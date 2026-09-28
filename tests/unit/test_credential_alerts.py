@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -6,6 +7,7 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderConfig, SystemConfig, WebhookConfig, WebhookCredentialAlert
 from app.services import auth_failures
+from app.services import credential_alerts as credential_alerts_module
 
 
 @pytest.fixture(name="session")
@@ -18,6 +20,28 @@ def session_fixture():
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
+
+
+@pytest.fixture(name="engine")
+def engine_fixture():
+    """A shared StaticPool in-memory engine two independent Sessions can both
+    bind to — used by the overlapping-poll race test below."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    return engine
+
+
+@pytest.fixture(autouse=True)
+def _fresh_check_lock(monkeypatch):
+    """A module-level asyncio.Lock binds to whichever event loop first awaits
+    it; pytest-asyncio spins up a fresh loop per test, so a lock left over
+    from a previous test's loop raises "bound to a different event loop".
+    Give every test its own unbound Lock."""
+    monkeypatch.setattr(credential_alerts_module, "_check_lock", asyncio.Lock())
 
 
 def _row(
@@ -337,12 +361,54 @@ async def test_two_webhooks_deduped_independently(session):
     assert client2.post.call_count == 0
 
 
+@pytest.mark.asyncio
+async def test_overlapping_polls_do_not_double_deliver(engine):
+    """`poll_now()` isn't reentrancy-guarded — a scheduled tick and a
+    `POST /force-collect` can both call `check_credential_alerts` concurrently
+    on the same event loop. Without `_check_lock`, both cycles can read the
+    dedup row as absent before either writes it, and both deliver the
+    webhook. Two independent Sessions on a shared engine + `asyncio.gather`
+    reproduces the real interleaving; mocking `_post_payload` to actually
+    `await asyncio.sleep(0)` opens the same race window a real HTTP POST
+    would.
+    """
+    from app.services.credential_alerts import check_credential_alerts
+
+    with Session(engine) as session_a, Session(engine) as session_b:
+        _config(session_a)
+
+        rows = [_row(status="invalid")]
+
+        async def _slow_post(*_args, **_kwargs) -> None:
+            await asyncio.sleep(0)
+
+        post_mock = AsyncMock(side_effect=_slow_post)
+
+        with (
+            patch(
+                "app.services.credential_alerts.token_health_service.get_health",
+                new=AsyncMock(return_value=rows),
+            ),
+            patch("app.services.credential_alerts._post_payload", new=post_mock),
+        ):
+            await asyncio.gather(
+                check_credential_alerts(session_a),
+                check_credential_alerts(session_b),
+            )
+
+        assert post_mock.call_count == 1
+        alerts = session_a.exec(select(WebhookCredentialAlert)).all()
+        assert len(alerts) == 1
+
+
 def test_commit_step_recovers_from_a_dedup_race(session):
-    """poll_now() isn't reentrancy-guarded (force-collect can overlap a
-    scheduled tick), so two overlapping cycles can race to insert the same
-    dedup row. `_commit_step` must swallow the loser's IntegrityError and
-    leave the session usable for the rest of that cycle's rows, rather than
-    rolling back everything committed so far."""
+    """`_check_lock` now serializes overlapping `check_credential_alerts`
+    cycles, so this scenario shouldn't arise in production — but `_commit_step`
+    keeps its `IntegrityError` catch as a defense-in-depth backstop (e.g. a
+    future caller that bypasses the lock, or a stray duplicate row from
+    before this fix shipped). It must still swallow a losing insert's
+    IntegrityError and leave the session usable for the rest of that cycle's
+    rows, rather than rolling back everything committed so far."""
     from app.services.credential_alerts import _commit_step
 
     session.add(
