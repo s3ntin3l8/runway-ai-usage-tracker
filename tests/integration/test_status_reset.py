@@ -67,3 +67,54 @@ async def test_collect_provider_clears_response_cache(client):
         response = client.post("/api/v1/usage/collect/anthropic")
         assert response.status_code == 200
     assert cache_get("fleet") is None
+
+
+def test_reset_provider_requires_admin_key(client, monkeypatch):
+    """With ADMIN_API_KEY configured and APP_HOST bound off-loopback, an
+    unauthenticated reset is rejected and no mutation occurs.
+
+    Pins the admin gate `require_admin_key` now enforces on this endpoint —
+    without it, any caller who could reach the server could force a
+    collector out of its error state. Pattern from
+    `test_multi_account_provider_config.py::test_delete_provider_config_requires_admin_key`:
+    patch both `app.core.config.settings` and `app.core.security.settings`,
+    since `resolve_auth` reads the latter's module-level binding.
+    """
+    for dotted in ("app.core.config.settings", "app.core.security.settings"):
+        monkeypatch.setattr(f"{dotted}.ADMIN_API_KEY", "admin-secret")
+        monkeypatch.setattr(f"{dotted}.APP_HOST", "0.0.0.0")
+
+    with patch(
+        "app.api.endpoints.usage.manager.reset_collector", new_callable=AsyncMock
+    ) as mock_reset:
+        response = client.post("/api/v1/usage/reset/anthropic")
+        assert response.status_code == 403
+        mock_reset.assert_not_called()
+
+        response = client.post(
+            "/api/v1/usage/reset/anthropic", headers={"X-Admin-Key": "admin-secret"}
+        )
+        assert response.status_code == 200
+        mock_reset.assert_called_once_with("anthropic", None)
+
+
+def test_collect_provider_requires_admin_key(client, monkeypatch):
+    """Same admin gate as `test_reset_provider_requires_admin_key`, for
+    `/collect/{provider}`."""
+    for dotted in ("app.core.config.settings", "app.core.security.settings"):
+        monkeypatch.setattr(f"{dotted}.ADMIN_API_KEY", "admin-secret")
+        monkeypatch.setattr(f"{dotted}.APP_HOST", "0.0.0.0")
+
+    with patch(
+        "app.api.endpoints.usage.manager.collect_one", new_callable=AsyncMock
+    ) as mock_collect:
+        mock_collect.return_value = []
+        response = client.post("/api/v1/usage/collect/anthropic")
+        assert response.status_code == 403
+        mock_collect.assert_not_called()
+
+        response = client.post(
+            "/api/v1/usage/collect/anthropic", headers={"X-Admin-Key": "admin-secret"}
+        )
+        assert response.status_code == 200
+        mock_collect.assert_called_once_with("anthropic", None)
