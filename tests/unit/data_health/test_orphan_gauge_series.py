@@ -70,6 +70,47 @@ def test_detect_flags_a_series_whose_events_are_all_old(session):
     assert report.total_count == 1
 
 
+def test_detect_query_count_is_roughly_constant_regardless_of_pair_count(session, query_counter):
+    """detect() must issue a small, bounded number of queries whether
+    there's 1 orphaned pair or 10 — the whole point of #375's rewrite. The
+    old per-pair implementation issued 2 + 5*N queries (2 for the pair set,
+    then _has_config + _last_event_ts + _count_latest + _count_snapshots +
+    candidate_targets per pair). The new one issues 4 fixed grouped queries
+    plus exactly one candidate_targets call per *distinct provider_id*
+    among the orphaned pairs (memoized, not per pair) — so growth tracks
+    the number of providers, never the number of pairs.
+    """
+    stale_ts = datetime.now(UTC) - timedelta(days=90)
+    make_latest_usage(session, provider_id="minimax", account_id="solo")
+    make_event(session, event_id="baseline", provider_id="minimax", account_id="solo", ts=stale_ts)
+    query_counter.reset()
+    _check().detect(session)
+    baseline_count = query_counter.count
+
+    # 10 orphaned pairs across 2 distinct providers, to exercise the
+    # candidate_targets memoization (one call per provider, not per pair).
+    for i in range(10):
+        provider_id = "minimax" if i % 2 == 0 else "chatgpt"
+        account_id = f"account{i}"
+        make_latest_usage(session, provider_id=provider_id, account_id=account_id)
+        make_event(
+            session,
+            event_id=f"{provider_id}-{account_id}",
+            provider_id=provider_id,
+            account_id=account_id,
+            ts=stale_ts,
+        )
+    query_counter.reset()
+    _check().detect(session)
+    ten_pair_count = query_counter.count
+
+    # Fixed cost (4) plus one memoized candidate_targets call per distinct
+    # provider — 1 provider in the baseline, 2 providers in the 11-pair
+    # case — so growth is exactly +1, not +10.
+    assert baseline_count == 5
+    assert ten_pair_count == 6
+
+
 def test_plan_is_read_only(session):
     make_latest_usage(session, provider_id="minimax", account_id="default")
 

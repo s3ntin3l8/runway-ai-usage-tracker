@@ -5,11 +5,12 @@ import os
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.core.security import require_admin_key
 from app.core.utils import IdentityExtractor, safe_write_json
 from app.services.collector_manager import manager
 
@@ -38,8 +39,14 @@ class DeviceFlowStatusResponse(BaseModel):
 
 @router.get("/init", response_model=DeviceFlowInitResponse)
 @limiter.limit("5/minute")
-async def init_device_flow(request: Request) -> DeviceFlowInitResponse:
-    """Step 1: Get the device code and user code from GitHub."""
+async def init_device_flow(
+    request: Request, _auth: None = Depends(require_admin_key)
+) -> DeviceFlowInitResponse:
+    """Step 1: Get the device code and user code from GitHub.
+
+    Admin-gated: starts a device-flow login that ends with this server
+    storing a GitHub credential.
+    """
     async with httpx.AsyncClient() as client:
         try:
             # GitHub Device Flow STEP 1: Request codes
@@ -88,8 +95,15 @@ async def init_device_flow(request: Request) -> DeviceFlowInitResponse:
 
 @router.post("/poll")
 @limiter.limit("5/minute")
-async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> dict[str, Any]:
-    """Step 2: Poll for the access token."""
+async def poll_device_flow(
+    request: Request,
+    body: DeviceFlowPollRequest,
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Step 2: Poll for the access token.
+
+    Admin-gated: on success this persists a GitHub access token to disk.
+    """
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(
@@ -106,7 +120,7 @@ async def poll_device_flow(request: Request, body: DeviceFlowPollRequest) -> dic
             )
             resp.raise_for_status()
             data = resp.json()
-            logger.info(f"GitHub polling response: {data}")
+            logger.debug("GitHub polling response keys: %s", sorted(data.keys()))
 
             if "error" in data:
                 error = data["error"]
@@ -223,8 +237,11 @@ async def get_status() -> DeviceFlowStatusResponse:
 
 
 @router.post("/logout")
-async def logout() -> dict[str, str]:
-    """Clear the stored GitHub token."""
+async def logout(_auth: None = Depends(require_admin_key)) -> dict[str, str]:
+    """Clear the stored GitHub token.
+
+    Admin-gated: deletes the stored credential file.
+    """
     if os.path.exists(settings.GITHUB_OAUTH_PATH):
         try:
             await asyncio.to_thread(os.remove, settings.GITHUB_OAUTH_PATH)
