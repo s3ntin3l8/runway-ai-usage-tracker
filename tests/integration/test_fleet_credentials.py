@@ -1357,6 +1357,221 @@ def test_pending_usage_event_can_be_assigned_and_promoted(client: TestClient, se
     assert stored.tokens_input == 1000
 
 
+def test_pending_usage_sessions_group_events_and_keep_missing_sessions_separate(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(
+        session,
+        provider_id="antigravity",
+        account_id="alice@example.com",
+    )
+    pushes = [
+        UsageEventPush(
+            provider_id="antigravity",
+            account_id="default",
+            account_source="default",
+            event_id=event_id,
+            ts=timestamp,
+            model_id="flash-3.8",
+            session_id=session_id,
+        )
+        for event_id, timestamp, session_id in (
+            ("session-a-1", "2026-09-01T10:00:00Z", "session-a"),
+            ("session-a-2", "2026-09-01T10:01:00Z", "session-a"),
+            ("no-session", "2026-09-01T10:02:00Z", None),
+        )
+    ]
+    for push in pushes:
+        session.add(
+            PendingUsageEvent(
+                provider_id=push.provider_id,
+                event_id=push.event_id,
+                sidecar_id="laptop",
+                ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+                payload_json=push.model_dump_json(),
+            )
+        )
+    session.commit()
+
+    response = client.get("/api/v1/fleet/events/pending/sessions")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total_events"] == 3
+    assert data["total_groups"] == 2
+    grouped = next(item for item in data["items"] if item["session_id"] == "session-a")
+    ungrouped = next(item for item in data["items"] if item["session_id"] is None)
+    assert grouped["event_count"] == 2
+    assert len(grouped["event_ids"]) == 2
+    assert grouped["model_ids"] == ["flash-3.8"]
+    assert ungrouped["event_count"] == 1
+    assert len(ungrouped["event_ids"]) == 1
+
+    assigned = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": grouped["event_ids"], "account_id": "alice@example.com"},
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["assigned"] == 2
+    promoted = session.exec(select(UsageEvent)).all()
+    assert len(promoted) == 2
+    assert {event.account_id for event in promoted} == {"alice@example.com"}
+    remaining = session.exec(select(PendingUsageEvent)).all()
+    assert len(remaining) == 1
+    assert remaining[0].event_id == "no-session"
+
+
+def test_pending_event_assignment_accepts_a_known_discovered_account(
+    client: TestClient, session: Session, monkeypatch
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    async def active_accounts():
+        return [("antigravity", "alice@example.com", "Alice")]
+
+    monkeypatch.setattr(
+        "app.api.endpoints.fleet.token_cache.get_all_active_accounts",
+        active_accounts,
+    )
+    push = UsageEventPush(
+        provider_id="antigravity",
+        account_id="default",
+        account_source="default",
+        event_id="discovered-account-pending",
+        ts="2026-09-01T10:00:00Z",
+        model_id="flash-3.8",
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id="laptop",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+    )
+    session.commit()
+    pending = session.exec(select(PendingUsageEvent)).first()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [pending.id], "account_id": "alice@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["assigned"] == 1
+    assert session.exec(select(PendingUsageEvent)).all() == []
+    stored = session.exec(select(UsageEvent)).first()
+    assert stored.account_id == "alice@example.com"
+
+
+def test_pending_event_assignment_rejects_disabled_account(client: TestClient, session: Session):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(
+        session,
+        provider_id="antigravity",
+        account_id="alice@example.com",
+        enabled=False,
+    )
+    push = UsageEventPush(
+        provider_id="antigravity",
+        account_id="default",
+        account_source="default",
+        event_id="disabled-account-pending",
+        ts="2026-09-01T10:00:00Z",
+        model_id="flash-3.8",
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id="laptop",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+    )
+    session.commit()
+    pending = session.exec(select(PendingUsageEvent)).first()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [pending.id], "account_id": "alice@example.com"},
+    )
+
+    assert response.status_code == 404
+    assert session.exec(select(PendingUsageEvent)).first() is not None
+
+
+def test_pending_event_assignment_does_not_resurrect_hidden_historical_identity(
+    client: TestClient, session: Session, monkeypatch
+):
+    from datetime import datetime
+
+    from app.models.db import LatestUsage, PendingUsageEvent, ProviderConfig
+    from app.models.schemas import UsageEventPush
+
+    async def no_active_accounts():
+        return []
+
+    monkeypatch.setattr(
+        "app.api.endpoints.fleet.token_cache.get_all_active_accounts",
+        no_active_accounts,
+    )
+    session.add(
+        ProviderConfig(provider_id="antigravity", account_id="alice@example.com", enabled=True)
+    )
+    session.add(
+        LatestUsage(
+            provider_id="antigravity",
+            account_id="historical@example.com",
+            sidecar_id="laptop",
+            window_type="weekly",
+            variant="default",
+            model_id="flash-3.8",
+            card_json="{}",
+        )
+    )
+    push = UsageEventPush(
+        provider_id="antigravity",
+        account_id="default",
+        account_source="default",
+        event_id="historical-account-pending",
+        ts="2026-09-01T10:00:00Z",
+        model_id="flash-3.8",
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id="laptop",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+    )
+    session.commit()
+    pending = session.exec(select(PendingUsageEvent)).first()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [pending.id], "account_id": "historical@example.com"},
+    )
+
+    assert response.status_code == 404
+    assert session.exec(select(PendingUsageEvent)).first() is not None
+
+
 def test_assigning_opencode_pending_event_persists_provider_mapping(
     client: TestClient, session: Session
 ):

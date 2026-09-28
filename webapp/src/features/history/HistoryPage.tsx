@@ -6,16 +6,18 @@ import type { HistoryWindowRow } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { DateRangeTabs, type DateRangeValue } from '@/components/ui/DateRangeTabs';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { useRangeParam } from '@/hooks/useRangeParam';
 import { formatCost, formatPct, formatTokens } from '@/lib/format';
+import { formatRangeLabel } from '@/lib/timeRange';
 import { formatLocalDate } from '@/lib/tz';
 import { HistoryChart } from './HistoryChart';
 import { WindowDetailSheet } from './WindowDetailSheet';
@@ -31,7 +33,7 @@ export function HistoryPage() {
   const fleet = useFleet();
   const providerConfigs = useProviderConfigs();
   const anomalies = useAnomalies();
-  const [range, setRange] = useState<DateRangeValue>({ days: 7 });
+  const [range, setRange] = useRangeParam();
   const [metric, setMetric] = useState<Metric>('percent');
   const [accountKey, setAccountKey] = useState<string | null>(null);
   const [detailRow, setDetailRow] = useState<HistoryWindowRow | null>(null);
@@ -74,12 +76,7 @@ export function HistoryPage() {
     (chart.data?.series?.some((s) => s.points.length > 0) ?? false) ||
     (chart.data?.bars?.length ?? 0) > 0;
 
-  const rangeLabel =
-    range.days != null
-      ? `${range.days}d`
-      : range.since && range.until
-        ? `${range.since} – ${range.until}`
-        : '';
+  const rangeLabel = formatRangeLabel(range);
 
   return (
     <>
@@ -98,7 +95,7 @@ export function HistoryPage() {
               ))}
             </SelectContent>
           </Select>
-          <DateRangeTabs value={range} onChange={setRange} />
+          <TimeRangePicker value={range} onChange={setRange} />
           <ExcludeCacheToggle className="ml-auto" />
           <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
             <TabsList className="border-0" aria-label="Chart metric">

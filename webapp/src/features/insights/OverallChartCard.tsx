@@ -1,6 +1,6 @@
 // Overall usage: cross-provider tokens/cost over the selected range, stacked
 // per provider. Range-total tiles sit above the chart. Shares the Insights
-// page's day-range and the global exclude-cache preference.
+// page's time range and the global exclude-cache preference.
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -11,13 +11,15 @@ import { HistoryChart } from '@/features/history/HistoryChart';
 import { useHistoryDeltas } from '@/features/history/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatTokens } from '@/lib/format';
+import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { useOverallChart, type OverallMetric } from './queries';
 
-export function OverallChartCard({ days }: { days: number }) {
+export function OverallChartCard({ range }: { range: DateRangeValue }) {
   const { excludeCache } = useExcludeCache();
   const [metric, setMetric] = useState<OverallMetric>('tokens');
-  const chart = useOverallChart(days, metric);
-  const deltas = useHistoryDeltas(days);
+  const chart = useOverallChart(range, metric);
+  const deltas = useHistoryDeltas(range);
+  const rangeLabel = formatRangeLabel(range);
 
   const hasData = (chart.data?.bars?.length ?? 0) > 0;
 
@@ -31,7 +33,7 @@ export function OverallChartCard({ days }: { days: number }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Overall usage · {days}d</CardTitle>
+        <CardTitle>Overall usage · {rangeLabel}</CardTitle>
         <Tabs value={metric} onValueChange={(v) => setMetric(v as OverallMetric)}>
           <TabsList className="border-0" aria-label="Overall metric">
             <TabsTrigger value="tokens" className="h-8 px-2.5">
@@ -46,12 +48,12 @@ export function OverallChartCard({ days }: { days: number }) {
       <CardContent className="flex flex-col gap-3 pt-2">
         <div className="grid grid-cols-2 gap-3">
           <StatTile
-            label={`Tokens (${days}d)`}
+            label={`Tokens (${rangeLabel})`}
             value={formatTokens(rangeTokens)}
             loading={deltas.isPending}
           />
           <StatTile
-            label={`Cost (${days}d)`}
+            label={`Cost (${rangeLabel})`}
             value={formatCost(rangeCost)}
             loading={deltas.isPending}
           />

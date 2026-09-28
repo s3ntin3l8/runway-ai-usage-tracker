@@ -72,7 +72,7 @@ describe('TopProjectsCard', () => {
   });
 
   it('renders RankBar with correct rows after data loads', async () => {
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     const option = capturedOption();
     const yAxis = option.yAxis as { data: string[] };
@@ -80,7 +80,7 @@ describe('TopProjectsCard', () => {
   });
 
   it('default metric is tokens', async () => {
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
     const tokensTab = within(tabs).getByRole('tab', { name: 'Tokens' });
@@ -91,7 +91,7 @@ describe('TopProjectsCard', () => {
   });
 
   it('metric tab switch updates query', async () => {
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([mockProject], 'cost'));
     const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
@@ -102,7 +102,7 @@ describe('TopProjectsCard', () => {
   });
 
   it('projectRow maps tokens correctly', async () => {
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     // tokens_input(10000) + tokens_output(5000) + tokens_reasoning(0) + cache(0) = 15000
     expect(stackedSeriesTotal(capturedOption())).toBe(15000);
@@ -110,7 +110,7 @@ describe('TopProjectsCard', () => {
 
   it('projectRow maps cost correctly', async () => {
     vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([mockProject], 'cost'));
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
     await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
@@ -119,7 +119,7 @@ describe('TopProjectsCard', () => {
 
   it('projectRow maps sessions correctly', async () => {
     vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([mockProject], 'sessions'));
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
     await userEvent.click(within(tabs).getByRole('tab', { name: 'Sessions' }));
@@ -135,7 +135,7 @@ describe('TopProjectsCard', () => {
       makeResponse([mockProjectWithCache], 'tokens'),
     );
     localStorage.setItem('runway_exclude_cache', '1');
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     const option = capturedOption();
     const series = option.series as Array<{ name: string; data: number[] }>;
@@ -154,7 +154,7 @@ describe('TopProjectsCard', () => {
       makeResponse([mockProjectWithCache], 'cost'),
     );
     localStorage.setItem('runway_exclude_cache', '1');
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
     await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
@@ -172,14 +172,14 @@ describe('TopProjectsCard', () => {
 
   it('shows skeleton during loading', () => {
     vi.mocked(api.fetchTopProjects).mockReturnValue(new Promise(() => {}));
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     expect(screen.queryByTestId('echart')).not.toBeInTheDocument();
     expect(document.querySelector('.shimmer-bg')).toBeInTheDocument();
   });
 
   it('shows empty state when no data', async () => {
     vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([], 'tokens'));
-    renderWithProviders(<TopProjectsCard days={7} />);
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     expect(
       await screen.findByText(/No project-attributed usage in this range/),
     ).toBeInTheDocument();

@@ -9,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { formatCost, formatDuration, formatTokens, timeAgo } from '@/lib/format';
-import { useProviderRecentSessions } from './queries';
+import { useProviderRecentSessions, type DateRange } from './queries';
 import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -78,13 +78,19 @@ function SessionCard({
 export function RecentSessions({
   providerId,
   accountId,
+  range,
+  label,
   excludeCache = false,
 }: {
   providerId: string;
   accountId: string;
+  // Follows the shared time-range picker when provided.
+  range?: DateRange;
+  // Display label for the selected range (appended to the heading).
+  label?: string;
   excludeCache?: boolean;
 }) {
-  const q = useProviderRecentSessions(providerId, accountId);
+  const q = useProviderRecentSessions(providerId, accountId, range);
   const sessions = q.data?.sessions ?? [];
 
   // Resolve sidecar labels only when more than one host feeds the fleet —
@@ -96,7 +102,9 @@ export function RecentSessions({
 
   return (
     <div className="flex flex-col gap-2">
-      <h2 className="text-[13px] font-semibold tracking-tight">Recent sessions</h2>
+      <h2 className="text-[13px] font-semibold tracking-tight">
+        {label ? `Recent sessions · ${label}` : 'Recent sessions'}
+      </h2>
       {q.isPending ? (
         <div className="grid gap-4 sm:grid-cols-3">
           {[0, 1, 2].map((i) => (

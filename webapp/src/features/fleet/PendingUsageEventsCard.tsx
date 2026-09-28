@@ -1,28 +1,40 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { assignPendingUsageEvents, fetchPendingUsageEvents, fetchProviderConfigs } from '@/api/endpoints';
+import {
+  assignPendingUsageEvents,
+  fetchPendingUsageSessions,
+  fetchProviderConfigs,
+} from '@/api/endpoints';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import type { PendingUsageSession } from '@/api/types';
+
+function sessionKey(group: PendingUsageSession) {
+  const sessionIdentity = group.session_id ? `session:${group.session_id}` : `event:${group.event_ids[0]}`;
+  return JSON.stringify([group.provider_id, group.sidecar_id, sessionIdentity]);
+}
 
 export function PendingUsageEventsCard() {
   const queryClient = useQueryClient();
   const [offset, setOffset] = useState(0);
+  const [accounts, setAccounts] = useState<Record<string, string>>({});
   const pending = useQuery({
-    queryKey: ['fleet', 'pending_usage_events', offset],
-    queryFn: () => fetchPendingUsageEvents(offset),
+    queryKey: ['fleet', 'pending_usage_sessions', offset],
+    queryFn: () => fetchPendingUsageSessions(offset),
     refetchInterval: 60_000,
   });
   const configs = useQuery({
     queryKey: ['system', 'provider-configs'],
     queryFn: fetchProviderConfigs,
   });
-  const [accounts, setAccounts] = useState<Record<string, string>>({});
   const assign = useMutation({
-    mutationFn: ({ id, accountId }: { id: number; accountId: string }) =>
-      assignPendingUsageEvents([id], accountId),
-    onSuccess: () => {
-      toast.success('Usage events assigned');
+    mutationFn: ({ eventIds, accountId }: { eventIds: number[]; accountId: string }) =>
+      assignPendingUsageEvents(eventIds, accountId),
+    onSuccess: ({ assigned }) => {
+      toast.success(`${assigned} usage event${assigned === 1 ? '' : 's'} assigned`);
+      setOffset(0);
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'pending_usage_sessions'] });
       queryClient.invalidateQueries({ queryKey: ['fleet', 'pending_usage_events'] });
       queryClient.invalidateQueries({ queryKey: ['usage'] });
     },
@@ -37,22 +49,18 @@ export function PendingUsageEventsCard() {
       </Card>
     );
   }
-  if (!pending.data?.total) return null;
+  if (!pending.data?.total_events) return null;
 
-  // Some providers still carry a config row keyed account_id="default" with
-  // a real-looking label (e.g. an email) — the label is cosmetic, but
-  // selecting that option here still assigns the event onto the shared
-  // "default" bucket, not a per-account row. Surfaced explicitly below and
-  // on the option itself so assigning to it is a deliberate choice, not a
-  // trap. See docs/migration-v3.md — re-key the config in Fleet first if
-  // that's not what's wanted.
-  const hasDefaultKeyedOption = (configs.data?.providers ?? []).some((p) =>
-    p.accounts.some((a) => a.account_id === 'default' && a.source !== 'discovered' && a.enabled !== false),
+  const hasDefaultKeyedOption = (configs.data?.providers ?? []).some((provider) =>
+    provider.accounts.some(
+      (account) =>
+        account.account_id === 'default' && !account.archived && account.enabled !== false,
+    ),
   );
 
   return (
     <Card id="pending-events" className="mb-3 border-warning/40 bg-warning-muted p-3">
-      <h2 className="text-sm font-semibold">Unassigned usage · {pending.data.total} events</h2>
+      <h2 className="text-sm font-semibold">Unassigned usage · {pending.data.total_events} events</h2>
       <p className="mt-1 text-xs text-fg-muted">
         These events are stored safely and excluded from account totals until assigned.
       </p>
@@ -61,27 +69,34 @@ export function PendingUsageEventsCard() {
       </p>
       {hasDefaultKeyedOption && (
         <p className="mt-1 text-xs text-fg-muted">
-          An account labeled "(default)" below is still stored under the shared default identity, not its own
+          An account labeled “(default)” below is still stored under the shared default identity, not its own
           account — assigning there keeps it shared. Re-key its config in Fleet first if you want it on its own
           account instead.
         </p>
       )}
       <div className="mt-3 flex max-h-[32rem] flex-col gap-2 overflow-y-auto">
-        {pending.data.items.map((event) => {
-          const providerId = event.provider_id;
-          const configured = configs.data?.providers.find((p) => p.provider_id === providerId);
-          const options = configured?.accounts.filter((a) => a.source !== 'discovered' && a.enabled !== false) ?? [];
+        {pending.data.items.map((group) => {
+          const key = sessionKey(group);
+          const configured = configs.data?.providers.find((provider) => provider.provider_id === group.provider_id);
+          const options =
+            configured?.accounts.filter((account) => !account.archived && account.enabled !== false) ?? [];
+          const sessionLabel = group.session_id ?? `event ${group.event_ids[0]}`;
+          const modelLabel = group.model_ids.length ? group.model_ids.join(', ') : 'unknown model';
           return (
-            <div key={event.id} className="flex flex-wrap items-center gap-2 rounded border border-border p-2">
-              <span className="min-w-24 text-xs font-medium">{providerId}</span>
-              <span className="max-w-64 truncate text-xs text-fg-muted" title={event.event_id}>
-                {new Date(event.ts).toLocaleString()} · {event.model_id || 'unknown model'} · {event.sidecar_id} · {event.event_id}
+            <div key={key} className="flex flex-wrap items-center gap-2 rounded border border-border p-2">
+              <span className="min-w-24 text-xs font-medium">{group.provider_id}</span>
+              <span className="max-w-72 truncate text-xs text-fg-muted" title={group.session_id ?? undefined}>
+                {group.event_count} events · {new Date(group.first_ts).toLocaleString()}–
+                {new Date(group.last_ts).toLocaleString()} · {modelLabel} · {group.sidecar_id}
+              </span>
+              <span className="max-w-48 truncate text-xs text-fg-muted" title={group.session_id ?? undefined}>
+                {group.session_id ? `Session ${group.session_id}` : `No session ID · event ${group.event_ids[0]}`}
               </span>
               <select
-                aria-label={`Account for ${providerId} event ${event.event_id}`}
+                aria-label={`Account for ${group.provider_id} session ${sessionLabel}`}
                 className="h-8 rounded border border-border bg-surface-1 px-2 text-xs"
-                value={accounts[String(event.id)] ?? ''}
-                onChange={(change) => setAccounts((old) => ({ ...old, [String(event.id)]: change.target.value }))}
+                value={accounts[key] ?? ''}
+                onChange={(change) => setAccounts((old) => ({ ...old, [key]: change.target.value }))}
               >
                 <option value="">Choose account…</option>
                 {options.map((account) => {
@@ -96,23 +111,30 @@ export function PendingUsageEventsCard() {
               <Button
                 size="sm"
                 variant="primary"
-                disabled={!accounts[String(event.id)] || assign.isPending}
+                disabled={!accounts[key] || assign.isPending}
                 loading={assign.isPending}
-                onClick={() => assign.mutate({ id: event.id, accountId: accounts[String(event.id)] })}
-              >Assign event</Button>
+                onClick={() => assign.mutate({ eventIds: group.event_ids, accountId: accounts[key] })}
+              >
+                {group.session_id ? 'Assign session' : 'Assign event'}
+              </Button>
             </div>
           );
         })}
       </div>
       <div className="mt-3 flex items-center justify-between text-xs text-fg-muted">
         <span>
-          Showing {offset + 1}–{Math.min(offset + pending.data.items.length, pending.data.total)} of {pending.data.total}
+          Showing {offset + 1}–{Math.min(offset + pending.data.items.length, pending.data.total_groups)} of{' '}
+          {pending.data.total_groups} groups · {pending.data.total_events} events
         </span>
         <div className="flex gap-2">
           <Button size="sm" disabled={offset === 0} onClick={() => setOffset((page) => Math.max(0, page - 100))}>
             Previous
           </Button>
-          <Button size="sm" disabled={offset + 100 >= pending.data.total} onClick={() => setOffset((page) => page + 100)}>
+          <Button
+            size="sm"
+            disabled={offset + 100 >= pending.data.total_groups}
+            onClick={() => setOffset((page) => page + 100)}
+          >
             Next
           </Button>
         </div>

@@ -15,20 +15,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { useFleet, useProviderConfigs } from '@/features/home/queries';
+import { useRangeParam } from '@/hooks/useRangeParam';
 import { ActivityTab } from './ActivityTab';
 import { CostTab } from './CostTab';
 import { DebugTab } from './DebugTab';
 import { EventsTab } from './EventsTab';
 import { ForecastTab } from './ForecastTab';
 import { OverviewTab } from './OverviewTab';
-import { ScopeSelector } from './ScopeSelector';
 import { SessionsBrowser } from './SessionsBrowser';
-import { currentMonthKey, resolveScope } from './period';
+import { resolveScope } from './period';
 import { useProviderEventRange } from './queries';
 
-// Tabs whose data is scoped by the shared month selector.
-const PERIOD_AWARE_TABS = new Set(['activity', 'sessions', 'events', 'cost']);
+// Tabs whose data is scoped by the shared time-range picker.
+const PERIOD_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events', 'cost']);
 
 export function ProviderPage() {
   const { providerId = '' } = useParams();
@@ -58,22 +59,12 @@ export function ProviderPage() {
   const entry = entries.find((e) => e.account_id === accountParam) ?? entries[0];
   const accountId = entry?.account_id ?? accountParam ?? 'default';
 
-  // Shared time-scope selector — `?period=` holds a 'YYYY-MM' month key or a
-  // 'Nd' rolling key, omitted when it's the current month (mirrors how `tab`
-  // omits 'overview'). resolveScope tolerates a bad deep-link by falling back
-  // to the current month.
-  const scope = resolveScope(searchParams.get('period'));
-  const setPeriod = (next: string) => {
-    setSearchParams(
-      (prev) => {
-        const p = new URLSearchParams(prev);
-        if (next === currentMonthKey()) p.delete('period');
-        else p.set('period', next);
-        return p;
-      },
-      { replace: true },
-    );
-  };
+  // Shared time-range picker — `?range=` holds 'Nd' or an absolute
+  // 'YYYY-MM-DD_…' span, omitted for the default last-7-days window (mirrors
+  // how `tab` omits 'overview'). The legacy `?period=` deep-link is still
+  // honoured as a read-only fallback and cleared on the first change.
+  const [rangeValue, setRange] = useRangeParam('period');
+  const scope = resolveScope(rangeValue);
   const eventRange = useProviderEventRange(providerId, accountId);
 
   const name =
@@ -124,10 +115,9 @@ export function ProviderPage() {
         actions={
           <>
             {entry && PERIOD_AWARE_TABS.has(tab) ? (
-              <ScopeSelector
-                value={scope.key}
-                mode={scope.mode}
-                onChange={setPeriod}
+              <TimeRangePicker
+                value={rangeValue}
+                onChange={setRange}
                 earliest={eventRange.data?.earliest}
               />
             ) : null}
@@ -232,7 +222,7 @@ export function ProviderPage() {
               <TabsTrigger value="debug">Debug</TabsTrigger>
             </TabsList>
             <TabsContent value="overview">
-              <OverviewTab entry={entry} />
+              <OverviewTab entry={entry} scope={scope} />
             </TabsContent>
             <TabsContent value="activity">
               <ActivityTab providerId={providerId} accountId={accountId} scope={scope} />

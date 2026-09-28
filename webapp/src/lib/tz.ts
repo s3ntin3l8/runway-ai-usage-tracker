@@ -101,7 +101,7 @@ export function formatLocalDate(
 }
 
 // The current calendar year + (1-based) month *in the resolved user tz*. Backs
-// the default period and the `isCurrentMonth` check for the month selector.
+// the `isLiveMonth` check in timeRange.ts (live-month scope gating).
 export function currentYearMonth(): { year: number; month: number } {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: getUserTz(),

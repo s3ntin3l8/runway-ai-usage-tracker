@@ -585,6 +585,17 @@ export interface PendingUsageEvent {
   session_id?: string | null;
 }
 
+export interface PendingUsageSession {
+  provider_id: string;
+  sidecar_id: string;
+  session_id: string | null;
+  event_ids: number[];
+  event_count: number;
+  first_ts: string;
+  last_ts: string;
+  model_ids: string[];
+}
+
 export interface SystemSettings {
   project_name?: string;
   app_host?: string;

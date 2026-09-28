@@ -2,6 +2,7 @@ import { screen, within } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { OverviewTab } from './OverviewTab';
 import * as api from '@/api/endpoints';
+import { resolveScope } from './period';
 import {
   anomaliesResponse,
   costForecast,
@@ -13,10 +14,14 @@ import {
   forecastResponse,
   historyChart,
   limitCard,
+  pastPeriod,
   session,
 } from './test-fixtures';
 
 vi.mock('@/api/endpoints');
+
+// The default scope — what ProviderPage renders with `?range=` omitted.
+const scope = resolveScope({ days: 7 });
 
 // Chart leaves render ECharts (no canvas in jsdom): stub to a marker.
 vi.mock('@/components/charts/TrajectoryChart', () => ({
@@ -50,16 +55,41 @@ describe('OverviewTab', () => {
   });
 
   it('renders the KPI strip and quota windows', async () => {
-    renderWithProviders(<OverviewTab entry={fleetEntry()} />);
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
     expect(await screen.findByText('Quota windows')).toBeInTheDocument();
     expect(screen.getByText('Current window')).toBeInTheDocument();
     // KPI labels
     expect(screen.getByText('Current')).toBeInTheDocument();
-    expect(screen.getByText('Cache hit')).toBeInTheDocument();
+    expect(screen.getByText('Cache hit · Last 7 days')).toBeInTheDocument();
+  });
+
+  // Pins OverviewTab's own copy of the three-way cumulative enable gates: the
+  // default rolling scope must fetch only the range bucket, a past-month scope
+  // only the month bucket — never both, never the wrong one.
+  it('requests only the range bucket for the default rolling scope', async () => {
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
+    expect(await screen.findByText('Cache hit · Last 7 days')).toBeInTheDocument();
+    expect(api.fetchCumulative).toHaveBeenCalledWith(
+      expect.objectContaining({ since: expect.any(String), until: expect.any(String) }),
+    );
+    expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+      expect.objectContaining({ period_type: expect.anything() }),
+    );
+  });
+
+  it('requests only the month bucket for a past-month scope', async () => {
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={pastPeriod('2026-01')} />);
+    expect(await screen.findByText('Cache hit · January 2026')).toBeInTheDocument();
+    expect(api.fetchCumulative).toHaveBeenCalledWith(
+      expect.objectContaining({ period_type: 'month', period_key: '2026-01' }),
+    );
+    expect(api.fetchCumulative).not.toHaveBeenCalledWith(
+      expect.objectContaining({ since: expect.anything() }),
+    );
   });
 
   it('shows the trajectory chart once a forecast resolves', async () => {
-    renderWithProviders(<OverviewTab entry={fleetEntry()} />);
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
     expect(await screen.findAllByTestId('trajectory')).not.toHaveLength(0);
   });
 
@@ -87,7 +117,7 @@ describe('OverviewTab', () => {
     const entry = fleetEntry({
       critical_gauge: limitCard({ window_type: 'weekly', variant: 'gemini', pct_used: 49 }),
     });
-    renderWithProviders(<OverviewTab entry={entry} />);
+    renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
     // "Current window" header (OverviewTab) resolves the gemini forecast…
     expect(await screen.findByText(/projected 88% at reset/i)).toBeInTheDocument();
     // …and so does the "Projected at reset" KPI tile (ProviderKpis), which uses
@@ -96,15 +126,15 @@ describe('OverviewTab', () => {
   });
 
   it('renders the token-mix donut when there is month usage', async () => {
-    renderWithProviders(<OverviewTab entry={fleetEntry()} />);
-    expect(await screen.findByText('Token mix (month)')).toBeInTheDocument();
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
+    expect(await screen.findByText('Token mix · Last 7 days')).toBeInTheDocument();
     expect(await screen.findAllByTestId('token-donut')).not.toHaveLength(0);
   });
 
   it('falls back to an empty token-mix message with no month bucket', async () => {
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());
-    renderWithProviders(<OverviewTab entry={fleetEntry()} />);
-    expect(await screen.findByText(/no usage this month/i)).toBeInTheDocument();
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
+    expect(await screen.findByText(/no usage in/i)).toBeInTheDocument();
   });
 
   it('falls back to an empty token-mix message when the month bucket has no tokens', async () => {
@@ -130,8 +160,8 @@ describe('OverviewTab', () => {
         ],
       }),
     );
-    renderWithProviders(<OverviewTab entry={fleetEntry()} />);
-    expect(await screen.findByText(/no usage this month/i)).toBeInTheDocument();
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
+    expect(await screen.findByText(/no usage in/i)).toBeInTheDocument();
     expect(screen.queryAllByTestId('token-donut')).toHaveLength(0);
   });
 
@@ -147,13 +177,13 @@ describe('OverviewTab', () => {
     });
 
     localStorage.setItem('runway_exclude_cache', '0');
-    const { unmount } = renderWithProviders(<OverviewTab entry={tokenEntry} />);
+    const { unmount } = renderWithProviders(<OverviewTab entry={tokenEntry} scope={scope} />);
     const cardOff = (await screen.findByText('Token usage')).closest('.rounded-md') as HTMLElement;
     expect(within(cardOff).getByText('1K')).toBeInTheDocument();
     unmount();
 
     localStorage.setItem('runway_exclude_cache', '1');
-    renderWithProviders(<OverviewTab entry={tokenEntry} />);
+    renderWithProviders(<OverviewTab entry={tokenEntry} scope={scope} />);
     const cardOn = (await screen.findByText('Token usage')).closest('.rounded-md') as HTMLElement;
     expect(within(cardOn).getByText('160')).toBeInTheDocument();
   });
@@ -162,7 +192,7 @@ describe('OverviewTab', () => {
     const entry = fleetEntry({
       secondary_limits: [limitCard({ service_name: 'Sonnet', window_type: 'daily', pct_used: 10 })],
     });
-    renderWithProviders(<OverviewTab entry={entry} />);
+    renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
     // Both critical + secondary cards render gauges; just assert the card body exists.
     expect(await screen.findByText('Quota windows')).toBeInTheDocument();
   });
@@ -180,7 +210,7 @@ describe('OverviewTab', () => {
         },
       },
     });
-    renderWithProviders(<OverviewTab entry={entry} />);
+    renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
     expect(await screen.findByText('Active window by model')).toBeInTheDocument();
   });
 
@@ -197,13 +227,13 @@ describe('OverviewTab', () => {
         },
       },
     });
-    renderWithProviders(<OverviewTab entry={entry} />);
+    renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
     expect(await screen.findByText('Active window by source')).toBeInTheDocument();
   });
 
   it('renders recent sessions when present', async () => {
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [session()] } as never);
-    renderWithProviders(<OverviewTab entry={fleetEntry()} />);
-    expect(await screen.findByText('Recent sessions')).toBeInTheDocument();
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
+    expect(await screen.findByText('Recent sessions · Last 7 days')).toBeInTheDocument();
   });
 });

@@ -29,6 +29,7 @@ import type {
   LimitCard,
   PairingCode,
   PendingUsageEvent,
+  PendingUsageSession,
   ProviderConfig,
   SessionEntry,
   SessionsPaginatedResponse,
@@ -144,6 +145,15 @@ export const fetchPendingUsageEvents = (offset = 0) =>
   api<{ items: PendingUsageEvent[]; total: number; offset: number; limit: number }>(
     `/api/v1/fleet/events/pending${qs({ offset, limit: 100 })}`,
   );
+
+export const fetchPendingUsageSessions = (offset = 0) =>
+  api<{
+    items: PendingUsageSession[];
+    total_events: number;
+    total_groups: number;
+    offset: number;
+    limit: number;
+  }>(`/api/v1/fleet/events/pending/sessions${qs({ offset, limit: 100 })}`);
 
 export const assignPendingUsageEvents = (eventIds: number[], accountId: string) =>
   api<{ assigned: number; provider_id: string }>('/api/v1/fleet/events/pending/assign', {
