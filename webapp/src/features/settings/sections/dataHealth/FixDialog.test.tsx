@@ -261,6 +261,8 @@ describe('FixDialog', () => {
     expect(screen.getByText(/status is unknown/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry status/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /close/i })).not.toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(onOpenChange).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole('button', { name: /retry status/i }));
     await userEvent.click(await screen.findByRole('button', { name: /close/i }));

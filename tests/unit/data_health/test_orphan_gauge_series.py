@@ -185,6 +185,25 @@ def test_apply_rejects_series_that_became_active(session):
         _check().apply(session, "minimax::default", {"action": "delete"})
 
 
+def test_plan_rejects_series_that_became_active(session):
+    make_latest_usage(
+        session,
+        provider_id="minimax",
+        account_id="default",
+        updated_at=datetime.now(UTC) - timedelta(days=90),
+    )
+    make_event(
+        session,
+        event_id="recent",
+        provider_id="minimax",
+        account_id="default",
+        ts=datetime.now(UTC) - timedelta(days=1),
+    )
+
+    with pytest.raises(ValueError, match="recent activity"):
+        _check().plan(session, "minimax::default", {"action": "delete"})
+
+
 def test_apply_merge_folds_into_a_configured_account(session):
     make_config(session, provider_id="minimax", account_id="alice@example.com")
     make_latest_usage(
