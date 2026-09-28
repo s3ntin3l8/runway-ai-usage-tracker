@@ -110,8 +110,8 @@ describe('HistoryPage', () => {
   it('renders the chart and the delta stat tiles', async () => {
     renderWithProviders(<HistoryPage />);
     expect(await screen.findByTestId('echart')).toBeInTheDocument();
-    expect(screen.getByText(/Tokens \(7d\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Cost \(7d\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Tokens \(Last 7 days\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Cost \(Last 7 days\)/)).toBeInTheDocument();
     expect(screen.getByText('Critical series')).toBeInTheDocument();
   });
 
@@ -146,7 +146,8 @@ describe('HistoryPage', () => {
   it('switches the time range, refetching the chart for the new window', async () => {
     renderWithProviders(<HistoryPage />);
     await screen.findByTestId('echart');
-    await userEvent.click(screen.getByRole('tab', { name: '30d' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Last 30 days' }));
     // The deltas/chart hooks key on `days`; a 30d refetch must fire.
     expect(api.fetchHistoryDeltas).toHaveBeenCalledWith(
       expect.objectContaining({ days: 30 }),

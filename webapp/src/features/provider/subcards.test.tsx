@@ -1,18 +1,19 @@
 // Sub-card components: ProviderKpis, ProviderAlerts, ProviderTrendCard,
 // QuotaWindowRow, RecentSessions.
 import { screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { ProviderKpis } from './ProviderKpis';
 import { ProviderAlerts } from './ProviderAlerts';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { QuotaWindowRow } from './QuotaWindowRow';
 import { RecentSessions } from './RecentSessions';
+import { resolveScope } from './period';
 import * as api from '@/api/endpoints';
 import {
   anomaliesResponse,
   costForecast,
   cumulativeResponse,
+  currentPeriod,
   errorEvents,
   emptyEvents,
   fleetEntry,
@@ -28,6 +29,9 @@ vi.mock('@/features/history/HistoryChart', () => ({
   HistoryChart: () => <div data-testid="history-chart" />,
 }));
 
+// Live-month scope: KPI tiles show the MTD/EOM projection labels.
+const scope = currentPeriod();
+
 describe('ProviderKpis', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -37,24 +41,35 @@ describe('ProviderKpis', () => {
   });
 
   it('renders the six KPI tiles with values', async () => {
-    renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'subscription' })} />);
+    renderWithProviders(
+      <ProviderKpis entry={fleetEntry({ billing_type: 'subscription' })} scope={scope} />,
+    );
     expect(await screen.findByText('Current')).toBeInTheDocument();
     expect(screen.getByText('Projected at reset')).toBeInTheDocument();
     expect(screen.getByText('Estimated usage value (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Daily usage value (7d)')).toBeInTheDocument();
-    expect(screen.getByText('Tokens (month)')).toBeInTheDocument();
-    expect(screen.getByText('Cache hit')).toBeInTheDocument();
+    expect(screen.getByText(`Tokens · ${scope.label}`)).toBeInTheDocument();
+    expect(screen.getByText(`Cache hit · ${scope.label}`)).toBeInTheDocument();
   });
 
   it('labels pay-as-you-go account values as spend', async () => {
-    renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'pay_as_you_go' })} />);
+    renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'pay_as_you_go' })} scope={scope} />);
     expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Daily burn (7d)')).toBeInTheDocument();
   });
 
   it('labels unknown account values neutrally', async () => {
-    renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'unknown' })} />);
+    renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'unknown' })} scope={scope} />);
     expect(await screen.findByText('Usage value (MTD)')).toBeInTheDocument();
+  });
+
+  it('falls back to recorded range spend outside the live month', async () => {
+    const past = resolveScope({ days: 30 });
+    renderWithProviders(
+      <ProviderKpis entry={fleetEntry({ billing_type: 'subscription' })} scope={past} />,
+    );
+    expect(await screen.findByText(`Estimated usage value · ${past.label}`)).toBeInTheDocument();
+    expect(screen.getByText('current month only')).toBeInTheDocument();
   });
 
   describe('tokens kind (unlimited / passive provider)', () => {
@@ -80,13 +95,15 @@ describe('ProviderKpis', () => {
       });
 
     it('includes cache tokens in the lifetime total when excludeCache is off', async () => {
-      renderWithProviders(<ProviderKpis entry={tokenFleetEntry()} excludeCache={false} />);
+      renderWithProviders(
+        <ProviderKpis entry={tokenFleetEntry()} scope={scope} excludeCache={false} />,
+      );
       // 45M + 0.6M + 38K + 700M + 43M = 788,638,000 → "788.64M"
       expect(await screen.findByText('788.64M')).toBeInTheDocument();
     });
 
     it('excludes cache tokens from the lifetime total when excludeCache is on', async () => {
-      renderWithProviders(<ProviderKpis entry={tokenFleetEntry()} excludeCache />);
+      renderWithProviders(<ProviderKpis entry={tokenFleetEntry()} scope={scope} excludeCache />);
       // 45M + 0.6M + 38K = 45,638,000 → "45.64M"
       expect(await screen.findByText('45.64M')).toBeInTheDocument();
     });
@@ -156,7 +173,7 @@ describe('ProviderTrendCard', () => {
     expect(screen.getByText('Tokens per day')).toBeInTheDocument();
   });
 
-  it('shows the no-data message and switches ranges', async () => {
+  it('shows the no-data message for the default range', async () => {
     vi.mocked(api.fetchHistoryChart).mockResolvedValue(historyChart(false));
     renderWithProviders(
       <ProviderTrendCard
@@ -167,9 +184,7 @@ describe('ProviderTrendCard', () => {
       />,
     );
     expect(await screen.findByText(/no data in this range/i)).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('tab', { name: '7d' }));
-    // refetch happens for the new range
+    // Default fallback range (last 7 days) drives the initial fetch.
     expect(api.fetchHistoryChart).toHaveBeenCalledWith(expect.objectContaining({ days: 7 }));
   });
 });

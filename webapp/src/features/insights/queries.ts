@@ -6,6 +6,7 @@ import {
   fetchTopProjects,
   fetchTopTools,
 } from '@/api/endpoints';
+import { rangeQueryParams, type DateRangeValue } from '@/lib/timeRange';
 
 export type TopMetric = 'tokens' | 'cost';
 export type ProjectMetric = 'tokens' | 'cost' | 'sessions';
@@ -14,20 +15,24 @@ export type OverallMetric = 'tokens' | 'cost';
 // Cross-provider "overall" time-series: tokens/cost bars summed across every
 // provider/account, one stacked segment per provider (group=provider). Unlike
 // useHistoryChart this has no account filter and no enabled guard.
-export const useOverallChart = (days: number, metric: OverallMetric) =>
-  useQuery({
-    queryKey: ['usage', 'overall-chart', days, metric],
-    queryFn: () => fetchHistoryChart({ days, metric, group: 'provider' }),
+export const useOverallChart = (range: DateRangeValue, metric: OverallMetric) => {
+  const params = rangeQueryParams(range);
+  return useQuery({
+    queryKey: ['usage', 'overall-chart', params, metric],
+    queryFn: () => fetchHistoryChart({ ...params, metric, group: 'provider' }),
     refetchInterval: 120_000,
   });
+};
 
-export const useTopModels = (metric: TopMetric, days: number, excludeCache: boolean) =>
-  useQuery({
-    queryKey: ['usage', 'top-models', metric, days, excludeCache],
+export const useTopModels = (metric: TopMetric, range: DateRangeValue, excludeCache: boolean) => {
+  const params = rangeQueryParams(range);
+  return useQuery({
+    queryKey: ['usage', 'top-models', metric, params, excludeCache],
     queryFn: () =>
-      fetchTopModels({ metric, days, exclude_cache: excludeCache, limit: 12 }),
+      fetchTopModels({ metric, ...params, exclude_cache: excludeCache, limit: 12 }),
     refetchInterval: 120_000,
   });
+};
 
 export const useGlobalStats = () =>
   useQuery({
@@ -36,46 +41,35 @@ export const useGlobalStats = () =>
     refetchInterval: 300_000,
   });
 
-export interface RankWindow {
-  days?: number;
-  range?: { since: string; until: string };
-  providerId?: string;
-}
-
 // Top Projects ranking. `providerId` undefined → cross-provider (Insights);
-// set → scoped to one provider (the Activity card). Window is either a rolling
-// `days` count or an explicit month `range`; neither → the endpoint's current
-// month default.
-export const useTopProjects = (metric: ProjectMetric, excludeCache: boolean, win: RankWindow) =>
-  useQuery({
-    queryKey: [
-      'usage',
-      'top-projects',
-      metric,
-      excludeCache,
-      win.days ?? null,
-      win.range?.since ?? null,
-      win.range?.until ?? null,
-      win.providerId ?? null,
-    ],
+// set → scoped to one provider (the Activity card). The window comes from the
+// shared range value — rolling `days` or an absolute span.
+export const useTopProjects = (
+  metric: ProjectMetric,
+  excludeCache: boolean,
+  range: DateRangeValue,
+  providerId?: string,
+) => {
+  const params = rangeQueryParams(range);
+  return useQuery({
+    queryKey: ['usage', 'top-projects', metric, excludeCache, params, providerId ?? null],
     queryFn: () =>
       fetchTopProjects({
         metric,
         exclude_cache: excludeCache,
         limit: 12,
-        ...(win.range
-          ? { since: win.range.since, until: win.range.until }
-          : win.days != null
-            ? { days: win.days }
-            : {}),
-        ...(win.providerId ? { provider_id: win.providerId } : {}),
+        ...params,
+        ...(providerId ? { provider_id: providerId } : {}),
       }),
     refetchInterval: 120_000,
   });
+};
 
-export const useTopTools = (days: number) =>
-  useQuery({
-    queryKey: ['usage', 'top-tools', days],
-    queryFn: () => fetchTopTools({ days, limit: 12 }),
+export const useTopTools = (range: DateRangeValue) => {
+  const params = rangeQueryParams(range);
+  return useQuery({
+    queryKey: ['usage', 'top-tools', params],
+    queryFn: () => fetchTopTools({ ...params, limit: 12 }),
     refetchInterval: 120_000,
   });
+};

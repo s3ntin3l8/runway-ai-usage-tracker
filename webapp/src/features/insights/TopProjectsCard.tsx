@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatTokens } from '@/lib/format';
+import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { useTopProjects, type ProjectMetric } from './queries';
 
 const COST_ACCESSORS: Record<string, (p: TopProjectEntry) => number> = {
@@ -90,30 +91,28 @@ const FORMAT: Record<ProjectMetric, (v: number) => string> = {
   sessions: (v) => v.toLocaleString(),
 };
 
-// Either a rolling `days` window (History, cross-provider) or a month `range`
-// + `providerId` (Activity, per-provider). `title` overrides the default.
+// The shared range value scopes the ranking; `providerId` narrows it to one
+// provider (Activity). `title` overrides the default `Top projects · label`.
 export function TopProjectsCard({
-  days,
   range,
   providerId,
   title,
 }: {
-  days?: number;
-  range?: { since: string; until: string };
+  range: DateRangeValue;
   providerId?: string;
   title?: string;
 }) {
   const { excludeCache } = useExcludeCache();
   const t = useChartTokens();
   const [metric, setMetric] = useState<ProjectMetric>('tokens');
-  const top = useTopProjects(metric, excludeCache, { days, range, providerId });
+  const top = useTopProjects(metric, excludeCache, range, providerId);
   const rows = (top.data?.projects ?? []).map((p) => projectRow(p, metric, excludeCache, t.series));
   const hasData = rows.some((r) => r.value > 0);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title ?? `Top projects · ${days}d`}</CardTitle>
+        <CardTitle>{title ?? `Top projects · ${formatRangeLabel(range)}`}</CardTitle>
         <Tabs value={metric} onValueChange={(v) => setMetric(v as ProjectMetric)}>
           <TabsList className="border-0" aria-label="Top projects metric">
             <TabsTrigger value="tokens" className="h-8 px-2.5">

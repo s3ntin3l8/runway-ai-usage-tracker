@@ -130,11 +130,29 @@ export const useProviderSessions = (
   });
 
 // The 3 most recent sessions (by ts_end) — drives the Overview activity pulse.
-export const useProviderRecentSessions = (providerId: string, accountId: string) =>
+export const useProviderRecentSessions = (
+  providerId: string,
+  accountId: string,
+  range?: DateRange,
+) =>
   useQuery({
-    queryKey: ['usage', 'sessions', 'recent', providerId, accountId],
+    queryKey: [
+      'usage',
+      'sessions',
+      'recent',
+      providerId,
+      accountId,
+      range?.since ?? null,
+      range?.until ?? null,
+    ],
     queryFn: () =>
-      fetchSessions({ provider_id: providerId, account_id: accountId, limit: 3, sort_by: 'recent' }),
+      fetchSessions({
+        provider_id: providerId,
+        account_id: accountId,
+        limit: 3,
+        sort_by: 'recent',
+        ...(range ? { since: range.since, until: range.until } : {}),
+      }),
     refetchInterval: 120_000,
   });
 

@@ -35,8 +35,8 @@ export function ActivityTab({
   scope: TabScope;
 }) {
   const { excludeCache } = useExcludeCache();
-  // Every panel honours the one selected scope (month-to-date, a past month, or
-  // a rolling window) — see issue #87.
+  // Every panel honours the one selected range — a rolling window, the live
+  // calendar month, a past month, or a custom span — see issue #87.
   const range = scope.range;
   const heatmap = useProviderHeatmap(providerId, accountId, getUserTz(), range);
   const sessions = useProviderSessions(providerId, accountId, range);
@@ -44,20 +44,20 @@ export function ActivityTab({
   // `current_month_key` to the bucket that holds the data, so the read below is
   // source-agnostic. Pick the source matching the active scope; the other hooks
   // stay disabled.
-  const isRolling = scope.mode === 'rolling';
+  const isRange = !scope.isLiveMonth && !scope.periodKey;
   const liveCumulative = useProviderCumulative(providerId, accountId);
   const monthCumulative = useProviderCumulativeMonth(
     providerId,
     accountId,
-    scope.key,
-    scope.mode === 'month' && !scope.isCurrentMonth,
+    scope.periodKey ?? '',
+    !!scope.periodKey && !scope.isLiveMonth,
   );
-  const rangeCumulative = useProviderCumulativeRange(providerId, accountId, range, isRolling);
-  const cumulative = isRolling
-    ? rangeCumulative
-    : scope.isCurrentMonth
-      ? liveCumulative
-      : monthCumulative;
+  const rangeCumulative = useProviderCumulativeRange(providerId, accountId, range, isRange);
+  const cumulative = scope.isLiveMonth
+    ? liveCumulative
+    : scope.periodKey
+      ? monthCumulative
+      : rangeCumulative;
   const scopeLabel = scope.label;
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
@@ -139,7 +139,7 @@ export function ActivityTab({
       </Card>
 
       <TopProjectsCard
-        range={scope.range}
+        range={scope.value}
         providerId={providerId}
         title={`Top projects · ${scopeLabel}`}
       />

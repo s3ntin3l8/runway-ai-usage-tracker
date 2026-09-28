@@ -107,31 +107,31 @@ describe('ProviderPage', () => {
     expect(await screen.findByTestId('overview-tab')).toHaveTextContent('b@x.com');
   });
 
-  it('hides the month selector on non-period tabs (Overview)', async () => {
+  it('shows the time-range picker on period-aware tabs with the default range', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     renderPage();
     await screen.findByTestId('overview-tab');
-    expect(screen.queryByRole('button', { name: /previous month/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Last 7 days' })).toBeInTheDocument();
   });
 
-  it('shows the month selector on period-aware tabs and reflects the ?period param', async () => {
+  it('honours the legacy ?period deep-link as a month range', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     renderPage('/provider/anthropic?tab=events&period=2026-03');
     await screen.findByTestId('events-tab');
-    expect(screen.getByRole('button', { name: /previous month/i })).toBeInTheDocument();
-    expect(screen.getByText('March 2026')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'March 2026' })).toBeInTheDocument();
   });
 
-  it('steps the selected month forward and back', async () => {
+  it('applies a quick range and reflects it in the trigger label', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
-    renderPage('/provider/anthropic?tab=events&period=2026-03');
-    await screen.findByTestId('events-tab');
+    renderPage();
+    await screen.findByTestId('overview-tab');
 
-    await userEvent.click(screen.getByRole('button', { name: /previous month/i }));
-    expect(await screen.findByText('February 2026')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: /next month/i }));
-    expect(await screen.findByText('March 2026')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Last 30 days' }));
+    expect(screen.getByRole('button', { name: 'Last 30 days' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Last 7 days' }),
+    ).not.toBeInTheDocument();
   });
 
   it('toasts an error when collection fails', async () => {

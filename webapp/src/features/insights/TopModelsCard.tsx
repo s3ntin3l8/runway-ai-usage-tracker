@@ -1,5 +1,5 @@
 // Top Models card: cross-provider model ranking with a tokens/cost toggle.
-// Shares the Insights page's day-range and the global exclude-cache preference.
+// Shares the Insights page's time range and the global exclude-cache preference.
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -7,18 +7,19 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TopModelsBar, type TopMetric } from '@/components/charts/TopModelsBar';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { useTopModels } from './queries';
 
-export function TopModelsCard({ days }: { days: number }) {
+export function TopModelsCard({ range }: { range: DateRangeValue }) {
   const { excludeCache } = useExcludeCache();
   const [metric, setMetric] = useState<TopMetric>('tokens');
-  const top = useTopModels(metric, days, excludeCache);
+  const top = useTopModels(metric, range, excludeCache);
   const hasData = (top.data?.models.length ?? 0) > 0;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top models · {days}d</CardTitle>
+        <CardTitle>Top models · {formatRangeLabel(range)}</CardTitle>
         <Tabs value={metric} onValueChange={(v) => setMetric(v as TopMetric)}>
           <TabsList className="border-0" aria-label="Top models metric">
             <TabsTrigger value="tokens" className="h-8 px-2.5">

@@ -22,16 +22,44 @@ import { ProviderKpis } from './ProviderKpis';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { QuotaWindowRow } from './QuotaWindowRow';
 import { RecentSessions } from './RecentSessions';
-import { useProviderCumulative, useProviderForecast } from './queries';
+import type { TabScope } from './period';
+import {
+  useProviderCumulative,
+  useProviderCumulativeMonth,
+  useProviderCumulativeRange,
+  useProviderForecast,
+} from './queries';
 
 
-export function OverviewTab({ entry }: { entry: FleetEntry }) {
+export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabScope }) {
   // Cache read/create is ~95% of tokens and skews the headline stats; let the
   // user drop it from the month totals and both token donuts. Shared, persisted
   // pref so the choice carries across tabs and the Home strip.
   const { excludeCache } = useExcludeCache();
   const forecast = useProviderForecast(entry.provider_id, entry.account_id);
-  const cumulative = useProviderCumulative(entry.provider_id, entry.account_id);
+  // Scope-matching bucket source — same 3-way split as ProviderKpis (which
+  // shares the React Query cache), so the donuts and KPI tiles agree.
+  const isLiveMonth = scope.isLiveMonth;
+  const isRange = !scope.isLiveMonth && !scope.periodKey;
+  const liveCumulative = useProviderCumulative(entry.provider_id, entry.account_id);
+  const monthCumulative = useProviderCumulativeMonth(
+    entry.provider_id,
+    entry.account_id,
+    scope.periodKey ?? '',
+    !!scope.periodKey && !scope.isLiveMonth,
+  );
+  const rangeCumulative = useProviderCumulativeRange(
+    entry.provider_id,
+    entry.account_id,
+    scope.range,
+    isRange,
+  );
+  const cumulative = isLiveMonth
+    ? liveCumulative
+    : scope.periodKey
+      ? monthCumulative
+      : rangeCumulative;
+  const scopeLabel = scope.label;
   const cards = [entry.critical_gauge, ...entry.secondary_limits];
   const kind = cardKind(entry.critical_gauge);
   const critical = entry.critical_gauge;
@@ -46,9 +74,9 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
     return findForecast(entry.critical_gauge, fs);
   }, [forecast.data, entry.critical_gauge]);
 
-  // This month's bucket for the token-mix donut — same lookup as ProviderKpis,
+  // This scope's bucket for the token-mix donut — same lookup as ProviderKpis,
   // so React Query serves it from cache (no extra request).
-  const monthBucket = useMemo<CumulativeBucket | null>(() => {
+  const scopeBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
     if (!data) return null;
     const row = data.cumulative.find(
@@ -68,16 +96,16 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
   const sourceIsSidecar = Object.keys(bySidecar).length > 1;
   const windowSplit = sourceIsSidecar ? bySidecar : (agg?.by_model ?? {});
   const useWindowSplit = kind === 'quota';
-  const sourceSplit = useWindowSplit ? windowSplit : (monthBucket?.by_model ?? {});
+  const sourceSplit = useWindowSplit ? windowSplit : (scopeBucket?.by_model ?? {});
   const sourceTitle = useWindowSplit
     ? (sourceIsSidecar ? 'Active window by source' : 'Active window by model')
-    : 'Tokens by model (month)';
+    : `Tokens by model · ${scopeLabel}`;
   const hasSourceSplit = Object.keys(sourceSplit).length > 0;
 
   return (
     <div className="flex flex-col gap-4">
       <ExcludeCacheToggle />
-      <ProviderKpis entry={entry} excludeCache={excludeCache} />
+      <ProviderKpis entry={entry} scope={scope} excludeCache={excludeCache} />
       <ProviderAlerts providerId={entry.provider_id} accountId={entry.account_id} />
 
       {kind === 'quota' && (
@@ -169,8 +197,8 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
         providerId={entry.provider_id}
         accountId={entry.account_id}
         metric="tokens"
-        title="Tokens per day"
-        defaultDays={14}
+        title={`Tokens per day · ${scopeLabel}`}
+        range={scope.range}
         compact
         excludeCache={excludeCache}
       />
@@ -178,15 +206,17 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Token mix (month)</CardTitle>
+            <CardTitle>Token mix · {scopeLabel}</CardTitle>
           </CardHeader>
           <CardContent>
             {cumulative.isPending ? (
               <Skeleton className="h-44 w-full" />
-            ) : hasTokenData(monthBucket, excludeCache) ? (
-              <TokenDonut bucket={monthBucket} className="h-44" excludeCache={excludeCache} />
+            ) : hasTokenData(scopeBucket, excludeCache) ? (
+              <TokenDonut bucket={scopeBucket} className="h-44" excludeCache={excludeCache} />
             ) : (
-              <p className="py-12 text-center text-xs text-fg-subtle">No usage this month.</p>
+              <p className="py-12 text-center text-xs text-fg-subtle">
+                No usage in {scopeLabel}.
+              </p>
             )}
           </CardContent>
         </Card>
@@ -205,7 +235,7 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
               <ModelDonut byModel={sourceSplit} className="h-44" excludeCache={excludeCache} />
             ) : (
               <p className="py-12 text-center text-xs text-fg-subtle">
-                {useWindowSplit ? 'No activity in the current window.' : 'No usage this month.'}
+                {useWindowSplit ? 'No activity in the current window.' : `No usage in ${scopeLabel}.`}
               </p>
             )}
           </CardContent>
@@ -216,6 +246,8 @@ export function OverviewTab({ entry }: { entry: FleetEntry }) {
         providerId={entry.provider_id}
         accountId={entry.account_id}
         excludeCache={excludeCache}
+        range={scope.range}
+        label={scopeLabel}
       />
     </div>
   );

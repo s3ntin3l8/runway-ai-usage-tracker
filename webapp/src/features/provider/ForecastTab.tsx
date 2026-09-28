@@ -156,8 +156,7 @@ export function ForecastTab({
           providerId={providerId}
           accountId={accountId}
           metric="tokens"
-          title="Token burn"
-          defaultDays={30}
+          title="Token burn · Last 7 days"
           excludeCache={excludeCache}
         />
         {anomaliesCard}
