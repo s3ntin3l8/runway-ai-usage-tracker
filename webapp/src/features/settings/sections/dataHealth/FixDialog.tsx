@@ -65,6 +65,13 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
       setValues({});
       setPreviewedValues(null);
       setConfirmed(false);
+      // Defense in depth: setJobId(null) alone already disables the job
+      // query, but drop its cache entry too so a future refactor that
+      // keeps jobId across reopens can't refire a stale succeeded/failed
+      // toast from an old job's cached data.
+      if (jobId !== null) {
+        queryClient.removeQueries({ queryKey: ['system', 'data-health', 'job', jobId] });
+      }
       setJobId(null);
       preview.reset();
       apply.reset();
@@ -78,9 +85,11 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
       queryClient.invalidateQueries({ queryKey: dataHealthKey });
     } else if (job.data?.status === 'failed') {
       toast.error(job.data.error ?? 'Fix failed');
+    } else if (job.isError) {
+      toast.error(job.error.message);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job.data?.status]);
+  }, [job.data?.status, job.isError]);
 
   const canApply =
     previewedValues !== null &&
@@ -106,7 +115,7 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
     );
   };
 
-  const jobDone = job.data?.status === 'succeeded' || job.data?.status === 'failed';
+  const jobDone = job.data?.status === 'succeeded' || job.data?.status === 'failed' || job.isError;
 
   return (
     <ResponsiveDialog
@@ -230,10 +239,17 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                   Fix failed
                 </>
               )}
+              {job.isError && (
+                <>
+                  <XCircle className="size-4 text-critical" aria-hidden />
+                  Could not check job status
+                </>
+              )}
             </div>
             {job.data?.status === 'failed' && job.data.error && (
               <p className="text-[12px] text-critical">{job.data.error}</p>
             )}
+            {job.isError && <p className="text-[12px] text-critical">{job.error.message}</p>}
             {job.data?.status === 'succeeded' && job.data.result && (
               <dl className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-fg-subtle">
                 {Object.entries(job.data.result.counts).map(([key, value]) => (

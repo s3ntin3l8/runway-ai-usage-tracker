@@ -16,11 +16,18 @@ import {
 
 export const dataHealthKey = ['system', 'data-health'] as const;
 
-export const useDataHealthReport = () =>
+// The report GET is rate-limited at 30/minute (see
+// app/api/endpoints/data_health.py) — 2s while scanning stays comfortably
+// under that (a 60s scan is 30 polls, right at the edge), 5s leaves more
+// margin for a slower scan or a second open tab polling the same endpoint.
+const SCANNING_INTERVAL_MS = 5_000;
+
+export const useDataHealthReport = (quietIntervalMs = 60_000) =>
   useQuery({
     queryKey: dataHealthKey,
     queryFn: fetchDataHealthReport,
-    refetchInterval: (query) => (query.state.data?.scanning ? 2_000 : 60_000),
+    refetchInterval: (query) =>
+      query.state.data?.scanning ? SCANNING_INTERVAL_MS : quietIntervalMs,
     // Admin-gated: a locked-down remote instance may 403 — the badge/section
     // just hides rather than retrying into a visible error.
     retry: false,

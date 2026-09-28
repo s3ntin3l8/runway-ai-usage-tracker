@@ -170,4 +170,25 @@ describe('FixDialog', () => {
 
     expect(await screen.findByText('target is not a configured account')).toBeInTheDocument();
   });
+
+  it('shows an error and a Close button if polling the job status fails', async () => {
+    vi.mocked(api.previewDataHealthFix).mockResolvedValue({
+      check_id: 'config_default_keyed',
+      group_key: 'minimax',
+      summary: 'Rekey it',
+      counts: {},
+      samples: [],
+    });
+    vi.mocked(api.applyDataHealthFix).mockResolvedValue({ job_id: 'job-1' });
+    vi.mocked(api.fetchDataHealthJob).mockRejectedValue(new Error('network error'));
+
+    renderDialog();
+    await userEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await screen.findByText('Rekey it');
+    await userEvent.click(screen.getByRole('switch'));
+    await userEvent.click(screen.getByRole('button', { name: /apply fix/i }));
+
+    expect(await screen.findByText('network error')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
+  });
 });

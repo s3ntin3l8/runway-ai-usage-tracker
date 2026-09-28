@@ -36,7 +36,10 @@ export function HomePage() {
   const cumulative = useCumulative();
   const tokenHealth = useTokenHealth();
   const anomalies = useAnomalies();
-  const dataHealth = useDataHealthReport();
+  // 300s quiet-path cadence, matching useTokenHealth — this is just the
+  // error badge, not the Settings page's own report, so it doesn't need
+  // the tighter default poll.
+  const dataHealth = useDataHealthReport(300_000);
   const providerConfigs = useProviderConfigs();
   const layout = useDashboardLayout();
   const [showArchived, setShowArchived] = useState(false);
