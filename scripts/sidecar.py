@@ -3299,12 +3299,6 @@ class CollectionResult:
     error_count: int
     completed_providers: list[str]
 
-    def __iter__(self):
-        # Preserve the long-standing three-value unpacking contract.
-        yield self.metrics
-        yield self.events
-        yield self.error_count
-
 
 def run_collection(config: dict[str, Any], providers: list[str] | None = None) -> CollectionResult:
     """Run collection for specified or enabled providers.
@@ -3801,8 +3795,14 @@ class DaemonRunner:
                 logging.info(f"Starting targeted collection for: {providers}...")
 
             collection_result = run_collection(self._config, providers=providers)
-            metrics, events, collection_errors = collection_result
-            completed_providers = getattr(collection_result, "completed_providers", [])
+            if isinstance(collection_result, CollectionResult):
+                metrics = collection_result.metrics
+                events = collection_result.events
+                collection_errors = collection_result.error_count
+                completed_providers = collection_result.completed_providers
+            else:  # compatibility for older integrations/test doubles
+                metrics, events, collection_errors = collection_result
+                completed_providers = []
 
             os_platform = f"{platform.system()}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version") or _SIDECAR_VERSION

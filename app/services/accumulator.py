@@ -18,6 +18,16 @@ def _source_id(provider_id: str, sidecar_id: str) -> str:
     )
 
 
+def _parse_source_id(source_id: str) -> tuple[str, str, str]:
+    """Return (producer kind, producer scope, provider id)."""
+    parts = source_id.split(":", 2)
+    if len(parts) == 2 and parts[0] == "server":
+        return "server", "local", parts[1]
+    if len(parts) == 3 and parts[0] == "sidecar":
+        return "sidecar", parts[1], parts[2]
+    raise ValueError(f"Invalid LatestUsage source id: {source_id!r}")
+
+
 def _join_distinct(
     a: str | None, b: str | None, *, drop: frozenset[str] = frozenset()
 ) -> str | None:
@@ -189,13 +199,25 @@ def _rebuild_latest_usage_slot(
     stale = True
     sidecar_id = "local"
     latest_at = None
+    latest_sidecar_at = None
+    has_server_source = False
     for contribution in contributions:
         payload = json.loads(contribution.card_json or "{}")
         merged = merge_card_json(merged, payload)
         stale = stale and payload.get("stale") is True
         latest_at = contribution.updated_at
-        if contribution.source_id.startswith("sidecar:"):
-            sidecar_id = contribution.source_id.split(":", 2)[1]
+        source_kind, source_scope, source_provider = _parse_source_id(contribution.source_id)
+        if source_provider != provider_id:
+            continue
+        if source_kind == "server":
+            has_server_source = True
+        elif latest_sidecar_at is None or contribution.updated_at >= latest_sidecar_at:
+            sidecar_id = source_scope
+            latest_sidecar_at = contribution.updated_at
+    if has_server_source:
+        # Stable ownership: server-scraped quota remains local even when a
+        # sidecar enrichment for the same logical card arrives later.
+        sidecar_id = "local"
     data = json.loads(merged or "{}")
     if stale:
         data["stale"] = True
@@ -241,7 +263,12 @@ def _upsert_contribution(
     encoded = json.dumps(card_json)
     now = datetime.now(UTC)
     if row:
-        row.card_json = merge_card_json(row.card_json, card_json)
+        previous = json.loads(row.card_json or "{}")
+        # A fresh successful card can recover from a stale source even when
+        # that card has no quota fields (for example, a token-count card).
+        previous.pop("stale", None)
+        previous.pop("collection_failing", None)
+        row.card_json = merge_card_json(json.dumps(previous), card_json)
         row.updated_at = now
     else:
         session.add(

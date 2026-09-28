@@ -1933,11 +1933,11 @@ def test_run_collection_events_use_server_hint_when_local_default(
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
-    _, _, error_count = sidecar.run_collection(
+    result = sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["opencode"],
     )
-    assert error_count == 0
+    assert result.error_count == 0
 
     # PR #318 round-2 review (W1): events branch keeps iterating under
     # "default" — the canonical-provider hint is NOT applied to the
@@ -2117,11 +2117,11 @@ def test_run_collection_events_untagged_only_when_events_extracted(
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
-    _, _, error_count = sidecar.run_collection(
+    result = sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["opencode"],
     )
-    assert error_count == 0
+    assert result.error_count == 0
 
     # PR #318 W3: when no new events were extracted, do not create a new
     # pending origin without evidence. Also withhold completion so an

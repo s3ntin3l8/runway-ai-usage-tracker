@@ -9,6 +9,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models.db import LatestUsage, LatestUsageContribution
 from app.services.accumulator import (
+    _parse_source_id,
     evict_orphan_error_rows,
     mark_latest_usage_source_stale,
     reconcile_latest_usage_snapshot,
@@ -171,6 +172,63 @@ def test_real_failure_marks_last_good_source_stale(session: Session):
     assert changed == 1
     assert card["stale"] is True
     assert card["collection_failing"] is True
+
+
+def test_fresh_non_quota_card_clears_source_staleness(session: Session):
+    card = _success_card()
+    upsert_latest_usage(session, card, source_id="server:chatgpt")
+    session.commit()
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    token_card = dict(card)
+    token_card.update(
+        {
+            "used_value": None,
+            "limit_value": None,
+            "pct_used": None,
+            "unit": "tokens",
+            "unit_type": "tokens",
+            "remaining": "42",
+            "data_source": "local",
+        }
+    )
+    upsert_latest_usage(session, token_card, source_id="server:chatgpt")
+    session.commit()
+
+    stored = json.loads(session.exec(select(LatestUsage)).one().card_json)
+    assert stored.get("stale") is not True
+    assert stored.get("collection_failing") is not True
+
+
+def test_server_source_keeps_local_sidecar_id_when_sidecar_writes_later(session: Session):
+    server_card = _success_card()
+    sidecar_card = {**server_card, "data_source": "local", "sidecar_id": "host-a"}
+    upsert_latest_usage(session, server_card, source_id="server:chatgpt")
+    upsert_latest_usage(
+        session,
+        sidecar_card,
+        sidecar_id_override="host-a",
+        source_id="sidecar:host-a:chatgpt",
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    assert row.sidecar_id == "local"
+
+
+def test_source_id_parser_extracts_producer_and_provider():
+    assert _parse_source_id("server:chatgpt") == ("server", "local", "chatgpt")
+    assert _parse_source_id("sidecar:host-a:anthropic") == (
+        "sidecar",
+        "host-a",
+        "anthropic",
+    )
 
 
 def test_default_error_suppressed_when_real_account_exists_same_slot(session: Session):

@@ -249,11 +249,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         card.model_id or "",
                     )
                 )
-        pruned = (
-            prune_stale_latest_usage(session, batch_keys)
-            if payload.completed_providers is None
-            else 0
-        )
+        pruned = prune_stale_latest_usage(session, batch_keys)
         if payload.completed_providers is not None:
             for provider_id in payload.completed_providers:
                 source_id = f"sidecar:{payload.sidecar_id or 'local'}:{provider_id}"

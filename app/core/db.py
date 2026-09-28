@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.config import settings
 
@@ -130,7 +130,8 @@ def init_db() -> None:
 
     with Session(engine) as session:
         prune_orphan_latest_usage_contributions(session)
-        backfill_latest_usage_contributions(session)
+        if session.exec(select(LatestUsageContribution.id)).first() is None:
+            backfill_latest_usage_contributions(session)
         session.commit()
 
     # Add columns introduced after initial schema (SQLite create_all doesn't ALTER)

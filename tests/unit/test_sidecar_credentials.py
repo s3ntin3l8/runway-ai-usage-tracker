@@ -1307,10 +1307,11 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
 
     config: dict = {"api_url": "http://unused", "api_key": "secret"}
 
-    metrics, events, errors = sc.run_collection(config=config, providers=["anthropic"])
+    result = sc.run_collection(config=config, providers=["anthropic"])
 
-    assert errors == 0
-    assert metrics == []
+    assert result.error_count == 0
+    assert result.metrics == []
+    events = result.events
     # Exactly one account iterated → one event emitted, stamped with the
     # matched account_id. The other server-side account is ignored.
     assert len(events) == 1
@@ -1372,8 +1373,8 @@ def test_run_collection_stamps_local_identity_when_no_server_match(monkeypatch, 
 
     config: dict = {"api_url": "http://unused", "api_key": "secret"}
 
-    _, _, errors = sc.run_collection(config=config, providers=["anthropic"])
-    assert errors == 0
+    result = sc.run_collection(config=config, providers=["anthropic"])
+    assert result.error_count == 0
     # Cross-host fallback was rejected: we stamped with the local
     # identity ("default"), NOT with server's "alice@example.com" (which
     # belongs to another sidecar).
@@ -1425,8 +1426,8 @@ def test_run_collection_uses_get_credential_cache_factory(monkeypatch, tmp_path)
     )
     monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
-    _, _, errors = sc.run_collection(config={}, providers=["anthropic"])
-    assert errors == 0
+    result = sc.run_collection(config={}, providers=["anthropic"])
+    assert result.error_count == 0
     # The production code MUST go through the factory; reaching for the
     # module-global directly would skip ``_get_credential_cache()`` and
     # leave ``calls`` empty.
@@ -1476,8 +1477,8 @@ def test_run_collection_swallows_lazy_init_failure(monkeypatch):
     monkeypatch.setattr(sc, "_make_account_extractor_antigravity", lambda *a, **kw: _fake_extractor)
     monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
-    _, _, errors = sc.run_collection(config={}, providers=["anthropic"])
-    assert errors == 0
+    result = sc.run_collection(config={}, providers=["anthropic"])
+    assert result.error_count == 0
     # Even with the cache factory blowing up, the legacy path still ran.
     assert emitted == ["default"]
 
@@ -1578,9 +1579,9 @@ def test_run_collection_keeps_prior_cache_when_fetch_identity_hints_returns_none
     monkeypatch.setattr(sc.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
 
     config = {"api_url": "https://api.example.com"}
-    _, _, errors = sc.run_collection(config=config, providers=["anthropic"])
+    result = sc.run_collection(config=config, providers=["anthropic"])
 
-    assert errors == 0
+    assert result.error_count == 0
     # The prior snapshot survived: the ``if fetched is not None`` guard
     # skipped ``cache.replace(accounts=None)``. A regression that uses
     # ``cache.replace(accounts=fetched or {})`` would clobber this with

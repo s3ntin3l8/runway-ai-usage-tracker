@@ -22,6 +22,9 @@ contribution; snapshots from cached, skipped, failed, or partial collection
 cycles do not remove anything. Failures mark retained last-good cards stale
 after an hour. The source contribution table lets one producer reconcile
 without removing another producer's card for the same provider/account.
+When multiple sources report the same slot, a server contribution keeps the
+materialized `sidecar_id` as `local`; sidecar-only slots use the most recently
+updated sidecar contribution.
 
 Collectors that can return partial card sets without raising should override
 `BaseCollector.complete_snapshot(result)` and return `False` until a complete

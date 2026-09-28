@@ -125,6 +125,26 @@ describe('Banners collection failure', () => {
     expect(screen.getByText(/ollama weekly \(last ok 1h 30m ago\)/i)).toBeInTheDocument();
   });
 
+  it('falls back to the provider name and prefers fetched_at for stale cards', () => {
+    renderWithProviders(
+      <Banners
+        tokens={[]}
+        anomalies={[]}
+        fleet={[
+          entry({
+            critical_gauge: card({
+              service_name: '',
+              stale: true,
+              updated_at: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+              fetched_at: new Date(Date.now() - 30 * 60_000).toISOString(),
+            }),
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByText(/ollama \(last ok 30m ago\)/i)).toBeInTheDocument();
+  });
+
   it('dismisses the banner', async () => {
     renderWithProviders(
       <Banners
