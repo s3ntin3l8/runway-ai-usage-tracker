@@ -19,6 +19,7 @@ from app.services.data_health.jobs import (
     DataHealthJobs,
     JobAlreadyRunningError,
     NoScanYetError,
+    ScanFailedError,
 )
 
 # A separate module handle (rather than `import ... as jobs_module`
@@ -92,6 +93,20 @@ async def test_no_scan_yet_report_is_none(jobs):
 async def test_wait_for_scan_populates_the_cache(jobs):
     report = await jobs.wait_for_scan()
     assert report["a"].total_count == 1
+    assert jobs.last_scanned_at is not None
+
+
+async def test_scan_failure_is_recorded_and_blocks_apply(jobs, monkeypatch):
+    def fail_scan():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(jobs_module, "_scan_sync", fail_scan)
+    with pytest.raises(ScanFailedError, match="database unavailable"):
+        await jobs.wait_for_scan()
+
+    assert jobs.scan_error == "database unavailable"
+    with pytest.raises(ScanFailedError, match="latest Data Health scan failed"):
+        await jobs.start_apply(check_id="a", group_key="x", params={}, actor="t", actor_ip=None)
 
 
 async def test_scan_computes_blocked_by_from_other_checks_live_findings(jobs):

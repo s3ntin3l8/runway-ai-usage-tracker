@@ -132,6 +132,8 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
     tokens_reasoning: int = 0,
     tokens_cache_create_1h: int = 0,
     tokens_cache_create_5m: int = 0,
+    _resolved_price_row: ProviderPricing | None = None,
+    _price_row_resolved: bool = False,
 ) -> CostBreakdown:
     """Per-component USD cost for an event using the price row in effect at `ts`.
 
@@ -156,7 +158,11 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
     provider, and any event predating this split), behavior is unchanged from
     before this split existed.
     """
-    row = resolve_price_row(session, provider_id, model_id, ts)
+    row = (
+        _resolved_price_row
+        if _price_row_resolved
+        else resolve_price_row(session, provider_id, model_id, ts)
+    )
     if row is None:
         return CostBreakdown(0.0, 0.0, 0.0, 0.0)
 

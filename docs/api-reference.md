@@ -84,10 +84,10 @@ See [docs/data-health.md](data-health.md) for what each check finds and fixes.
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| `GET` | `/api/v1/system/data-health/` | Cached scan report; starts a background scan in the background if none has completed yet |
+| `GET` | `/api/v1/system/data-health/` | Cached scan report; starts the initial background scan. Returns `scan_error` and keeps any prior report stale after a failure; retry with `POST /rescan` |
 | `POST` | `/api/v1/system/data-health/rescan` | Start a fresh scan (`202`; no-op if one is already running) |
-| `POST` | `/api/v1/system/data-health/{check_id}/preview` | Read-only preview of a fix for one finding group — body: `{group_key, params}` |
-| `POST` | `/api/v1/system/data-health/{check_id}/apply` | Apply a fix (`202`, returns `job_id`) — body: `{group_key, params, confirm: true}`; `409` if the check is currently blocked by an upstream check's unresolved findings, or another job is already running |
+| `POST` | `/api/v1/system/data-health/{check_id}/preview` | Read-only preview of a fix for one finding group — body: `{group_key, params}`; may include safe samples and a required `confirmation_text` |
+| `POST` | `/api/v1/system/data-health/{check_id}/apply` | Apply a fix (`202`, returns `job_id`) — body: `{group_key, params, confirm: true}`; `409` if the latest scan failed, a scan/job is running, or the check is blocked by an upstream finding |
 | `GET` | `/api/v1/system/data-health/jobs/{job_id}` | Poll a started fix job's status/result |
 
 ## Auth

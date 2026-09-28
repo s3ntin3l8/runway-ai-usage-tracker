@@ -11,6 +11,7 @@ import type { DataHealthFindingGroup } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
+import { SampleTable } from './SampleTable';
 import {
   Select,
   SelectContent,
@@ -52,6 +53,7 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
   const [values, setValues] = useState<Record<string, string>>({});
   const [previewedValues, setPreviewedValues] = useState<Record<string, string> | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [sameAccountConfirmed, setSameAccountConfirmed] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
 
   const preview = usePreviewDataHealthFix();
@@ -62,9 +64,17 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
   // over another group's stale preview/confirmation state.
   useEffect(() => {
     if (open) {
-      setValues({});
+      const initialValues: Record<string, string> = {};
+      const suggestedAccountId = group.detail.suggested_new_account_id;
+      const suggestedTarget = group.detail.suggested_target;
+      if (typeof suggestedAccountId === 'string') {
+        initialValues.new_account_id = suggestedAccountId;
+      }
+      if (typeof suggestedTarget === 'string') initialValues.target = suggestedTarget;
+      setValues(initialValues);
       setPreviewedValues(null);
       setConfirmed(false);
+      setSameAccountConfirmed(false);
       // Defense in depth: setJobId(null) alone already disables the job
       // query, but drop its cache entry too so a future refactor that
       // keeps jobId across reopens can't refire a stale succeeded/failed
@@ -85,20 +95,24 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
       queryClient.invalidateQueries({ queryKey: dataHealthKey });
     } else if (job.data?.status === 'failed') {
       toast.error(job.data.error ?? 'Fix failed');
-    } else if (job.isError) {
-      toast.error(job.error.message);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job.data?.status, job.isError]);
+  }, [job.data?.status]);
 
   const canApply =
     previewedValues !== null &&
     sameParams(previewedValues, values) &&
     confirmed &&
+    (!preview.data?.confirmation_text || sameAccountConfirmed) &&
     jobId === null;
+  const requiredParamsReady = group.params.every(
+    (param) => !param.required || Boolean(values[param.name]),
+  );
 
   const runPreview = () => {
     const snapshot = { ...values };
+    setConfirmed(false);
+    setSameAccountConfirmed(false);
     preview.mutate(
       { checkId, groupKey: group.key, params: cleanParams(values) },
       { onSuccess: () => setPreviewedValues(snapshot) },
@@ -106,8 +120,10 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
   };
 
   const runApply = () => {
+    const params = cleanParams(values);
+    if (preview.data?.confirmation_text) params.same_account_confirmed = sameAccountConfirmed;
     apply.mutate(
-      { checkId, groupKey: group.key, params: cleanParams(values) },
+      { checkId, groupKey: group.key, params },
       {
         onSuccess: (result) => setJobId(result.job_id),
         onError: (err) => toast.error(err.message),
@@ -115,13 +131,13 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
     );
   };
 
-  const jobDone = job.data?.status === 'succeeded' || job.data?.status === 'failed' || job.isError;
+  const jobDone = job.data?.status === 'succeeded' || job.data?.status === 'failed';
 
   return (
     <ResponsiveDialog
       open={open}
       onOpenChange={(next) => {
-        if (!next && job.data?.status === 'running') return; // don't let a running job vanish
+        if (!next && jobId !== null && !jobDone) return; // unknown status must remain visible
         onOpenChange(next);
       }}
       title={`Fix: ${group.label}`}
@@ -144,6 +160,9 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                     onValueChange={(v) => {
                       setValues((prev) => ({ ...prev, [param.name]: v }));
                       setPreviewedValues(null);
+                      setConfirmed(false);
+                      setSameAccountConfirmed(false);
+                      preview.reset();
                     }}
                   >
                     <SelectTrigger id={`dh-param-${param.name}`}>
@@ -152,7 +171,9 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                     <SelectContent>
                       {param.options.map((opt) => (
                         <SelectItem key={opt} value={opt}>
-                          {opt}
+                          {opt === 'archive_default'
+                            ? 'Archive default config; keep existing account config'
+                            : opt}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -165,6 +186,9 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                       const v = e.target.value;
                       setValues((prev) => ({ ...prev, [param.name]: v }));
                       setPreviewedValues(null);
+                      setConfirmed(false);
+                      setSameAccountConfirmed(false);
+                      preview.reset();
                     }}
                   />
                 )}
@@ -179,7 +203,7 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
               variant="secondary"
               onClick={runPreview}
               loading={preview.isPending}
-              disabled={preview.isPending}
+              disabled={preview.isPending || !requiredParamsReady}
             >
               Preview
             </Button>
@@ -191,6 +215,7 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
             {preview.data && (
               <div className="flex flex-col gap-2 rounded-md border border-edge bg-surface-1 p-3">
                 <p className="text-[13px] font-medium text-fg">{preview.data.summary}</p>
+                <SampleTable samples={preview.data.samples} />
                 <dl className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-fg-subtle">
                   {Object.entries(preview.data.counts).map(([key, value]) => (
                     <div key={key} className="flex gap-1">
@@ -207,6 +232,18 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                 <Label htmlFor="dh-confirm">I've reviewed the preview — apply this fix</Label>
                 <Switch id="dh-confirm" checked={confirmed} onCheckedChange={setConfirmed} />
               </div>
+            )}
+
+            {preview.data?.confirmation_text && (
+              <label className="flex items-start gap-2 rounded-md border border-critical/40 px-3 py-2 text-[12px] text-fg">
+                <input
+                  type="checkbox"
+                  checked={sameAccountConfirmed}
+                  onChange={(event) => setSameAccountConfirmed(event.target.checked)}
+                  className="mt-0.5"
+                />
+                {preview.data.confirmation_text}
+              </label>
             )}
 
             <Button
@@ -239,7 +276,7 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                   Fix failed
                 </>
               )}
-              {job.isError && (
+            {job.isError && !jobDone && (
                 <>
                   <XCircle className="size-4 text-critical" aria-hidden />
                   Could not check job status
@@ -249,7 +286,12 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
             {job.data?.status === 'failed' && job.data.error && (
               <p className="text-[12px] text-critical">{job.data.error}</p>
             )}
-            {job.isError && <p className="text-[12px] text-critical">{job.error.message}</p>}
+            {job.isError && !jobDone && (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[12px] text-critical">{job.error.message} Status is unknown.</p>
+                <Button size="sm" variant="secondary" onClick={() => job.refetch()}>Retry status</Button>
+              </div>
+            )}
             {job.data?.status === 'succeeded' && job.data.result && (
               <dl className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-fg-subtle">
                 {Object.entries(job.data.result.counts).map(([key, value]) => (

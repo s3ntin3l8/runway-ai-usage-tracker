@@ -26,6 +26,17 @@ def test_detect_finds_lone_default_events_with_one_unambiguous_target(session):
     assert group.detail["suggested_target"] == "alice@example.com"
 
 
+def test_detect_ignores_default_events_when_an_active_default_config_exists(session):
+    make_event(session, event_id="1", provider_id="minimax", account_id="default")
+    make_config(session, provider_id="minimax", account_id="default", account_label="default")
+    make_config(session, provider_id="minimax", account_id="alice@example.com")
+
+    assert _check().detect(session).total_count == 0
+
+    with pytest.raises(ValueError, match="active default config"):
+        _check().plan(session, "minimax", {"target": "alice@example.com"})
+
+
 def test_detect_marks_not_fixable_with_no_candidate_account(session):
     """The opencode-byok shape: lone default events, no other config to
     reassign onto."""

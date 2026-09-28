@@ -220,6 +220,33 @@ def test_the_returned_hook_moves_the_token_cache_entry():
     fake_manager._sync_collectors.assert_awaited_once_with(force=True)
 
 
+def test_archive_hook_removes_source_cache_without_overwriting_target():
+    session = _session()
+    _config(session, "default")
+    _config(session, "alice@example.com")
+
+    _result, hooks = apply_rekey_config(
+        session,
+        provider_id="minimax",
+        old_account_id="default",
+        new_account_id="alice@example.com",
+        on_collision="archive_default",
+    )
+    fake_cache = AsyncMock()
+    fake_cache.get_with_metadata.return_value = ({"api_key": "old"}, {})  # pragma: allowlist secret
+    with (
+        patch("app.services.token_cache.token_cache", fake_cache),
+        patch("app.services.collector_manager.manager") as fake_manager,
+    ):
+        fake_manager._sync_collectors = AsyncMock()
+        import asyncio
+
+        asyncio.run(_run_hook(hooks[0]))
+
+    fake_cache.store.assert_not_awaited()
+    fake_cache.remove.assert_awaited_once_with("minimax", "default")
+
+
 def test_the_returned_hook_tolerates_no_cached_tokens():
     session = _session()
     _config(session, "default")

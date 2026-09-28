@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import * as api from '@/api/endpoints';
 import type { DataHealthCheckReport, DataHealthReport } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
@@ -34,6 +35,36 @@ describe('DataHealthSection', () => {
     vi.mocked(api.fetchDataHealthReport).mockResolvedValue(report());
     renderWithProviders(<DataHealthSection />);
     expect(await screen.findByText(/all checks clean/i)).toBeInTheDocument();
+  });
+
+  it('shows scan errors as stale and disables fixes from the prior report', async () => {
+    vi.mocked(api.fetchDataHealthReport).mockResolvedValue(
+      report({
+        scan_error: 'database unavailable',
+        last_scanned_at: '2026-09-27T10:00:00Z',
+        checks: [check({
+          total_count: 1,
+          fixable_count: 1,
+          groups: [{ key: 'g', label: 'One finding', count: 1, fixable: true, params: [], samples: [], detail: {} }],
+        })],
+      }),
+    );
+    renderWithProviders(<DataHealthSection />);
+    expect(await screen.findByText(/showing the previous scan/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
+    expect(screen.getByRole('button', { name: /^fix$/i })).toBeDisabled();
+  });
+
+  it('reports a failed retry scan', async () => {
+    vi.mocked(api.fetchDataHealthReport).mockResolvedValue(
+      report({ scan_error: 'database unavailable' }),
+    );
+    vi.mocked(api.rescanDataHealth).mockRejectedValue(new Error('retry failed'));
+    renderWithProviders(<DataHealthSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /retry scan/i }));
+
+    expect(toast.error).toHaveBeenCalledWith('retry failed');
   });
 
   it('renders one row per check when findings exist', async () => {

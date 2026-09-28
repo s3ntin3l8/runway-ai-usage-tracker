@@ -107,7 +107,14 @@ def test_apply_archives_the_source_row_on_collision_when_requested(session):
     )
     make_config(session, provider_id="minimax", account_id="alice@example.com")
 
-    _check().apply(session, "minimax", {"on_collision": "archive_default"})
+    with pytest.raises(ValueError, match="Confirm that the source and target"):
+        _check().apply(session, "minimax", {"on_collision": "archive_default"})
+
+    _check().apply(
+        session,
+        "minimax",
+        {"on_collision": "archive_default", "same_account_confirmed": True},
+    )
 
     default_row = session.exec(
         select(ProviderConfig).where(
@@ -115,3 +122,21 @@ def test_apply_archives_the_source_row_on_collision_when_requested(session):
         )
     ).one()
     assert default_row.archived is True
+
+
+def test_collision_preview_shows_both_identities_and_requires_attestation(session):
+    make_config(
+        session, provider_id="minimax", account_id="default", account_label="alice@example.com"
+    )
+    make_config(
+        session, provider_id="minimax", account_id="alice@example.com", account_label="Alice"
+    )
+
+    plan = _check().plan(session, "minimax", {"on_collision": "archive_default"})
+
+    assert "same provider account" in plan.confirmation_text
+    assert [sample.label for sample in plan.samples[:2]] == [
+        "minimax/default (source)",
+        "minimax/alice@example.com (target)",
+    ]
+    assert plan.counts["usage_events_retained_on_default"] == 0

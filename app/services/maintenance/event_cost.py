@@ -30,6 +30,7 @@ from datetime import datetime
 
 from sqlmodel import Session
 
+from app.models.db import ProviderPricing
 from app.services.cost_calculator import (
     CostBreakdown,
     compute_event_cost_breakdown,
@@ -60,6 +61,8 @@ def resolve_event_cost(  # noqa: PLR0913 — one param per priced token dimensio
     tokens_cache_create_5m: int = 0,
     billing_type: str,
     reported_cost: float | None,
+    resolved_price_row: ProviderPricing | None = None,
+    price_row_resolved: bool = False,
 ) -> ResolvedCost:
     """Resolve the authoritative `cost_usd` for one event.
 
@@ -78,6 +81,11 @@ def resolve_event_cost(  # noqa: PLR0913 — one param per priced token dimensio
        trust the report rather than bill $0.00 for an unseeded model.
     3. Otherwise -> the computed estimate (`breakdown.total`).
     """
+    price_row = (
+        resolved_price_row
+        if price_row_resolved
+        else resolve_price_row(session, provider_id, model_id, ts)
+    )
     breakdown = compute_event_cost_breakdown(
         session,
         provider_id=provider_id,
@@ -90,13 +98,12 @@ def resolve_event_cost(  # noqa: PLR0913 — one param per priced token dimensio
         tokens_reasoning=tokens_reasoning,
         tokens_cache_create_1h=tokens_cache_create_1h,
         tokens_cache_create_5m=tokens_cache_create_5m,
+        _resolved_price_row=price_row,
+        _price_row_resolved=True,
     )
 
     cost_usd = breakdown.total
-    if reported_cost is not None and (
-        billing_type == "pay_as_you_go"
-        or resolve_price_row(session, provider_id, model_id, ts) is None
-    ):
+    if reported_cost is not None and (billing_type == "pay_as_you_go" or price_row is None):
         cost_usd = reported_cost
 
     return ResolvedCost(

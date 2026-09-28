@@ -16,10 +16,9 @@ import {
 
 export const dataHealthKey = ['system', 'data-health'] as const;
 
-// The report GET is rate-limited at 30/minute (see
-// app/api/endpoints/data_health.py) — 2s while scanning stays comfortably
-// under that (a 60s scan is 30 polls, right at the edge), 5s leaves more
-// margin for a slower scan or a second open tab polling the same endpoint.
+// The report GET is rate-limited at 30/minute and job status at 120/minute
+// (see app/api/endpoints/data_health.py). Five-second polling stays below
+// both limits, including when two tabs are open.
 const SCANNING_INTERVAL_MS = 5_000;
 
 export const useDataHealthReport = (quietIntervalMs = 60_000) =>
@@ -72,5 +71,10 @@ export const useDataHealthJob = (jobId: string | null) =>
     queryKey: ['system', 'data-health', 'job', jobId],
     queryFn: () => fetchDataHealthJob(jobId as string),
     enabled: jobId !== null,
-    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1_000 : false),
+    retry: false,
+    // Keep checking through transient errors. Unknown status is not a terminal job state.
+    refetchInterval: (query) =>
+      query.state.data?.status === 'succeeded' || query.state.data?.status === 'failed'
+        ? false
+        : 5_000,
   });
