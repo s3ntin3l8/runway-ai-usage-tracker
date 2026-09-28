@@ -152,6 +152,13 @@ PRICING_SEED: list[dict] = [
     # developers.openai.com/api/docs/pricing, checked 2026-09-09). Runway now
     # preserves the full slug (see _normalize_chatgpt_model) instead of
     # collapsing codenames to their bare version, so each needs its own row.
+    #
+    # Cache-write pricing: as of the 2026-09 pricing-page check, OpenAI
+    # publishes a non-zero cache-write rate ONLY for this gpt-5.6/gpt-6
+    # generation, at 1.25x the model's input rate (same multiple Anthropic
+    # uses for its 5m-TTL writes). Every other chatgpt row in this seed
+    # deliberately stays at cache_create_per_mtok=0.0 — the pricing page
+    # shows no cache-write column for those older models (issue #369).
     {
         "provider_id": "chatgpt",
         "model_id": "gpt-6-astra",
@@ -159,7 +166,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 10.00,
         "output_per_mtok": 50.00,
         "cache_read_per_mtok": 1.00,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 12.50,  # 1.25x input
         "notes": "GPT-6 Astra",
     },
     {
@@ -169,7 +176,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 2.00,
         "output_per_mtok": 10.00,
         "cache_read_per_mtok": 0.20,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 2.50,  # 1.25x input
         "notes": "GPT-6 Sol (rates per developers.openai.com/api/docs/pricing, checked 2026-09-27)",
     },
     {
@@ -179,7 +186,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 0.10,
         "output_per_mtok": 0.50,
         "cache_read_per_mtok": 0.01,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 0.125,  # 1.25x input
         "notes": "GPT-6 Luna (rates per developers.openai.com/api/docs/pricing, checked 2026-09-27)",
     },
     {
@@ -189,7 +196,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 4.00,
         "output_per_mtok": 20.00,
         "cache_read_per_mtok": 0.40,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 5.00,  # 1.25x input
         "notes": (
             "GPT-5.6 Sol — promotional pricing, published as valid at least "
             "through 2026-11-21; recheck and version a new effective_from row "
@@ -203,7 +210,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 4.00,
         "output_per_mtok": 20.00,
         "cache_read_per_mtok": 0.40,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 5.00,  # 1.25x input, inherited from gpt-5.6-sol
         "notes": (
             "Bare gpt-5.6 — events from before the extractor started "
             "preserving the codename suffix (see the 2026-09-09 note above); "
@@ -218,7 +225,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 2.00,
         "output_per_mtok": 12.00,
         "cache_read_per_mtok": 0.20,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 2.50,  # 1.25x input
         "notes": "GPT-5.6 Terra",
     },
     {
@@ -228,7 +235,7 @@ PRICING_SEED: list[dict] = [
         "input_per_mtok": 0.20,
         "output_per_mtok": 1.20,
         "cache_read_per_mtok": 0.02,
-        "cache_create_per_mtok": 0.0,
+        "cache_create_per_mtok": 0.25,  # 1.25x input
         "notes": "GPT-5.6 Luna",
     },
     # OpenAI ChatGPT — gpt-5.4 / gpt-5.4-mini backdated to 2025-08-01. The
@@ -1000,14 +1007,20 @@ def seed_pricing_table(session: Session) -> int:
         ).first()
         if exists:
             # cache_create_1h_per_mtok postdates the original seed rows (added
-            # when Runway started splitting cache writes by TTL). This isn't a
-            # real-world price change, so backfill it onto the already-seeded
-            # row in place rather than versioning a new effective_from row —
-            # but only when it's still at the column's default, so a rate a
-            # user tuned by hand is never clobbered.
+            # when Runway started splitting cache writes by TTL), and
+            # cache_create_per_mtok was omitted for chatgpt rows before the
+            # gpt-5.6/gpt-6 cache-write rate was discovered (issue #369).
+            # Neither is a real-world price change, so backfill each onto the
+            # already-seeded row in place rather than versioning a new
+            # effective_from row — but only when the column is still at its
+            # default, so a rate a user tuned by hand is never clobbered.
             seed_1h = row.get("cache_create_1h_per_mtok", 0.0)
             if exists.cache_create_1h_per_mtok == 0.0 and seed_1h:
                 exists.cache_create_1h_per_mtok = seed_1h
+                session.add(exists)
+            seed_create = row.get("cache_create_per_mtok", 0.0)
+            if exists.cache_create_per_mtok == 0.0 and seed_create:
+                exists.cache_create_per_mtok = seed_create
                 session.add(exists)
             continue
         session.add(

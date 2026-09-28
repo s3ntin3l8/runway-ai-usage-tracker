@@ -1,3 +1,5 @@
+from datetime import date
+
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -47,7 +49,10 @@ def test_seed_chatgpt_gpt54_mini_rates():
 
 
 def test_seed_chatgpt_gpt6_sol_rates():
-    """Per developers.openai.com/api/docs/pricing (checked 2026-09-27)."""
+    """Per developers.openai.com/api/docs/pricing (checked 2026-09-27).
+
+    Cache-write is published for this generation at 1.25x input (issue #369).
+    """
     s = _make_session()
     seed_pricing_table(s)
     row = s.exec(
@@ -60,11 +65,14 @@ def test_seed_chatgpt_gpt6_sol_rates():
     assert row.input_per_mtok == 2.00
     assert row.output_per_mtok == 10.00
     assert row.cache_read_per_mtok == 0.20
-    assert row.cache_create_per_mtok == 0.0
+    assert row.cache_create_per_mtok == 2.50
 
 
 def test_seed_chatgpt_gpt6_luna_rates():
-    """Per developers.openai.com/api/docs/pricing (checked 2026-09-27)."""
+    """Per developers.openai.com/api/docs/pricing (checked 2026-09-27).
+
+    Cache-write is published for this generation at 1.25x input (issue #369).
+    """
     s = _make_session()
     seed_pricing_table(s)
     row = s.exec(
@@ -77,7 +85,50 @@ def test_seed_chatgpt_gpt6_luna_rates():
     assert row.input_per_mtok == 0.10
     assert row.output_per_mtok == 0.50
     assert row.cache_read_per_mtok == 0.01
-    assert row.cache_create_per_mtok == 0.0
+    assert row.cache_create_per_mtok == 0.125
+
+
+def test_seed_chatgpt_gpt6_astra_rates():
+    """Per developers.openai.com/api/docs/pricing (checked 2026-09-27).
+
+    Cache-write is published for this generation at 1.25x input (issue #369).
+    """
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6-astra",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 10.00
+    assert row.output_per_mtok == 50.00
+    assert row.cache_read_per_mtok == 1.00
+    assert row.cache_create_per_mtok == 12.50
+
+
+def test_seed_chatgpt_gpt56_terra_and_luna_cache_write_rates():
+    """gpt-5.6-terra / gpt-5.6-luna cache-write at 1.25x input (issue #369)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    terra = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-5.6-terra",
+        )
+    ).first()
+    assert terra is not None
+    assert terra.cache_create_per_mtok == 2.50
+
+    luna = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-5.6-luna",
+        )
+    ).first()
+    assert luna is not None
+    assert luna.cache_create_per_mtok == 0.25
 
 
 def test_seed_chatgpt_bare_gpt56_inherits_sol_rate():
@@ -95,7 +146,108 @@ def test_seed_chatgpt_bare_gpt56_inherits_sol_rate():
     assert row.input_per_mtok == 4.00
     assert row.output_per_mtok == 20.00
     assert row.cache_read_per_mtok == 0.40
-    assert row.cache_create_per_mtok == 0.0
+    assert row.cache_create_per_mtok == 5.00  # 1.25x input, inherited from gpt-5.6-sol (#369)
+
+
+def test_seed_chatgpt_gpt56_sol_cache_write_rate():
+    """gpt-5.6-sol cache-write at 1.25x input (issue #369)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-5.6-sol",
+        )
+    ).first()
+    assert row is not None
+    assert row.cache_create_per_mtok == 5.00
+
+
+def test_seed_chatgpt_older_rows_stay_at_zero_cache_create():
+    """Older chatgpt generations (pre gpt-5.6/gpt-6) have no published
+    cache-write rate — cache_create_per_mtok must stay 0.0 (issue #369)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    for model_id in ("gpt-5", "codex", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5-mini"):
+        row = s.exec(
+            select(ProviderPricing).where(
+                ProviderPricing.provider_id == "chatgpt",
+                ProviderPricing.model_id == model_id,
+            )
+        ).first()
+        assert row is not None, f"expected a seeded row for {model_id}"
+        assert row.cache_create_per_mtok == 0.0, f"{model_id} should stay unpriced for cache writes"
+
+
+def test_seed_backfills_cache_create_per_mtok_on_existing_row():
+    """A row already committed to the DB with cache_create_per_mtok=0.0
+    (simulating a pre-#369 deployment) gets backfilled in place on re-seed,
+    the same way cache_create_1h_per_mtok is backfilled."""
+    s = _make_session()
+    s.add(
+        ProviderPricing(
+            provider_id="chatgpt",
+            model_id="gpt-6-sol",
+            effective_from=date.fromisoformat("2026-09-01"),
+            input_per_mtok=2.00,
+            output_per_mtok=10.00,
+            cache_read_per_mtok=0.20,
+            cache_create_per_mtok=0.0,
+            cache_create_1h_per_mtok=0.0,
+            notes="pre-#369 seed",
+        )
+    )
+    s.commit()
+
+    seed_pricing_table(s)
+
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6-sol",
+        )
+    ).first()
+    assert row is not None
+    assert row.cache_create_per_mtok == 2.50
+    # No second row was versioned in — the backfill updates in place.
+    rows = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6-sol",
+        )
+    ).all()
+    assert len(rows) == 1
+
+
+def test_seed_does_not_clobber_user_hand_tuned_cache_create_rate():
+    """A row a user already hand-set to a non-zero cache_create_per_mtok must
+    not be overwritten by the seed's rate on re-seed."""
+    s = _make_session()
+    s.add(
+        ProviderPricing(
+            provider_id="chatgpt",
+            model_id="gpt-6-sol",
+            effective_from=date.fromisoformat("2026-09-01"),
+            input_per_mtok=2.00,
+            output_per_mtok=10.00,
+            cache_read_per_mtok=0.20,
+            cache_create_per_mtok=9.99,  # user hand-tuned this
+            cache_create_1h_per_mtok=0.0,
+            notes="user-tuned",
+        )
+    )
+    s.commit()
+
+    seed_pricing_table(s)
+
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6-sol",
+        )
+    ).first()
+    assert row is not None
+    assert row.cache_create_per_mtok == 9.99
 
 
 def test_seed_preserves_anthropic_sonnet_rates():
