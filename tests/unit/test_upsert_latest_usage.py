@@ -292,12 +292,10 @@ def test_when_all_sources_are_stale_latest_sidecar_owns_card(session: Session):
 
 
 def test_contribution_write_failure_is_logged(session: Session, monkeypatch, caplog):
-    import app.services.accumulator as accumulator
-
     def fail_contribution_write(*args, **kwargs):
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(accumulator, "_upsert_contribution", fail_contribution_write)
+    monkeypatch.setattr("app.services.accumulator._upsert_contribution", fail_contribution_write)
     with caplog.at_level(logging.WARNING, logger="app.services.accumulator"):
         upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
 
