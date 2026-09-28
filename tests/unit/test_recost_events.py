@@ -465,7 +465,8 @@ def test_run_skips_phase_c_and_d_when_no_cost_changes(monkeypatch, capsys):
     run(providers=None, since=None, dry_run=False, skip_rollups=False, skip_windows=False)
 
     out = capsys.readouterr().out
-    assert "No cost changes — Phases C/D skipped (nothing to rebuild)." in out
+    assert "No cost changes — Phases C/D skipped" in out
+    assert "0 pair(s) affected: 0 event(s), 0 window(s) would be rebuilt" in out
     assert "Phase C —" not in out
     assert "Phase D —" not in out
 

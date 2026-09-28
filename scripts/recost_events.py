@@ -140,6 +140,12 @@ def phase_c_rollups(
     """
     if pairs is not None:
         if not pairs:
+            # Not load-bearing for correctness — `tuple_(...).in_(())` below
+            # would already match zero rows on its own — this is purely to
+            # skip the round trip and rebuild_rollups_for_pairs call for the
+            # common "nothing changed" case. Contrast phase_d_windows, where
+            # the equivalent check *is* load-bearing (an empty `providers`
+            # list means "every provider" to the functions it calls).
             print("Phase C — rebuilding rollups from 0 event(s)…", flush=True)
             return 0
         from sqlalchemy import tuple_
@@ -226,7 +232,18 @@ def run(
         )
 
         if not affected_pairs:
-            print("No cost changes — Phases C/D skipped (nothing to rebuild).", flush=True)
+            # Quantify the "would rebuild" preview explicitly rather than
+            # just saying "skipped" — this is the accurate answer to what a
+            # real run would now do (0 pairs, so nothing), which is a more
+            # useful dry-run signal than the old code's whole-provider
+            # event/window counts (those previewed the unconditional
+            # rebuild this PR removes, so they'd now overstate what a real
+            # run actually touches).
+            print(
+                f"{prefix}No cost changes — Phases C/D skipped "
+                "(0 pair(s) affected: 0 event(s), 0 window(s) would be rebuilt).",
+                flush=True,
+            )
         else:
             if not skip_rollups:
                 n_events = phase_c_rollups(session, providers, dry_run, pairs=affected_pairs)
