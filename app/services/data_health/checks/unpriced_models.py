@@ -226,6 +226,8 @@ class UnpricedModelsCheck(Check):
         )
 
     def plan(self, session: Session, group_key: str, params: dict[str, Any]) -> FixPlan:
+        if group_key.endswith("::informational-zero"):
+            raise ValueError("informational zero-cost findings cannot be recosted")
         provider_id = group_key
         recost_plan = plan_recost(session, [provider_id], only_zero_cost=True, sample_size=10)
         return FixPlan(
@@ -243,6 +245,8 @@ class UnpricedModelsCheck(Check):
     def apply(
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
+        if group_key.endswith("::informational-zero"):
+            raise ValueError("informational zero-cost findings cannot be recosted")
         provider_id = group_key
         result = apply_recost(session, [provider_id], only_zero_cost=True)
         return (

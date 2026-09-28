@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlmodel import select
 
 from app.models.db import UsageEvent
@@ -86,6 +87,17 @@ def test_detect_reports_a_configured_zero_rate_as_informational(session):
 
     assert report.severity.value == "info"
     assert report.groups[0].detail["by_model"][0]["classification"] == "verified_zero"
+
+
+def test_informational_group_rejects_preview_and_apply(session):
+    make_event(session, event_id="zero", provider_id="chatgpt", model_id="gpt-free", cost_usd=0.0)
+    make_price(session, provider_id="chatgpt", model_id="gpt-free", rate=0.0)
+    group_key = _check().detect(session).groups[0].key
+
+    with pytest.raises(ValueError, match="informational zero-cost"):
+        _check().plan(session, group_key, {})
+    with pytest.raises(ValueError, match="informational zero-cost"):
+        _check().apply(session, group_key, {})
 
 
 def test_mixed_model_evidence_is_split_between_actionable_and_info_groups(session):

@@ -141,7 +141,7 @@ class DataHealthJobs:
         assert self._scan_task is not None
         await self._scan_task
         if self.scan_error:
-            raise RuntimeError(self.scan_error)
+            raise ScanFailedError(self.scan_error)
         assert self._report_cache is not None
         return self._report_cache
 
