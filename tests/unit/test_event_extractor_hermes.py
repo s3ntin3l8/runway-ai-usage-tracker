@@ -56,7 +56,12 @@ def test_provider_id_mapping():
 
 
 def test_discover_hermes_db_paths(monkeypatch, tmp_path):
-    hermes_dir = tmp_path / ".hermes"
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+
+    hermes_dir = fake_home / ".hermes"
     hermes_dir.mkdir()
     default_db = hermes_dir / "state.db"
     default_db.touch()
@@ -67,13 +72,33 @@ def test_discover_hermes_db_paths(monkeypatch, tmp_path):
     review_db = review_bot_dir / "state.db"
     review_db.touch()
 
-    monkeypatch.setenv("HERMES_HOME", str(hermes_dir))
-    monkeypatch.setattr(
-        Path, "expanduser", lambda self: tmp_path / self.name if str(self).startswith("~") else self
-    )
+    paths = _discover_hermes_db_paths()
+    assert default_db in paths
+    assert review_db in paths
+    assert len(paths) == 2
+
+
+def test_discover_hermes_db_paths_with_hermes_home_profiles(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    custom_dir = tmp_path / "custom_hermes"
+    custom_dir.mkdir()
+    custom_default_db = custom_dir / "state.db"
+    custom_default_db.touch()
+
+    custom_profiles = custom_dir / "profiles" / "worker"
+    custom_profiles.mkdir(parents=True)
+    worker_db = custom_profiles / "state.db"
+    worker_db.touch()
+
+    monkeypatch.setenv("HERMES_HOME", str(custom_dir))
 
     paths = _discover_hermes_db_paths()
-    assert default_db in paths or any(p.name == "state.db" for p in paths)
+    assert custom_default_db in paths
+    assert worker_db in paths
+    assert len(paths) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +579,11 @@ def test_watermark_mixed_counter_regression_preserves_high_watermark(tmp_path):
 def test_discover_hermes_db_paths_canonicalizes_symlinks(tmp_path, monkeypatch):
     """If HERMES_HOME points to a symlink of ~/.hermes, discovery canonicalizes with
     resolve() and returns the database only once."""
-    real_dir = tmp_path / "real_hermes"
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    real_dir = fake_home / ".hermes"
     real_dir.mkdir()
     real_db = real_dir / "state.db"
     real_db.touch()
@@ -563,9 +592,6 @@ def test_discover_hermes_db_paths_canonicalizes_symlinks(tmp_path, monkeypatch):
     symlink_dir.symlink_to(real_dir)
 
     monkeypatch.setenv("HERMES_HOME", str(symlink_dir))
-    monkeypatch.setattr(
-        Path, "expanduser", lambda p: real_dir if "~/.hermes" in str(p) else Path(p)
-    )
 
     discovered = _discover_hermes_db_paths()
     assert len(discovered) == 1

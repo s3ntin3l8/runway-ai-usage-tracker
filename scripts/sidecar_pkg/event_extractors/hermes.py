@@ -91,16 +91,22 @@ def _discover_hermes_db_paths() -> list[Path]:
                 seen_canonical.add(resolved)
                 paths.append(p)
 
-    # 1. HERMES_HOME env override
+    # 1. HERMES_HOME env override (default DB and named profiles)
     hermes_home = os.getenv("HERMES_HOME")
     if hermes_home:
-        _add_if_valid(Path(hermes_home).expanduser() / "state.db")
+        home_path = Path(hermes_home).expanduser()
+        _add_if_valid(home_path / "state.db")
+        custom_profiles_dir = home_path / "profiles"
+        if custom_profiles_dir.is_dir():
+            for prof_db in sorted(custom_profiles_dir.glob("*/state.db")):
+                _add_if_valid(prof_db)
 
     # 2. Standard default profile
-    _add_if_valid(Path(os.path.expanduser("~/.hermes/state.db")))
+    default_dir = Path("~/.hermes").expanduser()
+    _add_if_valid(default_dir / "state.db")
 
     # 3. Named profiles in ~/.hermes/profiles/*/state.db
-    profiles_dir = Path(os.path.expanduser("~/.hermes/profiles"))
+    profiles_dir = default_dir / "profiles"
     if profiles_dir.is_dir():
         for prof_db in sorted(profiles_dir.glob("*/state.db")):
             _add_if_valid(prof_db)
@@ -113,7 +119,7 @@ def _default_watermark_state_path() -> Path:
     if config_dir:
         base = Path(config_dir) / "sidecar"
     else:
-        base = Path(os.path.expanduser("~/.config/runway/sidecar"))
+        base = Path("~/.config/runway/sidecar").expanduser()
     return base / "hermes_watermark.json"
 
 
