@@ -90,6 +90,39 @@ def test_plan_is_read_only(session):
     assert row.msgs == 5  # untouched
 
 
+def test_detect_query_count_is_constant_regardless_of_pair_count(session, query_counter):
+    """detect() must issue the same number of queries whether there's 1 pair
+    or 10 — the whole point of #375's grouped-query rewrite. The old
+    per-pair implementation issued 1 + 2*N queries (pair-set query, then
+    _actual_totals + _rollup_totals per pair); the new one issues exactly 2
+    (one grouped actual-totals query, one grouped rollup query) no matter N.
+    """
+    make_event(session, event_id="baseline", provider_id="minimax", account_id="solo@example.com")
+    _lifetime_rollup(session, account_id="solo@example.com", msgs=1, cost_usd=0.05)
+    query_counter.reset()
+    _check().detect(session)
+    baseline_count = query_counter.count
+
+    session2_pairs = [(f"provider{i}", f"account{i}@example.com") for i in range(10)]
+    for provider_id, account_id in session2_pairs:
+        make_event(
+            session,
+            event_id=f"{provider_id}-{account_id}",
+            provider_id=provider_id,
+            account_id=account_id,
+            cost_usd=0.05,
+        )
+        _lifetime_rollup(
+            session, provider_id=provider_id, account_id=account_id, msgs=1, cost_usd=0.05
+        )
+    query_counter.reset()
+    _check().detect(session)
+    ten_pair_count = query_counter.count
+
+    assert baseline_count == 2
+    assert ten_pair_count == baseline_count
+
+
 def test_apply_rebuilds_the_rollup_and_clears_the_finding(session):
     make_event(
         session, event_id="1", provider_id="minimax", account_id="alice@example.com", cost_usd=1.0

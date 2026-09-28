@@ -1,12 +1,15 @@
 """Data Health `unpriced_models` check — token-bearing message events priced
 at $0.00 (D8 in the v3.0.0 prod-cleanup audit: `gpt-6-luna`, `gpt-6-sol`,
 bare `gpt-5.6`). Each (provider, model) group is classified by resolving a
-price row at its earliest and latest event — `resolve_price_row` (not
+price row at its latest event — `resolve_price_row` (not
 `compute_event_cost_breakdown`) so a genuinely zero-rated seed row and no
-seed row at all are told apart:
+seed row at all are told apart. Only `ts_max` is checked: `resolve_price_row`'s
+fallback chain gates purely on `effective_from <= ts.date()`, so a row that
+would resolve at an earlier `ts` also resolves at the later `ts_max` — a
+`ts_min` check can never find a hit `ts_max` wouldn't also find.
 
-- a price row resolves at either end → `recost_fixes_it`: the fixer just
-  hasn't run since the seed was added.
+- a price row resolves at the latest event → `recost_fixes_it`: the fixer
+  just hasn't run since the seed was added.
 - no price row, but every event already carries a `cost_reported_usd` →
   `source_reported`: this is a real $0 (or the provider's own number),
   working as intended, not a bug.
@@ -21,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
@@ -45,22 +48,16 @@ def _is_excluded(provider_id: str, model_id: str) -> bool:
     return provider_id in _EXCLUDED_PROVIDERS or model_id.endswith(":free")
 
 
-def _classify(session: Session, provider_id: str, model_id: str, count: int, ts_min, ts_max) -> str:
-    if resolve_price_row(session, provider_id, model_id, ts_min) is not None:
-        return "recost_fixes_it"
+def _classify(
+    session: Session, provider_id: str, model_id: str, count: int, reported: int, ts_max
+) -> str:
+    # Only resolve at ts_max: effective_from <= ts.date() is the only date
+    # gate in resolve_price_row's fallback chain, and every fallback tier is
+    # independent of which ts triggered it — a row that resolves at an
+    # earlier ts also resolves at any later ts, so ts_min never adds a hit
+    # ts_max wouldn't also produce.
     if resolve_price_row(session, provider_id, model_id, ts_max) is not None:
         return "recost_fixes_it"
-    reported = session.execute(
-        select(func.count())
-        .select_from(UsageEvent)
-        .where(
-            col(UsageEvent.provider_id) == provider_id,
-            col(UsageEvent.model_id) == model_id,
-            col(UsageEvent.kind) == "message",
-            col(UsageEvent.cost_usd) == 0.0,
-            col(UsageEvent.cost_reported_usd).is_not(None),
-        )
-    ).scalar_one()
     return "source_reported" if reported == count else "needs_seed_row"
 
 
@@ -70,14 +67,18 @@ class UnpricedModelsCheck(Check):
     blocked_by = ("legacy_provider_ids",)
 
     def detect(self, session: Session) -> CheckReport:
-        # 5 columns exceeds SQLModel's typed select() overloads.
+        # 5 columns exceeds SQLModel's typed select() overloads. The
+        # `reported` column is computed in the same token-bearing-filtered
+        # group as `count`, so it's directly comparable — unlike the old
+        # per-group follow-up query, which had no token filter and so could
+        # over-count `reported` against a token-bearing-only `count`.
         rows = session.execute(
             select(  # type: ignore[call-overload]
                 UsageEvent.provider_id,
                 UsageEvent.model_id,
                 func.count(),
-                func.min(UsageEvent.ts),
                 func.max(UsageEvent.ts),
+                func.sum(case((col(UsageEvent.cost_reported_usd).is_not(None), 1), else_=0)),
             )
             .where(
                 col(UsageEvent.kind) == "message",
@@ -95,10 +96,10 @@ class UnpricedModelsCheck(Check):
         ).all()
 
         by_provider: dict[str, list[dict[str, Any]]] = {}
-        for provider_id, model_id, count, ts_min, ts_max in rows:
+        for provider_id, model_id, count, ts_max, reported in rows:
             if _is_excluded(provider_id, model_id):
                 continue
-            classification = _classify(session, provider_id, model_id, count, ts_min, ts_max)
+            classification = _classify(session, provider_id, model_id, count, reported, ts_max)
             by_provider.setdefault(provider_id, []).append(
                 {"model_id": model_id, "count": count, "classification": classification}
             )
