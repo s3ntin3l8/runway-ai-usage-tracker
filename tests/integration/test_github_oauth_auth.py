@@ -28,6 +28,10 @@ def client():
 
 @pytest.fixture
 def off_loopback_admin(monkeypatch):
+    """Patch both settings bindings — `resolve_auth` reads
+    `app.core.security.settings` (bound at module load), which drifts from
+    `app.core.config.settings` if only the latter is patched, silently
+    leaving the gate open."""
     for dotted in ("app.core.config.settings", "app.core.security.settings"):
         monkeypatch.setattr(f"{dotted}.ADMIN_API_KEY", "admin-secret")
         monkeypatch.setattr(f"{dotted}.APP_HOST", "0.0.0.0")
