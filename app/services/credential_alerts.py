@@ -44,9 +44,10 @@ _REARM_FLOOR_SECONDS = 1800
 
 # The server is guaranteed single-process (see app/main.py's `uvicorn.run`
 # comment), so every overlapping `poll_now()` call — a scheduled tick racing
-# a `POST /force-collect` — runs on the same event loop. This lock fully
-# serializes `check_credential_alerts` cycles, closing the read-then-write
-# race on the dedup row described in `_commit_step`'s docstring.
+# a `POST /force-collect` — runs on the same event loop. This lock serializes
+# the dedup-row read-then-write critical section of `check_credential_alerts`
+# (see that function's docstring for its exact scope), closing the race
+# described in `_commit_step`'s docstring.
 _check_lock = asyncio.Lock()
 
 
@@ -129,152 +130,165 @@ def _is_alert_bad(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]
 async def check_credential_alerts(session: Session) -> None:
     """Evaluate Token Health and fire/re-arm credential-health webhooks.
 
-    Holds `_check_lock` for the entire body — the dedup-row read (`alert =
-    session.exec(...)`) and the webhook POST + row write it gates must be
-    atomic with respect to any other overlapping cycle, or two concurrent
-    cycles can both observe `alert is None` and both deliver.
+    `_check_lock` is scoped to the dedup-row critical section only — the
+    `for (provider, account_id) ... for config in configs:` double loop
+    below and everything inside it — not the whole function. Everything
+    above that point (the `configs`/`scope_labels` queries, the Token
+    Health fetch, and the `keys` classification built from it) is read-only
+    with respect to `WebhookCredentialAlert` — the table the race actually
+    threatens — and doesn't need to serialize against another cycle. The
+    one row that *is* racy, `alert = session.exec(...)` below, is queried
+    fresh on every loop iteration, strictly after the lock is acquired, so
+    narrowing the lock to start here doesn't reopen the read-then-write gap
+    it exists to close.
+
+    (Contrast `webhooks.check_and_fire`: there, the racy
+    `WebhookConfig.last_fired_at` is loaded once *before* its loop, not
+    re-queried per iteration, so narrowing that lock the same way would
+    require an explicit per-iteration `session.refresh()` to stay correct —
+    a bigger structural change. It keeps the coarser whole-body lock
+    instead.)
     """
-    async with _check_lock:
-        configs = session.exec(
-            select(WebhookConfig).where(
-                WebhookConfig.active == True,  # noqa: E712
-                WebhookConfig.credential_alerts == True,  # noqa: E712
-            )
-        ).all()
-        if not configs:
-            return  # nothing opted in — skip the Token Health scan entirely
+    configs = session.exec(
+        select(WebhookConfig).where(
+            WebhookConfig.active == True,  # noqa: E712
+            WebhookConfig.credential_alerts == True,  # noqa: E712
+        )
+    ).all()
+    if not configs:
+        return  # nothing opted in — skip the Token Health scan entirely
 
-        scope_labels: dict[tuple[str, str | None], str | None] = {
-            (r.provider_id, r.account_id): r.account_label
-            for r in session.exec(select(ProviderConfig)).all()
-        }
+    scope_labels: dict[tuple[str, str | None], str | None] = {
+        (r.provider_id, r.account_id): r.account_label
+        for r in session.exec(select(ProviderConfig)).all()
+    }
 
-        rows = await token_health_service.get_health()
-        if not rows:
-            return
-        accounts_by_provider = _build_accounts_by_provider(rows)
+    rows = await token_health_service.get_health()
+    if not rows:
+        return
+    accounts_by_provider = _build_accounts_by_provider(rows)
 
-        # (provider, resolved_account_id) -> classification state built up
-        # across every Token Health row that maps to that identity.
-        keys: dict[tuple[str, str], dict[str, Any]] = {}
-        for row in rows:
-            provider = row["provider"]
-            underlying = _underlying_account(row["account_id"])
-            # Synthetic rows the service builds itself (`server`, in
-            # particular) carry no account_label of their own — fall back to
-            # the same provider_configs label `scope_labels` uses, so a
-            # `default`-scoped webhook whose account has an email label still
-            # matches a server-discovered credential for that account, the
-            # same way it already matches cards for it (see
-            # `_scope_matches`'s docstring).
-            label = row.get("account_label") or scope_labels.get((provider, underlying))
-            resolved = resolve_account_id(provider, underlying, label)
-            state = keys.setdefault(
-                (provider, resolved),
-                {"bad": False, "healthy": False, "status": None, "detail": None},
-            )
-            if _is_alert_bad(row, accounts_by_provider):
-                state["bad"] = True
-                state["status"] = _worst_status(state["status"], row["status"])
-                if state["detail"] is None or row["status"] == "invalid":
-                    state["detail"] = row
-            # Deliberately broader than token_health's own redundancy math,
-            # which excludes "_assumed" (config/env, no real expiry) rows as
-            # evidence — here, any non-bad valid/expiring sibling is enough
-            # to hold off an alert, since the goal is "don't page while
-            # collection still works."
-            if row["status"] in ("valid", "expiring"):
-                state["healthy"] = True
+    # (provider, resolved_account_id) -> classification state built up
+    # across every Token Health row that maps to that identity.
+    keys: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        provider = row["provider"]
+        underlying = _underlying_account(row["account_id"])
+        # Synthetic rows the service builds itself (`server`, in
+        # particular) carry no account_label of their own — fall back to
+        # the same provider_configs label `scope_labels` uses, so a
+        # `default`-scoped webhook whose account has an email label still
+        # matches a server-discovered credential for that account, the
+        # same way it already matches cards for it (see
+        # `_scope_matches`'s docstring).
+        label = row.get("account_label") or scope_labels.get((provider, underlying))
+        resolved = resolve_account_id(provider, underlying, label)
+        state = keys.setdefault(
+            (provider, resolved),
+            {"bad": False, "healthy": False, "status": None, "detail": None},
+        )
+        if _is_alert_bad(row, accounts_by_provider):
+            state["bad"] = True
+            state["status"] = _worst_status(state["status"], row["status"])
+            if state["detail"] is None or row["status"] == "invalid":
+                state["detail"] = row
+        # Deliberately broader than token_health's own redundancy math,
+        # which excludes "_assumed" (config/env, no real expiry) rows as
+        # evidence — here, any non-bad valid/expiring sibling is enough
+        # to hold off an alert, since the goal is "don't page while
+        # collection still works."
+        if row["status"] in ("valid", "expiring"):
+            state["healthy"] = True
 
-        if not keys:
-            return
+    if not keys:
+        return
 
-        now = datetime.now(UTC)
-        rearm_cutoff = now - timedelta(seconds=_rearm_window_seconds(session))
+    now = datetime.now(UTC)
+    rearm_cutoff = now - timedelta(seconds=_rearm_window_seconds(session))
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            for (provider, account_id), state in keys.items():
-                # bad+healthy both true (a working credential alongside a
-                # stale one) and neither true (only unknown/redundant/
-                # rollable rows) are both left alone: a healthy sibling means
-                # collection still works for this account, so a stale/
-                # rejected credential beside it isn't blocking anything and
-                # shouldn't page.
-                if state["bad"] and not state["healthy"]:
-                    classification = "bad"
-                elif state["healthy"] and not state["bad"]:
-                    classification = "healthy"
-                else:
+    async with _check_lock, httpx.AsyncClient(timeout=5.0) as client:
+        for (provider, account_id), state in keys.items():
+            # bad+healthy both true (a working credential alongside a
+            # stale one) and neither true (only unknown/redundant/
+            # rollable rows) are both left alone: a healthy sibling means
+            # collection still works for this account, so a stale/
+            # rejected credential beside it isn't blocking anything and
+            # shouldn't page.
+            if state["bad"] and not state["healthy"]:
+                classification = "bad"
+            elif state["healthy"] and not state["bad"]:
+                classification = "healthy"
+            else:
+                continue
+
+            for config in configs:
+                scope_label = scope_labels.get((config.provider_id, config.account_id))
+                if not _scope_matches(config, provider, account_id, scope_label):
                     continue
 
-                for config in configs:
-                    scope_label = scope_labels.get((config.provider_id, config.account_id))
-                    if not _scope_matches(config, provider, account_id, scope_label):
-                        continue
-
-                    alert = session.exec(
-                        select(WebhookCredentialAlert).where(
-                            WebhookCredentialAlert.webhook_id == config.id,
-                            WebhookCredentialAlert.provider_id == provider,
-                            WebhookCredentialAlert.account_id == account_id,
-                        )
-                    ).first()
-
-                    context = f"webhook {config.id} ({provider}/{account_id})"
-
-                    if classification == "healthy":
-                        if alert is None:
-                            continue  # no active alert to re-arm
-                        if alert.healthy_since is None:
-                            alert.healthy_since = now
-                            session.add(alert)
-                            _commit_step(session, context)
-                        elif _as_utc(alert.healthy_since) <= rearm_cutoff:
-                            session.delete(alert)
-                            _commit_step(session, context)
-                        continue
-
-                    # classification == "bad"
-                    if alert is not None:
-                        changed = False
-                        if alert.healthy_since is not None:
-                            alert.healthy_since = None
-                            changed = True
-                        if state["status"] == "invalid" and alert.status != "invalid":
-                            alert.status = "invalid"
-                            changed = True
-                        if changed:
-                            session.add(alert)
-                            _commit_step(session, context)
-                        continue  # already alerted for this bad episode
-
-                    detail = state["detail"] or {}
-                    payload_kwargs = {
-                        "provider_id": provider,
-                        "account_label": detail.get("account_label"),
-                        "account_id": account_id,
-                        "status": state["status"],
-                        "source_name": detail.get("source_name"),
-                    }
-                    payload = (
-                        _credential_discord_payload(**payload_kwargs)
-                        if config.channel == "discord"
-                        else _credential_slack_payload(**payload_kwargs)
+                alert = session.exec(
+                    select(WebhookCredentialAlert).where(
+                        WebhookCredentialAlert.webhook_id == config.id,
+                        WebhookCredentialAlert.provider_id == provider,
+                        WebhookCredentialAlert.account_id == account_id,
                     )
-                    try:
-                        await _post_payload(client, config, payload)
-                    except Exception as e:
-                        logger.error(f"Credential alert delivery failed for {context}: {e}")
-                        continue
+                ).first()
 
-                    session.add(
-                        WebhookCredentialAlert(
-                            webhook_id=config.id,
-                            provider_id=provider,
-                            account_id=account_id,
-                            status=state["status"],
-                            fired_at=now,
-                        )
+                context = f"webhook {config.id} ({provider}/{account_id})"
+
+                if classification == "healthy":
+                    if alert is None:
+                        continue  # no active alert to re-arm
+                    if alert.healthy_since is None:
+                        alert.healthy_since = now
+                        session.add(alert)
+                        _commit_step(session, context)
+                    elif _as_utc(alert.healthy_since) <= rearm_cutoff:
+                        session.delete(alert)
+                        _commit_step(session, context)
+                    continue
+
+                # classification == "bad"
+                if alert is not None:
+                    changed = False
+                    if alert.healthy_since is not None:
+                        alert.healthy_since = None
+                        changed = True
+                    if state["status"] == "invalid" and alert.status != "invalid":
+                        alert.status = "invalid"
+                        changed = True
+                    if changed:
+                        session.add(alert)
+                        _commit_step(session, context)
+                    continue  # already alerted for this bad episode
+
+                detail = state["detail"] or {}
+                payload_kwargs = {
+                    "provider_id": provider,
+                    "account_label": detail.get("account_label"),
+                    "account_id": account_id,
+                    "status": state["status"],
+                    "source_name": detail.get("source_name"),
+                }
+                payload = (
+                    _credential_discord_payload(**payload_kwargs)
+                    if config.channel == "discord"
+                    else _credential_slack_payload(**payload_kwargs)
+                )
+                try:
+                    await _post_payload(client, config, payload)
+                except Exception as e:
+                    logger.error(f"Credential alert delivery failed for {context}: {e}")
+                    continue
+
+                session.add(
+                    WebhookCredentialAlert(
+                        webhook_id=config.id,
+                        provider_id=provider,
+                        account_id=account_id,
+                        status=state["status"],
+                        fired_at=now,
                     )
-                    _commit_step(session, context)
-                    logger.info(f"Credential alert fired: {context} ({state['status']})")
+                )
+                _commit_step(session, context)
+                logger.info(f"Credential alert fired: {context} ({state['status']})")

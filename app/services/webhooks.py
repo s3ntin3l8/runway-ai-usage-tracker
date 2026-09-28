@@ -106,6 +106,18 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
     webhook POST + write that gates on it must be atomic with respect to any
     other overlapping cycle, or two concurrent cycles can both observe
     `last_fired_at is None` and both deliver.
+
+    Unlike `credential_alerts.check_credential_alerts` (which narrows its
+    lock to just the dedup-row critical section), this lock stays scoped to
+    the whole function: `config.last_fired_at` is read once, into each
+    config's in-memory ORM attribute, via the `configs = session.exec(...)`
+    query below — not re-queried per loop iteration — so narrowing the lock
+    to start after that query would let two overlapping cycles both load a
+    stale `last_fired_at` before either reaches the (now-narrower) critical
+    section, reopening the exact race this lock exists to close. Doing this
+    safely would need an explicit `session.refresh(config)` per iteration
+    plus a per-config commit (rather than the one final `session.commit()`
+    below) — a bigger structural change than this fix's scope covers.
     """
     async with _fire_lock:
         configs = session.exec(

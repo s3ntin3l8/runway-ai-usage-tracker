@@ -7,7 +7,6 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderConfig, SystemConfig, WebhookConfig, WebhookCredentialAlert
 from app.services import auth_failures
-from app.services import credential_alerts as credential_alerts_module
 
 
 @pytest.fixture(name="session")
@@ -33,15 +32,6 @@ def engine_fixture():
     )
     SQLModel.metadata.create_all(engine)
     return engine
-
-
-@pytest.fixture(autouse=True)
-def _fresh_check_lock(monkeypatch):
-    """A module-level asyncio.Lock binds to whichever event loop first awaits
-    it; pytest-asyncio spins up a fresh loop per test, so a lock left over
-    from a previous test's loop raises "bound to a different event loop".
-    Give every test its own unbound Lock."""
-    monkeypatch.setattr(credential_alerts_module, "_check_lock", asyncio.Lock())
 
 
 def _row(
@@ -399,6 +389,11 @@ async def test_overlapping_polls_do_not_double_deliver(engine):
         assert post_mock.call_count == 1
         alerts = session_a.exec(select(WebhookCredentialAlert)).all()
         assert len(alerts) == 1
+        # Pin the StaticPool-shared-connection assumption this test relies
+        # on: session_b must see the same committed row session_a does, not
+        # a second, independent one from an unserialized write.
+        alerts_from_b = session_b.exec(select(WebhookCredentialAlert)).all()
+        assert len(alerts_from_b) == 1
 
 
 def test_commit_step_recovers_from_a_dedup_race(session):

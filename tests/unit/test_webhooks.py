@@ -8,7 +8,6 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import WebhookConfig
 from app.models.schemas import LimitCard
-from app.services import webhooks as webhooks_module
 
 
 @pytest.fixture(name="session")
@@ -34,15 +33,6 @@ def engine_fixture():
     )
     SQLModel.metadata.create_all(engine)
     return engine
-
-
-@pytest.fixture(autouse=True)
-def _fresh_fire_lock(monkeypatch):
-    """A module-level asyncio.Lock binds to whichever event loop first awaits
-    it; pytest-asyncio spins up a fresh loop per test, so a lock left over
-    from a previous test's loop raises "bound to a different event loop".
-    Give every test its own unbound Lock."""
-    monkeypatch.setattr(webhooks_module, "_fire_lock", asyncio.Lock())
 
 
 def _card(provider="anthropic", used=950.0, limit=1000.0, account="acc1", label=None):
@@ -647,6 +637,13 @@ async def test_overlapping_polls_do_not_double_fire(engine):
             select(WebhookConfig).where(WebhookConfig.last_fired_at.is_not(None))
         ).all()
         assert len(fired) == 1
+        # Pin the StaticPool-shared-connection assumption this test relies
+        # on: session_b must see the same committed write session_a does,
+        # not a second, independent one from an unserialized write.
+        fired_from_b = session_b.exec(
+            select(WebhookConfig).where(WebhookConfig.last_fired_at.is_not(None))
+        ).all()
+        assert len(fired_from_b) == 1
 
 
 # --- _scope_matches (shared by check_and_fire and credential_alerts) --------
