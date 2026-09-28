@@ -46,6 +46,8 @@ _REMOTE_USER_FALLBACK_HEADER = "Remote-User"
 # FORWARD_AUTH_USER_HEADER at something else.
 _DEFAULT_FORWARD_AUTH_USER_HEADER = "X-Forwarded-User"
 
+_LOOPBACK_BIND_HOSTS = ("127.0.0.1", "localhost", "::1")
+
 # Some proxies (Authentik) delimit multi-valued group headers with "|"
 # rather than ",", since group names may themselves contain commas.
 _GROUP_SPLIT_RE = re.compile(r"[,|\s]+")
@@ -143,18 +145,14 @@ def resolve_auth(
     # convention every other check below and every existing auth test uses)
     # wouldn't reach the other. Match `settings.APP_HOST` on the same bound
     # object step 1 below already reads.
-    if not settings.ADMIN_API_KEY and settings.APP_HOST in ("127.0.0.1", "localhost", "::1"):
+    if not settings.ADMIN_API_KEY and settings.APP_HOST in _LOOPBACK_BIND_HOSTS:
         return AuthResult(True, "none")
 
     client_host = request.client.host if request.client else None
 
     # 1. Local trust (zero-touch local usage). Only when client IS localhost
     # AND the server is bound to localhost-only.
-    if client_host in ("127.0.0.1", "::1") and settings.APP_HOST in (
-        "127.0.0.1",
-        "localhost",
-        "::1",
-    ):
+    if client_host in ("127.0.0.1", "::1") and settings.APP_HOST in _LOOPBACK_BIND_HOSTS:
         return AuthResult(True, "localhost")
 
     # 2. Reverse-proxy trust — gated by an IP allowlist so the user headers
@@ -386,4 +384,4 @@ def is_loopback_bind() -> bool:
     """True when the server only listens on loopback (local topology)."""
     from app.core.config import settings as _settings
 
-    return _settings.APP_HOST in ("127.0.0.1", "localhost", "::1")
+    return _settings.APP_HOST in _LOOPBACK_BIND_HOSTS
