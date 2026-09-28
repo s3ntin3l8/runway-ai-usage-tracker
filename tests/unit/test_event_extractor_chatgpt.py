@@ -1,5 +1,6 @@
 """Unit tests for the ChatGPT/Codex event extractor."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -166,7 +167,7 @@ def test_captures_token_dimensions():
     assert first.tokens_output == 412
     assert first.tokens_cache_read == 500
     assert first.tokens_reasoning == 0
-    assert first.tokens_cache_create == 0  # OpenAI doesn't bill cache creation
+    assert first.tokens_cache_create == 0  # fixture has no cache_write_input_tokens → defaults to 0
 
     # Second event (gpt-5-codex): 900 input, 300 output, 0 cached, 200 reasoning
     codex = next(e for e in evts if e.model_id == "gpt-5-codex")
@@ -204,3 +205,61 @@ def test_missing_file_returns_empty():
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
     assert evts == []
+
+
+def test_captures_cache_write_tokens(tmp_path):
+    """A record with a non-zero cache_write_input_tokens (gpt-5.6/gpt-6, per
+    issue #369) surfaces tokens_cache_create, and tokens_input is reduced by
+    both the cached and cache-write amounts — input_tokens from the Responses
+    API is inclusive of both."""
+    lines = [
+        json.dumps(
+            {
+                "timestamp": "2026-09-20T10:00:00.000Z",
+                "type": "session_meta",
+                "payload": {"id": "sess", "cwd": "/tmp/proj"},
+            }
+        ),
+        json.dumps(
+            {
+                "timestamp": "2026-09-20T10:00:01.000Z",
+                "type": "turn_context",
+                "payload": {"model": "gpt-6-sol"},
+            }
+        ),
+        json.dumps(
+            {
+                "timestamp": "2026-09-20T10:00:02.000Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "last_token_usage": {
+                            "input_tokens": 1000,
+                            "cached_input_tokens": 200,
+                            "cache_write_input_tokens": 150,
+                            "output_tokens": 300,
+                            "reasoning_output_tokens": 10,
+                            "total_tokens": 1300,
+                        }
+                    },
+                },
+            }
+        ),
+    ]
+    fixture = tmp_path / "cache-write-sample.jsonl"
+    fixture.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    evts = parse_chatgpt_events(
+        [fixture],
+        account_id="u@codex.test",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert len(evts) == 1
+    evt = evts[0]
+    assert evt.model_id == "gpt-6-sol"
+    assert evt.tokens_cache_create == 150
+    # tokens_input = 1000 (raw) - 200 (cached) - 150 (cache write) = 650
+    assert evt.tokens_input == 650
+    assert evt.tokens_cache_read == 200
+    assert evt.tokens_output == 300
