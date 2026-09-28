@@ -79,6 +79,7 @@ export function DataHealthSection() {
         </p>
       )}
 
+      {/* A registry update can retire every check still present in the cached report. */}
       {report.isPending ? (
         <Skeleton className="h-24" />
       ) : report.isError ? (

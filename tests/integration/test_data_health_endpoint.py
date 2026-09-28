@@ -142,6 +142,25 @@ async def test_get_report_skips_cached_checks_no_longer_in_registry(session, job
     assert response.json()["checks"] == []
 
 
+async def test_get_report_names_blocker_even_when_its_check_is_missing(session, jobs):
+    jobs._report_cache = {
+        "lone_default_events": CheckReport(
+            check_id="lone_default_events",
+            severity=Severity.WARN,
+            total_count=1,
+            blocked_by=["config_default_keyed"],
+        )
+    }
+
+    async with _client() as client:
+        response = await client.get("/api/v1/system/data-health/")
+
+    assert response.status_code == 200
+    check = response.json()["checks"][0]
+    assert check["blocked_by"] == ["config_default_keyed"]
+    assert check["blocked_by_titles"] == ["Provider account uses a generic ID"]
+
+
 async def test_preview_a_fixable_group(session):
     make_config(
         session, provider_id="minimax", account_id="default", account_label="alice@example.com"
