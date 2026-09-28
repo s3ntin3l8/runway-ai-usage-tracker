@@ -98,6 +98,14 @@ class BaseCollector(ABC):
         """Whether the most recent empty result represents a valid no-data state."""
         return False
 
+    def complete_snapshot(self, result: list[dict[str, Any]]) -> bool:
+        """Whether a successful response is complete enough to retire omitted cards.
+
+        Override this for providers that can return partial windows/models
+        without raising. The default preserves existing collector behavior.
+        """
+        return True
+
     # Subclasses may declare their available strategies as an ordered dict:
     # { "strategy_id": ("Human-Readable Label", "_method_name") }
     # Or with options: { "strategy_id": ("Label", "_method", {"enrich": True}) }

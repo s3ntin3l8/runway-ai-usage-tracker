@@ -173,19 +173,67 @@ class BackgroundPoller:
         """Execute a single collection and snapshot cycle."""
         logger.info("Starting scheduled background collection...")
         cards = await manager.collect_all()
+        outcomes = getattr(manager, "last_collection_outcomes", [])
 
         # Update dormancy state before DB write
         self._update_sleep_state(cards)
 
-        if not cards:
+        if not cards and not outcomes:
             logger.debug("No metrics collected during background poll.")
-        else:
+        if cards or outcomes:
             with Session(engine) as session:
                 for card_dict in cards:
                     try:
-                        upsert_latest_usage(session, card_dict)
+                        provider_id = card_dict.get("provider_id")
+                        upsert_latest_usage(
+                            session,
+                            card_dict,
+                            source_id=f"server:{provider_id}" if provider_id else None,
+                        )
                     except Exception as e:
                         logger.error(f"Failed to upsert card to LatestUsage: {e}")
+
+                from app.services.account_identity import resolve_account_id
+                from app.services.accumulator import (
+                    mark_latest_usage_source_stale,
+                    reconcile_latest_usage_snapshot,
+                )
+
+                for outcome in outcomes:
+                    provider_id = outcome.get("provider_id")
+                    account_id = outcome.get("account_id") or "default"
+                    source_id = outcome.get("source_id")
+                    if not provider_id or not source_id:
+                        continue
+                    canonical_account_id = resolve_account_id(provider_id, account_id, None)
+                    state = outcome.get("state")
+                    if state == "complete":
+                        keys = {
+                            (
+                                str(card.get("window_type") or ""),
+                                str(card.get("variant") or "default"),
+                                str(card.get("model_id") or ""),
+                            )
+                            for card in cards
+                            if card.get("provider_id") == provider_id
+                            and resolve_account_id(
+                                provider_id,
+                                card.get("account_id") or "default",
+                                card.get("account_label"),
+                            )
+                            == canonical_account_id
+                        }
+                        reconcile_latest_usage_snapshot(
+                            session,
+                            provider_id=provider_id,
+                            account_id=canonical_account_id,
+                            source_id=source_id,
+                            reported_keys=keys,
+                        )
+                    elif state == "failed":
+                        mark_latest_usage_source_stale(
+                            session, provider_id=provider_id, source_id=source_id
+                        )
 
                 session.commit()
                 logger.info(f"Background poll complete. Snapshotted {len(cards)} metrics.")

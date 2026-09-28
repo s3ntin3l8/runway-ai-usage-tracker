@@ -100,6 +100,31 @@ describe('Banners collection failure', () => {
     expect(screen.getByText(/collection failing/i)).toBeInTheDocument();
   });
 
+  it('uses the stale secondary card timestamp when the critical gauge is fresh', () => {
+    renderWithProviders(
+      <Banners
+        tokens={[]}
+        anomalies={[]}
+        fleet={[
+          entry({
+            critical_gauge: card({
+              service_name: 'Ollama',
+              updated_at: new Date(Date.now() - 2 * 60_000).toISOString(),
+            }),
+            secondary_limits: [
+              card({
+                service_name: 'Ollama Weekly',
+                stale: true,
+                updated_at: new Date(Date.now() - 90 * 60_000).toISOString(),
+              }),
+            ],
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByText(/ollama weekly \(last ok 1h 30m ago\)/i)).toBeInTheDocument();
+  });
+
   it('dismisses the banner', async () => {
     renderWithProviders(
       <Banners

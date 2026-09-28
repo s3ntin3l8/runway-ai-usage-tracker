@@ -163,6 +163,9 @@ class IngestRequest(BaseModel):
     # sidecars that don't report it yet → server stays permissive.
     self_update_capable: bool | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
+    # Providers with a complete local-card snapshot in this payload. None from
+    # older sidecars means upsert-only; [] is a complete empty report.
+    completed_providers: list[str] | None = None
     last_log_lines: list[str] = Field(default_factory=list)
     # provider_id → {"account_id", "source"}: which account this sidecar
     # stamped each event provider's data with this cycle, and why

@@ -110,6 +110,58 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
     assert card_data["used_value"] == 20.0
 
 
+def test_complete_empty_provider_snapshot_retires_sidecar_card(session):
+    payload = {
+        "provider": "anthropic-sidecar",
+        "sidecar_id": "test-host-complete",
+        "metrics": [
+            {
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "account_label": "user@example.com",
+                "service_name": "Claude",
+                "window_type": "session",
+                "variant": "default",
+                "icon": "🤖",
+                "remaining": "80",
+                "unit": "tokens",
+                "health": "good",
+                "pace": "Stable",
+                "detail": "Test session card",
+                "used_value": 20.0,
+                "limit_value": 100.0,
+                "unit_type": "tokens",
+                "data_source": "local",
+            }
+        ],
+        "events": [],
+        "completed_providers": ["anthropic"],
+    }
+
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+        _ingest(client, payload)
+        payload["metrics"] = []
+        _ingest(client, payload)
+
+    assert (
+        session.exec(
+            select(LatestUsage).where(
+                LatestUsage.provider_id == "anthropic",
+                LatestUsage.account_id == "user@example.com",
+                LatestUsage.window_type == "session",
+            )
+        ).all()
+        == []
+    )
+
+
 def test_legacy_mixed_cookie_and_cli_card_does_not_cache_cookie(session):
     """Legacy mixed cards cannot prove that their browser cookie has the CLI owner's identity."""
     payload = {

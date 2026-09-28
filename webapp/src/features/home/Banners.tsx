@@ -34,9 +34,11 @@ export function Banners({ tokens, anomalies, fleet, dataHealth }: BannersProps) 
   );
 
   const failingLabel = (e: FleetEntry): string => {
-    const gauge = e.critical_gauge;
-    const name = (gauge?.service_name || e.provider_id) as string;
-    const when = gauge?.fetched_at || gauge?.updated_at;
+    const staleCard = [e.critical_gauge, ...(e.secondary_limits ?? [])].find(
+      (card) => card != null && cardStale(card),
+    );
+    const name = (staleCard?.service_name || e.provider_id) as string;
+    const when = staleCard?.fetched_at || staleCard?.updated_at;
     return when ? `${name} (last ok ${timeAgo(when)})` : name;
   };
 

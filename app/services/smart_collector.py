@@ -78,6 +78,9 @@ class SmartCollector:
         self.consecutive_errors: int = 0
         self.last_error_message: str | None = None
         self.cache_age_seconds: float = 0.0
+        # Snapshot reconciliation is allowed only after a fresh, complete
+        # provider response. Cached and skipped results are not snapshots.
+        self.last_collection_state: str = "skipped"
 
         # 429 rate-limit tracking
         self._last_429_time: float | None = None
@@ -226,11 +229,13 @@ class SmartCollector:
             # must not spam — but without it a token-lookup miss makes the provider
             # vanish with zero cards and no trace (the antigravity hash-key bug).
             logger.debug(f"{self.collector_name}: not configured, skipping collection")
+            self.last_collection_state = "skipped"
             return []
 
         # Fast path 2: Return cached data if fresh (no lock needed for read-only check)
         now = time.time()
         if self._should_use_cache(now) and self.last_result is not None:
+            self.last_collection_state = "cached"
             return self._tag_as_cached(self.last_result, now)
 
         # Acquire lock to ensure only one fetch happens per collector
@@ -238,6 +243,7 @@ class SmartCollector:
             # Re-check cache after acquiring lock
             now = time.time()
             if self._should_use_cache(now) and self.last_result is not None:
+                self.last_collection_state = "cached"
                 return self._tag_as_cached(self.last_result, now)
 
             # Don't hammer the API during outages or 429 backoff
@@ -261,7 +267,9 @@ class SmartCollector:
                     msg = f"Retry in {delay_rem:.0f}s"
 
                 if self.last_result:
+                    self.last_collection_state = "failed"
                     return self._tag_as_cached(self.last_result, now)
+                self.last_collection_state = "failed"
                 return [
                     error_card(
                         self.collector_name,
@@ -287,7 +295,9 @@ class SmartCollector:
                             retry_after = getattr(self.collector, "_last_retry_after", None)
                         self._mark_429(retry_after, now)
                         if self.last_result:
+                            self.last_collection_state = "failed"
                             return self._tag_as_cached(self.last_result, now)
+                        self.last_collection_state = "failed"
                         return copy.deepcopy(result)
 
                     # Any other error-shaped card (auth failure, parse error, ...)
@@ -308,12 +318,20 @@ class SmartCollector:
                             now,
                         )
                         if self.last_result:
+                            self.last_collection_state = "failed"
                             return self._tag_as_cached(self.last_result, now)
+                        self.last_collection_state = "failed"
                         return copy.deepcopy(result)
 
                     # Success: clear any 429 backoff
                     self._clear_429()
                     self._mark_success(result, now)
+                    self.last_collection_state = (
+                        "complete"
+                        if not isinstance(self.collector, BaseCollector)
+                        or self.collector.complete_snapshot(result)
+                        else "partial"
+                    )
                     return copy.deepcopy(result)
 
                 # Some providers can confirm that an empty result is a valid
@@ -324,12 +342,20 @@ class SmartCollector:
                 ):
                     self._clear_429()
                     self._mark_success(result, now)
+                    self.last_collection_state = (
+                        "complete"
+                        if not isinstance(self.collector, BaseCollector)
+                        or self.collector.complete_snapshot(result)
+                        else "partial"
+                    )
                     return []
 
                 # Empty result without error
                 self._mark_failure(Exception("Empty result from collector"), now)
                 if self.last_result:
+                    self.last_collection_state = "failed"
                     return self._tag_as_cached(self.last_result, now)
+                self.last_collection_state = "failed"
                 return [
                     error_card(
                         self.collector_name,
@@ -352,9 +378,11 @@ class SmartCollector:
                     logger.info(
                         f"{self.collector_name}: Returning cached data due to fetch failure: {e}"
                     )
+                    self.last_collection_state = "failed"
                     return self._tag_as_cached(self.last_result, now)
 
                 # No cache: Return error card
+                self.last_collection_state = "failed"
                 return [
                     error_card(
                         self.collector_name,

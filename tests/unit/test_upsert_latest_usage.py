@@ -7,8 +7,13 @@ import tempfile
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.models.db import LatestUsage
-from app.services.accumulator import evict_orphan_error_rows, upsert_latest_usage
+from app.models.db import LatestUsage, LatestUsageContribution
+from app.services.accumulator import (
+    evict_orphan_error_rows,
+    mark_latest_usage_source_stale,
+    reconcile_latest_usage_snapshot,
+    upsert_latest_usage,
+)
 
 
 @pytest.fixture(name="session")
@@ -111,6 +116,61 @@ def test_error_suppressed_when_healthy_row_exists(session: Session):
     assert len(rows) == 1
     assert rows[0].account_id == "alice@example.com"
     assert json.loads(rows[0].card_json).get("error_type") is None
+
+
+def test_complete_snapshot_retires_only_its_source_and_keeps_history_tables(session: Session):
+    server_card = _success_card()
+    sidecar_card = _success_card()
+    sidecar_card.update(
+        {
+            "window_type": "session",
+            "variant": "sidecar-session",
+            "data_source": "local",
+            "sidecar_id": "host-a",
+        }
+    )
+    upsert_latest_usage(session, server_card, source_id="server:chatgpt")
+    upsert_latest_usage(
+        session,
+        sidecar_card,
+        sidecar_id_override="host-a",
+        source_id="sidecar:host-a:chatgpt",
+    )
+    session.commit()
+
+    removed = reconcile_latest_usage_snapshot(
+        session,
+        provider_id="chatgpt",
+        account_id="alice@example.com",
+        source_id="sidecar:host-a:chatgpt",
+        reported_keys=set(),
+    )
+    session.commit()
+
+    rows = session.exec(select(LatestUsage)).all()
+    assert removed == 1
+    assert [(r.window_type, r.account_id) for r in rows] == [("weekly", "alice@example.com")]
+    contributions = session.exec(select(LatestUsageContribution)).all()
+    assert [(r.source_id, r.window_type) for r in contributions] == [("server:chatgpt", "weekly")]
+
+
+def test_real_failure_marks_last_good_source_stale(session: Session):
+    upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+    session.commit()
+
+    changed = mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    card = json.loads(row.card_json)
+    assert changed == 1
+    assert card["stale"] is True
+    assert card["collection_failing"] is True
 
 
 def test_default_error_suppressed_when_real_account_exists_same_slot(session: Session):
