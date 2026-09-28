@@ -86,6 +86,47 @@ describe('PendingUsageEventsCard', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('keeps events without a session separate and assigns one event', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'xai',
+          sidecar_id: 'laptop',
+          session_id: null,
+          event_ids: [44],
+          event_count: 1,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:00:00Z',
+          model_ids: [],
+        },
+      ],
+      total_events: 1,
+      total_groups: 1,
+      offset: 0,
+      limit: 100,
+    });
+    vi.mocked(api.assignPendingUsageEvents).mockResolvedValue({ assigned: 1, provider_id: 'xai' });
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    expect(await screen.findByText(/No session ID · event 44/)).toBeInTheDocument();
+    expect(screen.getByText(/unknown model/)).toBeInTheDocument();
+    const account = screen.getByRole('combobox', { name: /account for xai session event 44/i });
+    await user.selectOptions(account, 'alice@example.com');
+    await user.click(screen.getByRole('button', { name: 'Assign event' }));
+
+    await waitFor(() => expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([44], 'alice@example.com'));
+    expect(toast.success).toHaveBeenCalledWith('1 usage event assigned');
+  });
+
+  it('shows a useful message when pending usage cannot be loaded', async () => {
+    vi.mocked(api.fetchPendingUsageSessions).mockRejectedValue(new Error('offline'));
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    expect(await screen.findByText('Could not load unassigned usage events. Try refreshing the page.'))
+      .toBeInTheDocument();
+  });
+
   it('labels and warns about a default-keyed account, including a discovered default', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
       providers: [
