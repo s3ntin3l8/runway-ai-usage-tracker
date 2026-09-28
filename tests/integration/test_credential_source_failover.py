@@ -125,3 +125,52 @@ async def test_collector_retries_next_enabled_source_after_401(monkeypatch):
     assert result[0]["remaining"] == "healthy"
     assert collector.calls == ["rejected", "working"]
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_collector_returns_empty_when_all_sources_fail_auth(monkeypatch):
+    cache = TokenCache()
+    await cache.store(
+        "openrouter",
+        {"api_key": "rejected"},  # pragma: allowlist secret — fake rejected credential
+        account_id="alice@example.com",
+        source_id="only-source",
+        source_metadata={"enabled": True, "priority": 0},
+    )
+    collector = _CredentialProbeCollector(cache)
+    manager = CollectorManager()
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr(manager, "_record_source_health", lambda *_args: None)
+    manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
+        collector, "OpenRouter", ttl=0
+    )
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert result == []
+    assert collector.calls == ["rejected"]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_collector_returns_empty_when_every_source_is_disabled(monkeypatch):
+    cache = TokenCache()
+    await cache.store(
+        "openrouter",
+        {"api_key": "disabled"},  # pragma: allowlist secret — fake disabled credential
+        account_id="alice@example.com",
+        source_id="disabled-source",
+        source_metadata={"enabled": False, "priority": 0},
+    )
+    collector = _CredentialProbeCollector(cache)
+    manager = CollectorManager()
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
+        collector, "OpenRouter", ttl=0
+    )
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert result == []
+    assert collector.calls == []
+    await manager.close()

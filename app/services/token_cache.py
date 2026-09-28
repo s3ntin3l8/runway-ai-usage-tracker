@@ -147,7 +147,11 @@ class TokenCache:
                 account_label = email
 
         if not account_id:
-            account_id = self._derive_account_id(tokens)
+            account_id = (
+                selection[1]
+                if selection and selection[0] == provider
+                else self._derive_account_id(tokens)
+            )
         # Key by the canonical form so a sidecar-pushed ``Alice@X.com`` and
         # the collector's ``alice@x.com`` share one cache slot.
         account_id = canonical_account_id(account_id)
@@ -459,7 +463,12 @@ class TokenCache:
         entry = self._source_cache.get(provider, {}).get(account_id, {}).get(selection[2])
         if entry is None and account_id != "default":
             entry = self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
-        return entry[0] if entry else None
+        return dict(entry[0]) if entry else None
+
+    def is_source_selected(self, provider: str) -> bool:
+        """Whether this execution context is pinned to a source for provider."""
+        selection = _active_source.get()
+        return bool(selection and selection[0] == provider)
 
     def current_source_metadata(self, provider: str, account_id: str) -> dict[str, Any] | None:
         selection = _active_source.get()
@@ -470,7 +479,7 @@ class TokenCache:
         entry = self._source_cache.get(provider, {}).get(account_id, {}).get(selection[2])
         if entry is None and account_id != "default":
             entry = self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
-        return entry[1] if entry else None
+        return dict(entry[1]) if entry else None
 
     async def remove_source(self, provider: str, account_id: str, source_id: str) -> bool:
         """Remove one live secret bundle while preserving its durable metadata."""

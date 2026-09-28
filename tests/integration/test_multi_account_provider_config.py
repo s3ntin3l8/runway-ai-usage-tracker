@@ -267,6 +267,36 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     }
 
 
+def test_credential_source_preferences_reject_unknown_and_duplicate_ids(
+    client: TestClient, session: Session
+):
+    session.add(
+        CredentialSource(
+            provider_id="openrouter",
+            account_id="alice@example.com",
+            source_id="known-source",
+            source_type="sidecar",
+            source_label="auth.json",
+        )
+    )
+    session.commit()
+    endpoint = "/api/v1/system/provider-config/openrouter/alice@example.com/credential-sources"
+    preference = {"source_id": "known-source", "enabled": False, "priority": 0}
+    duplicate = client.patch(endpoint, json={"sources": [preference, preference]})
+    unknown = client.patch(
+        endpoint,
+        json={"sources": [{"source_id": "unknown-source", "enabled": True, "priority": 0}]},
+    )
+    unknown_provider = client.patch(
+        "/api/v1/system/provider-config/not-a-provider/alice@example.com/credential-sources",
+        json={"sources": []},
+    )
+
+    assert duplicate.status_code == 422
+    assert unknown.status_code == 404
+    assert unknown_provider.status_code == 404
+
+
 def test_explicit_put_preserves_canonical_field_derivation(client: TestClient):
     """The top-level (legacy) fields come from the 'default' row when present,
     or the first row when no 'default' row exists."""
@@ -468,6 +498,12 @@ def test_kimi_api_key_explicit_put_mirrors_to_token_cache(client: TestClient):
     tokens = _cache_tokens("kimi_coding", "default")
     assert tokens["api_key"] == "sk-kimi-test-123"  # pragma: allowlist secret
     assert tokens["oauth_token"] == "sk-kimi-test-123"  # pragma: allowlist secret
+    from app.services.token_cache import token_cache
+
+    sources = token_cache._source_cache["kimi_coding"]["default"]
+    config_source = sources["config:kimi_coding:default"]
+    assert config_source[0]["api_key"] == "sk-kimi-test-123"  # pragma: allowlist secret
+    assert config_source[1]["source_type"] == "config"
 
 
 def test_kimi_api_key_per_account_put_mirrors_to_token_cache(client: TestClient):

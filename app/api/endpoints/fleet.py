@@ -248,17 +248,16 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         )
         if not isinstance(actual_acc_id, str):
             actual_acc_id = a_id or "default"
-        if payload.sidecar_id:
-            touch_source(
-                session,
-                provider_id=p_id,
-                account_id=actual_acc_id,
-                source_id=source_id,
-                source_type=source_type,
-                source_label=source_label,
-                credential_origin=origin,
-                sidecar_id=payload.sidecar_id,
-            )
+        touch_source(
+            session,
+            provider_id=p_id,
+            account_id=actual_acc_id,
+            source_id=source_id,
+            source_type=source_type,
+            source_label=source_label,
+            credential_origin=origin,
+            sidecar_id=payload.sidecar_id,
+        )
         tokens_received_count += len(p_tokens)
         logger.info(
             f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {payload.provider}"

@@ -1653,30 +1653,44 @@ async def _update_credential_source_preferences(
     }
     if set(by_id) - set(known):
         raise HTTPException(status_code=404, detail="Unknown credential source")
-    all_sources = known
-    if all_machines:
-        all_sources = {
-            source.source_id: source
-            for source in session.exec(
-                select(CredentialSource).where(
-                    CredentialSource.provider_id == provider_id,
-                    CredentialSource.account_id == account_id,
-                )
-            ).all()
-        }
     for item in preferences:
         source = known[item.source_id]
         siblings = [source]
         if all_machines and source.credential_origin and source.sidecar_id:
             siblings = [
                 row
-                for row in all_sources.values()
+                for row in known.values()
                 if row.credential_origin == source.credential_origin and row.sidecar_id
             ]
         for sibling in siblings:
             sibling.enabled = item.enabled
             sibling.priority = item.priority
             session.add(sibling)
+
+
+async def _store_manual_config_source(
+    session: Session, provider_id: str, account_id: str, tokens: dict[str, str]
+) -> None:
+    """Keep dashboard credentials in their durable and in-memory source bundle."""
+    from app.services.credential_sources import touch_source
+
+    source_id = f"config:{provider_id}:{account_id}"
+    await token_cache.store(
+        provider_id,
+        tokens,
+        account_id=account_id,
+        source="config",
+        source_id=source_id,
+        source_metadata={"source_type": "config", "source_label": "Manual configuration"},
+    )
+    touch_source(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        source_id=source_id,
+        source_type="config",
+        source_label="Manual configuration",
+    )
 
 
 async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-field validation + persistence, refactor tracked separately
@@ -1841,14 +1855,11 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             if provider_id == "opencode":
                 tokens["api_key"] = row.api_key
 
-            await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
+            await _store_manual_config_source(session, provider_id, account_id, tokens)
         elif row.api_key and provider_id == "xai":
             # A dashboard paste is an access bearer, not a refresh token.
-            await token_cache.store(
-                provider_id,
-                {"xai_access": row.api_key},
-                account_id=account_id,
-                source="config",
+            await _store_manual_config_source(
+                session, provider_id, account_id, {"xai_access": row.api_key}
             )
     oai_sc_val: str | None = None  # may be extracted from pasted cookie string below
     if body.clear_session_cookie is True:
@@ -1956,7 +1967,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             if provider_id == "chatgpt" and oai_sc_val:
                 tokens["cookie_oai-sc"] = oai_sc_val
 
-            await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
+            await _store_manual_config_source(session, provider_id, account_id, tokens)
 
     session.commit()
     # A replaced/removed credential deserves a fresh verdict: drop any stale

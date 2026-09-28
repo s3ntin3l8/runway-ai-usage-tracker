@@ -22,7 +22,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ArrowDown, ArrowUp, GripVertical } from 'lucide-react';
+import { GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   patchCredentialSources,
@@ -452,12 +452,18 @@ function CredentialSourcesEditor({
   allMachines: boolean;
   onAllMachinesChange: (value: boolean) => void;
 }) {
-  const move = (index: number, delta: number) => {
-    const nextIndex = index + delta;
-    if (nextIndex < 0 || nextIndex >= sources.length) return;
-    const next = [...sources];
-    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-    onChange(next);
+  const sourceSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const handleSourceDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = sources.findIndex((source) => source.source_id === active.id);
+    const newIndex = sources.findIndex((source) => source.source_id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    onChange(arrayMove(sources, oldIndex, newIndex));
   };
 
   return (
@@ -479,61 +485,89 @@ function CredentialSourcesEditor({
       {sources.length === 0 ? (
         <p className="text-[12px] text-fg-muted">Sources will appear after the next credential scan.</p>
       ) : (
-        <ul className="divide-y divide-border" aria-label="Credential sources">
-          {sources.map((source, index) => (
-            <li key={source.source_id} className="flex items-center gap-2 py-2">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[12px] font-medium">
-                  {source.source_label || source.source_type}
-                  {source.sidecar_id ? (
-                    <span className="ml-1 font-normal text-fg-subtle">· {source.sidecar_id}</span>
-                  ) : null}
-                </p>
-                <p className="text-[11px] text-fg-subtle">
-                  {source.available
-                    ? source.health === 'auth_failed'
-                      ? 'Authentication failed'
-                      : 'Available'
-                    : 'Unavailable · awaiting refresh'}
-                  {source.last_seen ? ` · seen ${new Date(source.last_seen).toLocaleString()}` : ''}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Move ${source.source_label} earlier`}
-                disabled={index === 0}
-                onClick={() => move(index, -1)}
-              >
-                <ArrowUp className="size-3.5" aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Move ${source.source_label} later`}
-                disabled={index === sources.length - 1}
-                onClick={() => move(index, 1)}
-              >
-                <ArrowDown className="size-3.5" aria-hidden />
-              </Button>
-              <Switch
-                checked={source.enabled}
-                onCheckedChange={(enabled) =>
-                  onChange(
-                    sources.map((item) =>
-                      item.source_id === source.source_id ? { ...item, enabled } : item,
-                    ),
-                  )
-                }
-                aria-label={`Enable ${source.source_label}`}
-              />
-            </li>
-          ))}
-        </ul>
+        <DndContext
+          sensors={sourceSensors}
+          collisionDetection={closestCenter}
+          onDragStart={() => setPullToRefreshSuspended(true)}
+          onDragEnd={(event) => {
+            setPullToRefreshSuspended(false);
+            handleSourceDragEnd(event);
+          }}
+          onDragCancel={() => setPullToRefreshSuspended(false)}
+        >
+          <SortableContext
+            items={sources.map((source) => source.source_id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <ul className="divide-y divide-border" aria-label="Credential sources">
+              {sources.map((source) => (
+                <SortableCredentialSourceRow
+                  key={source.source_id}
+                  source={source}
+                  onToggle={(enabled) =>
+                    onChange(
+                      sources.map((item) =>
+                        item.source_id === source.source_id ? { ...item, enabled } : item,
+                      ),
+                    )
+                  }
+                />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
       )}
     </fieldset>
+  );
+}
+
+function SortableCredentialSourceRow({
+  source,
+  onToggle,
+}: {
+  source: CredentialSourceSummary;
+  onToggle: (enabled: boolean) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: source.source_id,
+  });
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-2 py-2 ${isDragging ? 'z-10 opacity-60' : ''}`}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="touch-none rounded p-1 text-fg-muted"
+        aria-label={`Reorder ${source.source_label || source.source_type}`}
+      >
+        <GripVertical className="size-3.5" aria-hidden />
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] font-medium">
+          {source.source_label || source.source_type}
+          {source.sidecar_id ? (
+            <span className="ml-1 font-normal text-fg-subtle">· {source.sidecar_id}</span>
+          ) : null}
+        </p>
+        <p className="text-[11px] text-fg-subtle">
+          {source.available
+            ? source.health === 'auth_failed'
+              ? 'Authentication failed'
+              : 'Available'
+            : 'Unavailable · awaiting refresh'}
+          {source.last_seen ? ` · seen ${new Date(source.last_seen).toLocaleString()}` : ''}
+        </p>
+      </div>
+      <Switch
+        checked={source.enabled}
+        onCheckedChange={onToggle}
+        aria-label={`Enable ${source.source_label || source.source_type}`}
+      />
+    </li>
   );
 }
 

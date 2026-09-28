@@ -263,6 +263,8 @@ class CredentialProvider:
             )
             kind = metadata.get("source_type") or metadata.get("source") or "server"
             return CredentialMap(results, sources=dict.fromkeys(results, kind))
+        if token_cache.is_source_selected(provider_id):
+            return CredentialMap({}, sources={})
 
         discovered: dict[str, str] = {}
         sources: dict[str, str] = {}
@@ -453,6 +455,8 @@ class CredentialProvider:
                 if selected.get(key):
                     return selected[key]
             return None
+        if token_cache.is_source_selected(provider_id):
+            return None
         try:
             cfg: ProviderConfig | None
             if account_id is not None:
@@ -500,6 +504,8 @@ class CredentialProvider:
             ):
                 if selected.get(key):
                     return selected[key]
+            return None
+        if token_cache.is_source_selected(provider_id):
             return None
         try:
             cfg: ProviderConfig | None

@@ -568,7 +568,7 @@ class CollectorManager:
                     provider_id, account_id, candidate["source_id"], "healthy"
                 )
                 return result
-            return result
+            return []
 
     @staticmethod
     def _record_source_health(

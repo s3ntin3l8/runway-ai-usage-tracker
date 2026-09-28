@@ -79,6 +79,68 @@ async def test_same_type_credentials_remain_separate_sources(cache):
 
 
 @pytest.mark.asyncio
+async def test_active_source_context_routes_all_cache_reads_and_updates(cache):
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "source-token", "account_label": "Alice"},
+        account_id="alice@example.com",
+        source_id="sidecar:host-a",
+        source_metadata={"source_type": "sidecar"},
+    )
+
+    async with cache.using_source("anthropic", "alice@example.com", "sidecar:host-a"):
+        source_accounts = await cache.get_accounts("anthropic")
+        assert source_accounts[0]["account_id"] == "alice@example.com"
+        assert source_accounts[0]["tokens"]["oauth_token"] == "source-token"
+        assert await cache.get("anthropic", "alice@example.com") == {
+            "oauth_token": "source-token",
+            "account_label": "Alice",
+        }
+        tokens, metadata = await cache.get_with_metadata("anthropic", "alice@example.com")
+        assert tokens["oauth_token"] == "source-token"
+        assert metadata["source_type"] == "sidecar"
+        assert cache.current_source_tokens("anthropic", "default")["oauth_token"] == "source-token"
+        assert cache.current_source_metadata("anthropic", "default")["source_type"] == "sidecar"
+
+        await cache.store("anthropic", {"refresh_token": "rotated"})
+        assert await cache.get_token("anthropic", "refresh_token", "alice@example.com") == "rotated"
+
+    assert await cache.get("anthropic", "alice@example.com") is not None
+
+
+@pytest.mark.asyncio
+async def test_stale_source_push_keeps_fresh_oauth_but_merges_refresh_and_other_fields(cache):
+    future_expiry = str(int((time.time() + 3600) * 1000))
+    past_expiry = str(int((time.time() - 3600) * 1000))
+    await cache.store(
+        "antigravity",
+        {
+            "oauth_token": "fresh-token",  # pragma: allowlist secret
+            "refresh_token": "fresh-refresh",  # pragma: allowlist secret
+            "expiry_date": future_expiry,
+        },
+        account_id="alice@example.com",
+        source_id="sidecar:host-a",
+    )
+    await cache.store(
+        "antigravity",
+        {
+            "oauth_token": "stale-token",  # pragma: allowlist secret
+            "refresh_token": "rotated-refresh",  # pragma: allowlist secret
+            "expiry_date": past_expiry,
+            "account_label": "Alice",
+        },
+        account_id="alice@example.com",
+        source_id="sidecar:host-a",
+    )
+
+    candidate = (await cache.get_source_candidates("antigravity", "alice@example.com"))[0]
+    assert candidate["tokens"]["oauth_token"] == "fresh-token"
+    assert candidate["tokens"]["refresh_token"] == "rotated-refresh"
+    assert candidate["tokens"]["account_label"] == "Alice"
+
+
+@pytest.mark.asyncio
 async def test_source_bundles_expire_independently(cache):
     short_cache = TokenCache(ttl_seconds=0)
     await short_cache.store(
@@ -538,3 +600,23 @@ async def test_staler_sidecar_push_keeps_config_origin(cache):
     assert tokens["oauth_token"] == "fresh"
     stats = await cache.get_all_stats()
     assert stats["gemini"]["user@example.com"]["source"] == "config"
+
+
+@pytest.mark.asyncio
+async def test_source_lookups_return_snapshots(cache):
+    await cache.store(
+        "openrouter",
+        {"api_key": "original"},  # pragma: allowlist secret — fake credential
+        account_id="alice@example.com",
+        source_id="source-a",
+        source_metadata={"source_type": "sidecar"},
+    )
+    async with cache.using_source("openrouter", "alice@example.com", "source-a"):
+        tokens = cache.current_source_tokens("openrouter", "alice@example.com")
+        metadata = cache.current_source_metadata("openrouter", "alice@example.com")
+        assert tokens is not None and metadata is not None
+        tokens["api_key"] = "mutated"  # pragma: allowlist secret — fake credential
+        metadata["source_type"] = "mutated"
+    candidates = await cache.get_source_candidates("openrouter", "alice@example.com")
+    assert candidates[0]["tokens"]["api_key"] == "original"  # pragma: allowlist secret
+    assert candidates[0]["source_type"] == "sidecar"
