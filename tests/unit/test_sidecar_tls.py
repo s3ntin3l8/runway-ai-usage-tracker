@@ -81,3 +81,139 @@ def test_reaped_certifi_bundle_falls_through_to_default(monkeypatch):
     ctx = tls.build_context("https://server")
     assert isinstance(ctx, ssl.SSLContext)
     assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+# --- config threading (B1): every real network call site must honour the
+# sidecar's own ca_bundle / tls_insecure config, not just sidecar.build_ssl_context
+# in isolation. Each call site used to call build_context(url) / build_ssl_context(url)
+# with NO config, silently ignoring an operator's insecure/ca_bundle opt-in.
+
+
+class _FakeResp:
+    def __init__(self, body=b"{}", code=200):
+        self._body = body
+        self.code = code
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def getcode(self):
+        return self.code
+
+    def read(self):
+        return self._body
+
+
+def test_health_check_honours_tls_insecure_config(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        captured["context"] = context
+        return _FakeResp()
+
+    monkeypatch.setattr(sidecar.request, "urlopen", fake_urlopen)
+    assert sidecar.health_check("https://server", config={"tls_insecure": True}) is True
+    assert captured["context"].verify_mode == ssl.CERT_NONE
+
+
+def test_http_post_signed_honours_tls_insecure_config(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        captured["context"] = context
+        return _FakeResp(body=b'{"status": "ok"}')
+
+    monkeypatch.setattr(sidecar.request, "urlopen", fake_urlopen)
+    success, _result, _code = sidecar.http_post_signed(
+        "https://server/x", {"a": 1}, "key", config={"tls_insecure": True}
+    )
+    assert success
+    assert captured["context"].verify_mode == ssl.CERT_NONE
+
+
+def test_http_post_signed_with_retry_threads_config(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        captured["context"] = context
+        return _FakeResp(body=b'{"status": "ok"}')
+
+    monkeypatch.setattr(sidecar.request, "urlopen", fake_urlopen)
+    success, _result, _code = sidecar.http_post_signed_with_retry(
+        "https://server/x", {"a": 1}, "key", config={"tls_insecure": True}
+    )
+    assert success
+    assert captured["context"].verify_mode == ssl.CERT_NONE
+
+
+def test_fetch_config_payload_honours_tls_insecure_config(monkeypatch):
+    from scripts.sidecar_pkg import credentials
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        captured["context"] = context
+        return _FakeResp(body=b'{"config": {}}')
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    payload = credentials._fetch_config_payload("https://server", config={"tls_insecure": True})
+    assert payload == {"config": {}}
+    assert captured["context"].verify_mode == ssl.CERT_NONE
+
+
+def test_pairing_redeem_honours_tls_insecure_config(monkeypatch):
+    from scripts.sidecar_pkg import pairing
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        captured["context"] = context
+        return _FakeResp(body=b'{"api_url": "https://server", "api_key": "k"}')
+
+    monkeypatch.setattr(pairing.request, "urlopen", fake_urlopen)
+    target = pairing.PairTarget(server="https://server", code="ABCD1234")
+    creds = pairing.redeem(target, config={"tls_insecure": True})
+    assert creds == {"api_url": "https://server", "api_key": "k"}
+    assert captured["context"].verify_mode == ssl.CERT_NONE
+
+
+def test_manifest_post_honours_tls_insecure_config(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        captured["context"] = context
+        return _FakeResp(body=b"{}")
+
+    monkeypatch.setattr(sidecar.urllib.request, "urlopen", fake_urlopen)
+    sidecar._post_credential_manifest(
+        api_url="https://server",
+        api_key="key",  # pragma: allowlist secret
+        sidecar_id="host",
+        entries=[],
+        config={"tls_insecure": True},
+    )
+    assert captured["context"].verify_mode == ssl.CERT_NONE
+
+
+def test_queue_flush_config_reaches_the_post(monkeypatch, tmp_path):
+    """queue_flush's own config param must reach http_post_signed_with_retry,
+    not just get accepted and dropped."""
+    captured = {}
+
+    def fake_post(url, data, api_key, config=None):
+        captured["config"] = config
+        return True, {"status": "ok"}, 200
+
+    monkeypatch.setattr(sidecar, "http_post_signed", fake_post)
+    monkeypatch.setattr(sidecar, "get_queue_dir", lambda: tmp_path)
+
+    queue_dir = tmp_path
+    queue_dir.mkdir(exist_ok=True)
+    (queue_dir / "1.jsonl").write_text('{"payload": {"a": 1}}\n', encoding="utf-8")
+
+    sentinel_config = {"tls_insecure": True}
+    sidecar.queue_flush("https://server", "key", config=sentinel_config)
+    assert captured["config"] is sentinel_config

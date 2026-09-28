@@ -376,22 +376,11 @@ __REGISTRY__: dict[str, Any] = {
                 },
             ],
         },
-        "kimi": {
+        "kimi_api": {
             "name": "Kimi API",
             "icon": "\ud83c\udf19",
             "rules": [
-                {
-                    "type": "env",
-                    "variable": "KIMI_AUTH_TOKEN",
-                    "mapping": {"value": "cookie_kimi-auth"},
-                },
                 {"type": "env", "variable": "KIMI_API_KEY", "mapping": {"value": "api_key"}},
-                {
-                    "type": "cookie",
-                    "domains": ["kimi.moonshot.cn", "kimi.com"],
-                    "name": "kimi-auth",
-                    "mapping": {"value": "cookie_kimi-auth"},
-                },
             ],
         },
         "kimi_k2": {
@@ -1025,10 +1014,18 @@ def _unlink_queue_file(dir_fd: int, name: str) -> None:
         os.close(fd)
 
 
-def queue_push(payload: dict[str, Any]) -> bool:
-    """Add payload to the bounded offline queue; return False when full."""
+def queue_push(payload: dict[str, Any], max_size_mb: float | None = None) -> bool:
+    """Add payload to the bounded offline queue; return False when full.
+
+    ``max_size_mb`` is the sidecar config's ``queue_max_size_mb`` key
+    (default 10); an unset, non-positive or otherwise invalid value falls
+    back to 10 so a bad config value can't silently disable the cap.
+    """
     if os.name == "nt":
         ensure_dirs()
+
+    if not isinstance(max_size_mb, (int, float)) or max_size_mb <= 0:
+        max_size_mb = 10
 
     # Create queue file for today
     today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
@@ -1036,14 +1033,15 @@ def queue_push(payload: dict[str, Any]) -> bool:
 
     entry = {"ts": int(time.time()), "payload": payload}
     line = json.dumps(entry, separators=(",", ":")) + "\n"
-    max_size_bytes = 10 * 1024 * 1024
+    max_size_bytes = max_size_mb * 1024 * 1024
 
     if os.name == "nt":
         total_size = sum(f.stat().st_size for f in get_queue_dir().glob("*.jsonl"))
         if total_size + len(line.encode("utf-8")) > max_size_bytes:
             logging.error(
-                "Offline queue reached its 10 MB limit; retaining existing entries and "
-                "skipping this payload; the next collection cycle will retry source data."
+                "Offline queue reached its %s MB limit; retaining existing entries and "
+                "skipping this payload; the next collection cycle will retry source data.",
+                max_size_mb,
             )
             return False
         with open(queue_file, "a") as f:
@@ -1060,8 +1058,9 @@ def queue_push(payload: dict[str, Any]) -> bool:
                     os.close(fd)
             if total_size + len(line.encode("utf-8")) > max_size_bytes:
                 logging.error(
-                    "Offline queue reached its 10 MB limit; retaining existing entries and "
-                    "skipping this payload; the next collection cycle will retry source data."
+                    "Offline queue reached its %s MB limit; retaining existing entries and "
+                    "skipping this payload; the next collection cycle will retry source data.",
+                    max_size_mb,
                 )
                 return False
             fd = _open_queue_file(
@@ -1075,18 +1074,24 @@ def queue_push(payload: dict[str, Any]) -> bool:
             os.close(dir_fd)
 
     logging.info(f"Queued payload for retry: {queue_file.name}")
-    queue_rotate()
+    queue_rotate(max_size_mb)
     return True
 
 
-def queue_rotate(max_size_mb: int = 10, config: dict[str, Any] | None = None) -> None:
-    """Report queue growth without deleting unacknowledged payloads."""
+def queue_rotate(max_size_mb: float | None = None, config: dict[str, Any] | None = None) -> None:
+    """Report queue growth without deleting unacknowledged payloads.
+
+    ``max_size_mb`` wins when given (matches ``queue_push``'s already-resolved
+    limit, so both stay in agreement about what "full" means within one
+    call). Otherwise falls back to ``config["queue_max_size_mb"]``, then 10.
+    """
     queue_dir = get_queue_dir()
     if os.name == "nt" and not queue_dir.exists():
         return
 
-    if max_size_mb is None and config:
-        max_size_mb = config.get("queue_max_size_mb", 10)
+    if not isinstance(max_size_mb, (int, float)) or max_size_mb <= 0:
+        cfg_value = (config or {}).get("queue_max_size_mb")
+        max_size_mb = cfg_value if isinstance(cfg_value, (int, float)) and cfg_value > 0 else 10
 
     max_size_bytes = max_size_mb * 1024 * 1024
 
@@ -1129,6 +1134,7 @@ def queue_flush(
     api_url: str,
     api_key: str,
     stop_event: threading.Event | None = None,
+    config: dict[str, Any] | None = None,
 ) -> int:
     """Flush all queued payloads to server. Returns count of successful sends."""
     queue_dir = get_queue_dir()
@@ -1187,7 +1193,7 @@ def queue_flush(
                     payload = entry.get("payload", {})
 
                     success, result, _ = http_post_signed_with_retry(
-                        target_url, payload, api_key, stop_event=stop_event
+                        target_url, payload, api_key, stop_event=stop_event, config=config
                     )
 
                     events_failed = bool(
@@ -1260,28 +1266,26 @@ def build_ssl_context(api_url: str, config: dict[str, Any] | None = None) -> ssl
     frozen sidecar bundles ``certifi`` so a valid public cert verifies without a
     system CA store.
     """
-    from scripts.sidecar_pkg.tls import build_context
+    from scripts.sidecar_pkg.tls import build_context_from_config
 
-    config = config or {}
-    cfg_insecure = str(config.get("tls_insecure", "")).strip().lower() in ("1", "true", "yes", "on")
-    return build_context(
-        api_url,
-        ca_bundle=config.get("ca_bundle"),
-        insecure=True if cfg_insecure else None,
-    )
+    return build_context_from_config(api_url, config)
 
 
-def health_check(api_url: str, timeout: int = 5) -> bool:
+def health_check(api_url: str, timeout: int = 5, config: dict[str, Any] | None = None) -> bool:
     """Check if server is healthy before pushing."""
     try:
         req = request.Request(f"{api_url.rstrip('/')}/api/health", method="GET")
-        with request.urlopen(req, timeout=timeout, context=build_ssl_context(api_url)) as resp:
+        with request.urlopen(
+            req, timeout=timeout, context=build_ssl_context(api_url, config)
+        ) as resp:
             return resp.getcode() == 200
     except Exception:
         return False
 
 
-def http_post_signed(url: str, data: dict[str, Any], api_key: str) -> tuple[bool, Any, int]:
+def http_post_signed(
+    url: str, data: dict[str, Any], api_key: str, config: dict[str, Any] | None = None
+) -> tuple[bool, Any, int]:
     """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
     timestamp = str(int(time.time()))
     body = json.dumps(data, separators=(",", ":")).encode("utf-8")
@@ -1296,7 +1300,7 @@ def http_post_signed(url: str, data: dict[str, Any], api_key: str) -> tuple[bool
 
     req = request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with request.urlopen(req, timeout=15, context=build_ssl_context(url)) as resp:
+        with request.urlopen(req, timeout=15, context=build_ssl_context(url, config)) as resp:
             return True, json.loads(resp.read().decode("utf-8")), resp.getcode()
     except error.HTTPError as e:
         try:
@@ -1314,6 +1318,7 @@ def http_post_signed_with_retry(
     max_attempts: int = 3,
     backoff_seconds: int = 5,
     stop_event: threading.Event | None = None,
+    config: dict[str, Any] | None = None,
 ) -> tuple[bool, Any, int]:
     """POST with exponential backoff retry.
 
@@ -1324,7 +1329,7 @@ def http_post_signed_with_retry(
     last_code = 500
 
     for attempt in range(max_attempts):
-        success, result, code = http_post_signed(url, data, api_key)
+        success, result, code = http_post_signed(url, data, api_key, config)
 
         if success:
             return True, result, code
@@ -3187,6 +3192,7 @@ def _post_credential_manifest(
     entries: list[dict[str, str]],
     completed_providers: list[str] | None = None,
     on_resolved: Callable[[dict[str, dict[str, str]]], None] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> None:
     """Send the silent-listener manifest POST (PR #288, PR #290 round-2 review).
 
@@ -3237,11 +3243,13 @@ def _post_credential_manifest(
             "X-Signature": sig,
         },
     )
-    from scripts.sidecar_pkg.tls import build_context  # late import keeps
+    from scripts.sidecar_pkg.tls import build_context_from_config  # late import keeps
     # stdlib-heavy sidecar slim when TLS is unused.
 
     try:
-        with urllib.request.urlopen(req, timeout=5, context=build_context(url)) as resp:
+        with urllib.request.urlopen(
+            req, timeout=5, context=build_context_from_config(url, config)
+        ) as resp:
             if resp.getcode() != 200:
                 logging.debug(f"manifest: server returned {resp.getcode()}")
                 return
@@ -3330,6 +3338,7 @@ def run_collection(
                 # Signed → the server returns account ids + tag hints; it
                 # redacts both for unsigned callers on a non-loopback bind.
                 api_key=os.environ.get("RUNWAY_API_KEY") or config.get("api_key") or None,
+                config=config,
             )
             # ``fetched is None`` distinguishes outage from a valid
             # empty response. The cache skips the update on None, so
@@ -3665,6 +3674,7 @@ def run_collection(
             entries=blocked_origins_this_cycle,
             completed_providers=completed_providers_this_cycle,
             on_resolved=_consume_resolved_into_cache,
+            config=config,
         )
     except Exception as _e:
         logging.debug(f"manifest: skipped ({_e})")
@@ -3781,7 +3791,7 @@ class DaemonRunner:
                 self_update_capable = None
 
             # Try to flush queue first
-            queue_flush(api_url, api_key, stop_event=self._stop_event)
+            queue_flush(api_url, api_key, stop_event=self._stop_event, config=self._config)
 
             # Spec §7.3: cap each POST at 1000 events. Bootstrap (90-day backfill)
             # commonly produces 5k–50k events; a single payload would exceed the
@@ -3827,6 +3837,7 @@ class DaemonRunner:
                     max_attempts=self._config.get("retry_attempts", 3),
                     backoff_seconds=self._config.get("retry_backoff_seconds", 5),
                     stop_event=self._stop_event,
+                    config=self._config,
                 )
                 if not success:
                     break  # don't keep firing batches if the server is rejecting them
@@ -3954,7 +3965,7 @@ class DaemonRunner:
             # Only queue metrics payloads; heartbeats don't need to be queued
             queue_saved = True
             if metrics or events:
-                queue_saved = queue_push(payload)
+                queue_saved = queue_push(payload, self._config.get("queue_max_size_mb"))
 
             with self._lock:
                 self.last_error = str(result)
@@ -4129,6 +4140,21 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
     from scripts.sidecar_pkg import pairing
     from scripts.sidecar_pkg.identity import normalize_sidecar_id
 
+    path = Path(config_path) if config_path else get_sidecar_dir() / "config.json"
+    # Best-effort read of just the two TLS keys from any existing config —
+    # NOT load_config(), which creates a template and exits(1) when the file
+    # doesn't exist yet, the common case for a first-time --pair. A sidecar
+    # re-pairing against a self-signed or otherwise custom-CA server needs
+    # these honoured on the redeem call itself, same as every other request
+    # this sidecar makes.
+    tls_config: dict[str, Any] | None = None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            tls_config = {k: raw[k] for k in ("ca_bundle", "tls_insecure") if k in raw}
+    except (OSError, ValueError):
+        pass
+
     try:
         if len(values) == 1 and pairing.is_pair_url(values[0]):
             target = pairing.parse_pair_url(values[0])
@@ -4143,12 +4169,13 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
         # The CLI invocation itself is the explicit confirmation, but still say
         # out loud where this machine's data will go.
         print(f"Pairing with {target.server} …")
-        creds = pairing.redeem(target, hostname=normalize_sidecar_id(socket.gethostname()))
+        creds = pairing.redeem(
+            target, hostname=normalize_sidecar_id(socket.gethostname()), config=tls_config
+        )
     except pairing.PairingError as exc:
         print(f"Pairing failed: {exc}")
         return 1
     ensure_dirs()
-    path = Path(config_path) if config_path else get_sidecar_dir() / "config.json"
     pairing.write_config(path, creds["api_url"], creds["api_key"])
     print(f"Paired. Wrote api_url={creds['api_url']} and the ingest key to {path}")
     print("Restart the sidecar (or its service) to start reporting.")

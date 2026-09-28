@@ -80,3 +80,20 @@ def build_context(
             cafile,
         )
     return ssl.create_default_context()
+
+
+def build_context_from_config(url: str | None, config: dict | None = None) -> ssl.SSLContext | None:
+    """`build_context` for a caller that only has the sidecar's raw config dict.
+
+    Extracts the `ca_bundle` / `tls_insecure` config keys the same way for
+    every caller, so the truthy-string parsing for `tls_insecure` (config
+    values arrive as JSON, so it may be a real bool or a string like "true")
+    lives in exactly one place. Used by `sidecar.build_ssl_context` and every
+    `scripts.sidecar_pkg` module that talks to the Runway server over HTTPS —
+    a caller that calls `build_context(url)` directly instead of through here
+    silently ignores an operator's `ca_bundle`/`tls_insecure` config.
+    """
+    config = config or {}
+    insecure_raw = str(config.get("tls_insecure", "")).strip().lower()
+    insecure = True if insecure_raw in _TRUTHY else None
+    return build_context(url, ca_bundle=config.get("ca_bundle"), insecure=insecure)

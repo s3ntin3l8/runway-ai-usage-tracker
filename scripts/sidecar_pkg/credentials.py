@@ -58,6 +58,7 @@ def _fetch_config_payload(
     timeout: int = 10,
     sidecar_id: str | None = None,
     api_key: str | None = None,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Single ``GET /api/v1/fleet/config`` round-trip.
 
@@ -77,7 +78,7 @@ def _fetch_config_payload(
     from urllib import error, request
     from urllib.parse import urlencode
 
-    from scripts.sidecar_pkg.tls import build_context
+    from scripts.sidecar_pkg.tls import build_context_from_config
 
     query = urlencode({"sidecar_id": sidecar_id}) if sidecar_id else ""
     url = f"{api_url.rstrip('/')}/api/v1/fleet/config"
@@ -96,7 +97,9 @@ def _fetch_config_payload(
         }
     req = request.Request(url, headers=headers)
     try:
-        with request.urlopen(req, timeout=timeout, context=build_context(url)) as resp:
+        with request.urlopen(
+            req, timeout=timeout, context=build_context_from_config(url, config)
+        ) as resp:
             if resp.getcode() != 200:
                 logger.debug("fetch_config: %s returned %s", url, resp.getcode())
                 return None
@@ -196,6 +199,7 @@ def fetch_identity_hints(
     timeout: int = 10,
     sidecar_id: str | None = None,
     api_key: str | None = None,
+    config: dict[str, Any] | None = None,
 ) -> tuple[dict[str, list[str]], dict[str, dict[str, str]] | None] | None:
     """Fetch per-account identity hints + operator tag-hint map from ``GET /api/v1/fleet/config``.
 
@@ -226,7 +230,7 @@ def fetch_identity_hints(
     for backward compatibility with positional callers.
     """
     payload = _fetch_config_payload(
-        api_url, timeout=timeout, sidecar_id=sidecar_id, api_key=api_key
+        api_url, timeout=timeout, sidecar_id=sidecar_id, api_key=api_key, config=config
     )
     if payload is None:
         return None
@@ -241,6 +245,7 @@ def fetch_credential_tokens(
     timeout: int = 10,
     sidecar_id: str | None = None,
     api_key: str | None = None,
+    config: dict[str, Any] | None = None,
 ) -> dict[tuple[str, str], str] | None:
     """Fetch per-account credential tokens from ``GET /api/v1/fleet/config``.
 
@@ -253,7 +258,7 @@ def fetch_credential_tokens(
     but sending it keeps both fetchers on the same request shape.
     """
     payload = _fetch_config_payload(
-        api_url, timeout=timeout, sidecar_id=sidecar_id, api_key=api_key
+        api_url, timeout=timeout, sidecar_id=sidecar_id, api_key=api_key, config=config
     )
     if payload is None:
         return None
@@ -311,6 +316,7 @@ class CredentialCache:
         fetch_tokens: bool = False,
         sidecar_id: str | None = None,
         api_key: str | None = None,
+        config: dict[str, Any] | None = None,
     ) -> tuple[int, int] | None:
         """Re-fetch ``/fleet/config`` and replace the cached snapshot.
 
@@ -328,7 +334,9 @@ class CredentialCache:
         ``sidecar_id`` (#319) forwards this machine's identity for
         machine-scoped account_tag_hints.
         """
-        payload = _fetch_config_payload(api_url, sidecar_id=sidecar_id, api_key=api_key)
+        payload = _fetch_config_payload(
+            api_url, sidecar_id=sidecar_id, api_key=api_key, config=config
+        )
         if payload is None:
             # Outage — leave the cache untouched. ``is_fresh`` stays at
             # its prior value (likely False), so the next cycle retries.

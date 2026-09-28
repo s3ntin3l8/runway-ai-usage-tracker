@@ -495,6 +495,28 @@ class TestQueueRotate:
         assert existing.stat().st_size == 10 * 1024 * 1024
         assert len(list(tmp_path.glob("*.jsonl"))) == 1
 
+    def test_queue_push_honours_configured_max_size_mb(self, tmp_path):
+        """B2: queue_max_size_mb used to be accepted by queue_rotate but never
+        actually threaded from config into queue_push's own hardcoded 10 MB
+        cap. A tiny configured limit must reject a push well under 10 MB."""
+        with patch.object(sidecar, "get_queue_dir", return_value=tmp_path):
+            with patch.object(sidecar, "ensure_dirs"):
+                # 1 KB payload against a 1-byte limit — must reject.
+                accepted = sidecar.queue_push({"events": ["x" * 1024]}, max_size_mb=1e-6)
+
+        assert accepted is False
+        # Nothing written at all — the very first push already exceeds the cap.
+        assert list(tmp_path.glob("*.jsonl")) == []
+
+    def test_queue_push_invalid_max_size_mb_falls_back_to_ten(self, tmp_path):
+        """A non-positive or non-numeric max_size_mb must not silently
+        disable the cap (or crash) — it falls back to the 10 MB default."""
+        with patch.object(sidecar, "get_queue_dir", return_value=tmp_path):
+            with patch.object(sidecar, "ensure_dirs"):
+                assert sidecar.queue_push({"a": 1}, max_size_mb=0) is True
+                assert sidecar.queue_push({"a": 1}, max_size_mb=-5) is True
+                assert sidecar.queue_push({"a": 1}, max_size_mb="bogus") is True
+
 
 class TestQueueFlush:
     def test_event_ingest_error_is_retained_and_retried(self, tmp_path, monkeypatch):
@@ -658,6 +680,47 @@ class TestSecureQueueStorage:
         sidecar.queue_rotate(max_size_mb=0)
         assert link.is_symlink()
         assert target.read_text() == '{"payload":{"credential":"do-not-read"}}\n'
+
+
+class TestKimiApiRegistryId:
+    """B3: the sidecar's embedded registry used to discover KIMI_API_KEY (and
+    the kimi-auth cookie) under the legacy id "kimi", which no collector
+    reads — KimiApiCollector reads token_cache/ProviderConfig under
+    "kimi_api" (app/services/collectors/kimi_api.py). A sidecar-found
+    KIMI_API_KEY therefore never reached the collector that uses it."""
+
+    def test_legacy_kimi_id_is_gone(self):
+        assert "kimi" not in sidecar.__REGISTRY__["providers"]
+
+    def test_kimi_api_key_env_var_is_registered_under_kimi_api(self):
+        rules = sidecar.__REGISTRY__["providers"]["kimi_api"]["rules"]
+        assert len(rules) == 1
+        assert rules[0] == {
+            "type": "env",
+            "variable": "KIMI_API_KEY",
+            "mapping": {"value": "api_key"},
+        }
+
+    def test_kimi_auth_token_and_cookie_stay_covered_by_kimi_coding(self):
+        """The KIMI_AUTH_TOKEN env rule and kimi-auth cookie rule dropped
+        from the legacy "kimi" entry are not lost — kimi_coding already
+        covers both."""
+        rules = sidecar.__REGISTRY__["providers"]["kimi_coding"]["rules"]
+        rule_types_vars = {(r.get("type"), r.get("variable"), r.get("name")) for r in rules}
+        assert ("env", "KIMI_AUTH_TOKEN", None) in rule_types_vars
+        assert ("cookie", None, "kimi-auth") in rule_types_vars
+
+    def test_kimi_api_key_env_discovery_lands_under_kimi_api(self, monkeypatch):
+        """No account hint is seeded, so the candidate blocks (Untagged) —
+        the point of this test is *which* provider_id it blocks under.
+        Before the fix, KIMI_API_KEY discovery reported provider_id="kimi",
+        which app/services/collectors/kimi_api.py never reads."""
+        monkeypatch.setenv("KIMI_API_KEY", "sk-test-kimi-key")  # pragma: allowlist secret
+        cards, blocked = sidecar.GenericCollector.collect_provider(
+            "kimi_api", sidecar.__REGISTRY__["providers"]["kimi_api"]
+        )
+        assert cards == []
+        assert blocked == [{"provider_id": "kimi_api", "credential_origin": "env:KIMI_API_KEY"}]
 
 
 class TestKimiCliCredentialGlob:
@@ -1082,7 +1145,11 @@ class TestDaemonRunnerQueuedStatus:
                 return_value=(False, "timeout", 0),
             ),
             patch.object(sidecar, "queue_flush"),
-            patch.object(sidecar, "queue_push", side_effect=lambda p: (queued.append(p), True)[1]),
+            patch.object(
+                sidecar,
+                "queue_push",
+                side_effect=lambda p, max_size_mb=None: (queued.append(p), True)[1],
+            ),
         ):
             runner.run_once()
 
