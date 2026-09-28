@@ -2255,7 +2255,19 @@ def _make_account_extractor_antigravity(parser: Any) -> Any:
     return _extract
 
 
-def _make_account_extractor_hermes(parser: Any) -> Any:
+def _make_account_extractor_hermes(parser: Any, state_file: Path | None = None) -> Any:
+    """Bind Hermes parser to discovery callable, forwarding state_file and canonical hints.
+
+    Deduplicates events by event_id across discovered databases as defense-in-depth
+    against overlapping discovery paths (mirroring _make_account_extractor).
+
+    TODO(multi-account): The slice-level watermark (hermes_watermark.json) is
+    currently shared across all accounts on the host. If scoped_accounts ever loops
+    over multiple accounts for Hermes, pass an account-scoped state_file or include
+    account_id in slice state_key to prevent earlier accounts from advancing the
+    watermark ahead of later accounts in the same cycle.
+    """
+
     def _extract(
         account_id: str,
         watermark: Any,
@@ -2269,12 +2281,23 @@ def _make_account_extractor_hermes(parser: Any) -> Any:
         since = watermark.last_pushed("hermes", account_id) or (
             datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
         )
-        return parser(
+        all_evts = parser(
             db_paths,
             account_id=account_id,
             since=since,
             canonical_hints=canonical_hints,
+            state_file=state_file,
         )
+        seen: set[str] = set()
+        deduped = []
+        for ev in all_evts:
+            eid = getattr(ev, "event_id", None)
+            if eid and eid in seen:
+                continue
+            if eid:
+                seen.add(eid)
+            deduped.append(ev)
+        return deduped
 
     return _extract
 

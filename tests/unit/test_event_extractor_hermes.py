@@ -1,5 +1,6 @@
 """Unit tests for the Hermes Agent event extractor."""
 
+import json
 import sqlite3
 import tempfile
 from datetime import UTC, datetime
@@ -424,3 +425,85 @@ def test_missing_or_corrupt_db(tmp_path):
         since=datetime(2020, 1, 1, tzinfo=UTC),
     )
     assert events == []
+
+
+def test_distinct_db_roots_have_independent_watermarks(tmp_path):
+    """If two distinct root directories each contain a state.db with identical
+    session_id and profile_name, resolving db_path prevents their slice watermark
+    state from colliding."""
+    dir1 = tmp_path / "root1"
+    dir2 = tmp_path / "root2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    db1, _ = _make_db()
+    db2, _ = _make_db()
+    target1 = dir1 / "state.db"
+    target2 = dir2 / "state.db"
+    db1.rename(target1)
+    db2.rename(target2)
+
+    state_file = tmp_path / "hermes_watermark.json"
+
+    events1 = parse_hermes_events(
+        [target1], "default", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
+    )
+    assert len(events1) == 2
+
+    # Second root has identical session IDs, but distinct resolved path, so it must also emit its events
+    events2 = parse_hermes_events(
+        [target2], "default", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
+    )
+    assert len(events2) == 2
+
+    # And watermark file contains distinct keys for both resolved paths
+    data = json.loads(state_file.read_text(encoding="utf-8"))
+    resolved_keys = list(data.keys())
+    assert any(str(target1.resolve()) in k for k in resolved_keys)
+    assert any(str(target2.resolve()) in k for k in resolved_keys)
+
+
+def test_missing_both_timestamps_skips_and_warns(tmp_path, caplog):
+    """Rows with both last_seen and first_seen NULL are skipped with a warning."""
+    import logging
+
+    conn = make_hermes_db(":memory:")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            cwd, git_branch, started_at, ended_at, input_tokens, output_tokens,
+            estimated_cost_usd, actual_cost_usd
+        ) VALUES (
+            'sess-null-ts', 'api_server', 'default', 'local-llm',
+            'custom', 'http://localhost:8000', '/home', 'main',
+            1780003000.0, 1780003500.0, 100, 50, 0.0, 0.0
+        )
+    """)
+    cur.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-null-ts', 'local-llm', 'custom', 'http://localhost:8000', '',
+            '', 1, 100, 50, 0, 0, 0, 0.0, 0.0, 'none', 'none', NULL, NULL
+        )
+    """)
+    conn.commit()
+
+    db_path = tmp_path / "null_ts.db"
+    file_conn = sqlite3.connect(str(db_path))
+    conn.backup(file_conn)
+    file_conn.close()
+    conn.close()
+
+    with caplog.at_level(logging.WARNING):
+        events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+    assert not any(e.session_id == "sess-null-ts" for e in events)
+    assert any("has both last_seen and first_seen NULL" in r.message for r in caplog.records)

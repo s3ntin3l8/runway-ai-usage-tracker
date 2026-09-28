@@ -153,6 +153,12 @@ def parse_hermes_events(
         canonical_hints: Optional {canonical_provider_id: {origin: account_id}} map.
         state_file: Optional path to JSON file tracking slice token watermarks.
     """
+    # TODO(multi-account): The slice-level watermark (hermes_watermark.json) is
+    # currently shared across all accounts on the host. Today Hermes has a single host
+    # identity (HERMES_ACCOUNT_LABEL), but if multi-account Hermes support is added
+    # (e.g. server's scoped_accounts loop iterating multiple accounts per cycle),
+    # callers should supply an account-scoped state_file or include account_id in
+    # state_key so later accounts do not find the watermark already advanced.
     state_path = state_file or _default_watermark_state_path()
     watermark_state = _load_hermes_watermark(state_path)
     state_modified = False
@@ -207,8 +213,9 @@ def parse_hermes_events(
                         COALESCE(s.profile_name, ?) as profile_name
                     FROM session_model_usage smu
                     LEFT JOIN sessions s ON smu.session_id = s.id
-                    WHERE smu.last_seen > ?
-                    ORDER BY smu.last_seen ASC
+                    WHERE COALESCE(smu.last_seen, smu.first_seen) > ?
+                       OR (smu.last_seen IS NULL AND smu.first_seen IS NULL)
+                    ORDER BY COALESCE(smu.last_seen, smu.first_seen, 0) ASC
                 """
                 rows = cur.execute(query, (profile_name, since_epoch)).fetchall()
             finally:
@@ -222,7 +229,19 @@ def parse_hermes_events(
             model = row["model"] or "unknown"
             billing_provider = row["billing_provider"] or ""
             task = row["task"] or ""
-            last_seen = float(row["last_seen"] or row["first_seen"] or 0.0)
+
+            raw_last_seen = row["last_seen"]
+            raw_first_seen = row["first_seen"]
+            if raw_last_seen is None and raw_first_seen is None:
+                logger.warning(
+                    "Hermes session_model_usage row for session %s has both last_seen and first_seen NULL; skipping",
+                    session_id,
+                )
+                continue
+
+            last_seen = float(raw_last_seen if raw_last_seen is not None else raw_first_seen)
+            # Belt-and-suspenders guard against floating-point precision / rounding
+            # differences between SQLite and Python timestamps; SQL query already filters smu.last_seen > since_epoch.
             if last_seen <= since_epoch:
                 continue
 
@@ -242,9 +261,9 @@ def parse_hermes_events(
             est_cost = row["estimated_cost_usd"]
             curr_cost = float(actual_cost if actual_cost is not None else (est_cost or 0.0))
 
-            # Watermark key uniquely identifies this slice within the DB
+            # Watermark key uniquely identifies this slice within the DB; resolve path to avoid collisions across roots
             state_key = (
-                f"{db_path.name}|{profile_name}|{session_id}|{model}|{billing_provider}|{task}"
+                f"{db_path.resolve()}|{profile_name}|{session_id}|{model}|{billing_provider}|{task}"
             )
             prev = watermark_state.get(state_key, {})
 

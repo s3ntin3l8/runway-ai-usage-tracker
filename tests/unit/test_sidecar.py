@@ -2523,3 +2523,27 @@ def test_hermes_account_extractor_wiring(monkeypatch, tmp_path):
     assert kwargs["account_id"] == "default"
     assert kwargs["canonical_hints"] == {"minimax": {}}
     assert kwargs["since"] is not None
+    assert kwargs["state_file"] is None
+
+
+def test_hermes_account_extractor_dedup_and_state_file(monkeypatch, tmp_path):
+    class FakeEvent:
+        def __init__(self, event_id):
+            self.event_id = event_id
+
+    mock_parser = MagicMock(return_value=[FakeEvent("e1"), FakeEvent("e2"), FakeEvent("e1")])
+    custom_state_file = tmp_path / "custom_watermark.json"
+    extractor = sidecar._make_account_extractor_hermes(mock_parser, state_file=custom_state_file)
+
+    class MockWatermark:
+        def last_pushed(self, provider_id, account_id):
+            return None
+
+    mock_db = tmp_path / "state.db"
+    mock_db.touch()
+    monkeypatch.setattr(sidecar, "_discover_hermes_db_paths", lambda: [mock_db])
+
+    events = extractor("default", MockWatermark(), 30)
+    assert [e.event_id for e in events] == ["e1", "e2"]
+    args, kwargs = mock_parser.call_args
+    assert kwargs["state_file"] == custom_state_file
