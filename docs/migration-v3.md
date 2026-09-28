@@ -137,3 +137,29 @@ For Kimi API, Kimi K2, MiniMax, OpenRouter, and zAI API keys, lookup precedence
 is the saved account credential, then that account's token-cache entry, then
 the server environment variable. A cached `default` account key therefore
 takes precedence over the corresponding environment variable.
+
+## Docker: the published port now actually works
+
+`docker-compose.yml` and `docker-compose.traefik.yml` now force
+`APP_HOST=0.0.0.0` inside the container via Compose's `environment:` block,
+overriding whatever `.env` sets. Previously, a plain `cp .env.example .env`
+left `APP_HOST=127.0.0.1` — a value Docker's port-forwarding can never
+reach, since it lands on the container's own network interface, not its
+loopback. The container's healthcheck (which runs *inside* the container
+namespace, where loopback works fine) kept passing throughout, so this
+silently produced a dead published port rather than a visible failure.
+
+Since the container is now genuinely reachable off-loopback from the app's
+own point of view, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`,
+and (per the gate above) `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` become
+mandatory in `.env` before the container will start at all — see the
+updated quick-start comment in `docker-compose.yml`. If you were already
+setting these (e.g. following `docs/deployment.md`), nothing changes for
+you; if you were relying on the old dead-port behavior for some reason,
+the container will now refuse to start until you set them.
+
+`make run` also now sources `.env` the same way `make dev` does — some
+settings (`CORS_ORIGINS`, and any provider credential configured only via
+a registry "env" rule) are read straight from the process environment
+rather than through pydantic's own `.env` loading, so a bare
+`python -m app.main` or the previous `make run` silently missed them.

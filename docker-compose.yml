@@ -5,8 +5,24 @@
 #
 #  Quick Start:
 #    1. Copy .env.example to .env and configure your API keys
-#    2. docker compose pull && docker compose up -d
-#    3. Access dashboard at http://localhost:8765
+#    2. This service force-binds APP_HOST=0.0.0.0 inside the container
+#       (below) — Docker's port-forwarding can never reach an app bound to
+#       127.0.0.1 in its own network namespace, no matter how the host side
+#       is restricted. That means the container is reachable off-host (this
+#       *is* the multi-host case from the app's own point of view), so
+#       these become REQUIRED in .env before it will start — see
+#       docs/SECURITY.md → Multi-Host Startup Gates:
+#         DB_ENCRYPTION_KEY=<fernet key>
+#         TLS_TERMINATED=1            # only assert this if something in
+#                                      # front of you actually terminates
+#                                      # TLS — a bare LAN/homelab setup with
+#                                      # no reverse proxy means cleartext;
+#                                      # use docker-compose.traefik.yml
+#                                      # instead if you want real TLS.
+#         CORS_ORIGINS=http://<this-host>:8765
+#         ADMIN_API_KEY=<strong secret>   # or TRUSTED_PROXY_IPS for forward-auth
+#    3. docker compose pull && docker compose up -d
+#    4. Access dashboard at http://localhost:8765
 #
 #  Pinning: change `:latest` to a specific version (e.g. `:1.0.0`). Available
 #  tags: https://github.com/s3ntin3l8/runway/pkgs/container/runway
@@ -27,6 +43,12 @@ services:
       - "8765:8765"
     env_file:
       - .env
+    environment:
+      # Overrides .env.example's APP_HOST=127.0.0.1 default. Required for
+      # the published port to reach the app at all — see the quick-start
+      # note above. If your .env sets APP_HOST itself, this still wins:
+      # Compose's `environment:` takes precedence over `env_file:`.
+      APP_HOST: "0.0.0.0"
     volumes:
       # Persist application data (database, configs)
       - ./data:/home/runway/.config/runway

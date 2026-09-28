@@ -30,14 +30,14 @@
 #  the internal `proxy` network. Sidecars reach the server through the PUBLIC URL;
 #  /api/v1/fleet/ingest rides through Traefik on :443 like any other path:
 #
-#         python3 scripts/sidecar.py --api-url https://${RUNWAY_HOST} --api-key <INGEST_API_KEY>
+#         RUNWAY_API_URL=https://${RUNWAY_HOST} RUNWAY_API_KEY=<INGEST_API_KEY> python3 scripts/sidecar.py
 #
 #  This is TLS-encrypted (ingest payloads carry tokens/cookies) and needs no
 #  inbound ports on the sidecar host. For per-client ingest rate limiting set
 #  TRUSTED_PROXY_IPS to Traefik's IP (see .env.traefik.example). For a same-host
 #  native sidecar that should skip the public round-trip, add a loopback publish
 #  to the runway service: `ports: ["127.0.0.1:8765:8765"]` and use
-#  --api-url http://localhost:8765.
+#  RUNWAY_API_URL=http://localhost:8765.
 #
 #  Pinning: change `:latest` to a specific version (e.g. `:1.0.0`). Available
 #  tags: https://github.com/s3ntin3l8/runway/pkgs/container/runway
@@ -78,6 +78,15 @@ services:
     container_name: runway
     env_file:
       - .env
+    environment:
+      # Defense-in-depth: this topology requires APP_HOST=0.0.0.0
+      # unconditionally (Traefik reaches the container over the internal
+      # network, and Docker's port-forwarding can't reach an app bound to
+      # 127.0.0.1 in its own namespace either way). .env.traefik.example
+      # already sets this, but hardcoding it here means a stray edit or a
+      # copy of the wrong example file can't silently produce a dead
+      # container — Compose's `environment:` wins over `env_file:`.
+      APP_HOST: "0.0.0.0"
     volumes:
       # Persist application data (database, configs)
       - ./data:/home/runway/.config/runway
