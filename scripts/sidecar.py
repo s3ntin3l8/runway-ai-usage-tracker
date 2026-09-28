@@ -4164,8 +4164,8 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             tls_config = {k: raw[k] for k in ("ca_bundle", "tls_insecure") if k in raw}
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as exc:
+        logging.debug("Pairing TLS config unavailable from %s: %s", path, exc)
 
     try:
         if len(values) == 1 and pairing.is_pair_url(values[0]):

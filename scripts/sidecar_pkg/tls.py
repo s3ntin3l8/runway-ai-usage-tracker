@@ -92,6 +92,8 @@ def build_context_from_config(url: str | None, config: dict | None = None) -> ss
     `scripts.sidecar_pkg` module that talks to the Runway server over HTTPS —
     a caller that calls `build_context(url)` directly instead of through here
     silently ignores an operator's `ca_bundle`/`tls_insecure` config.
+    GitHub update checks and downloads intentionally use `build_context`
+    with normal public certificate verification instead.
     """
     config = config or {}
     insecure_raw = str(config.get("tls_insecure", "")).strip().lower()
