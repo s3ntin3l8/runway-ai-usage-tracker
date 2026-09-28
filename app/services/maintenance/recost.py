@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
+from app.services.cost_calculator import PricingIndex, resolve_price_row
 from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.period_rollups import rebuild_rollups_for_pairs
@@ -90,8 +91,12 @@ def _compute_changes(
         (c.provider_id, c.account_id): c.billing_type
         for c in session.exec(select(ProviderConfig)).all()
     }
+    pricing_index = PricingIndex.load(session, providers)
     for ev in session.exec(_event_scope(providers, since, only_zero_cost)):
         billing_type = configs.get((ev.provider_id, ev.account_id), "unknown")
+        price_row = resolve_price_row(
+            session, ev.provider_id, ev.model_id, ev.ts, index=pricing_index
+        )
         resolved = resolve_event_cost(
             session,
             provider_id=ev.provider_id,
@@ -106,6 +111,8 @@ def _compute_changes(
             tokens_cache_create_5m=ev.tokens_cache_create_5m,
             billing_type=billing_type,
             reported_cost=_legacy_reported_cost(ev),
+            resolved_price_row=price_row,
+            price_row_resolved=True,
         )
         if only_zero_cost and resolved.cost_usd <= ev.cost_usd:
             # only_zero_cost is the Data Health "give an unpriced model a

@@ -30,9 +30,9 @@ from datetime import datetime
 
 from sqlmodel import Session
 
-from app.models.db import ProviderPricing
 from app.services.cost_calculator import (
     CostBreakdown,
+    PricingRow,
     compute_event_cost_breakdown,
     resolve_price_row,
 )
@@ -61,7 +61,7 @@ def resolve_event_cost(  # noqa: PLR0913 — one param per priced token dimensio
     tokens_cache_create_5m: int = 0,
     billing_type: str,
     reported_cost: float | None,
-    resolved_price_row: ProviderPricing | None = None,
+    resolved_price_row: PricingRow | None = None,
     price_row_resolved: bool = False,
 ) -> ResolvedCost:
     """Resolve the authoritative `cost_usd` for one event.

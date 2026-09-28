@@ -7,6 +7,7 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderPricing
 from app.services.cost_calculator import (
+    PricingIndex,
     compute_event_cost,
     compute_event_cost_breakdown,
     resolve_price_row,
@@ -1028,3 +1029,63 @@ def test_resolve_price_row_follows_the_same_fallback_chain():
     row = resolve_price_row(s, "anthropic", "opus-4.8", datetime.now(UTC))
     assert row is not None
     assert row.model_id == "opus"
+
+
+def test_preloaded_index_matches_single_row_resolution():
+    """Bulk resolution preserves the exact, family, segment, and case-folded
+    lookups, including effective-date boundaries and missing/zero rows."""
+    s = _seeded_session()
+    _seed_two_price_rows(s, date(2026, 6, 1), date(2026, 6, 2))
+    s.add(
+        ProviderPricing(
+            provider_id="zztest",
+            model_id="free-model",
+            effective_from=date(2020, 1, 1),
+            input_per_mtok=0.0,
+            output_per_mtok=0.0,
+            cache_read_per_mtok=0.0,
+            cache_create_per_mtok=0.0,
+        )
+    )
+    s.commit()
+    index = PricingIndex.load(s)
+    cases = [
+        ("chatgpt", "gpt-5.4-mini", datetime(2026, 6, 2, tzinfo=UTC)),
+        ("anthropic", "opus-4.8", datetime(2026, 6, 2, tzinfo=UTC)),
+        ("xai", "grok-4-mini", datetime(2026, 6, 2, tzinfo=UTC)),
+        ("minimax", "minimax-m3", datetime(2026, 6, 2, tzinfo=UTC)),
+        ("zztest", "flat", datetime(2026, 6, 1, 23, 59, 59, tzinfo=UTC)),
+        ("zztest", "flat", datetime(2026, 6, 2, tzinfo=UTC)),
+        ("zztest", "free-model", datetime(2026, 6, 2, tzinfo=UTC)),
+        ("zztest", "not-seeded", datetime(2026, 6, 2, tzinfo=UTC)),
+    ]
+
+    def signature(row):
+        if row is None:
+            return None
+        return (
+            row.provider_id,
+            row.model_id,
+            row.effective_from,
+            row.input_per_mtok,
+            row.output_per_mtok,
+            row.cache_read_per_mtok,
+            row.cache_create_per_mtok,
+            row.cache_create_1h_per_mtok,
+        )
+
+    for provider_id, model_id, ts in cases:
+        expected = resolve_price_row(s, provider_id, model_id, ts)
+        actual = resolve_price_row(s, provider_id, model_id, ts, index=index)
+        assert signature(actual) == signature(expected)
+
+
+def test_preloaded_index_snapshots_survive_session_commit():
+    s = _seeded_session()
+    index = PricingIndex.load(s, ["anthropic"])
+    s.commit()
+
+    row = resolve_price_row(s, "anthropic", "sonnet", datetime.now(UTC), index=index)
+
+    assert row is not None
+    assert row.input_per_mtok == 3.0
