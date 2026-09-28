@@ -20,6 +20,7 @@ const check = (o: Partial<DataHealthCheckReport> = {}): DataHealthCheckReport =>
   fixable_count: 0,
   groups: [],
   blocked_by: [],
+  blocked_by_titles: [],
   blocked: false,
   ...o,
 });
@@ -42,7 +43,7 @@ describe('DataHealthSection', () => {
     renderWithProviders(<DataHealthSection />);
     expect(await screen.findByText(/all checks clean/i)).toBeInTheDocument();
     expect(screen.getByText(/last scanned/i)).toBeInTheDocument();
-    expect(screen.getByText(/no findings · all 1 check clean/i)).toBeInTheDocument();
+    expect(screen.getByText(/no findings, all 1 check clean/i)).toBeInTheDocument();
   });
 
   it('shows scan errors as stale and disables fixes from the prior report', async () => {
@@ -82,7 +83,17 @@ describe('DataHealthSection', () => {
     renderWithProviders(<DataHealthSection />);
     expect(await screen.findByText('Provider account uses a generic ID')).toBeInTheDocument();
     expect(screen.getByText('Cached usage totals do not match events')).toBeInTheDocument();
-    expect(screen.getByText(/3 findings across 1 category · 0 fixable/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 findings across 1 category, 0 fixable, 0 blocked/i)).toBeInTheDocument();
+  });
+
+  it('explains when an old cached report has no checks from the current version', async () => {
+    vi.mocked(api.fetchDataHealthReport).mockResolvedValue(report({ checks: [] }));
+    vi.mocked(api.rescanDataHealth).mockResolvedValue({ started: true });
+    renderWithProviders(<DataHealthSection />);
+
+    expect(await screen.findByText(/no current checks in this report/i)).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: /re-scan/i })[0]);
+    expect(api.rescanDataHealth).toHaveBeenCalled();
   });
 
   it('sorts checks by severity, errors first', async () => {

@@ -29,13 +29,16 @@ const SEVERITY_BADGE: Record<DataHealthSeverity, SeverityBadgeInfo> = {
   info: { variant: 'neutral', label: 'Info' },
 };
 
+function readableCheckName(checkId: string): string {
+  const humanized = checkId.replaceAll('_', ' ');
+  return humanized.charAt(0).toUpperCase() + humanized.slice(1);
+}
+
 export function CheckRow({
   check,
-  checkNames = {},
   stale = false,
 }: {
   check: DataHealthCheckReport;
-  checkNames?: Record<string, string>;
   stale?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -75,7 +78,10 @@ export function CheckRow({
           </p>
           {check.blocked_by.length > 0 && (
             <p className="text-[12px] text-warning">
-              Fix first: {check.blocked_by.map((id) => checkNames[id] ?? id).join(', ')}.
+              Fix first:{' '}
+              {check.blocked_by
+                .map((id, index) => check.blocked_by_titles[index] ?? readableCheckName(id))
+                .join(', ')}.
             </p>
           )}
           {check.groups.length > 0 ? (

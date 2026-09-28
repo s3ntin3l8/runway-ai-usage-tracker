@@ -65,8 +65,14 @@ def _group_schema(group: FindingGroup) -> DataHealthFindingGroup:
     )
 
 
-def _report_schema(report: CheckReport) -> DataHealthCheckReport:
-    check = get_check(report.check_id)
+def _report_schema(report: CheckReport) -> DataHealthCheckReport | None:
+    try:
+        check = get_check(report.check_id)
+    except KeyError:
+        # A registry change can leave a retired check in an in-memory cached
+        # report. Skip that obsolete entry instead of failing the whole report.
+        logger.warning("Skipping cached Data Health report for retired check %r", report.check_id)
+        return None
     return DataHealthCheckReport(
         check_id=report.check_id,
         title=check.title,
@@ -78,8 +84,21 @@ def _report_schema(report: CheckReport) -> DataHealthCheckReport:
         fixable_count=report.fixable_count,
         groups=[_group_schema(g) for g in report.groups],
         blocked_by=report.blocked_by,
+        blocked_by_titles=[_check_title(check_id) for check_id in report.blocked_by],
         blocked=report.blocked,
     )
+
+
+def _check_title(check_id: str) -> str:
+    try:
+        return get_check(check_id).title
+    except KeyError:
+        humanized = check_id.replace("_", " ")
+        return humanized[:1].upper() + humanized[1:]
+
+
+def _reports_schema(reports: list[CheckReport]) -> list[DataHealthCheckReport]:
+    return [schema for report in reports if (schema := _report_schema(report)) is not None]
 
 
 @router.get("/", response_model=DataHealthReportResponse)
@@ -102,7 +121,7 @@ async def get_report(
         )
     return DataHealthReportResponse(
         scanning=jobs.scanning,
-        checks=[_report_schema(r) for r in cached.values()],
+        checks=_reports_schema(list(cached.values())),
         scan_error=jobs.scan_error,
         last_scanned_at=jobs.last_scanned_at.isoformat() if jobs.last_scanned_at else None,
     )

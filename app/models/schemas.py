@@ -389,6 +389,7 @@ class DataHealthCheckReport(BaseModel):
     fixable_count: int
     groups: list[DataHealthFindingGroup] = Field(default_factory=list)
     blocked_by: list[str] = Field(default_factory=list)
+    blocked_by_titles: list[str] = Field(default_factory=list)
     blocked: bool
 
 

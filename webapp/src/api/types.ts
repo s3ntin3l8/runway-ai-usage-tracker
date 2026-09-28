@@ -962,6 +962,7 @@ export interface DataHealthCheckReport {
   fixable_count: number;
   groups: DataHealthFindingGroup[];
   blocked_by: string[];
+  blocked_by_titles: string[];
   blocked: boolean;
 }
 

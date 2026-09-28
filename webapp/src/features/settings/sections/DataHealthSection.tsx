@@ -21,15 +21,14 @@ export function DataHealthSection() {
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
   );
   const allClean = checks.length > 0 && checks.every((c) => c.total_count === 0);
-  const checkNames = Object.fromEntries(checks.map((check) => [check.check_id, check.title]));
   const itemCount = checks.reduce((sum, check) => sum + check.total_count, 0);
   const findingCategories = checks.filter((check) => check.total_count > 0).length;
   const fixableCount = checks.reduce((sum, check) => sum + check.fixable_count, 0);
   const blockedCount = checks.filter((check) => check.blocked).length;
   const summary =
     itemCount === 0
-      ? `No findings · all ${checks.length} ${checks.length === 1 ? 'check' : 'checks'} clean`
-      : `${itemCount.toLocaleString()} ${itemCount === 1 ? 'finding' : 'findings'} across ${findingCategories} ${findingCategories === 1 ? 'category' : 'categories'} · ${fixableCount.toLocaleString()} fixable · ${blockedCount} waiting`;
+      ? `No findings, all ${checks.length} ${checks.length === 1 ? 'check' : 'checks'} clean`
+      : `${itemCount.toLocaleString()} ${itemCount === 1 ? 'finding' : 'findings'} across ${findingCategories} ${findingCategories === 1 ? 'category' : 'categories'}, ${fixableCount.toLocaleString()} fixable, ${blockedCount} blocked`;
 
   return (
     <div className="flex max-w-2xl flex-col gap-3">
@@ -99,12 +98,29 @@ export function DataHealthSection() {
           title="All checks clean"
           description="No data-quality issues found in the last scan."
         />
+      ) : report.data?.scanning && checks.length === 0 ? (
+        <Skeleton className="h-24" />
+      ) : report.data && checks.length === 0 ? (
+        <EmptyState
+          icon={ShieldCheck}
+          title="No current checks in this report"
+          description="The cached report may include checks from an older version. Re-scan to refresh it."
+          action={
+            <Button
+              size="sm"
+              disabled={report.data.scanning}
+              onClick={() => rescan.mutate(undefined, { onError: (err) => toast.error(err.message) })}
+              loading={rescan.isPending}
+            >
+              Re-scan
+            </Button>
+          }
+        />
       ) : (
         checks.map((check) => (
           <CheckRow
             key={check.check_id}
             check={check}
-            checkNames={checkNames}
             stale={Boolean(report.data?.scan_error || report.data?.scanning)}
           />
         ))

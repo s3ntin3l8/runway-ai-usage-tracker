@@ -223,6 +223,7 @@ const dataHealthCheck = (o: Partial<DataHealthCheckReport> = {}): DataHealthChec
   fixable_count: 0,
   groups: [],
   blocked_by: [],
+  blocked_by_titles: [],
   blocked: false,
   ...o,
 });

@@ -30,6 +30,7 @@ const check = (o: Partial<DataHealthCheckReport> = {}): DataHealthCheckReport =>
   fixable_count: 1,
   groups: [group()],
   blocked_by: [],
+  blocked_by_titles: [],
   blocked: false,
   ...o,
 });
@@ -76,13 +77,32 @@ describe('CheckRow', () => {
   it('disables Fix when the check is blocked', async () => {
     renderWithProviders(
       <CheckRow
-        check={check({ blocked: true, blocked_by: ['other_check'] })}
-        checkNames={{ other_check: 'Prerequisite check' }}
+        check={check({ blocked: true, blocked_by: ['other_check'], blocked_by_titles: ['Prerequisite check'] })}
       />,
     );
     await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
     expect(screen.getByRole('button', { name: /^fix$/i })).toBeDisabled();
     expect(screen.getByText('Fix first: Prerequisite check.')).toBeInTheDocument();
+  });
+
+  it('humanizes an unavailable blocker instead of showing its internal id', async () => {
+    renderWithProviders(<CheckRow check={check({ blocked: true, blocked_by: ['legacy_provider_ids'] })} />);
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
+    expect(screen.getByText('Fix first: Legacy provider ids.')).toBeInTheDocument();
+  });
+
+  it('uses the supplied blocker title when the report omits that check', async () => {
+    renderWithProviders(
+      <CheckRow
+        check={check({
+          blocked: true,
+          blocked_by: ['legacy_provider_ids'],
+          blocked_by_titles: ['Usage uses an old provider ID'],
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
+    expect(screen.getByText('Fix first: Usage uses an old provider ID.')).toBeInTheDocument();
   });
 
   it('links non-fixable pending work to Fleet', async () => {
