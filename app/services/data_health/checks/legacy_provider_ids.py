@@ -29,6 +29,14 @@ from app.services.maintenance.legacy_retag import apply_legacy_retag, plan_legac
 
 class LegacyProviderIdsCheck(Check):
     id = "legacy_provider_ids"
+    title = "Usage uses an old provider ID"
+    description = "Some usage events are stored under a provider name that Runway has since replaced with a canonical provider ID."
+    impact = (
+        "Usage can be split between provider names, which affects totals, pricing, and rollups."
+    )
+    recommended_action = (
+        "Retag the affected events to the canonical provider shown in the finding preview."
+    )
     severity = Severity.ERROR
 
     def detect(self, session: Session) -> CheckReport:

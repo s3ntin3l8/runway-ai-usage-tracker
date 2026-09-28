@@ -953,11 +953,16 @@ export interface DataHealthFindingGroup {
 
 export interface DataHealthCheckReport {
   check_id: string;
+  title: string;
+  description: string;
+  impact: string;
+  recommended_action: string;
   severity: DataHealthSeverity;
   total_count: number;
   fixable_count: number;
   groups: DataHealthFindingGroup[];
   blocked_by: string[];
+  blocked_by_titles: string[];
   blocked: boolean;
 }
 

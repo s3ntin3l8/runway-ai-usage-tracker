@@ -16,6 +16,12 @@ from app.services.data_health.base import Check, CheckReport, Finding, FindingGr
 
 class PendingEventsCheck(Check):
     id = "pending_events"
+    title = "Events need account assignment"
+    description = "Some collected usage events are waiting for an evidence-backed or manual account assignment."
+    impact = "Pending events are not included in account-level usage until they are assigned."
+    recommended_action = (
+        "Review each event in Fleet and assign it to the account supported by its evidence."
+    )
     severity = Severity.INFO
 
     def detect(self, session: Session) -> CheckReport:

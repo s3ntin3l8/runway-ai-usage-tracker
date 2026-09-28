@@ -70,6 +70,12 @@ def _rollup_totals(session: Session, provider_id: str, account_id: str) -> tuple
 
 class RollupDriftCheck(Check):
     id = "rollup_drift"
+    title = "Cached usage totals do not match events"
+    description = "A lifetime summary row differs from the totals calculated directly from usage events, or remains after its events were removed."
+    impact = "Dashboard lifetime totals may be stale or include usage that no longer exists."
+    recommended_action = (
+        "Rebuild the affected provider and account rollups from the current usage events."
+    )
     severity = Severity.WARN
     blocked_by = ("legacy_provider_ids",)
 
@@ -103,8 +109,10 @@ class RollupDriftCheck(Check):
             )
         }
         groups: list[FindingGroup] = []
-        for provider_id, account_id in sorted(actual_by_pair):
-            actual_msgs, actual_cost = actual_by_pair[(provider_id, account_id)]
+        # Include rollup-only pairs too: after all events are removed, a stale
+        # lifetime row is still visible to dashboard readers and must be cleared.
+        for provider_id, account_id in sorted(set(actual_by_pair) | set(rollup_by_pair)):
+            actual_msgs, actual_cost = actual_by_pair.get((provider_id, account_id), (0, 0.0))
             rollup_msgs, rollup_cost = rollup_by_pair.get((provider_id, account_id), (0, 0.0))
             if actual_msgs == rollup_msgs and abs(actual_cost - rollup_cost) <= _COST_EPSILON:
                 continue

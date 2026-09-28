@@ -12,6 +12,14 @@ def test_every_check_has_a_unique_id():
     assert len(ids) == len(set(ids))
 
 
+def test_every_check_has_user_facing_guidance():
+    for check in REGISTRY:
+        assert check.title.strip()
+        assert check.description.strip()
+        assert check.impact.strip()
+        assert check.recommended_action.strip()
+
+
 def test_get_check_returns_the_registered_instance():
     for check in REGISTRY:
         assert get_check(check.id) is check

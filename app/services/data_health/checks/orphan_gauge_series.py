@@ -131,6 +131,12 @@ def _assert_orphan(session: Session, provider_id: str, account_id: str) -> None:
 
 class OrphanGaugeSeriesCheck(Check):
     id = "orphan_gauge_series"
+    title = "Quota history belongs to an inactive account"
+    description = "Dashboard quota data refers to an account with no configuration or activity for at least 30 days."
+    impact = (
+        "Old quota cards and history can remain attached to an account that is no longer in use."
+    )
+    recommended_action = "Merge the quota data into another configured account or delete the stale series. Recent activity prevents cleanup."
     severity = Severity.WARN
 
     def detect(self, session: Session, *, stale_days: int = _STALE_DAYS_DEFAULT) -> CheckReport:

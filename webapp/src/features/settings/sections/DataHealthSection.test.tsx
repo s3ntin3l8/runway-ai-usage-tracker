@@ -11,11 +11,16 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const check = (o: Partial<DataHealthCheckReport> = {}): DataHealthCheckReport => ({
   check_id: 'config_default_keyed',
+  title: 'Provider account uses a generic ID',
+  description: 'A saved provider configuration uses a generic account ID.',
+  impact: 'Usage can be split across identities.',
+  recommended_action: 'Re-key the configuration.',
   severity: 'error',
   total_count: 0,
   fixable_count: 0,
   groups: [],
   blocked_by: [],
+  blocked_by_titles: [],
   blocked: false,
   ...o,
 });
@@ -32,9 +37,13 @@ describe('DataHealthSection', () => {
   });
 
   it('shows the all-clean empty state when every check has no findings', async () => {
-    vi.mocked(api.fetchDataHealthReport).mockResolvedValue(report());
+    vi.mocked(api.fetchDataHealthReport).mockResolvedValue(
+      report({ last_scanned_at: '2026-09-27T10:00:00Z' }),
+    );
     renderWithProviders(<DataHealthSection />);
     expect(await screen.findByText(/all checks clean/i)).toBeInTheDocument();
+    expect(screen.getByText(/last scanned/i)).toBeInTheDocument();
+    expect(screen.getByText(/no findings, all 1 check clean/i)).toBeInTheDocument();
   });
 
   it('shows scan errors as stale and disables fixes from the prior report', async () => {
@@ -51,7 +60,7 @@ describe('DataHealthSection', () => {
     );
     renderWithProviders(<DataHealthSection />);
     expect(await screen.findByText(/showing the previous scan/i)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /config_default_keyed/i }));
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
     expect(screen.getByRole('button', { name: /^fix$/i })).toBeDisabled();
   });
 
@@ -69,26 +78,37 @@ describe('DataHealthSection', () => {
 
   it('renders one row per check when findings exist', async () => {
     vi.mocked(api.fetchDataHealthReport).mockResolvedValue(
-      report({ checks: [check({ total_count: 3 }), check({ check_id: 'rollup_drift', severity: 'warn' })] }),
+      report({ checks: [check({ total_count: 3 }), check({ check_id: 'rollup_drift', title: 'Cached usage totals do not match events', severity: 'warn' })] }),
     );
     renderWithProviders(<DataHealthSection />);
-    expect(await screen.findByText('config_default_keyed')).toBeInTheDocument();
-    expect(screen.getByText('rollup_drift')).toBeInTheDocument();
+    expect(await screen.findByText('Provider account uses a generic ID')).toBeInTheDocument();
+    expect(screen.getByText('Cached usage totals do not match events')).toBeInTheDocument();
+    expect(screen.getByText(/3 findings across 1 category, 0 fixable, 0 blocked/i)).toBeInTheDocument();
+  });
+
+  it('explains when an old cached report has no checks from the current version', async () => {
+    vi.mocked(api.fetchDataHealthReport).mockResolvedValue(report({ checks: [] }));
+    vi.mocked(api.rescanDataHealth).mockResolvedValue({ started: true });
+    renderWithProviders(<DataHealthSection />);
+
+    expect(await screen.findByText(/no current checks in this report/i)).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: /re-scan/i })[0]);
+    expect(api.rescanDataHealth).toHaveBeenCalled();
   });
 
   it('sorts checks by severity, errors first', async () => {
     vi.mocked(api.fetchDataHealthReport).mockResolvedValue(
       report({
         checks: [
-          check({ check_id: 'an_info_check', severity: 'info', total_count: 1 }),
-          check({ check_id: 'a_error_check', severity: 'error', total_count: 1 }),
+          check({ check_id: 'an_info_check', title: 'Informational check', severity: 'info', total_count: 1 }),
+          check({ check_id: 'a_error_check', title: 'Error check', severity: 'error', total_count: 1 }),
         ],
       }),
     );
     renderWithProviders(<DataHealthSection />);
-    const rows = await screen.findAllByText(/_check$/);
-    expect(rows[0]).toHaveTextContent('a_error_check');
-    expect(rows[1]).toHaveTextContent('an_info_check');
+    const rows = await screen.findAllByText(/check$/i);
+    expect(rows[0]).toHaveTextContent('Error check');
+    expect(rows[1]).toHaveTextContent('Informational check');
   });
 
   it('shows a scanning indicator and disables re-scan while scanning', async () => {

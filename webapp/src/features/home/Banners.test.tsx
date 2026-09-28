@@ -214,11 +214,16 @@ describe('Banners credential health', () => {
 
 const dataHealthCheck = (o: Partial<DataHealthCheckReport> = {}): DataHealthCheckReport => ({
   check_id: 'config_default_keyed',
+  title: 'Provider account uses a generic ID',
+  description: 'A saved provider configuration uses a generic account ID.',
+  impact: 'Usage can be split across identities.',
+  recommended_action: 'Re-key the configuration.',
   severity: 'error',
   total_count: 0,
   fixable_count: 0,
   groups: [],
   blocked_by: [],
+  blocked_by_titles: [],
   blocked: false,
   ...o,
 });
@@ -232,7 +237,7 @@ describe('Banners data health', () => {
         dataHealth={{ scanning: false, checks: [dataHealthCheck({ total_count: 1 })] }}
       />,
     );
-    expect(screen.getByText(/data health found an issue: config_default_keyed/i)).toBeInTheDocument();
+    expect(screen.getByText(/data health found an issue: provider account uses a generic id/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /review and fix/i })).toHaveAttribute(
       'href',
       '/settings/data-health',

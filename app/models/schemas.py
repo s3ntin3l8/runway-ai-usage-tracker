@@ -380,11 +380,16 @@ class DataHealthCheckReport(BaseModel):
     """One check's live findings, as of the last scan."""
 
     check_id: str
+    title: str
+    description: str
+    impact: str
+    recommended_action: str
     severity: str  # "error" | "warn" | "info"
     total_count: int
     fixable_count: int
     groups: list[DataHealthFindingGroup] = Field(default_factory=list)
     blocked_by: list[str] = Field(default_factory=list)
+    blocked_by_titles: list[str] = Field(default_factory=list)
     blocked: bool
 
 

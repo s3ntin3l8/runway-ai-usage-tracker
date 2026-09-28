@@ -32,6 +32,7 @@ from sqlmodel import Session, SQLModel, create_engine
 import app.api.endpoints.data_health as data_health_endpoint
 from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine, get_session
 from app.main import app
+from app.services.data_health.base import CheckReport, Severity
 from app.services.data_health.jobs import DataHealthJobs
 from tests.unit.data_health.conftest import make_config
 
@@ -121,6 +122,43 @@ async def test_rescan_then_get_report_returns_findings(session, jobs):
     assert not report["scanning"]
     check = next(c for c in report["checks"] if c["check_id"] == "config_default_keyed")
     assert check["total_count"] == 1
+    assert check["title"] == "Provider account uses a generic ID"
+    assert check["description"]
+    assert check["impact"]
+    assert check["recommended_action"]
+
+
+async def test_get_report_skips_cached_checks_no_longer_in_registry(session, jobs):
+    jobs._report_cache = {
+        "retired_check": CheckReport(
+            check_id="retired_check", severity=Severity.WARN, total_count=1
+        )
+    }
+
+    async with _client() as client:
+        response = await client.get("/api/v1/system/data-health/")
+
+    assert response.status_code == 200
+    assert response.json()["checks"] == []
+
+
+async def test_get_report_names_blocker_even_when_its_check_is_missing(session, jobs):
+    jobs._report_cache = {
+        "lone_default_events": CheckReport(
+            check_id="lone_default_events",
+            severity=Severity.WARN,
+            total_count=1,
+            blocked_by=["config_default_keyed"],
+        )
+    }
+
+    async with _client() as client:
+        response = await client.get("/api/v1/system/data-health/")
+
+    assert response.status_code == 200
+    check = response.json()["checks"][0]
+    assert check["blocked_by"] == ["config_default_keyed"]
+    assert check["blocked_by_titles"] == ["Provider account uses a generic ID"]
 
 
 async def test_preview_a_fixable_group(session):
