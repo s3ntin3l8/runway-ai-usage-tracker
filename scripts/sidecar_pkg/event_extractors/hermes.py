@@ -266,18 +266,34 @@ def parse_hermes_events(
 
             # Determine provider_id and canonical mapping
             canonical = map_hermes_canonical(billing_provider)
-            if canonical:
-                target_provider_id = canonical[0]
+            if canonical is not None:
+                canonical_provider_id, account_override = canonical
+                target_provider_id = canonical_provider_id
+
+                if account_override is not None:
+                    event_account_id = account_override
+                    event_account_source = "tag"
+                elif canonical_hints:
+                    provider_hints = canonical_hints.get(canonical_provider_id, {})
+                    canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
+                    if not canonical_hint and provider_hints:
+                        canonical_hint = next(iter(provider_hints.values()), None)
+
+                    if canonical_hint:
+                        event_account_id = canonical_hint
+                        event_account_source = "tag"
+                    else:
+                        # Hermes host identity doesn't prove which account was used
+                        # through an underlying canonical provider. Hold back as pending.
+                        event_account_id = "default"
+                        event_account_source = "default"
+                else:
+                    event_account_id = "default"
+                    event_account_source = "default"
             else:
                 target_provider_id = map_hermes_provider_id(billing_provider)
-
-            # Determine account_id
-            event_account_id = account_id
-            if canonical and canonical_hints:
-                provider_hints = canonical_hints.get(target_provider_id, {})
-                if provider_hints:
-                    # Pick the first hinted account for this canonical provider
-                    event_account_id = next(iter(provider_hints.values()), account_id)
+                event_account_id = account_id
+                event_account_source = None
 
             # Monotonic event ID incorporating slice call count
             task_slug = task if task else "main"
@@ -289,6 +305,7 @@ def parse_hermes_events(
                 UsageEventPush(
                     provider_id=target_provider_id,
                     account_id=event_account_id,
+                    account_source=event_account_source,
                     event_id=event_id,
                     ts=ts.isoformat(),
                     model_id=model,

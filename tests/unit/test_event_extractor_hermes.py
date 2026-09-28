@@ -98,6 +98,7 @@ def test_parse_hermes_events_basic(tmp_path):
         kimi_ev = next(e for e in events if e.model_id == "kimi-for-coding")
         assert kimi_ev.provider_id == "kimi_coding"
         assert kimi_ev.account_id == "default"
+        assert kimi_ev.account_source == "default"
         assert kimi_ev.entrypoint == "hermes"
         assert kimi_ev.tokens_input == 50000
         assert kimi_ev.tokens_output == 2000
@@ -110,6 +111,8 @@ def test_parse_hermes_events_basic(tmp_path):
         # Second event: MiniMax with background review task
         mm_ev = next(e for e in events if e.model_id == "MiniMax-M3")
         assert mm_ev.provider_id == "minimax"
+        assert mm_ev.account_id == "default"
+        assert mm_ev.account_source == "default"
         assert mm_ev.subagent_type == "background_review"
         assert mm_ev.tokens_input == 80000
         assert mm_ev.tokens_output == 4000
@@ -139,9 +142,98 @@ def test_parse_hermes_events_with_canonical_hints(tmp_path):
 
         kimi_ev = next(e for e in events if e.model_id == "kimi-for-coding")
         assert kimi_ev.account_id == "kimi-user@example.com"
+        assert kimi_ev.account_source == "tag"
 
         mm_ev = next(e for e in events if e.model_id == "MiniMax-M3")
         assert mm_ev.account_id == "operator@example.com"
+        assert mm_ev.account_source == "tag"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_unhinted_canonical_provider_holds_back_as_default_even_with_custom_host_account(
+    tmp_path,
+):
+    """When an event maps to a canonical provider (e.g. kimi_coding or minimax),
+    the host's Hermes account label (e.g. 'bot-team') does NOT prove which
+    upstream provider account owns the message. It must be held back as
+    account_id='default' and account_source='default' for operator assignment.
+    """
+    db_path, _ = _make_db()
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="bot-team",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+            canonical_hints=None,
+        )
+
+        kimi_ev = next(e for e in events if e.model_id == "kimi-for-coding")
+        assert kimi_ev.provider_id == "kimi_coding"
+        assert kimi_ev.account_id == "default"
+        assert kimi_ev.account_source == "default"
+
+        mm_ev = next(e for e in events if e.model_id == "MiniMax-M3")
+        assert mm_ev.provider_id == "minimax"
+        assert mm_ev.account_id == "default"
+        assert mm_ev.account_source == "default"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_native_provider_preserves_host_account_id_and_leaves_account_source_none(tmp_path):
+    """Native non-canonical Hermes events retain the host account_id and leave
+    account_source=None so sidecar.py can stamp its local/tag attribution.
+    """
+    conn = make_hermes_db(":memory:")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            cwd, git_branch, started_at, ended_at, input_tokens, output_tokens,
+            estimated_cost_usd, actual_cost_usd
+        ) VALUES (
+            'sess-native-01', 'api_server', 'default', 'local-llm',
+            'custom-internal', 'http://localhost:8000', '/home/bjoern',
+            'main', 1780003000.0, 1780003500.0, 100, 50, 0.0, 0.0
+        )
+    """)
+    cur.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-native-01', 'local-llm', 'custom-internal',
+            'http://localhost:8000', '', '', 1, 100, 50, 0,
+            0, 0, 0.0, 0.0, 'none', 'none', 1780003000.0, 1780003500.0
+        )
+    """)
+    conn.commit()
+
+    db_path = tmp_path / "native_state.db"
+    file_conn = sqlite3.connect(str(db_path))
+    conn.backup(file_conn)
+    file_conn.close()
+    conn.close()
+
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="bot-team",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        native_ev = next(e for e in events if e.model_id == "local-llm")
+        assert native_ev.provider_id == "hermes-custom-internal"
+        assert native_ev.account_id == "bot-team"
+        assert native_ev.account_source is None
     finally:
         db_path.unlink(missing_ok=True)
 
