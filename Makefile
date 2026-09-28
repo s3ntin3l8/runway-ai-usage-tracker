@@ -18,11 +18,12 @@ install-hooks: ## Install pre-commit hooks for commit and push stages
 	$(VENV)/bin/pre-commit install
 	$(VENV)/bin/pre-commit install --hook-type pre-push
 
-install: install-hooks ## Set up venv, install Python and Node dependencies
+install: ## Set up venv, install Python and Node dependencies
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements-dev.txt
 	npm --prefix webapp ci
+	$(MAKE) install-hooks
 
 dev: ## Run development server (hot reload). Data → ./data (gitignored) unless RUNWAY_CONFIG_DIR is set.
 	$(LOAD_ENV); \

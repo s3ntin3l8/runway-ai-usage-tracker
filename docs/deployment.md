@@ -188,7 +188,7 @@ The sidecar only needs outbound HTTP — no inbound ports.
 | **Kimi Coding** | No | `KIMI_CODE_API_KEY` works everywhere; sidecar adds the browser cookie / CLI credential for enrichment |
 | **Kimi K2** | No | API key works everywhere |
 | **xAI (Grok)** | Optional | A pasted bearer in Settings works server-only; sidecar adds auto-discovery from OpenCode/Grok CLI credentials |
-| **Antigravity** | ⚠️ Yes | Sidecar-only — reads local IDE JSON file |
+| **Antigravity** | ⚠️ Yes for remote-host credentials and events | Server queries the Cloud Code Assist API for quota; a sidecar sends the agy OAuth token from another host and extracts local conversation events |
 
 **Legend:** ⚠️ Yes = sidecar required for full coverage. "No" means the server-side API path is enough, though a sidecar adds enrichment (token breakdowns, session counts, per-message events).
 
