@@ -37,6 +37,10 @@ services:
     environment:
       APP_PORT: "8765"                             # match the base healthcheck + label
       CORS_ORIGINS: "https://runway.example.com"   # your public origin
+      # Do NOT set APP_HOST here (e.g. to 127.0.0.1) — this map merges with
+      # (and can override) the base compose file's own `environment:`, which
+      # forces APP_HOST=0.0.0.0. Setting it to anything else re-introduces
+      # the dead-published-port bug (verified with `docker compose config`).
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
@@ -45,8 +49,11 @@ services:
       - traefik.http.routers.runway.tls.certresolver=le   # your resolver (le / cloudflare / …)
       - traefik.http.services.runway.loadbalancer.server.port=8765
 
-#  Required in `.env` for a non-localhost bind (server refuses to start otherwise):
-#    APP_HOST=0.0.0.0  TLS_TERMINATED=1  CORS_ORIGINS=…  DB_ENCRYPTION_KEY=…
+#  APP_HOST=0.0.0.0 is already forced by the base docker-compose.yml's own
+#  `environment:` block (Compose merges environment maps across files, so
+#  this override inherits it without repeating it here). Still required in
+#  `.env` for a non-localhost bind (server refuses to start otherwise):
+#    TLS_TERMINATED=1  CORS_ORIGINS=…  DB_ENCRYPTION_KEY=…
 #    …plus one of ADMIN_API_KEY=… or TRUSTED_PROXY_IPS=…. Only set
 #    TRUSTED_PROXY_IPS when a forward-auth proxy actually asserts user identity;
 #    plain Traefik TLS routing does not. See docs/SECURITY.md.

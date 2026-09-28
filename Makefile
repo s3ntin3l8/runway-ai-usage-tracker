@@ -35,7 +35,7 @@ dev-all: ## Run the full dev stack — server + Vite frontend (:5173) + sidecar 
 	$(MAKE) -j3 dev web-dev sidecar
 
 run: ## Run production server (serves the built SPA from webapp/dist at :8765)
-	$(PYTHON) -m app.main
+	$(LOAD_ENV); $(PYTHON) -m app.main
 
 run-all: web ## Build the SPA, then run the production server + sidecar (no hot reload)
 	$(MAKE) -j2 run sidecar
