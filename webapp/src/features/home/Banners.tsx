@@ -4,8 +4,8 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { AlertTriangle, KeyRound, TrendingUp, X } from 'lucide-react';
-import type { AnomalyEntry, FleetEntry, TokenHealthEntry } from '@/api/types';
+import { AlertTriangle, HeartPulse, KeyRound, TrendingUp, X } from 'lucide-react';
+import type { AnomalyEntry, DataHealthReport, FleetEntry, TokenHealthEntry } from '@/api/types';
 import { timeAgo } from '@/lib/format';
 import { cardStale } from '@/lib/quota';
 import { cn } from '@/lib/cn';
@@ -15,9 +15,10 @@ interface BannersProps {
   tokens: TokenHealthEntry[] | undefined;
   anomalies: AnomalyEntry[] | undefined;
   fleet?: FleetEntry[] | undefined;
+  dataHealth?: DataHealthReport | undefined;
 }
 
-export function Banners({ tokens, anomalies, fleet }: BannersProps) {
+export function Banners({ tokens, anomalies, fleet, dataHealth }: BannersProps) {
   const unhealthy = (tokens ?? []).filter(
     (t) =>
       (t.status === 'expired' || t.status === 'expiring' || t.status === 'invalid') &&
@@ -28,6 +29,9 @@ export function Banners({ tokens, anomalies, fleet }: BannersProps) {
     const cards = [e.critical_gauge, ...(e.secondary_limits ?? [])];
     return cards.some((c) => c != null && cardStale(c));
   });
+  const dataHealthErrors = (dataHealth?.checks ?? []).filter(
+    (c) => c.severity === 'error' && c.total_count > 0,
+  );
 
   const failingLabel = (e: FleetEntry): string => {
     const gauge = e.critical_gauge;
@@ -78,6 +82,21 @@ export function Banners({ tokens, anomalies, fleet }: BannersProps) {
               .map((a) => `${a.provider_id}/${a.model_id} (${a.z_score_tokens.toFixed(1)}σ)`)
               .join(', ')}
             {spikes.length > 2 ? ` and ${spikes.length - 2} more` : ''}
+          </span>
+        </Banner>
+      ) : null}
+      {dataHealthErrors.length > 0 ? (
+        <Banner tone="warning" icon={<HeartPulse className="size-4 shrink-0" aria-hidden />}>
+          <span>
+            {dataHealthErrors.length === 1
+              ? `Data health found an issue: ${dataHealthErrors[0].check_id}.`
+              : `Data health found issues in ${dataHealthErrors.length} checks.`}{' '}
+            <Link
+              to="/settings/data-health"
+              className="font-medium underline underline-offset-2"
+            >
+              Review and fix
+            </Link>
           </span>
         </Banner>
       ) : null}

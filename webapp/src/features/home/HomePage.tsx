@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Inbox } from 'lucide-react';
 import { useForceCollect } from '@/hooks/useForceCollect';
 import { timeAgo } from '@/lib/format';
+import { useDataHealthReport } from '@/features/settings/sections/dataHealth/queries';
 import { AggregateStrip } from './AggregateStrip';
 import { ArchivedSection } from './ArchivedSection';
 import { AtRiskRail } from './AtRiskRail';
@@ -35,6 +36,10 @@ export function HomePage() {
   const cumulative = useCumulative();
   const tokenHealth = useTokenHealth();
   const anomalies = useAnomalies();
+  // 300s quiet-path cadence, matching useTokenHealth — this is just the
+  // error badge, not the Settings page's own report, so it doesn't need
+  // the tighter default poll.
+  const dataHealth = useDataHealthReport(300_000);
   const providerConfigs = useProviderConfigs();
   const layout = useDashboardLayout();
   const [showArchived, setShowArchived] = useState(false);
@@ -112,6 +117,7 @@ export function HomePage() {
           tokens={tokenHealth.data?.tokens}
           anomalies={anomalies.data?.anomalies}
           fleet={fleet.data?.fleet}
+          dataHealth={dataHealth.data}
         />
 
         {fleet.isPending ? (

@@ -101,3 +101,9 @@ reg delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ApplicationBoundEncryption
 ```
 
 After relaunching the browser with ABE disabled, run `python3 scripts/sidecar.py --log-level DEBUG --once` and confirm the cookie-found log line appears. Then extract your session token into an environment variable (see the Alternative section above) and re-enable ABE.
+
+## Dashboard cards or account attribution look wrong
+
+Before digging into logs, check Settings → Data health — a stale `default`-keyed
+config, an event stuck under a legacy provider id, or an orphaned gauge series
+are all things it detects and fixes in-app. See [data-health.md](data-health.md).

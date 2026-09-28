@@ -907,3 +907,75 @@ export interface DebugRawResponse {
   strategies: Record<string, StrategyCapture>;
   timestamp: number;
 }
+
+// --- Data Health -------------------------------------------------------------
+// Mirrors app/services/data_health/base.py's dataclasses and the
+// DataHealth* Pydantic models in app/models/schemas.py.
+
+export type DataHealthSeverity = 'error' | 'warn' | 'info';
+
+export interface DataHealthFinding {
+  label: string;
+  detail: Record<string, unknown>;
+}
+
+export interface DataHealthParamSpec {
+  name: string;
+  label: string;
+  required: boolean;
+  options?: string[] | null;
+}
+
+export interface DataHealthFindingGroup {
+  key: string;
+  label: string;
+  count: number;
+  fixable: boolean;
+  not_fixable_reason?: string | null;
+  params: DataHealthParamSpec[];
+  samples: DataHealthFinding[];
+  detail: Record<string, unknown>;
+}
+
+export interface DataHealthCheckReport {
+  check_id: string;
+  severity: DataHealthSeverity;
+  total_count: number;
+  fixable_count: number;
+  groups: DataHealthFindingGroup[];
+  blocked_by: string[];
+  blocked: boolean;
+}
+
+export interface DataHealthReport {
+  scanning: boolean;
+  checks: DataHealthCheckReport[];
+}
+
+export interface DataHealthFixPlan {
+  check_id: string;
+  group_key: string;
+  summary: string;
+  counts: Record<string, unknown>;
+  samples: DataHealthFinding[];
+}
+
+export interface DataHealthFixResult {
+  check_id: string;
+  group_key: string;
+  summary: string;
+  counts: Record<string, unknown>;
+}
+
+export type DataHealthJobStatus = 'running' | 'succeeded' | 'failed';
+
+export interface DataHealthJob {
+  id: string;
+  check_id: string;
+  group_key: string;
+  status: DataHealthJobStatus;
+  result?: DataHealthFixResult | null;
+  error?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+}

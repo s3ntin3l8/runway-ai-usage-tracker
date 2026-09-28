@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ChevronRight,
   FileClock,
+  HeartPulse,
   Info,
   KeyRound,
   Palette,
@@ -20,6 +21,7 @@ import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/cn';
 import { AboutSection } from './sections/AboutSection';
 import { AuditSection } from './sections/AuditSection';
+import { DataHealthSection } from './sections/DataHealthSection';
 import { DisplaySection } from './sections/DisplaySection';
 import { ProvidersSection } from './sections/ProvidersSection';
 import { SystemSection } from './sections/SystemSection';
@@ -76,6 +78,13 @@ const SECTIONS: Section[] = [
     description: 'Recorded admin mutations',
     icon: FileClock,
     element: <AuditSection />,
+  },
+  {
+    slug: 'data-health',
+    label: 'Data health',
+    description: 'Database checks and in-app fixes',
+    icon: HeartPulse,
+    element: <DataHealthSection />,
   },
   {
     slug: 'about',
