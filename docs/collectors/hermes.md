@@ -106,7 +106,7 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
 | Environment Variable | Default | Purpose |
 |---|---|---|
 | `HERMES_HOME` | `~/.hermes` | Override root directory for Hermes state and configuration |
-| `HERMES_ACCOUNT_LABEL` | `default` | Host-level account identifier used for native unmapped Hermes events |
+| `HERMES_ACCOUNT_LABEL` | `default` | Host-level account identifier used for native unmapped Hermes events (intentionally not used for canonical retargeting, where events are held back as `default` / `PendingUsageEvent`) |
 | `RUNWAY_CONFIG_DIR` | `~/.config/runway` | Base directory for sidecar configuration and watermark storage |
 | `SIDECAR_BOOTSTRAP_DAYS` | `90` | Number of days of historical sessions to bootstrap on first run |
 

@@ -312,6 +312,7 @@ def test_incremental_deltas_watermark(tmp_path):
         assert delta_ev.provider_id == "kimi_coding"
         assert delta_ev.tokens_input == 5000
         assert delta_ev.tokens_output == 300
+        # Event ID ends with |c<curr_calls>s<emission_seq> (|c11s2 = 11 calls, 2nd emission slice)
         assert delta_ev.event_id.endswith("|c11s2")
     finally:
         db_path.unlink(missing_ok=True)
@@ -663,3 +664,77 @@ def test_watermark_state_key_scoped_by_account_id(tmp_path):
     keys = list(data.keys())
     assert any(k.startswith("account1|") for k in keys)
     assert any(k.startswith("account2|") for k in keys)
+
+
+def test_watermark_state_key_distinguishes_billing_base_url_and_mode(tmp_path):
+    """Watermark state keys include billing_base_url and billing_mode to prevent
+    collision when a session produces multiple slices with different endpoints or modes."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db_path = Path(tmp.name)
+    conn = make_hermes_db(str(db_path))
+
+    # Add a second row for the same session and model but differing in billing_base_url
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'api-sess-kimi-01', 'kimi-for-coding', 'kimi-coding',
+            'https://api-backup.kimi.com/coding/v1/', '', '', 5, 25000, 1000, 0,
+            0, 0, 0.0, 0.0, 'unknown', 'none', 1780000100.0, 1780000600.0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    state_file = tmp_path / "hermes_watermark.json"
+    try:
+        events = parse_hermes_events(
+            [db_path], "default", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
+        )
+        # 2 original rows + 1 new row = 3 events
+        assert len(events) == 3
+
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        # Both distinct base URLs exist as independent watermark keys
+        url1_keys = [k for k in data if "https://api.kimi.com/coding/v1/" in k]
+        url2_keys = [k for k in data if "https://api-backup.kimi.com/coding/v1/" in k]
+        assert len(url1_keys) == 1
+        assert len(url2_keys) == 1
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_first_seen_newer_than_last_seen_extracted(tmp_path):
+    """Rows where first_seen > since_epoch are extracted even if last_seen is older or zero."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db_path = Path(tmp.name)
+    conn = make_hermes_db(str(db_path))
+
+    # Add a row where last_seen is 0.0 (or older) but first_seen is 1790000000.0 (> since)
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'api-sess-kimi-01', 'custom-model', 'custom',
+            '', '', '', 1, 500, 100, 0, 0, 0, 0.0, 0.0, 'none', 'none', 1790000000.0, 1770000000.0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    try:
+        events = parse_hermes_events(
+            [db_path], "default", datetime.fromtimestamp(1785000000.0, tz=UTC)
+        )
+        assert len(events) == 1
+        assert events[0].model_id == "custom-model"
+    finally:
+        db_path.unlink(missing_ok=True)
