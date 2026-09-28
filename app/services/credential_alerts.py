@@ -224,7 +224,9 @@ async def check_credential_alerts(session: Session) -> None:
             for config in configs:
                 # SQLModel types primary keys as `int | None` (None until the
                 # row is flushed), so narrow once here: a config with no id
-                # can't be the FK target of an alert row.
+                # can't be the FK target of an alert row. Type-system-only
+                # guard — `configs` is a flushed select above, so this branch
+                # is unreachable unless an un-persisted config is ever added.
                 if config.id is None:
                     continue
                 config_id = config.id
