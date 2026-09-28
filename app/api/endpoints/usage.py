@@ -13,6 +13,7 @@ from app.core.cache import cache_clear, cache_get, cache_set
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
+from app.core.security import require_admin_key
 from app.core.utils import resolve_user_tz
 from app.models._datetime import iso_utc
 from app.models.schemas import (
@@ -1437,9 +1438,16 @@ async def get_projects(
 @router.post("/reset/{provider}")
 @limiter.limit("10/minute")
 async def reset_provider(
-    request: Request, provider: str, account_id: str | None = None
+    request: Request,
+    provider: str,
+    account_id: str | None = None,
+    _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
-    """Reset terminal failure state for a provider."""
+    """Reset terminal failure state for a provider.
+
+    Admin-gated: lets a caller force a specific collector out of its error
+    state on demand.
+    """
     if provider not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     await manager.reset_collector(provider, account_id)
@@ -1450,9 +1458,15 @@ async def reset_provider(
 @router.post("/collect/{provider}")
 @limiter.limit("6/minute")
 async def collect_provider(
-    request: Request, provider: str, account_id: str | None = None
+    request: Request,
+    provider: str,
+    account_id: str | None = None,
+    _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
-    """Force an immediate re-collection for a specific provider."""
+    """Force an immediate re-collection for a specific provider.
+
+    Admin-gated: triggers real network calls to the provider on demand.
+    """
     if provider not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Provider '{provider}' not found")
     cards = await manager.collect_one(provider, account_id)
