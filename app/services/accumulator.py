@@ -12,6 +12,9 @@ from app.core.date_utils import parse_iso8601_utc
 
 logger = logging.getLogger(__name__)
 
+# Keep ORM model imports inside persistence functions so importing the
+# accumulator during application startup does not eagerly register DB models.
+
 
 def _source_id(provider_id: str, sidecar_id: str) -> str:
     return (

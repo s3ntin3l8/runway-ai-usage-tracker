@@ -1,3 +1,4 @@
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -405,6 +406,39 @@ class TestCollectorManagerWarmup:
 
 
 class TestCollectorManagerCollection:
+    @pytest.mark.asyncio
+    async def test_global_timeout_cancellation_is_a_failed_outcome(self, manager):
+        smart = MagicMock()
+        smart.collector.PROVIDER_ID = "anthropic"
+        smart.collector.account_id = "alice@example.com"
+        smart.last_collection_state = "complete"
+        manager.smart_collectors = {"anthropic:alice@example.com": smart}
+
+        async def wait_forever(_key, _client):
+            await asyncio.Event().wait()
+
+        with (
+            patch.object(manager, "_sync_collectors", new_callable=AsyncMock),
+            patch.object(manager, "_get_client", new_callable=AsyncMock),
+            patch.object(manager, "_collect_with_semaphore", side_effect=wait_forever),
+            patch(
+                "app.services.collector_manager.asyncio.wait",
+                new_callable=AsyncMock,
+                side_effect=lambda tasks, timeout: (set(), set(tasks)),
+            ),
+        ):
+            result = await manager._do_collect()
+
+        assert result == []
+        assert manager.last_collection_outcomes == [
+            {
+                "provider_id": "anthropic",
+                "account_id": "alice@example.com",
+                "source_id": "server:anthropic",
+                "state": "failed",
+            }
+        ]
+
     @pytest.mark.asyncio
     async def test_collect_all_success(self, manager):
         """Test successful collection flow."""

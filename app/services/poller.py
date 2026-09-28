@@ -190,6 +190,8 @@ class BackgroundPoller:
                 except Exception as e:
                     logger.error(f"Failed to upsert card to LatestUsage: {e}")
 
+            # Defer these imports until collection runs to keep poller startup
+            # independent from ORM model registration and DB initialization.
             from sqlmodel import select
 
             from app.models.db import LatestUsageContribution
@@ -232,11 +234,7 @@ class BackgroundPoller:
                         source_id=source_id,
                         reported_keys=keys,
                     )
-                elif state == "failed":
-                    mark_latest_usage_source_stale(
-                        session, provider_id=provider_id, source_id=source_id
-                    )
-                elif state == "skipped":
+                elif state in {"failed", "skipped"}:
                     mark_latest_usage_source_stale(
                         session,
                         provider_id=provider_id,

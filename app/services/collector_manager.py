@@ -449,21 +449,17 @@ class CollectorManager:
             smart = self.smart_collectors.get(key)
             provider_id = getattr(getattr(smart, "collector", None), "PROVIDER_ID", None)
             account_id = getattr(getattr(smart, "collector", None), "account_id", None) or "default"
-            state = (
-                "failed"
-                if isinstance(res, Exception)
-                else (smart.last_collection_state if smart else "failed")
-            )
+            failed = isinstance(res, (Exception, asyncio.CancelledError))
+            state = "failed" if failed else (smart.last_collection_state if smart else "failed")
             outcomes.append(
                 {
                     "provider_id": provider_id,
                     "account_id": account_id,
                     "source_id": f"server:{provider_id}",
                     "state": state,
-                    "last_success_time": smart.last_success_time if smart else None,
                 }
             )
-            if isinstance(res, Exception):
+            if failed:
                 logger.error(f"Unexpected error from collector {active_keys[i]}: {res}")
                 continue
             if isinstance(res, list):
