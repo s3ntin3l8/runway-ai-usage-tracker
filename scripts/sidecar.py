@@ -2804,77 +2804,6 @@ class GenericCollector:
                             "xai grok CLI auth.json extraction failed for %s: %s", path, exc
                         )
 
-            # 8. Specialized: SQLite (OpenCode)
-            elif rule_type == "sqlite":
-                for path_str in rule.get("paths", []):
-                    path = resolve_path(path_str)
-                    if path.exists():
-                        try:
-                            conn = sqlite3.connect(str(path))
-                            try:
-                                cursor = conn.cursor()
-                                now = datetime.datetime.now(datetime.UTC)
-                                # Discover identity
-                                hostname = get_hostname()
-                                acc_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
-                                if not acc_label:
-                                    try:
-                                        cursor.execute("SELECT email FROM account LIMIT 1")
-                                        row = cursor.fetchone()
-                                        if row and row[0]:
-                                            acc_label = row[0]
-                                    except Exception:
-                                        logging.debug(
-                                            "OpenCode account email query failed", exc_info=True
-                                        )
-
-                                for q in rule.get("queries", []):
-                                    query_str = q.get("query")
-                                    for window_name, seconds in q.get("windows", {}).items():
-                                        cutoff = int(
-                                            (now - datetime.timedelta(seconds=seconds)).timestamp()
-                                            * 1000
-                                        )
-                                        cursor.execute(query_str, (cutoff,))
-                                        row = cursor.fetchone()
-                                        used = float(row[0] or 0.0)
-                                        count = int(row[1] or 0)
-                                        limit = q.get("limits", {}).get(window_name, 1.0)
-                                        remaining = max(0, limit - used)
-                                        pct = (used / limit * 100) if limit > 0 else 0
-
-                                        results.append(
-                                            {
-                                                "service_name": f"{provider_id.capitalize()} ({window_name})",
-                                                "icon": icon,
-                                                "remaining": f"${remaining:.2f}"
-                                                if "$" in q.get("name", "") or "cost" in query_str
-                                                else f"{remaining}",
-                                                "unit": f"{limit} limit",
-                                                "reset": f"Rolling {window_name}",
-                                                "health": "good"
-                                                if pct < 70
-                                                else "warning"
-                                                if pct < 90
-                                                else "critical",
-                                                "pace": "Stable" if pct < 50 else "High",
-                                                "detail": f"{used} used · {count} msgs · {hostname} [Sidecar]",
-                                                "data_source": "local",
-                                                "account_label": acc_label,
-                                                "metadata": {
-                                                    "used": used,
-                                                    "count": count,
-                                                    "window": window_name,
-                                                    "hostname": hostname,
-                                                    "account_label": acc_label,
-                                                },
-                                            }
-                                        )
-                            finally:
-                                conn.close()
-                        except Exception as e:
-                            logging.debug(f"SQLite error for {provider_id}: {e}")
-
             # 8. Specialized: Claude Statusline
             elif rule_type == "file_json_statusline":
                 for path_str in rule.get("paths", []):
@@ -2890,7 +2819,6 @@ class GenericCollector:
                                 data = json.load(f)
 
                             email = discover_anthropic_email()
-                            now_str = datetime.datetime.now(datetime.UTC).isoformat()
                             name_map = {"five_hour": "Session Window", "seven_day": "Weekly Window"}
 
                             # Rate Limits
@@ -2918,30 +2846,6 @@ class GenericCollector:
                                     }
                                 )
 
-                            # Context / Tokens
-                            ctx = data.get("context_window", {})
-                            if ctx:
-                                total_tokens = ctx.get("total_input_tokens", 0) + ctx.get(
-                                    "total_output_tokens", 0
-                                )
-                                max_t = ctx.get("max_tokens", 200000)
-                                results.append(
-                                    {
-                                        "service_name": "Claude (Session Tokens)",
-                                        "icon": "🪙",
-                                        "remaining": f"{total_tokens:,}",
-                                        "unit": f"/ {max_t:,}",
-                                        "reset": data.get("model", {}).get(
-                                            "display_name", "Sonnet"
-                                        ),
-                                        "health": "good",
-                                        "pace": "Active",
-                                        "detail": f"{total_tokens:,} tokens [Sidecar]",
-                                        "data_source": "local",
-                                        "account_id": email or None,
-                                        "account_label": email or None,
-                                    }
-                                )
                         except Exception:
                             logging.debug("Statusline file rule failed", exc_info=True)
 

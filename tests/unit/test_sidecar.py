@@ -108,6 +108,47 @@ class TestOpenCodeCredentialRules:
         cookie_slots = {rule["name"] for rule in rules if rule.get("type") == "cookie"}
         assert cookie_slots == {"auth", "__Host-console_session"}
 
+    def test_open_code_registries_do_not_emit_sqlite_rolling_usage_cards(self):
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
+            assert all(rule.get("type") != "sqlite" for rule in providers["opencode"]["rules"])
+
+
+def test_claude_statusline_keeps_quota_windows_without_session_token_card(monkeypatch, tmp_path):
+    statusline = tmp_path / "statusline.json"
+    statusline.write_text(
+        json.dumps(
+            {
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 25, "resets_at": 1_800_000_000},
+                    "seven_day": {"used_percentage": 40, "resets_at": 1_800_000_000},
+                },
+                "context_window": {
+                    "total_input_tokens": 900,
+                    "total_output_tokens": 100,
+                    "max_tokens": 200_000,
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(sidecar, "resolve_path", lambda _path: statusline)
+    monkeypatch.setattr(sidecar, "discover_anthropic_email", lambda: "claude@example.com")
+
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        "anthropic",
+        {
+            "icon": "🟠",
+            "rules": [{"type": "file_json_statusline", "paths": [str(statusline)]}],
+        },
+    )
+
+    assert blocked == []
+    assert {card["service_name"] for card in cards} == {
+        "Claude (Session Window)",
+        "Claude (Weekly Window)",
+    }
+    assert all(card["account_id"] == "claude@example.com" for card in cards)
+
 
 class TestDeepSeekCredentialRules:
     """The DeepSeek balance collector consumes the same API key the opencode

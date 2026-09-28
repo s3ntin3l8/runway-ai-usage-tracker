@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,7 +14,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import LatestUsage
+from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent
 from app.services.pricing_seed import seed_pricing_table
 
 TEST_KEY = "test-local-card-ingest-key"
@@ -133,6 +134,28 @@ def test_empty_completed_providers_heartbeat_skips_latest_usage_write_block(sess
 
 
 def test_complete_empty_provider_snapshot_retires_sidecar_card(session):
+    now = datetime.now(UTC)
+    session.add(
+        QuotaSnapshot(
+            provider_id="anthropic",
+            account_id="user@example.com",
+            window_type="weekly",
+            ts=now,
+            pct_used=20.0,
+        )
+    )
+    session.add(
+        UsageEvent(
+            provider_id="anthropic",
+            account_id="user@example.com",
+            event_id="historical-claude-message",
+            ts=now,
+            tokens_input=10,
+            tokens_output=5,
+        )
+    )
+    session.commit()
+
     payload = {
         "provider": "anthropic-sidecar",
         "sidecar_id": "test-host-complete",
@@ -181,6 +204,27 @@ def test_complete_empty_provider_snapshot_retires_sidecar_card(session):
             )
         ).all()
         == []
+    )
+    assert (
+        session.exec(
+            select(QuotaSnapshot).where(
+                QuotaSnapshot.provider_id == "anthropic",
+                QuotaSnapshot.account_id == "user@example.com",
+                QuotaSnapshot.window_type == "weekly",
+                QuotaSnapshot.ts == now,
+            )
+        ).first()
+        is not None
+    )
+    assert (
+        session.exec(
+            select(UsageEvent).where(
+                UsageEvent.provider_id == "anthropic",
+                UsageEvent.account_id == "user@example.com",
+                UsageEvent.event_id == "historical-claude-message",
+            )
+        ).first()
+        is not None
     )
 
 
