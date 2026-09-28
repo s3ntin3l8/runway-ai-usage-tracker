@@ -1,14 +1,21 @@
 """Tests for upsert_latest_usage error-suppression and orphan-eviction logic."""
 
 import json
+import logging
 import os
 import tempfile
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.models.db import LatestUsage
-from app.services.accumulator import evict_orphan_error_rows, upsert_latest_usage
+from app.models.db import LatestUsage, LatestUsageContribution
+from app.services.accumulator import (
+    _parse_source_id,
+    evict_orphan_error_rows,
+    mark_latest_usage_source_stale,
+    reconcile_latest_usage_snapshot,
+    upsert_latest_usage,
+)
 
 
 @pytest.fixture(name="session")
@@ -111,6 +118,227 @@ def test_error_suppressed_when_healthy_row_exists(session: Session):
     assert len(rows) == 1
     assert rows[0].account_id == "alice@example.com"
     assert json.loads(rows[0].card_json).get("error_type") is None
+
+
+def test_complete_snapshot_retires_only_its_source_and_keeps_history_tables(session: Session):
+    server_card = _success_card()
+    sidecar_card = _success_card()
+    sidecar_card.update(
+        {
+            "window_type": "session",
+            "variant": "sidecar-session",
+            "data_source": "local",
+            "sidecar_id": "host-a",
+        }
+    )
+    upsert_latest_usage(session, server_card, source_id="server:chatgpt")
+    upsert_latest_usage(
+        session,
+        sidecar_card,
+        sidecar_id_override="host-a",
+        source_id="sidecar:host-a:chatgpt",
+    )
+    session.commit()
+
+    removed = reconcile_latest_usage_snapshot(
+        session,
+        provider_id="chatgpt",
+        account_id="alice@example.com",
+        source_id="sidecar:host-a:chatgpt",
+        reported_keys=set(),
+    )
+    session.commit()
+
+    rows = session.exec(select(LatestUsage)).all()
+    assert removed == 1
+    assert [(r.window_type, r.account_id) for r in rows] == [("weekly", "alice@example.com")]
+    contributions = session.exec(select(LatestUsageContribution)).all()
+    assert [(r.source_id, r.window_type) for r in contributions] == [("server:chatgpt", "weekly")]
+
+
+def test_real_failure_marks_last_good_source_stale(session: Session):
+    upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+    session.commit()
+
+    changed = mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    card = json.loads(row.card_json)
+    assert changed == 1
+    assert card["stale"] is True
+    assert card["collection_failing"] is True
+
+
+def test_missing_server_account_can_be_marked_stale_without_touching_siblings(session: Session):
+    upsert_latest_usage(
+        session, _success_card(account_id="alice@example.com"), source_id="server:chatgpt"
+    )
+    upsert_latest_usage(
+        session,
+        _success_card(account_id="bob@example.com", account_label="bob@example.com"),
+        source_id="server:chatgpt",
+    )
+    session.commit()
+
+    changed = mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        account_id="alice@example.com",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    cards = {
+        row.account_id: json.loads(row.card_json) for row in session.exec(select(LatestUsage)).all()
+    }
+    assert changed == 1
+    assert cards["alice@example.com"]["stale"] is True
+    assert cards["bob@example.com"].get("stale") is not True
+
+
+def test_fresh_non_quota_card_clears_source_staleness(session: Session):
+    card = _success_card()
+    upsert_latest_usage(session, card, source_id="server:chatgpt")
+    session.commit()
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    token_card = dict(card)
+    token_card.update(
+        {
+            "used_value": None,
+            "limit_value": None,
+            "pct_used": None,
+            "unit": "tokens",
+            "unit_type": "tokens",
+            "remaining": "42",
+            "data_source": "local",
+        }
+    )
+    upsert_latest_usage(session, token_card, source_id="server:chatgpt")
+    session.commit()
+
+    stored = json.loads(session.exec(select(LatestUsage)).one().card_json)
+    assert stored.get("stale") is not True
+    assert stored.get("collection_failing") is not True
+
+
+def test_server_source_keeps_local_sidecar_id_when_sidecar_writes_later(session: Session):
+    server_card = _success_card()
+    sidecar_card = {**server_card, "data_source": "local", "sidecar_id": "host-a"}
+    upsert_latest_usage(session, server_card, source_id="server:chatgpt")
+    upsert_latest_usage(
+        session,
+        sidecar_card,
+        sidecar_id_override="host-a",
+        source_id="sidecar:host-a:chatgpt",
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    assert row.sidecar_id == "local"
+
+
+def test_fresh_sidecar_owns_card_when_server_contribution_is_stale(session: Session):
+    server_card = _success_card()
+    sidecar_card = {**server_card, "data_source": "local", "sidecar_id": "host-a"}
+    upsert_latest_usage(session, server_card, source_id="server:chatgpt")
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    upsert_latest_usage(
+        session,
+        sidecar_card,
+        sidecar_id_override="host-a",
+        source_id="sidecar:host-a:chatgpt",
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    card = json.loads(row.card_json)
+    assert row.sidecar_id == "host-a"
+    assert card.get("stale") is not True
+    assert card.get("collection_failing") is not True
+
+
+def test_stale_only_server_card_keeps_local_owner(session: Session):
+    upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    assert row.sidecar_id == "local"
+
+
+def test_when_all_sources_are_stale_latest_sidecar_owns_card(session: Session):
+    server_card = _success_card()
+    sidecar_card = {**server_card, "data_source": "local", "sidecar_id": "host-a"}
+    upsert_latest_usage(session, server_card, source_id="server:chatgpt")
+    upsert_latest_usage(
+        session,
+        sidecar_card,
+        sidecar_id_override="host-a",
+        source_id="sidecar:host-a:chatgpt",
+    )
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="server:chatgpt",
+        stale_after_seconds=0,
+    )
+    mark_latest_usage_source_stale(
+        session,
+        provider_id="chatgpt",
+        source_id="sidecar:host-a:chatgpt",
+        stale_after_seconds=0,
+    )
+    session.commit()
+
+    row = session.exec(select(LatestUsage)).one()
+    assert row.sidecar_id == "host-a"
+    assert json.loads(row.card_json)["stale"] is True
+
+
+def test_contribution_write_failure_is_logged(session: Session, monkeypatch, caplog):
+    def fail_contribution_write(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr("app.services.accumulator._upsert_contribution", fail_contribution_write)
+    with caplog.at_level(logging.WARNING, logger="app.services.accumulator"):
+        upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+
+    assert "LatestUsage contribution write failed" in caplog.text
+    assert "chatgpt/alice@example.com/weekly" in caplog.text
+    assert "database unavailable" in caplog.text
+
+
+def test_source_id_parser_extracts_producer_and_provider():
+    assert _parse_source_id("server:chatgpt") == ("server", "local", "chatgpt")
+    assert _parse_source_id("sidecar:host-a:anthropic") == (
+        "sidecar",
+        "host-a",
+        "anthropic",
+    )
 
 
 def test_default_error_suppressed_when_real_account_exists_same_slot(session: Session):

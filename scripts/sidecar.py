@@ -37,6 +37,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -3380,14 +3381,21 @@ def _post_credential_manifest(
         logging.debug(f"manifest: on_resolved callback raised ({exc})")
 
 
-def run_collection(
-    config: dict[str, Any],
-    providers: list[str] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+@dataclass
+class CollectionResult:
+    """Structured result from one collection cycle."""
+
+    metrics: list[dict[str, Any]]
+    events: list[dict[str, Any]]
+    error_count: int
+    completed_providers: list[str]
+
+
+def run_collection(config: dict[str, Any], providers: list[str] | None = None) -> CollectionResult:
     """Run collection for specified or enabled providers.
 
-    Returns (metrics, events, error_count) where events is a list of
-    serialised UsageEventPush dicts ready for the wire payload.
+    Returns collected metrics, extracted events, errors, and completed provider
+    snapshots for the ingest payload.
     """
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
@@ -3477,7 +3485,7 @@ def run_collection(
     elif not providers:
         # Empty list = pure heartbeat. Skip collection; the caller still pushes
         # an empty payload to /fleet/ingest so the server can deliver triggers.
-        return [], [], 0
+        return CollectionResult([], [], 0, [])
     else:
         enabled_providers = providers
 
@@ -3780,7 +3788,7 @@ def run_collection(
     except Exception as _e:
         logging.debug(f"manifest: skipped ({_e})")
 
-    return all_metrics, all_events, error_count
+    return CollectionResult(all_metrics, all_events, error_count, completed_providers_this_cycle)
 
 
 class DaemonRunner:
@@ -3877,7 +3885,11 @@ class DaemonRunner:
             else:
                 logging.info(f"Starting targeted collection for: {providers}...")
 
-            metrics, events, collection_errors = run_collection(self._config, providers=providers)
+            collection_result = run_collection(self._config, providers=providers)
+            metrics = collection_result.metrics
+            events = collection_result.events
+            collection_errors = collection_result.error_count
+            completed_providers = collection_result.completed_providers
 
             os_platform = f"{platform.system()}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version") or _SIDECAR_VERSION
@@ -3926,6 +3938,7 @@ class DaemonRunner:
                     "os_platform": os_platform,
                     "self_update_capable": self_update_capable if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
+                    "completed_providers": completed_providers if first_batch else None,
                     "identity_sources": dict(_IDENTITY_REPORT) if first_batch else None,
                     "last_log_lines": (_tail_log(20) if not providers else [])
                     if first_batch

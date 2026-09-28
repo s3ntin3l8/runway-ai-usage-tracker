@@ -173,22 +173,98 @@ class BackgroundPoller:
         """Execute a single collection and snapshot cycle."""
         logger.info("Starting scheduled background collection...")
         cards = await manager.collect_all()
+        outcomes = getattr(manager, "last_collection_outcomes", [])
 
         # Update dormancy state before DB write
         self._update_sleep_state(cards)
 
-        if not cards:
-            logger.debug("No metrics collected during background poll.")
-        else:
-            with Session(engine) as session:
-                for card_dict in cards:
-                    try:
-                        upsert_latest_usage(session, card_dict)
-                    except Exception as e:
-                        logger.error(f"Failed to upsert card to LatestUsage: {e}")
+        with Session(engine) as session:
+            for card_dict in cards:
+                try:
+                    provider_id = card_dict.get("provider_id")
+                    upsert_latest_usage(
+                        session,
+                        card_dict,
+                        source_id=f"server:{provider_id}" if provider_id else None,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to upsert card to LatestUsage: {e}")
 
-                session.commit()
+            # Defer these imports until collection runs to keep poller startup
+            # independent from ORM model registration and DB initialization.
+            from sqlmodel import select
+
+            from app.models.db import LatestUsageContribution
+            from app.services.account_identity import resolve_account_id
+            from app.services.accumulator import (
+                mark_latest_usage_source_stale,
+                reconcile_latest_usage_snapshot,
+            )
+
+            outcomes_by_account: dict[tuple[str, str], dict] = {}
+            for outcome in outcomes:
+                provider_id = outcome.get("provider_id")
+                account_id = outcome.get("account_id") or "default"
+                source_id = outcome.get("source_id")
+                if not provider_id or not source_id:
+                    continue
+                canonical_account_id = resolve_account_id(provider_id, account_id, None)
+                outcomes_by_account[(provider_id, canonical_account_id)] = outcome
+                state = outcome.get("state")
+                if state == "complete":
+                    keys = {
+                        (
+                            str(card.get("window_type") or ""),
+                            str(card.get("variant") or "default"),
+                            str(card.get("model_id") or ""),
+                        )
+                        for card in cards
+                        if card.get("provider_id") == provider_id
+                        and resolve_account_id(
+                            provider_id,
+                            card.get("account_id") or "default",
+                            card.get("account_label"),
+                        )
+                        == canonical_account_id
+                    }
+                    reconcile_latest_usage_snapshot(
+                        session,
+                        provider_id=provider_id,
+                        account_id=canonical_account_id,
+                        source_id=source_id,
+                        reported_keys=keys,
+                    )
+                elif state in {"failed", "skipped"}:
+                    mark_latest_usage_source_stale(
+                        session,
+                        provider_id=provider_id,
+                        source_id=source_id,
+                        account_id=canonical_account_id,
+                    )
+
+            # A dynamic collector can disappear during sync (for example when
+            # its token-cache account is removed), leaving no SmartCollector
+            # outcome. Preserve its last-good contribution, but age it to stale
+            # after the normal grace period so it cannot look current forever.
+            server_contributions = session.exec(
+                select(LatestUsageContribution.provider_id, LatestUsageContribution.account_id)
+                .where(LatestUsageContribution.source_id.startswith("server:"))
+                .distinct()
+            ).all()
+            for provider_id, account_id in server_contributions:
+                if (provider_id, account_id) not in outcomes_by_account:
+                    mark_latest_usage_source_stale(
+                        session,
+                        provider_id=provider_id,
+                        source_id=f"server:{provider_id}",
+                        account_id=account_id,
+                    )
+
+            session.commit()
+            if cards or outcomes:
                 logger.info(f"Background poll complete. Snapshotted {len(cards)} metrics.")
+        if not cards and not outcomes:
+            logger.debug("No metrics collected during background poll.")
 
         # Fire webhook alerts for any threshold breaches
         try:

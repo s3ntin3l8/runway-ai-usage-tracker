@@ -12,6 +12,34 @@ per-sidecar splits are derived on demand from `usage_events` by the
 `/api/v1/usage/fleet` endpoint's `window_aggregations` field. See the
 [Data Model section of CLAUDE.md](../CLAUDE.md#data-model) for the full event flow.
 
+## Current-card reconciliation
+
+`LatestUsage` is the live card view. Each producer reports complete provider
+snapshots independently: server collectors reconcile after a fresh complete
+response, and sidecars include `completed_providers` with each ingest cycle.
+Cards omitted from a complete snapshot are removed from that producer's live
+contribution; snapshots from cached, skipped, failed, or partial collection
+cycles do not remove anything. Failures mark retained last-good cards stale
+after an hour. The source contribution table lets one producer reconcile
+without removing another producer's card for the same provider/account.
+Server-side accounts that disappear from the active collector set are treated
+like skipped collections: their last-good contributions are retained and aged
+to stale after the same one-hour grace period, rather than being mistaken for
+a successful empty snapshot.
+When multiple sources report the same slot, a fresh server contribution keeps
+the materialized `sidecar_id` as `local`; otherwise the freshest healthy
+sidecar owns the slot. If every contribution is stale, the most recently
+updated source owns it.
+
+`BaseCollector.complete_snapshot(result)` defaults to `False`. Each registered
+collector explicitly opts in with `COMPLETE_SNAPSHOT = True` only when it emits
+full provider snapshots; collectors with result-dependent completeness should
+override the method. Valid empty results must also use
+`successful_empty_result` so only a provider-confirmed empty snapshot can retire
+old cards.
+Reconciliation only changes the live card view; `quota_snapshots` and
+`usage_events` retain their historical data.
+
 ## Strategy Types
 
 | Type | Description |

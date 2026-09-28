@@ -34,7 +34,11 @@ from app.services.account_identity import (
     normalize_sidecar_id,
     resolve_account_id,
 )
-from app.services.accumulator import prune_stale_latest_usage, upsert_latest_usage
+from app.services.accumulator import (
+    prune_stale_latest_usage,
+    reconcile_latest_usage_snapshot,
+    upsert_latest_usage,
+)
 from app.services.credential_tags import (
     CredentialTagRepo,
     PendingCredentialTagRepo,
@@ -222,7 +226,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         )
 
     # Store local data cards directly into LatestUsage (unified with server-scraped cards)
-    if local_cards:
+    if local_cards or payload.completed_providers:
         # Track (provider_id, canonical_account_id) → set of
         # (window_type, variant, model_id) for the prune step.
         batch_keys: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
@@ -232,6 +236,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 session,
                 card_dict,
                 sidecar_id_override=card.sidecar_id or payload.sidecar_id or "local",
+                source_id=f"sidecar:{payload.sidecar_id or 'local'}:{card.provider_id}",
             )
             if card.provider_id and card.account_id:
                 canonical_aid = resolve_account_id(
@@ -245,6 +250,29 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     )
                 )
         pruned = prune_stale_latest_usage(session, batch_keys)
+        if payload.completed_providers is not None:
+            for provider_id in payload.completed_providers:
+                source_id = f"sidecar:{payload.sidecar_id or 'local'}:{provider_id}"
+                accounts = {account_id for pid, account_id in batch_keys if pid == provider_id}
+                from app.models.db import LatestUsageContribution
+
+                accounts.update(
+                    row.account_id
+                    for row in session.exec(
+                        select(LatestUsageContribution).where(
+                            LatestUsageContribution.provider_id == provider_id,
+                            LatestUsageContribution.source_id == source_id,
+                        )
+                    ).all()
+                )
+                for account_id in accounts:
+                    reconcile_latest_usage_snapshot(
+                        session,
+                        provider_id=provider_id,
+                        account_id=account_id,
+                        source_id=source_id,
+                        reported_keys=batch_keys.get((provider_id, account_id), set()),
+                    )
         session.commit()
         logger.info(
             f"Stored {len(local_cards)} local cards into LatestUsage from {payload.provider}"

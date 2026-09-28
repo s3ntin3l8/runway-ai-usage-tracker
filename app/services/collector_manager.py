@@ -71,6 +71,7 @@ class CollectorManager:
         self._last_sync_time: float = 0.0
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
+        self.last_collection_outcomes: list[dict[str, Any]] = []
         # Concurrency limit: max 10 collectors running at once
         self._semaphore = asyncio.Semaphore(10)
 
@@ -442,8 +443,23 @@ class CollectorManager:
                 results.append(t.result())
 
         flattened = []
+        outcomes: list[dict[str, Any]] = []
         for i, res in enumerate(results):
-            if isinstance(res, Exception):
+            key = active_keys[i]
+            smart = self.smart_collectors.get(key)
+            provider_id = getattr(getattr(smart, "collector", None), "PROVIDER_ID", None)
+            account_id = getattr(getattr(smart, "collector", None), "account_id", None) or "default"
+            failed = isinstance(res, (Exception, asyncio.CancelledError))
+            state = "failed" if failed else (smart.last_collection_state if smart else "failed")
+            outcomes.append(
+                {
+                    "provider_id": provider_id,
+                    "account_id": account_id,
+                    "source_id": f"server:{provider_id}",
+                    "state": state,
+                }
+            )
+            if failed:
                 logger.error(f"Unexpected error from collector {active_keys[i]}: {res}")
                 continue
             if isinstance(res, list):
@@ -452,6 +468,7 @@ class CollectorManager:
         logger.info(
             f"Collected {len(flattened)} total cards from {len(active_keys)} active accounts"
         )
+        self.last_collection_outcomes = outcomes
         return flattened
 
     async def _collect_with_semaphore(

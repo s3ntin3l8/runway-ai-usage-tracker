@@ -906,6 +906,9 @@ class TestOllamaApiCollector:
             assert collector._last_error_reason == "unknown"
             assert smart.last_result == []
             assert smart.consecutive_errors == 0
+            assert collector.successful_empty_result is True
+            assert collector.complete_snapshot([]) is True
+            assert smart.last_collection_state == "complete"
 
             # A later malformed response in the same collector instance must
             # not inherit the previous cycle's no-cap success marker.

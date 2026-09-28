@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.config import settings
 
@@ -102,6 +102,7 @@ def init_db() -> None:
         AuditLog,
         CredentialTag,
         LatestUsage,
+        LatestUsageContribution,
         PendingCredentialTag,
         ProviderConfig,
         ProviderPricing,
@@ -121,6 +122,17 @@ def init_db() -> None:
 
     SQLModel.metadata.create_all(engine)
     logger.info(f"Database initialized at {settings.DATABASE_PATH}")
+
+    from app.services.accumulator import (
+        backfill_latest_usage_contributions,
+        prune_orphan_latest_usage_contributions,
+    )
+
+    with Session(engine) as session:
+        prune_orphan_latest_usage_contributions(session)
+        if session.exec(select(LatestUsageContribution.id)).first() is None:
+            backfill_latest_usage_contributions(session)
+        session.commit()
 
     # Add columns introduced after initial schema (SQLite create_all doesn't ALTER)
     with engine.connect() as conn:

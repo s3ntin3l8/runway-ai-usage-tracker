@@ -90,6 +90,7 @@ class KimiCodingCollector(BaseCollector):
     """Collector for Kimi Coding quotas (5h session / weekly / monthly)."""
 
     PROVIDER_ID = "kimi_coding"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "weekly"
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {

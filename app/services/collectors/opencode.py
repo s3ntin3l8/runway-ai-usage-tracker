@@ -61,6 +61,7 @@ _DEFAULT_LIMIT_USD: dict[str, float] = {
 
 class OpenCodeCollector(BaseCollector):
     PROVIDER_ID = "opencode"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "weekly"
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {

@@ -254,6 +254,37 @@ class LatestUsage(SQLModel, table=True):  # type: ignore[call-arg]
     updated_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class LatestUsageContribution(SQLModel, table=True):  # type: ignore[call-arg]
+    """Last successful card payload reported by one collection source.
+
+    ``LatestUsage`` remains the merged read model; this table preserves source
+    ownership so one complete report cannot retire another producer's card.
+    """
+
+    __tablename__ = "latest_usage_contributions"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "account_id",
+            "source_id",
+            "window_type",
+            "variant",
+            "model_id",
+            name="uq_latest_usage_contribution_identity",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)
+    account_id: str = Field(index=True)
+    source_id: str = Field(index=True)
+    window_type: str = Field(default="unknown")
+    variant: str = Field(default="default")
+    model_id: str = Field(default="")
+    card_json: str
+    updated_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     """One assistant-message-level usage record. Source of truth.
 

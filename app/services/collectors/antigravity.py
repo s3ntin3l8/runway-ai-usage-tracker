@@ -27,6 +27,7 @@ class AntigravityCollector(
     """Orchestrator for Antigravity (agy) quota collection."""
 
     PROVIDER_ID = "antigravity"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "weekly"
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {

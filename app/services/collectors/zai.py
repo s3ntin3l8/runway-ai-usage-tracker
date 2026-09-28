@@ -34,6 +34,7 @@ class ZaiCollector(BaseCollector):
     """Collector for zAI (Zhipu AI/GLM) quota limits."""
 
     PROVIDER_ID = "zai"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "monthly"
 
     MILLISECOND_TIMESTAMP_THRESHOLD = 1_000_000_000_000

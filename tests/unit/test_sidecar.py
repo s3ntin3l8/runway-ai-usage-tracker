@@ -19,6 +19,14 @@ import sidecar
 _REPO_ROOT = Path(__file__).parent.parent.parent
 
 
+def _collection_result(
+    metrics: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
+    error_count: int = 0,
+) -> sidecar.CollectionResult:
+    return sidecar.CollectionResult(metrics or [], events or [], error_count, [])
+
+
 def _gemini_file_mapping(rules: list) -> dict:
     """The json-file rule mapping from a provider's detection rules."""
     for rule in rules:
@@ -888,7 +896,7 @@ class TestDaemonRunnerRunOnceSuccess:
     def test_run_once_success_status_ok(self):
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -916,7 +924,7 @@ class TestDaemonRunnerRunOnceSuccess:
         refresh = MagicMock()
         monkeypatch.setattr(runner._trigger_event, "set", refresh)
         with (
-            patch.object(sidecar, "run_collection", return_value=([], events, 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(events=events)),
             patch.object(sidecar, "http_post_signed_with_retry", posts),
             patch.object(sidecar, "queue_flush"),
             patch("scripts.sidecar_pkg.self_update.self_update") as self_update,
@@ -932,7 +940,7 @@ class TestDaemonRunnerRunOnceSuccess:
         runner = _make_runner()
         events = [{"event_id": str(i)} for i in range(1001)]
         with (
-            patch.object(sidecar, "run_collection", return_value=([], events, 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(events=events)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -951,7 +959,7 @@ class TestDaemonRunnerRunOnceSuccess:
         runner = _make_runner()
         events = [{"event_id": str(i)} for i in range(1001)]
         with (
-            patch.object(sidecar, "run_collection", return_value=([], events, 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(events=events)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -985,7 +993,9 @@ class TestDaemonRunnerRunOnceSuccess:
             lambda _path: watermark,
         )
         with (
-            patch.object(sidecar, "run_collection", return_value=([], [event], 0)),
+            patch.object(
+                sidecar, "run_collection", return_value=_collection_result(events=[event])
+            ),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -1002,7 +1012,7 @@ class TestDaemonRunnerRunOnceSuccess:
         """No metrics collected → still 'ok', heartbeat HTTP call made."""
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=([], [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result()),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -1023,7 +1033,7 @@ class TestDaemonRunnerRunOnceFailure:
     def test_run_once_http_500_status_err(self):
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -1081,7 +1091,7 @@ class TestDaemonRunnerRuntimeCorruptionExit:
     def test_code_zero_plus_missing_runtime_exits_process(self):
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -1103,7 +1113,7 @@ class TestDaemonRunnerRuntimeCorruptionExit:
         the daemon."""
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -1126,7 +1136,7 @@ class TestDaemonRunnerRuntimeCorruptionExit:
         4xx/5xx from the server never triggers a process exit."""
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -1149,7 +1159,7 @@ class TestDaemonRunnerQueuedStatus:
         runner = _make_runner()
         queued = []
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -1187,7 +1197,7 @@ class TestDaemonRunnerPauseResume:
         """Resuming after a completed cycle → 'ok'."""
         runner = _make_runner()
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(sidecar, "http_post_signed_with_retry", return_value=(True, {}, 200)),
             patch.object(sidecar, "queue_flush"),
         ):
@@ -1214,7 +1224,7 @@ class TestDaemonRunnerStartStop:
         runner = sidecar.DaemonRunner(MINIMAL_CONFIG, on_status_change=on_status)
 
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(sidecar, "http_post_signed_with_retry", return_value=(True, {}, 200)),
             patch.object(sidecar, "queue_flush"),
         ):
@@ -1230,7 +1240,7 @@ class TestDaemonRunnerStartStop:
         runner = _make_runner()
 
         with (
-            patch.object(sidecar, "run_collection", return_value=([], [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result()),
             patch.object(sidecar, "queue_flush"),
         ):
             runner.start()
@@ -1247,7 +1257,7 @@ class TestDaemonRunnerOnStatusChange:
         runner = sidecar.DaemonRunner(MINIMAL_CONFIG, on_status_change=statuses.append)
 
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(sidecar, "http_post_signed_with_retry", return_value=(True, {}, 200)),
             patch.object(sidecar, "queue_flush"),
         ):
@@ -1279,7 +1289,7 @@ class TestDaemonRunnerOnStatusChange:
         runner = _make_runner()
 
         with (
-            patch.object(sidecar, "run_collection", return_value=([], [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result()),
             patch.object(sidecar, "queue_flush"),
         ):
             runner.run_once()  # must not raise
@@ -1289,7 +1299,7 @@ class TestDaemonRunnerOnStatusChange:
         runner = sidecar.DaemonRunner(MINIMAL_CONFIG, on_status_change=statuses.append)
 
         with (
-            patch.object(sidecar, "run_collection", return_value=(FAKE_METRICS, [], 0)),
+            patch.object(sidecar, "run_collection", return_value=_collection_result(FAKE_METRICS)),
             patch.object(
                 sidecar,
                 "http_post_signed_with_retry",
@@ -1933,11 +1943,11 @@ def test_run_collection_events_use_server_hint_when_local_default(
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
-    _, _, error_count = sidecar.run_collection(
+    result = sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["opencode"],
     )
-    assert error_count == 0
+    assert result.error_count == 0
 
     # PR #318 round-2 review (W1): events branch keeps iterating under
     # "default" — the canonical-provider hint is NOT applied to the
@@ -2117,11 +2127,11 @@ def test_run_collection_events_untagged_only_when_events_extracted(
 
     monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
 
-    _, _, error_count = sidecar.run_collection(
+    result = sidecar.run_collection(
         config={"api_url": "http://x", "api_key": "k"},
         providers=["opencode"],
     )
-    assert error_count == 0
+    assert result.error_count == 0
 
     # PR #318 W3: when no new events were extracted, do not create a new
     # pending origin without evidence. Also withhold completion so an

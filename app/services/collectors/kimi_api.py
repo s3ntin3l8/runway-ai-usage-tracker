@@ -39,6 +39,7 @@ class KimiApiCollector(BaseCollector):
     """Collector for Kimi API (Moonshot AI) prepaid balance and usage history."""
 
     PROVIDER_ID = "kimi_api"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "monthly"
 
     def _fallback_strategies(self) -> list[Any]:

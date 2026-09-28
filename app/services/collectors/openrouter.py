@@ -23,6 +23,7 @@ class OpenRouterCollector(BaseCollector):
     """
 
     PROVIDER_ID = "openrouter"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "rolling"
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):

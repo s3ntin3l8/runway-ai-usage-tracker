@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 class OllamaCollector(BaseCollector):
     PROVIDER_ID = "ollama"
+    COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "session"
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {

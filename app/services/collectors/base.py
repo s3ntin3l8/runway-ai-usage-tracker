@@ -92,11 +92,22 @@ class BaseCollector(ABC):
     # True when cache credentials are stored by the collector's resolved
     # account identity instead of the shared `default` credential slot.
     CREDENTIALS_KEYED_BY_ACCOUNT_ID: bool = False
+    # Concrete collectors must opt in after verifying they report full snapshots.
+    COMPLETE_SNAPSHOT: bool = False
 
     @property
     def successful_empty_result(self) -> bool:
         """Whether the most recent empty result represents a valid no-data state."""
         return False
+
+    def complete_snapshot(self, result: list[dict[str, Any]]) -> bool:
+        """Whether a successful response is complete enough to retire omitted cards.
+
+        The conservative default preserves existing cards. Concrete collectors
+        that return full snapshots set ``COMPLETE_SNAPSHOT = True``; override
+        this method when completeness depends on the result.
+        """
+        return self.COMPLETE_SNAPSHOT
 
     # Subclasses may declare their available strategies as an ordered dict:
     # { "strategy_id": ("Human-Readable Label", "_method_name") }
