@@ -479,6 +479,26 @@ def test_chatgpt_gpt56_codename_variants_price_distinctly():
     assert sol > terra > luna > 0.0
 
 
+def test_chatgpt_gpt6_sol_cache_write_bills_at_new_rate():
+    """gpt-6-sol cache-write tokens bill at 2.50/Mtok, the newly-published
+    1.25x-input cache-write rate (issue #369) — previously this billed $0
+    because pricing_seed.py left cache_create_per_mtok at 0.0 for every
+    chatgpt row."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="chatgpt",
+        model_id="gpt-6-sol",
+        ts=datetime(2026, 9, 27, tzinfo=UTC),
+        tokens_input=0,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=1_000_000,
+        tokens_reasoning=0,
+    )
+    assert cost == 2.50
+
+
 def test_unseeded_variant_falls_back_via_segment_trim():
     """A slug we haven't seeded yet must not silently cost $0 if a sibling
     with one fewer "-"-segment is seeded — e.g. a hypothetical fourth
