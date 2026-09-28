@@ -60,8 +60,11 @@ async def test_require_admin_key_standard_fail(monkeypatch):
 @pytest.mark.asyncio
 async def test_empty_admin_key_is_not_a_valid_credential(monkeypatch):
     # Config normalizes a blank key to None; defend the gate anyway. An empty
-    # ADMIN_API_KEY must read as "no key configured" (open) — never let an empty
-    # X-Admin-Key header authenticate as the api-key actor.
+    # X-Admin-Key header must never authenticate as the api-key actor — and
+    # since S1, "no key configured" is only an open bypass on a loopback
+    # bind. Here APP_HOST is non-loopback, so a real deployment would have
+    # been refused at startup (_validate_security_invariants); reaching
+    # this function with an empty key here must deny, not silently open.
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
     monkeypatch.setattr(settings, "APP_HOST", "0.0.0.0")  # not localhost-trusted
 
@@ -69,6 +72,6 @@ async def test_empty_admin_key_is_not_a_valid_credential(monkeypatch):
     request.client = MagicMock()
     request.client.host = "203.0.113.5"
 
-    # Must not raise, and must NOT be attributed as a valid api-key login.
-    await require_admin_key(request, x_admin_key="", session_cookie=None)
-    assert request.state.admin_actor == "no-admin-key-configured"
+    with pytest.raises(HTTPException) as excinfo:
+        await require_admin_key(request, x_admin_key="", session_cookie=None)
+    assert excinfo.value.status_code == 403

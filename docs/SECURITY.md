@@ -53,15 +53,16 @@ Pairing hands out the **same** shared `INGEST_API_KEY` that manual setup uses; i
 
 ## 🚦 Multi-Host Startup Gates
 
-When `APP_HOST` is not `127.0.0.1` / `localhost`, the server refuses to start unless three things are in place — HMAC alone is not enough confidentiality for sidecar payloads carrying OAuth tokens, cookies, and API keys.
+When `APP_HOST` is not `127.0.0.1` / `localhost`, the server refuses to start unless four things are in place — HMAC alone is not enough confidentiality for sidecar payloads carrying OAuth tokens, cookies, and API keys.
 
-| Setting             | Required | Why |
-|---------------------|----------|-----|
-| `DB_ENCRYPTION_KEY` | yes      | Encrypts credentials at rest. |
-| `TLS_TERMINATED=1`  | yes      | Operator assertion that nginx / caddy / cloudflare / kube ingress terminates TLS in front of Runway. |
-| `CORS_ORIGINS=…`    | yes      | Explicit allow-list. The legacy `["*"]` fallback combined with `allow_credentials=True` is rejected by browsers. |
+| Setting                              | Required | Why |
+|---------------------------------------|----------|-----|
+| `DB_ENCRYPTION_KEY`                   | yes      | Encrypts credentials at rest. |
+| `TLS_TERMINATED=1`                    | yes      | Operator assertion that nginx / caddy / cloudflare / kube ingress terminates TLS in front of Runway. |
+| `CORS_ORIGINS=…`                      | yes      | Explicit allow-list. The legacy `["*"]` fallback combined with `allow_credentials=True` is rejected by browsers. |
+| `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS`| yes      | `resolve_auth`'s "no key configured" bypass only opens on a loopback bind — off-loopback, at least one real gate (the key, or a forward-auth proxy) must exist, or every request would be treated as admin. |
 
-These are fail-fast checks: a misconfigured deployment dies at import time with a clear `RuntimeError`, never silently exposing tokens over cleartext or serving with a broken CORS policy. Localhost binds are exempt by design — Runway's primary topology is "developer's laptop".
+These are fail-fast checks: a misconfigured deployment dies at import time with a clear `RuntimeError`, never silently exposing tokens over cleartext, serving with a broken CORS policy, or leaving every admin endpoint open to the network. Localhost binds are exempt by design — Runway's primary topology is "developer's laptop".
 
 Blank values are treated as unset: an empty or whitespace-only `ADMIN_API_KEY` or `DB_ENCRYPTION_KEY` normalizes to `None` (so `KEY=""` in `.env` doesn't masquerade as a configured secret). A **malformed** `DB_ENCRYPTION_KEY` (set but not a valid Fernet key) also fails fast at startup, rather than silently falling back to plaintext storage.
 
@@ -116,7 +117,7 @@ TRUSTED_PROXY_IPS=10.0.0.2          # the proxy's source IP, NOT a CIDR you don'
 | `FORWARD_AUTH_EMAIL_HEADER`      | `X-Forwarded-Email`  | Recorded in the audit log (`actor_meta_json`). |
 | `FORWARD_AUTH_GROUPS_HEADER`     | `X-Forwarded-Groups` | Recorded in the audit log, and checked against `FORWARD_AUTH_ALLOWED_GROUPS` if set. |
 
-A CGI-style `Remote-User` header is always accepted as a fallback when the configured user header is absent, for back-compat.
+A CGI-style `Remote-User` header is accepted as a fallback when the configured user header is absent, for back-compat — but **only** while `FORWARD_AUTH_USER_HEADER` is left at its default (`X-Forwarded-User`). Once you point it at a proxy-specific header (e.g. Authentik's `X-authentik-username`), `Remote-User` is no longer consulted at all, so a request that reaches the app without that specific header can't fall back to forging identity via the CGI convention.
 
 **Authentik**: point the three header settings at the outpost's native headers — no proxy-side header renaming required:
 

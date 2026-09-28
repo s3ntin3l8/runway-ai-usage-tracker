@@ -59,6 +59,9 @@ FORWARD_AUTH_ALLOWED_GROUPS=runway-admins
 
 # Optional but recommended: a break-glass key for scripts, or for recovery if
 # Authentik is ever unreachable. Never entered in the browser once SSO works.
+# Genuinely optional here only because TRUSTED_PROXY_IPS is set above — on a
+# non-loopback bind, the startup gate requires at least one of the two (see
+# docs/SECURITY.md → Multi-Host Startup Gates).
 ADMIN_API_KEY=<strong secret>
 ```
 
