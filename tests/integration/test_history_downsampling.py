@@ -34,10 +34,6 @@ def session():
         yield s
 
 
-def _naive(dt: datetime) -> datetime:
-    return dt.replace(tzinfo=None) if dt.tzinfo else dt
-
-
 def _bucket_interior(bucket_seconds: int = 300) -> datetime:
     """A UTC instant safely inside a single downsampling bucket.
 
@@ -318,15 +314,14 @@ def test_query_snapshots_window_stats_join_uses_reset_at_minute_bucket(session):
     """Sub-minute jitter between snapshot.reset_at and usage_windows.window_end
     still matches via the minute-bucket join key."""
     now = datetime.now(UTC)
-    reset_naive = _naive(now + timedelta(hours=1))  # past for the snapshot
     # Pin reset_at / window_end to :30 of a recent *past* minute so the 800ms jitter
     # between them can't straddle a minute boundary into different buckets — the test
     # otherwise flakes when run near the top of a minute. The snapshot ts stays at
     # real `now` (never future) so the days=1 window still includes it.
     reset_anchor = (now - timedelta(minutes=1)).replace(second=30, microsecond=0)
-    snap_reset = _naive(reset_anchor)
+    snap_reset = reset_anchor
     # window_end differs by 800ms (sub-minute jitter) but stays in the same minute.
-    window_end = _naive(reset_anchor - timedelta(microseconds=800_000))
+    window_end = reset_anchor - timedelta(microseconds=800_000)
 
     session.add(
         QuotaSnapshot(
@@ -334,7 +329,7 @@ def test_query_snapshots_window_stats_join_uses_reset_at_minute_bucket(session):
             account_id="user@example.com",
             window_type="weekly",
             model_id="",
-            ts=_naive(now),
+            ts=now,
             pct_used=80.0,
             reset_at=snap_reset,
         )
@@ -346,7 +341,7 @@ def test_query_snapshots_window_stats_join_uses_reset_at_minute_bucket(session):
             window_type="weekly",
             model_id="",
             sidecar_id="",
-            window_start=_naive(now - timedelta(days=7)),
+            window_start=now - timedelta(days=7),
             window_end=window_end,
             tokens_input=1000,
             tokens_output=500,
@@ -357,7 +352,6 @@ def test_query_snapshots_window_stats_join_uses_reset_at_minute_bucket(session):
         )
     )
     session.commit()
-    _ = reset_naive  # unused but keeps the variable name explanatory above
 
     result = query_snapshots(session, days=1, limit=10)
     assert result["total"] == 1
@@ -371,7 +365,7 @@ def test_query_snapshots_open_window_event_sum_correct_across_pages(session):
     previous Python implementation computed it once over all snapshots; the
     new code computes per-page, so pages must each see correct sums."""
     now = datetime.now(UTC)
-    future_reset = _naive(now + timedelta(hours=1))
+    future_reset = now + timedelta(hours=1)
 
     # 75 distinct accounts, each with one open-window snapshot and one event.
     for i in range(75):
@@ -382,7 +376,7 @@ def test_query_snapshots_open_window_event_sum_correct_across_pages(session):
                 account_id=aid,
                 window_type="weekly",
                 model_id="",
-                ts=_naive(now - timedelta(seconds=i)),
+                ts=now - timedelta(seconds=i),
                 pct_used=10.0,
                 reset_at=future_reset,
             )
@@ -394,7 +388,7 @@ def test_query_snapshots_open_window_event_sum_correct_across_pages(session):
                 account_id=aid,
                 sidecar_id="local",
                 model_id="claude-sonnet",
-                ts=_naive(now - timedelta(minutes=30)),
+                ts=now - timedelta(minutes=30),
                 kind="message",
                 tokens_input=100 * (i + 1),
                 tokens_output=0,

@@ -222,19 +222,25 @@ async def check_credential_alerts(session: Session) -> None:
                 continue
 
             for config in configs:
+                # SQLModel types primary keys as `int | None` (None until the
+                # row is flushed), so narrow once here: a config with no id
+                # can't be the FK target of an alert row.
+                if config.id is None:
+                    continue
+                config_id = config.id
                 scope_label = scope_labels.get((config.provider_id, config.account_id))
                 if not _scope_matches(config, provider, account_id, scope_label):
                     continue
 
                 alert = session.exec(
                     select(WebhookCredentialAlert).where(
-                        WebhookCredentialAlert.webhook_id == config.id,
+                        WebhookCredentialAlert.webhook_id == config_id,
                         WebhookCredentialAlert.provider_id == provider,
                         WebhookCredentialAlert.account_id == account_id,
                     )
                 ).first()
 
-                context = f"webhook {config.id} ({provider}/{account_id})"
+                context = f"webhook {config_id} ({provider}/{account_id})"
 
                 if classification == "healthy":
                     if alert is None:
@@ -283,7 +289,7 @@ async def check_credential_alerts(session: Session) -> None:
 
                 session.add(
                     WebhookCredentialAlert(
-                        webhook_id=config.id,
+                        webhook_id=config_id,
                         provider_id=provider,
                         account_id=account_id,
                         status=state["status"],

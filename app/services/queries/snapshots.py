@@ -64,23 +64,29 @@ class _ParsedRow:
 
 
 def _parse_sqlite_dt(value: object) -> datetime | None:
-    """Coerce a value returned from a raw `text()` query into a naive UTC
+    """Coerce a value returned from a raw `text()` query into an aware UTC
     datetime. SQLAlchemy auto-decodes datetimes for ORM-mapped columns, but
     raw text queries return SQLite's storage format (TEXT with either 'T' or
     ' ' separator) as plain strings.
+
+    SQLite stores UTC wall time with no offset, so a naive parse is tagged
+    UTC; anything already offset-bearing is converted to UTC. Returning an
+    aware value keeps parsed rows consistent with ORM-hydrated columns, which
+    sqlmodel >= 0.0.45 reads back as aware (`UTCDateTime`).
     """
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.replace(tzinfo=None) if value.tzinfo else value
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         s = value.replace("T", " ")
         # SQLite occasionally tacks on trailing whitespace or timezone hints.
         s = s.strip().rstrip("Z")
         try:
-            return datetime.fromisoformat(s).replace(tzinfo=None)
+            parsed = datetime.fromisoformat(s)
         except ValueError:
             return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     return None
 
 
@@ -351,7 +357,7 @@ _PROVIDER_LABELS: dict[str, str] = {
 def _build_window_stats_for_rows(
     session: Session,
     page_rows: list,
-    now_naive: datetime,
+    now: datetime,
 ) -> dict[tuple, dict]:
     """Compute per-(pid, aid, wt, mid, minute_bucket(reset_at)) token/cost
     enrichment for the given page rows.
@@ -360,13 +366,17 @@ def _build_window_stats_for_rows(
     minute-bucketed `window_end`.
     Open windows (reset_at > now): sum `usage_events` in [window_start, now].
 
+    `now` and every datetime on `page_rows` must be timezone-aware: the
+    `usage_windows` / `usage_events` filters below bind into ORM columns,
+    which sqlmodel >= 0.0.45 rejects when given a naive value.
+
     The input was previously every snapshot in the time range; bucketing
     pagination reduces it to ≤ `limit` rows, so the batched event query
     only scans the events touching the page's live windows.
     """
     window_stats: dict[tuple, dict] = {}
 
-    past_resets = {r.reset_at for r in page_rows if r.reset_at and r.reset_at <= now_naive}
+    past_resets = {r.reset_at for r in page_rows if r.reset_at and r.reset_at <= now}
     if past_resets:
         min_t = min(past_resets) - timedelta(minutes=2)
         max_t = max(past_resets) + timedelta(minutes=2)
@@ -403,7 +413,7 @@ def _build_window_stats_for_rows(
     # row (model_id="") sums across all models.
     actual_reset_lookup: dict[tuple, datetime] = {}
     for r in page_rows:
-        if not (r.reset_at and r.reset_at > now_naive):
+        if not (r.reset_at and r.reset_at > now):
             continue
         key4 = (r.provider_id, r.account_id, r.window_type, r.model_id)
         actual_reset_lookup.setdefault(key4, r.reset_at)
@@ -411,7 +421,7 @@ def _build_window_stats_for_rows(
     series_windows: dict[tuple, datetime] = {}
     series_by_account: dict[tuple, list[tuple[tuple, datetime, str]]] = {}
     for r in page_rows:
-        if not (r.reset_at and r.reset_at > now_naive and r.window_type in WINDOW_DURATION):
+        if not (r.reset_at and r.reset_at > now and r.window_type in WINDOW_DURATION):
             continue
         key4 = (r.provider_id, r.account_id, r.window_type, r.model_id)
         actual_reset = actual_reset_lookup.get(key4)
@@ -438,7 +448,7 @@ def _build_window_stats_for_rows(
         events = session.exec(
             select(UsageEvent).where(
                 UsageEvent.ts >= min_window_start,
-                UsageEvent.ts <= now_naive,
+                UsageEvent.ts <= now,
                 UsageEvent.provider_id.in_(pids),  # type: ignore[attr-defined]
                 UsageEvent.account_id.in_(aids),  # type: ignore[attr-defined]
             )
@@ -598,9 +608,12 @@ def query_snapshots(
     happens in SQL; enrichment (tokens_total / cost_usd) runs only against
     the page's rows.
     """
-    # QuotaSnapshot.ts/reset_at are stored naive — bind naive UTC to match.
+    # `since` is only bound into the raw text() queries below: SQLite stores
+    # UTC wall time with no offset, so it must stay naive to compare as TEXT.
+    # `now` feeds the ORM enrichment query, where sqlmodel >= 0.0.45 requires
+    # an aware value on a datetime column.
     since = (datetime.now(UTC) - timedelta(days=days)).replace(tzinfo=None)
-    now_naive = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     bucket_seconds = _bucket_seconds_for(days)
     wt_param = window_type if window_type and window_type != "all" else None
     # Expanding bindparam doesn't accept empty lists. When no filter is active
@@ -641,15 +654,15 @@ def query_snapshots(
             )
         )
 
-    window_stats = _build_window_stats_for_rows(session, parsed_rows, now_naive)
+    window_stats = _build_window_stats_for_rows(session, parsed_rows, now)
 
     rows: list[dict] = []
     for r in parsed_rows:
         pid, aid, wt, mid = r.provider_id, r.account_id, r.window_type, r.model_id
         service = _PROVIDER_LABELS.get(pid, pid.capitalize())
         model_label = mid.capitalize() if mid else "-"
-        ts_iso = r.ts.isoformat() + "+00:00" if r.ts is not None else None
-        reset_iso = r.reset_at.isoformat() + "+00:00" if r.reset_at else None
+        ts_iso = iso_utc(r.ts)
+        reset_iso = iso_utc(r.reset_at)
         stats = (
             window_stats.get((pid, aid, wt, mid, _min_bucket(r.reset_at)), {}) if r.reset_at else {}
         )
@@ -737,7 +750,7 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
                     "points": [],
                 }
             ts_dt = _parse_sqlite_dt(s.ts)
-            ts_iso = ts_dt.isoformat() + "+00:00" if ts_dt is not None else str(s.ts)
+            ts_iso = iso_utc(ts_dt) if ts_dt is not None else str(s.ts)
             series_map[key]["points"].append({"ts": ts_iso, "pct_used": s.pct_used})
 
         # Seed any provider/window_type that has current pct_used data in latest_usage
