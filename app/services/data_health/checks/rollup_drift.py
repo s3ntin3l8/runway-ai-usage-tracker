@@ -74,18 +74,38 @@ class RollupDriftCheck(Check):
     blocked_by = ("legacy_provider_ids",)
 
     def detect(self, session: Session) -> CheckReport:
-        pairs = {
-            (row[0], row[1])
+        # One grouped query gives us both the pair set and the actual
+        # totals in a single shot instead of a per-pair follow-up query.
+        actual_by_pair: dict[tuple[str, str], tuple[int, float]] = {
+            (row[0], row[1]): (row[2], row[3])
             for row in session.execute(
-                select(UsageEvent.provider_id, UsageEvent.account_id)
-                .distinct()
+                select(  # type: ignore[call-overload]
+                    UsageEvent.provider_id,
+                    UsageEvent.account_id,
+                    func.count(),
+                    func.coalesce(func.sum(UsageEvent.cost_usd), 0.0),
+                )
                 .where(col(UsageEvent.kind) == "message")
+                .group_by(UsageEvent.provider_id, UsageEvent.account_id)
+            )
+        }
+        # One query for every lifetime all-grain rollup row — a pair with
+        # no matching row defaults to (0, 0.0), same as _rollup_totals.
+        rollup_by_pair: dict[tuple[str, str], tuple[int, float]] = {
+            (row.provider_id, row.account_id): (row.msgs, row.cost_usd)
+            for row in session.exec(
+                select(UsagePeriodRollup).where(
+                    col(UsagePeriodRollup.period_type) == "lifetime",
+                    col(UsagePeriodRollup.period_key) == "all",
+                    col(UsagePeriodRollup.model_id) == "",
+                    col(UsagePeriodRollup.sidecar_id) == "",
+                )
             )
         }
         groups: list[FindingGroup] = []
-        for provider_id, account_id in sorted(pairs):
-            actual_msgs, actual_cost = _actual_totals(session, provider_id, account_id)
-            rollup_msgs, rollup_cost = _rollup_totals(session, provider_id, account_id)
+        for provider_id, account_id in sorted(actual_by_pair):
+            actual_msgs, actual_cost = actual_by_pair[(provider_id, account_id)]
+            rollup_msgs, rollup_cost = rollup_by_pair.get((provider_id, account_id), (0, 0.0))
             if actual_msgs == rollup_msgs and abs(actual_cost - rollup_cost) <= _COST_EPSILON:
                 continue
             detail = {

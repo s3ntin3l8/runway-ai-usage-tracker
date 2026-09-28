@@ -53,6 +53,69 @@ def test_detect_classifies_a_reported_zero_cost_as_source_reported(session):
     assert group.detail["by_model"][0]["classification"] == "source_reported"
 
 
+def test_detect_classifies_source_reported_despite_extra_zero_token_events(session):
+    """Regression for #375: the old per-group `reported` count query had no
+    token-bearing filter (unlike the main grouped query, which requires
+    tokens_input+tokens_output+tokens_cache_read+tokens_cache_create > 0).
+    A group with 2 token-bearing, cost_reported_usd-backed events (count=2)
+    plus a zero-token event that ALSO carries cost_reported_usd used to
+    inflate the old unfiltered `reported` count to 3 — 3 != 2, so `_classify`
+    fell through to `needs_seed_row` even though every token-bearing event
+    in the group *is* cost_reported_usd-backed, contradicting the check's
+    own docstring. Fixed by computing `reported` in the same token-bearing
+    grouped query as `count`, so the zero-token event (reported or not) no
+    longer affects the comparison.
+    """
+    make_event(
+        session,
+        event_id="1",
+        provider_id="chatgpt",
+        model_id="gpt-6-luna",
+        cost_usd=0.0,
+        cost_reported_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="2",
+        provider_id="chatgpt",
+        model_id="gpt-6-luna",
+        cost_usd=0.0,
+        cost_reported_usd=0.0,
+    )
+    # A zero-token, cost_reported_usd-backed event for the same
+    # (provider, model) — excluded from the main grouped query's
+    # token-bearing filter, so it must not affect the `reported == count`
+    # comparison either. This is the event that inflated the old,
+    # unfiltered `reported` count past `count` and triggered the bug.
+    make_event(
+        session,
+        event_id="3",
+        provider_id="chatgpt",
+        model_id="gpt-6-luna",
+        cost_usd=0.0,
+        cost_reported_usd=0.0,
+        tokens_input=0,
+        tokens_output=0,
+    )
+    # A fourth, zero-token event with no cost_reported_usd at all — covers
+    # the "with or without cost_reported_usd" half of the zero-token case.
+    make_event(
+        session,
+        event_id="4",
+        provider_id="chatgpt",
+        model_id="gpt-6-luna",
+        cost_usd=0.0,
+        tokens_input=0,
+        tokens_output=0,
+    )
+
+    report = _check().detect(session)
+
+    group = report.groups[0]
+    assert group.detail["by_model"][0]["classification"] == "source_reported"
+    assert group.fixable is False
+
+
 def test_detect_excludes_free_suffixed_models(session):
     make_event(session, event_id="1", provider_id="opencode", model_id="grok:free", cost_usd=0.0)
 
