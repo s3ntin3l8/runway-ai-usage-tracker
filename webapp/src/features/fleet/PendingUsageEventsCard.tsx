@@ -9,6 +9,7 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import type { PendingUsageSession } from '@/api/types';
+import { accountConfigProviderIdForUsage } from '@/lib/opencodeTiers';
 
 function sessionKey(group: PendingUsageSession) {
   const sessionIdentity = group.session_id ? `session:${group.session_id}` : `event:${group.event_ids[0]}`;
@@ -77,7 +78,8 @@ export function PendingUsageEventsCard() {
       <div className="mt-3 flex max-h-[32rem] flex-col gap-2 overflow-y-auto">
         {pending.data.items.map((group) => {
           const key = sessionKey(group);
-          const configured = configs.data?.providers.find((provider) => provider.provider_id === group.provider_id);
+          const accountProviderId = accountConfigProviderIdForUsage(group.provider_id);
+          const configured = configs.data?.providers.find((provider) => provider.provider_id === accountProviderId);
           const options =
             configured?.accounts.filter((account) => !account.archived && account.enabled !== false) ?? [];
           const sessionLabel = group.session_id ?? `event ${group.event_ids[0]}`;

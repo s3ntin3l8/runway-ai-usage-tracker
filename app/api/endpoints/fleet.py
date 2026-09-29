@@ -29,6 +29,7 @@ from app.models.schemas import IngestRequest, UsageEventPush
 from app.services import audit_log, pairing
 from app.services.account_identity import (
     FINGERPRINTED_ORIGIN_PROVIDERS,
+    account_config_provider_id,
     credential_fingerprint,
     keyed_credential_origin,
     normalize_sidecar_id,
@@ -1074,18 +1075,19 @@ async def assign_pending_usage_events(
     if len(rows) != len(set(body.event_ids)):
         raise HTTPException(status_code=404, detail="One or more pending events were not found.")
     for row in rows:
+        config_provider_id = account_config_provider_id(row.provider_id)
         configured = session.exec(
             select(ProviderConfig).where(
-                ProviderConfig.provider_id == row.provider_id,
+                ProviderConfig.provider_id == config_provider_id,
                 ProviderConfig.account_id == account_id,
             )
         ).first()
         if configured is not None:
             assignable = configured.enabled and not configured.archived
         else:
-            key = (row.provider_id, account_id)
+            key = (config_provider_id, account_id)
             assignable = key in active_account_keys or (
-                row.provider_id not in providers_with_config and key in latest_account_keys
+                config_provider_id not in providers_with_config and key in latest_account_keys
             )
         if not assignable:
             raise HTTPException(

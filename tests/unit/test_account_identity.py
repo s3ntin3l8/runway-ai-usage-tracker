@@ -4,6 +4,8 @@ import pytest
 
 from app.services.account_identity import (
     FINGERPRINTED_ORIGIN_PROVIDERS,
+    account_config_provider_id,
+    account_usage_provider_ids,
     credential_fingerprint,
     keyed_credential_origin,
     normalize_sidecar_id,
@@ -17,6 +19,22 @@ from app.services.account_identity import (
 # TestCredentialFingerprint.test_known_vectors.
 PINNED_FP = "495fa9c614ce"  # pragma: allowlist secret
 PINNED_FP_ALT = "84620f3735b3"  # pragma: allowlist secret
+
+
+class TestOpenCodeAccountIdentity:
+    def test_tier_provider_ids_share_the_opencode_account_config(self):
+        assert account_config_provider_id("opencode") == "opencode"
+        assert account_config_provider_id("opencode-free") == "opencode"
+        assert account_config_provider_id("opencode-zen") == "opencode"
+        assert account_config_provider_id("xai") == "xai"
+
+    def test_usage_provider_ids_cover_all_tiers_only_for_opencode_account(self):
+        assert account_usage_provider_ids("opencode") == {
+            "opencode",
+            "opencode-free",
+            "opencode-zen",
+        }
+        assert account_usage_provider_ids("opencode-free") == {"opencode-free"}
 
 
 class TestResolveAccountId:

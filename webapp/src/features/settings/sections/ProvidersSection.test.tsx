@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import type { DragEndEvent } from '@dnd-kit/core';
 import type { ProviderConfig } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
@@ -148,6 +149,99 @@ describe('ProvidersSection', () => {
     await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalledWith(
       'claude', 'old@example.com', { archived: false },
     ));
+  });
+
+  it('offers permanent deletion only for empty archived accounts', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 0,
+        archived_count: 2,
+        accounts: [
+          {
+            account_id: 'empty@example.com',
+            account_label: 'Empty duplicate',
+            enabled: false,
+            archived: true,
+            has_usage_events: false,
+          },
+          {
+            account_id: 'history@example.com',
+            account_label: 'Has history',
+            enabled: false,
+            archived: true,
+            has_usage_events: true,
+          },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.deleteProviderConfig).mockResolvedValue({ status: 'permanently_deleted' });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Archived accounts (2)')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Delete permanently' })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+    expect(screen.getByText('Permanently delete this empty account?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+    await waitFor(() =>
+      expect(api.deleteProviderConfig).toHaveBeenCalledWith(
+        'claude',
+        'empty@example.com',
+        true,
+      ),
+    );
+  });
+
+  it('cancels the permanent deletion confirmation', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 0,
+        archived_count: 1,
+        accounts: [{
+          account_id: 'empty@example.com',
+          account_label: 'Empty duplicate',
+          enabled: false,
+          archived: true,
+          has_usage_events: false,
+        }],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete permanently' }));
+    expect(screen.getByText('Permanently delete this empty account?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByText('Permanently delete this empty account?')).not.toBeInTheDocument();
+    expect(api.deleteProviderConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new Error('Server rejected deletion'), 'Server rejected deletion'],
+    ['unexpected failure', 'Could not delete account'],
+  ])('shows a useful error when permanent deletion fails', async (error, message) => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 0,
+        archived_count: 1,
+        accounts: [{
+          account_id: 'empty@example.com',
+          account_label: 'Empty duplicate',
+          enabled: false,
+          archived: true,
+          has_usage_events: false,
+        }],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.deleteProviderConfig).mockRejectedValue(error);
+    renderV2(<ProvidersSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete permanently' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(message));
   });
 
   it('opens the detail dialog when a provider card is clicked', async () => {

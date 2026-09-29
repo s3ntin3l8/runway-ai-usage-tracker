@@ -690,6 +690,7 @@ export interface ProviderAccount {
   account_id: string;
   enabled?: boolean;
   archived?: boolean; // PR #292 — hide discontinued providers from the dashboard
+  has_usage_events?: boolean;
   api_key_set?: boolean;
   session_cookie_set?: boolean;
   account_label?: string | null;

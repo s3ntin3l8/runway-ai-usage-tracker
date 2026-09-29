@@ -296,9 +296,9 @@ export const patchCredentialSources = (
   });
 };
 
-export const deleteProviderConfig = (providerId: string, accountId: string) =>
+export const deleteProviderConfig = (providerId: string, accountId: string, permanent = false) =>
   api<{ status: string }>(
-    `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,
+    `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}${permanent ? '?permanent=true' : ''}`,
     { method: 'DELETE' },
   );
 

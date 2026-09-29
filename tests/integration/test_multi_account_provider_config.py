@@ -917,6 +917,109 @@ def test_sidecar_source_label_uses_rule_and_token_metadata(client: TestClient):
     assert "secret-opencode-key" not in str(account)
 
 
+@pytest.mark.parametrize(
+    ("provider_id", "tokens", "source_description"),
+    [
+        (
+            "opencode",
+            {"api_key": "test-opencode-value"},  # pragma: allowlist secret
+            "auth.json · API key",
+        ),
+        (
+            "minimax",
+            {"api_key": "test-minimax-value"},  # pragma: allowlist secret
+            "auth.json · API key",
+        ),
+        (
+            "xai",
+            {"xai_access": "test-xai-access", "xai_refresh": "test-xai-refresh"},
+            "auth.json · OAuth token",
+        ),
+    ],
+)
+def test_opencode_auth_json_discovery_is_shown_for_each_provider(
+    client: TestClient,
+    session: Session,
+    provider_id: str,
+    tokens: dict[str, str],
+    source_description: str,
+):
+    import time
+
+    from app.models.db import CredentialSource
+    from app.services.token_cache import token_cache
+
+    source_id = f"sidecar:auth-json-{provider_id}"
+    now = time.time()
+    source_metadata = {
+        "source": "sidecar",
+        "source_id": source_id,
+        "source_type": "file",
+        "source_label": "auth.json",
+        "credential_origin": "path:/home/alice/.local/share/opencode/auth.json",
+        "sidecar_id": "dev-01",
+    }
+    token_cache.seed_sync(
+        provider_id,
+        "alice@example.com",
+        tokens,
+        {"source": "sidecar"},
+        now,
+    )
+    token_cache._source_cache.setdefault(provider_id, {}).setdefault("alice@example.com", {})[
+        source_id
+    ] = (tokens, source_metadata, now)
+    session.add(
+        CredentialSource(
+            provider_id=provider_id,
+            account_id="alice@example.com",
+            source_id=source_id,
+            source_type="file",
+            source_label="auth.json",
+            credential_origin=source_metadata["credential_origin"],
+            sidecar_id="dev-01",
+        )
+    )
+    session.commit()
+
+    providers = client.get("/api/v1/system/provider-configs").json()["providers"]
+    provider = next(p for p in providers if p["provider_id"] == provider_id)
+    account = next(a for a in provider["accounts"] if a["account_id"] == "alice@example.com")
+
+    assert source_description in account["credential_source_labels"]
+    source = account["credential_sources"][0]
+    assert source["source_label"] == "auth.json"
+    assert source["sidecar_id"] == "dev-01"
+    assert source["available"] is True
+    assert not any(secret in str(account) for secret in tokens.values())
+
+
+def test_discovery_credential_kind_matches_known_oauth_token_types():
+    from app.api.endpoints.system import _discovery_credential_kind
+
+    assert _discovery_credential_kind("cookie", {"api_key"}) == "Cookie"
+    assert _discovery_credential_kind("file", {"oauth_token"}) == "OAuth token"
+    assert _discovery_credential_kind("file", {"id_token"}) == "OAuth token"
+    assert _discovery_credential_kind("file", {"access_token"}) == "OAuth token"
+    assert _discovery_credential_kind("file", {"xai_access"}) == "OAuth token"
+    assert _discovery_credential_kind("file", {"oauth_flow"}) == "API key"
+
+
+def test_archived_account_usage_flags_ignore_unrendered_provider_rows(
+    session: Session, monkeypatch
+):
+    from app.api.endpoints.system import _archived_account_usage_flags
+    from app.models.db import ProviderConfig
+    from app.services.collector_manager import manager
+
+    monkeypatch.setattr(manager, "collector_registry", {})
+    row = ProviderConfig(
+        provider_id="opencode-free", account_id="archived@example.com", archived=True
+    )
+
+    assert _archived_account_usage_flags(session, [row]) == {}
+
+
 # ---------------------------------------------------------------------------
 # preview_account_identity — edge cases (#287)
 # ---------------------------------------------------------------------------
@@ -1195,6 +1298,180 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
         if e.get("provider_id") == "openrouter" and e.get("account_id") == "alice@example.com"
     ]
     assert archived_alive == [], f"archived pair resurfaced in fleet view: {archived_alive}"
+
+
+def test_permanent_delete_removes_empty_archived_account_and_source_state(
+    client: TestClient, session: Session, monkeypatch
+):
+    from app.models.db import LatestUsageContribution, ProviderConfig
+    from app.services.collector_manager import manager
+    from app.services.credential_tags import CredentialTagRepo
+    from app.services.token_cache import token_cache
+
+    account_id = "duplicate@example.com"
+    row = ProviderConfig(
+        provider_id="opencode",
+        account_id=account_id,
+        enabled=False,
+        archived=True,
+        account_label="Duplicate",
+        api_key="oc_sk_duplicate",  # pragma: allowlist secret
+    )
+    session.add(row)
+    session.add(
+        LatestUsage(
+            provider_id="opencode",
+            account_id=account_id,
+            sidecar_id="dev-01",
+            window_type="weekly",
+            variant="default",
+            model_id="",
+            card_json="{}",
+        )
+    )
+    session.add(
+        LatestUsageContribution(
+            provider_id="opencode",
+            account_id=account_id,
+            source_id="collector:opencode",
+            window_type="weekly",
+            variant="default",
+            model_id="",
+            card_json="{}",
+        )
+    )
+    session.add(
+        CredentialSource(
+            provider_id="opencode",
+            account_id=account_id,
+            source_id="sidecar:old-auth",
+            source_type="file",
+            source_label="auth.json",
+            sidecar_id="dev-01",
+        )
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin="path:/old/auth.json#123456789abc",
+        account_id=account_id,
+        sidecar_id="dev-01",
+    )
+    session.commit()
+    token_cache.seed_sync(
+        "opencode",
+        account_id,
+        {"api_key": "oc_sk_duplicate"},  # pragma: allowlist secret
+        {"source": "sidecar"},
+    )
+    preferences = {("opencode", account_id): {"sidecar:old-auth": (True, 0)}}
+    monkeypatch.setattr(manager, "_credential_source_preferences", preferences)
+
+    response = client.delete(
+        f"/api/v1/system/provider-config/opencode/{account_id}?permanent=true",
+        headers=_admin_headers(),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "permanently_deleted"
+    assert (
+        session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "opencode", ProviderConfig.account_id == account_id
+            )
+        ).first()
+        is None
+    )
+    assert (
+        session.exec(
+            select(LatestUsage).where(
+                LatestUsage.provider_id == "opencode", LatestUsage.account_id == account_id
+            )
+        ).first()
+        is None
+    )
+    assert (
+        session.exec(
+            select(LatestUsageContribution).where(
+                LatestUsageContribution.provider_id == "opencode",
+                LatestUsageContribution.account_id == account_id,
+            )
+        ).first()
+        is None
+    )
+    assert (
+        session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == "opencode",
+                CredentialSource.account_id == account_id,
+            )
+        ).first()
+        is None
+    )
+    assert (
+        CredentialTagRepo.get(
+            session,
+            provider_id="opencode",
+            credential_origin="path:/old/auth.json#123456789abc",
+            sidecar_id="dev-01",
+        )
+        is None
+    )
+    assert token_cache._cache.get("opencode", {}).get(account_id) is None
+    assert ("opencode", account_id) not in manager._credential_source_preferences
+
+    audit_entry = session.exec(
+        select(AuditLog).where(
+            AuditLog.action == "provider_config.purge",
+            AuditLog.target_id == f"opencode/{account_id}",
+        )
+    ).one()
+    assert json.loads(audit_entry.payload_json or "{}") == {
+        "tags_cleared": 1,
+        "permanent": True,
+    }
+
+
+def test_permanent_delete_rejects_open_code_account_with_tier_usage(
+    client: TestClient, session: Session
+):
+    from datetime import UTC, datetime
+
+    from app.models.db import ProviderConfig, UsageEvent
+
+    account_id = "archived@example.com"
+    session.add(
+        ProviderConfig(provider_id="opencode", account_id=account_id, enabled=False, archived=True)
+    )
+    session.add(
+        UsageEvent(
+            provider_id="opencode-free",
+            account_id=account_id,
+            event_id="free-tier-history",
+            kind="message",
+            ts=datetime.now(UTC),
+        )
+    )
+    session.commit()
+
+    listed = client.get("/api/v1/system/provider-configs")
+    opencode = next(p for p in listed.json()["providers"] if p["provider_id"] == "opencode")
+    archived_account = next(a for a in opencode["accounts"] if a["account_id"] == account_id)
+    assert archived_account["has_usage_events"] is True
+
+    response = client.delete(
+        f"/api/v1/system/provider-config/opencode/{account_id}?permanent=true",
+        headers=_admin_headers(),
+    )
+    assert response.status_code == 409
+    assert (
+        session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "opencode", ProviderConfig.account_id == account_id
+            )
+        ).first()
+        is not None
+    )
 
 
 def test_delete_provider_config_returns_404_for_unknown_provider(

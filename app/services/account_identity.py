@@ -20,6 +20,26 @@ def normalize_sidecar_id(raw: str) -> str:
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
 
+# OpenCode's subscription, Zen, and free usage streams have distinct provider
+# IDs in the event store, but share one OpenCode account identity/config.
+# OpenCode's extractor explicitly keeps opencode-zen as its own usage stream
+# in scripts/sidecar_pkg/event_extractors/opencode.py:_OC_PROVIDER_MAP, while
+# scripts/sidecar_pkg/event_extractors/hermes.py folds it to opencode.
+_OPENCODE_TIER_PROVIDER_IDS = frozenset({"opencode-free", "opencode-zen"})
+_OPENCODE_ACCOUNT_USAGE_PROVIDER_IDS = frozenset({"opencode", "opencode-free", "opencode-zen"})
+
+
+def account_config_provider_id(provider_id: str) -> str:
+    """Return the provider whose account config owns a usage provider ID."""
+    return "opencode" if provider_id in _OPENCODE_TIER_PROVIDER_IDS else provider_id
+
+
+def account_usage_provider_ids(provider_id: str) -> frozenset[str]:
+    """Return event provider IDs that share a configured account identity."""
+    if provider_id == "opencode":
+        return _OPENCODE_ACCOUNT_USAGE_PROVIDER_IDS
+    return frozenset({provider_id})
+
 
 def canonical_account_id(raw: str | None) -> str:
     """Canonical storage form of an already-resolved ``account_id``.

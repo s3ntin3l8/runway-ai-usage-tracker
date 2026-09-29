@@ -36,16 +36,20 @@ _OAUTH_CREDENTIAL_KEYS = {
     "expiry_date",
     "client_id",
 }
-_AUTH_VALUE_KEYS = {
-    "api_key",
-    "oauth_token",
-    "access_token",
-    "refresh_token",
-    "id_token",
-    "xai_access",
-    "cli_access_token",
-    "session_cookie",
-}
+AUTH_VALUE_KEYS = frozenset(
+    {
+        "api_key",
+        "oauth_token",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "xai_access",
+        "xai_refresh",
+        "cli_access_token",
+        "session_cookie",
+    }
+)
+OAUTH_TOKEN_VALUE_KEYS = AUTH_VALUE_KEYS - {"api_key", "session_cookie"}
 
 # Origins the user typed into the dashboard. They outrank every other origin
 # (sidecar ids, "server") when a later push re-stamps `source`: a sidecar
@@ -468,7 +472,7 @@ class TokenCache:
             for key, value in tokens.items()
             if isinstance(value, str)
             and value
-            and (key in _AUTH_VALUE_KEYS or key.startswith("cookie_"))
+            and (key in AUTH_VALUE_KEYS or key.startswith("cookie_"))
         ]
         request_values: list[str] = []
         headers = getattr(request, "headers", {})

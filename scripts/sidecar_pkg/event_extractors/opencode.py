@@ -14,8 +14,8 @@ Each assistant message row in the `message` table has:
 The data JSON contains:
   - role: "assistant" | "user"
   - modelID: model name string
-  - providerID: "opencode-go" | "opencode" | "open-design-byok" | "openrouter"
-    | "ollama-cloud" | ... (OpenCode's own backend/billing-tier tag — NOT the
+  - providerID: "opencode-go" | "opencode" | "opencode-zen" | "open-design-byok"
+    | "openrouter" | "ollama-cloud" | ... (OpenCode's own backend/billing-tier tag — NOT the
     upstream model maker)
   - cost: float (USD — authoritative; skip pricing table lookup)
   - tokens: {input, output, reasoning, cache: {read, write}, total}
@@ -39,6 +39,7 @@ providerID -> runway provider_id mapping (see _OC_PROVIDER_MAP below):
                                                    they are billed to the
                                                    subscription, not to a
                                                    DeepSeek balance)
+  - "opencode-zen"      -> "opencode-zen"       (Zen pay-as-you-go tier)
   - "open-design-byok"  -> "opencode-byok"      (bring-your-own-key)
   - "openrouter"        -> "opencode-openrouter"
   - "ollama-cloud"      -> "opencode-ollama"    (folded onto "ollama" by
@@ -93,6 +94,7 @@ from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
 _OC_PROVIDER_MAP: dict[str, str] = {
     "opencode": "opencode-free",
     "opencode-go": "opencode",
+    "opencode-zen": "opencode-zen",
     "open-design-byok": "opencode-byok",
     "openrouter": "opencode-openrouter",
     "ollama-cloud": "opencode-ollama",
