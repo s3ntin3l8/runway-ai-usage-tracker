@@ -284,10 +284,10 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     siblings = session.exec(
         select(CredentialSource).where(CredentialSource.credential_origin == origin)
     ).all()
-    assert {(row.sidecar_id, row.enabled, row.priority) for row in siblings} == {
-        ("host-a", False, 3),
-        ("host-b", False, 3),
-        ("host-c", False, 3),
+    assert {(row.sidecar_id, row.account_id, row.enabled, row.priority) for row in siblings} == {
+        ("host-a", "alice@example.com", False, 3),
+        ("host-b", "alice@example.com", False, 3),
+        ("host-c", "bob@example.com", True, 0),
     }
 
 

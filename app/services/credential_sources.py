@@ -46,7 +46,8 @@ def touch_source(
     """Create or refresh a source without replacing operator preferences.
 
     Initial priority is assigned only when creating a row. Later refreshes
-    preserve the operator's enabled state and priority.
+    preserve the operator's enabled state and priority. Refreshing metadata does
+    not reset health; only a collection result confirms credential health.
     """
     aid = canonical_account_id(account_id)
     row = session.exec(
@@ -86,9 +87,6 @@ def touch_source(
         row.credential_origin = credential_origin
         row.sidecar_id = sidecar_id
         row.last_seen = datetime.now(UTC)
-        if row.health == "unavailable":
-            row.health = "healthy"
-            row.health_detail = None
     session.flush()
     return row
 

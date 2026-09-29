@@ -178,13 +178,17 @@ async def test_collector_continues_after_non_auth_source_error(monkeypatch):
     collector = _CredentialProbeCollector(cache)
     manager = CollectorManager()
     health_writes: list[tuple[str, str, dict[str, str]]] = []
+    available_slots = manager._semaphore._value
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+
+    def record_health(provider_id, account_id, updates):
+        assert manager._semaphore._value == available_slots
+        health_writes.append((provider_id, account_id, dict(updates)))
+
     monkeypatch.setattr(
         manager,
         "_record_source_health",
-        lambda provider_id, account_id, updates: health_writes.append(
-            (provider_id, account_id, dict(updates))
-        ),
+        record_health,
     )
     manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
         collector, "OpenRouter", ttl=0

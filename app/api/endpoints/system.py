@@ -1674,6 +1674,7 @@ async def _update_credential_source_preferences(
             siblings = session.exec(
                 select(CredentialSource).where(
                     CredentialSource.provider_id == provider_id,
+                    CredentialSource.account_id == account_id,
                     CredentialSource.credential_origin == source.credential_origin,
                     col(CredentialSource.sidecar_id).is_not(None),
                 )

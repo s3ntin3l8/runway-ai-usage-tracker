@@ -511,81 +511,97 @@ class CollectorManager:
         self, key: str, client: httpx.AsyncClient
     ) -> list[dict[str, Any]]:
         """Run a single collector with semaphore/timeout protection."""
+        health_updates: dict[str, str] = {}
         async with self._semaphore:
-            smart = self.smart_collectors[key]
-            collector = smart.collector
+            collector = self.smart_collectors[key].collector
             provider_id = getattr(collector, "PROVIDER_ID", None)
             account_id = (
                 getattr(collector, "credential_account_id", None)
                 or getattr(collector, "account_id", None)
                 or "default"
             )
-            candidates = (
-                await token_cache.get_source_candidates(provider_id, account_id)
-                if isinstance(provider_id, str) and isinstance(account_id, str)
-                else []
-            )
-            if not candidates:
-                return await asyncio.wait_for(smart.collect(client), timeout=25.0)
-            if not isinstance(provider_id, str):
-                return await asyncio.wait_for(smart.collect(client), timeout=25.0)
+            result = await self._collect_with_source_failover(key, client, health_updates)
+        # Release the shared semaphore before doing synchronous DB I/O.
+        if isinstance(provider_id, str) and isinstance(account_id, str):
+            self._record_source_health(provider_id, account_id, health_updates)
+        return result
 
-            preferences = self._credential_source_preferences.get((provider_id, account_id), {})
-            candidates = [
-                candidate
-                for candidate in candidates
-                if (
-                    preferences[candidate["source_id"]][0]
-                    if candidate["source_id"] in preferences
-                    else candidate.get("enabled", True)
-                )
-            ]
-            candidates.sort(
-                key=lambda candidate: (
-                    preferences[candidate["source_id"]][1]
-                    if candidate["source_id"] in preferences
-                    else candidate.get("priority", 0),
-                    candidate["source_id"],
-                )
-            )
-            if not candidates:
-                return []
+    async def _collect_with_source_failover(
+        self,
+        key: str,
+        client: httpx.AsyncClient,
+        health_updates: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        smart = self.smart_collectors[key]
+        collector = smart.collector
+        provider_id = getattr(collector, "PROVIDER_ID", None)
+        account_id = (
+            getattr(collector, "credential_account_id", None)
+            or getattr(collector, "account_id", None)
+            or "default"
+        )
+        candidates = (
+            await token_cache.get_source_candidates(provider_id, account_id)
+            if isinstance(provider_id, str) and isinstance(account_id, str)
+            else []
+        )
+        if not candidates or not isinstance(provider_id, str):
+            return await asyncio.wait_for(smart.collect(client), timeout=25.0)
 
-            health_updates: dict[str, str] = {}
-            successful_result: list[dict[str, Any]] | None = None
-            deadline = asyncio.get_running_loop().time() + 25.0
-            await smart.reset()
-            for index, candidate in enumerate(candidates):
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
-                if index:
-                    await smart.reset()
-                async with token_cache.using_source(
-                    provider_id, account_id, candidate["source_id"]
-                ) as attempt:
-                    try:
-                        result = await asyncio.wait_for(smart.collect(client), timeout=remaining)
-                    except Exception:
-                        logger.exception(
-                            "Credential source collection failed for %s/%s (%s)",
-                            scrub_log(provider_id),
-                            scrub_log(account_id),
-                            scrub_log(candidate["source_id"]),
-                        )
-                        health_updates[candidate["source_id"]] = "unavailable"
-                        continue
-                if attempt["auth_failed"]:
-                    health_updates[candidate["source_id"]] = "auth_failed"
-                    continue
-                if any(card.get("error_type") in {"api_error", "parse_error"} for card in result):
+        preferences = self._credential_source_preferences.get((provider_id, account_id), {})
+        candidates = [
+            candidate
+            for candidate in candidates
+            if (
+                preferences[candidate["source_id"]][0]
+                if candidate["source_id"] in preferences
+                else candidate.get("enabled", True)
+            )
+        ]
+        candidates.sort(
+            key=lambda candidate: (
+                preferences[candidate["source_id"]][1]
+                if candidate["source_id"] in preferences
+                else candidate.get("priority", 0),
+                candidate["source_id"],
+            )
+        )
+        if not candidates:
+            return []
+
+        successful_result: list[dict[str, Any]] | None = None
+        deadline = asyncio.get_running_loop().time() + 25.0
+        await smart.reset()
+        for index, candidate in enumerate(candidates):
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            if index:
+                await smart.reset()
+            async with token_cache.using_source(
+                provider_id, account_id, candidate["source_id"]
+            ) as attempt:
+                try:
+                    result = await asyncio.wait_for(smart.collect(client), timeout=remaining)
+                except Exception:
+                    logger.exception(
+                        "Credential source collection failed for %s/%s (%s)",
+                        scrub_log(provider_id),
+                        scrub_log(account_id),
+                        scrub_log(candidate["source_id"]),
+                    )
                     health_updates[candidate["source_id"]] = "unavailable"
                     continue
-                health_updates[candidate["source_id"]] = "healthy"
-                successful_result = result
-                break
-            self._record_source_health(provider_id, account_id, health_updates)
-            return successful_result if successful_result is not None else []
+            if attempt["auth_failed"]:
+                health_updates[candidate["source_id"]] = "auth_failed"
+                continue
+            if any(card.get("error_type") in {"api_error", "parse_error"} for card in result):
+                health_updates[candidate["source_id"]] = "unavailable"
+                continue
+            health_updates[candidate["source_id"]] = "healthy"
+            successful_result = result
+            break
+        return successful_result if successful_result is not None else []
 
     @staticmethod
     def _record_source_health(provider_id: str, account_id: str, updates: dict[str, str]) -> None:

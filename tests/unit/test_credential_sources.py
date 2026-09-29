@@ -79,8 +79,8 @@ def test_touch_source_preserves_preferences_and_config_source_is_first():
 
         assert refreshed.enabled is False
         assert refreshed.priority == 6
-        assert refreshed.health == "healthy"
-        assert refreshed.health_detail is None
+        assert refreshed.health == "unavailable"
+        assert refreshed.health_detail == "Missing from last scan"
         assert refreshed.source_label == "OPENROUTER_API_KEY"
         assert config.priority == 0
         assert account_sources(session, "openrouter", "ALICE@example.com") == [
