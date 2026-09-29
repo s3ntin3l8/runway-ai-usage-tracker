@@ -73,14 +73,11 @@ class EventIngestor:
                     mapped_account = CredentialTagRepo.get_account_id(
                         self.session,
                         provider_id=push.provider_id,
-                        credential_origin=f"provider:{push.provider_id}",
+                        credential_origin=CredentialTagRepo.provider_origin(push.provider_id),
                         sidecar_id=sidecar_id,
                     )
                     if mapped_account:
                         account_id = canonical_account_id(mapped_account)
-                    else:
-                        mapped_account = None
-                    if mapped_account:
                         push = push.model_copy(
                             update={"account_id": account_id, "account_source": "tag"}
                         )

@@ -523,7 +523,9 @@ def _fingerprinted_credential_hints(
         fingerprint = credential_fingerprint(api_key)
         if not fingerprint:
             continue
-        hint_key = keyed_credential_origin(f"provider:{row.provider_id}", fingerprint)
+        hint_key = keyed_credential_origin(
+            CredentialTagRepo.provider_origin(row.provider_id), fingerprint
+        )
         candidates.setdefault(row.provider_id, {}).setdefault(hint_key, set()).add(row.account_id)
     # The same key stored under multiple accounts is ambiguous; keep it for
     # manual assignment rather than making ordered rows an accidental policy.
@@ -698,12 +700,14 @@ async def post_credential_manifest(
     candidate_provider_ids.update(
         pid
         for pid in session.exec(
-            select(CredentialTag.provider_id).where(
+            select(CredentialTag.provider_id)
+            .where(
                 or_(
                     col(CredentialTag.sidecar_id) == payload.sidecar_id,
                     col(CredentialTag.sidecar_id).is_(None),
                 )
             )
+            .distinct()
         ).all()
         if isinstance(pid, str) and pid
     )
@@ -1324,7 +1328,7 @@ def _promote_pending_event_rows(
         CredentialTagRepo.set_tag(
             session,
             provider_id=row.provider_id,
-            credential_origin=f"provider:{row.provider_id}",
+            credential_origin=CredentialTagRepo.provider_origin(row.provider_id),
             account_id=account_id,
             sidecar_id=row.sidecar_id,
             set_by="operator",
