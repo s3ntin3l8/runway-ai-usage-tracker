@@ -22,7 +22,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import { putDashboardLayout, putProviderConfig } from '@/api/endpoints';
+import { deleteProviderConfig, putDashboardLayout, putProviderConfig } from '@/api/endpoints';
 import type { DashboardLayout, ProviderConfig } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -108,6 +108,7 @@ function ProvidersSectionV2({
   // each render keeps the open dialog in sync after invalidateQueries
   // (a one-shot object snapshot froze the switch/badges on stale state).
   const [detailProviderId, setDetailProviderId] = useState<string | null>(null);
+  const [pendingPermanentDeleteKey, setPendingPermanentDeleteKey] = useState<string | null>(null);
   const detailProvider = providers.find((p) => p.provider_id === detailProviderId) ?? null;
   // Wizard (#287) — null = closed, otherwise the provider we pre-scoped to
   // (undefined/null = open at step 1 with no pre-scope).
@@ -275,7 +276,7 @@ function ProvidersSectionV2({
           <h3 className="mb-2 text-sm font-semibold">Archived accounts ({archivedAccounts.length})</h3>
           <div className="flex flex-col gap-2">
             {archivedAccounts.map(({ provider, account }) => (
-              <Card key={`${provider.provider_id}/${account.account_id}`} className="flex items-center gap-3 px-4 py-3">
+              <Card key={`${provider.provider_id}/${account.account_id}`} className="flex flex-wrap items-center gap-3 px-4 py-3">
                 <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-medium">{provider.name}</p>
@@ -296,6 +297,44 @@ function ProvidersSectionV2({
                 >
                   Restore
                 </Button>
+                {account.has_usage_events === false ? (
+                  pendingPermanentDeleteKey === `${provider.provider_id}/${account.account_id}` ? (
+                    <div className="flex w-full items-center justify-end gap-2 border-t border-border pt-2">
+                      <span className="mr-auto text-xs text-fg-muted">Permanently delete this empty account?</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setPendingPermanentDeleteKey(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            await deleteProviderConfig(provider.provider_id, account.account_id, true);
+                            setPendingPermanentDeleteKey(null);
+                            await configs.refetch();
+                            toast.success('Archived account permanently deleted');
+                          } catch (error) {
+                            toast.error(error instanceof Error ? error.message : 'Could not delete account');
+                          }
+                        }}
+                      >
+                        Delete permanently
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => setPendingPermanentDeleteKey(`${provider.provider_id}/${account.account_id}`)}
+                    >
+                      Delete permanently
+                    </Button>
+                  )
+                ) : null}
               </Card>
             ))}
           </div>

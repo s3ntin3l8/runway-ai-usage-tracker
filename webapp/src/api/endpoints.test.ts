@@ -11,6 +11,7 @@ import {
   fetchStatus,
   fetchTokenHealth,
   fetchWebhooks,
+  deleteProviderConfig,
   forceCollect,
   getDashboardLayout,
   getGitHubOAuthStatus,
@@ -129,6 +130,19 @@ describe('endpoints', () => {
     [path, init] = mockFetch().mock.calls.at(-1) as [string, RequestInit];
     expect(path).toContain('/openrouter/default/credential-sources');
     expect(JSON.parse(String(init.body))).toEqual({ sources: [source], all_machines: false });
+  });
+
+  it('permanently deletes an archived account only when explicitly requested', async () => {
+    mockFetch().mockResolvedValue(jsonResponse({ status: 'permanently_deleted' }));
+    await deleteProviderConfig('opencode', 'alice@example.com', true);
+    const [path, init] = lastCall();
+    expect(path).toBe('/api/v1/system/provider-config/opencode/alice%40example.com?permanent=true');
+    expect(init.method).toBe('DELETE');
+
+    mockFetch().mockClear();
+    mockFetch().mockResolvedValue(jsonResponse({ status: 'deleted' }));
+    await deleteProviderConfig('opencode', 'alice@example.com');
+    expect(lastCall()[0]).toBe('/api/v1/system/provider-config/opencode/alice%40example.com');
   });
 
   it('getDashboardLayout hits the dashboard-layout path', async () => {

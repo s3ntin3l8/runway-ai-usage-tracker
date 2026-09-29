@@ -1426,6 +1426,52 @@ def test_pending_usage_sessions_group_events_and_keep_missing_sessions_separate(
     assert remaining[0].event_id == "no-session"
 
 
+@pytest.mark.parametrize("tier_provider_id", ["opencode-free", "opencode-zen"])
+def test_opencode_tier_events_assign_to_shared_account_without_merging_provider(
+    client: TestClient, session: Session, tier_provider_id: str
+):
+    from datetime import datetime
+
+    from app.models.db import CredentialTag, PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="opencode", account_id="alice@example.com")
+    push = UsageEventPush(
+        provider_id=tier_provider_id,
+        account_id="default",
+        account_source="default",
+        event_id=f"{tier_provider_id}-pending",
+        ts="2026-09-01T10:00:00Z",
+        model_id="tier-model",
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id="laptop",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+    )
+    session.commit()
+    pending = session.exec(select(PendingUsageEvent)).one()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [pending.id], "account_id": "alice@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    event = session.exec(select(UsageEvent)).one()
+    assert (event.provider_id, event.account_id) == (tier_provider_id, "alice@example.com")
+    tag = session.exec(select(CredentialTag)).one()
+    assert (tag.provider_id, tag.account_id, tag.sidecar_id) == (
+        tier_provider_id,
+        "alice@example.com",
+        "laptop",
+    )
+
+
 def test_pending_event_assignment_accepts_a_known_discovered_account(
     client: TestClient, session: Session, monkeypatch
 ):

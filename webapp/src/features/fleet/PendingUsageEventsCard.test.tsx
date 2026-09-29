@@ -119,6 +119,51 @@ describe('PendingUsageEventsCard', () => {
     expect(toast.success).toHaveBeenCalledWith('1 usage event assigned');
   });
 
+  it.each(['opencode-free', 'opencode-zen'])('offers OpenCode accounts for %s events', async (providerId) => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'opencode',
+          name: 'OpenCode',
+          accounts: [
+            { account_id: 'alice@example.com', account_label: 'Alice', source: 'config', enabled: true },
+          ],
+          account_count: 1,
+        },
+      ],
+    });
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: providerId,
+          sidecar_id: 'laptop',
+          session_id: 'tier-session',
+          event_ids: [63],
+          event_count: 1,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:00:00Z',
+          model_ids: ['tier-model'],
+        },
+      ],
+      total_events: 1,
+      total_groups: 1,
+      offset: 0,
+      limit: 100,
+    });
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    const account = await screen.findByRole('combobox', {
+      name: new RegExp(`account for ${providerId} session tier-session`, 'i'),
+    });
+    expect(screen.getByRole('option', { name: 'Alice' })).toBeInTheDocument();
+    await user.selectOptions(account, 'alice@example.com');
+    await user.click(screen.getByRole('button', { name: 'Assign session' }));
+    await waitFor(() =>
+      expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([63], 'alice@example.com'),
+    );
+  });
+
   it('shows a useful message when pending usage cannot be loaded', async () => {
     vi.mocked(api.fetchPendingUsageSessions).mockRejectedValue(new Error('offline'));
     renderWithProviders(<PendingUsageEventsCard />);

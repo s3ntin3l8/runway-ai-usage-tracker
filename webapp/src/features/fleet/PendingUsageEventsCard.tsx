@@ -15,6 +15,10 @@ function sessionKey(group: PendingUsageSession) {
   return JSON.stringify([group.provider_id, group.sidecar_id, sessionIdentity]);
 }
 
+function accountProviderIdForUsage(providerId: string) {
+  return providerId === 'opencode-free' || providerId === 'opencode-zen' ? 'opencode' : providerId;
+}
+
 export function PendingUsageEventsCard() {
   const queryClient = useQueryClient();
   const [offset, setOffset] = useState(0);
@@ -77,7 +81,8 @@ export function PendingUsageEventsCard() {
       <div className="mt-3 flex max-h-[32rem] flex-col gap-2 overflow-y-auto">
         {pending.data.items.map((group) => {
           const key = sessionKey(group);
-          const configured = configs.data?.providers.find((provider) => provider.provider_id === group.provider_id);
+          const accountProviderId = accountProviderIdForUsage(group.provider_id);
+          const configured = configs.data?.providers.find((provider) => provider.provider_id === accountProviderId);
           const options =
             configured?.accounts.filter((account) => !account.archived && account.enabled !== false) ?? [];
           const sessionLabel = group.session_id ?? `event ${group.event_ids[0]}`;

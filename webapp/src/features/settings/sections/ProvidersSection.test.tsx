@@ -150,6 +150,47 @@ describe('ProvidersSection', () => {
     ));
   });
 
+  it('offers permanent deletion only for empty archived accounts', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 0,
+        archived_count: 2,
+        accounts: [
+          {
+            account_id: 'empty@example.com',
+            account_label: 'Empty duplicate',
+            enabled: false,
+            archived: true,
+            has_usage_events: false,
+          },
+          {
+            account_id: 'history@example.com',
+            account_label: 'Has history',
+            enabled: false,
+            archived: true,
+            has_usage_events: true,
+          },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.deleteProviderConfig).mockResolvedValue({ status: 'permanently_deleted' });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Archived accounts (2)')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Delete permanently' })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+    expect(screen.getByText('Permanently delete this empty account?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+    await waitFor(() =>
+      expect(api.deleteProviderConfig).toHaveBeenCalledWith(
+        'claude',
+        'empty@example.com',
+        true,
+      ),
+    );
+  });
+
   it('opens the detail dialog when a provider card is clicked', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
     vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });

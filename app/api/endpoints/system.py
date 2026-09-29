@@ -8,7 +8,7 @@ from typing import Any, Literal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import delete
+from sqlalchemy import and_, delete, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
@@ -25,15 +25,17 @@ from app.models.db import (
     AuditLog,
     CredentialSource,
     LatestUsage,
+    LatestUsageContribution,
     ProviderConfig,
     SidecarRegistry,
     SystemConfig,
+    UsageEvent,
     WebhookConfig,
     WebhookCredentialAlert,
 )
 from app.models.schemas import LimitCard, SidecarDownloadsResponse
 from app.services import audit_log, auth_failures
-from app.services.account_identity import canonical_account_id
+from app.services.account_identity import account_usage_provider_ids, canonical_account_id
 from app.services.collector_manager import manager
 from app.services.credential_provider import CredentialProvider
 from app.services.sidecar_downloads import sidecar_downloads
@@ -1009,6 +1011,10 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     rows_by_provider: dict[str, list[ProviderConfig]] = {}
     for r in db_rows:
         rows_by_provider.setdefault(r.provider_id, []).append(r)
+    archived_account_usage = _archived_account_usage_flags(
+        session, [row for row in db_rows if row.archived]
+    )
+
     credential_sources_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
     for source in session.exec(select(CredentialSource)).all():
         credential_sources_by_account.setdefault(
@@ -1078,9 +1084,10 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             if rule_type not in ("env", "file", "keychain", "cookie"):
                 continue
             mapping = rule.get("mapping", {})
-            if not token_names.intersection(mapping.values()):
+            matching_token_types = token_names.intersection(mapping.values())
+            if not matching_token_types:
                 continue
-            kind = "Cookie" if rule_type == "cookie" else "API key"
+            kind = _discovery_credential_kind(rule_type, matching_token_types)
             paths = rule.get("paths", [])
             if rule_type == "file" and paths:
                 import os
@@ -1163,6 +1170,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "account_id": r.account_id,
                 "enabled": r.enabled,
                 "archived": r.archived,
+                "has_usage_events": archived_account_usage.get((p_id, r.account_id), False),
                 "api_key_set": bool(r.api_key_encrypted),
                 "session_cookie_set": bool(r.session_cookie_encrypted),
                 "account_label": r.account_label,
@@ -1208,6 +1216,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "account_id": c_aid,
                     "enabled": True,
                     "archived": False,
+                    "has_usage_events": False,
                     "api_key_set": False,
                     "session_cookie_set": False,
                     "account_label": c_name,
@@ -1235,6 +1244,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "account_id": live_aid,
                         "enabled": True,
                         "archived": False,
+                        "has_usage_events": False,
                         "api_key_set": False,
                         "session_cookie_set": False,
                         "account_label": None,
@@ -1371,47 +1381,18 @@ async def delete_provider_config_for_account(
     request: Request,
     provider_id: str,
     account_id: str,
+    permanent: bool = False,
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict:
-    """Remove one ``(provider_id, account_id)`` row and its live ``LatestUsage`` cards.
+    """Archive an account, or permanently remove an empty archived account.
 
-    The webapp's ``ProviderDetailDialog`` Remove action calls this endpoint
-    to clean up orphan ``default`` rows left over from initial setup, and
-    any other labeled account the operator no longer wants to track.
-
-    Implementation: **soft-archive** rather than hard-delete. The repo
-    convention is that ``provider_configs`` rows never leave the table —
-    ``archived=True`` is the established hide-from-dashboard flag, picked
-    up by ``_fetch_fleet_view_sync`` in ``app/api/endpoints/usage.py`` at
-    both the real-card skip-set (line ~236) and the synthetic-from-events
-    skip-set (line ~260). Hard-deleting a row whose ``usage_events`` still
-    has rows would let the synthetic loop resurrect the pair as a
-    PAYG-style card (PR #317 round-2 review warning).
-
-    Cascades:
-      - ``LatestUsage`` cards evicted from ``latest_usage``.
-      - stored credentials cleared (``api_key`` / ``session_cookie`` →
-        ``None``) — Remove is destructive: the dialog's confirm copy
-        promises the stored credentials go with it, and keeping them
-        would let a later re-enable re-cache them
-        (PR #317 round-2 re-review warning). Note the distinction from
-        PUT-archive (``archived: true`` via the ProviderPage archive
-        toggle), which only hides the account and keeps credentials
-        for easy un-archive.
-      - in-memory ``token_cache`` entry dropped so collectors don't keep
-        fetching credentials for the removed account.
-      - ``credential_tags`` rows whose ``account_id`` matches are deleted
-        so the sidecar stops receiving ``origin -> account_id`` hints for
-        the removed account on subsequent ``/fleet/config`` heartbeats
-        (PR #317 round-2 review warning).
-      - ``audit_log`` records ``action="provider_config.delete"``,
-        ``target_id=f"{provider_id}/{account_id}"`` (mirrors
-        ``sidecar.delete`` + ``credential.tag_set`` conventions).
-
-    ``usage_events`` / rollups are intentionally left in place — they're
-    event-sourced history and stay readable via ``/usage/cumulative`` and
-    ``/usage/archived-providers`` even without a live card.
+    The ordinary Remove action soft-archives and clears stored credentials,
+    retaining the row for restoration and keeping usage history out of the
+    active fleet. ``?permanent=true`` is the explicit cleanup action for an
+    already archived account with no usage events; it deletes the account row
+    and its non-secret source metadata. OpenCode history checks cover Go,
+    Zen, and Free event provider IDs because they share one account identity.
     """
     if provider_id not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
@@ -1438,6 +1419,18 @@ async def delete_provider_config_for_account(
             detail=f"No provider_config for {provider_id}/{account_id}",
         )
 
+    if permanent and not row.archived:
+        raise HTTPException(
+            status_code=409,
+            detail="Only archived accounts can be permanently deleted.",
+        )
+    if permanent:
+        if _has_account_usage(provider_id, account_id, session):
+            raise HTTPException(
+                status_code=409,
+                detail="Accounts with usage history cannot be permanently deleted.",
+            )
+
     # Evict matching LatestUsage rows so the dashboard doesn't show ghost cards
     # for an account the operator just removed. usage_events / rollups are
     # intentionally left in place — they're event-sourced history and stay
@@ -1460,21 +1453,32 @@ async def delete_provider_config_for_account(
         session, provider_id=provider_id, account_id=account_id
     )
 
-    # Soft-archive instead of hard-delete (see docstring). Mirrors the
-    # PUT helper's archived-toggle cascade: archiving forces enabled=False
-    # so no collector keeps polling. Also wipe the stored credential blobs —
-    # Remove is destructive (the dialog's confirm copy promises it), and a
-    # kept credential could be re-cached if the row were ever re-enabled
-    # (PR #317 round-2 re-review warning). PUT-archive deliberately does NOT
-    # clear credentials; archive ≠ remove. ``oai_sc_cookie`` is ChatGPT's
-    # companion to ``session_cookie`` — the sibling ``clear_session_cookie``
-    # path wipes both (parity nit from the round-3 approve review).
-    row.archived = True
-    row.enabled = False
-    row.api_key = None
-    row.session_cookie = None
-    row.oai_sc_cookie = None
-    session.add(row)
+    if permanent:
+        # Configured credential-source metadata is scoped to this account as
+        # well. Remove it with the final row so a deleted account cannot be
+        # offered stale source preferences if it is later recreated.
+        session.exec(
+            delete(LatestUsageContribution).where(
+                col(LatestUsageContribution.provider_id) == provider_id,
+                col(LatestUsageContribution.account_id) == account_id,
+            )
+        )
+        session.exec(
+            delete(CredentialSource).where(
+                col(CredentialSource.provider_id) == provider_id,
+                col(CredentialSource.account_id) == account_id,
+            )
+        )
+        session.delete(row)
+    else:
+        # Soft-archive instead of hard-delete (see docstring). Remove is
+        # destructive to credentials, but keeps the row for easy restoration.
+        row.archived = True
+        row.enabled = False
+        row.api_key = None
+        row.session_cookie = None
+        row.oai_sc_cookie = None
+        session.add(row)
     session.commit()
 
     # Drop the in-memory token cache entry. The async lock is held inside
@@ -1482,13 +1486,15 @@ async def delete_provider_config_for_account(
     # the handler on a loop and the cache uses asyncio.Lock.
     await token_cache.remove(provider_id, account_id)
     auth_failures.clear(provider_id, account_id)
+    if permanent:
+        manager._credential_source_preferences.pop((provider_id, account_id), None)
 
     audit_log.record(
         session,
         request,
-        action="provider_config.delete",
+        action="provider_config.purge" if permanent else "provider_config.delete",
         target_id=f"{provider_id}/{account_id}",
-        payload={"tags_cleared": tags_cleared},
+        payload={"tags_cleared": tags_cleared, "permanent": permanent},
     )
 
     # Invalidate cached fleet/limits responses so the next dashboard poll
@@ -1513,10 +1519,66 @@ async def delete_provider_config_for_account(
         )
 
     return {
-        "status": "deleted",
+        "status": "permanently_deleted" if permanent else "deleted",
         "provider_id": provider_id,
         "account_id": account_id,
         "tags_cleared": tags_cleared,
+    }
+
+
+def _has_account_usage(provider_id: str, account_id: str, session: Session) -> bool:
+    return (
+        session.exec(
+            select(UsageEvent.id)
+            .where(
+                col(UsageEvent.provider_id).in_(account_usage_provider_ids(provider_id)),
+                col(UsageEvent.account_id) == account_id,
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
+def _discovery_credential_kind(rule_type: str, token_types: set[str]) -> str:
+    if rule_type == "cookie":
+        return "Cookie"
+    if any(
+        "oauth" in token_type.lower()
+        or "access_token" in token_type.lower()
+        or "refresh_token" in token_type.lower()
+        or token_type.lower() in {"xai_access", "xai_refresh"}
+        for token_type in token_types
+    ):
+        return "OAuth token"
+    return "API key"
+
+
+def _archived_account_usage_flags(
+    session: Session, archived_rows: list[ProviderConfig]
+) -> dict[tuple[str, str], bool]:
+    usage_terms = [
+        and_(
+            col(UsageEvent.provider_id).in_(account_usage_provider_ids(row.provider_id)),
+            col(UsageEvent.account_id) == row.account_id,
+        )
+        for row in archived_rows
+    ]
+    if not usage_terms:
+        return {}
+    usage_event_pairs = set(
+        session.exec(
+            select(UsageEvent.provider_id, UsageEvent.account_id)
+            .where(or_(*usage_terms))
+            .distinct()
+        ).all()
+    )
+    return {
+        (row.provider_id, row.account_id): any(
+            (event_provider_id, row.account_id) in usage_event_pairs
+            for event_provider_id in account_usage_provider_ids(row.provider_id)
+        )
+        for row in archived_rows
     }
 
 
