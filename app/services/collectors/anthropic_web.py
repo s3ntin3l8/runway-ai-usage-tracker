@@ -75,8 +75,6 @@ class AnthropicWebMixin:
             if data is None:
                 return []
 
-            self._last_statusline_data = data
-
             # Extract identity from local credentials to ensure account_label is set
             identity_str = ""
             creds = None
@@ -168,37 +166,6 @@ class AnthropicWebMixin:
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": self.DATA_SOURCE_LOCAL,
                     "input_source": "server",
-                    "tier": tier,
-                    "account_label": identity_str,
-                    "updated_at": now.isoformat(),
-                }
-            )
-
-        # 2. Session Context (Tokens/Cost)
-        context = data.get("context_window", {})
-        if context:
-            input_tokens = context.get("total_input_tokens", 0)
-            output_tokens = context.get("total_output_tokens", 0)
-            total = input_tokens + output_tokens
-            max_tokens = context.get("max_tokens", 200000)
-
-            results.append(
-                {
-                    "service_name": "Claude",
-                    "variant": "Tokens",
-                    "icon": "🪙",
-                    "remaining": f"{total:,}",
-                    "unit": f"/ {max_tokens:,}",
-                    "reset": data.get("model", {}).get("display_name", "Sonnet"),
-                    "health": "good",
-                    "pace": "Active",
-                    "detail": f"IN: {input_tokens:,} | OUT: {output_tokens:,} [Statusline]{identity_suffix}",
-                    "used_value": float(total),
-                    "limit_value": float(max_tokens),
-                    "unit_type": "tokens",
-                    "window_type": "session",
-                    "model_id": None,
-                    "data_source": self.DATA_SOURCE_LOCAL,
                     "tier": tier,
                     "account_label": identity_str,
                     "updated_at": now.isoformat(),

@@ -61,7 +61,6 @@ class AnthropicCollector(
 
         self._refresh_backoff_seconds = 30
         self._max_refresh_backoff = 21600  # 6 hours max
-        self._last_statusline_data = {}  # Cache for hybrid fallback
         self._terminal_failure = False  # Guard for invalid_grant
 
     async def is_configured(self) -> bool:

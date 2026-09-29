@@ -8,7 +8,7 @@ Anthropic Claude quota collector with a 3-tier fallback: `api` → `web` → `lo
 ## Overview
 
 - **Collection Strategy**: api (OAuth) → web (Cookies) → local (Statusline/CLI/Logs, via sidecar)
-- **Cards**: Quota cards for Session, Weekly, per-model, and Extra Usage windows
+- **Cards**: Session and Weekly quota windows, per-model Sonnet and Opus cards, and Extra Usage windows
 - **Authentication**: OAuth token (api), Chrome cookies (web), local statusline / CLI (local — collected by the sidecar).
 
 ## Setup Methods Quick Overview
@@ -62,7 +62,7 @@ This is the preferred method, providing the most reliable and comprehensive data
 - **Statusline**: Reads `~/.claude/statusline.json` for Session and Weekly quota windows (Fast Path).
 - **CLI PTY**: Executes `claude -s read-only` to parse CLI output.
 - **Local Logs**: Scans `~/.claude/projects/**/*.jsonl` for token usage and emits per-message events.
-**Behavior:** The sidecar pushes parsed quota windows and per-message events from local logs to `/api/v1/fleet/ingest`. It does not emit the statusline context-window token count as a separate card; per-message token usage remains available from the event history. On the server, `EventIngestor` merges local event data with any `api`/`web` results for the same `(provider_id, account_id, window_type, variant, model_id)` tuple — token breakdown and session counts come from events, while the headline `%` typically comes from `api`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
+**Behavior:** The sidecar pushes parsed quota windows and per-message events from local logs to `/api/v1/fleet/ingest`. Neither the sidecar nor the server's local statusline path emits the context-window token count as a separate card; per-message token usage remains available from event history. On the server, `EventIngestor` merges local event data with any `api`/`web` results for the same `(provider_id, account_id, window_type, variant, model_id)` tuple — token breakdown and session counts come from events, while the headline `%` typically comes from `api`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
 
 ## Output Format
 
