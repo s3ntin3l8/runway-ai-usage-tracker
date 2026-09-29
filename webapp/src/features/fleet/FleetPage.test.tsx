@@ -95,7 +95,7 @@ describe('FleetPage', () => {
     expect(list).toHaveTextContent('unidentified');
     expect(list).toHaveTextContent('No credential origin reported for mapping');
     expect(
-      screen.getByText(/account this machine currently uses for each provider/i),
+      screen.getByText('"Mapped by operator" below means a credential rule assigned this account.'),
     ).toBeInTheDocument();
   });
 

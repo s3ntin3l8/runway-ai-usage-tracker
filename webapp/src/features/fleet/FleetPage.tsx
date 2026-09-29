@@ -525,8 +525,7 @@ function IdentitySources({
         </span>
       </summary>
       <p className="mt-1 text-[11px] text-fg-subtle">
-        This is the account this machine currently uses for each provider’s data. “Mapped by
-        operator” means a credential rule below assigned that account.
+        "Mapped by operator" below means a credential rule assigned this account.
       </p>
       <ul className="mt-2 space-y-1 text-[12px]" aria-label="Current account identities">
         {entries.map(([providerId, info]) => {

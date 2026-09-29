@@ -47,8 +47,8 @@ export function CredentialMappingsCard({ className }: { className?: string }) {
       <p className="text-[13px] font-semibold">Credential assignment rules</p>
       <p className="text-[11px] text-fg-subtle">
         If a sidecar cannot identify a credential locally, this rule assigns it to the selected
-        account for that provider. The resulting account appears in that sidecar’s current account
-        identities. “On a machine” applies to one sidecar; “all machines” applies everywhere.
+        account for that provider. The result appears in that sidecar's current account identities.
+        "On a machine" applies to one sidecar; "all machines" applies everywhere.
       </p>
       <ul className="mt-2 divide-y divide-border" aria-label="Credential assignment rules">
         {items.map((t) => (
