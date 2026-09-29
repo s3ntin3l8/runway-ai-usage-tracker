@@ -26,6 +26,10 @@ class TestOpenCodeAccountIdentity:
         assert account_config_provider_id("opencode") == "opencode"
         assert account_config_provider_id("opencode-free") == "opencode"
         assert account_config_provider_id("opencode-zen") == "opencode"
+        assert account_config_provider_id("hermes-auto") == "opencode"
+        assert account_config_provider_id("hermes-xai-oauth") == "xai"
+        assert account_config_provider_id("xai-oauth") == "xai"
+        assert account_config_provider_id("xai-api") == "xai"
         assert account_config_provider_id("xai") == "xai"
 
     def test_usage_provider_ids_cover_all_tiers_only_for_opencode_account(self):
@@ -33,6 +37,13 @@ class TestOpenCodeAccountIdentity:
             "opencode",
             "opencode-free",
             "opencode-zen",
+            "hermes-auto",
+        }
+        assert account_usage_provider_ids("xai") == {
+            "xai",
+            "hermes-xai-oauth",
+            "xai-oauth",
+            "xai-api",
         }
         assert account_usage_provider_ids("opencode-free") == {"opencode-free"}
 

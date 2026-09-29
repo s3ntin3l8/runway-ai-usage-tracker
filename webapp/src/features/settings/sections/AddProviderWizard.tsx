@@ -44,6 +44,7 @@ interface AddProviderWizardProps {
   // lists — defense-in-depth against the wizard's 409-on-existing preview.
   existingAccountIdsByProvider: Map<string, Set<string>>;
   onClose: () => void;
+  onSaved?: (providerId: string, accountId: string) => void;
 }
 
 interface Step2Result {
@@ -57,6 +58,7 @@ export function AddProviderWizard({
   providers,
   existingAccountIdsByProvider,
   onClose,
+  onSaved,
 }: AddProviderWizardProps) {
   // Step 1 is skipped when pre-scoped: step starts at 2.
   const [step, setStep] = useState<number>(preScopedProvider ? 2 : 1);
@@ -127,7 +129,10 @@ export function AddProviderWizard({
                   provider={selected}
                   step2Result={step2Result}
                   onBack={() => setStep(2)}
-                  onSaved={onClose}
+                  onSaved={(savedAccountId) => {
+                    onSaved?.(selected.provider_id, savedAccountId ?? step2Result.preview.suggested_account_id);
+                    onClose();
+                  }}
                 />
               </div>
             ) : null}
@@ -588,7 +593,7 @@ function Step3({
   provider: ProviderConfig;
   step2Result: Step2Result;
   onBack: () => void;
-  onSaved: () => void;
+  onSaved: (savedAccountId?: string) => void;
 }) {
   const queryClient = useQueryClient();
   const accountId = step2Result.preview.suggested_account_id;
@@ -622,11 +627,11 @@ function Step3({
       }
       return putProviderConfig(provider.provider_id, accountId, body);
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.success(`${provider.name} · ${label.trim() || maskedAccountId} saved`);
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       queryClient.invalidateQueries({ queryKey: ['usage'] });
-      onSaved();
+      onSaved(data?.account_id);
     },
     onError: (err) => toast.error(err.message),
   });

@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import * as api from '@/api/endpoints';
 import { renderWithProviders } from '@/test/utils';
@@ -7,6 +8,19 @@ import { PendingUsageEventsCard } from './PendingUsageEventsCard';
 
 vi.mock('@/api/endpoints');
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/features/settings/sections/AddProviderWizard', () => ({
+  AddProviderWizard: ({ onSaved, onClose, preScopedProvider }: any) =>
+    createPortal(
+      <div role="dialog" aria-label="Mock Add Provider Wizard">
+        <p>Add account · {preScopedProvider?.name ?? 'Unknown'}</p>
+        <button onClick={() => onSaved?.(preScopedProvider?.provider_id ?? 'test', 'saved-acc@example.com')}>
+          Simulate Save
+        </button>
+        <button onClick={onClose}>Simulate Close</button>
+      </div>,
+      document.body,
+    ),
+}));
 
 describe('PendingUsageEventsCard', () => {
   beforeEach(() => {
@@ -343,5 +357,230 @@ describe('PendingUsageEventsCard', () => {
     renderWithProviders(<PendingUsageEventsCard />);
     expect(await screen.findByText('Unassigned usage · 158 events')).toBeInTheDocument();
     expect(document.getElementById('pending-events')).toBeInTheDocument();
+  });
+
+  it('shows a setup button for unconfigured providers and opens the wizard', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'openrouter',
+          name: 'OpenRouter',
+          accounts: [],
+          account_count: 0,
+        },
+      ],
+    });
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'openrouter',
+          sidecar_id: 'laptop',
+          session_id: 'or-session-1',
+          event_ids: [50],
+          event_count: 1,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:01:00Z',
+          model_ids: ['anthropic/claude-3.5-sonnet'],
+        },
+      ],
+      total_events: 1,
+      matching_events: 1,
+      total_groups: 1,
+      sidecars: ['laptop'],
+      providers: ['openrouter'],
+      offset: 0,
+      limit: 100,
+    });
+
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    const setupBtn = await screen.findByRole('button', { name: '+ Set up OpenRouter' });
+    expect(setupBtn).toBeInTheDocument();
+
+    await user.click(setupBtn);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/Add account · OpenRouter/i)).toBeInTheDocument();
+  });
+
+  it('shows setup button in batch dialog when a selected provider has 0 accounts', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'openrouter',
+          name: 'OpenRouter',
+          accounts: [],
+          account_count: 0,
+        },
+      ],
+    });
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'openrouter',
+          sidecar_id: 'laptop',
+          session_id: 'or-session-1',
+          event_ids: [50],
+          event_count: 1,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:01:00Z',
+          model_ids: ['anthropic/claude-3.5-sonnet'],
+        },
+      ],
+      total_events: 1,
+      matching_events: 1,
+      total_groups: 1,
+      sidecars: ['laptop'],
+      providers: ['openrouter'],
+      offset: 0,
+      limit: 100,
+    });
+
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    await user.click(await screen.findByRole('checkbox', { name: /select openrouter on laptop/i }));
+    await user.click(screen.getByRole('button', { name: 'Assign selected' }));
+
+    expect(screen.getByText('No account configured')).toBeInTheDocument();
+    const batchSetupBtn = screen.getByRole('button', { name: '+ Set up OpenRouter' });
+    expect(batchSetupBtn).toBeInTheDocument();
+
+    await user.click(batchSetupBtn);
+    expect(await screen.findByText(/Add account · OpenRouter/i)).toBeInTheDocument();
+  });
+
+  it('allows picking "+ Set up new account…" from dropdown when accounts exist', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    const accountSelect = await screen.findByRole('combobox', { name: /account for xai session session-12/i });
+    expect(screen.getByRole('option', { name: '+ Set up new account…' })).toBeInTheDocument();
+
+    await user.selectOptions(accountSelect, '__add_new__');
+    expect(await screen.findByText(/Add account · xAI/i)).toBeInTheDocument();
+  });
+
+  it('auto-selects newly configured account and updates rows when wizard completes save', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'openrouter',
+          name: 'OpenRouter',
+          accounts: [],
+          account_count: 0,
+        },
+      ],
+    });
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'openrouter',
+          sidecar_id: 'laptop',
+          session_id: 'or-session-1',
+          event_ids: [50],
+          event_count: 1,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:01:00Z',
+          model_ids: ['anthropic/claude-3.5-sonnet'],
+        },
+      ],
+      total_events: 1,
+      matching_events: 1,
+      total_groups: 1,
+      sidecars: ['laptop'],
+      providers: ['openrouter'],
+      offset: 0,
+      limit: 100,
+    });
+
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    const setupBtn = await screen.findByRole('button', { name: '+ Set up OpenRouter' });
+    await user.click(setupBtn);
+
+    // Simulate save in wizard
+    await user.click(screen.getByRole('button', { name: 'Simulate Save' }));
+
+    // Wizard closes and assign button is enabled
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const assignBtn = screen.getByRole('button', { name: 'Assign' });
+    expect(assignBtn).not.toBeDisabled();
+    await user.click(assignBtn);
+    await waitFor(() =>
+      expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([50], 'saved-acc@example.com'),
+    );
+  });
+
+  it('auto-selects newly configured account in batch dialog and enables batch assign', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'openrouter',
+          name: 'OpenRouter',
+          accounts: [],
+          account_count: 0,
+        },
+      ],
+    });
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'openrouter',
+          sidecar_id: 'laptop',
+          session_id: 'or-session-1',
+          event_ids: [50],
+          event_count: 1,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:01:00Z',
+          model_ids: ['anthropic/claude-3.5-sonnet'],
+        },
+      ],
+      total_events: 1,
+      matching_events: 1,
+      total_groups: 1,
+      sidecars: ['laptop'],
+      providers: ['openrouter'],
+      offset: 0,
+      limit: 100,
+    });
+
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    await user.click(await screen.findByRole('checkbox', { name: /select openrouter on laptop/i }));
+    await user.click(screen.getByRole('button', { name: 'Assign selected' }));
+
+    const batchSetupBtn = screen.getByRole('button', { name: '+ Set up OpenRouter' });
+    await user.click(batchSetupBtn);
+
+    await user.click(screen.getByRole('button', { name: 'Simulate Save' }));
+
+    // Batch dialog is open with Assign button enabled
+    const batchAssignBtn = screen.getByRole('button', { name: 'Assign 1 events' });
+    expect(batchAssignBtn).not.toBeDisabled();
+    await user.click(batchAssignBtn);
+    await waitFor(() =>
+      expect(api.assignPendingUsageEventsBatch).toHaveBeenCalledWith([
+        { event_ids: [50], account_id: 'saved-acc@example.com' },
+      ]),
+    );
+  });
+
+  it('opens wizard when picking "+ Set up new account…" in the batch dialog, and closing returns to dialog', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    await user.click(await screen.findByRole('checkbox', { name: /select xai on laptop/i }));
+    await user.click(screen.getByRole('button', { name: 'Assign selected' }));
+
+    const batchSelect = screen.getByRole('combobox', { name: 'Batch account for xai' });
+    await user.selectOptions(batchSelect, '__add_new__');
+    expect(await screen.findByText(/Add account · xAI/i)).toBeInTheDocument();
+
+    // Closing wizard returns to batch dialog
+    await user.click(screen.getByRole('button', { name: 'Simulate Close' }));
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 });
