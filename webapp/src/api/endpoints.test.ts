@@ -16,6 +16,7 @@ import {
   getDashboardLayout,
   getGitHubOAuthStatus,
   assignPendingUsageEvents,
+  assignPendingUsageEventsBatch,
   initGitHubOAuth,
   logoutGitHub,
   postWake,
@@ -74,10 +75,20 @@ describe('endpoints', () => {
   });
 
   it('fetchPendingUsageSessions requests grouped pending usage', async () => {
-    const payload = { items: [], total_events: 0, total_groups: 0, offset: 100, limit: 100 };
+    const payload = {
+      items: [], total_events: 0, matching_events: 0, total_groups: 0, sidecars: [], providers: [], offset: 100, limit: 100,
+    };
     mockFetch().mockResolvedValue(jsonResponse(payload));
-    await expect(fetchPendingUsageSessions(100)).resolves.toEqual(payload);
+    await expect(fetchPendingUsageSessions({ offset: 100 })).resolves.toEqual(payload);
     expect(lastCall()[0]).toBe('/api/v1/fleet/events/pending/sessions?offset=100&limit=100');
+  });
+
+  it('fetchPendingUsageSessions sends filters and a requested page size', async () => {
+    mockFetch().mockResolvedValue(jsonResponse({ items: [], sidecars: [], providers: [] }));
+    await fetchPendingUsageSessions({ offset: 0, filters: { sidecar_id: 'host 1', provider_id: 'xai', search: 'grok' }, limit: 500 });
+    expect(lastCall()[0]).toBe(
+      '/api/v1/fleet/events/pending/sessions?offset=0&limit=500&sidecar_id=host+1&provider_id=xai&search=grok',
+    );
   });
 
   it('fetchSidecars hits the sidecars path', async () => {
@@ -214,6 +225,26 @@ describe('endpoints', () => {
     expect(path).toBe('/api/v1/fleet/events/pending/assign');
     expect(init.method).toBe('POST');
     expect(init.body).toBe(JSON.stringify({ event_ids: [12, 13], account_id: 'alice@example.com' }));
+  });
+
+  it('assignPendingUsageEventsBatch POSTs provider-specific account assignments', async () => {
+    mockFetch().mockResolvedValue(jsonResponse({
+      assigned: 3,
+      providers: ['anthropic', 'xai'],
+      mappings: [
+        { provider_id: 'anthropic', sidecar_id: 'host-a', account_id: 'alice@example.com' },
+        { provider_id: 'xai', sidecar_id: 'host-b', account_id: 'bob@example.com' },
+      ],
+    }));
+    const assignments = [
+      { event_ids: [12, 13], account_id: 'alice@example.com' },
+      { event_ids: [21], account_id: 'bob@example.com' },
+    ];
+    await assignPendingUsageEventsBatch(assignments);
+    const [path, init] = lastCall();
+    expect(path).toBe('/api/v1/fleet/events/pending/assign-batch');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ assignments }));
   });
 
   it('logoutGitHub POSTs to github logout', async () => {

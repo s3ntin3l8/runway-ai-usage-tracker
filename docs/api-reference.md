@@ -53,7 +53,11 @@ All API routes are under `/api/v1/`.
 | `DELETE` | `/api/v1/fleet/credentials/tags` | Remove one resolved tag in a given scope (admin) |
 | `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution |
 | `GET` | `/api/v1/fleet/events/pending` | Paginated queue of events held back under an unresolved `default` identity (admin) |
-| `POST` | `/api/v1/fleet/events/pending/assign` | Assign up to 1000 pending events to a configured account, promoting them into `usage_events` (admin) |
+| `GET` | `/api/v1/fleet/events/pending/sessions` | Paginated pending events grouped by provider, host, and session; supports `sidecar_id`, `provider_id`, and session/model `search` filters (admin) |
+| `POST` | `/api/v1/fleet/events/pending/assign` | Assign up to 1000 pending events to one active account, promoting them into `usage_events` and creating provider/host mappings (admin) |
+| `POST` | `/api/v1/fleet/events/pending/assign-batch` | Assign up to 10000 pending events across provider-specific active accounts; validates the full batch before promotion and returns the created provider/host mappings (admin) |
+
+The grouped pending-events response reports `total_events` across the full queue and `matching_events` for the current filters; `total_groups` is the filtered group count used for pagination.
 
 ## System
 

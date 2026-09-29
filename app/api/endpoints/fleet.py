@@ -64,6 +64,10 @@ class PendingEventAssignment(BaseModel):
     account_id: str
 
 
+class PendingEventBatchAssignment(BaseModel):
+    assignments: list[PendingEventAssignment]
+
+
 @router.post("/ingest")
 @limiter.limit("600/minute")
 async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest entrypoint, refactor tracked separately
@@ -1104,6 +1108,9 @@ async def list_pending_usage_events(
 async def list_pending_usage_sessions(
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    sidecar_id: str | None = Query(None),
+    provider_id: str | None = Query(None),
+    search: str | None = Query(None, max_length=200),
     session: Session = Depends(get_session),
     _: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
@@ -1151,7 +1158,22 @@ async def list_pending_usage_sessions(
         if isinstance(model_id, str) and model_id:
             group["model_ids"].add(model_id)
 
-    ordered = sorted(groups.values(), key=lambda group: group["last_ts"], reverse=True)
+    all_groups = list(groups.values())
+    sidecars = sorted({group["sidecar_id"] for group in all_groups})
+    providers = sorted({group["provider_id"] for group in all_groups})
+    needle = search.strip().casefold() if search else ""
+    filtered = [
+        group
+        for group in all_groups
+        if (sidecar_id is None or group["sidecar_id"] == sidecar_id)
+        and (provider_id is None or group["provider_id"] == provider_id)
+        and (
+            not needle
+            or needle in (group["session_id"] or "").casefold()
+            or any(needle in model_id.casefold() for model_id in group["model_ids"])
+        )
+    ]
+    ordered = sorted(filtered, key=lambda group: group["last_ts"], reverse=True)
     page = ordered[offset : offset + limit]
     items = [
         {
@@ -1164,23 +1186,27 @@ async def list_pending_usage_sessions(
     ]
     return {
         "items": items,
-        "total_events": len(rows),
+        "total_events": sum(group["event_count"] for group in all_groups),
+        "matching_events": sum(group["event_count"] for group in ordered),
         "total_groups": len(ordered),
+        "sidecars": sidecars,
+        "providers": providers,
         "offset": offset,
         "limit": limit,
     }
 
 
-@router.post("/events/pending/assign")
-async def assign_pending_usage_events(
-    request: Request,
-    body: PendingEventAssignment,
-    session: Session = Depends(get_session),
-    _: None = Depends(require_admin_key),
-) -> dict[str, Any]:
-    if not body.event_ids or len(body.event_ids) > 1000:
-        raise HTTPException(status_code=422, detail="Select between 1 and 1000 events.")
-    account_id = resolve_account_id("", body.account_id, None)
+async def _validate_pending_event_assignments(
+    assignments: list[PendingEventAssignment], session: Session
+) -> list[tuple[str, list[PendingUsageEvent]]]:
+    event_ids = [event_id for assignment in assignments for event_id in assignment.event_ids]
+    if not assignments or not event_ids or len(event_ids) > 10_000:
+        raise HTTPException(status_code=422, detail="Select between 1 and 10000 events.")
+    if any(not assignment.event_ids for assignment in assignments):
+        raise HTTPException(status_code=422, detail="Each account assignment must include events.")
+    if len(event_ids) != len(set(event_ids)):
+        raise HTTPException(status_code=422, detail="An event can only appear once per batch.")
+
     # Discovered identities can be valid assignment targets even without a
     # provider_configs row (for example sidecar-managed Antigravity accounts).
     # Only accept those that are still known from the cache or latest_usage.
@@ -1198,34 +1224,77 @@ async def assign_pending_usage_events(
     providers_with_config = set(session.exec(select(ProviderConfig.provider_id).distinct()).all())
     rows = list(
         session.exec(
-            select(PendingUsageEvent).where(cast(Any, PendingUsageEvent.id).in_(body.event_ids))
+            select(PendingUsageEvent).where(cast(Any, PendingUsageEvent.id).in_(event_ids))
         ).all()
     )
-    if len(rows) != len(set(body.event_ids)):
+    if len(rows) != len(event_ids):
         raise HTTPException(status_code=404, detail="One or more pending events were not found.")
-    for row in rows:
-        config_provider_id = account_config_provider_id(row.provider_id)
-        configured = session.exec(
-            select(ProviderConfig).where(
-                ProviderConfig.provider_id == config_provider_id,
-                ProviderConfig.account_id == account_id,
-            )
-        ).first()
-        if configured is not None:
-            assignable = configured.enabled and not configured.archived
-        else:
-            key = (config_provider_id, account_id)
-            assignable = key in active_account_keys or (
-                config_provider_id not in providers_with_config and key in latest_account_keys
-            )
-        if not assignable:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No active account {account_id!r} known for {row.provider_id!r}.",
-            )
+    by_id = {row.id: row for row in rows}
+    # Check mapping collisions before validating account configuration so a
+    # malformed batch cannot partially populate the validated work list.
+    future_tags: dict[tuple[str, str], str] = {}
+    for assignment in assignments:
+        account_id = resolve_account_id("", assignment.account_id, None)
+        for event_id in assignment.event_ids:
+            row = by_id[event_id]
+            tag_key = (row.provider_id, row.sidecar_id)
+            if tag_key in future_tags and future_tags[tag_key] != account_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="A provider on one host can only be assigned to one account per batch.",
+                )
+            future_tags[tag_key] = account_id
+    validated: list[tuple[str, list[PendingUsageEvent]]] = []
+    assignable_accounts: dict[tuple[str, str], bool] = {}
+    for assignment in assignments:
+        account_id = resolve_account_id("", assignment.account_id, None)
+        assignment_rows = [by_id[event_id] for event_id in assignment.event_ids]
+        for row in assignment_rows:
+            config_provider_id = account_config_provider_id(row.provider_id)
+            account_key = (config_provider_id, account_id)
+            if account_key not in assignable_accounts:
+                configured = session.exec(
+                    select(ProviderConfig).where(
+                        ProviderConfig.provider_id == config_provider_id,
+                        ProviderConfig.account_id == account_id,
+                    )
+                ).first()
+                if configured is not None:
+                    assignable_accounts[account_key] = (
+                        configured.enabled and not configured.archived
+                    )
+                else:
+                    assignable_accounts[account_key] = account_key in active_account_keys or (
+                        config_provider_id not in providers_with_config
+                        and account_key in latest_account_keys
+                    )
+            assignable = assignable_accounts[account_key]
+            if not assignable:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No active account {account_id!r} known for {row.provider_id!r}.",
+                )
+        validated.append((account_id, assignment_rows))
+    return validated
 
+
+def _promote_pending_event_rows(
+    request: Request,
+    session: Session,
+    rows: list[PendingUsageEvent],
+    account_id: str,
+    *,
+    clear_pending: bool = True,
+    record_audit: bool = True,
+) -> None:
     # Ingest is idempotent. Keep pending rows until every promotion succeeds;
     # a retry after a partial failure safely deduplicates already-promoted rows.
+    pushes_by_sidecar: dict[str, list[UsageEventPush]] = {}
+    event_key_counts: dict[tuple[str, str], int] = {}
+    for row in rows:
+        event_key = (row.provider_id, row.event_id)
+        event_key_counts[event_key] = event_key_counts.get(event_key, 0) + 1
+    ingestor = EventIngestor(session)
     for row in rows:
         payload = UsageEventPush.model_validate_json(row.payload_json).model_copy(
             update={"account_id": account_id, "account_source": "tag"}
@@ -1252,18 +1321,83 @@ async def assign_pending_usage_events(
         # explicit operator assignment can safely move that event and its
         # rollups instead of being mistaken for a competing host replay.
         promotion_sidecar = existing.sidecar_id if existing is not None else row.sidecar_id
-        EventIngestor(session).ingest([payload], sidecar_id=promotion_sidecar)
-    for row in rows:
-        session.delete(row)
+        if event_key_counts[(row.provider_id, row.event_id)] > 1:
+            # Keep duplicate replays sequential: a later copy must observe
+            # the first promoted row and reuse its sidecar identity.
+            ingestor.ingest([payload], sidecar_id=promotion_sidecar)
+        else:
+            pushes_by_sidecar.setdefault(promotion_sidecar, []).append(payload)
+    for sidecar_id, pushes in pushes_by_sidecar.items():
+        ingestor.ingest(pushes, sidecar_id=sidecar_id)
+    if clear_pending:
+        for row in rows:
+            session.delete(row)
+        session.commit()
+    if record_audit:
+        audit_log.record(
+            session,
+            request,
+            action="usage.pending_events_assigned",
+            target_id=f"{rows[0].provider_id if rows else ''}/{account_id}",
+            payload={"event_count": len(rows)},
+        )
+
+
+@router.post("/events/pending/assign")
+async def assign_pending_usage_events(
+    request: Request,
+    body: PendingEventAssignment,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    if not body.event_ids or len(body.event_ids) > 1000:
+        raise HTTPException(status_code=422, detail="Select between 1 and 1000 events.")
+    validated = await _validate_pending_event_assignments([body], session)
+    account_id, rows = validated[0]
+    _promote_pending_event_rows(request, session, rows, account_id)
+    return {"assigned": len(rows), "provider_id": rows[0].provider_id if rows else None}
+
+
+@router.post("/events/pending/assign-batch")
+async def assign_pending_usage_events_batch(
+    request: Request,
+    body: PendingEventBatchAssignment,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    validated = await _validate_pending_event_assignments(body.assignments, session)
+    for account_id, rows in validated:
+        _promote_pending_event_rows(
+            request, session, rows, account_id, clear_pending=False, record_audit=False
+        )
+    for _account_id, rows in validated:
+        for row in rows:
+            session.delete(row)
     session.commit()
+    assigned = sum(len(rows) for _account_id, rows in validated)
+    providers = sorted({row.provider_id for _account_id, rows in validated for row in rows})
+    mapping_targets = sorted(
+        {
+            (row.provider_id, row.sidecar_id, account_id)
+            for account_id, rows in validated
+            for row in rows
+        }
+    )
     audit_log.record(
         session,
         request,
-        action="usage.pending_events_assigned",
-        target_id=f"{rows[0].provider_id if rows else ''}/{account_id}",
-        payload={"event_count": len(rows)},
+        action="usage.pending_events_batch_assigned",
+        target_id=",".join(providers),
+        payload={"event_count": assigned, "assignment_count": len(validated)},
     )
-    return {"assigned": len(rows), "provider_id": rows[0].provider_id if rows else None}
+    return {
+        "assigned": assigned,
+        "providers": providers,
+        "mappings": [
+            {"provider_id": provider_id, "sidecar_id": sidecar_id, "account_id": account_id}
+            for provider_id, sidecar_id, account_id in mapping_targets
+        ],
+    }
 
 
 def _get_active_identities(_session: Session) -> dict[str, str]:

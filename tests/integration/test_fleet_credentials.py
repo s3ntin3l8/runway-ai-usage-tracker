@@ -1478,7 +1478,10 @@ def test_pending_usage_sessions_group_events_and_keep_missing_sessions_separate(
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["total_events"] == 3
+    assert data["matching_events"] == 3
     assert data["total_groups"] == 2
+    assert data["sidecars"] == ["laptop"]
+    assert data["providers"] == ["antigravity"]
     grouped = next(item for item in data["items"] if item["session_id"] == "session-a")
     ungrouped = next(item for item in data["items"] if item["session_id"] is None)
     assert grouped["event_count"] == 2
@@ -1499,6 +1502,268 @@ def test_pending_usage_sessions_group_events_and_keep_missing_sessions_separate(
     remaining = session.exec(select(PendingUsageEvent)).all()
     assert len(remaining) == 1
     assert remaining[0].event_id == "no-session"
+
+
+def test_pending_usage_sessions_filter_groups_before_pagination(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent
+    from app.models.schemas import UsageEventPush
+
+    for provider_id, event_id, sidecar_id, model_id in (
+        ("xai", "filter-xai-a", "laptop-a", "grok-4"),
+        ("xai", "filter-xai-b", "laptop-b", "grok-4"),
+        ("minimax", "filter-minimax", "laptop-a", "abab-7"),
+    ):
+        push = UsageEventPush(
+            provider_id=provider_id,
+            account_id="default",
+            account_source="default",
+            event_id=event_id,
+            ts="2026-09-01T10:00:00Z",
+            model_id=model_id,
+            session_id=f"session-{event_id}",
+        )
+        session.add(
+            PendingUsageEvent(
+                provider_id=provider_id,
+                event_id=event_id,
+                sidecar_id=sidecar_id,
+                ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+                payload_json=push.model_dump_json(),
+            )
+        )
+    session.commit()
+
+    response = client.get(
+        "/api/v1/fleet/events/pending/sessions",
+        params={"sidecar_id": "laptop-a", "provider_id": "xai", "search": "GROK"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total_events"] == 3
+    assert data["matching_events"] == 1
+    assert data["total_groups"] == 1
+    assert data["sidecars"] == ["laptop-a", "laptop-b"]
+    assert data["providers"] == ["minimax", "xai"]
+    assert data["items"][0]["event_ids"]
+
+
+def test_pending_usage_batch_assigns_provider_specific_accounts_and_host_tags(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import CredentialTag, PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="xai", account_id="bob@example.com")
+    event_ids: dict[str, int] = {}
+    for provider_id, account_id, sidecar_id in (
+        ("anthropic", "alice@example.com", "host-a"),
+        ("xai", "bob@example.com", "host-b"),
+    ):
+        push = UsageEventPush(
+            provider_id=provider_id,
+            account_id="default",
+            account_source="default",
+            event_id=f"batch-{provider_id}",
+            ts="2026-09-01T10:00:00Z",
+            model_id=f"{provider_id}-model",
+        )
+        row = PendingUsageEvent(
+            provider_id=provider_id,
+            event_id=push.event_id,
+            sidecar_id=sidecar_id,
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+        session.add(row)
+        session.flush()
+        event_ids[provider_id] = row.id
+    session.commit()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={
+            "assignments": [
+                {"event_ids": [event_ids["anthropic"]], "account_id": "alice@example.com"},
+                {"event_ids": [event_ids["xai"]], "account_id": "bob@example.com"},
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "assigned": 2,
+        "providers": ["anthropic", "xai"],
+        "mappings": [
+            {"provider_id": "anthropic", "sidecar_id": "host-a", "account_id": "alice@example.com"},
+            {"provider_id": "xai", "sidecar_id": "host-b", "account_id": "bob@example.com"},
+        ],
+    }
+    assert session.exec(select(PendingUsageEvent)).all() == []
+    assert {
+        event.provider_id: event.account_id for event in session.exec(select(UsageEvent)).all()
+    } == {"anthropic": "alice@example.com", "xai": "bob@example.com"}
+    tags = session.exec(select(CredentialTag)).all()
+    assert {(tag.provider_id, tag.account_id, tag.sidecar_id) for tag in tags} == {
+        ("anthropic", "alice@example.com", "host-a"),
+        ("xai", "bob@example.com", "host-b"),
+    }
+    assert CredentialTagRepo.list_pending_payload(
+        session, providers=["anthropic"], sidecar_id="host-a"
+    ) == {"anthropic": {"provider:anthropic": "alice@example.com"}}
+    assert (
+        CredentialTagRepo.list_pending_payload(
+            session, providers=["anthropic"], sidecar_id="host-b"
+        )
+        == {}
+    )
+
+
+def test_pending_usage_batch_validates_every_account_before_promoting(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
+    _add_provider_config(
+        session, provider_id="xai", account_id="disabled@example.com", enabled=False
+    )
+    pending_ids = []
+    for provider_id in ("anthropic", "xai"):
+        push = UsageEventPush(
+            provider_id=provider_id,
+            account_id="default",
+            account_source="default",
+            event_id=f"batch-invalid-{provider_id}",
+            ts="2026-09-01T10:00:00Z",
+            model_id=f"{provider_id}-model",
+        )
+        row = PendingUsageEvent(
+            provider_id=provider_id,
+            event_id=push.event_id,
+            sidecar_id="laptop",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+        session.add(row)
+        session.flush()
+        pending_ids.append(row.id)
+    session.commit()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={
+            "assignments": [
+                {"event_ids": [pending_ids[0]], "account_id": "alice@example.com"},
+                {"event_ids": [pending_ids[1]], "account_id": "disabled@example.com"},
+            ]
+        },
+    )
+
+    assert response.status_code == 404
+    assert len(session.exec(select(PendingUsageEvent)).all()) == 2
+    assert session.exec(select(UsageEvent)).all() == []
+
+
+def test_pending_usage_batch_rejects_conflicting_future_mapping_targets(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="anthropic", account_id="bob@example.com")
+    pending_ids = []
+    for event_id in ("conflict-one", "conflict-two"):
+        push = UsageEventPush(
+            provider_id="anthropic",
+            account_id="default",
+            account_source="default",
+            event_id=event_id,
+            ts="2026-09-01T10:00:00Z",
+            model_id="sonnet",
+        )
+        row = PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id="same-host",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+        session.add(row)
+        session.flush()
+        pending_ids.append(row.id)
+    session.commit()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={
+            "assignments": [
+                {"event_ids": [pending_ids[0]], "account_id": "alice@example.com"},
+                {"event_ids": [pending_ids[1]], "account_id": "bob@example.com"},
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert len(session.exec(select(PendingUsageEvent)).all()) == 2
+    assert session.exec(select(UsageEvent)).all() == []
+
+
+def test_pending_assignment_preserves_deduplication_across_sidecars(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
+    pending_ids = []
+    for sidecar_id in ("host-a", "host-b"):
+        push = UsageEventPush(
+            provider_id="anthropic",
+            account_id="default",
+            account_source="default",
+            event_id="shared-pending-event",
+            ts="2026-09-01T10:00:00Z",
+            model_id="sonnet",
+        )
+        row = PendingUsageEvent(
+            provider_id=push.provider_id,
+            event_id=push.event_id,
+            sidecar_id=sidecar_id,
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+        session.add(row)
+        session.flush()
+        pending_ids.append(row.id)
+    session.commit()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": pending_ids, "account_id": "alice@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    stored = session.exec(select(UsageEvent)).all()
+    assert len(stored) == 1
+    assert stored[0].account_id == "alice@example.com"
+    assert session.exec(select(PendingUsageEvent)).all() == []
 
 
 @pytest.mark.parametrize("tier_provider_id", ["opencode-free", "opencode-zen"])
