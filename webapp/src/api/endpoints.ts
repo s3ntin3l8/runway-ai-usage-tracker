@@ -148,10 +148,14 @@ export const fetchPendingUsageEvents = (offset = 0) =>
     `/api/v1/fleet/events/pending${qs({ offset, limit: 100 })}`,
   );
 
+export interface FetchPendingUsageSessionsOptions {
+  offset?: number;
+  filters?: PendingUsageFilter;
+  limit?: number;
+}
+
 export const fetchPendingUsageSessions = (
-  offset = 0,
-  filters: PendingUsageFilter = {},
-  limit = 100,
+  { offset = 0, filters = {}, limit = 100 }: FetchPendingUsageSessionsOptions = {},
 ) =>
   api<PendingUsageSessionsResponse>(
     `/api/v1/fleet/events/pending/sessions${qs({ offset, limit, ...filters })}`,

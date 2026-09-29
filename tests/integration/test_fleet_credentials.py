@@ -1478,6 +1478,7 @@ def test_pending_usage_sessions_group_events_and_keep_missing_sessions_separate(
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["total_events"] == 3
+    assert data["matching_events"] == 3
     assert data["total_groups"] == 2
     assert data["sidecars"] == ["laptop"]
     assert data["providers"] == ["antigravity"]
@@ -1543,7 +1544,8 @@ def test_pending_usage_sessions_filter_groups_before_pagination(
 
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["total_events"] == 1
+    assert data["total_events"] == 3
+    assert data["matching_events"] == 1
     assert data["total_groups"] == 1
     assert data["sidecars"] == ["laptop-a", "laptop-b"]
     assert data["providers"] == ["minimax", "xai"]

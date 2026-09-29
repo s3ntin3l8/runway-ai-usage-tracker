@@ -32,7 +32,7 @@ describe('PendingUsageEventsCard', () => {
       providers: ['xai'],
       mappings: [{ provider_id: 'xai', sidecar_id: 'laptop', account_id: 'alice@example.com' }],
     });
-    vi.mocked(api.fetchPendingUsageSessions).mockImplementation(async (offset = 0) => ({
+    vi.mocked(api.fetchPendingUsageSessions).mockImplementation(async ({ offset = 0 } = {}) => ({
       items: [
         {
           provider_id: 'xai',
@@ -45,7 +45,8 @@ describe('PendingUsageEventsCard', () => {
           model_ids: ['grok-4'],
         },
       ],
-      total_events: offset === 0 ? 158 : 1,
+      total_events: 158,
+      matching_events: offset === 0 ? 158 : 1,
       total_groups: 101,
       sidecars: ['laptop'],
       providers: ['xai'],
@@ -76,7 +77,7 @@ describe('PendingUsageEventsCard', () => {
     expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('2 usage events assigned'));
 
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    await waitFor(() => expect(api.fetchPendingUsageSessions).toHaveBeenCalledWith(100, { sidecar_id: undefined, provider_id: undefined, search: undefined }));
+    await waitFor(() => expect(api.fetchPendingUsageSessions).toHaveBeenCalledWith({ offset: 100, filters: { sidecar_id: undefined, provider_id: undefined, search: undefined } }));
     expect(await screen.findByText(/Showing 101–101 of 101 groups/)).toBeInTheDocument();
   });
 
@@ -120,6 +121,7 @@ describe('PendingUsageEventsCard', () => {
         },
       ],
       total_events: 3,
+      matching_events: 3,
       total_groups: 2,
       sidecars: ['laptop'],
       providers: ['anthropic', 'xai'],
@@ -144,9 +146,9 @@ describe('PendingUsageEventsCard', () => {
     ]));
   });
 
-  it('assigns a filtered host/provider result set in bulk', async () => {
+  it('assigns all providers from a filtered host in bulk', async () => {
     const user = userEvent.setup();
-    vi.mocked(api.fetchPendingUsageSessions).mockImplementation(async (offset = 0, _filters, limit = 100) => ({
+    vi.mocked(api.fetchPendingUsageSessions).mockImplementation(async ({ offset = 0, limit = 100 } = {}) => ({
       items: Array.from({ length: Math.max(0, Math.min(limit, 3 - offset)) }, (_, index) => ({
         provider_id: 'xai',
         sidecar_id: 'laptop',
@@ -158,6 +160,7 @@ describe('PendingUsageEventsCard', () => {
         model_ids: ['grok-4'],
       })),
       total_events: 3,
+      matching_events: 3,
       total_groups: 3,
       sidecars: ['laptop'],
       providers: ['xai'],
@@ -172,7 +175,6 @@ describe('PendingUsageEventsCard', () => {
     renderWithProviders(<PendingUsageEventsCard />);
 
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Filter unassigned usage by host' }), 'laptop');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter unassigned usage by provider' }), 'xai');
     await user.click(screen.getByRole('button', { name: 'Select all 3 matching groups' }));
     await waitFor(() => expect(screen.getByText('3 groups · 3 events selected')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: 'Assign selected' }));
@@ -187,6 +189,7 @@ describe('PendingUsageEventsCard', () => {
     vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
       items: [],
       total_events: 0,
+      matching_events: 0,
       total_groups: 0,
       sidecars: [],
       providers: [],
@@ -214,6 +217,7 @@ describe('PendingUsageEventsCard', () => {
         },
       ],
           total_events: 1,
+          matching_events: 1,
           total_groups: 1,
           sidecars: ['laptop'],
           providers: ['xai'],
@@ -261,6 +265,7 @@ describe('PendingUsageEventsCard', () => {
         },
       ],
           total_events: 1,
+          matching_events: 1,
           total_groups: 1,
           sidecars: ['laptop'],
           providers: [providerId],

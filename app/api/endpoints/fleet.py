@@ -1186,7 +1186,8 @@ async def list_pending_usage_sessions(
     ]
     return {
         "items": items,
-        "total_events": sum(group["event_count"] for group in ordered),
+        "total_events": sum(group["event_count"] for group in all_groups),
+        "matching_events": sum(group["event_count"] for group in ordered),
         "total_groups": len(ordered),
         "sidecars": sidecars,
         "providers": providers,
@@ -1229,13 +1230,13 @@ async def _validate_pending_event_assignments(
     if len(rows) != len(event_ids):
         raise HTTPException(status_code=404, detail="One or more pending events were not found.")
     by_id = {row.id: row for row in rows}
-    validated: list[tuple[str, list[PendingUsageEvent]]] = []
+    # Check mapping collisions before validating account configuration so a
+    # malformed batch cannot partially populate the validated work list.
     future_tags: dict[tuple[str, str], str] = {}
-    assignable_accounts: dict[tuple[str, str], bool] = {}
     for assignment in assignments:
         account_id = resolve_account_id("", assignment.account_id, None)
-        assignment_rows = [by_id[event_id] for event_id in assignment.event_ids]
-        for row in assignment_rows:
+        for event_id in assignment.event_ids:
+            row = by_id[event_id]
             tag_key = (row.provider_id, row.sidecar_id)
             if tag_key in future_tags and future_tags[tag_key] != account_id:
                 raise HTTPException(
@@ -1243,6 +1244,12 @@ async def _validate_pending_event_assignments(
                     detail="A provider on one host can only be assigned to one account per batch.",
                 )
             future_tags[tag_key] = account_id
+    validated: list[tuple[str, list[PendingUsageEvent]]] = []
+    assignable_accounts: dict[tuple[str, str], bool] = {}
+    for assignment in assignments:
+        account_id = resolve_account_id("", assignment.account_id, None)
+        assignment_rows = [by_id[event_id] for event_id in assignment.event_ids]
+        for row in assignment_rows:
             config_provider_id = account_config_provider_id(row.provider_id)
             account_key = (config_provider_id, account_id)
             if account_key not in assignable_accounts:

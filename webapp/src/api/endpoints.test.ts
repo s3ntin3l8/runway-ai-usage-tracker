@@ -76,16 +76,16 @@ describe('endpoints', () => {
 
   it('fetchPendingUsageSessions requests grouped pending usage', async () => {
     const payload = {
-      items: [], total_events: 0, total_groups: 0, sidecars: [], providers: [], offset: 100, limit: 100,
+      items: [], total_events: 0, matching_events: 0, total_groups: 0, sidecars: [], providers: [], offset: 100, limit: 100,
     };
     mockFetch().mockResolvedValue(jsonResponse(payload));
-    await expect(fetchPendingUsageSessions(100)).resolves.toEqual(payload);
+    await expect(fetchPendingUsageSessions({ offset: 100 })).resolves.toEqual(payload);
     expect(lastCall()[0]).toBe('/api/v1/fleet/events/pending/sessions?offset=100&limit=100');
   });
 
   it('fetchPendingUsageSessions sends filters and a requested page size', async () => {
     mockFetch().mockResolvedValue(jsonResponse({ items: [], sidecars: [], providers: [] }));
-    await fetchPendingUsageSessions(0, { sidecar_id: 'host 1', provider_id: 'xai', search: 'grok' }, 500);
+    await fetchPendingUsageSessions({ offset: 0, filters: { sidecar_id: 'host 1', provider_id: 'xai', search: 'grok' }, limit: 500 });
     expect(lastCall()[0]).toBe(
       '/api/v1/fleet/events/pending/sessions?offset=0&limit=500&sidecar_id=host+1&provider_id=xai&search=grok',
     );

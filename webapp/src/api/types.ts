@@ -609,7 +609,10 @@ export interface PendingUsageSession {
 
 export interface PendingUsageSessionsResponse {
   items: PendingUsageSession[];
+  /** Events across all unassigned groups, before the current filters. */
   total_events: number;
+  /** Events in groups matching the current filters. */
+  matching_events: number;
   total_groups: number;
   sidecars: string[];
   providers: string[];

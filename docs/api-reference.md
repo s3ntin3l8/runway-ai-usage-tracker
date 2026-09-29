@@ -57,6 +57,8 @@ All API routes are under `/api/v1/`.
 | `POST` | `/api/v1/fleet/events/pending/assign` | Assign up to 1000 pending events to one active account, promoting them into `usage_events` and creating provider/host mappings (admin) |
 | `POST` | `/api/v1/fleet/events/pending/assign-batch` | Assign up to 10000 pending events across provider-specific active accounts; validates the full batch before promotion and returns the created provider/host mappings (admin) |
 
+The grouped pending-events response reports `total_events` across the full queue and `matching_events` for the current filters; `total_groups` is the filtered group count used for pagination.
+
 ## System
 
 | Method | Route | Description |

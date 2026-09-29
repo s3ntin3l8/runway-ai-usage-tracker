@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -35,13 +35,14 @@ export function PendingUsageEventsCard() {
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchAccounts, setBatchAccounts] = useState<Record<string, string>>({});
   const [selectingAll, setSelectingAll] = useState(false);
+  const selectionRequestId = useRef(0);
   const filters = useMemo<PendingUsageFilter>(
     () => ({ sidecar_id: host || undefined, provider_id: provider || undefined, search: search || undefined }),
     [host, provider, search],
   );
   const pending = useQuery({
     queryKey: ['fleet', 'pending_usage_sessions', offset, filters],
-    queryFn: () => fetchPendingUsageSessions(offset, filters),
+    queryFn: () => fetchPendingUsageSessions({ offset, filters }),
     refetchInterval: 60_000,
   });
   const configs = useQuery({
@@ -94,6 +95,8 @@ export function PendingUsageEventsCard() {
   });
 
   const updateFilter = (setter: (value: string) => void) => (value: string) => {
+    selectionRequestId.current += 1;
+    setSelectingAll(false);
     setter(value);
     setOffset(0);
     setSelected({});
@@ -108,20 +111,25 @@ export function PendingUsageEventsCard() {
   };
 
   async function selectAllMatching() {
-    if (!pending.data || !host || !provider) return;
+    if (!pending.data || !host) return;
+    const requestId = ++selectionRequestId.current;
+    const selectedFilters = { ...filters };
     setSelectingAll(true);
     try {
-      const first = await fetchPendingUsageSessions(0, filters, 500);
+      const first = await fetchPendingUsageSessions({ offset: 0, filters: selectedFilters, limit: 500 });
+      if (selectionRequestId.current !== requestId) return;
       const all = [...first.items];
       for (let pageOffset = 500; pageOffset < first.total_groups; pageOffset += 500) {
-        const page = await fetchPendingUsageSessions(pageOffset, filters, 500);
+        const page = await fetchPendingUsageSessions({ offset: pageOffset, filters: selectedFilters, limit: 500 });
+        if (selectionRequestId.current !== requestId) return;
         all.push(...page.items);
       }
+      if (selectionRequestId.current !== requestId) return;
       setSelected(Object.fromEntries(all.map((group) => [sessionKey(group), group])));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not select matching usage groups');
     } finally {
-      setSelectingAll(false);
+      if (selectionRequestId.current === requestId) setSelectingAll(false);
     }
   }
 
@@ -165,6 +173,11 @@ export function PendingUsageEventsCard() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold">Unassigned usage · {pending.data.total_events} events</h2>
+          {(host || provider || search) && (
+            <p className="mt-1 text-xs text-fg-muted">
+              {pending.data.matching_events} events match the current filters.
+            </p>
+          )}
           <p className="mt-1 max-w-4xl text-xs text-fg-muted">
             These events are stored safely and excluded from account totals until assigned. Assigning maps future
             default-identity events for the same provider on the same host after its next config sync.
@@ -337,7 +350,7 @@ export function PendingUsageEventsCard() {
         <span>
           {pending.data.total_groups === 0
             ? 'No matching groups'
-            : `Showing ${offset + 1}–${Math.min(offset + pending.data.items.length, pending.data.total_groups)} of ${pending.data.total_groups} groups · ${pending.data.total_events} events`}
+            : `Showing ${offset + 1}–${Math.min(offset + pending.data.items.length, pending.data.total_groups)} of ${pending.data.total_groups} groups · ${pending.data.matching_events} matching events`}
         </span>
         <div className="flex gap-2">
           <Button size="sm" disabled={offset === 0} onClick={() => setOffset((page) => Math.max(0, page - 100))}>
