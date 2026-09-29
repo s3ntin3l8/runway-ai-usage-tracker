@@ -196,22 +196,29 @@ class CollectorManager:
 
             # Identity-pending sources are intentionally absent from the
             # aggregate account cache so they cannot render as "default".
-            # Still run a temporary default-keyed collector for their exact
-            # source bundle, even when this provider has only named account
-            # configs and the normal default collector was suppressed above.
+            # Run a dedicated verifier regardless of whether a normal default
+            # collector exists: that collector may already have a resolved
+            # display identity and therefore read another credential slot.
             for p_id, (cls, name, ttl) in self.collector_registry.items():
-                key = f"{p_id}:default"
+                pending_sources = await token_cache.get_source_candidates(p_id, "default")
+                has_pending_source = any(
+                    source.get("source_type") == "sidecar"
+                    and source.get("credential_origin")
+                    and source.get("identity_pending") is True
+                    for source in pending_sources
+                )
+                key = f"{p_id}:default:identity-pending"
+                if not has_pending_source:
+                    self.smart_collectors.pop(key, None)
+                    continue
+                active_keys.add(key)
                 if key in self.smart_collectors:
                     continue
-                pending_sources = await token_cache.get_source_candidates(p_id, "default")
-                if not any(
-                    source.get("source_type") == "sidecar" and source.get("credential_origin")
-                    for source in pending_sources
-                ):
-                    continue
                 full_name = f"{name} (identity pending)"
+                collector_instance = cls(account_id="default")
+                collector_instance.credential_account_id = "default"
                 self.smart_collectors[key] = SmartCollector(
-                    collector=cls(account_id="default"),
+                    collector=collector_instance,
                     collector_name=full_name,
                     ttl=ttl,
                 )
@@ -545,12 +552,27 @@ class CollectorManager:
             or "default"
         )
         default_account_label = getattr(collector, "account_label", None)
+        identity_verification = key.endswith(":identity-pending")
         candidates = (
             await token_cache.get_source_candidates(provider_id, account_id)
             if isinstance(provider_id, str) and isinstance(account_id, str)
             else []
         )
         if not candidates or not isinstance(provider_id, str):
+            if identity_verification:
+                return []
+            return await asyncio.wait_for(smart.collect(client), timeout=25.0)
+
+        # A regular default collector must not race the verifier for pending
+        # sources. The dedicated collector sees only pending sidecar bundles.
+        candidates = [
+            candidate
+            for candidate in candidates
+            if bool(candidate.get("identity_pending")) == identity_verification
+        ]
+        if not candidates:
+            if identity_verification:
+                return []
             return await asyncio.wait_for(smart.collect(client), timeout=25.0)
 
         preferences = self._credential_source_preferences.get((provider_id, account_id), {})
@@ -589,6 +611,8 @@ class CollectorManager:
                 # source A can never be attributed to source B on a later poll.
                 collector.account_id = "default"
                 collector.account_label = default_account_label
+            if hasattr(collector, "credential_account_id"):
+                collector.credential_account_id = account_id
             async with token_cache.using_source(
                 provider_id, account_id, candidate["source_id"]
             ) as attempt:
@@ -694,6 +718,8 @@ class CollectorManager:
                     CredentialSource.source_id == source_id,
                 )
             ).first()
+            source_sidecar_id = source.sidecar_id
+            source_credential_origin = source.credential_origin
             if existing_target is None:
                 source.account_id = target
                 session.add(source)
@@ -705,20 +731,20 @@ class CollectorManager:
                 existing_target.last_seen = datetime.now(UTC)
                 session.add(existing_target)
                 session.delete(source)
-            if source.sidecar_id:
+            if source_sidecar_id:
                 CredentialTagRepo.set_tag(
                     session,
                     provider_id=provider_id,
-                    credential_origin=source.credential_origin,
+                    credential_origin=source_credential_origin,
                     account_id=target,
-                    sidecar_id=source.sidecar_id,
+                    sidecar_id=source_sidecar_id,
                     set_by="identity_verification",
                 )
                 PendingCredentialTagRepo.delete(
                     session,
-                    sidecar_id=source.sidecar_id,
+                    sidecar_id=source_sidecar_id,
                     provider_id=provider_id,
-                    credential_origin=source.credential_origin,
+                    credential_origin=source_credential_origin,
                 )
             session.commit()
         await token_cache.move_source(provider_id, old_account_id, target, source_id)
@@ -771,7 +797,13 @@ class CollectorManager:
 
         for key, sc in self.smart_collectors.items():
             if key.startswith(target_prefix):
-                if account_id is None or key == f"{provider_id}:{account_id}":
+                if (
+                    account_id is None
+                    or key == f"{provider_id}:{account_id}"
+                    or (
+                        account_id == "default" and key == f"{provider_id}:default:identity-pending"
+                    )
+                ):
                     await sc.reset()
                     try:
                         res = await self._collect_with_semaphore(key, client)

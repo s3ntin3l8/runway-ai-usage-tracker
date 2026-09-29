@@ -833,7 +833,7 @@ async def post_credential_tag(
     if body.scope == "sidecar":
         source_stmt = source_stmt.where(CredentialSource.sidecar_id == sidecar_id)
     source_rows = list(session.exec(source_stmt).all())
-    cache_moves: list[tuple[str, str]] = []
+    cache_moves: list[tuple[str, str, bool, int]] = []
     for source_row in source_rows:
         if source_row.account_id == target_account_id:
             continue
@@ -848,6 +848,7 @@ async def post_credential_tag(
         if target_source is None:
             source_row.account_id = target_account_id
             session.add(source_row)
+            preference_row = source_row
         else:
             target_source.source_type = source_row.source_type
             target_source.source_label = source_row.source_label
@@ -857,7 +858,15 @@ async def post_credential_tag(
             target_source.health = source_row.health
             session.add(target_source)
             session.delete(source_row)
-        cache_moves.append((previous_account_id, source_row.source_id))
+            preference_row = target_source
+        cache_moves.append(
+            (
+                previous_account_id,
+                source_row.source_id,
+                preference_row.enabled,
+                preference_row.priority,
+            )
+        )
     if body.scope == "deployment":
         # "All machines" must actually win on every machine: drop any
         # machine-scoped override for this origin, otherwise it keeps
@@ -884,12 +893,20 @@ async def post_credential_tag(
     # answering ``ok``.
     session.commit()
 
-    for previous_account_id, source_id in cache_moves:
+    from app.services.collector_manager import manager
+
+    for previous_account_id, source_id, enabled, priority in cache_moves:
         await token_cache.move_source(
             body.provider_id, previous_account_id, target_account_id, source_id
         )
-        from app.services.collector_manager import manager
-
+        old_preferences = manager._credential_source_preferences.get(
+            (body.provider_id, previous_account_id)
+        )
+        if old_preferences is not None:
+            old_preferences.pop(source_id, None)
+        manager._credential_source_preferences.setdefault(
+            (body.provider_id, target_account_id), {}
+        )[source_id] = (enabled, priority)
         manager._identity_pending_previews.pop((body.provider_id, source_id), None)
 
     audit_log.record(

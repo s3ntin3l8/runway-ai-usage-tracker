@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent
+from app.models.db import LatestUsage, ProviderConfig, QuotaSnapshot, UsageEvent
 from app.services.data_health._provider_accounts import candidate_targets
 from app.services.data_health.base import (
     AsyncHook,
@@ -41,6 +41,15 @@ class LoneDefaultEventsCheck(Check):
     blocked_by = ("config_default_keyed",)
 
     def detect(self, session: Session) -> CheckReport:
+        active_default_configs = set(
+            session.exec(
+                select(ProviderConfig.provider_id).where(
+                    ProviderConfig.account_id == "default",
+                    col(ProviderConfig.enabled).is_(True),
+                    col(ProviderConfig.archived).is_(False),
+                )
+            ).all()
+        )
         counts = session.execute(
             select(UsageEvent.provider_id, UsageEvent.kind, func.count())
             .where(col(UsageEvent.account_id) == "default")
@@ -67,6 +76,12 @@ class LoneDefaultEventsCheck(Check):
         for provider_id, kinds in sorted(by_provider.items()):
             total = sum(kinds.values())
             candidates = candidate_targets(session, provider_id)
+            # A default-only provider has no safe target to offer. Do not
+            # raise an unfixable ERROR just because its configured identity is
+            # intentionally the generic default. If a specific candidate is
+            # also known, retain the explicit preview/confirm merge action.
+            if not candidates and provider_id in active_default_configs:
+                continue
             sample = Finding(
                 label=provider_id, detail={"provider_id": provider_id, "by_kind": kinds}
             )
@@ -150,6 +165,8 @@ class LoneDefaultEventsCheck(Check):
                 "usage_events": reassign_plan.count,
                 "quota_cards_merged": gauge_plan.merged,
                 "quota_cards_retagged": gauge_plan.retagged,
+                "quota_contributions_merged": gauge_plan.contributions_merged,
+                "quota_contributions_retagged": gauge_plan.contributions_retagged,
                 "quota_snapshots_retagged": gauge_plan.snapshots_retagged,
                 "quota_snapshots_collided": gauge_plan.snapshots_collided,
             },

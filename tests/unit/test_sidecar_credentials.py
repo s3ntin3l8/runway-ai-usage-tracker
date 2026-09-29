@@ -808,6 +808,28 @@ class TestCredentialCandidateOwnership:
             "cookie:anthropic/session",
         }
 
+    def test_unverifiable_provider_reports_origin_without_shipping_token(self, monkeypatch):
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("OLLAMA_API_KEY", "ollama-secret")
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "ollama",
+            {
+                "rules": [
+                    {
+                        "type": "env",
+                        "variable": "OLLAMA_API_KEY",
+                        "mapping": {"value": "api_key"},
+                    }
+                ]
+            },
+        )
+
+        assert cards == []
+        assert len(blocked) == 1
+        assert blocked[0]["provider_id"] == "ollama"
+        assert blocked[0]["credential_origin"].startswith("env:OLLAMA_API_KEY#")
+
     def test_env_cookie_alias_does_not_emit_duplicate_cookie_candidate(self, monkeypatch):
         import scripts.sidecar as sc
 

@@ -46,6 +46,16 @@ def test_detect_offers_explicit_history_merge_when_an_active_default_config_exis
     )
 
 
+def test_detect_ignores_default_only_config_without_a_specific_target(session):
+    make_event(session, event_id="1", provider_id="minimax", account_id="default")
+    make_config(session, provider_id="minimax", account_id="default", account_label="default")
+
+    report = _check().detect(session)
+
+    assert report.total_count == 0
+    assert report.groups == []
+
+
 def test_detect_marks_not_fixable_with_no_candidate_account(session):
     """The opencode-byok shape: lone default events, no other config to
     reassign onto."""
@@ -132,6 +142,7 @@ def test_apply_moves_default_quota_cards_snapshots_and_contributions(session):
 
     plan = _check().plan(session, "minimax", {"target": target})
     assert plan.counts["quota_cards_retagged"] == 1
+    assert plan.counts["quota_contributions_retagged"] == 1
     assert plan.counts["quota_snapshots_retagged"] == 1
 
     _check().apply(session, "minimax", {"target": target})

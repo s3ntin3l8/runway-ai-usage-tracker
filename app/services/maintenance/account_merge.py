@@ -62,6 +62,8 @@ def _count_snapshots(session: Session, provider_id: str, account_id: str) -> int
 class MergePlan:
     merged: int = 0  # source card folded into an existing target card
     retagged: int = 0  # source card moved (no colliding target card)
+    contributions_merged: int = 0
+    contributions_retagged: int = 0
     snapshots_retagged: int = 0
     snapshots_collided: int = 0  # exact grain+ts already exists under target — dropped
     samples: list[str] = field(default_factory=list)
@@ -90,6 +92,26 @@ def plan_merge_gauge_series(
     collided = _count_colliding_snapshots(session, provider_id, source, target)
     plan.snapshots_collided = collided
     plan.snapshots_retagged = total_snaps - collided
+
+    contributions = session.exec(
+        select(LatestUsageContribution).where(
+            LatestUsageContribution.provider_id == provider_id,
+            col(LatestUsageContribution.account_id).in_([source, target]),
+        )
+    ).all()
+    target_contribution_keys = {
+        (row.source_id, row.window_type, row.variant, row.model_id)
+        for row in contributions
+        if row.account_id == target
+    }
+    for row in contributions:
+        if row.account_id != source:
+            continue
+        key = (row.source_id, row.window_type, row.variant, row.model_id)
+        if key in target_contribution_keys:
+            plan.contributions_merged += 1
+        else:
+            plan.contributions_retagged += 1
     return plan
 
 
@@ -164,14 +186,19 @@ def merge_gauge_series(
                 if not target_row.updated_at or incoming_updated_at > target_row.updated_at:
                     target_row.updated_at = incoming_updated_at
                 session.add(target_row)
-            session.delete(contribution)
-        else:
-            card = json.loads(contribution.card_json)
-            card["account_id"] = target
-            card["account_label"] = target
-            contribution.account_id = target
-            contribution.card_json = json.dumps(card)
-            session.add(contribution)
+                session.delete(contribution)
+                result.contributions_merged += 1
+                continue
+
+        # If a concurrent cleanup removed the target contribution after the
+        # lookup, preserve the source by retagging it instead of dropping it.
+        card = json.loads(contribution.card_json)
+        card["account_id"] = target
+        card["account_label"] = target
+        contribution.account_id = target
+        contribution.card_json = json.dumps(card)
+        session.add(contribution)
+        result.contributions_retagged += 1
 
     session.commit()
 

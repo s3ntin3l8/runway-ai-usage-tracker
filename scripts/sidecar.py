@@ -3025,11 +3025,18 @@ class GenericCollector:
                 else:
                     resolved_account_id = None
                 if resolved_account_id is None or not source_identity_strong:
-                    logging.warning(
-                        f"  [{provider_id}] token card blocked (origin={origin}) — "
-                        "no strong account identity resolved; shipping only for "
-                        "source-specific server identity verification."
-                    )
+                    if provider_id in _SERVER_IDENTITY_PROVIDERS:
+                        logging.warning(
+                            f"  [{provider_id}] token card blocked (origin={origin}) — "
+                            "no strong identity resolved; sharing only for exact-source "
+                            "server identity verification."
+                        )
+                    else:
+                        logging.warning(
+                            f"  [{provider_id}] credential origin reported without sending "
+                            "its token; configure an account before server-side quota "
+                            "collection is available."
+                        )
                     blocked_origins.append(
                         {"provider_id": provider_id, "credential_origin": origin}
                     )
@@ -3038,7 +3045,11 @@ class GenericCollector:
                     # Do not let a default sentinel or an inheritable
                     # provider-wide hint pick the server cache account. The
                     # server stores this only in the source-pinned pending
-                    # bucket until that exact source proves its identity.
+                    # bucket until that exact source proves its identity. For
+                    # providers without an exact-source server verifier, only
+                    # the credential origin is reported: no token is shipped,
+                    # so the operator must configure an account before the
+                    # server can show quota for that credential.
                     tokens.pop("account_id", None)
                     tokens.pop("account_label", None)
                 if not identity_pending or provider_id in _SERVER_IDENTITY_PROVIDERS:

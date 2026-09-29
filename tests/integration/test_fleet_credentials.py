@@ -539,18 +539,31 @@ def test_tag_endpoint_creates_tag_and_clears_pending(client: TestClient, session
 
 
 def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
-    client: TestClient, session: Session
+    client: TestClient, session: Session, monkeypatch
 ):
+    from app.services.collector_manager import manager
+
     _add_provider_config(
         session, provider_id="anthropic", account_id="alice@example.com", api_key="sk-test"
     )
     origin = "path:/home/alice/.claude/.credentials.json"
+    source_id = "sidecar:alpha:path:/auth.json"
+    monkeypatch.setitem(
+        manager._credential_source_preferences,
+        ("anthropic", "default"),
+        {source_id: (False, 7)},
+    )
+    monkeypatch.setitem(
+        manager._credential_source_preferences,
+        ("anthropic", "alice@example.com"),
+        {},
+    )
     session.add_all(
         [
             CredentialSource(
                 provider_id="anthropic",
                 account_id="default",
-                source_id="sidecar:alpha:path:/auth.json",
+                source_id=source_id,
                 source_type="sidecar",
                 source_label="new machine label",
                 credential_origin=origin,
@@ -559,7 +572,7 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
             CredentialSource(
                 provider_id="anthropic",
                 account_id="alice@example.com",
-                source_id="sidecar:alpha:path:/auth.json",
+                source_id=source_id,
                 source_type="server",
                 source_label="stale label",
                 credential_origin="path:/old.json",
@@ -584,7 +597,7 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
         session.exec(
             select(CredentialSource).where(
                 CredentialSource.provider_id == "anthropic",
-                CredentialSource.source_id == "sidecar:alpha:path:/auth.json",
+                CredentialSource.source_id == source_id,
             )
         ).all()
     )
@@ -594,6 +607,10 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
     assert sources[0].source_label == "new machine label"
     assert sources[0].credential_origin == origin
     assert sources[0].sidecar_id == "alpha"
+    assert source_id not in manager._credential_source_preferences[("anthropic", "default")]
+    assert manager._credential_source_preferences[("anthropic", "alice@example.com")][
+        source_id
+    ] == (sources[0].enabled, sources[0].priority)
 
 
 def test_tag_endpoint_404_when_provider_account_missing(client: TestClient):

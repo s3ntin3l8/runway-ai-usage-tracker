@@ -50,7 +50,10 @@ class TestCollectorManagerInitialization:
         self, manager, monkeypatch, resolved_account, expected_result
     ):
         collector = SimpleNamespace(
-            PROVIDER_ID="antigravity", account_id="default", account_label="Default"
+            PROVIDER_ID="antigravity",
+            account_id="default",
+            account_label="Default",
+            credential_account_id="default",
         )
         smart = MagicMock(collector=collector)
         smart.reset = AsyncMock()
@@ -65,11 +68,12 @@ class TestCollectorManagerInitialization:
             return [quota]
 
         smart.collect = AsyncMock(side_effect=collect)
-        manager.smart_collectors["antigravity:default"] = smart
+        manager.smart_collectors["antigravity:default:identity-pending"] = smart
         candidate = {
             "source_id": "sidecar:host:path:/home/user/auth.json",
             "source_type": "sidecar",
             "credential_origin": "path:/home/user/auth.json",
+            "identity_pending": True,
         }
 
         async def get_candidates(*_args):
@@ -88,7 +92,7 @@ class TestCollectorManagerInitialization:
         health = {}
 
         result = await manager._collect_with_source_failover(
-            "antigravity:default", MagicMock(), health
+            "antigravity:default:identity-pending", MagicMock(), health
         )
 
         assert result == expected_result
@@ -247,6 +251,103 @@ class TestCollectorManagerInitialization:
 
         assert "anthropic:default" in manager.smart_collectors
         assert "anthropic:alice@example.com" in manager.smart_collectors
+
+    @pytest.mark.asyncio
+    async def test_pending_source_gets_a_verifier_even_if_default_collector_exists(self, manager):
+        manager.smart_collectors = {
+            "antigravity:default": MagicMock(
+                collector=SimpleNamespace(
+                    PROVIDER_ID="antigravity",
+                    account_id="alice@example.com",
+                    credential_account_id="default",
+                    account_label=None,
+                    _user_strategies=None,
+                    apply_strategy_config=MagicMock(),
+                )
+            )
+        }
+
+        async def source_candidates(provider_id, account_id):
+            if provider_id == "antigravity" and account_id == "default":
+                return [
+                    {
+                        "source_id": "sidecar:laptop:auth-json",
+                        "source_type": "sidecar",
+                        "credential_origin": "path:/auth.json",
+                        "identity_pending": True,
+                    }
+                ]
+            return []
+
+        with patch(
+            "app.services.collector_manager.token_cache.get_source_candidates",
+            side_effect=source_candidates,
+        ):
+            await manager._sync_collectors(force=True)
+
+        verifier = manager.smart_collectors["antigravity:default:identity-pending"]
+        assert verifier.collector.account_id == "default"
+        assert verifier.collector.credential_account_id == "default"
+
+    @pytest.mark.asyncio
+    async def test_verifier_repins_credential_slot_between_pending_sources(
+        self, manager, monkeypatch
+    ):
+        collector = SimpleNamespace(
+            PROVIDER_ID="antigravity",
+            account_id="default",
+            account_label=None,
+            credential_account_id="default",
+        )
+        smart = MagicMock(collector=collector)
+        smart.reset = AsyncMock()
+        account_ids = iter(["alice@example.com", "bob@example.com"])
+        credential_slots = []
+
+        async def collect(_client):
+            credential_slots.append(collector.credential_account_id)
+            resolved_id = next(account_ids)
+            collector.account_id = resolved_id
+            collector.credential_account_id = resolved_id
+            if len(credential_slots) == 1:
+                return [{"error_type": "api_error"}]
+            return [{"service_name": resolved_id}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["antigravity:default:identity-pending"] = smart
+        candidates = [
+            {
+                "source_id": f"sidecar:laptop:{origin}",
+                "source_type": "sidecar",
+                "credential_origin": origin,
+                "identity_pending": True,
+            }
+            for origin in ("path:/one.json", "path:/two.json")
+        ]
+
+        async def get_candidates(*_args):
+            return candidates
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+        promote = AsyncMock()
+        monkeypatch.setattr(manager, "_promote_source_identity", promote)
+
+        result = await manager._collect_with_source_failover(
+            "antigravity:default:identity-pending", MagicMock(), {}
+        )
+
+        assert credential_slots == ["default", "default"]
+        assert result == [{"service_name": "bob@example.com"}]
+        promote.assert_awaited_once_with(
+            "antigravity", "default", candidates[1]["source_id"], "bob@example.com"
+        )
 
     @pytest.mark.asyncio
     async def test_default_xai_collector_does_not_borrow_durable_identity(self, manager):
