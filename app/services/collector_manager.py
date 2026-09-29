@@ -672,25 +672,14 @@ class CollectorManager:
                 # Let an unresolved source call its API so it can prove its
                 # identity, but never publish an unidentified quota card into
                 # the shared default account history.
-                preview: list[dict[str, Any]] = [
-                    {
-                        key: card[key]
-                        for key in (
-                            "service_name",
-                            "remaining",
-                            "unit",
-                            "unit_type",
-                            "pct_used",
-                            "window_type",
-                            "reset",
-                            "reset_at",
-                        )
-                        if key in card
-                    }
-                    for card in result
-                    if not card.get("error_type")
-                ]
-                self._persist_identity_pending_preview(provider_id, candidate, preview)
+                from app.services.credential_tags import safe_quota_preview
+
+                preview = safe_quota_preview(
+                    [card for card in result if not card.get("error_type")]
+                )
+                await asyncio.to_thread(
+                    self._persist_identity_pending_preview, provider_id, candidate, preview
+                )
                 successful_result = []
                 break
             successful_result = result

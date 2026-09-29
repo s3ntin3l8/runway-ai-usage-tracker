@@ -37,6 +37,11 @@ _QUOTA_PREVIEW_FIELDS = frozenset(
 )
 
 
+def safe_quota_preview(preview: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only the quota fields safe to persist and return to the UI."""
+    return [{key: item[key] for key in _QUOTA_PREVIEW_FIELDS if key in item} for item in preview]
+
+
 def live_sidecar_ids(session: Session) -> list[str]:
     """Sidecar ids whose ``last_seen`` is within the last 7 days.
 
@@ -545,9 +550,7 @@ class PendingCredentialTagRepo:
             provider_id=provider_id,
             credential_origin=credential_origin,
         )
-        safe_preview = [
-            {key: item[key] for key in _QUOTA_PREVIEW_FIELDS if key in item} for item in preview
-        ]
+        safe_preview = safe_quota_preview(preview)
         row.quota_preview_json = json.dumps(safe_preview)
         row.quota_preview_observed_at = observed_at or datetime.now(UTC)
         session.add(row)
@@ -585,12 +588,8 @@ class PendingCredentialTagRepo:
             payload = json.loads(row.quota_preview_json or "[]")
         except (TypeError, json.JSONDecodeError):
             payload = []
-        preview = (
-            [
-                {key: item[key] for key in _QUOTA_PREVIEW_FIELDS if key in item}
-                for item in payload
-                if isinstance(item, dict)
-            ]
+        preview = safe_quota_preview(
+            [item for item in payload if isinstance(item, dict)]
             if isinstance(payload, list)
             else []
         )

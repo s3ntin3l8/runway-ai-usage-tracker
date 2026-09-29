@@ -69,6 +69,7 @@ async def _pending_quota_preview_cleanup_loop(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     cleanup: Callable[[], None] = _expire_pending_quota_previews,
 ) -> None:
+    # The cadence is captured when the task starts; TTL setting changes take effect on restart.
     cleanup_interval = _pending_quota_preview_cleanup_interval_seconds(
         settings.PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS
     )
