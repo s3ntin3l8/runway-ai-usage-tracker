@@ -159,8 +159,8 @@ class TokenCache:
         # Store each source as a self-contained credential bundle. The merged
         # cache below is preserved until all existing callers migrate to the
         # source-aware read path.
-        if source_id:
-            async with self._lock:
+        async with self._lock:
+            if source_id:
                 source_accounts = self._source_cache.setdefault(provider, {}).setdefault(
                     account_id, {}
                 )
@@ -179,7 +179,6 @@ class TokenCache:
                 metadata.update({"source_id": source_id, "source": source})
                 source_accounts[source_id] = (stored_tokens, metadata, time.time())
 
-        async with self._lock:
             if provider not in self._cache:
                 self._cache[provider] = {}
                 self._token_timestamps[provider] = {}

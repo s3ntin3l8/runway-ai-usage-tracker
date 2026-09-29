@@ -184,6 +184,7 @@ class TestCollectorManagerInitialization:
             inner = MagicMock()
             inner.exec.return_value.all.side_effect = [
                 [],  # ProviderConfig rows
+                [],  # CredentialSource rows
                 [("xai", "alice@example.com")],  # durable LatestUsage identity
             ]
             inner.exec.return_value.first.return_value = None
@@ -220,6 +221,7 @@ class TestCollectorManagerInitialization:
             inner = MagicMock()
             inner.exec.return_value.all.side_effect = [
                 [],  # ProviderConfig rows
+                [],  # CredentialSource rows
                 [("kimi_coding", "alice@example.com")],  # durable LatestUsage identity
             ]
             inner.exec.return_value.first.return_value = None

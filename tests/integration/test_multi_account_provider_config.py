@@ -6,8 +6,10 @@ the canonical per-account route and the GET response's ``accounts`` field.
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import CredentialSource, LatestUsage
+from app.models.db import AuditLog, CredentialSource, LatestUsage
 
 
 @pytest.fixture(name="session")
@@ -242,6 +244,15 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
                 credential_origin=origin,
                 sidecar_id="host-b",
             ),
+            CredentialSource(
+                provider_id="openrouter",
+                account_id="bob@example.com",
+                source_id="host-c-source",
+                source_type="file",
+                source_label="auth.json",
+                credential_origin=origin,
+                sidecar_id="host-c",
+            ),
         ]
     )
     session.commit()
@@ -264,6 +275,7 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     assert {(row.sidecar_id, row.enabled, row.priority) for row in siblings} == {
         ("host-a", False, 3),
         ("host-b", False, 3),
+        ("host-c", False, 3),
     }
 
 
@@ -295,6 +307,42 @@ def test_credential_source_preferences_reject_unknown_and_duplicate_ids(
     assert duplicate.status_code == 422
     assert unknown.status_code == 404
     assert unknown_provider.status_code == 404
+
+
+def test_credential_source_audit_is_committed_when_collector_reset_fails(
+    client: TestClient, session: Session, monkeypatch
+):
+    session.add(
+        CredentialSource(
+            provider_id="openrouter",
+            account_id="alice@example.com",
+            source_id="source-a",
+            source_type="sidecar",
+            source_label="Laptop",
+        )
+    )
+    session.commit()
+    monkeypatch.setattr(
+        "app.api.endpoints.system.manager.reset_collector",
+        AsyncMock(side_effect=RuntimeError("reset failed")),
+    )
+
+    response = client.patch(
+        "/api/v1/system/provider-config/openrouter/alice@example.com/credential-sources",
+        json={"sources": [{"source_id": "source-a", "enabled": False, "priority": 0}]},
+        headers=_admin_headers(),
+    )
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    source = session.exec(
+        select(CredentialSource).where(CredentialSource.source_id == "source-a")
+    ).one()
+    assert source.enabled is False
+    audit = session.exec(
+        select(AuditLog).where(AuditLog.action == "credential.sources_update")
+    ).one()
+    assert json.loads(audit.payload_json or "{}")["sources"][0]["source_id"] == "source-a"
 
 
 def test_explicit_put_preserves_canonical_field_derivation(client: TestClient):

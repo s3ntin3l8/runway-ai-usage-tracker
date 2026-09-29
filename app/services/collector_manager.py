@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from app.core.utils import scrub_log
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
@@ -69,6 +70,7 @@ class CollectorManager:
         self.smart_collectors: dict[str, SmartCollector] = {}
         self._client = None
         self._last_sync_time: float = 0.0
+        self._credential_source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
         self.last_collection_outcomes: list[dict[str, Any]] = []
@@ -101,12 +103,18 @@ class CollectorManager:
             db_configs: dict[str, dict[str, Any]] = {}
             global_poll_interval: int | None = None
             durable_identities: dict[str, str] = {}
+            source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
             try:
                 from sqlmodel import Session, col
                 from sqlmodel import select as sqlselect
 
                 from app.core.db import engine
-                from app.models.db import LatestUsage, ProviderConfig, SystemConfig
+                from app.models.db import (
+                    CredentialSource,
+                    LatestUsage,
+                    ProviderConfig,
+                    SystemConfig,
+                )
 
                 with Session(engine) as _s:
                     for r in _s.exec(sqlselect(ProviderConfig)).all():
@@ -117,6 +125,12 @@ class CollectorManager:
                         # Sync manual tokens to cache to survive reloads/restarts
                         if r.enabled and (r.api_key or r.session_cookie):
                             await self._sync_manual_config_to_cache(r, _s)
+
+                    for row in _s.exec(sqlselect(CredentialSource)).all():
+                        account_sources = source_preferences.setdefault(
+                            (row.provider_id, row.account_id), {}
+                        )
+                        account_sources[row.source_id] = (row.enabled, row.priority)
 
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
@@ -138,6 +152,7 @@ class CollectorManager:
 
             except Exception as e:
                 logger.debug(f"Could not load provider configs from DB: {e}")
+            self._credential_source_preferences = source_preferences
 
             # 1. Ensure Default/Static collectors are present
             for p_id, (cls, name, ttl) in self.collector_registry.items():
@@ -515,34 +530,19 @@ class CollectorManager:
             if not isinstance(provider_id, str):
                 return await asyncio.wait_for(smart.collect(client), timeout=25.0)
 
-            from sqlmodel import Session
-            from sqlmodel import select as sqlselect
-
-            from app.core.db import engine
-            from app.models.db import CredentialSource
-
-            with Session(engine) as session:
-                preferences = {
-                    row.source_id: row
-                    for row in session.exec(
-                        sqlselect(CredentialSource).where(
-                            CredentialSource.provider_id == provider_id,
-                            CredentialSource.account_id == account_id,
-                        )
-                    ).all()
-                }
+            preferences = self._credential_source_preferences.get((provider_id, account_id), {})
             candidates = [
                 candidate
                 for candidate in candidates
                 if (
-                    preferences[candidate["source_id"]].enabled
+                    preferences[candidate["source_id"]][0]
                     if candidate["source_id"] in preferences
                     else candidate.get("enabled", True)
                 )
             ]
             candidates.sort(
                 key=lambda candidate: (
-                    preferences[candidate["source_id"]].priority
+                    preferences[candidate["source_id"]][1]
                     if candidate["source_id"] in preferences
                     else candidate.get("priority", 0),
                     candidate["source_id"],
@@ -551,36 +551,69 @@ class CollectorManager:
             if not candidates:
                 return []
 
+            health_updates: dict[str, str] = {}
             result: list[dict[str, Any]] = []
+            deadline = asyncio.get_running_loop().time() + 25.0
+            await smart.reset()
             for index, candidate in enumerate(candidates):
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
                 if index:
                     await smart.reset()
                 async with token_cache.using_source(
                     provider_id, account_id, candidate["source_id"]
                 ) as attempt:
-                    result = await asyncio.wait_for(smart.collect(client), timeout=25.0)
+                    try:
+                        result = await asyncio.wait_for(smart.collect(client), timeout=remaining)
+                    except Exception:
+                        logger.exception(
+                            "Credential source collection failed for %s/%s (%s)",
+                            scrub_log(provider_id),
+                            scrub_log(account_id),
+                            scrub_log(candidate["source_id"]),
+                        )
+                        health_updates[candidate["source_id"]] = "unavailable"
+                        continue
                 if attempt["auth_failed"]:
-                    self._record_source_health(
-                        provider_id, account_id, candidate["source_id"], "auth_failed"
-                    )
+                    health_updates[candidate["source_id"]] = "auth_failed"
                     continue
-                self._record_source_health(
-                    provider_id, account_id, candidate["source_id"], "healthy"
-                )
+                if any(card.get("error_type") in {"api_error", "parse_error"} for card in result):
+                    health_updates[candidate["source_id"]] = "unavailable"
+                    continue
+                health_updates[candidate["source_id"]] = "healthy"
+                self._record_source_health(provider_id, account_id, health_updates)
                 return result
+            self._record_source_health(provider_id, account_id, health_updates)
             return []
 
     @staticmethod
-    def _record_source_health(
-        provider_id: str, account_id: str, source_id: str, health: str
-    ) -> None:
-        from sqlmodel import Session
+    def _record_source_health(provider_id: str, account_id: str, updates: dict[str, str]) -> None:
+        if not updates:
+            return
+
+        from sqlmodel import Session, col
+        from sqlmodel import select as sqlselect
 
         from app.core.db import engine
-        from app.services.credential_sources import record_source_health
+        from app.models.db import CredentialSource
 
         with Session(engine) as session:
-            record_source_health(session, provider_id, account_id, source_id, health)
+            rows = session.exec(
+                sqlselect(CredentialSource).where(
+                    CredentialSource.provider_id == provider_id,
+                    CredentialSource.account_id == account_id,
+                    col(CredentialSource.source_id).in_(updates),
+                )
+            ).all()
+            for row in rows:
+                health = updates[row.source_id]
+                row.health = health
+                row.health_detail = {
+                    "auth_failed": "Authentication failed",
+                    "unavailable": "Collection failed",
+                }.get(health)
+                session.add(row)
             session.commit()
 
     def get_collector_stats(self) -> dict[str, Any]:

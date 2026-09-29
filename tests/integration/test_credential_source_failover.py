@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -29,6 +31,8 @@ class _CredentialProbeCollector:
     async def collect(self, _client: httpx.AsyncClient) -> list[dict]:
         value = await self.cache.get_token(self.PROVIDER_ID, "api_key", self.account_id)
         self.calls.append(value or "missing")
+        if value == "broken":
+            raise RuntimeError("temporary collection failure")
         if value == "rejected":
             await self.cache.observe_response(SimpleNamespace(status_code=401))
             return [{"remaining": "ERR", "error_type": "auth_failed"}]
@@ -116,14 +120,22 @@ async def test_collector_retries_next_enabled_source_after_401(monkeypatch):
     collector = _CredentialProbeCollector(cache)
     manager = CollectorManager()
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
-    manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
-        collector, "OpenRouter", ttl=0
-    )
+    smart = SmartCollector(collector, "OpenRouter", ttl=0)
+    original_reset = smart.reset
+
+    async def delayed_reset() -> None:
+        await asyncio.sleep(0.01)
+        await original_reset()
+
+    reset = AsyncMock(side_effect=delayed_reset)
+    smart.reset = reset
+    manager.smart_collectors["openrouter:alice@example.com"] = smart
     async with httpx.AsyncClient() as client:
         result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
 
     assert result[0]["remaining"] == "healthy"
     assert collector.calls == ["rejected", "working"]
+    assert reset.await_count == 2
     await manager.close()
 
 
@@ -153,6 +165,32 @@ async def test_collector_returns_empty_when_all_sources_fail_auth(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_collector_continues_after_non_auth_source_error(monkeypatch):
+    cache = TokenCache()
+    for source_id, value, priority in (("first", "broken", 0), ("last", "working", 1)):
+        await cache.store(
+            "openrouter",
+            {"api_key": value},  # pragma: allowlist secret — fake values for failover test
+            account_id="alice@example.com",
+            source_id=source_id,
+            source_metadata={"enabled": True, "priority": priority},
+        )
+    collector = _CredentialProbeCollector(cache)
+    manager = CollectorManager()
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr(manager, "_record_source_health", lambda *_args: None)
+    manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
+        collector, "OpenRouter", ttl=0
+    )
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert result[0]["remaining"] == "healthy"
+    assert collector.calls == ["broken", "working"]
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_collector_returns_empty_when_every_source_is_disabled(monkeypatch):
     cache = TokenCache()
     await cache.store(
@@ -160,10 +198,13 @@ async def test_collector_returns_empty_when_every_source_is_disabled(monkeypatch
         {"api_key": "disabled"},  # pragma: allowlist secret — fake disabled credential
         account_id="alice@example.com",
         source_id="disabled-source",
-        source_metadata={"enabled": False, "priority": 0},
+        source_metadata={"enabled": True, "priority": 0},
     )
     collector = _CredentialProbeCollector(cache)
     manager = CollectorManager()
+    manager._credential_source_preferences[("openrouter", "alice@example.com")] = {
+        "disabled-source": (False, 0)
+    }
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
     manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
         collector, "OpenRouter", ttl=0

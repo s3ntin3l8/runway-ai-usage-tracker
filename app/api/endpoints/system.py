@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -1331,6 +1332,15 @@ async def update_credential_sources(
         session, provider_id, account_id, body.sources, all_machines=body.all_machines
     )
     session.commit()
+    manager._last_sync_time = 0.0
+    try:
+        await manager.reset_collector(provider_id, account_id)
+    except Exception:
+        logger.exception(
+            "Could not reset collector after credential source preferences changed: %s/%s",
+            scrub_log(provider_id),
+            scrub_log(account_id),
+        )
     audit_log.record(
         session,
         request,
@@ -1344,9 +1354,6 @@ async def update_credential_sources(
             ],
         },
     )
-    session.commit()
-    manager._last_sync_time = 0.0
-    await manager.reset_collector(provider_id, account_id)
     from app.core.cache import cache_clear
     from app.services.poller import poller
 
@@ -1655,13 +1662,15 @@ async def _update_credential_source_preferences(
         raise HTTPException(status_code=404, detail="Unknown credential source")
     for item in preferences:
         source = known[item.source_id]
-        siblings = [source]
+        siblings: Sequence[CredentialSource] = [source]
         if all_machines and source.credential_origin and source.sidecar_id:
-            siblings = [
-                row
-                for row in known.values()
-                if row.credential_origin == source.credential_origin and row.sidecar_id
-            ]
+            siblings = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == provider_id,
+                    CredentialSource.credential_origin == source.credential_origin,
+                    col(CredentialSource.sidecar_id).is_not(None),
+                )
+            ).all()
         for sibling in siblings:
             sibling.enabled = item.enabled
             sibling.priority = item.priority
