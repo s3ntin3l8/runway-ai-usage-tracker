@@ -35,27 +35,25 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.models.schemas import UsageEventPush  # noqa: E402
+from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
+    SHARED_CANONICAL_PROVIDER_MAP,
+)
 
 logger = logging.getLogger("runway.sidecar.hermes")
 
-# TODO: Hoist shared provider mappings to scripts/sidecar_pkg/canonical_providers.py
 # Upstream billing_provider -> (canonical provider_id, explicit account override or None).
 _HERMES_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     "kimi-coding": ("kimi_coding", None),
     "minimax": ("minimax", None),
     "minimax-oauth": ("minimax", None),
-    "minimax-coding-plan": ("minimax", None),
     "opencode-go": ("opencode", None),
     "opencode-zen": ("opencode", None),
     "opencode": ("opencode", None),
-    "openrouter": ("openrouter", None),
-    "deepseek": ("deepseek", None),
     "deepseek-api": ("deepseek", None),
     "anthropic": ("anthropic", None),
     "gemini": ("gemini", None),
     "ollama": ("ollama", None),
-    "ollama-cloud": ("ollama", None),
-    "xai": ("xai", None),
+    **SHARED_CANONICAL_PROVIDER_MAP,
 }
 
 
