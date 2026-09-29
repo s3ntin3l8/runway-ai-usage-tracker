@@ -15,6 +15,7 @@ import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from app.core.utils import IdentityExtractor, scrub_log
 from app.services.account_identity import canonical_account_id
@@ -34,6 +35,16 @@ _OAUTH_CREDENTIAL_KEYS = {
     "id_token",
     "expiry_date",
     "client_id",
+}
+_AUTH_VALUE_KEYS = {
+    "api_key",
+    "oauth_token",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "xai_access",
+    "cli_access_token",
+    "session_cookie",
 }
 
 # Origins the user typed into the dashboard. They outrank every other origin
@@ -432,10 +443,39 @@ class TokenCache:
             _active_source.reset(token)
 
     async def observe_response(self, response: Any) -> None:
-        """Mark the active bundle rejected when a provider answers HTTP 401."""
+        """Mark the active bundle rejected when its credential gets HTTP 401."""
         attempt = _active_attempt.get()
-        if attempt is not None and getattr(response, "status_code", None) == 401:
-            attempt["auth_failed"] = True
+        if attempt is None or getattr(response, "status_code", None) != 401:
+            return
+
+        request = getattr(response, "request", None)
+        if request is not None and not self._request_uses_active_source(request):
+            return
+        attempt["auth_failed"] = True
+
+    def _request_uses_active_source(self, request: Any) -> bool:
+        selection = _active_source.get()
+        if selection is None:
+            return False
+        provider, account_id, source_id = selection
+        entry = self._source_cache.get(provider, {}).get(account_id, {}).get(source_id)
+        if entry is None:
+            return False
+
+        tokens = entry[0]
+        credential_values = [
+            value
+            for key, value in tokens.items()
+            if isinstance(value, str)
+            and value
+            and (key in _AUTH_VALUE_KEYS or key.startswith("cookie_"))
+        ]
+        request_values: list[str] = []
+        headers = getattr(request, "headers", {})
+        request_values.extend(str(value) for value in headers.values())
+        query = parse_qs(urlsplit(str(getattr(request, "url", ""))).query)
+        request_values.extend(value for values in query.values() for value in values)
+        return any(secret in value for secret in credential_values for value in request_values)
 
     async def get_source_candidates(self, provider: str, account_id: str) -> list[dict[str, Any]]:
         """Return live source bundles in configured priority order."""
@@ -464,10 +504,14 @@ class TokenCache:
             entry = self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
         return dict(entry[0]) if entry else None
 
-    def is_source_selected(self, provider: str) -> bool:
-        """Whether this execution context is pinned to a source for provider."""
+    def is_source_selected(self, provider: str, account_id: str | None = None) -> bool:
+        """Whether this context is pinned to a source for the requested account."""
         selection = _active_source.get()
-        return bool(selection and selection[0] == provider)
+        if selection is None or selection[0] != provider:
+            return False
+        if account_id is None or canonical_account_id(account_id) == "default":
+            return True
+        return canonical_account_id(account_id) == selection[1]
 
     def current_source_metadata(self, provider: str, account_id: str) -> dict[str, Any] | None:
         selection = _active_source.get()

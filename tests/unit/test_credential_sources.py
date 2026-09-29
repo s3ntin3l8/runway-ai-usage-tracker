@@ -31,7 +31,7 @@ def test_sidecar_source_id_is_host_scoped_and_stable():
     assert source_id != sidecar_source_id("host-b", "path:~/.config/auth.json")
 
 
-def test_touch_source_preserves_preferences_and_config_source_is_first():
+def test_touch_source_refresh_preserves_preferences_and_health():
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -67,6 +67,33 @@ def test_touch_source_preserves_preferences_and_config_source_is_first():
             credential_origin="env:OPENROUTER_API_KEY",
             sidecar_id="host-a",
         )
+        session.commit()
+
+        assert refreshed.enabled is False
+        assert refreshed.priority == 5
+        assert refreshed.health == "unavailable"
+        assert refreshed.health_detail == "Missing from last scan"
+        assert refreshed.source_label == "OPENROUTER_API_KEY"
+
+
+def test_config_source_is_inserted_first_and_shifts_existing_priority():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        sidecar = touch_source(
+            session,
+            provider_id="openrouter",
+            account_id="alice@example.com",
+            source_id="host-a",
+            source_type="file",
+            source_label="auth.json",
+        )
+        sidecar.priority = 5
+        session.add(sidecar)
         config = touch_source(
             session,
             provider_id="openrouter",
@@ -76,16 +103,11 @@ def test_touch_source_preserves_preferences_and_config_source_is_first():
             source_label="Manual configuration",
         )
         session.commit()
-
-        assert refreshed.enabled is False
-        assert refreshed.priority == 6
-        assert refreshed.health == "unavailable"
-        assert refreshed.health_detail == "Missing from last scan"
-        assert refreshed.source_label == "OPENROUTER_API_KEY"
         assert config.priority == 0
+        assert sidecar.priority == 6
         assert account_sources(session, "openrouter", "ALICE@example.com") == [
             config,
-            refreshed,
+            sidecar,
         ]
 
 
@@ -114,4 +136,9 @@ def test_record_source_health_updates_only_matching_source():
         assert row is not None
         assert row.health == "auth_failed"
         assert row.health_detail == "Authentication failed"
+        record_source_health(session, "openrouter", "alice@example.com", "host-a", "unavailable")
+        session.commit()
+        session.refresh(row)
+        assert row.health == "unavailable"
+        assert row.health_detail is None
         record_source_health(session, "openrouter", "alice@example.com", "unknown", "healthy")

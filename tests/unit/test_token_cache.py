@@ -1,6 +1,7 @@
 import base64
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -155,11 +156,28 @@ async def test_source_bundles_expire_independently(cache):
 
 @pytest.mark.asyncio
 async def test_401_response_marks_only_active_source_attempt(cache):
-    class Response:
-        status_code = 401
+    await cache.store(
+        "openrouter",
+        {"api_key": "provider-key"},  # pragma: allowlist secret — test credential
+        account_id="default",
+        source_id="env:one",
+    )
+
+    matching_request = SimpleNamespace(
+        url="https://provider.example/usage",
+        headers={"Authorization": "Bearer provider-key"},
+    )
+    unrelated_request = SimpleNamespace(
+        url="https://metrics.example/ping",
+        headers={"Authorization": "Bearer unrelated-key"},
+    )
+    matching_response = SimpleNamespace(status_code=401, request=matching_request)
+    unrelated_response = SimpleNamespace(status_code=401, request=unrelated_request)
 
     async with cache.using_source("openrouter", "default", "env:one") as attempt:
-        await cache.observe_response(Response())
+        await cache.observe_response(unrelated_response)
+        assert attempt["auth_failed"] is False
+        await cache.observe_response(matching_response)
         assert attempt["auth_failed"] is True
 
 

@@ -265,7 +265,7 @@ class CredentialProvider:
             return CredentialMap(results, sources=dict.fromkeys(results, kind))
         # This is true only when this provider owns the active pin; other
         # providers correctly continue through legacy discovery.
-        if token_cache.is_source_selected(provider_id):
+        if token_cache.is_source_selected(provider_id, account_id):
             return CredentialMap({}, sources={})
 
         discovered: dict[str, str] = {}
@@ -457,7 +457,7 @@ class CredentialProvider:
                 if selected.get(key):
                     return selected[key]
             return None
-        if token_cache.is_source_selected(provider_id):
+        if token_cache.is_source_selected(provider_id, account_id):
             return None
         try:
             cfg: ProviderConfig | None
@@ -507,7 +507,7 @@ class CredentialProvider:
                 if selected.get(key):
                     return selected[key]
             return None
-        if token_cache.is_source_selected(provider_id):
+        if token_cache.is_source_selected(provider_id, account_id):
             return None
         try:
             cfg: ProviderConfig | None

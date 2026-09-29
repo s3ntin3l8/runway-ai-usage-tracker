@@ -1667,18 +1667,34 @@ async def _update_credential_source_preferences(
             status_code=422,
             detail="Credential source preferences must include every known source",
         )
+    sibling_groups: dict[str, list[CredentialSource]] = {}
+    if all_machines:
+        for source in known.values():
+            if source.credential_origin and source.sidecar_id:
+                sibling_groups.setdefault(source.credential_origin, []).append(source)
+
+        group_preferences: dict[str, tuple[bool, int]] = {}
+        for item in preferences:
+            source = known[item.source_id]
+            if not source.credential_origin or not source.sidecar_id:
+                continue
+            value = (item.enabled, item.priority)
+            previous = group_preferences.setdefault(source.credential_origin, value)
+            if previous != value:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Sources sharing an origin must have identical preferences when all_machines is enabled",
+                )
+
+    applied_origins: set[str] = set()
     for item in preferences:
         source = known[item.source_id]
         siblings: Sequence[CredentialSource] = [source]
         if all_machines and source.credential_origin and source.sidecar_id:
-            siblings = session.exec(
-                select(CredentialSource).where(
-                    CredentialSource.provider_id == provider_id,
-                    CredentialSource.account_id == account_id,
-                    CredentialSource.credential_origin == source.credential_origin,
-                    col(CredentialSource.sidecar_id).is_not(None),
-                )
-            ).all()
+            if source.credential_origin in applied_origins:
+                continue
+            applied_origins.add(source.credential_origin)
+            siblings = sibling_groups[source.credential_origin]
         for sibling in siblings:
             sibling.enabled = item.enabled
             sibling.priority = item.priority

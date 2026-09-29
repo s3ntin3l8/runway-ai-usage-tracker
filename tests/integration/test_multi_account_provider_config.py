@@ -271,6 +271,25 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     ).one()
     assert host_b.enabled is True
 
+    ambiguous_all_machines_payload = {
+        "sources": [
+            {"source_id": "host-a-source", "enabled": False, "priority": 3},
+            {"source_id": "host-b-source", "enabled": True, "priority": 1},
+        ],
+        "all_machines": True,
+    }
+    response = client.patch(endpoint, json=ambiguous_all_machines_payload)
+    assert response.status_code == 422, response.text
+    session.expire_all()
+    host_a = session.exec(
+        select(CredentialSource).where(CredentialSource.source_id == "host-a-source")
+    ).one()
+    host_b = session.exec(
+        select(CredentialSource).where(CredentialSource.source_id == "host-b-source")
+    ).one()
+    assert (host_a.enabled, host_a.priority) == (False, 3)
+    assert (host_b.enabled, host_b.priority) == (True, 1)
+
     all_machines_payload = {
         "sources": [
             {"source_id": "host-a-source", "enabled": False, "priority": 3},

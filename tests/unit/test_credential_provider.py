@@ -66,6 +66,33 @@ async def test_selected_but_missing_source_does_not_fall_back(monkeypatch):
         )
 
 
+@pytest.mark.asyncio
+async def test_active_source_for_other_account_does_not_block_legacy_discovery(monkeypatch):
+    from app.services import token_cache as token_cache_module
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    monkeypatch.setattr(token_cache_module, "token_cache", cache)
+    monkeypatch.setenv("RUNWAY_TEST_BOB_KEY", "bob-env-key")
+    monkeypatch.setattr(
+        "app.services.credential_provider.registry.get_provider",
+        lambda _provider: {
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "RUNWAY_TEST_BOB_KEY",
+                    "mapping": {"value": "api_key"},
+                }
+            ]
+        },
+    )
+    async with cache.using_source("anthropic", "alice@example.com", "alice-source"):
+        assert (
+            CredentialProvider.get_credentials("anthropic", account_id="bob@example.com")["api_key"]
+            == "bob-env-key"
+        )
+
+
 def test_github_token_env():
     """Test discovering GitHub token from environment."""
     with (
