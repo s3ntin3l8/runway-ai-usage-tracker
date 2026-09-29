@@ -4,7 +4,10 @@ This file is the single source of truth for this repo's workflow rules and
 load-bearing invariants — the ones every agent needs before touching
 anything, regardless of which CLI you are. `CLAUDE.md` is a one-line
 `@AGENTS.md` import, so Claude Code reads this file through it; Codex,
-opencode, and friends read it natively. For deeper detail see
+opencode, and friends read it natively. A stock Gemini CLI still looks for
+`GEMINI.md` (removed here on purpose) — set `"context.fileName":
+"AGENTS.md"` in `~/.gemini/settings.json` if yours needs it. For deeper
+detail see
 [`docs/architecture.md`](docs/architecture.md) (data model, collectors,
 CI/CD), [`docs/collection_logic.md`](docs/collection_logic.md) (card merge
 semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),

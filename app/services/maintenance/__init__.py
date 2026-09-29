@@ -3,5 +3,5 @@
 
 ``scripts/`` entry points are thin argparse wrappers over these functions —
 the logic lives here once so an in-app fix and a host-run script can never
-drift apart. See docs/architecture.md's Data Model section for the module map.
+drift apart. See docs/architecture.md's Data model section for the module map.
 """
