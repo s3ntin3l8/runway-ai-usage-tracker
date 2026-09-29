@@ -76,9 +76,8 @@ export function FleetPage() {
   const [updating, setUpdating] = useState<Sidecar | null>(null);
   const [confirmUpdateAll, setConfirmUpdateAll] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
-  // Silent-listener dialog state. ``null`` = closed; an
-  // ``UntaggedCredential`` = single-row entry (per-card badge); ``undefined`` =
-  // open in banner mode (all pending rows for the operator).
+  // Silent-listener dialog selection. `undefined` means no single credential
+  // is selected; `null` opens all pending credentials; an entry opens that row.
   const [tagDialogEntry, setTagDialogEntry] = useState<UntaggedCredential | null | undefined>(
     undefined,
   );
@@ -226,7 +225,7 @@ export function FleetPage() {
                     setTagDialogEntry(entry);
                   }}
                   onMapIdentity={(providerId) => {
-                    setTagDialogEntry(null);
+                    setTagDialogEntry(undefined);
                     setTagDialogProvider({ sidecarId: s.sidecar_id, providerId });
                   }}
                 />
@@ -494,7 +493,6 @@ function IdentitySources({
     return (
       <IdentitySourcesEmptyState
         label="Report not available"
-        description="This sidecar response did not include identity report data."
       />
     );
   }
@@ -503,7 +501,6 @@ function IdentitySources({
     return (
       <IdentitySourcesEmptyState
         label="No identities reported"
-        description="The latest identity report did not include any provider identities."
       />
     );
   }
@@ -573,22 +570,12 @@ function IdentitySources({
   );
 }
 
-function IdentitySourcesEmptyState({
-  label,
-  description,
-}: {
-  label: string;
-  description: string;
-}) {
+function IdentitySourcesEmptyState({ label }: { label: string }) {
   return (
-    <details className="mt-3 group">
-      <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-fg-subtle marker:hidden">
-        <ChevronDown className="size-3.5 shrink-0" aria-hidden />
-        <span className="font-medium text-fg">Account identities</span>
-        <span className="ml-1">· {label}</span>
-      </summary>
-      <p className="mt-2 text-[11px] text-fg-subtle">{description}</p>
-    </details>
+    <div className="mt-3 flex items-center gap-1 text-[11px] text-fg-subtle">
+      <span className="font-medium text-fg">Account identities</span>
+      <span className="ml-1">· {label}</span>
+    </div>
   );
 }
 
