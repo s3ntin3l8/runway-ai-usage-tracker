@@ -88,7 +88,21 @@ class TestIsUpdateAvailable:
         assert is_update_available("3.0.0-beta.1", "2.12.0", None, "3.0.0-beta.2") is True
         assert is_update_available("3.0.0-beta.2", "2.12.0", None, "3.0.0-beta.2") is False
         assert is_update_available("3.0.0-beta.1", "2.12.0", None, None) is False
-        assert is_update_available("3.0.0-beta.1", "3.0.0", None, "3.0.0-beta.1") is True
+        assert is_update_available("3.0.0-beta.1", "3.0.0", None, "3.0.0-beta.1") is False
+
+    def test_configured_stable_channel_promotes_a_beta_build(self):
+        assert is_update_available("3.0.0-beta.1", "3.0.0", target_channel="stable") is True
+
+    def test_configured_beta_channel_selects_beta_for_stable_build(self):
+        assert (
+            is_update_available(
+                "2.12.0",
+                "2.12.0",
+                latest_beta="3.0.0-beta.1",
+                target_channel="beta",
+            )
+            is True
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -49,8 +49,10 @@ def parse_channel(version: str | None) -> tuple[str, str | None]:
     """
     if version and "+edge." in version:
         return "edge", version.split("+edge.", 1)[1] or None
-    if version and _BETA_TAG_RE.fullmatch(f"v{version.lstrip('vV')}"):
-        return "beta", None
+    if version:
+        normalized = version.strip().lstrip("\ufeff").strip().lstrip("vV")
+        if _BETA_TAG_RE.fullmatch(f"v{normalized}"):
+            return "beta", None
     return "stable", None
 
 

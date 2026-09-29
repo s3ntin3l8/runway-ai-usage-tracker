@@ -3,6 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from scripts.sidecar_pkg.update_check import check_once, parse_channel
 
 
@@ -47,6 +49,13 @@ class TestParseChannel:
 
     def test_numbered_beta_version(self):
         assert parse_channel("3.0.0-beta.1") == ("beta", None)
+
+    @pytest.mark.parametrize(
+        "version",
+        [" 3.0.0-beta.1", "\ufeff3.0.0-beta.1", "vv3.0.0-beta.1"],
+    )
+    def test_normalizes_beta_version(self, version):
+        assert parse_channel(version) == ("beta", None)
 
 
 # ---------------------------------------------------------------------------

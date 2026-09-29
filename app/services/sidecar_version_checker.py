@@ -178,49 +178,40 @@ def is_update_available(
     latest: str | None,
     latest_edge_sha: str | None = None,
     latest_beta: str | None = None,
+    target_channel: str | None = None,
 ) -> bool:
     """Whether *current* is behind the newest build on its channel. False on ambiguity.
 
-    Edge builds compare commit sha against the rolling `edge` tag; beta builds
-    compare against the newest beta and stable versions so stable promotion is
-    visible. Stable builds compare against *latest*. Missing channel heads mean
+    Edge builds compare commit sha against the rolling `edge` tag. A configured
+    target channel overrides the build's channel so beta installs can be
+    promoted to stable by changing the fleet setting. Missing channel heads mean
     "unknown" and do not flag an update.
     """
     if not current:
         return False
 
     channel, embedded_sha = parse_channel(current)
+    channel = target_channel if target_channel in ("stable", "beta", "edge") else channel
     if channel == "edge":
         # Tag ref returns the full sha; the build stamps a short prefix.
-        if not latest_edge_sha or not embedded_sha:
-            return False
-        return not latest_edge_sha.startswith(embedded_sha)
-
-    if channel == "beta":
-        try:
-            from packaging.version import InvalidVersion, Version
-
-            try:
-                current_version = Version(current)
-                return any(
-                    candidate and Version(candidate) > current_version
-                    for candidate in (latest, latest_beta)
-                )
-            except InvalidVersion:
+        if embedded_sha:
+            if not latest_edge_sha:
                 return False
-        except Exception:
-            return False
+            return not latest_edge_sha.startswith(embedded_sha)
+        # A non-edge build opted into edge; like the sidecar updater, offer the
+        # stable release until an edge build identity is available.
+        channel = "stable"
 
-    if not latest:
+    latest_target = latest_beta if channel == "beta" else latest
+    if not latest_target:
         return False
     try:
         from packaging.version import InvalidVersion, Version
-
-        try:
-            return Version(latest) > Version(current)
-        except InvalidVersion:
-            return False
-    except Exception:
+    except ImportError:
+        return False
+    try:
+        return Version(latest_target) > Version(current)
+    except InvalidVersion:
         return False
 
 

@@ -101,6 +101,8 @@ Releases are managed by **Release Please** (`.github/workflows/release-please.ym
 - Merging that PR creates the GitHub Release and tag automatically
 - To force a version jump (e.g. v1.0.0): tag manually, push the tag, create the GitHub Release by hand — Release Please picks up from there
 
+The prerelease settings in `release-please-config.json` are temporary for the 3.0.0 beta cycle. Before merging a stable release, follow [issue #408](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/408) to remove prerelease mode and promote 3.0.0; otherwise future Release Please releases will also be beta versions.
+
 ## Git Workflow
 - **Branch off the latest remote default branch, never off your local one.**
   `git fetch` updates `origin/*` but never fast-forwards local `main`, so a

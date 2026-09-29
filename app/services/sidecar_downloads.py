@@ -96,7 +96,8 @@ class SidecarDownloads:
         self._lock = asyncio.Lock()
 
     async def get(self, channel: str) -> SidecarDownloadsResponse:
-        channel = channel if channel in ("beta", "edge") else "stable"
+        if channel not in ("stable", "beta", "edge"):
+            raise ValueError(f"Unknown sidecar release channel: {channel!r}")
         cached = self._cache.get(channel)
         if cached and time.monotonic() - cached[0] < self._ttl:
             return cached[1]

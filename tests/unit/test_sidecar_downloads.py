@@ -142,13 +142,6 @@ class TestBetaReleaseSelection:
         assert result.version == "v3.0.0-beta.1"
         assert calls == ["beta"]
 
-    def test_unknown_channel_coerced_to_stable(self, monkeypatch):
-        seen: list[str] = []
-
-        async def fake_fetch(self, channel):
-            seen.append(channel)
-            return sd.parse_release(_release(), channel)
-
-        monkeypatch.setattr(sd.SidecarDownloads, "_fetch", fake_fetch)
-        asyncio.run(sd.SidecarDownloads().get("nightly"))
-        assert seen == ["stable"]
+    def test_unknown_channel_raises(self):
+        with pytest.raises(ValueError, match="Unknown sidecar release channel"):
+            asyncio.run(sd.SidecarDownloads().get("nightly"))

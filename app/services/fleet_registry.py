@@ -194,7 +194,7 @@ class FleetRegistryService:
         logger.info(f"Deleted sidecar from registry: '{scrub_log(sidecar_id)}'")
         return True
 
-    def to_dict(self, row: SidecarRegistry) -> dict:
+    def to_dict(self, row: SidecarRegistry, update_channel: str | None = None) -> dict:
         """Serialize a SidecarRegistry row to a response dict."""
         # Imported lazily so unit tests that exercise to_dict don't need
         # the global FastAPI startup wiring.
@@ -219,7 +219,11 @@ class FleetRegistryService:
         # "A newer build exists" is independent of whether it can be pushed
         # right now (#202): an offline sidecar still reports it is behind.
         outdated = is_update_available(
-            row.sidecar_version, latest_version, latest_edge_sha, latest_beta
+            row.sidecar_version,
+            latest_version,
+            latest_edge_sha,
+            latest_beta,
+            target_channel=update_channel,
         )
         update_available = not stale and row.self_update_capable is not False and outdated
         return {
