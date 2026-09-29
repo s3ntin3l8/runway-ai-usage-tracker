@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle,
+  ChevronDown,
   Pause,
   Plus,
   Pencil,
@@ -81,6 +82,10 @@ export function FleetPage() {
   const [tagDialogEntry, setTagDialogEntry] = useState<UntaggedCredential | null | undefined>(
     undefined,
   );
+  const [tagDialogProvider, setTagDialogProvider] = useState<{
+    sidecarId: string;
+    providerId: string;
+  } | null>(null);
 
   const updatable = (sidecars.data?.sidecars ?? []).filter((s) => s.update_available);
 
@@ -193,8 +198,14 @@ export function FleetPage() {
               counts={untagged.data?.counts_by_sidecar ?? {}}
               items={untagged.data?.items ?? []}
               loading={untagged.isPending}
-              onResolveAll={() => setTagDialogEntry(null)}
-              onResolveOne={(entry) => setTagDialogEntry(entry)}
+              onResolveAll={() => {
+                setTagDialogProvider(null);
+                setTagDialogEntry(null);
+              }}
+              onResolveOne={(entry) => {
+                setTagDialogProvider(null);
+                setTagDialogEntry(entry);
+              }}
             />
             <div className="grid gap-3 lg:grid-cols-2">
               {sidecars.data!.sidecars.map((s) => (
@@ -205,10 +216,19 @@ export function FleetPage() {
                   untaggedEntries={
                     (untagged.data?.items ?? []).filter((e) => e.sidecar_id === s.sidecar_id)
                   }
+                  untaggedLoading={untagged.isPending}
+                  untaggedError={untagged.isError}
                   onEdit={() => setEditing(s)}
                   onDelete={() => setDeleting(s)}
                   onUpdate={() => setUpdating(s)}
-                  onResolveUntagged={(entry) => setTagDialogEntry(entry)}
+                  onResolveUntagged={(entry) => {
+                    setTagDialogProvider(null);
+                    setTagDialogEntry(entry);
+                  }}
+                  onMapIdentity={(providerId) => {
+                    setTagDialogEntry(null);
+                    setTagDialogProvider({ sidecarId: s.sidecar_id, providerId });
+                  }}
                 />
               ))}
             </div>
@@ -222,7 +242,12 @@ export function FleetPage() {
       <UntaggedCredentialsDialog
         open={tagDialogEntry !== undefined}
         singleEntry={tagDialogEntry ?? undefined}
-        onClose={() => setTagDialogEntry(undefined)}
+        sidecarId={tagDialogProvider?.sidecarId}
+        providerId={tagDialogProvider?.providerId}
+        onClose={() => {
+          setTagDialogProvider(null);
+          setTagDialogEntry(undefined);
+        }}
       />
       <ResponsiveDialog
         open={confirmUpdateAll}
@@ -257,18 +282,24 @@ function SidecarCard({
   sidecar,
   untaggedCount,
   untaggedEntries,
+  untaggedLoading,
+  untaggedError,
   onEdit,
   onDelete,
   onUpdate,
   onResolveUntagged,
+  onMapIdentity,
 }: {
   sidecar: Sidecar;
   untaggedCount: number;
   untaggedEntries: UntaggedCredential[];
+  untaggedLoading: boolean;
+  untaggedError: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onUpdate: () => void;
   onResolveUntagged: (entry: UntaggedCredential) => void;
+  onMapIdentity: (providerId: string) => void;
 }) {
   const queryClient = useQueryClient();
   const online = isOnline(sidecar);
@@ -395,7 +426,13 @@ function SidecarCard({
             </div>
           </dl>
 
-          <IdentitySources sources={sidecar.identity_sources} />
+          <IdentitySources
+            sources={sidecar.identity_sources}
+            untaggedEntries={untaggedEntries}
+            untaggedLoading={untaggedLoading}
+            untaggedError={untaggedError}
+            onMapCredential={onMapIdentity}
+          />
 
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={onEdit}>
@@ -440,28 +477,85 @@ const IDENTITY_SOURCE_LABEL: Record<string, string> = {
 // Which account each event provider's data is stamped with on this sidecar,
 // and why — so a card landing on the wrong (or a "default") account is
 // visible here instead of as a silent split on the dashboard.
-function IdentitySources({ sources }: { sources?: Sidecar['identity_sources'] }) {
+function IdentitySources({
+  sources,
+  untaggedEntries,
+  untaggedLoading,
+  untaggedError,
+  onMapCredential,
+}: {
+  sources?: Sidecar['identity_sources'];
+  untaggedEntries: UntaggedCredential[];
+  untaggedLoading: boolean;
+  untaggedError: boolean;
+  onMapCredential: (providerId: string) => void;
+}) {
   const entries = Object.entries(sources ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  if (entries.length === 0) return null;
+  if (entries.length === 0) {
+    return (
+      <p className="mt-3 text-[11px] text-fg-subtle">
+        Account identities · No identity data reported
+      </p>
+    );
+  }
+  const unidentifiedCount = entries.filter(
+    ([, info]) => info.source === 'default' || info.account_id === 'default',
+  ).length;
+  const identifiedCount = entries.length - unidentifiedCount;
   return (
-    <div className="mt-3">
-      <p className="text-[11px] text-fg-subtle">Accounts</p>
-      <ul className="mt-1 space-y-0.5 text-[12px]" aria-label="Account identities">
-        {entries.map(([providerId, info]) => (
-          <li key={providerId} className="flex items-baseline justify-between gap-2">
-            <span className="font-medium">{providerId}</span>
-            <span className="min-w-0 truncate text-right">
-              <span className={`font-mono ${info.source === 'default' ? 'text-warning' : ''}`}>
-                {maskAccountId(info.account_id)}
-              </span>{' '}
-              <span className="text-fg-subtle">
-                · {IDENTITY_SOURCE_LABEL[info.source] ?? info.source}
+    <details className="mt-3 group">
+      <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-fg-subtle marker:hidden">
+        <ChevronDown className="size-3.5 shrink-0" aria-hidden />
+        <span className="font-medium text-fg">Account identities</span>
+        <span className="ml-1">
+          · {identifiedCount} identified · {unidentifiedCount} unidentified
+        </span>
+      </summary>
+      <ul className="mt-2 space-y-1 text-[12px]" aria-label="Account identities">
+        {entries.map(([providerId, info]) => {
+          const unidentified = info.source === 'default' || info.account_id === 'default';
+          const matchingCredentials = untaggedEntries.filter(
+            (entry) => entry.provider_id === providerId,
+          );
+          return (
+            <li
+              key={providerId}
+              className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1"
+            >
+              <span className="font-medium">{providerId}</span>
+              <span className="min-w-0 truncate text-right">
+                <span className={`font-mono ${unidentified ? 'text-warning' : ''}`}>
+                  {maskAccountId(info.account_id)}
+                </span>{' '}
+                <span className="text-fg-subtle">
+                  · {IDENTITY_SOURCE_LABEL[info.source] ?? info.source}
+                </span>
               </span>
-            </span>
-          </li>
-        ))}
+              {unidentified ? (
+                matchingCredentials.length > 0 ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="ml-auto h-7 px-2 text-[11px]"
+                    onClick={() => onMapCredential(providerId)}
+                  >
+                    Map credential ({matchingCredentials.length})
+                  </Button>
+                ) : (
+                  <span className="ml-auto text-[11px] text-fg-subtle">
+                    {untaggedLoading
+                      ? 'Checking for a credential to map…'
+                      : untaggedError
+                        ? 'Credential mapping data unavailable'
+                        : 'No credential origin reported for mapping'}
+                  </span>
+                )
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
-    </div>
+    </details>
   );
 }
 
