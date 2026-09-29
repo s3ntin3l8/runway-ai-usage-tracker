@@ -358,7 +358,13 @@ function UntaggedRow({
         </div>
       </div>
 
-      {entry.quota_preview?.length ? (
+      {entry.quota_preview_stale ? (
+        <p className="mt-2 rounded-sm bg-surface-2 px-2.5 py-2 text-[11px] text-fg-subtle" role="status">
+          The quota preview expired. A fresh preview will appear after the next successful check.
+        </p>
+      ) : null}
+
+      {entry.quota_preview?.length && !entry.quota_preview_stale ? (
         <div className="mt-2 rounded-sm bg-surface-2 px-2.5 py-2 text-[11px]">
           <p className="font-medium">Live quota from this credential</p>
           {entry.quota_preview_observed_at ? (

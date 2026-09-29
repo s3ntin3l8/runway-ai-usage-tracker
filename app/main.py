@@ -57,6 +57,20 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize DB
     init_db()
 
+    # Drop expired pending quota payloads before the first API request. Keep
+    # their observation timestamps so Fleet can explain the stale preview.
+    try:
+        from sqlmodel import Session
+
+        from app.core.db import engine
+        from app.services.credential_tags import PendingCredentialTagRepo
+
+        with Session(engine) as session:
+            PendingCredentialTagRepo.expire_quota_previews(session)
+            session.commit()
+    except Exception as e:
+        logger.warning(f"Pending quota preview cleanup failed: {e}")
+
     # Remove stale error rows superseded by healthy rows (idempotent cleanup).
     try:
         from sqlmodel import Session as _Session

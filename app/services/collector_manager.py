@@ -71,8 +71,6 @@ class CollectorManager:
         self._client = None
         self._last_sync_time: float = 0.0
         self._credential_source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
-        self._identity_pending_previews: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        self._identity_pending_preview_observed_at: dict[tuple[str, str], float] = {}
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
         self.last_collection_outcomes: list[dict[str, Any]] = []
@@ -148,6 +146,7 @@ class CollectorManager:
             except Exception as e:
                 logger.debug(f"Could not load provider configs from DB: {e}")
             self._credential_source_preferences = source_preferences
+            await self.reconcile_token_cache_from_durable_tags()
 
             # 1. Ensure Default/Static collectors are present
             for p_id, (cls, name, ttl) in self.collector_registry.items():
@@ -673,7 +672,7 @@ class CollectorManager:
                 # Let an unresolved source call its API so it can prove its
                 # identity, but never publish an unidentified quota card into
                 # the shared default account history.
-                self._identity_pending_previews[(provider_id, candidate["source_id"])] = [
+                preview: list[dict[str, Any]] = [
                     {
                         key: card[key]
                         for key in (
@@ -691,9 +690,7 @@ class CollectorManager:
                     for card in result
                     if not card.get("error_type")
                 ]
-                self._identity_pending_preview_observed_at[
-                    (provider_id, candidate["source_id"])
-                ] = time.time()
+                self._persist_identity_pending_preview(provider_id, candidate, preview)
                 successful_result = []
                 break
             successful_result = result
@@ -774,27 +771,103 @@ class CollectorManager:
                     credential_origin=source_credential_origin,
                 )
             session.commit()
-        await token_cache.move_source(provider_id, old_account_id, target, source_id)
-        self.clear_identity_preview(provider_id, source_id)
+        moved = await self.reconcile_token_cache_from_durable_tags(
+            provider_id=provider_id, source_id=source_id
+        )
+        if not moved:
+            await token_cache.move_source(provider_id, old_account_id, target, source_id)
 
-    def pending_identity_preview(self, provider_id: str, source_id: str) -> list[dict[str, Any]]:
-        """Quota preview from an unresolved source's last API response."""
-        return list(self._identity_pending_previews.get((provider_id, source_id), []))
+    def _persist_identity_pending_preview(
+        self,
+        provider_id: str,
+        candidate: dict[str, Any],
+        preview: list[dict[str, Any]],
+    ) -> None:
+        """Persist safe quota fields against the pending credential row."""
+        sidecar_id = candidate.get("sidecar_id")
+        credential_origin = candidate.get("credential_origin")
+        if not isinstance(sidecar_id, str) or not isinstance(credential_origin, str):
+            return
 
-    def pending_identity_preview_observed_at(self, provider_id: str, source_id: str) -> str | None:
-        """UTC timestamp for the latest in-memory quota preview, if available."""
-        observed_at = self._identity_pending_preview_observed_at.get((provider_id, source_id))
-        if observed_at is None:
-            return None
-        from datetime import UTC, datetime
+        from sqlmodel import Session
 
-        return datetime.fromtimestamp(observed_at, UTC).isoformat()
+        from app.core.db import engine
+        from app.services.credential_tags import PendingCredentialTagRepo
 
-    def clear_identity_preview(self, provider_id: str, source_id: str) -> None:
-        """Clear the in-memory preview after a credential is assigned or verified."""
-        key = (provider_id, source_id)
-        self._identity_pending_previews.pop(key, None)
-        self._identity_pending_preview_observed_at.pop(key, None)
+        with Session(engine) as session:
+            PendingCredentialTagRepo.set_quota_preview(
+                session,
+                sidecar_id=sidecar_id,
+                provider_id=provider_id,
+                credential_origin=credential_origin,
+                preview=preview,
+            )
+            session.commit()
+
+    async def reconcile_token_cache_from_durable_tags(
+        self,
+        *,
+        provider_id: str | None = None,
+        source_id: str | None = None,
+    ) -> int:
+        """Move cached sidecar credentials to accounts named by durable tags.
+
+        Tags commit before the in-memory cache can be updated. Rechecking the
+        durable mapping during startup/sync and after promotions closes that
+        gap without relying on a later sidecar heartbeat.
+        """
+        from sqlmodel import Session, select
+
+        from app.core.db import engine
+        from app.models.db import CredentialSource
+        from app.services.credential_tags import CredentialTagRepo
+
+        provider_ids = [provider_id] if provider_id else list(self.collector_registry)
+        moves: list[tuple[str, str, str, str, bool, int]] = []
+        for pid in provider_ids:
+            candidates = await token_cache.get_source_candidates(pid, "default")
+            for candidate in candidates:
+                candidate_id = candidate.get("source_id")
+                origin = candidate.get("credential_origin")
+                sidecar_id = candidate.get("sidecar_id")
+                if (
+                    candidate.get("source_type") != "sidecar"
+                    or not isinstance(candidate_id, str)
+                    or (source_id is not None and candidate_id != source_id)
+                    or not isinstance(origin, str)
+                    or not isinstance(sidecar_id, str)
+                ):
+                    continue
+                with Session(engine) as session:
+                    target = CredentialTagRepo.get_account_id(
+                        session,
+                        provider_id=pid,
+                        credential_origin=origin,
+                        sidecar_id=sidecar_id,
+                    )
+                    if not target or target == "default":
+                        continue
+                    source = session.exec(
+                        select(CredentialSource).where(
+                            CredentialSource.provider_id == pid,
+                            CredentialSource.account_id == target,
+                            CredentialSource.source_id == candidate_id,
+                        )
+                    ).first()
+                    enabled = source.enabled if source else candidate.get("enabled", True)
+                    priority = source.priority if source else candidate.get("priority", 0)
+                moves.append((pid, candidate_id, target, "default", bool(enabled), int(priority)))
+
+        for pid, candidate_id, target, old_account_id, enabled, priority in moves:
+            await token_cache.move_source(pid, old_account_id, target, candidate_id)
+            old_preferences = self._credential_source_preferences.get((pid, old_account_id))
+            if old_preferences is not None:
+                old_preferences.pop(candidate_id, None)
+            self._credential_source_preferences.setdefault((pid, target), {})[candidate_id] = (
+                enabled,
+                priority,
+            )
+        return len(moves)
 
     @staticmethod
     def _record_source_health(provider_id: str, account_id: str, updates: dict[str, str]) -> None:

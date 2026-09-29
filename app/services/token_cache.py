@@ -566,6 +566,8 @@ class TokenCache:
                 return False
             if not source_accounts:
                 self._source_cache[provider].pop(from_id, None)
+            tokens, metadata, timestamp = entry
+            entry = (tokens, {**metadata, "identity_pending": False}, timestamp)
             self._source_cache.setdefault(provider, {}).setdefault(to_id, {})[source_id] = entry
             # Keep the compatibility cache coherent when it represents this
             # same source bundle; never overwrite another account's aggregate.

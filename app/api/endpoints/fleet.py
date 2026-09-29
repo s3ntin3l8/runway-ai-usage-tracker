@@ -358,6 +358,8 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         from app.services.collector_manager import manager
         from app.services.poller import poller
 
+        if tokens_to_store:
+            await manager.reconcile_token_cache_from_durable_tags()
         # Force the next collect_all to re-sync per-account collectors so
         # the freshly-pushed accounts get SmartCollectors immediately
         # instead of waiting the 60s sync throttle.
@@ -934,7 +936,6 @@ async def post_credential_tag(
         manager._credential_source_preferences.setdefault(
             (body.provider_id, target_account_id), {}
         )[source_id] = (enabled, priority)
-        manager.clear_identity_preview(body.provider_id, source_id)
 
     audit_log.record(
         session,
@@ -1037,6 +1038,9 @@ async def list_pending_credential_tags(
     auto-hint doesn't oscillate, but they're not "untagged" from the
     operator's perspective.
     """
+    expired_previews = PendingCredentialTagRepo.expire_quota_previews(session)
+    if expired_previews:
+        session.commit()
     all_rows = PendingCredentialTagRepo.list_all(session)
 
     # Group by sidecar so hints resolve with that host's scope.
@@ -1058,12 +1062,11 @@ async def list_pending_credential_tags(
     if sidecar_id is not None:
         visible_rows = [r for r in visible_rows if r.sidecar_id == sidecar_id]
 
-    from app.services.collector_manager import manager
-    from app.services.credential_sources import sidecar_source_id
-
     items = []
     for row in visible_rows:
-        source_id = sidecar_source_id(row.sidecar_id, row.credential_origin)
+        preview, observed_at, preview_stale = PendingCredentialTagRepo.read_quota_preview(
+            session, row
+        )
         items.append(
             {
                 "sidecar_id": row.sidecar_id,
@@ -1071,10 +1074,9 @@ async def list_pending_credential_tags(
                 "credential_origin": row.credential_origin,
                 "first_seen": row.first_seen.isoformat() if row.first_seen else None,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
-                "quota_preview": manager.pending_identity_preview(row.provider_id, source_id),
-                "quota_preview_observed_at": manager.pending_identity_preview_observed_at(
-                    row.provider_id, source_id
-                ),
+                "quota_preview": preview,
+                "quota_preview_observed_at": observed_at,
+                "quota_preview_stale": preview_stale,
             }
         )
 

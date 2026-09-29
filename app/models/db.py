@@ -720,6 +720,9 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     credential_origin: str
     first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    # Safe quota fields only; tokens and cookies are never written here.
+    quota_preview_json: str | None = None
+    quota_preview_observed_at: UTCDateTime | None = None
 
 
 class PendingUsageEvent(SQLModel, table=True):  # type: ignore[call-arg]

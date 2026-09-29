@@ -790,6 +790,65 @@ def test_pending_endpoint_filters_by_sidecar(client: TestClient, session: Sessio
     assert {i["credential_origin"] for i in items} == {"path:/alpha/x"}
 
 
+def test_pending_endpoint_serves_persisted_quota_preview(client: TestClient, session: Session):
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    PendingCredentialTagRepo.set_quota_preview(
+        session,
+        sidecar_id="alpha",
+        provider_id="antigravity",
+        credential_origin="path:/auth.json",
+        preview=[
+            {
+                "service_name": "Antigravity",
+                "remaining": 7,
+                "api_key": "fake-key",  # pragma: allowlist secret
+            }  # pragma: allowlist secret
+        ],  # pragma: allowlist secret
+    )
+    session.commit()
+
+    response = client.get("/api/v1/fleet/credentials/tags/pending")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["quota_preview"] == [{"service_name": "Antigravity", "remaining": 7}]
+    assert item["quota_preview_observed_at"]
+    assert item["quota_preview_stale"] is False
+    assert "fake-key" not in response.text
+
+
+def test_pending_endpoint_expires_old_quota_preview(
+    client: TestClient, session: Session, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.config import settings
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    monkeypatch.setattr(settings, "PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS", 60)
+    observed_at = datetime.now(UTC) - timedelta(seconds=61)
+    row = PendingCredentialTagRepo.set_quota_preview(
+        session,
+        sidecar_id="alpha",
+        provider_id="antigravity",
+        credential_origin="path:/auth.json",
+        preview=[{"service_name": "Antigravity", "remaining": 7}],
+        observed_at=observed_at,
+    )
+    session.commit()
+
+    response = client.get("/api/v1/fleet/credentials/tags/pending")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["quota_preview"] == []
+    assert item["quota_preview_stale"] is True
+    assert item["quota_preview_observed_at"] == observed_at.isoformat()
+    session.refresh(row)
+    assert row.quota_preview_json is None
+
+
 def test_config_response_carries_account_tag_hints(client: TestClient, session: Session):
     """/fleet/config exposes the per-provider hint map for the sidecar's next cycle."""
     from app.services.credential_tags import CredentialTagRepo

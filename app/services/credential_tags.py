@@ -15,11 +15,26 @@ goes through this surface so the lookup key stays in one place.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import json
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlmodel import Session, col, or_, select
 
 from app.models.db import CredentialTag, PendingCredentialTag
+
+_QUOTA_PREVIEW_FIELDS = frozenset(
+    {
+        "service_name",
+        "remaining",
+        "unit",
+        "unit_type",
+        "pct_used",
+        "window_type",
+        "reset",
+        "reset_at",
+    }
+)
 
 
 def live_sidecar_ids(session: Session) -> list[str]:
@@ -495,6 +510,129 @@ class PendingCredentialTagRepo:
     then delete any pending row for the sidecar that's not in the new
     list).
     """
+
+    @staticmethod
+    def set_quota_preview(
+        session: Session,
+        *,
+        sidecar_id: str,
+        provider_id: str,
+        credential_origin: str,
+        preview: list[dict[str, Any]],
+        observed_at: datetime | None = None,
+    ) -> PendingCredentialTag | None:
+        """Persist a whitelisted quota-only preview for a pending source."""
+        if (
+            CredentialTagRepo.get_account_id(
+                session,
+                provider_id=provider_id,
+                credential_origin=credential_origin,
+                sidecar_id=sidecar_id,
+            )
+            is not None
+        ):
+            PendingCredentialTagRepo.delete(
+                session,
+                sidecar_id=sidecar_id,
+                provider_id=provider_id,
+                credential_origin=credential_origin,
+            )
+            return None
+
+        row = PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id=sidecar_id,
+            provider_id=provider_id,
+            credential_origin=credential_origin,
+        )
+        safe_preview = [
+            {key: item[key] for key in _QUOTA_PREVIEW_FIELDS if key in item} for item in preview
+        ]
+        row.quota_preview_json = json.dumps(safe_preview)
+        row.quota_preview_observed_at = observed_at or datetime.now(UTC)
+        session.add(row)
+        session.flush()
+
+        # Recheck after the write so a concurrent tag commit cannot leave a
+        # preview attached to a source that has just been assigned.
+        if (
+            CredentialTagRepo.get_account_id(
+                session,
+                provider_id=provider_id,
+                credential_origin=credential_origin,
+                sidecar_id=sidecar_id,
+            )
+            is not None
+        ):
+            PendingCredentialTagRepo.delete(
+                session,
+                sidecar_id=sidecar_id,
+                provider_id=provider_id,
+                credential_origin=credential_origin,
+            )
+            return None
+        return row
+
+    @staticmethod
+    def read_quota_preview(
+        session: Session,
+        row: PendingCredentialTag,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None, bool]:
+        """Return preview data, observation time, and staleness.
+
+        Expired values are cleared from storage while their observation time is
+        retained so the UI can explain why no preview is shown.
+        """
+        observed_at = row.quota_preview_observed_at
+        if observed_at is None:
+            return [], None, False
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=UTC)
+        observed_at_text = observed_at.isoformat()
+
+        from app.core.config import settings
+
+        current = now or datetime.now(UTC)
+        if current - observed_at > timedelta(
+            seconds=settings.PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS
+        ):
+            if row.quota_preview_json is not None:
+                row.quota_preview_json = None
+                session.add(row)
+            return [], observed_at_text, True
+
+        try:
+            payload = json.loads(row.quota_preview_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            payload = []
+        preview = (
+            [
+                {key: item[key] for key in _QUOTA_PREVIEW_FIELDS if key in item}
+                for item in payload
+                if isinstance(item, dict)
+            ]
+            if isinstance(payload, list)
+            else []
+        )
+        return preview, observed_at_text, False
+
+    @staticmethod
+    def expire_quota_previews(session: Session, *, now: datetime | None = None) -> int:
+        """Clear aged preview payloads and return the number cleared."""
+        rows = session.exec(select(PendingCredentialTag)).all()
+        cleared = 0
+        for row in rows:
+            had_preview = row.quota_preview_json is not None
+            _preview, _observed_at, stale = PendingCredentialTagRepo.read_quota_preview(
+                session, row, now=now
+            )
+            if stale and had_preview:
+                cleared += 1
+        if cleared:
+            session.flush()
+        return cleared
 
     @staticmethod
     def upsert(
