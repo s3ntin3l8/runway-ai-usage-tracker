@@ -72,6 +72,7 @@ class CollectorManager:
         self._last_sync_time: float = 0.0
         self._credential_source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
         self._identity_pending_previews: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self._identity_pending_preview_observed_at: dict[tuple[str, str], float] = {}
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
         self.last_collection_outcomes: list[dict[str, Any]] = []
@@ -679,6 +680,9 @@ class CollectorManager:
                     for card in result
                     if not card.get("error_type")
                 ]
+                self._identity_pending_preview_observed_at[
+                    (provider_id, candidate["source_id"])
+                ] = time.time()
                 successful_result = []
                 break
             successful_result = result
@@ -728,7 +732,19 @@ class CollectorManager:
                 existing_target.source_label = source.source_label
                 existing_target.credential_origin = source.credential_origin
                 existing_target.sidecar_id = source.sidecar_id
-                existing_target.last_seen = datetime.now(UTC)
+                seen_values = [
+                    value
+                    for value in (source.last_seen, existing_target.last_seen)
+                    if value is not None
+                ]
+                existing_target.last_seen = (
+                    max(
+                        value.replace(tzinfo=UTC) if value.tzinfo is None else value
+                        for value in seen_values
+                    )
+                    if seen_values
+                    else datetime.now(UTC)
+                )
                 session.add(existing_target)
                 session.delete(source)
             if source_sidecar_id:
@@ -748,11 +764,26 @@ class CollectorManager:
                 )
             session.commit()
         await token_cache.move_source(provider_id, old_account_id, target, source_id)
-        self._identity_pending_previews.pop((provider_id, source_id), None)
+        self.clear_identity_preview(provider_id, source_id)
 
     def pending_identity_preview(self, provider_id: str, source_id: str) -> list[dict[str, Any]]:
         """Quota preview from an unresolved source's last API response."""
         return list(self._identity_pending_previews.get((provider_id, source_id), []))
+
+    def pending_identity_preview_observed_at(self, provider_id: str, source_id: str) -> str | None:
+        """UTC timestamp for the latest in-memory quota preview, if available."""
+        observed_at = self._identity_pending_preview_observed_at.get((provider_id, source_id))
+        if observed_at is None:
+            return None
+        from datetime import UTC, datetime
+
+        return datetime.fromtimestamp(observed_at, UTC).isoformat()
+
+    def clear_identity_preview(self, provider_id: str, source_id: str) -> None:
+        """Clear the in-memory preview after a credential is assigned or verified."""
+        key = (provider_id, source_id)
+        self._identity_pending_previews.pop(key, None)
+        self._identity_pending_preview_observed_at.pop(key, None)
 
     @staticmethod
     def _record_source_health(provider_id: str, account_id: str, updates: dict[str, str]) -> None:

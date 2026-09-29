@@ -793,7 +793,7 @@ async def post_credential_tag(
 
         discovered = (
             any(
-                pid == body.provider_id and canonical_account_id(aid) == target_account_id
+                pid == body.provider_id and aid == target_account_id
                 for pid, aid, _label in await token_cache.get_all_active_accounts()
             )
             or session.exec(
@@ -907,7 +907,7 @@ async def post_credential_tag(
         manager._credential_source_preferences.setdefault(
             (body.provider_id, target_account_id), {}
         )[source_id] = (enabled, priority)
-        manager._identity_pending_previews.pop((body.provider_id, source_id), None)
+        manager.clear_identity_preview(body.provider_id, source_id)
 
     audit_log.record(
         session,
@@ -1045,6 +1045,9 @@ async def list_pending_credential_tags(
                 "first_seen": row.first_seen.isoformat() if row.first_seen else None,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
                 "quota_preview": manager.pending_identity_preview(row.provider_id, source_id),
+                "quota_preview_observed_at": manager.pending_identity_preview_observed_at(
+                    row.provider_id, source_id
+                ),
             }
         )
 

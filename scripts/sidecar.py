@@ -154,9 +154,12 @@ _SIDECAR_VERSION_FALLBACK = (
 _SIDECAR_VERSION = _resolve_sidecar_version()
 
 # Providers whose server collector can ask the upstream API for the identity
-# of the exact credential source currently pinned in TokenCache. Other
-# unidentified credentials stay pending for operator assignment and are not
-# transmitted to the server just to discover that no identity endpoint exists.
+# of the exact credential source currently pinned in TokenCache. Keep this in
+# sync with the identity-promotion branch in
+# CollectorManager._collect_with_source_failover; providers need both sides
+# enabled before sidecar credentials can be sent for identity verification.
+# Other unidentified credentials stay pending for operator assignment and are
+# not transmitted to discover that no identity endpoint exists.
 _SERVER_IDENTITY_PROVIDERS = frozenset({"antigravity", "anthropic", "github", "opencode"})
 
 # --- INJECTED REGISTRY ---

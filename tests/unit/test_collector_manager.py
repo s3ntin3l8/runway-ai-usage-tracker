@@ -106,6 +106,16 @@ class TestCollectorManagerInitialization:
             assert manager.pending_identity_preview("antigravity", candidate["source_id"]) == [
                 {"service_name": "Antigravity", "remaining": 7}
             ]
+            observed_at = manager.pending_identity_preview_observed_at(
+                "antigravity", candidate["source_id"]
+            )
+            assert observed_at is not None
+            assert observed_at.endswith("+00:00")
+            manager.clear_identity_preview("antigravity", candidate["source_id"])
+            assert (
+                manager.pending_identity_preview_observed_at("antigravity", candidate["source_id"])
+                is None
+            )
 
     def test_registered_collectors_explicitly_opt_into_complete_snapshots(self, manager):
         assert BaseCollector.COMPLETE_SNAPSHOT is False

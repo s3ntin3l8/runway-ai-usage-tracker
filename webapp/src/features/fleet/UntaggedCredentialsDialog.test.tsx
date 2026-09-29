@@ -105,6 +105,7 @@ describe('UntaggedCredentialsDialog', () => {
       items: [
         {
           ...entry,
+          quota_preview_observed_at: '2026-09-29T10:00:00Z',
           quota_preview: [
             { service_name: 'Antigravity', remaining: 7, unit: 'requests', pct_used: 30 },
             { remaining: 4 },
@@ -119,6 +120,7 @@ describe('UntaggedCredentialsDialog', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('Live quota from this credential')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Observed/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Antigravity · 7 requests · 30% used/)).toBeInTheDocument();
     expect(within(dialog).getByText(/not added to account history until assigned/i)).toBeInTheDocument();
   });

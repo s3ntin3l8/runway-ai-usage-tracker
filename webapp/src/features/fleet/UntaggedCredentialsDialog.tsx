@@ -343,6 +343,11 @@ function UntaggedRow({
       {entry.quota_preview?.length ? (
         <div className="mt-2 rounded-sm bg-surface-2 px-2.5 py-2 text-[11px]">
           <p className="font-medium">Live quota from this credential</p>
+          {entry.quota_preview_observed_at ? (
+            <p className="text-fg-subtle">
+              Observed {new Date(entry.quota_preview_observed_at).toLocaleString()}
+            </p>
+          ) : null}
           <ul className="mt-1 flex flex-col gap-0.5 text-fg-subtle">
             {entry.quota_preview.map((quota, index) => (
               <li key={`${quota.service_name ?? 'quota'}-${quota.window_type ?? index}`}>

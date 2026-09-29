@@ -252,6 +252,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     SQLModel.metadata.create_all(engine)
     source_id = "sidecar:host-a:path:/home/user/auth.json"
     origin = "path:/home/user/auth.json"
+    target_seen = datetime(2026, 9, 30, tzinfo=UTC)
     with Session(engine) as session:
         session.add(
             CredentialSource(
@@ -267,6 +268,18 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
         session.add(
             PendingCredentialTag(
                 sidecar_id="host-a", provider_id="antigravity", credential_origin=origin
+            )
+        )
+        session.add(
+            CredentialSource(
+                provider_id="antigravity",
+                account_id="s3ntin3l8@gmail.com",
+                source_id=source_id,
+                source_type="sidecar",
+                source_label="host-a",
+                credential_origin=origin,
+                sidecar_id="host-a",
+                last_seen=target_seen,
             )
         )
         session.commit()
@@ -324,6 +337,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
         )
 
     assert source.account_id == "s3ntin3l8@gmail.com"
+    assert source.last_seen == target_seen
     assert tag is not None and tag.set_by == "identity_verification"
     assert pending is None
     assert manager.pending_identity_preview("antigravity", source_id) == []
