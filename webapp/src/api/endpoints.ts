@@ -283,6 +283,19 @@ export const putProviderConfig = (providerId: string, accountId: string, body: P
     },
   );
 
+export const patchCredentialSources = (
+  providerId: string,
+  accountId: string,
+  sources: { source_id: string; enabled: boolean; priority: number }[],
+  allMachines = false,
+) => {
+  const endpoint = `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}/credential-sources`;
+  return api<{ status: string }>(endpoint, {
+    method: 'PATCH',
+    body: JSON.stringify({ sources, all_machines: allMachines }),
+  });
+};
+
 export const deleteProviderConfig = (providerId: string, accountId: string) =>
   api<{ status: string }>(
     `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,

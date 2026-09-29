@@ -1,6 +1,7 @@
 import base64
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,6 +52,133 @@ async def test_multi_account_isolation(cache):
     # Verify counts
     accounts = await cache.get_accounts("anthropic")
     assert len(accounts) == 2
+
+
+@pytest.mark.asyncio
+async def test_same_type_credentials_remain_separate_sources(cache):
+    await cache.store(
+        "openrouter",
+        {"api_key": "first"},  # pragma: allowlist secret — fake credential for cache test
+        account_id="alice@example.com",
+        source_id="sidecar:first",
+        source_metadata={"priority": 1},
+    )
+    await cache.store(
+        "openrouter",
+        {"api_key": "second"},  # pragma: allowlist secret — fake credential for cache test
+        account_id="alice@example.com",
+        source_id="sidecar:second",
+        source_metadata={"priority": 0},
+    )
+
+    candidates = await cache.get_source_candidates("openrouter", "alice@example.com")
+    assert [entry["source_id"] for entry in candidates] == ["sidecar:second", "sidecar:first"]
+    async with cache.using_source("openrouter", "alice@example.com", "sidecar:first"):
+        assert await cache.get_token("openrouter", "api_key", "alice@example.com") == "first"
+    async with cache.using_source("openrouter", "alice@example.com", "sidecar:second"):
+        assert await cache.get_token("openrouter", "api_key", "alice@example.com") == "second"
+
+
+@pytest.mark.asyncio
+async def test_active_source_context_routes_all_cache_reads_and_updates(cache):
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "source-token", "account_label": "Alice"},
+        account_id="alice@example.com",
+        source_id="sidecar:host-a",
+        source_metadata={"source_type": "sidecar"},
+    )
+
+    async with cache.using_source("anthropic", "alice@example.com", "sidecar:host-a"):
+        source_accounts = await cache.get_accounts("anthropic")
+        assert source_accounts[0]["account_id"] == "alice@example.com"
+        assert source_accounts[0]["tokens"]["oauth_token"] == "source-token"
+        assert await cache.get("anthropic", "alice@example.com") == {
+            "oauth_token": "source-token",
+            "account_label": "Alice",
+        }
+        tokens, metadata = await cache.get_with_metadata("anthropic", "alice@example.com")
+        assert tokens["oauth_token"] == "source-token"
+        assert metadata["source_type"] == "sidecar"
+        assert cache.current_source_tokens("anthropic", "default")["oauth_token"] == "source-token"
+        assert cache.current_source_metadata("anthropic", "default")["source_type"] == "sidecar"
+
+        await cache.store("anthropic", {"refresh_token": "rotated"})
+        assert await cache.get_token("anthropic", "refresh_token", "alice@example.com") == "rotated"
+
+    assert await cache.get("anthropic", "alice@example.com") is not None
+
+
+@pytest.mark.asyncio
+async def test_stale_source_push_keeps_fresh_oauth_but_merges_refresh_and_other_fields(cache):
+    future_expiry = str(int((time.time() + 3600) * 1000))
+    past_expiry = str(int((time.time() - 3600) * 1000))
+    await cache.store(
+        "antigravity",
+        {
+            "oauth_token": "fresh-token",  # pragma: allowlist secret
+            "refresh_token": "fresh-refresh",  # pragma: allowlist secret
+            "expiry_date": future_expiry,
+        },
+        account_id="alice@example.com",
+        source_id="sidecar:host-a",
+    )
+    await cache.store(
+        "antigravity",
+        {
+            "oauth_token": "stale-token",  # pragma: allowlist secret
+            "refresh_token": "rotated-refresh",  # pragma: allowlist secret
+            "expiry_date": past_expiry,
+            "account_label": "Alice",
+        },
+        account_id="alice@example.com",
+        source_id="sidecar:host-a",
+    )
+
+    candidate = (await cache.get_source_candidates("antigravity", "alice@example.com"))[0]
+    assert candidate["tokens"]["oauth_token"] == "fresh-token"
+    assert candidate["tokens"]["refresh_token"] == "rotated-refresh"
+    assert candidate["tokens"]["account_label"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_source_bundles_expire_independently(cache):
+    short_cache = TokenCache(ttl_seconds=0)
+    await short_cache.store(
+        "openrouter",
+        {"api_key": "temporary"},  # pragma: allowlist secret — fake credential for expiry test
+        account_id="default",
+        source_id="env:one",
+    )
+    time.sleep(0.01)
+    assert await short_cache.get_source_candidates("openrouter", "default") == []
+
+
+@pytest.mark.asyncio
+async def test_401_response_marks_only_active_source_attempt(cache):
+    await cache.store(
+        "openrouter",
+        {"api_key": "provider-key"},  # pragma: allowlist secret — test credential
+        account_id="default",
+        source_id="env:one",
+    )
+
+    matching_request = SimpleNamespace(
+        url="https://provider.example/usage",
+        headers={"Authorization": "Bearer provider-key"},
+    )
+    unrelated_request = SimpleNamespace(
+        url="https://metrics.example/ping",
+        headers={"Authorization": "Bearer unrelated-key"},
+    )
+    matching_response = SimpleNamespace(status_code=401, request=matching_request)
+    unrelated_response = SimpleNamespace(status_code=401, request=unrelated_request)
+
+    async with cache.using_source("openrouter", "default", "env:one") as attempt:
+        await cache.observe_response(unrelated_response)
+        assert attempt["auth_failed"] is False
+        await cache.observe_response(matching_response)
+        assert attempt["auth_failed"] is True
 
 
 @pytest.mark.asyncio
@@ -490,3 +618,23 @@ async def test_staler_sidecar_push_keeps_config_origin(cache):
     assert tokens["oauth_token"] == "fresh"
     stats = await cache.get_all_stats()
     assert stats["gemini"]["user@example.com"]["source"] == "config"
+
+
+@pytest.mark.asyncio
+async def test_source_lookups_return_snapshots(cache):
+    await cache.store(
+        "openrouter",
+        {"api_key": "original"},  # pragma: allowlist secret — fake credential
+        account_id="alice@example.com",
+        source_id="source-a",
+        source_metadata={"source_type": "sidecar"},
+    )
+    async with cache.using_source("openrouter", "alice@example.com", "source-a"):
+        tokens = cache.current_source_tokens("openrouter", "alice@example.com")
+        metadata = cache.current_source_metadata("openrouter", "alice@example.com")
+        assert tokens is not None and metadata is not None
+        tokens["api_key"] = "mutated"  # pragma: allowlist secret — fake credential
+        metadata["source_type"] = "mutated"
+    candidates = await cache.get_source_candidates("openrouter", "alice@example.com")
+    assert candidates[0]["tokens"]["api_key"] == "original"  # pragma: allowlist secret
+    assert candidates[0]["source_type"] == "sidecar"

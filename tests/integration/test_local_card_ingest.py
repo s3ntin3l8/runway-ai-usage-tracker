@@ -89,6 +89,7 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock()
+        mock_tc.store.return_value = "a@example.com"
         client = TestClient(app)
         resp = _ingest(client, payload)
 
@@ -109,6 +110,41 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
     assert card_data["provider_id"] == "anthropic"
     assert card_data["window_type"] == "weekly"
     assert card_data["used_value"] == 20.0
+
+
+def test_local_credential_ingest_registers_source_without_sidecar_id(session):
+    payload = {
+        "provider": "local-sidecar",
+        "metrics": [
+            {
+                "provider_id": "anthropic",
+                "service_name": "Claude",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "oauth_token": "local-token",  # pragma: allowlist secret
+                    "credential_origin": "claude_code",
+                },
+            }
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.services.credential_sources.touch_source") as mock_touch,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock(return_value="alice@example.com")
+        _ingest(TestClient(app), payload)
+
+    mock_touch.assert_called_once()
+    from app.services.credential_sources import sidecar_source_id
+
+    assert mock_touch.call_args.kwargs["source_id"] == sidecar_source_id("local", "claude_code")
+    assert mock_touch.call_args.kwargs["sidecar_id"] is None
 
 
 def test_empty_completed_providers_heartbeat_skips_latest_usage_write_block(session):

@@ -338,8 +338,8 @@ class TestAntigravityTokenStamp:
         ):
             cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert len(token_cards) == 1
-        assert token_cards[0]["account_id"] == "default"
+        assert token_cards == []
+        assert len(_blocked) == 1
 
     def test_token_card_defaults_when_email_unknown(self, tmp_path):
         tok = self._write_token_file(tmp_path)
@@ -347,8 +347,8 @@ class TestAntigravityTokenStamp:
         with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
             cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert len(token_cards) == 1
-        assert token_cards[0]["account_id"] == "default"
+        assert token_cards == []
+        assert len(_blocked) == 1
 
 
 class TestChatGPTTokenStamp:
@@ -425,8 +425,8 @@ class TestChatGPTTokenStamp:
             cards, _blocked = sidecar.GenericCollector.collect_provider("chatgpt", config)
 
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert len(token_cards) == 1
-        assert token_cards[0]["account_id"] == "default"
+        assert token_cards == []
+        assert len(_blocked) == 1
 
 
 class TestAntigravityTokenExpiry:
@@ -472,7 +472,7 @@ class TestAntigravityTokenExpiry:
         tok = self._write_token_file(tmp_path, future)
         config = self._config(tok)
 
-        with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
+        with patch.object(sidecar, "_ag_account_email", return_value="user@example.com"):
             cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
 
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
@@ -2341,9 +2341,10 @@ def test_xai_grok_auth_card_and_events_share_email_first_identity(monkeypatch, t
     monkeypatch.delenv("GROK_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [auth_path])
 
-    cards, blocked = sidecar.GenericCollector.collect_provider(
-        "xai", sidecar.__REGISTRY__["providers"]["xai"]
-    )
+    with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
+        cards, blocked = sidecar.GenericCollector.collect_provider(
+            "xai", sidecar.__REGISTRY__["providers"]["xai"]
+        )
 
     assert blocked == []
     card = next(card for card in cards if card["unit"] == "oauth")
@@ -2360,18 +2361,20 @@ def test_xai_grok_uses_user_id_then_operator_tag_when_email_missing(monkeypatch,
     monkeypatch.setenv("GROK_HOME", str(tmp_path / ".grok"))
     monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [user_auth])
 
-    cards, blocked = sidecar.GenericCollector.collect_provider(
-        "xai", sidecar.__REGISTRY__["providers"]["xai"]
-    )
+    with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
+        cards, blocked = sidecar.GenericCollector.collect_provider(
+            "xai", sidecar.__REGISTRY__["providers"]["xai"]
+        )
     assert blocked == []
     assert next(card for card in cards if card["unit"] == "oauth")["account_id"] == "user-42"
     assert sidecar._grok_account_identity() == "user-42"
 
     untagged_auth = _seed_grok_auth_json(tmp_path, block={"key": "token", "team_id": "team-99"})
     monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [untagged_auth])
-    cards, blocked = sidecar.GenericCollector.collect_provider(
-        "xai", sidecar.__REGISTRY__["providers"]["xai"]
-    )
+    with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
+        cards, blocked = sidecar.GenericCollector.collect_provider(
+            "xai", sidecar.__REGISTRY__["providers"]["xai"]
+        )
     # xai is key-scoped (#349): the blocked origin names the credential,
     # not just the file it was found in.
     from scripts.sidecar_pkg.identity import credential_fingerprint

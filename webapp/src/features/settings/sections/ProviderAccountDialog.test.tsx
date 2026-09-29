@@ -6,11 +6,24 @@
 
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createElement } from 'react';
 import { toast } from 'sonner';
 import * as api from '@/api/endpoints';
 import type { ProviderConfig } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { ProviderAccountDialog } from './ProviderAccountDialog';
+
+const dndContexts = vi.hoisted(() => [] as Array<Record<string, (...args: any[]) => void>>);
+vi.mock('@dnd-kit/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>();
+  return {
+    ...actual,
+    DndContext: ({ children, ...props }: any) => {
+      dndContexts.push(props);
+      return createElement(actual.DndContext, props, children);
+    },
+  };
+});
 
 vi.mock('@/api/endpoints');
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
@@ -86,6 +99,137 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
         expect.objectContaining({ opencode_workspace_id: 'workspace-new' }),
       ),
     );
+  });
+
+  it('lists credential sources and saves their enabled preferences', async () => {
+    vi.mocked(api.patchCredentialSources).mockResolvedValue({ status: 'saved' });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    const provider: ProviderConfig = {
+      ...anthropic,
+      accounts: [
+        {
+          ...anthropic.accounts[0]!,
+          credential_sources: [
+            {
+              source_id: 'sidecar:browser',
+              source_type: 'sidecar',
+              source_label: 'Browser cookie',
+              sidecar_id: 'laptop',
+              enabled: true,
+              priority: 0,
+              last_seen: null,
+              health: 'healthy',
+              available: true,
+            },
+            {
+              source_id: 'sidecar:cli',
+              source_type: 'sidecar',
+              source_label: 'CLI credentials',
+              sidecar_id: 'laptop',
+              enabled: true,
+              priority: 1,
+              last_seen: null,
+              health: 'unavailable',
+              available: false,
+            },
+            {
+              source_id: 'config:anthropic:alice@example.com',
+              source_type: 'config',
+              source_label: 'Manual configuration',
+              sidecar_id: null,
+              enabled: true,
+              priority: 2,
+              last_seen: null,
+              health: 'unavailable',
+              available: false,
+            },
+          ],
+        },
+      ],
+    };
+    renderWithProviders(
+      <ProviderAccountDialog provider={provider} accountId="alice@example.com" onClose={() => {}} />,
+    );
+
+    expect(screen.getByText('Browser cookie')).toBeInTheDocument();
+    expect(screen.getByText('Available')).toBeInTheDocument();
+    expect(screen.getByText('Sidecar unavailable or credential expired')).toBeInTheDocument();
+    expect(screen.getByText('Manual configuration is not currently available')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('switch', { name: 'Enable Browser cookie' }));
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(api.patchCredentialSources).toHaveBeenCalledWith(
+      'anthropic',
+      'alice@example.com',
+      [
+        { source_id: 'sidecar:browser', enabled: false, priority: 0 },
+        { source_id: 'sidecar:cli', enabled: true, priority: 1 },
+        { source_id: 'config:anthropic:alice@example.com', enabled: true, priority: 2 },
+      ],
+      false,
+    ));
+  });
+
+  it('reorders sources through the accessible drag handlers', async () => {
+    vi.mocked(api.patchCredentialSources).mockResolvedValue({ status: 'saved' });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    dndContexts.length = 0;
+    const provider: ProviderConfig = {
+      ...anthropic,
+      collection_strategies: [],
+      supported_strategies: [],
+      accounts: [
+        {
+          ...anthropic.accounts[0]!,
+          collection_strategies: [],
+          credential_sources: [
+            {
+              source_id: 'sidecar:browser',
+              source_type: 'sidecar',
+              source_label: 'Browser cookie',
+              sidecar_id: 'laptop',
+              enabled: true,
+              priority: 0,
+              health: 'healthy',
+              available: true,
+            },
+            {
+              source_id: 'sidecar:cli',
+              source_type: 'sidecar',
+              source_label: 'CLI credentials',
+              sidecar_id: 'laptop',
+              enabled: true,
+              priority: 1,
+              health: 'healthy',
+              available: true,
+            },
+          ],
+        },
+      ],
+    };
+    renderWithProviders(
+      <ProviderAccountDialog provider={provider} accountId="alice@example.com" onClose={() => {}} />,
+    );
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /Apply matching credential origins/ }));
+    const handlers = dndContexts.at(-1)!;
+    handlers.onDragStart?.({});
+    handlers.onDragCancel?.({});
+    handlers.onDragEnd?.({
+      active: { id: 'sidecar:cli' },
+      over: { id: 'sidecar:browser' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(api.patchCredentialSources).toHaveBeenCalledWith(
+      'anthropic',
+      'alice@example.com',
+      [
+        { source_id: 'sidecar:cli', enabled: true, priority: 0 },
+        { source_id: 'sidecar:browser', enabled: true, priority: 1 },
+      ],
+      true,
+    ));
   });
 
   it('pre-fills the form fields from the existing account', async () => {

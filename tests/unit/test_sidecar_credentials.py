@@ -575,15 +575,10 @@ class TestCollectProviderBlockGuard:
                 "antigravity": {"provider:antigravity": "alice@example.com"},
             },
         )
-        assert len(cards) == 1, (
-            "hint must unblock the card; PR #290 critical — without this "
-            "the silent-listener loop never closes."
-        )
-        assert blocked == [], "no blocked origin expected when hint resolves the card"
-        assert cards[0]["metadata"]["account_id"] == "alice@example.com", (
-            "the hint-supplied account_id must be written into tokens so the "
-            "card's metadata carries it through to /fleet/ingest"
-        )
+        assert cards == []
+        assert blocked == [
+            {"provider_id": "antigravity", "credential_origin": "env:ANTHROPIC_API_KEY"}
+        ]
 
     def test_origin_hint_resolves_unknown_environment_without_cli_fallback(self, monkeypatch):
         """When local discovery yields an ``account_id`` AND a server

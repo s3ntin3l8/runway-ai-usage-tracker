@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -22,6 +23,7 @@ from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
     AuditLog,
+    CredentialSource,
     LatestUsage,
     ProviderConfig,
     SidecarRegistry,
@@ -939,6 +941,18 @@ class _DashboardLayout(BaseModel):
     card_orders: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class _CredentialSourcePreference(BaseModel):
+    source_id: str
+    enabled: bool
+    # Zero-based ordering rank; duplicate ranks are resolved by source_id.
+    priority: int = Field(ge=0)
+
+
+class _CredentialSourcesUpdate(BaseModel):
+    sources: list[_CredentialSourcePreference]
+    all_machines: bool = False
+
+
 class _ProviderConfigUpdate(BaseModel):
     enabled: bool | None = None
     archived: bool | None = None
@@ -995,6 +1009,32 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     rows_by_provider: dict[str, list[ProviderConfig]] = {}
     for r in db_rows:
         rows_by_provider.setdefault(r.provider_id, []).append(r)
+    credential_sources_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
+    for source in session.exec(select(CredentialSource)).all():
+        credential_sources_by_account.setdefault(
+            (source.provider_id, source.account_id), []
+        ).append(source)
+
+    async def _source_summaries(provider_id: str, account_id: str) -> list[dict[str, Any]]:
+        live_ids = {
+            item["source_id"]
+            for item in await token_cache.get_source_candidates(provider_id, account_id)
+        }
+        rows = credential_sources_by_account.get((provider_id, account_id), [])
+        return [
+            {
+                "source_id": row.source_id,
+                "source_type": row.source_type,
+                "source_label": row.source_label,
+                "sidecar_id": row.sidecar_id,
+                "enabled": row.enabled,
+                "priority": row.priority,
+                "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+                "health": row.health if row.source_id in live_ids else "unavailable",
+                "available": row.source_id in live_ids,
+            }
+            for row in sorted(rows, key=lambda item: (item.priority, item.id or 0))
+        ]
 
     # Pre-compute the set of (provider_id, account_id) pairs that have at
     # least one row in latest_usage — drives the per-account `is_orphaned`
@@ -1154,6 +1194,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 ),
                 "source": "config",
                 "credential_source_labels": _discovery_labels(p_id, r.account_id),
+                "credential_sources": await _source_summaries(p_id, r.account_id),
             }
             for r in provider_rows
         ]
@@ -1176,6 +1217,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "is_orphaned": False,
                     "source": "discovered",
                     "credential_source_labels": _discovery_labels(p_id, c_aid),
+                    "credential_sources": await _source_summaries(p_id, c_aid),
                 }
             )
         # Durable fallback for passive providers only (no config rows ever):
@@ -1202,6 +1244,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "is_orphaned": False,
                         "source": "discovered",
                         "credential_source_labels": [],
+                        "credential_sources": [],
                     }
                 )
 
@@ -1269,6 +1312,56 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
     # typed ``Alice@X.com`` lines up with the cards/events for alice@x.com.
     account_id = canonical_account_id(account_id)
     await _apply_provider_config_update(session, provider_id, account_id, body)
+    return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
+
+
+@router.patch("/provider-config/{provider_id}/{account_id}/credential-sources")
+@limiter.limit("20/minute")
+async def update_credential_sources(
+    request: Request,
+    provider_id: str,
+    account_id: str,
+    body: _CredentialSourcesUpdate,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """Update enabled state and priority for sources on any account, discovered or configured."""
+    if provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    account_id = canonical_account_id(account_id)
+    source_preferences = await _update_credential_source_preferences(
+        session, provider_id, account_id, body.sources, all_machines=body.all_machines
+    )
+    session.commit()
+    manager._credential_source_preferences[(provider_id, account_id)] = source_preferences
+    manager._last_sync_time = 0.0
+    try:
+        await manager.reset_collector(provider_id, account_id)
+    except Exception:
+        logger.exception(
+            "Could not reset collector after credential source preferences changed: %s/%s",
+            scrub_log(provider_id),
+            scrub_log(account_id),
+        )
+    # audit_log.record commits its row in its own savepoint transaction.
+    audit_log.record(
+        session,
+        request,
+        action="credential.sources_update",
+        target_id=f"{provider_id}/{account_id}",
+        payload={
+            "all_machines": body.all_machines,
+            "sources": [
+                {"source_id": item.source_id, "enabled": item.enabled, "priority": item.priority}
+                for item in body.sources
+            ],
+        },
+    )
+    from app.core.cache import cache_clear
+    from app.services.poller import poller
+
+    cache_clear()
+    poller.wake()
     return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
 
 
@@ -1548,6 +1641,88 @@ def _row_exists(session: Session, provider_id: str, account_id: str) -> bool:
     return session.exec(stmt).one() > 0
 
 
+async def _update_credential_source_preferences(
+    session: Session,
+    provider_id: str,
+    account_id: str,
+    preferences: list[_CredentialSourcePreference],
+    *,
+    all_machines: bool = False,
+) -> dict[str, tuple[bool, int]]:
+    by_id = {item.source_id: item for item in preferences}
+    if len(by_id) != len(preferences):
+        raise HTTPException(status_code=422, detail="Duplicate credential source id")
+    known = {
+        source.source_id: source
+        for source in session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == provider_id,
+                CredentialSource.account_id == account_id,
+            )
+        ).all()
+    }
+    if set(by_id) - set(known):
+        raise HTTPException(status_code=404, detail="Unknown credential source")
+    if set(known) - set(by_id):
+        raise HTTPException(
+            status_code=422,
+            detail="Credential source preferences must include every known source",
+        )
+    sibling_groups: dict[str, list[CredentialSource]] = {}
+    if all_machines:
+        for source in known.values():
+            if source.credential_origin and source.sidecar_id:
+                sibling_groups.setdefault(source.credential_origin, []).append(source)
+
+    applied_origins: set[str] = set()
+    for item in preferences:
+        source = known[item.source_id]
+        siblings: Sequence[CredentialSource] = [source]
+        if all_machines and source.credential_origin and source.sidecar_id:
+            if source.credential_origin in applied_origins:
+                continue
+            applied_origins.add(source.credential_origin)
+            siblings = sibling_groups[source.credential_origin]
+        for sibling in siblings:
+            sibling_preference = by_id.get(sibling.source_id)
+            if sibling_preference is None:
+                continue
+            sibling.enabled = sibling_preference.enabled
+            sibling.priority = sibling_preference.priority
+            session.add(sibling)
+    return {source_id: (item.enabled, item.priority) for source_id, item in by_id.items()}
+
+
+async def _store_manual_config_source(
+    session: Session, provider_id: str, account_id: str, tokens: dict[str, str]
+) -> None:
+    """Keep dashboard credentials in their durable and in-memory source bundle."""
+    from app.services.credential_sources import touch_source
+
+    source_id = f"config:{provider_id}:{account_id}"
+    source = touch_source(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        source_id=source_id,
+        source_type="config",
+        source_label="Manual configuration",
+    )
+    await token_cache.store(
+        provider_id,
+        tokens,
+        account_id=account_id,
+        source="config",
+        source_id=source_id,
+        source_metadata={
+            "source_type": "config",
+            "source_label": "Manual configuration",
+            "enabled": source.enabled,
+            "priority": source.priority,
+        },
+    )
+
+
 async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-field validation + persistence, refactor tracked separately
     session: Session,
     provider_id: str,
@@ -1633,6 +1808,9 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             await token_cache.remove_tokens(provider_id, account_id, {"api_key", "oauth_token"})
         else:
             await token_cache.remove(provider_id, account_id)
+        await token_cache.remove_source(
+            provider_id, account_id, f"config:{provider_id}:{account_id}"
+        )
     if body.api_key is not None and body.clear_api_key is not True:
         # Empty string = clear the stored key; non-empty = encrypt and store
         val = body.api_key
@@ -1707,14 +1885,11 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             if provider_id == "opencode":
                 tokens["api_key"] = row.api_key
 
-            await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
+            await _store_manual_config_source(session, provider_id, account_id, tokens)
         elif row.api_key and provider_id == "xai":
             # A dashboard paste is an access bearer, not a refresh token.
-            await token_cache.store(
-                provider_id,
-                {"xai_access": row.api_key},
-                account_id=account_id,
-                source="config",
+            await _store_manual_config_source(
+                session, provider_id, account_id, {"xai_access": row.api_key}
             )
     oai_sc_val: str | None = None  # may be extracted from pasted cookie string below
     if body.clear_session_cookie is True:
@@ -1725,6 +1900,19 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         await token_cache.remove_tokens(
             provider_id,
             account_id,
+            {
+                "session_cookie",
+                "cookie_session",
+                "cookie_sessionKey",
+                "cookie___Secure-next-auth.session-token",
+                "console_session",
+                "cookie_oai-sc",
+            },
+        )
+        await token_cache.remove_source_tokens(
+            provider_id,
+            account_id,
+            f"config:{provider_id}:{account_id}",
             {
                 "session_cookie",
                 "cookie_session",
@@ -1809,7 +1997,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             if provider_id == "chatgpt" and oai_sc_val:
                 tokens["cookie_oai-sc"] = oai_sc_val
 
-            await token_cache.store(provider_id, tokens, account_id=account_id, source="config")
+            await _store_manual_config_source(session, provider_id, account_id, tokens)
 
     session.commit()
     # A replaced/removed credential deserves a fresh verdict: drop any stale

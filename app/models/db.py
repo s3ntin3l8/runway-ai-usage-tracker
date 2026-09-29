@@ -196,6 +196,30 @@ class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
             self.oai_sc_cookie_encrypted = None
 
 
+class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
+    """Durable, non-secret settings and health for one account credential source."""
+
+    __tablename__ = "credential_sources"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "account_id", "source_id", name="uq_credential_source"),
+        Index("ix_credential_sources_account", "provider_id", "account_id"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str
+    account_id: str
+    source_id: str
+    source_type: str  # config | sidecar | env | file | server
+    source_label: str
+    credential_origin: str | None = None
+    sidecar_id: str | None = None
+    enabled: bool = Field(default=True)
+    priority: int = Field(default=0)
+    last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    health: str = Field(default="healthy")  # healthy | auth_failed | unavailable
+    health_detail: str | None = None
+
+
 class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]
     """Global application configuration (single row)."""
 

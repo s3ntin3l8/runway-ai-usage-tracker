@@ -8,6 +8,95 @@ import yaml
 from app.services.credential_provider import CredentialProvider
 
 
+@pytest.mark.asyncio
+async def test_credential_provider_reads_the_selected_source_bundle(monkeypatch):
+    from app.services import token_cache as token_cache_module
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    monkeypatch.setattr(token_cache_module, "token_cache", cache)
+    await cache.store(
+        "anthropic",
+        {
+            "oauth_token": "source-oauth",  # pragma: allowlist secret — fake credential
+            "session_cookie": "source-cookie",  # pragma: allowlist secret — fake credential
+        },
+        account_id="alice@example.com",
+        source_id="sidecar:host-a",
+        source_metadata={"source_type": "sidecar"},
+    )
+
+    async with cache.using_source("anthropic", "alice@example.com", "sidecar:host-a"):
+        credentials = CredentialProvider.get_credentials(
+            "anthropic", account_id="alice@example.com"
+        )
+        assert credentials["api_key"] == "source-oauth"  # pragma: allowlist secret
+        assert credentials["access_token"] == "source-oauth"  # pragma: allowlist secret
+        assert credentials.sources["oauth_token"] == "sidecar"
+        assert (
+            CredentialProvider.get_provider_api_key("anthropic", account_id="alice@example.com")
+            == "source-oauth"  # pragma: allowlist secret
+        )
+        assert (
+            CredentialProvider.get_provider_session_cookie(
+                "anthropic", account_id="alice@example.com"
+            )
+            == "source-cookie"
+        )
+
+
+@pytest.mark.asyncio
+async def test_selected_but_missing_source_does_not_fall_back(monkeypatch):
+    from app.services import token_cache as token_cache_module
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    monkeypatch.setattr(token_cache_module, "token_cache", cache)
+    async with cache.using_source("anthropic", "alice@example.com", "expired-source"):
+        assert CredentialProvider.get_credentials("anthropic", account_id="alice@example.com") == {}
+        assert (
+            CredentialProvider.get_provider_api_key("anthropic", account_id="alice@example.com")
+            is None
+        )
+        assert (
+            CredentialProvider.get_provider_session_cookie(
+                "anthropic", account_id="alice@example.com"
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_active_source_for_other_account_does_not_block_legacy_discovery(monkeypatch):
+    from app.services import token_cache as token_cache_module
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    monkeypatch.setattr(token_cache_module, "token_cache", cache)
+    monkeypatch.setenv("RUNWAY_TEST_BOB_KEY", "bob-env-key")
+    monkeypatch.setattr(
+        "app.services.credential_provider.registry.get_provider",
+        lambda _provider: {
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "RUNWAY_TEST_BOB_KEY",
+                    "mapping": {"value": "api_key"},
+                }
+            ]
+        },
+    )
+    async with cache.using_source("anthropic", "alice@example.com", "alice-source"):
+        assert (
+            CredentialProvider.get_credentials("anthropic", account_id="bob@example.com")["api_key"]
+            == "bob-env-key"
+        )
+        assert (
+            CredentialProvider.get_credentials("openrouter")["api_key"]
+            == "bob-env-key"  # pragma: allowlist secret — fake environment credential
+        )
+
+
 def test_github_token_env():
     """Test discovering GitHub token from environment."""
     with (
