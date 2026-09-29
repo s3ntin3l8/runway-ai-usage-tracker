@@ -122,7 +122,8 @@ export function UntaggedCredentialsDialog({
   const entries = untagged.data?.items ?? [];
   // Three entry points use this list: the Fleet banner shows all entries,
   // per-entry actions show one credential, and identity rows filter to a
-  // provider on one sidecar.
+  // provider on one sidecar. The client filter also guards against entries
+  // outside the requested scope if a response ever contains them.
   const visibleEntries = useMemo(
     () =>
       singleEntry

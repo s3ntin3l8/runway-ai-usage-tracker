@@ -511,6 +511,13 @@ function IdentitySources({
     ([, info]) => info.source === 'default' || info.account_id === 'default',
   ).length;
   const identifiedCount = entries.length - unidentifiedCount;
+  const pendingCredentialCounts = new Map<string, number>();
+  for (const entry of untaggedEntries) {
+    pendingCredentialCounts.set(
+      entry.provider_id,
+      (pendingCredentialCounts.get(entry.provider_id) ?? 0) + 1,
+    );
+  }
   return (
     <details className="mt-3 group">
       <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-fg-subtle marker:hidden">
@@ -523,9 +530,7 @@ function IdentitySources({
       <ul className="mt-2 space-y-1 text-[12px]" aria-label="Account identities">
         {entries.map(([providerId, info]) => {
           const unidentified = info.source === 'default' || info.account_id === 'default';
-          const matchingCredentials = untaggedEntries.filter(
-            (entry) => entry.provider_id === providerId,
-          );
+          const matchingCredentialCount = pendingCredentialCounts.get(providerId) ?? 0;
           return (
             <li
               key={providerId}
@@ -541,14 +546,14 @@ function IdentitySources({
                 </span>
               </span>
               {unidentified ? (
-                matchingCredentials.length > 0 ? (
+                matchingCredentialCount > 0 ? (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="ml-auto h-7 px-2 text-[11px]"
                     onClick={() => onMapCredential(providerId)}
                   >
-                    Map credential ({matchingCredentials.length})
+                    Map credential ({matchingCredentialCount})
                   </Button>
                 ) : (
                   <span className="ml-auto text-[11px] text-fg-subtle">

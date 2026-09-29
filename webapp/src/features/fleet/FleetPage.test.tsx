@@ -145,6 +145,7 @@ describe('FleetPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Map credential (2)' }));
 
     const dialog = await screen.findByRole('dialog');
+    expect(api.fetchUntaggedCredentials).toHaveBeenCalledWith('laptop');
     expect(within(dialog).getByText('antigravity · credentials reported by laptop')).toBeInTheDocument();
     expect(within(dialog).getByText('provider:antigravity')).toBeInTheDocument();
     expect(within(dialog).getByText('env:ANTIGRAVITY_TOKEN')).toBeInTheDocument();
