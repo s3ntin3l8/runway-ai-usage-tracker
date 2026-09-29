@@ -994,6 +994,30 @@ def test_opencode_auth_json_discovery_is_shown_for_each_provider(
     assert not any(secret in str(account) for secret in tokens.values())
 
 
+def test_discovery_credential_kind_matches_known_oauth_token_types():
+    from app.api.endpoints.system import _discovery_credential_kind
+
+    assert _discovery_credential_kind("cookie", {"api_key"}) == "Cookie"
+    assert _discovery_credential_kind("file", {"oauth_token"}) == "OAuth token"
+    assert _discovery_credential_kind("file", {"xai_access"}) == "OAuth token"
+    assert _discovery_credential_kind("file", {"oauth_flow"}) == "API key"
+
+
+def test_archived_account_usage_flags_ignore_unrendered_provider_rows(
+    session: Session, monkeypatch
+):
+    from app.api.endpoints.system import _archived_account_usage_flags
+    from app.models.db import ProviderConfig
+    from app.services.collector_manager import manager
+
+    monkeypatch.setattr(manager, "collector_registry", {})
+    row = ProviderConfig(
+        provider_id="opencode-free", account_id="archived@example.com", archived=True
+    )
+
+    assert _archived_account_usage_flags(session, [row]) == {}
+
+
 # ---------------------------------------------------------------------------
 # preview_account_identity — edge cases (#287)
 # ---------------------------------------------------------------------------

@@ -22,6 +22,9 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
 
 # OpenCode's subscription, Zen, and free usage streams have distinct provider
 # IDs in the event store, but share one OpenCode account identity/config.
+# OpenCode's extractor preserves opencode-zen in
+# scripts/sidecar_pkg/event_extractors/opencode.py:_OC_PROVIDER_MAP, while
+# scripts/sidecar_pkg/event_extractors/hermes.py folds it to opencode.
 _OPENCODE_TIER_PROVIDER_IDS = frozenset({"opencode-free", "opencode-zen"})
 _OPENCODE_ACCOUNT_USAGE_PROVIDER_IDS = frozenset({"opencode", "opencode-free", "opencode-zen"})
 

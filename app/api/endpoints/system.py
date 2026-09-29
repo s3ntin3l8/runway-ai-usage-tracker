@@ -1543,13 +1543,13 @@ def _has_account_usage(provider_id: str, account_id: str, session: Session) -> b
 def _discovery_credential_kind(rule_type: str, token_types: set[str]) -> str:
     if rule_type == "cookie":
         return "Cookie"
-    if any(
-        "oauth" in token_type.lower()
-        or "access_token" in token_type.lower()
-        or "refresh_token" in token_type.lower()
-        or token_type.lower() in {"xai_access", "xai_refresh"}
-        for token_type in token_types
-    ):
+    if token_types & {
+        "oauth_token",
+        "refresh_token",
+        "cli_access_token",
+        "xai_access",
+        "xai_refresh",
+    }:
         return "OAuth token"
     return "API key"
 
@@ -1557,6 +1557,7 @@ def _discovery_credential_kind(rule_type: str, token_types: set[str]) -> str:
 def _archived_account_usage_flags(
     session: Session, archived_rows: list[ProviderConfig]
 ) -> dict[tuple[str, str], bool]:
+    archived_rows = [row for row in archived_rows if row.provider_id in manager.collector_registry]
     usage_terms = [
         and_(
             col(UsageEvent.provider_id).in_(account_usage_provider_ids(row.provider_id)),
