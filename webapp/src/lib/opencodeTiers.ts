@@ -1,6 +1,8 @@
 const PROVIDER_CONFIG_ID_BY_USAGE_PROVIDER: Record<string, string> = {
   'opencode-free': 'opencode',
   'opencode-zen': 'opencode',
+  'hermes-auto': 'opencode',
+  'hermes-xai-oauth': 'xai',
 };
 
 // Keep tier aliases in sync with account_config_provider_id in

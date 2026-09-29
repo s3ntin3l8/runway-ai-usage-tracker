@@ -12,8 +12,14 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
-import type { PendingUsageAssignmentGroup, PendingUsageFilter, PendingUsageSession } from '@/api/types';
+import type {
+  PendingUsageAssignmentGroup,
+  PendingUsageFilter,
+  PendingUsageSession,
+  ProviderConfig,
+} from '@/api/types';
 import { accountConfigProviderIdForUsage } from '@/lib/opencodeTiers';
+import { AddProviderWizard } from '@/features/settings/sections/AddProviderWizard';
 
 function sessionKey(group: PendingUsageSession) {
   const sessionIdentity = group.session_id ? `session:${group.session_id}` : `event:${group.event_ids[0]}`;
@@ -108,6 +114,39 @@ export function PendingUsageEventsCard() {
     const configProviderId = accountConfigProviderIdForUsage(providerId);
     const configured = configs.data?.providers.find((item) => item.provider_id === configProviderId);
     return configured?.accounts.filter((account) => !account.archived && account.enabled !== false) ?? [];
+  };
+
+  const [wizardTarget, setWizardTarget] = useState<{
+    provider: ProviderConfig | null;
+    providerId: string;
+    rowKey?: string;
+  } | null>(null);
+
+  const existingAccountIdsByProvider = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const p of configs.data?.providers ?? []) {
+      map.set(
+        p.provider_id,
+        new Set(p.accounts.map((a) => a.account_id)),
+      );
+    }
+    return map;
+  }, [configs.data?.providers]);
+
+  const providerName = (providerId: string) => {
+    const configProviderId = accountConfigProviderIdForUsage(providerId);
+    const found = configs.data?.providers.find((item) => item.provider_id === configProviderId);
+    return found?.name || providerId;
+  };
+
+  const openWizard = (providerId: string, rowKey?: string) => {
+    const configProviderId = accountConfigProviderIdForUsage(providerId);
+    const found = configs.data?.providers.find((item) => item.provider_id === configProviderId) ?? null;
+    setWizardTarget({
+      provider: found,
+      providerId,
+      rowKey,
+    });
   };
 
   async function selectAllMatching() {
@@ -304,22 +343,40 @@ export function PendingUsageEventsCard() {
                     {first !== last ? ` – ${last}` : ''}
                   </TD>
                   <TD>
-                    <select
-                      aria-label={`Account for ${group.provider_id} session ${groupLabel(group)}`}
-                      className="h-8 min-w-40 max-w-52 rounded-sm border border-edge bg-surface-2 px-2 text-xs"
-                      value={accounts[key] ?? ''}
-                      onChange={(event) => setAccounts((old) => ({ ...old, [key]: event.target.value }))}
-                    >
-                      <option value="">Choose account…</option>
-                      {options.map((account) => {
-                        const label = account.account_label || account.account_id;
-                        return (
-                          <option key={account.account_id} value={account.account_id}>
-                            {account.account_id === 'default' ? `${label} (default)` : label}
-                          </option>
-                        );
-                      })}
-                    </select>
+                    {options.length === 0 ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 text-xs shrink-0"
+                        onClick={() => openWizard(group.provider_id, key)}
+                      >
+                        + Set up {providerName(group.provider_id)}
+                      </Button>
+                    ) : (
+                      <select
+                        aria-label={`Account for ${group.provider_id} session ${groupLabel(group)}`}
+                        className="h-8 min-w-40 max-w-52 rounded-sm border border-edge bg-surface-2 px-2 text-xs"
+                        value={accounts[key] ?? ''}
+                        onChange={(event) => {
+                          if (event.target.value === '__add_new__') {
+                            openWizard(group.provider_id, key);
+                            return;
+                          }
+                          setAccounts((old) => ({ ...old, [key]: event.target.value }));
+                        }}
+                      >
+                        <option value="">Choose account…</option>
+                        {options.map((account) => {
+                          const label = account.account_label || account.account_id;
+                          return (
+                            <option key={account.account_id} value={account.account_id}>
+                              {account.account_id === 'default' ? `${label} (default)` : label}
+                            </option>
+                          );
+                        })}
+                        <option value="__add_new__">+ Set up new account…</option>
+                      </select>
+                    )}
                   </TD>
                   <TD>
                     <Button
@@ -367,7 +424,7 @@ export function PendingUsageEventsCard() {
       </div>
 
       <ResponsiveDialog
-        open={batchOpen}
+        open={batchOpen && !wizardTarget}
         onOpenChange={setBatchOpen}
         title="Assign selected usage"
         description={`${selectedGroups.length} groups · ${selectedEventCount} events. Choose an account for each provider.`}
@@ -377,26 +434,51 @@ export function PendingUsageEventsCard() {
           {selectedProviders.map((providerId) => {
             const groups = selectedGroups.filter((group) => group.provider_id === providerId);
             const count = groups.reduce((sum, group) => sum + group.event_count, 0);
+            const options = optionsForProvider(providerId);
             return (
-              <label key={providerId} className="grid gap-1 text-xs font-medium text-fg-muted sm:grid-cols-[minmax(9rem,1fr)_2fr] sm:items-center">
+              <div
+                key={providerId}
+                className="grid gap-1 text-xs font-medium text-fg-muted sm:grid-cols-[minmax(9rem,1fr)_2fr] sm:items-center"
+              >
                 <span>{providerId} · {count} events</span>
-                <select
-                  aria-label={`Batch account for ${providerId}`}
-                  className="h-9 w-full rounded-sm border border-edge bg-surface-2 px-2 text-[13px] text-fg"
-                  value={batchAccounts[providerId] ?? ''}
-                  onChange={(event) => setBatchAccounts((old) => ({ ...old, [providerId]: event.target.value }))}
-                >
-                  <option value="">Choose account…</option>
-                  {optionsForProvider(providerId).map((account) => {
-                    const label = account.account_label || account.account_id;
-                    return (
-                      <option key={account.account_id} value={account.account_id}>
-                        {account.account_id === 'default' ? `${label} (default)` : label}
-                      </option>
-                    );
-                  })}
-                </select>
-              </label>
+                {options.length === 0 ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-warning">No account configured</span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-8 text-xs shrink-0"
+                      onClick={() => openWizard(providerId)}
+                    >
+                      + Set up {providerName(providerId)}
+                    </Button>
+                  </div>
+                ) : (
+                  <select
+                    aria-label={`Batch account for ${providerId}`}
+                    className="h-9 w-full rounded-sm border border-edge bg-surface-2 px-2 text-[13px] text-fg"
+                    value={batchAccounts[providerId] ?? ''}
+                    onChange={(event) => {
+                      if (event.target.value === '__add_new__') {
+                        openWizard(providerId);
+                        return;
+                      }
+                      setBatchAccounts((old) => ({ ...old, [providerId]: event.target.value }));
+                    }}
+                  >
+                    <option value="">Choose account…</option>
+                    {options.map((account) => {
+                      const label = account.account_label || account.account_id;
+                      return (
+                        <option key={account.account_id} value={account.account_id}>
+                          {account.account_id === 'default' ? `${label} (default)` : label}
+                        </option>
+                      );
+                    })}
+                    <option value="__add_new__">+ Set up new account…</option>
+                  </select>
+                )}
+              </div>
             );
           })}
           <div className="flex justify-end gap-2 pt-2">
@@ -412,6 +494,32 @@ export function PendingUsageEventsCard() {
           </div>
         </div>
       </ResponsiveDialog>
+
+      {wizardTarget ? (
+        <AddProviderWizard
+          preScopedProvider={wizardTarget.provider}
+          providers={configs.data?.providers ?? []}
+          existingAccountIdsByProvider={existingAccountIdsByProvider}
+          onClose={() => setWizardTarget(null)}
+          onSaved={(_savedProviderId, savedAccountId) => {
+            setBatchAccounts((old) => ({ ...old, [wizardTarget.providerId]: savedAccountId }));
+            if (wizardTarget.rowKey) {
+              setAccounts((old) => ({ ...old, [wizardTarget.rowKey!]: savedAccountId }));
+            }
+            setAccounts((old) => {
+              const next = { ...old };
+              for (const item of pending.data?.items ?? []) {
+                if (item.provider_id === wizardTarget.providerId) {
+                  next[sessionKey(item)] = savedAccountId;
+                }
+              }
+              return next;
+            });
+            queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+            setWizardTarget(null);
+          }}
+        />
+      ) : null}
     </Card>
   );
 }

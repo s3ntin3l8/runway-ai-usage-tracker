@@ -28,10 +28,17 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
 _OPENCODE_TIER_PROVIDER_IDS = frozenset({"opencode-free", "opencode-zen"})
 _OPENCODE_ACCOUNT_USAGE_PROVIDER_IDS = frozenset({"opencode", "opencode-free", "opencode-zen"})
 
+_USAGE_TO_CONFIG_PROVIDER_MAP: dict[str, str] = {
+    "opencode-free": "opencode",
+    "opencode-zen": "opencode",
+    "hermes-auto": "opencode",
+    "hermes-xai-oauth": "xai",
+}
+
 
 def account_config_provider_id(provider_id: str) -> str:
     """Return the provider whose account config owns a usage provider ID."""
-    return "opencode" if provider_id in _OPENCODE_TIER_PROVIDER_IDS else provider_id
+    return _USAGE_TO_CONFIG_PROVIDER_MAP.get(provider_id, provider_id)
 
 
 def account_usage_provider_ids(provider_id: str) -> frozenset[str]:

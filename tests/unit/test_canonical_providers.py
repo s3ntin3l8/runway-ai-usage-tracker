@@ -23,13 +23,17 @@ def test_extractors_extend_shared_canonical_provider_mappings_without_drift():
     assert _HERMES_CANONICAL_MAP == {
         **SHARED_CANONICAL_PROVIDER_MAP,
         "kimi-coding": ("kimi_coding", None),
+        "kimi": ("kimi_coding", None),
         "minimax": ("minimax", None),
         "minimax-oauth": ("minimax", None),
         "opencode-go": ("opencode", None),
         "opencode-zen": ("opencode", None),
         "opencode": ("opencode", None),
+        "opencode-free": ("opencode-free", None),
         "deepseek-api": ("deepseek", None),
         "anthropic": ("anthropic", None),
         "gemini": ("gemini", None),
         "ollama": ("ollama", None),
+        "xai-oauth": ("xai", None),
+        "xai-api": ("xai", None),
     }

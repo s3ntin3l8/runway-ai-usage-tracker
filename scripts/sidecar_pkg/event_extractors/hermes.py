@@ -46,16 +46,26 @@ logger = logging.getLogger("runway.sidecar.hermes")
 _HERMES_CANONICAL_MAP: dict[str, CanonicalProviderTuple] = {
     **SHARED_CANONICAL_PROVIDER_MAP,
     "kimi-coding": ("kimi_coding", None),
+    "kimi": ("kimi_coding", None),
     "minimax": ("minimax", None),
     "minimax-oauth": ("minimax", None),
     "opencode-go": ("opencode", None),
     "opencode-zen": ("opencode", None),
     "opencode": ("opencode", None),
+    "opencode-free": ("opencode-free", None),
     "deepseek-api": ("deepseek", None),
     "anthropic": ("anthropic", None),
     "gemini": ("gemini", None),
     "ollama": ("ollama", None),
+    "xai-oauth": ("xai", None),
+    "xai-api": ("xai", None),
 }
+
+
+def _is_free_model(model: str) -> bool:
+    """Return True if model name indicates a free-tier model."""
+    m = (model or "").strip().lower()
+    return m.endswith((":free", "-free")) or ":free" in m or "-free" in m
 
 
 def map_hermes_canonical(billing_provider: str) -> tuple[str, str | None] | None:
@@ -72,6 +82,63 @@ def map_hermes_provider_id(billing_provider: str) -> str:
     if canonical:
         return canonical[0]
     return f"hermes-{bp}"
+
+
+def resolve_hermes_provider_and_canonical(
+    billing_provider: str,
+    billing_base_url: str,
+    model: str,
+    session_billing_provider: str = "",
+    session_billing_base_url: str = "",
+    session_model: str = "",
+) -> tuple[str, CanonicalProviderTuple | None]:
+    """Resolve raw and session metadata to (target_provider_id, canonical_tuple_or_None)."""
+    bp = (billing_provider or "").strip().lower()
+    sbp = (session_billing_provider or "").strip().lower()
+    base_url = (billing_base_url or session_billing_base_url or "").strip().lower()
+    m = (model or session_model or "").strip()
+    m_lower = m.lower()
+
+    # 1. Model-specific heuristics when billing_provider is missing, hermes, or generic
+    if not bp or bp in ("hermes", "auto", "default", "custom"):
+        if m_lower.startswith("kimi-") or m_lower == "kimi-for-coding":
+            bp = "kimi-coding"
+        elif m_lower.startswith("grok-"):
+            bp = "xai-oauth"
+        elif m_lower.startswith("minimax") or m_lower.startswith("minimax-"):
+            bp = "minimax-oauth"
+        elif sbp and sbp not in ("hermes", "auto", "default", "custom"):
+            bp = sbp
+        elif "opencode.ai" in base_url or sbp.startswith("opencode"):
+            bp = "opencode"
+        elif "api.x.ai" in base_url:
+            bp = "xai-oauth"
+        elif "api.kimi.com" in base_url:
+            bp = "kimi-coding"
+        elif "api.minimax.io" in base_url:
+            bp = "minimax-oauth"
+        elif "openrouter.ai" in base_url:
+            bp = "openrouter"
+
+    # 2. OpenCode tier splitting: free models vs paid/subscription
+    is_opencode = (
+        bp in ("opencode", "opencode-go", "opencode-zen", "auto")
+        or "opencode.ai" in base_url
+        or sbp.startswith("opencode")
+    )
+    if is_opencode:
+        if _is_free_model(m):
+            return "opencode-free", ("opencode-free", None)
+        return "opencode", ("opencode", None)
+
+    # 3. Canonical map lookup
+    canonical = map_hermes_canonical(bp)
+    if canonical is not None:
+        return canonical[0], canonical
+
+    # 4. Fallback provider ID
+    provider_id = map_hermes_provider_id(bp)
+    return provider_id, None
 
 
 def _discover_hermes_db_paths() -> list[Path]:
@@ -221,7 +288,11 @@ def parse_hermes_events(
                         s.cwd,
                         s.git_branch,
                         s.source,
-                        COALESCE(s.profile_name, ?) as profile_name
+                        COALESCE(s.profile_name, ?) as profile_name,
+                        s.billing_provider as session_billing_provider,
+                        s.billing_base_url as session_billing_base_url,
+                        s.billing_mode as session_billing_mode,
+                        s.model as session_model
                     FROM session_model_usage smu
                     LEFT JOIN sessions s ON smu.session_id = s.id
                     WHERE MAX(COALESCE(smu.last_seen, 0), COALESCE(smu.first_seen, 0)) > ?
@@ -309,7 +380,14 @@ def parse_hermes_events(
                 continue
 
             # Determine provider_id and canonical mapping
-            canonical = map_hermes_canonical(billing_provider)
+            target_provider_id, canonical = resolve_hermes_provider_and_canonical(
+                billing_provider=billing_provider,
+                billing_base_url=billing_base_url,
+                model=model,
+                session_billing_provider=row["session_billing_provider"] or "",
+                session_billing_base_url=row["session_billing_base_url"] or "",
+                session_model=row["session_model"] or "",
+            )
             if canonical is not None:
                 canonical_provider_id, account_override = canonical
                 target_provider_id = canonical_provider_id
@@ -320,6 +398,10 @@ def parse_hermes_events(
                 elif canonical_hints:
                     provider_hints = canonical_hints.get(canonical_provider_id, {})
                     canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
+                    if not canonical_hint and canonical_provider_id == "opencode-free":
+                        canonical_hint = canonical_hints.get("opencode", {}).get(
+                            "provider:opencode"
+                        )
                     if canonical_hint:
                         event_account_id = canonical_hint
                         event_account_source = "tag"
@@ -332,7 +414,6 @@ def parse_hermes_events(
                     event_account_id = "default"
                     event_account_source = "default"
             else:
-                target_provider_id = map_hermes_provider_id(billing_provider)
                 event_account_id = account_id
                 event_account_source = None
 

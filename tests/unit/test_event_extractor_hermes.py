@@ -13,6 +13,7 @@ from scripts.sidecar_pkg.event_extractors.hermes import (
     map_hermes_canonical,
     map_hermes_provider_id,
     parse_hermes_events,
+    resolve_hermes_provider_and_canonical,
 )
 from tests.fixtures.hermes_fixture import make_hermes_db
 
@@ -34,20 +35,83 @@ def _make_db() -> tuple[Path, sqlite3.Connection]:
 
 def test_canonical_provider_mapping():
     assert map_hermes_canonical("kimi-coding") == ("kimi_coding", None)
+    assert map_hermes_canonical("kimi") == ("kimi_coding", None)
     assert map_hermes_canonical("minimax-oauth") == ("minimax", None)
     assert map_hermes_canonical("minimax") == ("minimax", None)
     assert map_hermes_canonical("opencode-go") == ("opencode", None)
     assert map_hermes_canonical("opencode-zen") == ("opencode", None)
+    assert map_hermes_canonical("opencode-free") == ("opencode-free", None)
     assert map_hermes_canonical("openrouter") == ("openrouter", None)
     assert map_hermes_canonical("deepseek") == ("deepseek", None)
+    assert map_hermes_canonical("xai") == ("xai", None)
+    assert map_hermes_canonical("xai-oauth") == ("xai", None)
     assert map_hermes_canonical("unknown-provider") is None
 
 
 def test_provider_id_mapping():
     assert map_hermes_provider_id("kimi-coding") == "kimi_coding"
     assert map_hermes_provider_id("minimax-oauth") == "minimax"
+    assert map_hermes_provider_id("xai-oauth") == "xai"
     assert map_hermes_provider_id("custom-llm") == "hermes-custom-llm"
     assert map_hermes_provider_id("") == "hermes"
+
+
+def test_resolve_hermes_provider_and_canonical():
+    # xai-oauth maps to xai
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "xai-oauth", "https://api.x.ai/v1", "grok-4.7"
+    )
+    assert pid == "xai"
+    assert canon == ("xai", None)
+
+    # Empty billing_provider with kimi model resolves to kimi_coding
+    pid, canon = resolve_hermes_provider_and_canonical("", "", "kimi-for-coding")
+    assert pid == "kimi_coding"
+    assert canon == ("kimi_coding", None)
+
+    # Empty billing_provider falls back to parent session opencode-go
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "", "", "deepseek-v4-flash", session_billing_provider="opencode-go"
+    )
+    assert pid == "opencode"
+    assert canon == ("opencode", None)
+
+    # Empty billing_provider with free model falls back to opencode-free
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "", "", "deepseek-v4-flash-free", session_billing_provider="opencode-go"
+    )
+    assert pid == "opencode-free"
+    assert canon == ("opencode-free", None)
+
+    # auto billing_provider with opencode base_url
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "auto", "https://opencode.ai/zen/v1/", "deepseek-v4-flash"
+    )
+    assert pid == "opencode"
+    assert canon == ("opencode", None)
+
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "auto", "https://opencode.ai/zen/v1/", "deepseek-v4-flash-free"
+    )
+    assert pid == "opencode-free"
+    assert canon == ("opencode-free", None)
+
+    # Colon free model syntax
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "auto", "https://opencode.ai/zen/v1/", "nvidia/nemotron-3-ultra-550b-a55b:free"
+    )
+    assert pid == "opencode-free"
+    assert canon == ("opencode-free", None)
+
+    # grok model with empty billing_provider resolves to xai
+    pid, canon = resolve_hermes_provider_and_canonical("", "", "grok-4.7")
+    assert pid == "xai"
+    assert canon == ("xai", None)
+
+    # MiniMax model with empty billing_provider resolves to minimax
+    pid, canon = resolve_hermes_provider_and_canonical("", "", "MiniMax-M3")
+    assert pid == "minimax"
+    assert canon == ("minimax", None)
 
 
 # ---------------------------------------------------------------------------
@@ -736,5 +800,141 @@ def test_first_seen_newer_than_last_seen_extracted(tmp_path):
         )
         assert len(events) == 1
         assert events[0].model_id == "custom-model"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_hermes_parent_session_and_model_heuristics_extraction(tmp_path):
+    """Auxiliary tasks with empty or auto billing_provider resolve via parent session and model heuristics."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db_path = Path(tmp.name)
+    conn = make_hermes_db(str(db_path))
+
+    # 1. Parent session is opencode-go; title_generation task has empty billing_provider
+    conn.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            started_at, ended_at
+        ) VALUES (
+            'sess-opencode-01', 'api_server', 'review-bot', 'deepseek-v4-flash',
+            'opencode-go', 'https://opencode.ai/zen/go/v1', 1780000000.0, 1780000500.0
+        )
+    """)
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-opencode-01', 'deepseek-v4-flash', '', '', '',
+            'title_generation', 1, 500, 50, 0, 0, 0, 0.0, 0.0, 'none', 'none',
+            1780000100.0, 1780000500.0
+        )
+    """)
+
+    # 2. xai-oauth billing_provider
+    conn.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            started_at, ended_at
+        ) VALUES (
+            'sess-xai-01', 'api_server', 'review-bot', 'grok-4.7',
+            'xai-oauth', 'https://api.x.ai/v1', 1780000000.0, 1780000500.0
+        )
+    """)
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-xai-01', 'grok-4.7', 'xai-oauth', 'https://api.x.ai/v1', '',
+            'main', 5, 2000, 300, 0, 0, 0, 0.0, 0.0, 'none', 'none',
+            1780000100.0, 1780000500.0
+        )
+    """)
+
+    # 3. auto billing_provider with free model against opencode.ai URL
+    conn.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            started_at, ended_at
+        ) VALUES (
+            'sess-free-01', 'api_server', 'review-bot', 'deepseek-v4-flash-free',
+            'opencode-zen', 'https://opencode.ai/zen/v1', 1780000000.0, 1780000500.0
+        )
+    """)
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-free-01', 'deepseek-v4-flash-free', 'auto', 'https://opencode.ai/zen/v1/', '',
+            'compression', 2, 800, 100, 0, 0, 0, 0.0, 0.0, 'none', 'none',
+            1780000100.0, 1780000500.0
+        )
+    """)
+
+    # 4. Kimi model in session whose main billing provider was minimax
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'api-sess-minimax-02', 'kimi-for-coding', '', '', '',
+            'title_generation', 1, 592, 23, 0, 0, 0, 0.0, 0.0, 'none', 'none',
+            1780001000.0, 1780001500.0
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+    canonical_hints = {
+        "opencode": {"provider:opencode": "operator@opencode.com"},
+        "xai": {"provider:xai": "operator@xai.com"},
+    }
+
+    try:
+        events = parse_hermes_events(
+            [db_path],
+            "fallback@host.com",
+            datetime.fromtimestamp(1779000000.0, tz=UTC),
+            canonical_hints=canonical_hints,
+        )
+
+        by_session_task = {(ev.session_id, ev.subagent_type): ev for ev in events}
+
+        # 1. Opencode title generation resolved from session to opencode
+        ev_oc = by_session_task[("sess-opencode-01", "title_generation")]
+        assert ev_oc.provider_id == "opencode"
+        assert ev_oc.account_id == "operator@opencode.com"
+        assert ev_oc.account_source == "tag"
+
+        # 2. xai-oauth resolved to xai
+        ev_xai = by_session_task[("sess-xai-01", "main")]
+        assert ev_xai.provider_id == "xai"
+        assert ev_xai.account_id == "operator@xai.com"
+        assert ev_xai.account_source == "tag"
+
+        # 3. auto with free model resolved to opencode-free and inherited provider:opencode hint
+        ev_free = by_session_task[("sess-free-01", "compression")]
+        assert ev_free.provider_id == "opencode-free"
+        assert ev_free.account_id == "operator@opencode.com"
+        assert ev_free.account_source == "tag"
+
+        # 4. Kimi model resolved to kimi_coding even when session was minimax
+        ev_kimi = by_session_task[("api-sess-minimax-02", "title_generation")]
+        assert ev_kimi.provider_id == "kimi_coding"
+        # No hint for kimi_coding was provided -> holds back as default
+        assert ev_kimi.account_id == "default"
+        assert ev_kimi.account_source == "default"
     finally:
         db_path.unlink(missing_ok=True)

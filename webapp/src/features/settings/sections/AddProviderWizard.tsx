@@ -44,6 +44,7 @@ interface AddProviderWizardProps {
   // lists — defense-in-depth against the wizard's 409-on-existing preview.
   existingAccountIdsByProvider: Map<string, Set<string>>;
   onClose: () => void;
+  onSaved?: (providerId: string, accountId: string) => void;
 }
 
 interface Step2Result {
@@ -57,6 +58,7 @@ export function AddProviderWizard({
   providers,
   existingAccountIdsByProvider,
   onClose,
+  onSaved,
 }: AddProviderWizardProps) {
   // Step 1 is skipped when pre-scoped: step starts at 2.
   const [step, setStep] = useState<number>(preScopedProvider ? 2 : 1);
@@ -127,7 +129,10 @@ export function AddProviderWizard({
                   provider={selected}
                   step2Result={step2Result}
                   onBack={() => setStep(2)}
-                  onSaved={onClose}
+                  onSaved={() => {
+                    onSaved?.(selected.provider_id, step2Result.preview.suggested_account_id);
+                    onClose();
+                  }}
                 />
               </div>
             ) : null}
