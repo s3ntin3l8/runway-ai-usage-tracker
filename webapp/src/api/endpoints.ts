@@ -297,7 +297,7 @@ export interface ProviderConfigUpdate {
 
 // Multi-account PUT. accountId is required in the URL.
 export const putProviderConfig = (providerId: string, accountId: string, body: ProviderConfigUpdate) =>
-  api<{ status: string }>(
+  api<{ status: string; provider_id?: string; account_id?: string }>(
     `/api/v1/system/provider-config/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,
     {
       method: 'PUT',

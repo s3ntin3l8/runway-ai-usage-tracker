@@ -129,8 +129,8 @@ export function AddProviderWizard({
                   provider={selected}
                   step2Result={step2Result}
                   onBack={() => setStep(2)}
-                  onSaved={() => {
-                    onSaved?.(selected.provider_id, step2Result.preview.suggested_account_id);
+                  onSaved={(savedAccountId) => {
+                    onSaved?.(selected.provider_id, savedAccountId ?? step2Result.preview.suggested_account_id);
                     onClose();
                   }}
                 />
@@ -593,7 +593,7 @@ function Step3({
   provider: ProviderConfig;
   step2Result: Step2Result;
   onBack: () => void;
-  onSaved: () => void;
+  onSaved: (savedAccountId?: string) => void;
 }) {
   const queryClient = useQueryClient();
   const accountId = step2Result.preview.suggested_account_id;
@@ -627,11 +627,11 @@ function Step3({
       }
       return putProviderConfig(provider.provider_id, accountId, body);
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.success(`${provider.name} · ${label.trim() || maskedAccountId} saved`);
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       queryClient.invalidateQueries({ queryKey: ['usage'] });
-      onSaved();
+      onSaved(data?.account_id);
     },
     onError: (err) => toast.error(err.message),
   });
