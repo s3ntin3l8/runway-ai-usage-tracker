@@ -17,7 +17,8 @@
           "type": "file",
           "paths": [
             "~/.claude/.credentials.json",
-            "{{CONFIG_DIR:claude}}/.credentials.json"
+            "{{CONFIG_DIR:claude}}/.credentials.json",
+            "{{CONFIG_DIR:claude}}/oauth_creds.json"
           ],
           "format": "json",
           "mapping": {

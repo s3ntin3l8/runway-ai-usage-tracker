@@ -318,7 +318,7 @@ launchctl start com.runway.sidecar
 
 | Provider | Data Source | Required Environment |
 |----------|-------------|---------------------|
-| **Claude** | OAuth / cookie / file | `CLAUDE_CODE_OAUTH_TOKEN`, `~/.claude/.credentials.json`, macOS keychain, `sessionKey` cookie, or `~/.claude/statusline.json` |
+| **Claude** | OAuth / cookie / file | `CLAUDE_CODE_OAUTH_TOKEN`, `~/.claude/.credentials.json`, `~/.config/claude/oauth_creds.json`, macOS keychain, `sessionKey` cookie, or `~/.claude/statusline.json` |
 | **GitHub Copilot** | API token, OAuth | `GITHUB_TOKEN` (from .env or OAuth flow), `gh` CLI (from `~/.config/gh/hosts.yml`), or Windows Credential Manager |
 | **Gemini** | OAuth | `~/.gemini/oauth_creds.json` |
 | **ChatGPT** | OAuth / cookie | `CHATGPT_OAUTH_TOKEN`, `~/.codex/auth.json`, or Chrome cookie |
