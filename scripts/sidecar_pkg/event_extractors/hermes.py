@@ -43,6 +43,7 @@ logger = logging.getLogger("runway.sidecar.hermes")
 
 # Upstream billing_provider -> (canonical provider_id, explicit account override or None).
 _HERMES_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
+    **SHARED_CANONICAL_PROVIDER_MAP,
     "kimi-coding": ("kimi_coding", None),
     "minimax": ("minimax", None),
     "minimax-oauth": ("minimax", None),
@@ -53,7 +54,6 @@ _HERMES_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
     "anthropic": ("anthropic", None),
     "gemini": ("gemini", None),
     "ollama": ("ollama", None),
-    **SHARED_CANONICAL_PROVIDER_MAP,
 }
 
 
