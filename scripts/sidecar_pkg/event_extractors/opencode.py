@@ -82,6 +82,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.models.schemas import UsageEventPush  # noqa: E402
+from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
+    SHARED_CANONICAL_PROVIDER_MAP,
+    CanonicalProviderTuple,
+)
 
 # OpenCode's own providerID (backend/billing tier) -> runway provider_id.
 # Keep this in sync with scripts/reclassify_opencode_providers.py, which
@@ -115,28 +119,10 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
 # does not report which credential handled a message. Unmatched events stay
 # pending for assignment.
 # Keep this in sync with scripts/reclassify_opencode_providers.py.
-_OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
-    # MiniMax coding plan exposes no provider account identity in OpenCode.
-    "minimax-coding-plan": ("minimax", None),
+_OC_CANONICAL_MAP: dict[str, CanonicalProviderTuple] = {
+    **SHARED_CANONICAL_PROVIDER_MAP,
     # Kimi For Coding (kimi-code-plan-global backend in OpenCode).
     "kimi-code-plan-global": ("kimi_coding", None),
-    # Ollama Cloud.
-    "ollama-cloud": ("ollama", None),
-    # OpenRouter.
-    "openrouter": ("openrouter", None),
-    # xAI.
-    "xai": ("xai", None),
-    # DeepSeek — BYOK keys inside OpenCode (providerID "deepseek") are
-    # pay-as-you-go against the DeepSeek prepaid balance, so retag onto the
-    # direct "deepseek" provider: its quota card comes from
-    # GET api.deepseek.com/user/balance. The Go subscription's deepseek
-    # models (providerID "opencode-go", modelIDs "deepseek-v4-flash" /
-    # "deepseek-v4-pro") are deliberately NOT here — they stay on
-    # "opencode" because the subscription, not the DeepSeek balance, pays
-    # for them. OpenCode's account identity does not identify the BYOK
-    # DeepSeek credential, so use an explicit provider-level mapping or
-    # leave the event pending for manual assignment.
-    "deepseek": ("deepseek", None),
 }
 
 
