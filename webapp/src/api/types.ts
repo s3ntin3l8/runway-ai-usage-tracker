@@ -607,6 +607,27 @@ export interface PendingUsageSession {
   model_ids: string[];
 }
 
+export interface PendingUsageSessionsResponse {
+  items: PendingUsageSession[];
+  total_events: number;
+  total_groups: number;
+  sidecars: string[];
+  providers: string[];
+  offset: number;
+  limit: number;
+}
+
+export interface PendingUsageFilter {
+  sidecar_id?: string;
+  provider_id?: string;
+  search?: string;
+}
+
+export interface PendingUsageAssignmentGroup {
+  event_ids: number[];
+  account_id: string;
+}
+
 export interface SystemSettings {
   project_name?: string;
   app_host?: string;

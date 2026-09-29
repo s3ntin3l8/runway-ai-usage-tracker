@@ -29,7 +29,9 @@ import type {
   LimitCard,
   PairingCode,
   PendingUsageEvent,
-  PendingUsageSession,
+  PendingUsageFilter,
+  PendingUsageAssignmentGroup,
+  PendingUsageSessionsResponse,
   ProviderConfig,
   SessionEntry,
   SessionsPaginatedResponse,
@@ -146,19 +148,29 @@ export const fetchPendingUsageEvents = (offset = 0) =>
     `/api/v1/fleet/events/pending${qs({ offset, limit: 100 })}`,
   );
 
-export const fetchPendingUsageSessions = (offset = 0) =>
-  api<{
-    items: PendingUsageSession[];
-    total_events: number;
-    total_groups: number;
-    offset: number;
-    limit: number;
-  }>(`/api/v1/fleet/events/pending/sessions${qs({ offset, limit: 100 })}`);
+export const fetchPendingUsageSessions = (
+  offset = 0,
+  filters: PendingUsageFilter = {},
+  limit = 100,
+) =>
+  api<PendingUsageSessionsResponse>(
+    `/api/v1/fleet/events/pending/sessions${qs({ offset, limit, ...filters })}`,
+  );
 
 export const assignPendingUsageEvents = (eventIds: number[], accountId: string) =>
   api<{ assigned: number; provider_id: string }>('/api/v1/fleet/events/pending/assign', {
     method: 'POST',
     body: JSON.stringify({ event_ids: eventIds, account_id: accountId }),
+  });
+
+export const assignPendingUsageEventsBatch = (assignments: PendingUsageAssignmentGroup[]) =>
+  api<{
+    assigned: number;
+    providers: string[];
+    mappings: { provider_id: string; sidecar_id: string; account_id: string }[];
+  }>('/api/v1/fleet/events/pending/assign-batch', {
+    method: 'POST',
+    body: JSON.stringify({ assignments }),
   });
 
 export const tagCredential = (body: CredentialTagRequest) =>
