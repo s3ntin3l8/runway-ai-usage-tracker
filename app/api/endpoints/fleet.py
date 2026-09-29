@@ -428,7 +428,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         ),  # Per-provider list of real account_ids (multi-account)
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
         # Update channel the sidecar should track for its "update available"
-        # check ("stable" | "edge"). The dashboard owns this setting.
+        # check ("stable" | "beta" | "edge"). The dashboard owns this setting.
         "sidecar_update_channel": (sys_cfg.sidecar_update_channel if sys_cfg else None) or "stable",
         # Fleet-wide opt-in auto-update flag; a sidecar's explicit local config wins.
         "sidecar_auto_update": (sys_cfg.sidecar_auto_update if sys_cfg else None) or False,
