@@ -1301,9 +1301,10 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
 
 
 def test_permanent_delete_removes_empty_archived_account_and_source_state(
-    client: TestClient, session: Session
+    client: TestClient, session: Session, monkeypatch
 ):
     from app.models.db import LatestUsageContribution, ProviderConfig
+    from app.services.collector_manager import manager
     from app.services.credential_tags import CredentialTagRepo
     from app.services.token_cache import token_cache
 
@@ -1363,6 +1364,8 @@ def test_permanent_delete_removes_empty_archived_account_and_source_state(
         {"api_key": "oc_sk_duplicate"},  # pragma: allowlist secret
         {"source": "sidecar"},
     )
+    preferences = {("opencode", account_id): {"sidecar:old-auth": (True, 0)}}
+    monkeypatch.setattr(manager, "_credential_source_preferences", preferences)
 
     response = client.delete(
         f"/api/v1/system/provider-config/opencode/{account_id}?permanent=true",
@@ -1415,6 +1418,18 @@ def test_permanent_delete_removes_empty_archived_account_and_source_state(
         is None
     )
     assert token_cache._cache.get("opencode", {}).get(account_id) is None
+    assert ("opencode", account_id) not in manager._credential_source_preferences
+
+    audit_entry = session.exec(
+        select(AuditLog).where(
+            AuditLog.action == "provider_config.purge",
+            AuditLog.target_id == f"opencode/{account_id}",
+        )
+    ).one()
+    assert json.loads(audit_entry.payload_json or "{}") == {
+        "tags_cleared": 1,
+        "permanent": True,
+    }
 
 
 def test_permanent_delete_rejects_open_code_account_with_tier_usage(
