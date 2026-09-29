@@ -196,6 +196,20 @@ class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
             self.oai_sc_cookie_encrypted = None
 
 
+class ProviderAccountLabel(SQLModel, table=True):  # type: ignore[call-arg]
+    """Operator label override for discovered identities without config rows."""
+
+    __tablename__ = "provider_account_labels"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "account_id", name="uq_provider_account_label"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)
+    account_id: str = Field(index=True)
+    account_label: str | None = None
+
+
 class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
     """Durable, non-secret settings and health for one account credential source."""
 

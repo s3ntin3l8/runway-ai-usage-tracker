@@ -272,6 +272,12 @@ export const putAppConfig = (body: Partial<AppConfig>) =>
 export const fetchProviderConfigs = () =>
   api<{ providers: ProviderConfig[] }>('/api/v1/system/provider-configs');
 
+export const putDiscoveredAccountLabel = (providerId: string, accountId: string, account_label: string | null) =>
+  api<{ status: string }>(
+    `/api/v1/system/provider-account-label/${encodeURIComponent(providerId)}/${encodeURIComponent(accountId)}`,
+    { method: 'PUT', body: JSON.stringify({ account_label }) },
+  );
+
 export interface ProviderConfigUpdate {
   enabled?: boolean;
   archived?: boolean;

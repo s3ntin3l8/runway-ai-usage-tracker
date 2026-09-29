@@ -24,8 +24,10 @@ from app.models._datetime import iso_utc
 from app.models.db import (
     AuditLog,
     CredentialSource,
+    CredentialTag,
     LatestUsage,
     LatestUsageContribution,
+    ProviderAccountLabel,
     ProviderConfig,
     SidecarRegistry,
     SystemConfig,
@@ -955,6 +957,305 @@ class _CredentialSourcesUpdate(BaseModel):
     all_machines: bool = False
 
 
+class _DiscoveredAccountLabelUpdate(BaseModel):
+    account_label: str | None = Field(max_length=120)
+
+
+class _AccountMergeRequest(BaseModel):
+    provider_id: str
+    source_account_id: str
+    destination_account_id: str
+    confirm_collisions: bool = False
+    confirm_shared_default: bool = False
+
+
+def _account_merge_rows(
+    session: Session, provider_id: str, source_id: str, destination_id: str
+) -> list[tuple[Any, Sequence[Any], list[Any]]]:
+    """Load account scoped records and identify duplicate logical identities."""
+    from app.models.db import (
+        LatestUsage,
+        LatestUsageContribution,
+        QuotaSnapshot,
+        UsageEvent,
+        UsageWindow,
+    )
+
+    models: list[Any] = [
+        UsageEvent,
+        LatestUsage,
+        LatestUsageContribution,
+        QuotaSnapshot,
+        UsageWindow,
+    ]
+    result: list[tuple[Any, Sequence[Any], list[Any]]] = []
+    for model in models:
+        source = session.exec(
+            select(model).where(model.provider_id == provider_id, model.account_id == source_id)
+        ).all()
+        dest = session.exec(
+            select(model).where(
+                model.provider_id == provider_id, model.account_id == destination_id
+            )
+        ).all()
+        unique_sets = [
+            tuple(column.name for column in constraint.columns)
+            for constraint in model.__table__.constraints
+            if constraint.__class__.__name__ == "UniqueConstraint"
+        ]
+        unique_sets.extend(
+            tuple(column.name for column in index.columns)
+            for index in model.__table__.indexes
+            if index.unique
+        )
+        keys = [
+            tuple(name for name in names if name not in ("provider_id", "account_id", "id"))
+            for names in unique_sets
+        ]
+        keys = [key for key in keys if key]
+        # A row is colliding if any declared uniqueness identity matches.
+        collisions = []
+        for row in source:
+            if any(
+                tuple(getattr(row, name) for name in key)
+                in {tuple(getattr(candidate, name) for name in key) for candidate in dest}
+                for key in keys
+            ):
+                collisions.append(row)
+        result.append((model, source, collisions))
+    return result
+
+
+@router.post("/provider-account-merge/preview")
+@limiter.limit("20/minute")
+async def preview_provider_account_merge(
+    request: Request,
+    body: _AccountMergeRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    if body.provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    source_id = canonical_account_id(body.source_account_id)
+    destination_id = canonical_account_id(body.destination_account_id)
+    if source_id == destination_id:
+        raise HTTPException(status_code=400, detail="Source and destination must differ")
+    tables = _account_merge_rows(session, body.provider_id, source_id, destination_id)
+    counts = {
+        model.__tablename__: {"affected": len(rows), "collisions": len(collisions)}
+        for model, rows, collisions in tables
+    }
+    from app.models.db import UsagePeriodRollup
+
+    counts["usage_period_rollup"] = {
+        "affected": len(
+            session.exec(
+                select(UsagePeriodRollup).where(
+                    UsagePeriodRollup.provider_id == body.provider_id,
+                    UsagePeriodRollup.account_id == source_id,
+                )
+            ).all()
+        ),
+        "collisions": 0,
+    }
+    source_credentials = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == body.provider_id,
+            CredentialSource.account_id == source_id,
+        )
+    ).all()
+    destination_source_ids = {
+        row.source_id
+        for row in session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == body.provider_id,
+                CredentialSource.account_id == destination_id,
+            )
+        ).all()
+    }
+    counts["credential_sources"] = {
+        "affected": len(source_credentials),
+        "collisions": sum(row.source_id in destination_source_ids for row in source_credentials),
+    }
+    counts["credential_tags"] = {
+        "affected": session.exec(
+            select(CredentialTag).where(
+                CredentialTag.provider_id == body.provider_id, CredentialTag.account_id == source_id
+            )
+        )
+        .all()
+        .__len__(),
+        "collisions": 0,
+    }
+    return {
+        "provider_id": body.provider_id,
+        "source_account_id": source_id,
+        "destination_account_id": destination_id,
+        "counts": counts,
+        "total_collisions": sum(item["collisions"] for item in counts.values()),
+        "shared_default_warning": source_id == "default" or destination_id == "default",
+    }
+
+
+@router.post("/provider-account-merge/apply")
+@limiter.limit("10/minute")
+async def apply_provider_account_merge(
+    request: Request,
+    body: _AccountMergeRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    if body.provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    source_id, destination_id = (
+        canonical_account_id(body.source_account_id),
+        canonical_account_id(body.destination_account_id),
+    )
+    if source_id == destination_id:
+        raise HTTPException(status_code=400, detail="Source and destination must differ")
+    if (source_id == "default" or destination_id == "default") and not body.confirm_shared_default:
+        raise HTTPException(
+            status_code=409,
+            detail="Merging with the shared default identity can affect unattributed usage; preview and explicitly confirm.",
+        )
+    tables = _account_merge_rows(session, body.provider_id, source_id, destination_id)
+    credential_sources = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == body.provider_id,
+            CredentialSource.account_id == source_id,
+        )
+    ).all()
+    destination_source_ids = {
+        row.source_id
+        for row in session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == body.provider_id,
+                CredentialSource.account_id == destination_id,
+            )
+        ).all()
+    }
+    collisions = sum(len(dupes) for _, _, dupes in tables) + sum(
+        row.source_id in destination_source_ids for row in credential_sources
+    )
+    if collisions and not body.confirm_collisions:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Merge has duplicate history; preview and explicitly confirm collision removal.",
+                "collisions": collisions,
+            },
+        )
+    for model, rows, dupes in tables:
+        duplicate_ids = {row.id for row in dupes}
+        for row in rows:
+            if row.id in duplicate_ids:
+                session.delete(row)
+            else:
+                row.account_id = destination_id
+    # Rollups are derived from UsageEvent. Rebuild both account views after
+    # moving/deduplicating authoritative events instead of editing rollups.
+    from app.services.period_rollups import rebuild_rollups_for_pairs
+
+    rebuild_rollups_for_pairs(
+        session, {(body.provider_id, source_id), (body.provider_id, destination_id)}
+    )
+    # Keep destination credential settings authoritative. Re-home nonconflicting
+    # source metadata. Shared default identity tags are deliberately not globalized.
+    for row in credential_sources:
+        if row.source_id in destination_source_ids:
+            session.delete(row)
+        else:
+            row.account_id = destination_id
+    if source_id != "default":
+        for row in session.exec(
+            select(CredentialTag).where(
+                CredentialTag.provider_id == body.provider_id, CredentialTag.account_id == source_id
+            )
+        ).all():
+            row.account_id = destination_id
+    src = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == body.provider_id, ProviderConfig.account_id == source_id
+        )
+    ).first()
+    if src:
+        destination_config = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == body.provider_id,
+                ProviderConfig.account_id == destination_id,
+            )
+        ).first()
+        if destination_config is None:
+            src.account_id = destination_id
+        else:
+            src.enabled = False
+            src.archived = True
+            src.api_key_encrypted = None
+            src.session_cookie_encrypted = None
+    session.commit()
+    manager._last_sync_time = 0.0
+    for account_id in (source_id, destination_id):
+        try:
+            await manager.reset_collector(body.provider_id, account_id)
+        except Exception:
+            logger.exception(
+                "Could not reset collector after account merge: %s/%s",
+                scrub_log(body.provider_id),
+                scrub_log(account_id),
+            )
+    from app.core.cache import cache_clear
+    from app.services.poller import poller
+
+    cache_clear()
+    poller.wake()
+    audit_log.record(
+        session,
+        request,
+        action="provider.account_merge",
+        target_id=f"{body.provider_id}/{destination_id}",
+        payload={"source_account_id": source_id, "collisions_removed": collisions},
+    )
+    return {
+        "status": "merged",
+        "provider_id": body.provider_id,
+        "source_account_id": source_id,
+        "destination_account_id": destination_id,
+        "collisions_removed": collisions,
+    }
+
+
+@router.put("/provider-account-label/{provider_id}/{account_id}")
+@limiter.limit("20/minute")
+async def put_discovered_account_label(
+    request: Request,
+    provider_id: str,
+    account_id: str,
+    body: _DiscoveredAccountLabelUpdate,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, str]:
+    """Save a display label independently of provider collection settings."""
+    if provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    account_id = canonical_account_id(account_id)
+    row = session.exec(
+        select(ProviderAccountLabel).where(
+            ProviderAccountLabel.provider_id == provider_id,
+            ProviderAccountLabel.account_id == account_id,
+        )
+    ).first()
+    label = body.account_label.strip() if body.account_label else None
+    if row is None:
+        row = ProviderAccountLabel(
+            provider_id=provider_id, account_id=account_id, account_label=label
+        )
+        session.add(row)
+    else:
+        row.account_label = label
+    session.commit()
+    return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
+
+
 class _ProviderConfigUpdate(BaseModel):
     enabled: bool | None = None
     archived: bool | None = None
@@ -998,7 +1299,7 @@ def _supported_saved_strategies(
 
 @router.get("/provider-configs")
 @limiter.limit("30/minute")
-async def list_provider_configs(request: Request, session: Session = Depends(get_session)) -> dict:
+async def list_provider_configs(request: Request, session: Session = Depends(get_session)) -> dict:  # noqa: PLR0915
     """Return all known providers merged with their DB configuration."""
     from app.core.registry import registry
 
@@ -1022,12 +1323,10 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         ).append(source)
 
     async def _source_summaries(provider_id: str, account_id: str) -> list[dict[str, Any]]:
-        live_ids = {
-            item["source_id"]
-            for item in await token_cache.get_source_candidates(provider_id, account_id)
-        }
+        candidates = await token_cache.get_source_candidates(provider_id, account_id)
+        live_by_id = {item["source_id"]: item for item in candidates}
         rows = credential_sources_by_account.get((provider_id, account_id), [])
-        return [
+        summaries = [
             {
                 "source_id": row.source_id,
                 "source_type": row.source_type,
@@ -1036,11 +1335,36 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "enabled": row.enabled,
                 "priority": row.priority,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
-                "health": row.health if row.source_id in live_ids else "unavailable",
-                "available": row.source_id in live_ids,
+                "health": row.health if row.source_id in live_by_id else "unavailable",
+                "available": row.source_id in live_by_id,
             }
             for row in sorted(rows, key=lambda item: (item.priority, item.id or 0))
         ]
+        known_ids = {row.source_id for row in rows}
+        # Sidecar manifests may already have supplied live credentials while
+        # the durable source summary has not yet been written. Include those
+        # candidates so settings can show/tag OpenCode auth.json sources.
+        for item in candidates:
+            if item["source_id"] in known_ids:
+                continue
+            origin = item.get("credential_origin") or ""
+            source_label = (
+                origin.removeprefix("path:").rsplit("/", 1)[-1] if origin else "Sidecar credential"
+            )
+            summaries.append(
+                {
+                    "source_id": item["source_id"],
+                    "source_type": item.get("source_type", "sidecar"),
+                    "source_label": source_label,
+                    "sidecar_id": item.get("sidecar_id"),
+                    "enabled": item.get("enabled", True),
+                    "priority": item.get("priority", 0),
+                    "last_seen": None,
+                    "health": "healthy",
+                    "available": True,
+                }
+            )
+        return summaries
 
     # Pre-compute the set of (provider_id, account_id) pairs that have at
     # least one row in latest_usage — drives the per-account `is_orphaned`
@@ -1057,6 +1381,11 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     for provider_id, account_id in live_rows:
         if account_id:
             live_keys.add((provider_id, account_id))
+
+    account_label_overrides = {
+        (row.provider_id, row.account_id): row.account_label
+        for row in session.exec(select(ProviderAccountLabel)).all()
+    }
 
     # Active in-memory credentials (sidecar-discovered / server-local).
     # Passive providers (antigravity, opencode-free, …) never get a
@@ -1219,7 +1548,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "has_usage_events": False,
                     "api_key_set": False,
                     "session_cookie_set": False,
-                    "account_label": c_name,
+                    "account_label": account_label_overrides.get((p_id, c_aid)) or c_name,
                     "poll_interval_seconds": None,
                     "collection_strategies": None,
                     "opencode_workspace_id": None,
@@ -1247,7 +1576,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "has_usage_events": False,
                         "api_key_set": False,
                         "session_cookie_set": False,
-                        "account_label": None,
+                        "account_label": account_label_overrides.get((live_pid, live_aid)),
                         "poll_interval_seconds": None,
                         "collection_strategies": None,
                         "opencode_workspace_id": None,

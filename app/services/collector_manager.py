@@ -116,7 +116,18 @@ class CollectorManager:
                     for r in _s.exec(sqlselect(ProviderConfig)).all():
                         if r.provider_id not in db_configs:
                             db_configs[r.provider_id] = {}
-                        db_configs[r.provider_id][r.account_id] = r
+                        # Keep a detached value snapshot. The session commits
+                        # and closes below; retaining ORM instances here makes
+                        # later attribute reads fail when expire_on_commit is
+                        # enabled (and can trigger implicit DB access).
+                        from types import SimpleNamespace
+
+                        db_configs[r.provider_id][r.account_id] = SimpleNamespace(
+                            enabled=r.enabled,
+                            poll_interval_seconds=r.poll_interval_seconds,
+                            account_label=r.account_label,
+                            strategies=r.strategies,
+                        )
 
                         # Sync manual tokens to cache to survive reloads/restarts
                         if r.enabled and (r.api_key or r.session_cookie):
