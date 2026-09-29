@@ -526,7 +526,12 @@ class PendingCredentialTagRepo:
         preview: list[dict[str, Any]],
         observed_at: datetime | None = None,
     ) -> PendingCredentialTag | None:
-        """Persist a whitelisted quota-only preview for a pending source."""
+        """Persist a whitelisted quota-only preview for a pending source.
+
+        If the source is already tagged, its pending row and any saved preview
+        are deleted; the preview is intentionally discarded because the source
+        is now identified.
+        """
         if (
             CredentialTagRepo.get_account_id(
                 session,

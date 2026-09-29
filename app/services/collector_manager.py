@@ -765,6 +765,12 @@ class CollectorManager:
         )
         if not moved:
             # Safety net if reconciliation cannot see the just-committed tag.
+            logger.warning(
+                "Credential source reconciliation did not move the verified source; "
+                "using direct cache fallback (provider=%s, source_id=%s)",
+                provider_id,
+                source_id,
+            )
             await token_cache.move_source(provider_id, old_account_id, target, source_id)
 
     def _persist_identity_pending_preview(
