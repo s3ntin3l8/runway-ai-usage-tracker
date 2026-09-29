@@ -4,6 +4,9 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
+      "versioning": "prerelease",
+      "prerelease": true,
+      "prerelease-type": "beta.1",
       "extra-files": [
         "pyproject.toml",
         "app/__init__.py"

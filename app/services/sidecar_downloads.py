@@ -1,8 +1,9 @@
 """Resolve the downloadable sidecar builds for the Fleet page's download card.
 
-Fetches the stable (``/releases/latest``) or rolling ``edge`` release from
-GitHub and classifies its assets into installers (``.dmg`` / ``-setup.exe``)
-and portable payloads (``.zip`` / ``.tar.gz``). Results are cached per channel
+Fetches the stable (``/releases/latest``), newest numbered beta, or rolling
+``edge`` release from GitHub and classifies its assets into installers
+(``.dmg`` / ``-setup.exe``) and portable payloads (``.zip`` / ``.tar.gz``).
+Results are cached per channel
 for an hour so a busy dashboard never hammers the (rate-limited, unauthenticated)
 GitHub API; a failed fetch keeps serving the last good answer.
 
@@ -22,6 +23,7 @@ import time
 import httpx
 
 from app.models.schemas import SidecarDownloadAsset, SidecarDownloadsResponse
+from scripts.sidecar_pkg.update_check import latest_beta_release
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,7 @@ _REPO_API = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker"
 RELEASES_URL = "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases"
 _RELEASE_API = {
     "stable": f"{_REPO_API}/releases/latest",
+    "beta": f"{_REPO_API}/releases?per_page=100",
     "edge": f"{_REPO_API}/releases/tags/edge",
 }
 _CACHE_TTL_SECONDS = 60 * 60
@@ -93,7 +96,7 @@ class SidecarDownloads:
         self._lock = asyncio.Lock()
 
     async def get(self, channel: str) -> SidecarDownloadsResponse:
-        channel = "edge" if channel == "edge" else "stable"
+        channel = channel if channel in ("beta", "edge") else "stable"
         cached = self._cache.get(channel)
         if cached and time.monotonic() - cached[0] < self._ttl:
             return cached[1]
@@ -116,7 +119,16 @@ class SidecarDownloads:
             ) as client:
                 resp = await client.get(url, headers={"User-Agent": "Runway-Server-Downloads"})
             if resp.status_code == 200:
-                return parse_release(resp.json(), channel)
+                release = resp.json()
+                if channel == "beta":
+                    release = latest_beta_release(release)
+                    if release is None:
+                        return SidecarDownloadsResponse(
+                            channel=channel,
+                            release_url=RELEASES_URL,
+                            error="No beta sidecar release is available",
+                        )
+                return parse_release(release, channel)
             error = f"GitHub returned HTTP {resp.status_code}"
         except Exception as exc:  # network / JSON — degrade, never 500 the card
             error = f"GitHub unreachable: {type(exc).__name__}"

@@ -55,7 +55,7 @@ class TestAssetNames:
         assert asset_names.CHECKSUMS_FILE == "SHA256SUMS.txt"
         assert "> SHA256SUMS.txt" in BUILD_WF
 
-    @pytest.mark.parametrize("label", ["v2.13.0", "edge", "v3.0.0-rc.1"])
+    @pytest.mark.parametrize("label", ["v2.13.0", "v3.0.0-beta.1", "edge", "v3.0.0-rc.1"])
     def test_every_published_name_classifies_back(self, label):
         for name in asset_names.release_assets(label):
             plat, got_label, kind = asset_names.classify(name)

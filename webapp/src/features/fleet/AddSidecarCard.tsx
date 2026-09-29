@@ -61,7 +61,7 @@ export function AddSidecarCard({ className }: { className?: string }) {
       <CardHeader>
         <CardTitle>Add a sidecar</CardTitle>
         <div role="group" aria-label="Release channel" className="flex gap-1">
-          {(['stable', 'edge'] as const).map((c) => (
+          {(['stable', 'beta', 'edge'] as const).map((c) => (
             <Button
               key={c}
               size="sm"
@@ -69,7 +69,7 @@ export function AddSidecarCard({ className }: { className?: string }) {
               aria-pressed={channel === c}
               onClick={() => setChannel(c)}
             >
-              {c === 'stable' ? 'Stable' : 'Edge'}
+              {c === 'stable' ? 'Stable' : c === 'beta' ? 'Beta' : 'Edge'}
             </Button>
           ))}
         </div>
@@ -78,7 +78,11 @@ export function AddSidecarCard({ className }: { className?: string }) {
         <p className="text-xs text-fg-muted">
           The sidecar runs on each machine you use AI tools from and forwards local usage to this
           server.
-          {channel === 'edge' ? ' Edge is rebuilt on every push to main. It is not a stable release.' : ''}
+          {channel === 'beta'
+            ? ' Beta tracks the newest numbered prerelease.'
+            : channel === 'edge'
+              ? ' Edge is rebuilt on sidecar and installer changes to main. It is not a stable release.'
+              : ''}
         </p>
 
         {downloads.isPending ? (

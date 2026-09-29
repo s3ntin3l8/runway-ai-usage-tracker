@@ -251,7 +251,7 @@ async def get_collector_status(request: Request) -> dict[str, Any]:
 @router.get("/sidecar-downloads", response_model=SidecarDownloadsResponse)
 @limiter.limit("30/minute")
 async def get_sidecar_downloads(
-    request: Request, channel: Literal["stable", "edge"] = "stable"
+    request: Request, channel: Literal["stable", "beta", "edge"] = "stable"
 ) -> SidecarDownloadsResponse:
     """Latest sidecar installers + portable builds for *channel* (Fleet page card).
 
@@ -930,7 +930,7 @@ class _AppConfigUpdate(BaseModel):
     default_poll_interval_seconds: int | None = None  # 0 = clear override
     # IANA tz name (e.g. "Europe/Berlin"); "" or null = clear override (use TZ env / browser detect)
     user_timezone: str | None = None
-    # Sidecar update channel: "stable" (default) or "edge"; "" = clear → stable.
+    # Sidecar update channel: stable (default), beta, or edge; "" = stable.
     sidecar_update_channel: str | None = None
     # Fleet-wide opt-in: when true, sidecars self-install available updates.
     sidecar_auto_update: bool | None = None
@@ -2090,10 +2090,12 @@ async def upsert_app_config(
             cfg.sidecar_update_channel = None
         elif channel == "edge":
             cfg.sidecar_update_channel = "edge"
+        elif channel == "beta":
+            cfg.sidecar_update_channel = "beta"
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid update channel: {body.sidecar_update_channel!r} (expected 'stable' or 'edge')",
+                detail=f"Invalid update channel: {body.sidecar_update_channel!r} (expected 'stable', 'beta', or 'edge')",
             )
     if body.sidecar_auto_update is not None:
         cfg.sidecar_auto_update = bool(body.sidecar_auto_update)

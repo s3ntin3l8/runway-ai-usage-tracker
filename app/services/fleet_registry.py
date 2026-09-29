@@ -208,6 +208,7 @@ class FleetRegistryService:
         stale = last_seen_utc < datetime.now(UTC) - timedelta(minutes=_STALE_THRESHOLD_MINUTES)
         latest_version = sidecar_version_checker.get_latest()
         latest_edge_sha = sidecar_version_checker.get_latest_edge_sha()
+        latest_beta = sidecar_version_checker.get_latest_beta()
         # Only offer an update when the build can actually self-update in place.
         # `None` (not reported) stays permissive so already-deployed frozen
         # sidecars keep working; `False` (from-source / Docker) suppresses it.
@@ -217,7 +218,9 @@ class FleetRegistryService:
         # even though nothing can apply it. Gate the offer on liveness too.
         # "A newer build exists" is independent of whether it can be pushed
         # right now (#202): an offline sidecar still reports it is behind.
-        outdated = is_update_available(row.sidecar_version, latest_version, latest_edge_sha)
+        outdated = is_update_available(
+            row.sidecar_version, latest_version, latest_edge_sha, latest_beta
+        )
         update_available = not stale and row.self_update_capable is not False and outdated
         return {
             "sidecar_id": row.sidecar_id,

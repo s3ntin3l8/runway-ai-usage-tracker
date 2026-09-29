@@ -44,12 +44,15 @@ import time
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from typing import Any
 from urllib import error, request
 
 from scripts.sidecar_pkg import asset_names
 from scripts.sidecar_pkg.update_check import (
+    _BETA_RELEASES_API_URL,
     _LATEST_URL,
     check_once,
+    latest_beta_release,
     parse_channel,
 )
 
@@ -233,7 +236,7 @@ def _github_ssl_context(url: str):  # type: ignore[no-untyped-def]
     return build_context(url, insecure=False)
 
 
-def _get_json(url: str) -> dict:
+def _get_json(url: str) -> Any:
     req = request.Request(  # noqa: S310 — fixed https GitHub API URL
         url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"}
     )
@@ -243,7 +246,14 @@ def _get_json(url: str) -> dict:
 
 def _get_release_json(channel: str) -> dict:
     """Fetch the release object (with ``assets[]``) for the active channel."""
-    return _get_json(_EDGE_RELEASE_URL if channel == "edge" else _LATEST_URL)
+    if channel == "edge":
+        return _get_json(_EDGE_RELEASE_URL)
+    if channel == "beta":
+        release = latest_beta_release(_get_json(_BETA_RELEASES_API_URL))
+        if release is None:
+            raise SelfUpdateError("no beta release is available")
+        return release
+    return _get_json(_LATEST_URL)
 
 
 def find_asset_urls(release: dict, asset_name: str | list[str]) -> tuple[str, str]:

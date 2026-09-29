@@ -27,7 +27,7 @@ on:
         required: true
         type: string
       label:
-        description: Release label in asset names — the `vX.Y.Z` tag, or `edge`.
+        description: Release label in asset names — `vX.Y.Z[-beta.N]`, or `edge`.
         required: true
         type: string
       allow-partial:

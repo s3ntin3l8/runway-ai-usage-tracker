@@ -627,7 +627,7 @@ _pid_file_path: Path | None = None
 _hostname: str | None = None
 _windows_cred_cache: dict = {}
 _windows_cred_ttl_seconds: int = 300
-# Update channel the server tells us to track ("stable" | "edge"), refreshed
+# Update channel the server tells us to track ("stable" | "beta" | "edge"), refreshed
 # from each /fleet/ingest response. None until the first successful check-in;
 # the update-check thread then falls back to the channel inferred from our own
 # version string.

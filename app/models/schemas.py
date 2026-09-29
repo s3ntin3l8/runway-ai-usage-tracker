@@ -338,8 +338,8 @@ class SidecarDownloadAsset(BaseModel):
 class SidecarDownloadsResponse(BaseModel):
     """Sidecar builds for one release channel, for the Fleet page's download card."""
 
-    channel: str  # "stable" | "edge"
-    version: str | None = None  # release tag ("v2.13.0") or "edge"
+    channel: str  # "stable" | "beta" | "edge"
+    version: str | None = None  # versioned release tag or "edge"
     published_at: str | None = None
     release_url: str
     checksums_url: str | None = None  # SHA256SUMS.txt

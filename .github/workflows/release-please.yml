@@ -24,6 +24,7 @@ jobs:
       image-name: 's3ntin3l8/runway'
       push-release: true
       release-tag: ${{ needs.release-please.outputs.tag_name }}
+      release-channel: ${{ contains(needs.release-please.outputs.tag_name, '-beta.') && 'beta' || 'stable' }}
     secrets: inherit
 
   build-sidecar:

@@ -37,7 +37,7 @@ export function SystemSection() {
   const [timezone, setTimezone] = useState('');
   const [pollInterval, setPollInterval] = useState('');
   const [browserPref, setBrowserPref] = useState('');
-  const [channel, setChannel] = useState<'stable' | 'edge'>('stable');
+  const [channel, setChannel] = useState<'stable' | 'beta' | 'edge'>('stable');
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
@@ -50,7 +50,9 @@ export function SystemSection() {
         : '',
     );
     setBrowserPref(appConfig.data.browser_preference ?? '');
-    setChannel(appConfig.data.sidecar_update_channel === 'edge' ? 'edge' : 'stable');
+    setChannel(appConfig.data.sidecar_update_channel === 'beta' || appConfig.data.sidecar_update_channel === 'edge'
+      ? appConfig.data.sidecar_update_channel
+      : 'stable');
     setAutoUpdate(appConfig.data.sidecar_auto_update === true);
   }, [appConfig.data]);
 
@@ -161,7 +163,7 @@ export function SystemSection() {
               <Select
                 value={channel}
                 onValueChange={(v) => {
-                  if (v) setChannel(v as 'stable' | 'edge');
+                  if (v) setChannel(v as 'stable' | 'beta' | 'edge');
                 }}
               >
                 <SelectTrigger id="sys-channel" className="w-full sm:max-w-xs">
@@ -169,12 +171,13 @@ export function SystemSection() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="stable">Stable</SelectItem>
+                  <SelectItem value="beta">Beta (numbered prereleases)</SelectItem>
                   <SelectItem value="edge">Edge (rolling prerelease)</SelectItem>
                 </SelectContent>
               </Select>
               <HelperText>
-                Which release sidecars compare against for the "update available" check. Edge tracks
-                the rolling prerelease build.
+                Which release sidecars compare against for the "update available" check. Beta tracks
+                the newest numbered prerelease; Edge tracks the rolling build.
               </HelperText>
             </div>
             <div className="flex flex-col gap-1.5">

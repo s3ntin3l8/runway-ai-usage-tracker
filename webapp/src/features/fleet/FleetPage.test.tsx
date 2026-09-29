@@ -161,6 +161,14 @@ describe('FleetPage', () => {
     expect(await screen.findByText('edge')).toBeInTheDocument();
   });
 
+  it('shows a BETA badge for a numbered-beta sidecar', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ channel: 'beta', sidecar_version: '3.0.0-beta.1' })],
+    });
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByText('beta')).toBeInTheDocument();
+  });
+
   it('omits the EDGE badge for a stable-channel sidecar', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({
       sidecars: [sidecar({ channel: 'stable' })],

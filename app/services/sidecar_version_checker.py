@@ -1,10 +1,10 @@
 """Background service that tracks the latest published sidecar release.
 
-Polls the GitHub Releases API once on startup and every 24h thereafter, caches
-the latest tag in memory, and exposes a `get_latest()` accessor so the fleet
-API can flag sidecars running an older version. Network failures keep the
-previous cache (or `None` if we have never succeeded) — the fleet API treats
-`None` as "unknown latest, don't flag anything."
+Polls GitHub Releases once on startup and every 24h thereafter, caches the
+latest stable and beta tags plus the rolling edge sha, and exposes accessors so
+the fleet API can flag sidecars running an older version. Network failures keep
+the previous cache (or `None` if never fetched) — the fleet API treats `None`
+as "unknown latest, don't flag anything."
 
 Because release-please tags the whole repo, the cached latest tag doubles as the
 latest **server** release — `app/api/endpoints/system.py` reuses `get_latest()`
@@ -16,33 +16,41 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 import httpx
+
+from scripts.sidecar_pkg.update_check import latest_beta_release
 
 logger = logging.getLogger(__name__)
 
 _GITHUB_API_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest"
+_GITHUB_BETA_RELEASES_URL = (
+    "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases?per_page=100"
+)
 _GITHUB_EDGE_REFS_URL = (
     "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
 )
 _CHECK_INTERVAL_SECONDS = 24 * 60 * 60  # 24h
 _HTTP_TIMEOUT_SECONDS = 10.0
+_BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
 
 
 def parse_channel(version: str | None) -> tuple[str, str | None]:
     """Classify a reported sidecar version.
 
-    Edge builds are stamped ``<base>+edge.<short_sha>`` by the build workflow, so
-    a ``+edge.`` local segment identifies an edge build and carries the commit
-    sha it was built from. Returns ``("edge", short_sha)`` or ``("stable", None)``.
+    Edge builds are stamped ``<base>+edge.<short_sha>``; numbered prereleases
+    such as ``3.0.0-beta.1`` belong to the beta channel.
     """
     if version and "+edge." in version:
         return "edge", version.split("+edge.", 1)[1] or None
+    if version and _BETA_TAG_RE.fullmatch(f"v{version.lstrip('vV')}"):
+        return "beta", None
     return "stable", None
 
 
 class SidecarVersionChecker:
-    """Periodically refreshes the cached "latest sidecar release" tag."""
+    """Periodically refreshes cached stable/beta release tags and edge sha."""
 
     def __init__(
         self,
@@ -52,6 +60,7 @@ class SidecarVersionChecker:
         self._api_url = api_url
         self._interval = check_interval
         self._latest: str | None = None
+        self._latest_beta: str | None = None
         self._latest_edge_sha: str | None = None
         self._task: asyncio.Task | None = None
         self._running = False
@@ -63,6 +72,10 @@ class SidecarVersionChecker:
     def get_latest_edge_sha(self) -> str | None:
         """Return the cached commit sha of the rolling `edge` tag, or None."""
         return self._latest_edge_sha
+
+    def get_latest_beta(self) -> str | None:
+        """Return the newest numbered beta tag without its `v` prefix."""
+        return self._latest_beta
 
     def start(self) -> None:
         """Kick off the background refresh loop."""
@@ -85,9 +98,9 @@ class SidecarVersionChecker:
         logger.info("Sidecar version checker stopped.")
 
     async def check_now(self) -> str | None:
-        """Refresh the cached latest stable tag and edge-tag sha.
+        """Refresh the cached stable/beta tags and edge-tag sha.
 
-        Both fetches are best-effort: on any failure the previous cache is kept
+        All fetches are best-effort: on any failure the previous cache is kept
         and the fleet API degrades to "unknown latest" for that channel.
         """
         headers = {"User-Agent": "Runway-Server-VersionChecker"}
@@ -111,6 +124,23 @@ class SidecarVersionChecker:
                     logger.warning(
                         f"Sidecar version check returned HTTP {resp.status_code} "
                         f"for {self._api_url}; keeping cache"
+                    )
+
+                beta_resp = await client.get(_GITHUB_BETA_RELEASES_URL, headers=headers)
+                if beta_resp.status_code == 200:
+                    beta_release = latest_beta_release(beta_resp.json())
+                    beta_tag = (
+                        str(beta_release.get("tag_name", "")).lstrip("v").strip()
+                        if beta_release
+                        else None
+                    )
+                    if beta_tag != self._latest_beta:
+                        if beta_tag:
+                            logger.info(f"Latest sidecar beta release is {beta_tag}")
+                        self._latest_beta = beta_tag
+                else:
+                    logger.warning(
+                        f"Sidecar beta check returned HTTP {beta_resp.status_code}; keeping cache"
                     )
 
                 # Rolling `edge` prerelease: track the tag's commit sha so edge
@@ -147,13 +177,14 @@ def is_update_available(
     current: str | None,
     latest: str | None,
     latest_edge_sha: str | None = None,
+    latest_beta: str | None = None,
 ) -> bool:
     """Whether *current* is behind the newest build on its channel. False on ambiguity.
 
-    Edge builds (``<base>+edge.<sha>``) are compared by commit sha against the
-    rolling `edge` tag (*latest_edge_sha*), since the rolling prerelease never
-    bumps the public version. Stable builds compare against *latest* via PEP 440.
-    `latest`/`latest_edge_sha` of None → unknown channel head → don't flag.
+    Edge builds compare commit sha against the rolling `edge` tag; beta builds
+    compare against the newest beta and stable versions so stable promotion is
+    visible. Stable builds compare against *latest*. Missing channel heads mean
+    "unknown" and do not flag an update.
     """
     if not current:
         return False
@@ -164,6 +195,21 @@ def is_update_available(
         if not latest_edge_sha or not embedded_sha:
             return False
         return not latest_edge_sha.startswith(embedded_sha)
+
+    if channel == "beta":
+        try:
+            from packaging.version import InvalidVersion, Version
+
+            try:
+                current_version = Version(current)
+                return any(
+                    candidate and Version(candidate) > current_version
+                    for candidate in (latest, latest_beta)
+                )
+            except InvalidVersion:
+                return False
+        except Exception:
+            return False
 
     if not latest:
         return False
