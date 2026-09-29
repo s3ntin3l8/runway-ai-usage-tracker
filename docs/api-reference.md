@@ -77,7 +77,7 @@ All API routes are under `/api/v1/`.
 | `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it |
 | `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write) |
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout |
-| `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|edge` (public) |
+| `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` (public) |
 
 ### Data health (admin)
 
@@ -183,4 +183,4 @@ interface LimitCard {
 }
 ```
 
-See `../app/models/schemas.py` for the authoritative Pydantic definition. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are documented in [CLAUDE.md](../CLAUDE.md) and [statistics.md](statistics.md).
+See `../app/models/schemas.py` for the authoritative Pydantic definition. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are documented in [architecture.md](architecture.md) and [statistics.md](statistics.md).

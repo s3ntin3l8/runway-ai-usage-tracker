@@ -4,16 +4,16 @@ This directory contains comprehensive unit and integration tests for the Runway 
 
 ## Quick Start
 
-### Install Testing Dependencies
+### Install Dependencies
 
 ```bash
-pip install -r ../requirements.txt
+make install    # from the repo root: venv, Python deps, webapp deps, git hooks
 ```
 
 ### Run All Tests
 
 ```bash
-pytest
+make test       # or: pytest
 ```
 
 ### Run Specific Test Categories
@@ -48,7 +48,7 @@ pytest --cov=app --cov-report=html tests/
 
 Unit tests isolate individual components and test them in isolation with mocked dependencies.
 
-- **test_collectors.py**: Tests for 12 provider collectors (Claude, Gemini, GitHub, ChatGPT, Antigravity, OpenCode, zAI, Kimi, Kimi K2, Kimi Coding, OpenRouter, MiniMax)
+- **test_collectors.py**: Tests for the API/OAuth collectors (Claude, Gemini, GitHub Copilot, ChatGPT, DeepSeek, Kimi API, Kimi K2, Kimi Coding, MiniMax, OpenCode, OpenRouter, zAI) — dedicated collectors have their own files (`test_antigravity_collector.py`, `test_collectors_xai.py`, ...)
   - OAuth API success and failure scenarios
   - Fallback logic between primary and secondary sources
   - Token caching and refresh behavior
@@ -66,8 +66,8 @@ Unit tests isolate individual components and test them in isolation with mocked 
 Integration tests verify how components work together end-to-end.
 
 - **test_endpoints.py**: API endpoint testing
-  - `/api/limits` endpoint with multiple collectors
-  - `/api/ingest` endpoint for external metrics
+  - `/api/v1/usage/limits` endpoint with multiple collectors
+  - `/api/v1/fleet/ingest` endpoint for sidecar-pushed metrics
   - Partial failure handling (some collectors fail, others succeed)
   - Full failure scenarios
   - Response schema validation
@@ -103,6 +103,9 @@ pytest -m "not slow"
 ```
 
 ## Test Coverage Goals
+
+CI enforces overall floors of **70%** (Python, via `test-python`) and
+**85%** (frontend, via `test-frontend`); per-area targets above those floors:
 
 - **Collectors**: 90%+ coverage
   - OAuth/API success and error paths
@@ -185,17 +188,16 @@ pytest -s tests/
 
 ## CI/CD Integration
 
-The project uses GitHub Actions for CI/CD, with workflow files in `.github/workflows/`:
+The project uses GitHub Actions for CI/CD, with workflow files in `.github/workflows/` (full detail in [`docs/architecture.md`](../docs/architecture.md#cicd)):
 
-- **Linting**: Checks code style with `ruff` and scans for secrets using `detect-secrets`.
-- **Testing**: Runs the full suite with coverage reporting.
-- **Build & Push**: Automatically builds and pushes Docker images to **GHCR** on push to `main` or version tags.
+- **Linting**: ruff (style/format) plus mypy, detect-secrets, and pip-audit.
+- **Testing**: `test-python` runs pytest with coverage (floor 70%); `test-frontend` runs vitest (floor 85%).
+- **Build & Push**: `build-docker` pushes the `:edge` image to GHCR on push to `main`; releases publish `:latest` + the version tag.
 
-To run tests in a similar environment locally:
+To run tests the way CI does:
 
 ```bash
-pip install -r requirements.txt
-pytest --cov=app --cov-report=term-missing tests/
+make lint && make test
 ```
 
 ## Common Issues and Fixes
