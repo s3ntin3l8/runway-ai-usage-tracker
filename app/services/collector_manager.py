@@ -775,6 +775,7 @@ class CollectorManager:
             provider_id=provider_id, source_id=source_id
         )
         if not moved:
+            # The cache entry may already have left default through another path.
             await token_cache.move_source(provider_id, old_account_id, target, source_id)
 
     def _persist_identity_pending_preview(
