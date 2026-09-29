@@ -17,6 +17,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app import __version__
+
+# Routes read this module binding, so patch it to emulate a beta server build.
 from app.api.endpoints import system as system_endpoint
 from app.core.db import get_session
 from app.main import app
