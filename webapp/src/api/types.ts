@@ -537,6 +537,7 @@ export interface UntaggedCredential {
   first_seen?: string | null;
   last_seen?: string | null;
   quota_preview_observed_at?: string | null;
+  quota_preview_stale?: boolean;
   quota_preview?: Array<{
     service_name?: string;
     remaining?: string | number;

@@ -228,6 +228,8 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # Opt-in (default on) for credential-health (expired/invalid) alerts,
     # alongside the existing threshold alerts. See app.services.credential_alerts.
     ("webhook_configs", "credential_alerts", "BOOLEAN NOT NULL DEFAULT 1"),
+    ("pending_credential_tags", "quota_preview_json", "TEXT"),
+    ("pending_credential_tags", "quota_preview_observed_at", "DATETIME"),
 ]
 
 

@@ -73,6 +73,7 @@ class TestCollectorManagerInitialization:
             "source_id": "sidecar:host:path:/home/user/auth.json",
             "source_type": "sidecar",
             "credential_origin": "path:/home/user/auth.json",
+            "sidecar_id": "host",
             "identity_pending": True,
         }
 
@@ -88,7 +89,9 @@ class TestCollectorManagerInitialization:
         )
         monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
         promote = AsyncMock()
+        persist_preview = MagicMock()
         monkeypatch.setattr(manager, "_promote_source_identity", promote)
+        monkeypatch.setattr(manager, "_persist_identity_pending_preview", persist_preview)
         health = {}
 
         result = await manager._collect_with_source_failover(
@@ -103,18 +106,10 @@ class TestCollectorManagerInitialization:
             )
         else:
             promote.assert_not_awaited()
-            assert manager.pending_identity_preview("antigravity", candidate["source_id"]) == [
-                {"service_name": "Antigravity", "remaining": 7}
-            ]
-            observed_at = manager.pending_identity_preview_observed_at(
-                "antigravity", candidate["source_id"]
-            )
-            assert observed_at is not None
-            assert observed_at.endswith("+00:00")
-            manager.clear_identity_preview("antigravity", candidate["source_id"])
-            assert (
-                manager.pending_identity_preview_observed_at("antigravity", candidate["source_id"])
-                is None
+            persist_preview.assert_called_once_with(
+                "antigravity",
+                candidate,
+                [{"service_name": "Antigravity", "remaining": 7}],
             )
 
     def test_registered_collectors_explicitly_opt_into_complete_snapshots(self, manager):

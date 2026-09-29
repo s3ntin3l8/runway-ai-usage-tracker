@@ -298,7 +298,6 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
     manager = CollectorManager()
-    manager._identity_pending_previews[("antigravity", source_id)] = [{"remaining": 7}]
     move_source = cache.move_source
 
     async def heartbeat_before_cache_move(provider, old_account, new_account, source):
@@ -340,10 +339,108 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     assert source.last_seen == target_seen
     assert tag is not None and tag.set_by == "identity_verification"
     assert pending is None
-    assert manager.pending_identity_preview("antigravity", source_id) == []
     assert await cache.get_source_candidates("antigravity", "default") == []
-    assert [
-        candidate["source_id"]
-        for candidate in await cache.get_source_candidates("antigravity", "s3ntin3l8@gmail.com")
-    ] == [source_id]
+    promoted = await cache.get_source_candidates("antigravity", "s3ntin3l8@gmail.com")
+    assert [candidate["source_id"] for candidate in promoted] == [source_id]
+    assert promoted[0]["identity_pending"] is False
+    await cache.reset()
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monkeypatch):
+    from sqlmodel import SQLModel
+
+    from app.services.credential_tags import CredentialTagRepo
+
+    source_id = "sidecar:host-a:auth-json"
+    configured_source_id = "sidecar:host-a:oauth-json"
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id="antigravity",
+            credential_origin="path:/auth.json",
+            account_id="alice@example.com",
+            sidecar_id="host-a",
+        )
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id="antigravity",
+            credential_origin="path:/oauth.json",
+            account_id="alice@example.com",
+            sidecar_id="host-a",
+        )
+        session.add(
+            CredentialSource(
+                provider_id="antigravity",
+                account_id="alice@example.com",
+                source_id=configured_source_id,
+                source_type="sidecar",
+                source_label="OAuth file",
+                enabled=False,
+                priority=3,
+                sidecar_id="host-a",
+            )
+        )
+        session.commit()
+
+    cache = TokenCache()
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "fake-token"},  # pragma: allowlist secret
+        account_id="default",
+        source_id=source_id,
+        source_metadata={
+            "source_type": "sidecar",
+            "credential_origin": "path:/auth.json",
+            "sidecar_id": "host-a",
+            "identity_pending": True,
+        },
+    )
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "fake-token-two"},  # pragma: allowlist secret
+        account_id="default",
+        source_id=configured_source_id,
+        source_metadata={
+            "source_type": "sidecar",
+            "credential_origin": "path:/oauth.json",
+            "sidecar_id": "host-a",
+            "identity_pending": True,
+        },
+    )
+    monkeypatch.setattr("app.core.db.engine", engine)
+    monkeypatch.setattr("sqlmodel.Session", Session)
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    manager = CollectorManager()
+    manager._credential_source_preferences[("antigravity", "default")] = {
+        source_id: (True, 0),
+        configured_source_id: (True, 1),
+    }
+    manager._credential_source_preferences[("antigravity", "alice@example.com")] = {
+        "already-configured": (False, 9),
+        source_id: (False, 4),
+    }
+
+    reconciled = await manager.reconcile_token_cache_from_durable_tags(provider_id="antigravity")
+
+    assert reconciled == 2
+    assert await cache.get_source_candidates("antigravity", "default") == []
+    target_sources = await cache.get_source_candidates("antigravity", "alice@example.com")
+    assert {source["source_id"] for source in target_sources} == {
+        source_id,
+        configured_source_id,
+    }
+    assert all(source["identity_pending"] is False for source in target_sources)
+    assert manager._credential_source_preferences[("antigravity", "default")] == {}
+    assert manager._credential_source_preferences[("antigravity", "alice@example.com")] == {
+        "already-configured": (False, 9),
+        source_id: (False, 4),
+        configured_source_id: (False, 3),
+    }
     await cache.reset()

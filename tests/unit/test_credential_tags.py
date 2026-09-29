@@ -19,6 +19,8 @@ Pins the silent-listener resolution table contract:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine
@@ -1245,3 +1247,150 @@ def test_drop_redundant_credential_tag_indexes():
         assert "ix_credential_tags_sidecar_id" not in after
         assert "ix_credential_tags_provider_id" not in after
         assert "ix_credential_tags_sidecar" in after
+
+
+def test_pending_quota_preview_persists_only_safe_fields(session: Session):
+    row = PendingCredentialTagRepo.set_quota_preview(
+        session,
+        sidecar_id="host-a",
+        provider_id="antigravity",
+        credential_origin="path:/auth.json",
+        preview=[
+            {
+                "service_name": "Antigravity",
+                "remaining": 7,
+                "pct_used": 30,
+                "oauth_token": "fake-token",
+                "cookie_session": "fake-cookie",
+                "metadata": {"refresh_token": "fake-refresh-token"},
+            }
+        ],
+    )
+    session.commit()
+    session.refresh(row)
+
+    preview, observed_at, stale = PendingCredentialTagRepo.read_quota_preview(row)
+
+    assert preview == [{"service_name": "Antigravity", "remaining": 7, "pct_used": 30}]
+    assert observed_at is not None
+    assert stale is False
+    assert "fake-token" not in (row.quota_preview_json or "")
+    assert "fake-cookie" not in (row.quota_preview_json or "")
+    assert "fake-refresh-token" not in (row.quota_preview_json or "")
+
+
+def test_pending_quota_preview_expires_and_marks_stale(session: Session, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS", 60)
+    observed_at = datetime.now(UTC) - timedelta(seconds=61)
+    row = PendingCredentialTagRepo.set_quota_preview(
+        session,
+        sidecar_id="host-a",
+        provider_id="antigravity",
+        credential_origin="path:/auth.json",
+        preview=[{"remaining": 7}],
+        observed_at=observed_at,
+    )
+    session.commit()
+
+    preview, timestamp, stale = PendingCredentialTagRepo.read_quota_preview(
+        row, now=datetime.now(UTC)
+    )
+
+    assert preview == []
+    assert timestamp == observed_at.isoformat()
+    assert stale is True
+    assert row.quota_preview_json is not None
+
+
+def test_pending_quota_preview_cleanup_clears_expired_payloads(session: Session, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS", 60)
+    observed_at = datetime.now(UTC) - timedelta(seconds=61)
+    row = PendingCredentialTagRepo.set_quota_preview(
+        session,
+        sidecar_id="host-a",
+        provider_id="antigravity",
+        credential_origin="path:/auth.json",
+        preview=[{"remaining": 7}],
+        observed_at=observed_at,
+    )
+    session.commit()
+
+    cleared = PendingCredentialTagRepo.expire_quota_previews(session, now=datetime.now(UTC))
+    session.commit()
+    session.refresh(row)
+
+    assert cleared == 1
+    assert row.quota_preview_json is None
+    assert row.quota_preview_observed_at == observed_at
+
+
+def test_pending_preview_columns_have_forward_safe_migrations():
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert ("pending_credential_tags", "quota_preview_json", "TEXT") in _DEFERRED_COLUMNS
+    assert (
+        "pending_credential_tags",
+        "quota_preview_observed_at",
+        "DATETIME",
+    ) in _DEFERRED_COLUMNS
+
+
+def test_pending_quota_preview_is_not_written_after_source_is_tagged(session: Session):
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="antigravity",
+        credential_origin="path:/auth.json",
+        account_id="alice@example.com",
+        sidecar_id="host-a",
+    )
+
+    row = PendingCredentialTagRepo.set_quota_preview(
+        session,
+        sidecar_id="host-a",
+        provider_id="antigravity",
+        credential_origin="path:/auth.json",
+        preview=[{"remaining": 7}],
+    )
+
+    assert row is None
+    assert (
+        PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="host-a",
+            provider_id="antigravity",
+            credential_origin="path:/auth.json",
+        )
+        is None
+    )
+
+
+def test_existing_pending_table_gets_preview_columns_idempotently():
+    from sqlalchemy import text
+
+    from app.core.db import _add_columns_if_missing
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE pending_credential_tags DROP COLUMN quota_preview_json"))
+        conn.execute(
+            text("ALTER TABLE pending_credential_tags DROP COLUMN quota_preview_observed_at")
+        )
+        conn.commit()
+
+        _add_columns_if_missing(conn)
+        _add_columns_if_missing(conn)
+
+        columns = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(pending_credential_tags)"))
+        }
+        assert "quota_preview_json" in columns
+        assert "quota_preview_observed_at" in columns

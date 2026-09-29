@@ -51,7 +51,7 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/fleet/credentials/tags` | List every resolved credential tag (deployment-wide and per-sidecar scopes) |
 | `POST` | `/api/v1/fleet/credentials/tags` | Resolve a pending credential origin to a configured account (admin) |
 | `DELETE` | `/api/v1/fleet/credentials/tags` | Remove one resolved tag in a given scope (admin) |
-| `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution |
+| `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution, with safe quota previews and staleness status when available |
 | `GET` | `/api/v1/fleet/events/pending` | Paginated queue of events held back under an unresolved `default` identity (admin) |
 | `GET` | `/api/v1/fleet/events/pending/sessions` | Paginated pending events grouped by provider, host, and session; supports `sidecar_id`, `provider_id`, and session/model `search` filters (admin) |
 | `POST` | `/api/v1/fleet/events/pending/assign` | Assign up to 1000 pending events to one active account, promoting them into `usage_events` and creating provider/host mappings (admin) |

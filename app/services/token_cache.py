@@ -556,7 +556,11 @@ class TokenCache:
     async def move_source(
         self, provider: str, from_account_id: str, to_account_id: str, source_id: str
     ) -> bool:
-        """Move one credential bundle after its own API response proves identity."""
+        """Move an identified credential bundle and clear ``identity_pending``.
+
+        Call only after the source has been tagged or otherwise verified; the
+        destination entry is always marked as no longer pending.
+        """
         from_id = canonical_account_id(from_account_id)
         to_id = canonical_account_id(to_account_id)
         async with self._lock:
@@ -566,6 +570,8 @@ class TokenCache:
                 return False
             if not source_accounts:
                 self._source_cache[provider].pop(from_id, None)
+            tokens, metadata, timestamp = entry
+            entry = (tokens, {**metadata, "identity_pending": False}, timestamp)
             self._source_cache.setdefault(provider, {}).setdefault(to_id, {})[source_id] = entry
             # Keep the compatibility cache coherent when it represents this
             # same source bundle; never overwrite another account's aggregate.

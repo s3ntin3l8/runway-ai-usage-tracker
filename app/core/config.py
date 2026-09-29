@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     # cadence; the TTL intentionally caps blast radius if a token leaks.
     CREDENTIAL_TOKEN_TTL_SECONDS: int = 3600
 
+    # Safe quota previews shown for unresolved sidecar credentials are cleared
+    # after this age. They are only diagnostic context, not account history.
+    PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS: int = Field(default=86400, gt=0)
+
     # Sidecar pairing (runway-sidecar://pair deep links, POST /fleet/pair).
     # PUBLIC_URL pins the server URL handed to paired sidecars; empty = use the
     # URL the admin's browser is on (sent by the dashboard), else the request's

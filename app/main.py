@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -52,10 +53,52 @@ if settings.LOG_FORMAT == "json":
 logger = logging.getLogger(__name__)
 
 
+def _expire_pending_quota_previews() -> None:
+    from sqlmodel import Session
+
+    from app.core.db import engine
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    with Session(engine) as session:
+        PendingCredentialTagRepo.expire_quota_previews(session)
+        session.commit()
+
+
+async def _pending_quota_preview_cleanup_loop(
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    cleanup: Callable[[], None] = _expire_pending_quota_previews,
+) -> None:
+    # The cadence is captured when the task starts; TTL setting changes take effect on restart.
+    cleanup_interval = _pending_quota_preview_cleanup_interval_seconds(
+        settings.PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS
+    )
+    while True:
+        try:
+            await sleep(cleanup_interval)
+            cleanup()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Pending quota preview cleanup failed: {e}")
+
+
+def _pending_quota_preview_cleanup_interval_seconds(max_age_seconds: int) -> int:
+    """Match cleanup to the TTL, capped at one check per day."""
+    return min(max_age_seconds, 86400)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize DB
     init_db()
+
+    # Drop expired pending quota payloads before the first API request. Keep
+    # their observation timestamps so Fleet can explain the stale preview.
+    try:
+        _expire_pending_quota_previews()
+    except Exception as e:
+        logger.warning(f"Pending quota preview cleanup failed: {e}")
 
     # Remove stale error rows superseded by healthy rows (idempotent cleanup).
     try:
@@ -84,6 +127,10 @@ async def lifespan(app: FastAPI):
     # Start background poller (keeps registry fresh every 15 min)
     poller.start()
 
+    # Keep expired preview payloads out of storage without making Fleet's
+    # frequently polled pending-credentials GET endpoint perform writes.
+    preview_cleanup_task = asyncio.create_task(_pending_quota_preview_cleanup_loop())
+
     # Start background token auto-refresher (rolls JWTs before they expire,
     # independent of poller cadence).
     if settings.TOKEN_AUTO_REFRESH_ENABLED:
@@ -95,6 +142,11 @@ async def lifespan(app: FastAPI):
 
     yield
     # Shutdown logic
+    preview_cleanup_task.cancel()
+    try:
+        await preview_cleanup_task
+    except asyncio.CancelledError:
+        logger.debug("Pending quota preview cleanup task cancelled during shutdown")
     await poller.stop()
     await token_auto_refresher.stop()
     await sidecar_version_checker.stop()
