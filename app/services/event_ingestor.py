@@ -18,6 +18,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.models.db import PendingUsageEvent, ProviderConfig, UsageEvent
 from app.models.schemas import UsageEventPush
 from app.services.account_identity import canonical_account_id
+from app.services.credential_tags import CredentialTagRepo
 from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.period_rollups import update_rollups_for_event
 from app.services.project_label import derive_project
@@ -64,48 +65,63 @@ class EventIngestor:
                 if push.account_source == "default" or (
                     push.account_source is None and account_id == "default"
                 ):
-                    existing = self.session.exec(
-                        select(UsageEvent.id).where(
-                            UsageEvent.provider_id == push.provider_id,
-                            UsageEvent.event_id == push.event_id,
-                        )
-                    ).first()
-                    if existing is not None:
-                        # A stale or replayed unresolved payload must not
-                        # create a second pending copy of an event that has
-                        # already been assigned to a real account.
-                        result.events_duplicate += 1
-                        continue
-                    # Keep unresolved usage out of account cards and rollups.
-                    # The provider/event/sidecar key makes retries safe.
-                    sidecar = sidecar_id or "local"
-                    row = self.session.exec(
-                        select(PendingUsageEvent).where(
-                            PendingUsageEvent.provider_id == push.provider_id,
-                            PendingUsageEvent.event_id == push.event_id,
-                            PendingUsageEvent.sidecar_id == sidecar,
-                        )
-                    ).first()
-                    payload = json.dumps(
-                        push.model_dump(mode="json"), separators=(",", ":"), sort_keys=True
+                    # Identity-less event providers have no credential origin
+                    # in their event stream. Their explicit provider mapping
+                    # is the available identity signal. Resolve it at ingest
+                    # time as well as in the sidecar so a saved mapping takes
+                    # effect immediately, even with a stale hint cache.
+                    mapped_account = CredentialTagRepo.get_account_id(
+                        self.session,
+                        provider_id=push.provider_id,
+                        credential_origin=CredentialTagRepo.provider_origin(push.provider_id),
+                        sidecar_id=sidecar_id,
                     )
-                    if row is None:
-                        self.session.add(
-                            PendingUsageEvent(
-                                provider_id=push.provider_id,
-                                event_id=push.event_id,
-                                sidecar_id=sidecar,
-                                ts=ts,
-                                payload_json=payload,
-                            )
+                    if mapped_account:
+                        account_id = canonical_account_id(mapped_account)
+                        push = push.model_copy(
+                            update={"account_id": account_id, "account_source": "tag"}
                         )
-                        result.events_inserted += 1
                     else:
-                        row.payload_json = payload
-                        row.last_seen = datetime.now(UTC)
-                        self.session.add(row)
-                        result.events_duplicate += 1
-                    continue
+                        existing = self.session.exec(
+                            select(UsageEvent.id).where(
+                                UsageEvent.provider_id == push.provider_id,
+                                UsageEvent.event_id == push.event_id,
+                            )
+                        ).first()
+                        if existing is not None:
+                            # A stale or replayed unresolved payload must not
+                            # create a second pending copy of an event that has
+                            # already been assigned to a real account.
+                            result.events_duplicate += 1
+                            continue
+                        sidecar = sidecar_id or "local"
+                        row = self.session.exec(
+                            select(PendingUsageEvent).where(
+                                PendingUsageEvent.provider_id == push.provider_id,
+                                PendingUsageEvent.event_id == push.event_id,
+                                PendingUsageEvent.sidecar_id == sidecar,
+                            )
+                        ).first()
+                        payload = json.dumps(
+                            push.model_dump(mode="json"), separators=(",", ":"), sort_keys=True
+                        )
+                        if row is None:
+                            self.session.add(
+                                PendingUsageEvent(
+                                    provider_id=push.provider_id,
+                                    event_id=push.event_id,
+                                    sidecar_id=sidecar,
+                                    ts=ts,
+                                    payload_json=payload,
+                                )
+                            )
+                            result.events_inserted += 1
+                        else:
+                            row.payload_json = payload
+                            row.last_seen = datetime.now(UTC)
+                            self.session.add(row)
+                            result.events_duplicate += 1
+                        continue
 
                 if push.kind == "error":
                     ev = UsageEvent(

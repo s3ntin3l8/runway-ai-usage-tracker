@@ -49,6 +49,11 @@ class CredentialTagRepo:
     """Lookup / write / list operations on the ``credential_tags`` table."""
 
     @staticmethod
+    def provider_origin(provider_id: str) -> str:
+        """Return the origin key used when a provider has no event identity."""
+        return f"provider:{provider_id}"
+
+    @staticmethod
     def get(
         session: Session,
         *,
