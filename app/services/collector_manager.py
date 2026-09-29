@@ -379,29 +379,35 @@ class CollectorManager:
             all_tokens["cookie_oai-sc"] = r.oai_sc_cookie
 
         if all_tokens:
+            source_id = f"config:{r.provider_id}:{r.account_id or 'default'}"
+            enabled = True
+            priority = 0
+            if session is not None:
+                from app.services.credential_sources import touch_source
+
+                source = touch_source(
+                    session,
+                    provider_id=r.provider_id,
+                    account_id=r.account_id or "default",
+                    source_id=source_id,
+                    source_type="config",
+                    source_label="Manual configuration",
+                )
+                enabled = source.enabled
+                priority = source.priority
             await token_cache.store(
                 r.provider_id,
                 all_tokens,
                 account_id=r.account_id or "default",
                 source="config",
-                source_id=f"config:{r.provider_id}:{r.account_id or 'default'}",
+                source_id=source_id,
                 source_metadata={
                     "source_type": "config",
                     "source_label": "Manual configuration",
-                    "priority": 0,
+                    "enabled": enabled,
+                    "priority": priority,
                 },
             )
-            if session is not None:
-                from app.services.credential_sources import touch_source
-
-                touch_source(
-                    session,
-                    provider_id=r.provider_id,
-                    account_id=r.account_id or "default",
-                    source_id=f"config:{r.provider_id}:{r.account_id or 'default'}",
-                    source_type="config",
-                    source_label="Manual configuration",
-                )
 
     async def collect_all(self) -> list[dict[str, Any]]:
         """

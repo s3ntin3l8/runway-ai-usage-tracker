@@ -116,5 +116,8 @@ def record_source_health(
     ).first()
     if row:
         row.health = health
-        row.health_detail = "Authentication failed" if health == "auth_failed" else None
+        row.health_detail = {
+            "auth_failed": "Authentication failed",
+            "unavailable": "Collection failed",
+        }.get(health)
         session.add(row)

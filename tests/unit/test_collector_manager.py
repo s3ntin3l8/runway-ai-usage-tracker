@@ -90,6 +90,8 @@ class TestCollectorManagerInitialization:
         }
         assert store.call_args.kwargs["account_id"] == "alice@example.com"
         assert store.call_args.kwargs["source"] == "config"
+        assert store.call_args.kwargs["source_metadata"]["enabled"] is True
+        assert store.call_args.kwargs["source_metadata"]["priority"] == 0
 
     @pytest.mark.asyncio
     async def test_manual_deepseek_key_is_mirrored_to_api_key_slot(self, manager):

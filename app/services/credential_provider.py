@@ -263,8 +263,8 @@ class CredentialProvider:
             )
             kind = metadata.get("source_type") or metadata.get("source") or "server"
             return CredentialMap(results, sources=dict.fromkeys(results, kind))
-        # This is true only when this provider owns the active pin; other
-        # providers correctly continue through legacy discovery.
+        # An empty map means this exact provider/account is pinned but its live
+        # bundle is missing. Other providers or accounts continue discovery.
         if token_cache.is_source_selected(provider_id, account_id):
             return CredentialMap({}, sources={})
 

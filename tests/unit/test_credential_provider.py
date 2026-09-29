@@ -91,6 +91,10 @@ async def test_active_source_for_other_account_does_not_block_legacy_discovery(m
             CredentialProvider.get_credentials("anthropic", account_id="bob@example.com")["api_key"]
             == "bob-env-key"
         )
+        assert (
+            CredentialProvider.get_credentials("openrouter")["api_key"]
+            == "bob-env-key"  # pragma: allowlist secret — fake environment credential
+        )
 
 
 def test_github_token_env():

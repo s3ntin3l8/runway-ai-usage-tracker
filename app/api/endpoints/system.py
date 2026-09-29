@@ -1329,10 +1329,11 @@ async def update_credential_sources(
     if provider_id not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
     account_id = canonical_account_id(account_id)
-    await _update_credential_source_preferences(
+    source_preferences = await _update_credential_source_preferences(
         session, provider_id, account_id, body.sources, all_machines=body.all_machines
     )
     session.commit()
+    manager._credential_source_preferences[(provider_id, account_id)] = source_preferences
     manager._last_sync_time = 0.0
     try:
         await manager.reset_collector(provider_id, account_id)
@@ -1647,7 +1648,7 @@ async def _update_credential_source_preferences(
     preferences: list[_CredentialSourcePreference],
     *,
     all_machines: bool = False,
-) -> None:
+) -> dict[str, tuple[bool, int]]:
     by_id = {item.source_id: item for item in preferences}
     if len(by_id) != len(preferences):
         raise HTTPException(status_code=422, detail="Duplicate credential source id")
@@ -1673,19 +1674,6 @@ async def _update_credential_source_preferences(
             if source.credential_origin and source.sidecar_id:
                 sibling_groups.setdefault(source.credential_origin, []).append(source)
 
-        group_preferences: dict[str, tuple[bool, int]] = {}
-        for item in preferences:
-            source = known[item.source_id]
-            if not source.credential_origin or not source.sidecar_id:
-                continue
-            value = (item.enabled, item.priority)
-            previous = group_preferences.setdefault(source.credential_origin, value)
-            if previous != value:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Sources sharing an origin must have identical preferences when all_machines is enabled",
-                )
-
     applied_origins: set[str] = set()
     for item in preferences:
         source = known[item.source_id]
@@ -1696,9 +1684,13 @@ async def _update_credential_source_preferences(
             applied_origins.add(source.credential_origin)
             siblings = sibling_groups[source.credential_origin]
         for sibling in siblings:
-            sibling.enabled = item.enabled
-            sibling.priority = item.priority
+            sibling_preference = by_id.get(sibling.source_id)
+            if sibling_preference is None:
+                continue
+            sibling.enabled = sibling_preference.enabled
+            sibling.priority = sibling_preference.priority
             session.add(sibling)
+    return {source_id: (item.enabled, item.priority) for source_id, item in by_id.items()}
 
 
 async def _store_manual_config_source(
@@ -1708,21 +1700,26 @@ async def _store_manual_config_source(
     from app.services.credential_sources import touch_source
 
     source_id = f"config:{provider_id}:{account_id}"
-    await token_cache.store(
-        provider_id,
-        tokens,
-        account_id=account_id,
-        source="config",
-        source_id=source_id,
-        source_metadata={"source_type": "config", "source_label": "Manual configuration"},
-    )
-    touch_source(
+    source = touch_source(
         session,
         provider_id=provider_id,
         account_id=account_id,
         source_id=source_id,
         source_type="config",
         source_label="Manual configuration",
+    )
+    await token_cache.store(
+        provider_id,
+        tokens,
+        account_id=account_id,
+        source="config",
+        source_id=source_id,
+        source_metadata={
+            "source_type": "config",
+            "source_label": "Manual configuration",
+            "enabled": source.enabled,
+            "priority": source.priority,
+        },
     )
 
 

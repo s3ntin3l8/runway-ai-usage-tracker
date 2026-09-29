@@ -221,8 +221,11 @@ async def test_credential_source_preferences_and_safe_listing(client: TestClient
 
 
 def test_credential_source_preferences_are_host_scoped_unless_all_machines(
-    client: TestClient, session: Session
+    client: TestClient, session: Session, monkeypatch
 ):
+    from app.services.collector_manager import manager
+
+    monkeypatch.setattr(manager, "_credential_source_preferences", {})
     origin = "path:~/.config/provider/auth.json"
     session.add_all(
         [
@@ -265,47 +268,36 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     }
     response = client.patch(endpoint, json=payload)
     assert response.status_code == 200, response.text
+    assert manager._credential_source_preferences[("openrouter", "alice@example.com")] == {
+        "host-a-source": (False, 3),
+        "host-b-source": (True, 1),
+    }
     session.expire_all()
     host_b = session.exec(
         select(CredentialSource).where(CredentialSource.source_id == "host-b-source")
     ).one()
     assert host_b.enabled is True
 
-    ambiguous_all_machines_payload = {
+    all_machines_payload = {
         "sources": [
             {"source_id": "host-a-source", "enabled": False, "priority": 3},
             {"source_id": "host-b-source", "enabled": True, "priority": 1},
         ],
         "all_machines": True,
     }
-    response = client.patch(endpoint, json=ambiguous_all_machines_payload)
-    assert response.status_code == 422, response.text
-    session.expire_all()
-    host_a = session.exec(
-        select(CredentialSource).where(CredentialSource.source_id == "host-a-source")
-    ).one()
-    host_b = session.exec(
-        select(CredentialSource).where(CredentialSource.source_id == "host-b-source")
-    ).one()
-    assert (host_a.enabled, host_a.priority) == (False, 3)
-    assert (host_b.enabled, host_b.priority) == (True, 1)
-
-    all_machines_payload = {
-        "sources": [
-            {"source_id": "host-a-source", "enabled": False, "priority": 3},
-            {"source_id": "host-b-source", "enabled": False, "priority": 3},
-        ],
-        "all_machines": True,
-    }
     response = client.patch(endpoint, json=all_machines_payload)
     assert response.status_code == 200, response.text
+    assert manager._credential_source_preferences[("openrouter", "alice@example.com")] == {
+        "host-a-source": (False, 3),
+        "host-b-source": (True, 1),
+    }
     session.expire_all()
     siblings = session.exec(
         select(CredentialSource).where(CredentialSource.credential_origin == origin)
     ).all()
     assert {(row.sidecar_id, row.account_id, row.enabled, row.priority) for row in siblings} == {
         ("host-a", "alice@example.com", False, 3),
-        ("host-b", "alice@example.com", False, 3),
+        ("host-b", "alice@example.com", True, 1),
         ("host-c", "bob@example.com", True, 0),
     }
 
