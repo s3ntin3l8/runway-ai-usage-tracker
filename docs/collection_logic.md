@@ -10,7 +10,7 @@ sidecar additionally extracts events into `usage_events` and pushes them via
 authoritative quota gauge (`pct_used`, `limit_value`, `reset_at`); per-model and
 per-sidecar splits are derived on demand from `usage_events` by the
 `/api/v1/usage/fleet` endpoint's `window_aggregations` field. See the
-[Data Model section of CLAUDE.md](../CLAUDE.md#data-model) for the full event flow.
+[Data Model section of architecture.md](architecture.md#data-model) for the full event flow.
 
 ## Current-card reconciliation
 

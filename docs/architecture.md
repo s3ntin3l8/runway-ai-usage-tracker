@@ -1,0 +1,230 @@
+# Architecture
+
+Runway is a local-first monitoring tool for AI provider quotas with
+SQLite-backed history. This document is the deep reference behind
+[`AGENTS.md`](../AGENTS.md) — topologies, environments, the event-sourced
+data model, collectors, and how CI actually builds and ships.
+
+## Topologies
+
+- **Two topologies**: Local (server + sidecar on same host) and
+  Multi-Host/Docker (server + one or more remote sidecars). The server never
+  performs local detection itself — all LSP probes, browser cookies, and
+  IDE/file introspection live in the sidecar.
+- **Docker rule**: No native desktop UI/keychains in the server container —
+  credentials come from ENV vars or sidecar payloads.
+- **Cookie collectors**: Claude, ChatGPT, Ollama, Kimi Coding, OpenCode need
+  browser cookies; the sidecar extracts them and ships them to the server.
+
+## Environments (dev vs prod)
+
+Dev and prod are meant to run side by side with **separate data dirs** —
+SQLite is single-writer, so never let two processes write one `runway.db`.
+
+- **Dev**: `make dev-all` (hot reload). DB + sidecar config live in the
+  gitignored **`./data`** (Makefile defaults `RUNWAY_CONFIG_DIR` there).
+  Disposable sandbox.
+- **Prod**: Docker. DB lives in the container's config dir
+  (`/home/runway/.config/runway`), persisted via a host bind-mount — point it
+  at the platform config dir (`~/.config/runway`) to keep prod data out of the
+  repo. Attach to an existing reverse proxy with a **gitignored
+  `docker-compose.override.yml`** (template:
+  `docker-compose.override.example.yml`); the tracked `docker-compose.yml`
+  stays a generic blueprint, and `docker-compose.traefik.yml` is the
+  bundled-Traefik option. Non-localhost binds trip the multi-host gates (see
+  *Data Model → Multi-host startup gates*).
+
+**Updates / channels**: the SPA is **baked into the server image**
+(`Dockerfile` copies `webapp/dist/`), so UI/server changes ship by pulling a
+new **server image** — `:edge` (rebuilt on every push to `main`) or
+`:latest`/`:vX.Y.Z` (release). The **sidecar edge channel updates only the
+collector binary, never the UI**. Schema upgrades are **forward-safe** (no
+Alembic; `init_db` runs `create_all` + idempotent `ALTER TABLE ADD COLUMN`),
+so bumping the image won't break an existing DB.
+
+## Data model
+
+Runway is **event-sourced**. The authoritative table is `usage_events` — one
+row per assistant message — and everything else is a derived view. All models
+live in `app/models/db.py`.
+
+| Table | Role |
+|-------|------|
+| `usage_events` | Per-message events. Unique on `(provider_id, event_id)` — a re-push under a new account from the *same* sidecar re-attributes the row and moves its rollups (retag-safe); another sidecar can't steal it. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — raw per-message `cwd`, indexed `project` (the session's root basename, derived in `EventIngestor` via `app/services/project_label.py` — worktree/tmp cwds collapse at the `/.claude/` boundary, and `scripts/consolidate_session_projects.py` consolidates per-session subfolder drift offline; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. |
+| `usage_period_rollup` | Pre-aggregated rollups (hour/day/month/year/lifetime × model × sidecar grain). Updated incrementally on each event ingest. |
+| `usage_windows` | Closed-window archive — totals frozen at each authoritative `reset_at` boundary by `app/services/window_closer.py`. |
+| `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`) — what scrapers see. Merged via `merge_card_json` in `app/services/accumulator.py`. |
+| `latest_usage_contributions` | Per-source last-good card payload behind a merged `latest_usage` row. One producer's complete report can't retire another producer's card — see [collection logic](collection_logic.md#current-card-reconciliation). |
+| `quota_snapshots` | Append-only time-series of `pct_used`/`reset_at` observations. Written on every `upsert_latest_usage` call when `pct_used` is non-null. Backs the `%` history chart and the Theil-Sen forecast. |
+| `provider_pricing` | Time-versioned per-(provider, model) prices used by `app/services/cost_calculator.py` so historical cost stays stable across price changes. |
+| `provider_configs` | Per-provider user config — API keys, session cookies (Fernet-encrypted), account labels, poll intervals, per-strategy enable toggles. Unique on `(provider_id, account_id)`. |
+| `credential_tags` | Operator mapping from a host-side credential origin (`path:...`/`env:...`, never the value) to a server account, optionally scoped to one sidecar or deployment-wide. Unresolved origins sit in `pending_credential_tags` until tagged in the Fleet UI. |
+| `pending_credential_tags` | Credential origins a sidecar has reported but no operator tag exists yet — powers the "Untagged credentials" surface (`GET /fleet/credentials/tags/pending`). |
+| `pending_usage_events` | Collected events awaiting account assignment (evidence-backed or manual) — `GET /fleet/events/pending`, assign via `POST /fleet/events/pending/assign`. |
+| `sidecar_registry` | Known sidecars with hostname, custom name, tags, last-seen, version, OS, recent log lines, and a `collection_enabled` pause flag. |
+| `webhook_configs` | Discord/Slack threshold alerts: `provider_id`, `account_id` (NULL = all accounts), `threshold_pct`, `url`, `channel`, last-fired timestamp, `credential_alerts` (opt-in, default on, for the credential-health alerts below). |
+| `webhook_credential_alerts` | Dedup/re-arm state for credential-health alerts (`app/services/credential_alerts.py`): one row per `(webhook_id, provider_id, account_id)` bad episode, with a `healthy_since` hysteresis timestamp so a single healthy Token Health observation doesn't immediately re-arm. |
+| `system_config` | Single-row global config — browser preference, default poll interval, dashboard layout JSON, user timezone. |
+| `audit_log` | Append-only record of admin mutations (sidecar pause/resume/delete/patch, etc.). Diagnostic, not legal-grade. |
+| `sidecar_pairing_codes` | One-time, short-lived (`PAIRING_CODE_TTL_SECONDS`) sidecar pairing codes, stored as SHA-256 only. Minted by admins (`POST /fleet/pairing-codes`, a `runway-sidecar://pair` deep link), redeemed once by a new sidecar (`POST /fleet/pair` → `api_url` + ingest key). See `app/services/pairing.py`, [SECURITY](SECURITY.md). |
+
+**Ingest path:** Sidecar batches up to 1000 events per push to
+`POST /api/v1/fleet/ingest` (HMAC-signed, rate-limited to 600/min per source
+IP). Server runs `EventIngestor`, which deduplicates by
+`(provider_id, event_id)` (re-attributing same-sidecar account changes),
+computes cost via `cost_calculator`, updates rollups, and triggers
+`window_closer._maybe_close_previous_window` on quota-window boundaries.
+
+**Read / mutating paths:** the endpoint catalog lives in the
+[API reference](api-reference.md). Non-obvious semantics worth knowing here:
+
+- `/usage/fleet` adds `window_aggregations.longest` — per-model +
+  per-sidecar splits aligned to the provider's longest active window
+  (Claude weekly, Gemini daily, etc.), computed on demand from `usage_events`.
+- `history/chart` takes `group=provider` for a cross-provider stack;
+  `sessions/paginated` adds server-side sort + `project` filter; snapshot
+  bucketing runs SQL-side via the `ix_quota_snapshots_series_ts` covering
+  index.
+- Forecasts: `/usage/forecast` (Theil-Sen regression on `quota_snapshots`,
+  anchor-at-now) and `/usage/cost-forecast` (MTD + 7-day burn to EOM).
+- Mutating endpoints (`usage/reset`, `usage/collect`, fleet pause/resume/
+  update, pairing codes, `/system/{cleanup,wake,force-collect,check-updates}`,
+  and the webhook/provider-config/app-config/dashboard-layout CRUD) go through
+  `require_admin_key` and append to `audit_log`.
+
+**Admin auth:** the dashboard logs in via `POST /api/v1/auth/session`
+(validates `ADMIN_API_KEY`, sets an HttpOnly `SameSite=Strict` session
+cookie, rate-limited 10/min); `POST /auth/logout` clears the cookie and
+`POST /auth/revoke-all` rotates `SESSION_SECRET` to invalidate every session.
+`SESSION_SECRET` is auto-generated, stored Fernet-encrypted in
+`system_config`, and is separate from `DB_ENCRYPTION_KEY`. Scripts/API
+clients can keep using the `X-Admin-Key` header. Blank
+`ADMIN_API_KEY`/`DB_ENCRYPTION_KEY` env values normalize to unset, and a
+malformed `DB_ENCRYPTION_KEY` fails fast at startup rather than silently
+running plaintext. See [SECURITY](SECURITY.md).
+
+**Account identity:** `app/services/account_identity.py:resolve_account_id` —
+email > UUID > SHA256 hash > `"default"`. Sidecar identity is the hostname;
+never part of unique constraints on the canonical
+`(provider_id, account_id)` pair. Every write path (cards, `EventIngestor`,
+token-cache keys, provider-config PUT) stores ids via `canonical_account_id`
+(emails lowercased, opaque ids verbatim); the sidecar mirrors it in
+`scripts/sidecar_pkg/identity.py`, and
+`app/services/account_canonicalization.py` repairs legacy rows at startup.
+
+**Multi-host startup gates:** when `APP_HOST != 127.0.0.1`, the server
+refuses to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, an explicit
+`CORS_ORIGINS` allow-list, and either `ADMIN_API_KEY` or
+`TRUSTED_PROXY_IPS` — sidecar payloads carry tokens (HMAC isn't
+confidentiality), and `resolve_auth`'s "no key configured" bypass only opens
+on a loopback bind, so at least one real admin gate must exist off-loopback.
+See [SECURITY](SECURITY.md).
+
+**Data Health / repair logic:** all data-repair logic (retagging events,
+rekeying a `provider_configs` row, merging gauge series, recosting, rebuilding
+rollups/windows) lives in `app/services/maintenance/` — a `plan_*`/`apply_*`
+pair per repair, each `apply_*` chunked (`_chunked_sql.py`'s id-cursor
+`chunked_update`/`chunked_delete`) so it never holds SQLite's writer lock for
+one giant transaction. `app/services/data_health/checks/` only decides *when*
+to offer a repair (read-only `detect()`) and exposes it through
+`/api/v1/system/data-health/*` (`app/services/data_health/jobs.py`'s
+single-flight job registry) and the Settings → Data health page. Host-run
+scripts (`scripts/recost_events.py`, `scripts/assign_default_events.py`,
+`scripts/merge_gemini_default_account.py`) are thin wrappers over the same
+functions, so an operator running one from the CLI and the in-app fixer can
+never drift apart. See [data-health](data-health.md).
+
+## Collectors
+
+Strategies are categorized by data type, collected in phases, and merged into
+a single card per provider. Anything `local` (CLI / statusline / log
+scraping) executes inside the sidecar, not the server — server-side
+collectors only do `api` and `web`.
+
+| Type | Strategies | Where it runs | Provides |
+|------|------------|---------------|----------|
+| **quota** | api, web | server | Percentages, currency limits, tier |
+| **enrichment** | local (cli / statusline / logs) | sidecar | Token breakdown, session counts, per-message events |
+
+### Standard definitions
+
+**`data_source` (origin of payload):**
+- **`api`** — official API / OAuth endpoints.
+- **`web`** — unofficial / cookie-based / scraped web endpoints.
+- **`local`** — local log files / CLI statuslines / fast-path caches.
+
+**`input_source` (origin of credentials):**
+- **`config`** — entered via the Runway Dashboard UI (stored in DB).
+- **`server`** — discovered by the local machine (ENV, local files, browser scraping).
+- **`sidecar`** — discovered by a remote agent and pushed to the server.
+
+Collection pipeline: server quota collection → merge with sidecar-ingested
+enrichment → single card per
+`(provider_id, account_id, window_type, variant, model_id)` tuple in
+`latest_usage`. See [collection logic](collection_logic.md) for the full
+bucket model, the per-collector strategy map, and `_merge_enrichment`
+semantics.
+
+## CI/CD
+
+Workflows live in `.github/workflows/`.
+
+- **`ci-cd.yml`** — on push/PR to `main`:
+  - **`test-python`** — reusable `s3ntin3l8/.github` `ci-python.yml`:
+    `lint` (ruff check + format) and `type-and-test` (mypy, detect-secrets
+    against `.secrets.baseline`, pip-audit, pytest with Codecov). Coverage
+    floor 70%.
+  - **`test-frontend`** — reusable `ci-node.yml` against `webapp/` with
+    strict checks: typecheck, Vite build, vitest coverage. Floor 85%.
+  - **`installer-check`** — compiles the Windows NSIS installer with a
+    placeholder exe on every PR, so a broken `.nsi` or missing installer
+    asset fails here, not at release time.
+  - **`build-docker`** — on push only: GHCR image via the shared
+    `docker-publish.yml` with `push-edge: true` → the `:edge` tag.
+  - Required checks on `main`: `test-python / lint`,
+    `test-python / type-and-test`, `test-frontend / lint-and-test`, and
+    CodeQL — enforced *strict* (branch must be up to date).
+- **`release-please.yml`** — on push to `main`: opens/merges the release PR
+  from Conventional Commits (see *Releases*). When it cuts a release it also
+  runs `docker-publish.yml` with `push-release: true` (`:latest` + version
+  tag) and calls `sidecar-build.yml` via `build-sidecar`/`publish-sidecar`.
+- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix, the
+  only place PyInstaller runs. Per release label (`vX.Y.Z` or `edge`) it
+  builds the macOS **`.dmg`** (ad-hoc signed `.app`, `create-dmg`) and
+  Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`)
+  installers, plus the `.zip`/`.tar.gz` self-update payloads for all four
+  targets. Its `attest` job then writes `SHA256SUMS.txt` and Sigstore
+  keyless `.sig`/`.cert` files. Every asset name comes from
+  `scripts/sidecar_pkg/asset_names.py` (the updater's source of truth), and
+  `tests/unit/test_sidecar_release_contract.py` pins it all together.
+  `sidecar-release.yml` is a manual wrapper (`workflow_dispatch`; empty
+  `tag` = build-only artifacts, handy for testing installers from a branch).
+- **`sidecar-edge.yml`** — on push to `main` touching sidecar/installer
+  code; calls `sidecar-build.yml` with `label: edge` (version stamped
+  `<base>+edge.<sha>`) and publishes to the always-overwritten `edge`
+  prerelease — the sidecar analog of the Docker `:edge` tag. A flaky
+  non-Linux runner doesn't block the rest (`allow-partial`).
+- **`hermes.yml`** — automated PR review. Auto-reviews exactly once per PR
+  (`opened` when non-draft, or `ready_for_review`); on-demand re-reviews via
+  a `@s3ntin3l8-hermes Review` comment. Deliberately no `synchronize`
+  trigger — re-reviewing every push would be an unbounded review loop.
+  Auto-review excludes `mullion/task-*`, dependabot, and release-please PRs.
+- **`claude.yml`** — `@claude` mentions on issues/PRs route to the shared
+  reusable Claude Code workflow.
+- Also `codeql.yml`, `dependency-review.yml`, `cleanup-ghcr.yml`.
+  Dependabot updates actions, pip, and npm weekly. `.secrets.baseline` is
+  tracked in git — CI's detect-secrets gate needs it.
+
+## Releases
+
+Releases are managed by **Release Please**
+(`.github/workflows/release-please.yml`):
+
+- Uses Conventional Commits to determine version bumps: `feat:` → minor,
+  `fix:` → patch, `feat!:` → major, `chore:`/`docs:`/`test:` → no release.
+- On qualifying commits to `main`, Release Please opens a PR updating
+  `CHANGELOG.md` and `package.json`.
+- Merging that PR creates the GitHub Release and tag automatically — which is
+  what triggers the `:latest` image and stable sidecar builds above.
+- To force a version jump (e.g. v1.0.0): tag manually, push the tag, create
+  the GitHub Release by hand — Release Please picks up from there.

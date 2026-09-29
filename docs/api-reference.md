@@ -183,4 +183,4 @@ interface LimitCard {
 }
 ```
 
-See `../app/models/schemas.py` for the authoritative Pydantic definition. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are documented in [CLAUDE.md](../CLAUDE.md) and [statistics.md](statistics.md).
+See `../app/models/schemas.py` for the authoritative Pydantic definition. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are documented in [architecture.md](architecture.md) and [statistics.md](statistics.md).

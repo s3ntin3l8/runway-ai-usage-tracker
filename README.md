@@ -100,11 +100,12 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 | `make run` | Start the production server (serves the built SPA at :8765) |
 | `make run-all` | Build the SPA, then run the production server + sidecar (no hot reload) |
 | `make sidecar` | Run the sidecar agent script |
-| `make test` | Run the test suite (standard pytest; automatically ignores macOS-only cookie tests on Linux/WSL) |
+| `make test` | Run the test suite (pytest) |
 | `make test-cov` | Run tests with coverage report (`term-missing`) |
 | `make lint` | Run code quality checks (ruff + mypy + pip-audit) |
 | `make format` | Automatically fix linting and formatting issues |
 | `make web` / `make web-dev` | Build the SPA for production (`webapp/dist`) / run the live Vite dev server on :5173 (HMR) |
+| `make web-test` | Run the frontend unit tests (vitest) |
 | `make logo` | Regenerate every brand surface (favicon, PWA icons, sidecar tray) from the canonical `assets/logo.svg` — see [Branding](docs/branding.md) |
 | `make secrets` | Scan for secrets against `.secrets.baseline` |
 | `make clean` | Remove virtual environments and build artifacts |
