@@ -492,7 +492,7 @@ export interface Sidecar {
   ingest_count?: number;
   sidecar_version?: string;
   // Release channel derived from the version string ("1.0.0+edge.<sha>" → edge).
-  channel?: 'stable' | 'edge';
+  channel?: 'stable' | 'beta' | 'edge';
   os_platform?: string;
   collection_enabled?: boolean;
   collection_errors?: string[] | null;
@@ -623,7 +623,7 @@ export interface UpdateCheckResult {
 // GET /system/sidecar-downloads — latest sidecar builds for the Fleet page's
 // "Add a sidecar" card. Mirrors SidecarDownloadsResponse in app/models/schemas.py.
 export type SidecarPlatform = 'macOS' | 'Windows' | 'Linux' | 'Linux-CLI';
-export type SidecarChannel = 'stable' | 'edge';
+export type SidecarChannel = 'stable' | 'beta' | 'edge';
 
 export interface SidecarDownloadAsset {
   platform: SidecarPlatform;
@@ -660,7 +660,7 @@ export interface AppConfig {
   user_timezone?: string | null;
   env_timezone?: string | null;
   // Update channel sidecars track for the "update available" check.
-  sidecar_update_channel?: 'stable' | 'edge' | null;
+  sidecar_update_channel?: SidecarChannel | null;
   // Fleet-wide opt-in: when true, sidecars self-install available updates
   // (a sidecar's explicit local config overrides this).
   sidecar_auto_update?: boolean | null;

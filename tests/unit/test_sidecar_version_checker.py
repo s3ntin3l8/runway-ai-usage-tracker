@@ -84,6 +84,32 @@ class TestIsUpdateAvailable:
     def test_returns_false_when_latest_unparseable(self):
         assert is_update_available("1.0.0", "not-a-version") is False
 
+    def test_beta_builds_compare_only_with_newest_beta_version(self):
+        assert is_update_available("3.0.0-beta.1", "2.12.0", None, "3.0.0-beta.2") is True
+        assert is_update_available("3.0.0-beta.2", "2.12.0", None, "3.0.0-beta.2") is False
+        assert is_update_available("3.0.0-beta.1", "2.12.0", None, None) is False
+        assert is_update_available("3.0.0-beta.1", "3.0.0", None, "3.0.0-beta.1") is False
+
+    def test_configured_stable_channel_promotes_a_beta_build(self):
+        assert is_update_available("3.0.0-beta.1", "3.0.0", target_channel="stable") is True
+
+    def test_configured_beta_channel_selects_beta_for_stable_build(self):
+        assert (
+            is_update_available(
+                "2.12.0",
+                "2.12.0",
+                latest_beta="3.0.0-beta.1",
+                target_channel="beta",
+            )
+            is True
+        )
+
+    def test_stable_build_opted_into_edge_falls_back_to_stable(self):
+        assert is_update_available("2.12.0", "3.0.0", target_channel="edge") is True
+
+    def test_beta_build_opted_into_edge_falls_back_to_stable(self):
+        assert is_update_available("2.12.0-beta.1", "3.0.0", target_channel="edge") is True
+
 
 # ---------------------------------------------------------------------------
 # SidecarVersionChecker.check_now
@@ -187,6 +213,16 @@ class TestParseChannel:
     def test_edge_marker_without_sha(self):
         assert parse_channel("1.1.0+edge.") == ("edge", None)
 
+    def test_numbered_beta_version(self):
+        assert parse_channel("3.0.0-beta.1") == ("beta", None)
+
+    @pytest.mark.parametrize(
+        "version",
+        [" 3.0.0-beta.1", "\ufeff3.0.0-beta.1", "vv3.0.0-beta.1"],
+    )
+    def test_normalizes_numbered_beta_version(self, version):
+        assert parse_channel(version) == ("beta", None)
+
 
 # ---------------------------------------------------------------------------
 # is_update_available — edge channel (sha comparison)
@@ -244,3 +280,38 @@ class TestCheckNowEdge:
             await checker.check_now()
         assert checker.get_latest() == "1.4.2"
         assert checker.get_latest_edge_sha() is None
+
+
+class TestCheckNowBeta:
+    @pytest.mark.asyncio
+    async def test_caches_newest_beta_tag(self):
+        checker = SidecarVersionChecker()
+        client = _mock_client_by_url(
+            {
+                "releases/latest": (200, {"tag_name": "v2.12.0"}),
+                "releases?per_page=100": (
+                    200,
+                    [
+                        {"tag_name": "v3.0.0-beta.2", "prerelease": True},
+                        {"tag_name": "v3.0.0-beta.1", "prerelease": True},
+                    ],
+                ),
+            }
+        )
+        with patch("app.services.sidecar_version_checker.httpx.AsyncClient", return_value=client):
+            await checker.check_now()
+        assert checker.get_latest_beta() == "3.0.0-beta.2"
+
+    @pytest.mark.asyncio
+    async def test_successful_empty_beta_list_clears_removed_release(self):
+        checker = SidecarVersionChecker()
+        checker._latest_beta = "3.0.0-beta.1"
+        client = _mock_client_by_url(
+            {
+                "releases/latest": (200, {"tag_name": "v2.12.0"}),
+                "releases?per_page=100": (200, []),
+            }
+        )
+        with patch("app.services.sidecar_version_checker.httpx.AsyncClient", return_value=client):
+            await checker.check_now()
+        assert checker.get_latest_beta() is None

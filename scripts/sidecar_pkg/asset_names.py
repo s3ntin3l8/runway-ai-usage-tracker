@@ -1,8 +1,8 @@
 """Canonical sidecar release asset names — the single source of truth.
 
-Every name a release (stable ``vX.Y.Z`` or the rolling ``edge`` prerelease)
-publishes is derived here. The self-updater resolves its download through this
-module, and ``tests/unit/test_sidecar_release_contract.py`` asserts the build
+Every name a release (stable ``vX.Y.Z``, numbered beta ``vX.Y.Z-beta.N``, or
+the rolling ``edge`` prerelease) publishes is derived here. The self-updater
+resolves its download through this module, and ``tests/unit/test_sidecar_release_contract.py`` asserts the build
 workflow (``.github/workflows/sidecar-build.yml``) emits exactly these names, so
 the two can never drift apart again (they did: stable builds were published as
 ``…-v2.12.0.zip`` while the updater looked for ``…-2.12.0.zip``).
@@ -130,7 +130,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 2 or args[0] not in PLATFORMS:
-        print(f"usage: asset_names <{'|'.join(PLATFORMS)}> <vX.Y.Z|edge>", file=sys.stderr)
+        print(
+            f"usage: asset_names <{'|'.join(PLATFORMS)}> <vX.Y.Z[-beta.N]|edge>",
+            file=sys.stderr,
+        )
         return 2
     plat, label = args
     if label != EDGE_LABEL:

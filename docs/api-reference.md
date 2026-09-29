@@ -77,7 +77,7 @@ All API routes are under `/api/v1/`.
 | `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it |
 | `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write) |
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout |
-| `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|edge` (public) |
+| `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` (public) |
 
 ### Data health (admin)
 

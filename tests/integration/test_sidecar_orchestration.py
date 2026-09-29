@@ -10,7 +10,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import LatestUsage, ProviderConfig
+from app.models.db import LatestUsage, ProviderConfig, SystemConfig
 from app.services.accumulator import merge_card_json
 from app.services.fleet_registry import fleet_registry
 
@@ -72,6 +72,14 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     assert resp.status_code == 200
     data = resp.json()
     assert set(data["poll_providers"]) == {"anthropic", "github"}
+    assert data["sidecar_update_channel"] == "stable"
+
+    session.add(SystemConfig(sidecar_update_channel="beta"))
+    session.commit()
+    body, headers = get_signed_payload(payload, "test-key")
+    resp = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["sidecar_update_channel"] == "beta"
 
     # 3. Second heartbeat (immediate): should trigger NONE
     body, headers = get_signed_payload(payload, "test-key")

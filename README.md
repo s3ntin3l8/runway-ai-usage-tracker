@@ -138,7 +138,7 @@ Every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/rele
 - `Runway-Sidecar-Linux-<version>.tar.gz`: desktop tray app (needs AppIndicator/GTK + DBus)
 - `Runway-Sidecar-Linux-CLI-<version>.tar.gz`: headless single-file binary for servers, Docker, and CI agents (no Python or GUI required)
 
-It also ships portable `.zip` builds for macOS/Windows, which the in-app self-updater uses, plus `SHA256SUMS.txt` and Sigstore signatures for verification. The **Fleet** page of the dashboard links the right installer for your OS. A rolling `edge` prerelease carries the same set for every push to `main`.
+It also ships portable `.zip` builds for macOS/Windows, which the in-app self-updater uses, plus `SHA256SUMS.txt` and Sigstore signatures for verification. The **Fleet** page of the dashboard links the right installer for your OS. Numbered `beta` prereleases are available from Fleet; the rolling `edge` prerelease is rebuilt when a push to `main` changes sidecar or installer files.
 
 The desktop apps are not signed with an Apple Developer ID / Windows code-signing certificate, so the OS asks once before the first launch:
 

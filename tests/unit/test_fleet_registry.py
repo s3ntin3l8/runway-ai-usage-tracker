@@ -240,6 +240,24 @@ class TestToDictUpdateAvailable:
         assert d["update_available"] is False
         assert d["latest_version"] == "1.5.0"
 
+    def test_stable_setting_offers_promotion_to_beta_sidecar(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "3.0.0")
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest_beta", "3.0.0-beta.1")
+        d = service.to_dict(self._row("3.0.0-beta.1"), update_channel="stable")
+        assert d["channel"] == "beta"
+        assert d["update_available"] is True
+
+    def test_beta_setting_does_not_offer_stable_promotion(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "3.0.0")
+        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest_beta", "3.0.0-beta.1")
+        d = service.to_dict(self._row("3.0.0-beta.1"), update_channel="beta")
+        assert d["channel"] == "beta"
+        assert d["update_available"] is False
+
     def test_no_update_when_latest_unknown(self, service, monkeypatch):
         from app.services import sidecar_version_checker as svc_mod
 

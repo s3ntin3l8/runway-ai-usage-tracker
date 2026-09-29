@@ -36,8 +36,9 @@ SQLite is single-writer, so never let two processes write one `runway.db`.
 
 **Updates / channels**: the SPA is **baked into the server image**
 (`Dockerfile` copies `webapp/dist/`), so UI/server changes ship by pulling a
-new **server image** — `:edge` (rebuilt on every push to `main`) or
-`:latest`/`:vX.Y.Z` (release). The **sidecar edge channel updates only the
+new **server image** — `:edge` (rebuilt on every push to `main`), and on a
+release either `:latest`/`:vX.Y.Z` (stable) or `:beta`/`:vX.Y.Z-beta.N`
+(prerelease beta). The **sidecar edge channel updates only the
 collector binary, never the UI**. Schema upgrades are **forward-safe** (no
 Alembic; `init_db` runs `create_all` + idempotent `ALTER TABLE ADD COLUMN`),
 so bumping the image won't break an existing DB.
@@ -186,10 +187,13 @@ Workflows live in `.github/workflows/`.
     CodeQL — enforced *strict* (branch must be up to date).
 - **`release-please.yml`** — on push to `main`: opens/merges the release PR
   from Conventional Commits (see *Releases*). When it cuts a release it also
-  runs `docker-publish.yml` with `push-release: true` (`:latest` + version
-  tag) and calls `sidecar-build.yml` via `build-sidecar`/`publish-sidecar`.
+  runs `docker-publish.yml` with `push-release: true` (stable → `:latest` +
+  version tags; beta → `:beta` + version tag, selected by `release-channel`)
+  and calls `sidecar-build.yml` via `build-sidecar`/`publish-sidecar` —
+  for stable and beta releases alike.
 - **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix, the
-  only place PyInstaller runs. Per release label (`vX.Y.Z` or `edge`) it
+  only place PyInstaller runs. Per release label (`vX.Y.Z`, `vX.Y.Z-beta.N`,
+  or `edge`) it
   builds the macOS **`.dmg`** (ad-hoc signed `.app`, `create-dmg`) and
   Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`)
   installers, plus the `.zip`/`.tar.gz` self-update payloads for all four
@@ -225,6 +229,14 @@ Releases are managed by **Release Please**
 - On qualifying commits to `main`, Release Please opens a PR updating
   `CHANGELOG.md` and `package.json`.
 - Merging that PR creates the GitHub Release and tag automatically — which is
-  what triggers the `:latest` image and stable sidecar builds above.
+  what triggers the release-channel image and sidecar builds above (stable →
+  `:latest`, beta prerelease → `:beta`).
 - To force a version jump (e.g. v1.0.0): tag manually, push the tag, create
   the GitHub Release by hand — Release Please picks up from there.
+
+The prerelease settings in `release-please-config.json` are temporary for
+the 3.0.0 beta cycle (`prerelease: true`, `prerelease-type: beta.1`). Before
+merging a stable release, follow
+[issue #408](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/408)
+to remove prerelease mode and promote 3.0.0; otherwise future Release Please
+releases will also be beta versions.

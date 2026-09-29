@@ -68,6 +68,10 @@ tar -xzf Runway-Sidecar-Linux-CLI-edge.tar.gz
 
 Edge binaries report their version as `<base>+edge.<short-sha>` (e.g. `1.1.0+edge.abc1234`); `--version` shows the exact build. Because the `edge` release is a prerelease, it is **never** returned by GitHub's "latest release" API, so stable sidecars and the dashboard's "update available" flag ignore it entirely. To have edge sidecars notified when a newer edge build lands, set the update channel to **Edge** (see below).
 
+### Beta releases (numbered)
+
+Beta releases use versioned prerelease tags such as `v3.0.0-beta.1` and `v3.0.0-beta.2`. The Fleet download card's **Beta** option always selects the newest numbered beta release. To have installed sidecars follow that sequence, select **Beta** under *System → Sidecar update channel*. Stable releases remain the default channel.
+
 ### First Run
 
 **Easiest: pair from the dashboard.** In Runway, go to *Fleet → Add sidecar → Generate pairing link* and click **Open in Runway Sidecar**. The sidecar opens a confirmation page naming your server. Check the address and click **Pair**. The sidecar fetches the server URL and ingest key itself and starts reporting straight away. Codes are one-time and expire after 10 minutes.
@@ -141,7 +145,7 @@ You can install the update without leaving the app:
 - The checksum is **mandatory**: a missing or mismatched `.sha256` aborts the install, leaving the running copy untouched.
 - **Rollback:** the build an update replaced is kept next to the install as `<name>.previous` (e.g. `Runway Sidecar.app.previous`, `RunwaySidecar.exe.previous`), with its version in `<name>.previous.version`. If a new build misbehaves, use the tray's **Roll Back to vX.Y.Z** item (shown only when a backup exists) or `runway-sidecar-cli --rollback`. A rollback keeps the newer build as the backup, so you can undo it. Only one backup is kept.
 - On Windows, installs made with the setup.exe also get their *Apps & Features* version refreshed after each self-update or rollback.
-- Self-update always downloads the portable `.zip` / `.tar.gz` payload, never the `.dmg` / `-setup.exe`, and swaps it in place. It works on every platform and both channels.
+- Self-update always downloads the portable `.zip` / `.tar.gz` payload, never the `.dmg` / `-setup.exe`, and swaps it in place. It works on every platform and all release channels.
 - If the install path isn't writable (e.g. `/Applications` for a non-admin macOS account, or `/usr/local/bin`), the update is skipped with a log message and you install the new DMG / setup.exe via **Check for Updates…**. The Windows installer's per-user location is always writable.
 
 ---

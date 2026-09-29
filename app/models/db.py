@@ -233,8 +233,8 @@ class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]
         None  # IANA name, e.g. "Europe/Berlin"; None = use TZ env / browser detect
     )
     # Update channel sidecars track for the "update available" check: "stable"
-    # (default) or "edge" (rolling prerelease). Pushed to sidecars via the
-    # /fleet/ingest response. None = "stable".
+    # (default), "beta" (numbered prereleases), or "edge" (rolling build).
+    # Pushed to sidecars via /fleet/ingest. None = "stable".
     sidecar_update_channel: str | None = None
     # Fleet-wide opt-in: when true, sidecars self-install available updates.
     # Pushed via the /fleet/ingest response; a sidecar's explicit local
