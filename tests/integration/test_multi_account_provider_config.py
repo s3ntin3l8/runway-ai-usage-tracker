@@ -948,6 +948,48 @@ def test_account_merge_requires_explicit_confirmation_for_gauge_collision(
     assert [row.account_id for row in rows] == ["target@example.com"]
 
 
+def test_account_merge_warns_when_default_is_destination(client: TestClient, session: Session):
+    session.add_all(
+        [
+            LatestUsage(
+                provider_id="openrouter",
+                account_id="source@example.com",
+                window_type="weekly",
+                variant="source-series",
+                card_json='{"remaining": 10}',
+            ),
+            LatestUsage(
+                provider_id="openrouter",
+                account_id="default",
+                window_type="weekly",
+                variant="default-series",
+                card_json='{"remaining": 8}',
+            ),
+        ]
+    )
+    session.commit()
+    body = {
+        "provider_id": "openrouter",
+        "source_account_id": "source@example.com",
+        "destination_account_id": "default",
+    }
+    preview = client.post(
+        "/api/v1/system/provider-account-merge/preview", json=body, headers=_admin_headers()
+    )
+    assert preview.status_code == 200
+    assert preview.json()["shared_default_warning"] is True
+
+    apply_url = "/api/v1/system/provider-account-merge/apply"
+    rejected = client.post(apply_url, json=body, headers=_admin_headers())
+    assert rejected.status_code == 409
+    applied = client.post(
+        apply_url,
+        json={**body, "confirm_shared_default": True},
+        headers=_admin_headers(),
+    )
+    assert applied.status_code == 200, applied.text
+
+
 def test_opencode_saved_strategy_ids_are_normalized(client: TestClient):
     r = client.put(
         "/api/v1/system/provider-config/opencode/default",

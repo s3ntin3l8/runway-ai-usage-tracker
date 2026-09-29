@@ -1093,7 +1093,7 @@ async def preview_provider_account_merge(
         "destination_account_id": destination_id,
         "counts": counts,
         "total_collisions": sum(item["collisions"] for item in counts.values()),
-        "shared_default_warning": source_id == "default",
+        "shared_default_warning": source_id == "default" or destination_id == "default",
     }
 
 
@@ -1113,10 +1113,10 @@ async def apply_provider_account_merge(
     )
     if source_id == destination_id:
         raise HTTPException(status_code=400, detail="Source and destination must differ")
-    if source_id == "default" and not body.confirm_shared_default:
+    if (source_id == "default" or destination_id == "default") and not body.confirm_shared_default:
         raise HTTPException(
             status_code=409,
-            detail="Merging the shared default identity can affect unattributed usage; preview and explicitly confirm.",
+            detail="Merging with the shared default identity can affect unattributed usage; preview and explicitly confirm.",
         )
     tables = _account_merge_rows(session, body.provider_id, source_id, destination_id)
     credential_sources = session.exec(
