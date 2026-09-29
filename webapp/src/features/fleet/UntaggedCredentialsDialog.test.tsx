@@ -145,6 +145,20 @@ describe('UntaggedCredentialsDialog', () => {
     expect(within(dialog).getByRole('status')).toHaveTextContent(/last observed/i);
   });
 
+  it('shows an expired preview without a last-observed timestamp when unavailable', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [{ ...entry, quota_preview: [], quota_preview_stale: true }],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog');
+    const status = await within(dialog).findByRole('status');
+    expect(status).toHaveTextContent(/preview expired/i);
+    expect(status).not.toHaveTextContent(/last observed/i);
+  });
+
   it('shows the "Add one in Provider Settings" fallback when no provider row exists', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [entry],
