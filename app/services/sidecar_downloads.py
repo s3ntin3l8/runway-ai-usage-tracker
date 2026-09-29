@@ -23,7 +23,7 @@ import time
 import httpx
 
 from app.models.schemas import SidecarDownloadAsset, SidecarDownloadsResponse
-from scripts.sidecar_pkg.update_check import latest_beta_release
+from app.services.release_metadata import latest_beta_release
 
 logger = logging.getLogger(__name__)
 

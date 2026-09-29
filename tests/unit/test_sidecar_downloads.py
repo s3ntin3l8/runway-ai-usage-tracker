@@ -124,7 +124,7 @@ class TestBetaReleaseSelection:
             {"tag_name": "v3.0.0-rc.1", "prerelease": True},
             {"tag_name": "v3.0.0", "prerelease": False},
         ]
-        from scripts.sidecar_pkg.update_check import latest_beta_release
+        from app.services.release_metadata import latest_beta_release
 
         assert latest_beta_release(releases) is releases[0]
 
