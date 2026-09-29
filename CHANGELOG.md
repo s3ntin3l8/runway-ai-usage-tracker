@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.1...v3.0.0-beta.2) (2026-09-29)
+
+
+### Features
+
+* clarify fleet account mapping ([#423](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/423)) ([50510d7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/50510d7cb5b300cd04ad732b1405ee706f8d89dc))
+* improve unassigned usage triage ([#417](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/417)) ([8b1d107](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8b1d107e3786d393762926d71459709c5d8b0842))
+* surface sidecar account mapping ([#416](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/416)) ([d241296](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d241296b889db14154fc41560303697d2df4dfc2))
+
+
+### Bug Fixes
+
+* apply saved credential mappings to usage events ([#422](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/422)) ([b248c43](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b248c43b0777717631f38218f0e848edea8a46ee))
+* assign sidecar credentials to verified identities ([#410](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/410)) ([927c350](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/927c35007e245ebb8fc70866031a035ea1bfa91e))
+* discover Claude CLI OAuth credentials ([#424](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/424)) ([284030e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/284030e195a9086992183ee0cfbd0e00ca8bb8f4))
+* **docker:** remove server imports from scripts package ([d8befa7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d8befa7f7e64c220f67d6301a63628e4564b0ebf))
+* improve account management and collection ([#420](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/420)) ([3305b3d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3305b3dd6579a787b43f336192fd21ea9b59e258))
+* persist pending credential previews and reconcile tags ([#419](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/419)) ([bfd93f1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/bfd93f124160bd246bf5dc6d0fe7c6e23affa450))
+* resolve Hermes session providers and allow provider setup in unassigned usage ([#421](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/421)) ([4ac11ae](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4ac11ae10d65a092b7a9a23dbd70d39a9841eb86))
+* share OpenCode account attribution across tiers ([#411](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/411)) ([661a93a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/661a93a0ee4d5a786091775e61a0f053f660f05a))
+
 ## [3.0.0-beta.1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v2.12.0...v3.0.0-beta.1) (2026-09-29)
 
 
