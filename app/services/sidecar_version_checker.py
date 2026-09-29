@@ -19,16 +19,14 @@ import logging
 
 import httpx
 
-from scripts.sidecar_pkg.update_check import (
-    _BETA_RELEASES_API_URL,
-    _BETA_TAG_RE,
-    latest_beta_release,
-    normalize_version,
-)
+from app.services.release_metadata import _BETA_TAG_RE, latest_beta_release, normalize_version
 
 logger = logging.getLogger(__name__)
 
 _GITHUB_API_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest"
+_BETA_RELEASES_API_URL = (
+    "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases?per_page=100"
+)
 _GITHUB_EDGE_REFS_URL = (
     "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
 )
