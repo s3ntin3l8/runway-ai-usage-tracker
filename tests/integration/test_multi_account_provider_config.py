@@ -999,6 +999,8 @@ def test_discovery_credential_kind_matches_known_oauth_token_types():
 
     assert _discovery_credential_kind("cookie", {"api_key"}) == "Cookie"
     assert _discovery_credential_kind("file", {"oauth_token"}) == "OAuth token"
+    assert _discovery_credential_kind("file", {"id_token"}) == "OAuth token"
+    assert _discovery_credential_kind("file", {"access_token"}) == "OAuth token"
     assert _discovery_credential_kind("file", {"xai_access"}) == "OAuth token"
     assert _discovery_credential_kind("file", {"oauth_flow"}) == "API key"
 

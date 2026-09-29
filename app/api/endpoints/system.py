@@ -40,7 +40,7 @@ from app.services.collector_manager import manager
 from app.services.credential_provider import CredentialProvider
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
-from app.services.token_cache import token_cache
+from app.services.token_cache import OAUTH_TOKEN_VALUE_KEYS, token_cache
 from app.services.token_health import CredentialNotRemovableError, token_health_service
 
 logger = logging.getLogger(__name__)
@@ -1535,13 +1535,7 @@ def _has_account_usage(provider_id: str, account_id: str, session: Session) -> b
 def _discovery_credential_kind(rule_type: str, token_types: set[str]) -> str:
     if rule_type == "cookie":
         return "Cookie"
-    if token_types & {
-        "oauth_token",
-        "refresh_token",
-        "cli_access_token",
-        "xai_access",
-        "xai_refresh",
-    }:
+    if token_types & OAUTH_TOKEN_VALUE_KEYS:
         return "OAuth token"
     return "API key"
 
