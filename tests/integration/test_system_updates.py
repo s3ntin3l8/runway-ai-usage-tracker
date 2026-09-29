@@ -17,6 +17,9 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app import __version__
+
+# Routes read this module binding, so patch it to emulate a beta server build.
+from app.api.endpoints import system as system_endpoint
 from app.core.db import get_session
 from app.main import app
 from app.models.db import AuditLog
@@ -54,6 +57,15 @@ def test_settings_flags_update_when_latest_is_ahead(client, monkeypatch):
     assert body["update_available"] is True
 
 
+def test_settings_flags_stable_promotion_for_beta_server(client, monkeypatch):
+    monkeypatch.setattr(system_endpoint, "__version__", "3.0.0-beta.1")
+    monkeypatch.setattr(sidecar_version_checker, "get_latest", lambda: "3.0.0")
+
+    body = client.get("/api/v1/system/settings").json()
+
+    assert body["update_available"] is True
+
+
 def test_settings_no_update_when_latest_unknown(client, monkeypatch):
     # None == never polled / offline -> never flag an update.
     monkeypatch.setattr(sidecar_version_checker, "get_latest", lambda: None)
@@ -79,6 +91,16 @@ def test_check_updates_refreshes_and_reports(client, session, monkeypatch):
     assert body["latest_version"] == "999.0.0"
     assert body["update_available"] is True
     mock_check.assert_awaited_once()
+
+
+def test_check_updates_flags_stable_promotion_for_beta_server(client, session, monkeypatch):
+    monkeypatch.setattr(system_endpoint, "__version__", "3.0.0-beta.1")
+    monkeypatch.setattr(sidecar_version_checker, "check_now", AsyncMock(return_value="3.0.0"))
+
+    response = client.post("/api/v1/system/check-updates")
+
+    assert response.status_code == 200
+    assert response.json()["update_available"] is True
 
 
 def test_check_updates_writes_audit_row(client, session, monkeypatch):
