@@ -6,8 +6,8 @@ describe('accountConfigProviderIdForUsage', () => {
     expect(accountConfigProviderIdForUsage(providerId)).toBe('opencode');
   });
 
-  it('maps hermes-xai-oauth to xai config', () => {
-    expect(accountConfigProviderIdForUsage('hermes-xai-oauth')).toBe('xai');
+  it.each(['hermes-xai-oauth', 'xai-oauth', 'xai-api'])('maps %s to xai config', (providerId) => {
+    expect(accountConfigProviderIdForUsage(providerId)).toBe('xai');
   });
 
   it('preserves provider IDs without a shared config alias', () => {

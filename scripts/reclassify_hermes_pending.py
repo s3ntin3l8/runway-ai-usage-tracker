@@ -80,6 +80,7 @@ def reclassify_pending(session: Session, dry_run: bool) -> int:
 
     reclassified = 0
     counts_by_target: dict[str, int] = {}
+    skipped_by_target: dict[str, int] = {}
     for row in rows:
         try:
             payload = json.loads(row.payload_json)
@@ -99,6 +100,7 @@ def reclassify_pending(session: Session, dry_run: bool) -> int:
             )
         ).first()
         if existing is not None:
+            skipped_by_target[target_provider] = skipped_by_target.get(target_provider, 0) + 1
             logger.warning(
                 "Skipping collision: pending event %s (%s) already exists under %s",
                 row.event_id,
@@ -116,8 +118,13 @@ def reclassify_pending(session: Session, dry_run: bool) -> int:
         counts_by_target[target_provider] = counts_by_target.get(target_provider, 0) + 1
         reclassified += 1
 
-    for target_provider, count in sorted(counts_by_target.items()):
-        logger.info("  -> %s: %d event(s)", target_provider, count)
+    for target_provider in sorted(set(counts_by_target) | set(skipped_by_target)):
+        count = counts_by_target.get(target_provider, 0)
+        skipped = skipped_by_target.get(target_provider, 0)
+        msg = f"  -> {target_provider}: {count} event(s)"
+        if skipped > 0:
+            msg += f" ({skipped} skipped due to collision)"
+        logger.info(msg)
 
     if not dry_run and reclassified > 0:
         session.commit()
@@ -134,11 +141,14 @@ def reclassify_usage_events(session: Session, dry_run: bool) -> int:
         return 0
 
     reclassified = 0
+    counts_by_target: dict[str, int] = {}
+    skipped_by_target: dict[str, int] = {}
     affected_providers: set[str] = set()
     for row in rows:
         target_provider = determine_canonical_provider(row.provider_id, row.model_id or "")
         if target_provider == row.provider_id:
             continue
+        # Matches unique index uq_usage_events_provider_event on (provider_id, event_id)
         existing = session.exec(
             select(UsageEvent).where(
                 UsageEvent.provider_id == target_provider,
@@ -146,6 +156,7 @@ def reclassify_usage_events(session: Session, dry_run: bool) -> int:
             )
         ).first()
         if existing is not None:
+            skipped_by_target[target_provider] = skipped_by_target.get(target_provider, 0) + 1
             logger.warning(
                 "Skipping collision: UsageEvent %s (%s) already exists under %s",
                 row.event_id,
@@ -159,7 +170,16 @@ def reclassify_usage_events(session: Session, dry_run: bool) -> int:
             affected_providers.add(target_provider)
             row.provider_id = target_provider
             session.add(row)
+        counts_by_target[target_provider] = counts_by_target.get(target_provider, 0) + 1
         reclassified += 1
+
+    for target_provider in sorted(set(counts_by_target) | set(skipped_by_target)):
+        count = counts_by_target.get(target_provider, 0)
+        skipped = skipped_by_target.get(target_provider, 0)
+        msg = f"  -> {target_provider}: {count} event(s)"
+        if skipped > 0:
+            msg += f" ({skipped} skipped due to collision)"
+        logger.info(msg)
 
     if not dry_run and reclassified > 0:
         session.commit()

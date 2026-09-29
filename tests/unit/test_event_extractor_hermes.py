@@ -108,6 +108,24 @@ def test_resolve_hermes_provider_and_canonical():
     assert pid == "xai"
     assert canon == ("xai", None)
 
+    # False-positive heuristic guard: model with -free- inside name is NOT free tier
+    pid, canon = resolve_hermes_provider_and_canonical("opencode", "", "claude-free-preview")
+    assert pid == "opencode"
+    assert canon == ("opencode", None)
+
+    # Host matching: exact host or subdomain matches
+    pid, canon = resolve_hermes_provider_and_canonical("", "https://api.kimi.com/v1", "")
+    assert pid == "kimi_coding"
+    assert canon == ("kimi_coding", None)
+
+    pid, canon = resolve_hermes_provider_and_canonical("", "https://api.minimax.io/v1", "")
+    assert pid == "minimax"
+    assert canon == ("minimax", None)
+
+    # Substring attacker domain is rejected
+    pid, _ = resolve_hermes_provider_and_canonical("", "https://evil-kimi.com/v1", "")
+    assert pid == "hermes"
+
     # MiniMax model with empty billing_provider resolves to minimax
     pid, canon = resolve_hermes_provider_and_canonical("", "", "MiniMax-M3")
     assert pid == "minimax"

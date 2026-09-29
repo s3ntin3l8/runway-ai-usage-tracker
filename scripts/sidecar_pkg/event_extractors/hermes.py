@@ -28,6 +28,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 # Allow importing from app/ when running from the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -65,7 +66,33 @@ _HERMES_CANONICAL_MAP: dict[str, CanonicalProviderTuple] = {
 def _is_free_model(model: str) -> bool:
     """Return True if model name indicates a free-tier model."""
     m = (model or "").strip().lower()
-    return m.endswith((":free", "-free")) or ":free" in m or "-free" in m
+    if not m:
+        return False
+    if m.endswith((":free", "-free", "/free")):
+        return True
+    last_token = m.replace(":", "/").split("/")[-1]
+    return last_token == "free" or last_token.endswith("-free")
+
+
+def _url_host_matches(url: str, *domains: str) -> bool:
+    """Safely check if a URL's hostname matches or is a subdomain of any candidate domain."""
+    if not url:
+        return False
+    try:
+        raw = url.strip()
+        if "://" not in raw:
+            raw = f"https://{raw}"
+        parsed = urlparse(raw)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        for domain in domains:
+            d = domain.strip().lower()
+            if host == d or host.endswith(f".{d}"):
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def map_hermes_canonical(billing_provider: str) -> tuple[str, str | None] | None:
@@ -91,6 +118,7 @@ def resolve_hermes_provider_and_canonical(
     session_billing_provider: str = "",
     session_billing_base_url: str = "",
     session_model: str = "",
+    session_billing_mode: str = "",
 ) -> tuple[str, CanonicalProviderTuple | None]:
     """Resolve raw and session metadata to (target_provider_id, canonical_tuple_or_None)."""
     bp = (billing_provider or "").strip().lower()
@@ -109,21 +137,23 @@ def resolve_hermes_provider_and_canonical(
             bp = "minimax-oauth"
         elif sbp and sbp not in ("hermes", "auto", "default", "custom"):
             bp = sbp
-        elif "opencode.ai" in base_url or sbp.startswith("opencode"):
+        elif _url_host_matches(base_url, "opencode.ai") or sbp.startswith("opencode"):
             bp = "opencode"
-        elif "api.x.ai" in base_url:
+        elif _url_host_matches(base_url, "api.x.ai", "x.ai"):
             bp = "xai-oauth"
-        elif "api.kimi.com" in base_url:
+        elif _url_host_matches(
+            base_url, "api.kimi.com", "kimi.com", "api.moonshot.cn", "moonshot.cn"
+        ):
             bp = "kimi-coding"
-        elif "api.minimax.io" in base_url:
+        elif _url_host_matches(base_url, "api.minimax.io", "minimax.io"):
             bp = "minimax-oauth"
-        elif "openrouter.ai" in base_url:
+        elif _url_host_matches(base_url, "openrouter.ai"):
             bp = "openrouter"
 
     # 2. OpenCode tier splitting: free models vs paid/subscription
     is_opencode = (
         bp in ("opencode", "opencode-go", "opencode-zen", "auto")
-        or "opencode.ai" in base_url
+        or _url_host_matches(base_url, "opencode.ai")
         or sbp.startswith("opencode")
     )
     if is_opencode:
@@ -387,6 +417,7 @@ def parse_hermes_events(
                 session_billing_provider=row["session_billing_provider"] or "",
                 session_billing_base_url=row["session_billing_base_url"] or "",
                 session_model=row["session_model"] or "",
+                session_billing_mode=row["session_billing_mode"] or "",
             )
             if canonical is not None:
                 canonical_provider_id, account_override = canonical
