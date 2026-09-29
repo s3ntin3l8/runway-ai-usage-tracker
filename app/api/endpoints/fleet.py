@@ -4,6 +4,7 @@ from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlmodel import Session, col, func, select
 
 from app.core.date_utils import parse_iso8601_utc
@@ -18,6 +19,7 @@ from app.core.security import (
 from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
+    CredentialTag,
     LatestUsage,
     PendingUsageEvent,
     ProviderConfig,
@@ -688,7 +690,24 @@ async def post_credential_manifest(
 
     # Retain currently reported origins and prune origins no longer present.
     existing_rows = PendingCredentialTagRepo.list_all(session, sidecar_id=payload.sidecar_id)
-    candidate_pids = sorted({r.provider_id for r in existing_rows} | set(keep_by_provider))
+    candidate_provider_ids = {r.provider_id for r in existing_rows} | set(keep_by_provider)
+    # Saved mappings must be returned even after their pending-origin row was
+    # cleared. Include explicitly mapped providers so the sidecar can refresh
+    # a stale/empty hint cache on this manifest round-trip (including
+    # canonical providers used by OpenCode and Hermes events).
+    candidate_provider_ids.update(
+        pid
+        for pid in session.exec(
+            select(CredentialTag.provider_id).where(
+                or_(
+                    col(CredentialTag.sidecar_id) == payload.sidecar_id,
+                    col(CredentialTag.sidecar_id).is_(None),
+                )
+            )
+        ).all()
+        if isinstance(pid, str) and pid
+    )
+    candidate_pids = sorted(candidate_provider_ids)
 
     # The sidecar reports which providers completed so a missing provider
     # cannot make an incomplete collection cycle look like an empty snapshot.

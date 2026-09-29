@@ -2,7 +2,13 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine
-from app.models.db import PendingUsageEvent, ProviderConfig, UsageEvent, UsagePeriodRollup
+from app.models.db import (
+    CredentialTag,
+    PendingUsageEvent,
+    ProviderConfig,
+    UsageEvent,
+    UsagePeriodRollup,
+)
 from app.models.schemas import UsageEventPush
 from app.services.event_ingestor import EventIngestor
 from app.services.pricing_seed import seed_pricing_table
@@ -211,6 +217,73 @@ def test_unresolved_default_event_is_durable_and_excluded_from_usage_rollups():
     assert pending.event_id == "waiting"
     assert pending.sidecar_id == "dev-01"
     assert s.exec(select(UsagePeriodRollup)).all() == []
+
+
+def test_provider_mapping_attributes_identityless_events_for_direct_and_canonical_providers():
+    s = _seeded_session()
+    for provider_id in ("anthropic", "minimax", "kimi_coding"):
+        s.add(
+            CredentialTag(
+                provider_id=provider_id,
+                credential_origin=f"provider:{provider_id}",
+                account_id="Alice@Example.com",
+                sidecar_id="host-a",
+                set_by="operator",
+            )
+        )
+    s.commit()
+
+    pushes = [
+        _make_push(
+            event_id=f"{provider_id}-mapped",
+            provider_id=provider_id,
+            account_id="default",
+            account_source="default",
+        )
+        for provider_id in ("anthropic", "minimax", "kimi_coding")
+    ]
+    EventIngestor(s).ingest(pushes, sidecar_id="host-a")
+
+    rows = s.exec(select(UsageEvent)).all()
+    assert {
+        row.provider_id: (row.account_id, row.attribution_source) for row in rows
+    } == dict.fromkeys(("anthropic", "minimax", "kimi_coding"), ("alice@example.com", "tag"))
+    assert s.exec(select(PendingUsageEvent)).all() == []
+
+
+def test_provider_mapping_is_host_scoped_and_native_identity_is_preserved():
+    s = _seeded_session()
+    s.add(
+        CredentialTag(
+            provider_id="anthropic",
+            credential_origin="provider:anthropic",
+            account_id="mapped@example.com",
+            sidecar_id="host-a",
+            set_by="operator",
+        )
+    )
+    s.commit()
+    ingestor = EventIngestor(s)
+    ingestor.ingest(
+        [_make_push("native", account_id="native@example.com", account_source="local")],
+        sidecar_id="host-a",
+    )
+    ingestor.ingest(
+        [_make_push("unassigned", account_id="Unassigned", account_source="local")],
+        sidecar_id="host-a",
+    )
+    ingestor.ingest(
+        [_make_push("other-host", account_id="default", account_source="default")],
+        sidecar_id="host-b",
+    )
+
+    rows = {row.event_id: row for row in s.exec(select(UsageEvent)).all()}
+    assert rows["native"].account_id == "native@example.com"
+    assert rows["native"].attribution_source == "local"
+    assert rows["unassigned"].account_id == "Unassigned"
+    assert rows["unassigned"].attribution_source == "local"
+    assert "other-host" not in rows
+    assert s.exec(select(PendingUsageEvent)).one().sidecar_id == "host-b"
 
 
 def test_unresolved_replay_does_not_requeue_an_already_assigned_event():

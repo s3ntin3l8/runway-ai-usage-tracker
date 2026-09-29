@@ -486,6 +486,33 @@ def test_manifest_normalizes_fqdn_sidecar_id(client: TestClient, session: Sessio
     assert rows[0].sidecar_id == normalize_sidecar_id("alpha.example.com")
 
 
+def test_manifest_returns_saved_provider_mapping_without_pending_origin(
+    client: TestClient, session: Session
+):
+    """Saved mappings are included even after their pending origin is cleared."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="minimax",
+        credential_origin="provider:minimax",
+        account_id="alice@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    response = _post_manifest(
+        client, {"sidecar_id": "alpha-host", "entries": [], "completed_providers": ["opencode"]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolved"] == {"minimax": {"provider:minimax": "alice@example.com"}}
+
+    other = _post_manifest(client, {"sidecar_id": "beta-host", "entries": []})
+    assert other.status_code == 200
+    assert other.json()["resolved"] == {}
+
+
 def test_tag_endpoint_creates_tag_and_clears_pending(client: TestClient, session: Session):
     """Operator's POST creates a CredentialTag and deletes the matching pending row."""
     from app.services.credential_tags import (
