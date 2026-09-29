@@ -240,7 +240,7 @@ export function FleetPage() {
       <DeleteSidecarDialog sidecar={deleting} onClose={() => setDeleting(null)} />
       <UpdateSidecarDialog sidecar={updating} onClose={() => setUpdating(null)} />
       <UntaggedCredentialsDialog
-        open={tagDialogEntry !== undefined}
+        open={tagDialogEntry !== undefined || tagDialogProvider !== null}
         singleEntry={tagDialogEntry ?? undefined}
         sidecarId={tagDialogProvider?.sidecarId}
         providerId={tagDialogProvider?.providerId}
@@ -490,12 +490,21 @@ function IdentitySources({
   untaggedError: boolean;
   onMapCredential: (providerId: string) => void;
 }) {
-  const entries = Object.entries(sources ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  if (sources === undefined) {
+    return (
+      <IdentitySourcesEmptyState
+        label="Report not available"
+        description="This sidecar response did not include identity report data."
+      />
+    );
+  }
+  const entries = Object.entries(sources).sort(([a], [b]) => a.localeCompare(b));
   if (entries.length === 0) {
     return (
-      <p className="mt-3 text-[11px] text-fg-subtle">
-        Account identities · No identity data reported
-      </p>
+      <IdentitySourcesEmptyState
+        label="No identities reported"
+        description="The latest identity report did not include any provider identities."
+      />
     );
   }
   const unidentifiedCount = entries.filter(
@@ -555,6 +564,25 @@ function IdentitySources({
           );
         })}
       </ul>
+    </details>
+  );
+}
+
+function IdentitySourcesEmptyState({
+  label,
+  description,
+}: {
+  label: string;
+  description: string;
+}) {
+  return (
+    <details className="mt-3 group">
+      <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-fg-subtle marker:hidden">
+        <ChevronDown className="size-3.5 shrink-0" aria-hidden />
+        <span className="font-medium text-fg">Account identities</span>
+        <span className="ml-1">· {label}</span>
+      </summary>
+      <p className="mt-2 text-[11px] text-fg-subtle">{description}</p>
     </details>
   );
 }

@@ -120,8 +120,9 @@ export function UntaggedCredentialsDialog({
   }, [open, singleEntry?.sidecar_id, singleEntry?.provider_id, singleEntry?.credential_origin]);
 
   const entries = untagged.data?.items ?? [];
-  // When invoked as a per-card / single-entry dialog, only show the
-  // targeted entry; otherwise show every pending entry.
+  // Three entry points use this list: the Fleet banner shows all entries,
+  // per-entry actions show one credential, and identity rows filter to a
+  // provider on one sidecar.
   const visibleEntries = useMemo(
     () =>
       singleEntry

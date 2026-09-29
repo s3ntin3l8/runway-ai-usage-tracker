@@ -96,10 +96,16 @@ describe('FleetPage', () => {
     expect(list).toHaveTextContent('No credential origin reported for mapping');
   });
 
-  it('shows an explicit empty state when no identity report is available', async () => {
-    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+  it('distinguishes a missing identity report from an empty report', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        sidecar(),
+        sidecar({ sidecar_id: 'desktop', hostname: 'desktop', identity_sources: {} }),
+      ],
+    });
     renderWithProviders(<FleetPage />);
-    expect(await screen.findByText('Account identities · No identity data reported')).toBeInTheDocument();
+    expect(await screen.findByText('· Report not available')).toBeInTheDocument();
+    expect(screen.getByText('· No identities reported')).toBeInTheDocument();
   });
 
   it('opens provider-scoped credential mapping from an unidentified identity row', async () => {
