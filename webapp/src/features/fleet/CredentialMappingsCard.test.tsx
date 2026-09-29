@@ -30,7 +30,10 @@ describe('CredentialMappingsCard', () => {
   it('lists machine-scoped and all-machines tags', async () => {
     vi.mocked(api.fetchCredentialTags).mockResolvedValue({ items: [scoped, deployment] });
     renderWithProviders(<CredentialMappingsCard />);
-    expect(await screen.findByText('Credential mappings')).toBeInTheDocument();
+    expect(await screen.findByText('Credential assignment rules')).toBeInTheDocument();
+    expect(
+      screen.getByText(/this rule assigns it to the selected account for that provider/i),
+    ).toBeInTheDocument();
     expect(screen.getByText('laptop')).toBeInTheDocument();
     expect(screen.getByText('all machines')).toBeInTheDocument();
   });

@@ -67,7 +67,7 @@ describe('FleetPage', () => {
       ],
     });
     renderWithProviders(<FleetPage />);
-    expect(await screen.findByText('Credential mappings')).toBeInTheDocument();
+    expect(await screen.findByText('Credential assignment rules')).toBeInTheDocument();
   });
 
   it('shows which account each provider is stamped with, and why', async () => {
@@ -86,7 +86,7 @@ describe('FleetPage', () => {
     // The expanded section keeps provider details out of the card until requested.
     expect(summary.closest('details')).not.toHaveAttribute('open');
     await userEvent.click(summary);
-    const list = await screen.findByRole('list', { name: 'Account identities' });
+    const list = await screen.findByRole('list', { name: 'Current account identities' });
     expect(list).toHaveTextContent('anthropic');
     expect(list).toHaveTextContent('found on this machine');
     // The summary and rows distinguish a real default identity from missing data.
@@ -94,6 +94,9 @@ describe('FleetPage', () => {
     expect(list).toHaveTextContent('default');
     expect(list).toHaveTextContent('unidentified');
     expect(list).toHaveTextContent('No credential origin reported for mapping');
+    expect(
+      screen.getByText(/account this machine currently uses for each provider/i),
+    ).toBeInTheDocument();
   });
 
   it('distinguishes a missing identity report from an empty report', async () => {

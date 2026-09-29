@@ -519,12 +519,16 @@ function IdentitySources({
     <details className="mt-3 group">
       <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-fg-subtle marker:hidden">
         <ChevronDown className="size-3.5 shrink-0" aria-hidden />
-        <span className="font-medium text-fg">Account identities</span>
+        <span className="font-medium text-fg">Current account identities</span>
         <span className="ml-1">
           · {identifiedCount} identified · {unidentifiedCount} unidentified
         </span>
       </summary>
-      <ul className="mt-2 space-y-1 text-[12px]" aria-label="Account identities">
+      <p className="mt-1 text-[11px] text-fg-subtle">
+        This is the account this machine currently uses for each provider’s data. “Mapped by
+        operator” means a credential rule below assigned that account.
+      </p>
+      <ul className="mt-2 space-y-1 text-[12px]" aria-label="Current account identities">
         {entries.map(([providerId, info]) => {
           const unidentified = info.source === 'default' || info.account_id === 'default';
           const matchingCredentialCount = pendingCredentialCounts.get(providerId) ?? 0;
@@ -573,7 +577,7 @@ function IdentitySources({
 function IdentitySourcesEmptyState({ label }: { label: string }) {
   return (
     <div className="mt-3 flex items-center gap-1 text-[11px] text-fg-subtle">
-      <span className="font-medium text-fg">Account identities</span>
+      <span className="font-medium text-fg">Current account identities</span>
       <span className="ml-1">· {label}</span>
     </div>
   );
