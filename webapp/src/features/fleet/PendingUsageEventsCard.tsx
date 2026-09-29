@@ -18,7 +18,7 @@ import type {
   PendingUsageSession,
   ProviderConfig,
 } from '@/api/types';
-import { accountConfigProviderIdForUsage } from '@/lib/opencodeTiers';
+import { accountConfigProviderIdForUsage } from '@/lib/providerAccountAliases';
 import { AddProviderWizard } from '@/features/settings/sections/AddProviderWizard';
 
 function sessionKey(group: PendingUsageSession) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountConfigProviderIdForUsage } from './opencodeTiers';
+import { accountConfigProviderIdForUsage } from './providerAccountAliases';
 
 describe('accountConfigProviderIdForUsage', () => {
   it.each(['opencode-free', 'opencode-zen', 'hermes-auto'])('maps %s to the shared OpenCode config', (providerId) => {

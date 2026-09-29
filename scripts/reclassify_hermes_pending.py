@@ -154,7 +154,9 @@ def reclassify_usage_events(session: Session, dry_run: bool) -> int:
         target_provider = determine_canonical_provider(row.provider_id, row.model_id or "")
         if target_provider == row.provider_id:
             continue
-        # Matches unique index uq_usage_events_provider_event on (provider_id, event_id)
+        # Matches unique index uq_usage_events_provider_event on (provider_id, event_id).
+        # Note: uq_usage_events_identity on (provider_id, account_id, event_id) is strictly
+        # subsumed by this index since (provider_id, event_id) is unique across all accounts.
         existing = session.exec(
             select(UsageEvent).where(
                 UsageEvent.provider_id == target_provider,
