@@ -37,12 +37,13 @@ if str(_REPO_ROOT) not in sys.path:
 from app.models.schemas import UsageEventPush  # noqa: E402
 from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
     SHARED_CANONICAL_PROVIDER_MAP,
+    CanonicalProviderTuple,
 )
 
 logger = logging.getLogger("runway.sidecar.hermes")
 
 # Upstream billing_provider -> (canonical provider_id, explicit account override or None).
-_HERMES_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
+_HERMES_CANONICAL_MAP: dict[str, CanonicalProviderTuple] = {
     **SHARED_CANONICAL_PROVIDER_MAP,
     "kimi-coding": ("kimi_coding", None),
     "minimax": ("minimax", None),

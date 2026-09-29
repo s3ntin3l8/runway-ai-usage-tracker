@@ -84,6 +84,7 @@ if str(_REPO_ROOT) not in sys.path:
 from app.models.schemas import UsageEventPush  # noqa: E402
 from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
     SHARED_CANONICAL_PROVIDER_MAP,
+    CanonicalProviderTuple,
 )
 
 # OpenCode's own providerID (backend/billing tier) -> runway provider_id.
@@ -118,7 +119,7 @@ def map_opencode_provider_id(oc_provider_id: str) -> str:
 # does not report which credential handled a message. Unmatched events stay
 # pending for assignment.
 # Keep this in sync with scripts/reclassify_opencode_providers.py.
-_OC_CANONICAL_MAP: dict[str, tuple[str, str | None]] = {
+_OC_CANONICAL_MAP: dict[str, CanonicalProviderTuple] = {
     **SHARED_CANONICAL_PROVIDER_MAP,
     # Kimi For Coding (kimi-code-plan-global backend in OpenCode).
     "kimi-code-plan-global": ("kimi_coding", None),
