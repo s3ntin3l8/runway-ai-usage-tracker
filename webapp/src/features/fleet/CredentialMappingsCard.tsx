@@ -44,11 +44,13 @@ export function CredentialMappingsCard({ className }: { className?: string }) {
 
   return (
     <Card className={`p-3 ${className ?? ''}`}>
-      <p className="text-[13px] font-semibold">Credential mappings</p>
+      <p className="text-[13px] font-semibold">Credential assignment rules</p>
       <p className="text-[11px] text-fg-subtle">
-        Operator-assigned accounts for sidecar credentials that carry no identity of their own.
+        If a sidecar cannot identify a credential locally, this rule assigns it to the selected
+        account for that provider. The result appears in that sidecar's current account identities.
+        "On a machine" applies to one sidecar; "all machines" applies everywhere.
       </p>
-      <ul className="mt-2 divide-y divide-border" aria-label="Credential mappings">
+      <ul className="mt-2 divide-y divide-border" aria-label="Credential assignment rules">
         {items.map((t) => (
           <li key={tagKey(t)} className="flex items-center justify-between gap-3 py-2">
             <div className="min-w-0">
