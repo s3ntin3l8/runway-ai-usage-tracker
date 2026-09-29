@@ -352,6 +352,8 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
 
     from app.services.credential_tags import CredentialTagRepo
 
+    source_id = "sidecar:host-a:auth-json"
+    configured_source_id = "sidecar:host-a:oauth-json"
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -366,10 +368,28 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
             account_id="alice@example.com",
             sidecar_id="host-a",
         )
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id="antigravity",
+            credential_origin="path:/oauth.json",
+            account_id="alice@example.com",
+            sidecar_id="host-a",
+        )
+        session.add(
+            CredentialSource(
+                provider_id="antigravity",
+                account_id="alice@example.com",
+                source_id=configured_source_id,
+                source_type="sidecar",
+                source_label="OAuth file",
+                enabled=False,
+                priority=3,
+                sidecar_id="host-a",
+            )
+        )
         session.commit()
 
     cache = TokenCache()
-    source_id = "sidecar:host-a:auth-json"
     await cache.store(
         "antigravity",
         {"oauth_token": "fake-token"},  # pragma: allowlist secret
@@ -382,10 +402,26 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
             "identity_pending": True,
         },
     )
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "fake-token-two"},  # pragma: allowlist secret
+        account_id="default",
+        source_id=configured_source_id,
+        source_metadata={
+            "source_type": "sidecar",
+            "credential_origin": "path:/oauth.json",
+            "sidecar_id": "host-a",
+            "identity_pending": True,
+        },
+    )
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
     manager = CollectorManager()
+    manager._credential_source_preferences[("antigravity", "default")] = {
+        source_id: (True, 0),
+        configured_source_id: (True, 1),
+    }
     manager._credential_source_preferences[("antigravity", "alice@example.com")] = {
         "already-configured": (False, 9),
         source_id: (False, 4),
@@ -393,13 +429,18 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
 
     reconciled = await manager.reconcile_token_cache_from_durable_tags(provider_id="antigravity")
 
-    assert reconciled == 1
+    assert reconciled == 2
     assert await cache.get_source_candidates("antigravity", "default") == []
     target_sources = await cache.get_source_candidates("antigravity", "alice@example.com")
-    assert [source["source_id"] for source in target_sources] == [source_id]
-    assert target_sources[0]["identity_pending"] is False
+    assert {source["source_id"] for source in target_sources} == {
+        source_id,
+        configured_source_id,
+    }
+    assert all(source["identity_pending"] is False for source in target_sources)
+    assert manager._credential_source_preferences[("antigravity", "default")] == {}
     assert manager._credential_source_preferences[("antigravity", "alice@example.com")] == {
         "already-configured": (False, 9),
         source_id: (False, 4),
+        configured_source_id: (False, 3),
     }
     await cache.reset()

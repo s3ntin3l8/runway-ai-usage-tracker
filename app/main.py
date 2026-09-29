@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -63,14 +64,18 @@ def _expire_pending_quota_previews() -> None:
         session.commit()
 
 
-async def _pending_quota_preview_cleanup_loop() -> None:
+async def _pending_quota_preview_cleanup_loop(
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    cleanup: Callable[[], None] = _expire_pending_quota_previews,
+) -> None:
     cleanup_interval = _pending_quota_preview_cleanup_interval_seconds(
         settings.PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS
     )
     while True:
         try:
-            await asyncio.sleep(cleanup_interval)
-            _expire_pending_quota_previews()
+            await sleep(cleanup_interval)
+            cleanup()
         except asyncio.CancelledError:
             raise
         except Exception as e:
