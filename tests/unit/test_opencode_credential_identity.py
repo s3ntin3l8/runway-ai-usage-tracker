@@ -141,7 +141,9 @@ class TestKeyedCredentialOrigins:
 
         cards, blocked = sc.GenericCollector.collect_provider("opencode", _file_config(auth))
 
-        assert cards == []
+        assert len(cards) == 1
+        assert cards[0]["account_id"] is None
+        assert cards[0]["metadata"]["identity_pending"] is True
         assert blocked == [
             {
                 "provider_id": "opencode",
@@ -256,7 +258,9 @@ class TestTokenCardCascade:
             account_label_hints={"opencode": {f"provider:opencode#{FP_B}": "bob@example.com"}},
         )
 
-        assert cards == []
+        assert len(cards) == 1
+        assert cards[0]["account_id"] is None
+        assert cards[0]["metadata"]["identity_pending"] is True
         assert blocked[0]["credential_origin"] == f"path:{auth.resolve()}#{FP_A}"
 
     def test_legacy_plain_origin_tag_still_resolves(self, tmp_path: Path) -> None:
@@ -318,7 +322,9 @@ class TestTokenCardCascade:
 
         cards, blocked = sc.GenericCollector.collect_provider("opencode", _file_config(auth))
 
-        assert cards == []
+        assert len(cards) == 1
+        assert cards[0]["account_id"] is None
+        assert cards[0]["metadata"]["identity_pending"] is True
         assert blocked == [
             {"provider_id": "opencode", "credential_origin": f"path:{auth.resolve()}#{FP_A}"}
         ]
@@ -340,8 +346,8 @@ class TestProviderWideHintGate:
     @pytest.mark.parametrize(
         ("active_key", "expected_cards"),
         [
-            (None, []),  # provider-wide hints do not establish credential identity
-            (KEY_A, []),  # a CLI's active key does not verify the Runway account id
+            (None, [None]),  # provider-wide hints do not establish credential identity
+            (KEY_A, [None]),  # a CLI's active key does not verify the Runway account id
         ],
         ids=["no-local-state", "local-state-agrees"],
     )
@@ -382,7 +388,9 @@ class TestProviderWideHintGate:
                 account_label_hints=self._auto_hint(),
             )
 
-        assert cards == []
+        assert len(cards) == 1
+        assert cards[0]["account_id"] is None
+        assert cards[0]["metadata"]["identity_pending"] is True
         assert blocked[0]["credential_origin"] == f"path:{auth.resolve()}#{FP_A}"
         assert "provider-wide account hint withheld" in caplog.text
 
@@ -422,7 +430,9 @@ class TestProviderWideHintGate:
                 "opencode", _env_config(), account_label_hints=self._auto_hint()
             )
 
-        assert cards == []
+        assert len(cards) == 1
+        assert cards[0]["account_id"] is None
+        assert cards[0]["metadata"]["identity_pending"] is True
         assert blocked == [
             {"provider_id": "opencode", "credential_origin": f"env:OPENCODE_API_KEY#{FP_A}"}
         ]

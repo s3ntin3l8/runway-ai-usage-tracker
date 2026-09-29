@@ -129,6 +129,22 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 credential_origin = (
                     card.metadata.get("credential_origin") if card.metadata else None
                 )
+                identity_pending = bool(
+                    card.metadata and card.metadata.get("identity_pending") is True
+                )
+                if identity_pending and credential_origin and payload.sidecar_id:
+                    # A verified identity can race one more heartbeat with
+                    # stale pending metadata. Trust only the durable tag for
+                    # this exact origin and reporting machine.
+                    verified_tag = CredentialTagRepo.get(
+                        session,
+                        provider_id=provider_id,
+                        credential_origin=credential_origin,
+                        sidecar_id=payload.sidecar_id,
+                    )
+                    if verified_tag is not None:
+                        acc_id = verified_tag.account_id
+                        identity_pending = False
                 if card.metadata:
                     for key, val in card.metadata.items():
                         # Store tokens but skip the provider/account identifiers
@@ -171,7 +187,14 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
                 if provider_tokens:
                     tokens_to_store.append(
-                        (provider_id, provider_tokens, acc_id, acc_label, credential_origin)
+                        (
+                            provider_id,
+                            provider_tokens,
+                            acc_id,
+                            acc_label,
+                            credential_origin,
+                            identity_pending,
+                        )
                     )
                     logger.debug(
                         f"Extracted {list(provider_tokens.keys())} for {provider_id} account {acc_id or 'auto'} from {payload.provider}"
@@ -223,7 +246,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
     # Store tokens in cache for each identified account
     tokens_received_count = 0
-    for p_id, p_tokens, a_id, a_name, origin in tokens_to_store:
+    for p_id, p_tokens, a_id, a_name, origin, identity_pending in tokens_to_store:
         sidecar_id = payload.sidecar_id or "local"
         from app.services.credential_sources import (
             describe_origin,
@@ -245,6 +268,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 "source_label": source_label,
                 "credential_origin": origin,
                 "sidecar_id": payload.sidecar_id,
+                "identity_pending": identity_pending,
             },
         )
         if not isinstance(actual_acc_id, str):
@@ -626,12 +650,29 @@ async def post_credential_manifest(
     payload.sidecar_id = normalize_sidecar_id(payload.sidecar_id)
 
     keep_by_provider: dict[str, set[str]] = {}
+    entries_received = 0
     for entry in payload.entries:
         provider_id = entry.get("provider_id")
         origin = entry.get("credential_origin")
         if not isinstance(provider_id, str) or not provider_id:
             continue
         if not isinstance(origin, str) or not origin:
+            continue
+        entries_received += 1
+        if CredentialTagRepo.get(
+            session,
+            provider_id=provider_id,
+            credential_origin=origin,
+            sidecar_id=payload.sidecar_id,
+        ):
+            # A prior operator assignment or source-verified identity already
+            # resolves this origin. Do not re-open it as pending each heartbeat.
+            PendingCredentialTagRepo.delete(
+                session,
+                sidecar_id=payload.sidecar_id,
+                provider_id=provider_id,
+                credential_origin=origin,
+            )
             continue
         keep_by_provider.setdefault(provider_id, set()).add(origin)
         PendingCredentialTagRepo.upsert(
@@ -640,10 +681,6 @@ async def post_credential_manifest(
             provider_id=provider_id,
             credential_origin=origin,
         )
-
-    # Count before stickiness folds synthetic auto-hint origins into the
-    # keep-set — entries_received must reflect what the sidecar reported.
-    entries_received = sum(len(v) for v in keep_by_provider.values())
 
     # Retain currently reported origins and prune origins no longer present.
     existing_rows = PendingCredentialTagRepo.list_all(session, sidecar_id=payload.sidecar_id)
@@ -722,16 +759,18 @@ async def post_credential_tag(
     session: Session = Depends(get_session),
     _: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
-    """Operator resolves a pending credential origin into a server-side
-    ``account_id`` (matching a configured ``provider_configs`` row).
+    """Operator resolves a pending credential origin to a known account.
 
-    Validates the chosen ``account_id`` corresponds to an existing
-    ``provider_configs`` row for the same provider, persists a
+    The target must be a configured account or a discovered identity with
+    live credential or usage evidence for the same provider. The endpoint persists a
     :class:`CredentialTag` (scoped per ``scope`` — #319), clears the
     matching pending row(s), and writes an audit-log row. A
     deployment-wide scope clears every sidecar's pending row for the
     origin; a sidecar scope clears only that sidecar's.
     """
+    from app.services.account_identity import canonical_account_id
+
+    target_account_id = canonical_account_id(body.account_id)
     sidecar_id = normalize_sidecar_id(body.sidecar_id) if body.sidecar_id else ""
     if body.scope == "sidecar" and not sidecar_id:
         raise HTTPException(
@@ -742,10 +781,30 @@ async def post_credential_tag(
     row = session.exec(
         select(ProviderConfig).where(
             ProviderConfig.provider_id == body.provider_id,
-            ProviderConfig.account_id == body.account_id,
+            ProviderConfig.account_id == target_account_id,
         )
     ).first()
+    discovered = False
     if row is None:
+        # Discovered accounts intentionally have no ProviderConfig row. They
+        # are valid assignment targets when there is live credential or usage
+        # evidence for that exact provider/account pair.
+        from app.models.db import LatestUsage
+
+        discovered = (
+            any(
+                pid == body.provider_id and aid == target_account_id
+                for pid, aid, _label in await token_cache.get_all_active_accounts()
+            )
+            or session.exec(
+                select(LatestUsage.id).where(
+                    LatestUsage.provider_id == body.provider_id,
+                    LatestUsage.account_id == target_account_id,
+                )
+            ).first()
+            is not None
+        )
+    if row is None and not discovered:
         raise HTTPException(
             status_code=404,
             detail=(
@@ -759,12 +818,55 @@ async def post_credential_tag(
         session,
         provider_id=body.provider_id,
         credential_origin=body.credential_origin,
-        account_id=body.account_id,
+        account_id=target_account_id,
         sidecar_id=sidecar_id if body.scope == "sidecar" else None,
         set_by=getattr(request.state.auth, "actor", "operator")
         if hasattr(request.state, "auth")
         else "operator",
     )
+    from app.models.db import CredentialSource
+
+    source_stmt = select(CredentialSource).where(
+        CredentialSource.provider_id == body.provider_id,
+        CredentialSource.credential_origin == body.credential_origin,
+    )
+    if body.scope == "sidecar":
+        source_stmt = source_stmt.where(CredentialSource.sidecar_id == sidecar_id)
+    source_rows = list(session.exec(source_stmt).all())
+    cache_moves: list[tuple[str, str, bool, int]] = []
+    for source_row in source_rows:
+        if source_row.account_id == target_account_id:
+            continue
+        previous_account_id = source_row.account_id
+        target_source = session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == body.provider_id,
+                CredentialSource.account_id == target_account_id,
+                CredentialSource.source_id == source_row.source_id,
+            )
+        ).first()
+        if target_source is None:
+            source_row.account_id = target_account_id
+            session.add(source_row)
+            preference_row = source_row
+        else:
+            target_source.source_type = source_row.source_type
+            target_source.source_label = source_row.source_label
+            target_source.credential_origin = source_row.credential_origin
+            target_source.sidecar_id = source_row.sidecar_id
+            target_source.last_seen = source_row.last_seen
+            target_source.health = source_row.health
+            session.add(target_source)
+            session.delete(source_row)
+            preference_row = target_source
+        cache_moves.append(
+            (
+                previous_account_id,
+                source_row.source_id,
+                preference_row.enabled,
+                preference_row.priority,
+            )
+        )
     if body.scope == "deployment":
         # "All machines" must actually win on every machine: drop any
         # machine-scoped override for this origin, otherwise it keeps
@@ -790,6 +892,22 @@ async def post_credential_tag(
     # errors, so relying on its commit could drop the tag while still
     # answering ``ok``.
     session.commit()
+
+    from app.services.collector_manager import manager
+
+    for previous_account_id, source_id, enabled, priority in cache_moves:
+        await token_cache.move_source(
+            body.provider_id, previous_account_id, target_account_id, source_id
+        )
+        old_preferences = manager._credential_source_preferences.get(
+            (body.provider_id, previous_account_id)
+        )
+        if old_preferences is not None:
+            old_preferences.pop(source_id, None)
+        manager._credential_source_preferences.setdefault(
+            (body.provider_id, target_account_id), {}
+        )[source_id] = (enabled, priority)
+        manager.clear_identity_preview(body.provider_id, source_id)
 
     audit_log.record(
         session,
@@ -913,17 +1031,28 @@ async def list_pending_credential_tags(
     if sidecar_id is not None:
         visible_rows = [r for r in visible_rows if r.sidecar_id == sidecar_id]
 
-    return {
-        "items": [
+    from app.services.collector_manager import manager
+    from app.services.credential_sources import sidecar_source_id
+
+    items = []
+    for row in visible_rows:
+        source_id = sidecar_source_id(row.sidecar_id, row.credential_origin)
+        items.append(
             {
-                "sidecar_id": r.sidecar_id,
-                "provider_id": r.provider_id,
-                "credential_origin": r.credential_origin,
-                "first_seen": r.first_seen.isoformat() if r.first_seen else None,
-                "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+                "sidecar_id": row.sidecar_id,
+                "provider_id": row.provider_id,
+                "credential_origin": row.credential_origin,
+                "first_seen": row.first_seen.isoformat() if row.first_seen else None,
+                "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+                "quota_preview": manager.pending_identity_preview(row.provider_id, source_id),
+                "quota_preview_observed_at": manager.pending_identity_preview_observed_at(
+                    row.provider_id, source_id
+                ),
             }
-            for r in visible_rows
-        ],
+        )
+
+    return {
+        "items": items,
         "counts_by_sidecar": counts_by_sidecar,
     }
 

@@ -26,7 +26,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import ProviderConfig
+from app.models.db import CredentialSource, ProviderConfig
 
 SECRET = "test-sidecar-secret-for-redeem"
 
@@ -536,6 +536,81 @@ def test_tag_endpoint_creates_tag_and_clears_pending(client: TestClient, session
         )
         is None
     )
+
+
+def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
+    client: TestClient, session: Session, monkeypatch
+):
+    from app.services.collector_manager import manager
+
+    _add_provider_config(
+        session, provider_id="anthropic", account_id="alice@example.com", api_key="sk-test"
+    )
+    origin = "path:/home/alice/.claude/.credentials.json"
+    source_id = "sidecar:alpha:path:/auth.json"
+    monkeypatch.setitem(
+        manager._credential_source_preferences,
+        ("anthropic", "default"),
+        {source_id: (False, 7)},
+    )
+    monkeypatch.setitem(
+        manager._credential_source_preferences,
+        ("anthropic", "alice@example.com"),
+        {},
+    )
+    session.add_all(
+        [
+            CredentialSource(
+                provider_id="anthropic",
+                account_id="default",
+                source_id=source_id,
+                source_type="sidecar",
+                source_label="new machine label",
+                credential_origin=origin,
+                sidecar_id="alpha",
+            ),
+            CredentialSource(
+                provider_id="anthropic",
+                account_id="alice@example.com",
+                source_id=source_id,
+                source_type="server",
+                source_label="stale label",
+                credential_origin="path:/old.json",
+                sidecar_id="old-host",
+            ),
+        ]
+    )
+    session.commit()
+
+    response = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha",
+            "provider_id": "anthropic",
+            "credential_origin": origin,
+            "account_id": "Alice@Example.com",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    sources = list(
+        session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == "anthropic",
+                CredentialSource.source_id == source_id,
+            )
+        ).all()
+    )
+    assert len(sources) == 1
+    assert sources[0].account_id == "alice@example.com"
+    assert sources[0].source_type == "sidecar"
+    assert sources[0].source_label == "new machine label"
+    assert sources[0].credential_origin == origin
+    assert sources[0].sidecar_id == "alpha"
+    assert source_id not in manager._credential_source_preferences[("anthropic", "default")]
+    assert manager._credential_source_preferences[("anthropic", "alice@example.com")][
+        source_id
+    ] == (sources[0].enabled, sources[0].priority)
 
 
 def test_tag_endpoint_404_when_provider_account_missing(client: TestClient):

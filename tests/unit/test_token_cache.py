@@ -23,6 +23,63 @@ def cache():
 
 
 @pytest.mark.asyncio
+async def test_identity_pending_source_stays_hidden_until_promoted(cache):
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "opaque-token"},  # pragma: allowlist secret — fake token
+        account_id="default",
+        source_id="sidecar:origin-a",
+        source_metadata={
+            "source_type": "sidecar",
+            "credential_origin": "path:/agy/token",
+            "identity_pending": True,
+        },
+    )
+
+    assert await cache.get_all_active_accounts() == []
+    assert len(await cache.get_source_candidates("antigravity", "default")) == 1
+
+    assert await cache.move_source(
+        "antigravity", "default", "alice@example.com", "sidecar:origin-a"
+    )
+    assert [(pid, aid) for pid, aid, _label in await cache.get_all_active_accounts()] == [
+        ("antigravity", "alice@example.com")
+    ]
+    assert (
+        await cache.get_token("antigravity", "oauth_token", "alice@example.com") == "opaque-token"
+    )
+
+
+@pytest.mark.asyncio
+async def test_move_source_refreshes_timestamp_when_merging_into_existing_account(
+    cache, monkeypatch
+):
+    now = 1_800_000_000.0
+    monkeypatch.setattr("app.services.token_cache.time.time", lambda: now)
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "pending-token"},  # pragma: allowlist secret
+        account_id="default",
+        source_id="sidecar:origin-a",
+        source_metadata={"identity_pending": True},
+    )
+    cache._cache["antigravity"] = {
+        "alice@example.com": (
+            {"api_key": "existing-token"},  # pragma: allowlist secret
+            {"source_id": "other-source"},
+            now,
+        )
+    }
+    cache._token_timestamps["antigravity"] = {"alice@example.com": {"oauth_token": now - 1000}}
+
+    assert await cache.move_source(
+        "antigravity", "default", "alice@example.com", "sidecar:origin-a"
+    )
+
+    assert cache._token_timestamps["antigravity"]["alice@example.com"]["oauth_token"] == now
+
+
+@pytest.mark.asyncio
 async def test_store_and_get_token(cache):
     # Test default account (auto-id)
     acc_id = await cache.store("anthropic", {"api_key": "secret123"})

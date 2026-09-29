@@ -382,7 +382,9 @@ class TestSidecarIdentityPrecedence:
                 },
             )
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert token_cards == []
+        assert len(token_cards) == 1
+        assert token_cards[0]["metadata"]["identity_pending"] is True
+        assert token_cards[0]["account_id"] is None
         assert blocked == [
             {
                 "provider_id": "antigravity",
@@ -462,7 +464,8 @@ class TestSidecarIdentityPrecedence:
         )
         cards, blocked = sidecar.GenericCollector.collect_provider("anthropic", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert [c["account_id"] for c in token_cards] == ["cli@example.com"]
+        assert [c["account_id"] for c in token_cards] == ["cli@example.com", None]
+        assert token_cards[1]["metadata"]["identity_pending"] is True
         assert blocked == [
             {"provider_id": "anthropic", "credential_origin": "cookie:anthropic/session"}
         ]

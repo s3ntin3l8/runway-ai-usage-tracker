@@ -489,7 +489,9 @@ class TestCollectProviderBlockGuard:
         # The env rule fires, tokens dict has api_key, but account_id can't be
         # resolved (the antigravity+chatgpt stamping helpers returned None,
         # anthropic statusline wasn't iterated).
-        assert cards == [], "token card must be dropped when account_id is None"
+        assert len(cards) == 1
+        assert cards[0]["metadata"]["identity_pending"] is True
+        assert cards[0]["account_id"] is None
         assert len(blocked) == 1, "exactly one blocked origin expected"
         assert blocked[0]["provider_id"] == "antigravity"
 
@@ -575,7 +577,11 @@ class TestCollectProviderBlockGuard:
                 "antigravity": {"provider:antigravity": "alice@example.com"},
             },
         )
-        assert cards == []
+        assert len(cards) == 1
+        assert cards[0]["metadata"]["identity_pending"] is True
+        assert cards[0]["account_id"] is None
+        assert cards[0]["account_label"] is None
+        assert "account_label" not in cards[0]["metadata"]
         assert blocked == [
             {"provider_id": "antigravity", "credential_origin": "env:ANTHROPIC_API_KEY"}
         ]
@@ -644,7 +650,8 @@ class TestCollectProviderBlockGuard:
                 "anthropic": {"provider:antigravity": "leaked@example.com"},
             },
         )
-        assert cards == []
+        assert len(cards) == 1
+        assert all(card["metadata"]["identity_pending"] for card in cards)
         assert len(blocked) == 1
         assert blocked[0]["provider_id"] == "antigravity"
 
@@ -743,7 +750,8 @@ class TestCredentialCandidateOwnership:
             ],
         }
         cards, blocked = sc.GenericCollector.collect_provider("anthropic", config)
-        assert cards == []
+        assert len(cards) == 2
+        assert all(card["metadata"]["identity_pending"] for card in cards)
         assert {entry["credential_origin"] for entry in blocked} == {
             "env:CLAUDE_CODE_OAUTH_TOKEN",
             "cookie:anthropic/session",
@@ -793,11 +801,34 @@ class TestCredentialCandidateOwnership:
             },
             account_label_hints={"anthropic": {"provider:anthropic": "a@example.com"}},
         )
-        assert cards == []
+        assert len(cards) == 2
+        assert all(card["metadata"]["identity_pending"] for card in cards)
         assert {entry["credential_origin"] for entry in blocked} == {
             "env:CLAUDE_CODE_OAUTH_TOKEN",
             "cookie:anthropic/session",
         }
+
+    def test_unverifiable_provider_reports_origin_without_shipping_token(self, monkeypatch):
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("OLLAMA_API_KEY", "ollama-secret")
+        cards, blocked = sc.GenericCollector.collect_provider(
+            "ollama",
+            {
+                "rules": [
+                    {
+                        "type": "env",
+                        "variable": "OLLAMA_API_KEY",
+                        "mapping": {"value": "api_key"},
+                    }
+                ]
+            },
+        )
+
+        assert cards == []
+        assert len(blocked) == 1
+        assert blocked[0]["provider_id"] == "ollama"
+        assert blocked[0]["credential_origin"].startswith("env:OLLAMA_API_KEY#")
 
     def test_env_cookie_alias_does_not_emit_duplicate_cookie_candidate(self, monkeypatch):
         import scripts.sidecar as sc

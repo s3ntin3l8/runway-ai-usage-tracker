@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
-from app.models.db import LatestUsage, QuotaSnapshot
+from app.models.db import LatestUsage, LatestUsageContribution, QuotaSnapshot
 from app.services.maintenance.account_merge import (
     _chunked_retag_snapshots,
     delete_gauge_series,
@@ -128,6 +128,38 @@ def test_plan_matches_apply_counts():
     _card(session, "alice@example.com", model_id="flash")  # collides with the second card
     ts = datetime(2026, 9, 1, tzinfo=UTC)
     _snapshot(session, "default", ts)
+    session.add_all(
+        [
+            LatestUsageContribution(
+                provider_id="gemini",
+                account_id="default",
+                source_id="server:gemini",
+                window_type="daily",
+                variant="",
+                model_id="pro",
+                card_json="{}",
+            ),
+            LatestUsageContribution(
+                provider_id="gemini",
+                account_id="alice@example.com",
+                source_id="server:gemini",
+                window_type="daily",
+                variant="",
+                model_id="pro",
+                card_json="{}",
+            ),
+            LatestUsageContribution(
+                provider_id="gemini",
+                account_id="default",
+                source_id="sidecar:laptop",
+                window_type="daily",
+                variant="",
+                model_id="flash",
+                card_json="{}",
+            ),
+        ]
+    )
+    session.commit()
 
     plan = plan_merge_gauge_series(
         session, provider_id="gemini", source="default", target="alice@example.com"
@@ -136,6 +168,8 @@ def test_plan_matches_apply_counts():
     assert plan.retagged == 1
     assert plan.snapshots_retagged == 1
     assert plan.snapshots_collided == 0
+    assert plan.contributions_merged == 1
+    assert plan.contributions_retagged == 1
 
     result = merge_gauge_series(
         session, provider_id="gemini", source="default", target="alice@example.com"
@@ -145,11 +179,15 @@ def test_plan_matches_apply_counts():
         result.retagged,
         result.snapshots_retagged,
         result.snapshots_collided,
+        result.contributions_merged,
+        result.contributions_retagged,
     ) == (
         plan.merged,
         plan.retagged,
         plan.snapshots_retagged,
         plan.snapshots_collided,
+        plan.contributions_merged,
+        plan.contributions_retagged,
     )
 
 
@@ -163,6 +201,50 @@ def test_plan_is_read_only():
 
     row = session.exec(select(LatestUsage)).one()
     assert row.account_id == "default"
+
+
+def test_contribution_is_retagged_if_colliding_target_disappears(monkeypatch):
+    session = _session()
+    target = LatestUsageContribution(
+        provider_id="gemini",
+        account_id="alice@example.com",
+        source_id="sidecar:laptop",
+        window_type="daily",
+        variant="",
+        model_id="pro",
+        card_json=json.dumps({"remaining": 5}),
+    )
+    source = LatestUsageContribution(
+        provider_id="gemini",
+        account_id="default",
+        source_id="sidecar:laptop",
+        window_type="daily",
+        variant="",
+        model_id="pro",
+        card_json=json.dumps({"account_id": "default", "remaining": 7}),
+    )
+    session.add_all([target, source])
+    session.commit()
+    original_get = session.get
+
+    def get_without_contribution(model, ident, *args, **kwargs):
+        if model is LatestUsageContribution and ident == target.id:
+            row = original_get(model, ident, *args, **kwargs)
+            if row is not None:
+                session.delete(row)
+                session.flush()
+            return None
+        return original_get(model, ident, *args, **kwargs)
+
+    monkeypatch.setattr(session, "get", get_without_contribution)
+
+    merge_gauge_series(session, provider_id="gemini", source="default", target="alice@example.com")
+
+    rows = list(session.exec(select(LatestUsageContribution).order_by(LatestUsageContribution.id)))
+    assert len(rows) == 1
+    source_row = next(row for row in rows if row.id == source.id)
+    assert source_row.account_id == "alice@example.com"
+    assert json.loads(source_row.card_json)["remaining"] == 7
 
 
 def test_delete_gauge_series_removes_both_tables():

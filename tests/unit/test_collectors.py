@@ -9,6 +9,7 @@ Tests cover:
 - Local log parsing and file-based data sources
 """
 
+import asyncio
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -747,6 +748,24 @@ class TestAnthropicCollector:
         org_empty = {}
         identity = collector._extract_identity_from_web(org_empty)
         assert identity == ""
+
+    @pytest.mark.asyncio
+    async def test_web_api_email_promotes_only_the_default_account_identity(self):
+        collector = AnthropicCollector(account_id="default")
+        update_identity = AsyncMock()
+        with patch(
+            "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+            update_identity,
+        ):
+            collector._parse_web_api_response(
+                {}, org_data={"membership": {"user": {"email": "User@Example.com"}}}
+            )
+            await asyncio.sleep(0)
+
+        assert collector.account_id == "user@example.com"
+        update_identity.assert_awaited_once_with(
+            "anthropic", "user@example.com", name="User@Example.com"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")

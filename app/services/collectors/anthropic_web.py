@@ -367,12 +367,25 @@ class AnthropicWebMixin:
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
         # Identity Promotion: sync discovered email/name back to the token cache metadata
-        if identity_str and hasattr(self, "account_id") and self.account_id:
-            task = asyncio.create_task(
-                token_cache.update_account_metadata("anthropic", self.account_id, name=identity_str)
-            )
-            _pending_tasks.add(task)
-            task.add_done_callback(_pending_tasks.discard)
+        if identity_str and hasattr(self, "account_id"):
+            # The organization name is a useful display label, but only an
+            # authenticated email is a stable account identity. The current
+            # source was selected by CollectorManager, so this API response
+            # belongs to that exact credential bundle.
+            if "@" in identity_str and (
+                not self.account_id or self.account_id.lower() == "default"
+            ):
+                from app.services.collectors.base import normalize_account_id
+
+                self.account_id = normalize_account_id(identity_str)
+            if self.account_id:
+                task = asyncio.create_task(
+                    token_cache.update_account_metadata(
+                        "anthropic", self.account_id, name=identity_str
+                    )
+                )
+                _pending_tasks.add(task)
+                task.add_done_callback(_pending_tasks.discard)
             self.account_label = identity_str
 
         # Tier discovery - use regex to extract pro/max/team and multiplier (e.g. 5x)

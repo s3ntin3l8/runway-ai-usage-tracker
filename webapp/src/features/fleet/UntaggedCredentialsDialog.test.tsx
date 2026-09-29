@@ -100,6 +100,31 @@ describe('UntaggedCredentialsDialog', () => {
     expect(screen.queryByText('Default')).not.toBeInTheDocument();
   });
 
+  it('shows an unresolved source quota preview without presenting it as account history', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          ...entry,
+          quota_preview_observed_at: '2026-09-29T10:00:00Z',
+          quota_preview: [
+            { service_name: 'Antigravity', remaining: 7, unit: 'requests', pct_used: 30 },
+            { remaining: 4 },
+            { service_name: 'Gemini', window_type: 'weekly' },
+          ],
+        },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Live quota from this credential')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Observed/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Antigravity · 7 requests · 30% used/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/not added to account history until assigned/i)).toBeInTheDocument();
+  });
+
   it('shows the "Add one in Provider Settings" fallback when no provider row exists', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [entry],

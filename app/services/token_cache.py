@@ -194,6 +194,12 @@ class TokenCache:
                 metadata.update({"source_id": source_id, "source": source})
                 source_accounts[source_id] = (stored_tokens, metadata, time.time())
 
+            # Keep identity-pending credentials available only through the
+            # source-pinned API path. They must not become a visible/default
+            # account in the compatibility cache before verification.
+            if (source_metadata or {}).get("identity_pending") is True:
+                return account_id
+
             if provider not in self._cache:
                 self._cache[provider] = {}
                 self._token_timestamps[provider] = {}
@@ -241,6 +247,11 @@ class TokenCache:
             metadata = {
                 "account_label": account_label or prev_meta.get("account_label"),
                 "source": _resolve_source(source, prev_meta.get("source")),
+                "identity_pending": bool(
+                    (source_metadata or {}).get(
+                        "identity_pending", prev_meta.get("identity_pending", False)
+                    )
+                ),
             }
             self._cache[provider][account_id] = (stored_tokens, metadata, time.time())
 
@@ -540,6 +551,45 @@ class TokenCache:
                 self._source_cache[provider].pop(account_id, None)
             if not self._source_cache.get(provider):
                 self._source_cache.pop(provider, None)
+            return True
+
+    async def move_source(
+        self, provider: str, from_account_id: str, to_account_id: str, source_id: str
+    ) -> bool:
+        """Move one credential bundle after its own API response proves identity."""
+        from_id = canonical_account_id(from_account_id)
+        to_id = canonical_account_id(to_account_id)
+        async with self._lock:
+            source_accounts = self._source_cache.get(provider, {}).get(from_id, {})
+            entry = source_accounts.pop(source_id, None)
+            if entry is None:
+                return False
+            if not source_accounts:
+                self._source_cache[provider].pop(from_id, None)
+            self._source_cache.setdefault(provider, {}).setdefault(to_id, {})[source_id] = entry
+            # Keep the compatibility cache coherent when it represents this
+            # same source bundle; never overwrite another account's aggregate.
+            old_aggregate = self._cache.get(provider, {}).get(from_id)
+            if old_aggregate and old_aggregate[1].get("source_id") == source_id:
+                self._cache.setdefault(provider, {})[to_id] = old_aggregate
+                self._cache[provider].pop(from_id, None)
+            elif entry:
+                tokens, metadata, timestamp = entry
+                target_aggregate = self._cache.setdefault(provider, {}).get(to_id)
+                if target_aggregate is None:
+                    self._cache[provider][to_id] = (
+                        dict(tokens),
+                        {
+                            "account_label": metadata.get("account_label"),
+                            "source": metadata.get("source"),
+                            "source_id": source_id,
+                        },
+                        timestamp,
+                    )
+                else:
+                    target_aggregate[0].update(tokens)
+                    for key in tokens:
+                        self._mark_token_seen(provider, to_id, key)
             return True
 
     async def remove_source_tokens(

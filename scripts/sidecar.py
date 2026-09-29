@@ -153,6 +153,15 @@ _SIDECAR_VERSION_FALLBACK = (
 )
 _SIDECAR_VERSION = _resolve_sidecar_version()
 
+# Providers whose server collector can ask the upstream API for the identity
+# of the exact credential source currently pinned in TokenCache. Keep this in
+# sync with the identity-promotion branch in
+# CollectorManager._collect_with_source_failover; providers need both sides
+# enabled before sidecar credentials can be sent for identity verification.
+# Other unidentified credentials stay pending for operator assignment and are
+# not transmitted to discover that no identity endpoint exists.
+_SERVER_IDENTITY_PROVIDERS = frozenset({"antigravity", "anthropic", "github", "opencode"})
+
 # --- INJECTED REGISTRY ---
 __REGISTRY__: dict[str, Any] = {
     "providers": {
@@ -3019,16 +3028,34 @@ class GenericCollector:
                 else:
                     resolved_account_id = None
                 if resolved_account_id is None or not source_identity_strong:
-                    logging.warning(
-                        f"  [{provider_id}] token card blocked (origin={origin}) — "
-                        "no strong account identity resolved; "
-                        "not shipping. Operator will see this in the fleet view's "
-                        "Untagged Credentials panel."
-                    )
+                    if provider_id in _SERVER_IDENTITY_PROVIDERS:
+                        logging.warning(
+                            f"  [{provider_id}] token card blocked (origin={origin}) — "
+                            "no strong identity resolved; sharing only for exact-source "
+                            "server identity verification."
+                        )
+                    else:
+                        logging.warning(
+                            f"  [{provider_id}] credential origin reported without sending "
+                            "its token; configure an account before server-side quota "
+                            "collection is available."
+                        )
                     blocked_origins.append(
                         {"provider_id": provider_id, "credential_origin": origin}
                     )
-                else:
+                identity_pending = not bool(resolved_account_id and source_identity_strong)
+                if identity_pending:
+                    # Do not let a default sentinel or an inheritable
+                    # provider-wide hint pick the server cache account. The
+                    # server stores this only in the source-pinned pending
+                    # bucket until that exact source proves its identity. For
+                    # providers without an exact-source server verifier, only
+                    # the credential origin is reported: no token is shipped,
+                    # so the operator must configure an account before the
+                    # server can show quota for that credential.
+                    tokens.pop("account_id", None)
+                    tokens.pop("account_label", None)
+                if not identity_pending or provider_id in _SERVER_IDENTITY_PROVIDERS:
                     results.append(
                         {
                             "service_name": name,
@@ -3040,12 +3067,13 @@ class GenericCollector:
                             "pace": "Token",
                             "detail": "[Token Extracted] [Sidecar]",
                             "data_source": data_source,
-                            "account_id": resolved_account_id,
+                            "account_id": None if identity_pending else resolved_account_id,
                             "account_label": tokens.get("account_label"),
                             "metadata": {
                                 **tokens,
                                 "provider_id": provider_id,
                                 "credential_origin": origin,
+                                "identity_pending": identity_pending,
                             },
                         }
                     )

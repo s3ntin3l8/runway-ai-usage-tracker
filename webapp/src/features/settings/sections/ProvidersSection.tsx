@@ -1,7 +1,7 @@
 // Provider configuration with multi-account rendering.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,
   KeyboardSensor,
@@ -22,7 +22,12 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import { deleteProviderConfig, putDashboardLayout, putProviderConfig } from '@/api/endpoints';
+import {
+  deleteProviderConfig,
+  fetchUntaggedCredentials,
+  putDashboardLayout,
+  putProviderConfig,
+} from '@/api/endpoints';
 import type { DashboardLayout, ProviderConfig } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -37,6 +42,7 @@ import { useProviderConfigs } from '@/features/home/queries';
 import { useDashboardLayout } from '@/features/home/queries';
 import { ProviderDetailDialog } from './ProviderDetailDialog';
 import { AddProviderWizard } from './AddProviderWizard';
+import { UntaggedCredentialsDialog } from '@/features/fleet/UntaggedCredentialsDialog';
 
 export function reorderItems<T>(
   items: T[],
@@ -113,6 +119,11 @@ function ProvidersSectionV2({
   // Wizard (#287) — null = closed, otherwise the provider we pre-scoped to
   // (undefined/null = open at step 1 with no pre-scope).
   const [wizardScope, setWizardScope] = useState<ProviderConfig | null | undefined>(undefined);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
+  const pendingCredentials = useQuery({
+    queryKey: ['fleet', 'untagged_credentials', 'all'],
+    queryFn: () => fetchUntaggedCredentials(),
+  });
 
   // Build a Map<provider_id, Set<account_id>> for the wizard's
   // defense-in-depth 409 detection (the API does the same check; this lets
@@ -203,6 +214,19 @@ function ProvidersSectionV2({
   return (
     <>
       <div className="flex max-w-2xl flex-col gap-3">
+        {(pendingCredentials.data?.items.length ?? 0) > 0 ? (
+          <Card className="flex items-center justify-between gap-3 p-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold">Credentials need an account</p>
+              <p className="text-[11px] text-fg-subtle">
+                {pendingCredentials.data?.items.length} discovered credential{pendingCredentials.data?.items.length === 1 ? '' : 's'} could not be matched to a stable identity.
+              </p>
+            </div>
+            <Button variant="primary" size="sm" onClick={() => setAssignmentOpen(true)}>
+              Assign accounts
+            </Button>
+          </Card>
+        ) : null}
         {providers.length > 5 && (
           <div className="relative">
             <Search
@@ -368,6 +392,11 @@ function ProvidersSectionV2({
           }
         }}
         onAddAccount={(p) => setWizardScope(p)}
+      />
+
+      <UntaggedCredentialsDialog
+        open={assignmentOpen}
+        onClose={() => setAssignmentOpen(false)}
       />
 
       {wizardScope !== undefined ? (
