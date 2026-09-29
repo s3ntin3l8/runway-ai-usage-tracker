@@ -221,7 +221,7 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
         "project_name": settings.PROJECT_NAME,
         "version": __version__,
         "latest_version": latest,
-        "update_available": is_update_available(__version__, latest),
+        "update_available": is_update_available(__version__, latest, target_channel="stable"),
         "app_host": settings.APP_HOST,
         "app_port": settings.APP_PORT,
         "encryption_enabled": encryption_service.is_enabled,
@@ -358,7 +358,7 @@ async def check_updates(
     return {
         "current_version": __version__,
         "latest_version": latest,
-        "update_available": is_update_available(__version__, latest),
+        "update_available": is_update_available(__version__, latest, target_channel="stable"),
     }
 
 
