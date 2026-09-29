@@ -1343,7 +1343,7 @@ async def update_credential_sources(
         session, provider_id, account_id, body.sources, all_machines=body.all_machines
     )
     session.commit()
-    manager._credential_source_preferences[(provider_id, account_id)] = source_preferences
+    manager.set_credential_source_preferences(provider_id, account_id, source_preferences)
     manager._last_sync_time = 0.0
     try:
         await manager.reset_collector(provider_id, account_id)
@@ -1487,7 +1487,7 @@ async def delete_provider_config_for_account(
     await token_cache.remove(provider_id, account_id)
     auth_failures.clear(provider_id, account_id)
     if permanent:
-        manager._credential_source_preferences.pop((provider_id, account_id), None)
+        manager.clear_credential_source_preferences(provider_id, account_id)
 
     audit_log.record(
         session,
@@ -1527,16 +1527,8 @@ async def delete_provider_config_for_account(
 
 
 def _has_account_usage(provider_id: str, account_id: str, session: Session) -> bool:
-    return (
-        session.exec(
-            select(UsageEvent.id)
-            .where(
-                col(UsageEvent.provider_id).in_(account_usage_provider_ids(provider_id)),
-                col(UsageEvent.account_id) == account_id,
-            )
-            .limit(1)
-        ).first()
-        is not None
+    return _account_usage_flags(session, [(provider_id, account_id)]).get(
+        (provider_id, account_id), False
     )
 
 
@@ -1558,12 +1550,21 @@ def _archived_account_usage_flags(
     session: Session, archived_rows: list[ProviderConfig]
 ) -> dict[tuple[str, str], bool]:
     archived_rows = [row for row in archived_rows if row.provider_id in manager.collector_registry]
+    return _account_usage_flags(
+        session, [(row.provider_id, row.account_id) for row in archived_rows]
+    )
+
+
+def _account_usage_flags(
+    session: Session, account_keys: list[tuple[str, str]]
+) -> dict[tuple[str, str], bool]:
+    account_keys = list(dict.fromkeys(account_keys))
     usage_terms = [
         and_(
-            col(UsageEvent.provider_id).in_(account_usage_provider_ids(row.provider_id)),
-            col(UsageEvent.account_id) == row.account_id,
+            col(UsageEvent.provider_id).in_(account_usage_provider_ids(provider_id)),
+            col(UsageEvent.account_id) == account_id,
         )
-        for row in archived_rows
+        for provider_id, account_id in account_keys
     ]
     if not usage_terms:
         return {}
@@ -1575,11 +1576,11 @@ def _archived_account_usage_flags(
         ).all()
     )
     return {
-        (row.provider_id, row.account_id): any(
-            (event_provider_id, row.account_id) in usage_event_pairs
-            for event_provider_id in account_usage_provider_ids(row.provider_id)
+        (provider_id, account_id): any(
+            (event_provider_id, account_id) in usage_event_pairs
+            for event_provider_id in account_usage_provider_ids(provider_id)
         )
-        for row in archived_rows
+        for provider_id, account_id in account_keys
     }
 
 

@@ -675,6 +675,16 @@ class CollectorManager:
         cls, _name, _ttl = entry
         return cls()
 
+    def set_credential_source_preferences(
+        self, provider_id: str, account_id: str, preferences: dict[str, tuple[bool, int]]
+    ) -> None:
+        """Replace the in-memory source preferences for one account."""
+        self._credential_source_preferences[(provider_id, account_id)] = preferences
+
+    def clear_credential_source_preferences(self, provider_id: str, account_id: str) -> None:
+        """Drop the in-memory source preferences for one account."""
+        self._credential_source_preferences.pop((provider_id, account_id), None)
+
     async def reset_collector(self, provider_id: str, account_id: str | None = None):
         """Reset internal state for specific collector(s)."""
         target_prefix = f"{provider_id}:"

@@ -343,6 +343,7 @@ def test_error_push_has_no_effort():
     [
         ("opencode", "opencode-free"),
         ("opencode-go", "opencode"),
+        ("opencode-zen", "opencode-zen"),
         ("open-design-byok", "opencode-byok"),
         ("openrouter", "opencode-openrouter"),
         ("ollama-cloud", "opencode-ollama"),

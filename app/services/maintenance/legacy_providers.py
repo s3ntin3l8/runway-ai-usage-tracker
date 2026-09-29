@@ -28,6 +28,7 @@ from __future__ import annotations
 _OC_PROVIDER_MAP: dict[str, str] = {
     "opencode": "opencode-free",
     "opencode-go": "opencode",
+    "opencode-zen": "opencode-zen",
     "open-design-byok": "opencode-byok",
     "openrouter": "opencode-openrouter",
     "ollama-cloud": "opencode-ollama",
