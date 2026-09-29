@@ -342,30 +342,6 @@
           "domains": ["opencode.ai", ".opencode.ai"],
           "name": "__Host-console_session",
           "mapping": { "value": "console_session" }
-        },
-        {
-          "type": "sqlite",
-          "paths": [
-            "~/.local/share/opencode/opencode.db",
-            "~/.opencode/opencode.db",
-            "{{DATA_DIR:opencode}}/opencode.db"
-          ],
-          "queries": [
-            {
-              "name": "Usage (5h/7d/30d)",
-              "query": "SELECT SUM(json_extract(data, '$.cost')), COUNT(*) FROM message WHERE time_created > ? AND json_valid(data) AND json_extract(data, '$.role') = 'assistant'",
-              "windows": {
-                "5h": 18000,
-                "week": 604800,
-                "month": 2592000
-              },
-              "limits": {
-                "5h": 12.0,
-                "week": 30.0,
-                "month": 60.0
-              }
-            }
-          ]
         }
       ]
     },

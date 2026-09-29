@@ -8,7 +8,7 @@ Anthropic Claude quota collector with a 3-tier fallback: `api` → `web` → `lo
 ## Overview
 
 - **Collection Strategy**: api (OAuth) → web (Cookies) → local (Statusline/CLI/Logs, via sidecar)
-- **Cards**: 2-5 cards (Session, Weekly, Sonnet, Opus, Extra Usage windows)
+- **Cards**: Session and Weekly quota windows, per-model Sonnet and Opus cards, and Extra Usage windows
 - **Authentication**: OAuth token (api), Chrome cookies (web), local statusline / CLI (local — collected by the sidecar).
 
 ## Setup Methods Quick Overview
@@ -59,10 +59,10 @@ This is the preferred method, providing the most reliable and comprehensive data
 ### Tier 3: local (CLI / Logs / Statusline) — sidecar-only
 **Runs in:** the sidecar (`scripts/sidecar.py` / `sidecar_app/`). The server-side collector does not implement this tier — its only strategies are `oauth` and `web`.
 **Mechanism (sidecar):**
-- **Statusline**: Reads `~/.claude/statusline.json` (Fast Path).
+- **Statusline**: Reads `~/.claude/statusline.json` for Session and Weekly quota windows (Fast Path).
 - **CLI PTY**: Executes `claude -s read-only` to parse CLI output.
 - **Local Logs**: Scans `~/.claude/projects/**/*.jsonl` for token usage and emits per-message events.
-**Behavior:** The sidecar pushes both the parsed quota card and the per-message events to `/api/v1/fleet/ingest`. On the server, `EventIngestor` merges them with any `api`/`web` results for the same `(provider_id, account_id, window_type, variant, model_id)` tuple — token breakdown and session counts come from this tier, the headline `%` typically comes from `api`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
+**Behavior:** The sidecar pushes parsed quota windows and per-message events from local logs to `/api/v1/fleet/ingest`. Neither the sidecar nor the server's local statusline path emits the context-window token count as a separate card; per-message token usage remains available from event history. On the server, `EventIngestor` merges local event data with any `api`/`web` results for the same `(provider_id, account_id, window_type, variant, model_id)` tuple — token breakdown and session counts come from events, while the headline `%` typically comes from `api`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
 
 ## Output Format
 

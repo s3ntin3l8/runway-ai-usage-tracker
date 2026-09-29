@@ -9,6 +9,7 @@ OpenCode quota collector with API-key and session-cookie strategies.
 - **Strategy:** `api` (primary, bearer token) → `web` (fallback, console session cookies)
 - **Cards:** 3 cards per account (5h rolling, 7d weekly, 30d monthly)
 - **Auth:** OpenCode Go API key (`oc_sk_…`), or session cookies (`auth` + `__Host-console_session`)
+- **Local history:** The sidecar extracts per-message usage events from OpenCode's SQLite database; it does not emit rolling quota cards from that database.
 
 ## Auth Sources
 

@@ -318,7 +318,7 @@ launchctl start com.runway.sidecar
 | **GitHub Copilot** | API token, OAuth | `GITHUB_TOKEN` (from .env or OAuth flow), `gh` CLI (from `~/.config/gh/hosts.yml`), or Windows Credential Manager |
 | **Gemini** | OAuth | `~/.gemini/oauth_creds.json` |
 | **ChatGPT** | OAuth / cookie | `CHATGPT_OAUTH_TOKEN`, `~/.codex/auth.json`, or Chrome cookie |
-| **OpenCode** | SQLite DB | `~/.local/share/opencode/opencode.db`, `~/.opencode/opencode.db`, or Chrome cookie |
+| **OpenCode** | API key / browser cookie / local events | `OPENCODE_API_KEY`, `~/.local/share/opencode/auth.json`, Chrome cookie, or SQLite event database |
 | **zAI API/Plan** | API key | `ZAI_API_KEY` |
 | **Kimi API** | API key | `KIMI_API_KEY` |
 | **Kimi Coding** | API key / CLI credential / cookie | `KIMI_CODE_API_KEY`, `~/.kimi-code/credentials/kimi-code*.json` (access token + expiry only, never the refresh token), or `KIMI_AUTH_TOKEN` / Chrome cookie |

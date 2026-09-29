@@ -66,8 +66,8 @@ The "Runs in" column shows where the strategy executes. The server-side collecto
 | ChatGPT | local (logs) | enrichment | sidecar |
 | **Gemini** | api | quota | server |
 | Gemini | local (session logs) | enrichment | sidecar |
-| **OpenCode** | web | quota | server |
-| OpenCode | local (SQLite DB) | enrichment | sidecar |
+| **OpenCode** | api / web | quota | server |
+| OpenCode | local (SQLite events) | enrichment | sidecar |
 | **Antigravity** | api (Code Assist cloud) | quota | server |
 | Antigravity | local (LSP probe — legacy enrichment) | enrichment | sidecar |
 

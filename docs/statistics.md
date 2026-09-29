@@ -11,7 +11,7 @@ The `data_source` label identifies **how** the usage data was obtained from the 
 | :--- | :--- | :--- | :--- |
 | **`api`** | Primary | Official/Public API endpoint or OAuth-authenticated service. | `anthropic_oauth`, `gemini_api`, `github`, `openrouter`, `kimi_coding` |
 | **`web`** | Secondary | Web-mimicking calls or scraping using browser cookies. | `chatgpt` (wham/usage), `ollama` (scraping) |
-| **`local`** | Tertiary | Reading local logs, CLI output, or local application databases. | `claude_local` (statusline), `opencode_db`, sidecar event extractors (Claude/Codex/Gemini/OpenCode JSONL/SQLite) |
+| **`local`** | Tertiary | Reading local logs, CLI output, or local application databases. | Claude statusline quota windows and sidecar event extractors (Claude/Codex/Gemini/OpenCode JSONL/SQLite) |
 
 ### Fallback Logic
 Most providers follow an `api` → `web` → `local` fallback chain. This ensures the dashboard always shows the most accurate data available given the current authentication state.
