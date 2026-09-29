@@ -133,7 +133,7 @@ def resolve_hermes_provider_and_canonical(
             bp = "kimi-coding"
         elif m_lower.startswith("grok-"):
             bp = "xai-oauth"
-        elif m_lower.startswith("minimax") or m_lower.startswith("minimax-"):
+        elif m_lower.startswith("minimax-") or m_lower == "minimax":
             bp = "minimax-oauth"
         elif sbp and sbp not in ("hermes", "auto", "default", "custom"):
             bp = sbp
@@ -157,7 +157,8 @@ def resolve_hermes_provider_and_canonical(
         or sbp.startswith("opencode")
     )
     if is_opencode:
-        if _is_free_model(m):
+        mode = (session_billing_mode or "").strip().lower()
+        if mode == "free" or _is_free_model(m):
             return "opencode-free", ("opencode-free", None)
         return "opencode", ("opencode", None)
 

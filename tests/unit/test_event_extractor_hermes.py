@@ -131,6 +131,17 @@ def test_resolve_hermes_provider_and_canonical():
     assert pid == "minimax"
     assert canon == ("minimax", None)
 
+    # MiniMax greedy prefix rejection: non-hyphenated model is rejected
+    pid, _ = resolve_hermes_provider_and_canonical("", "", "minimaximal")
+    assert pid == "hermes"
+
+    # session_billing_mode="free" routes opencode to opencode-free even for paid model name
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "opencode", "", "claude-3-5-sonnet", session_billing_mode="free"
+    )
+    assert pid == "opencode-free"
+    assert canon == ("opencode-free", None)
+
 
 # ---------------------------------------------------------------------------
 # Path Discovery Tests

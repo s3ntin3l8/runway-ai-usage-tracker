@@ -443,7 +443,7 @@ export function PendingUsageEventsCard() {
                 <span>{providerId} · {count} events</span>
                 {options.length === 0 ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-warning">No account configured</span>
+                    <span className="text-warning" aria-live="polite">No account configured</span>
                     <Button
                       size="sm"
                       variant="secondary"

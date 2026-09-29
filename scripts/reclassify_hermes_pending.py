@@ -15,6 +15,12 @@ This script scans pending_usage_events (and any usage_events) tagged with
 these legacy IDs, determines the canonical provider from the event model and task,
 and updates the database rows in place.
 
+Note on rollups:
+  When --apply is passed, database updates to usage_events are committed first,
+  followed by a best-effort rollup rebuild across affected providers. If the rollup
+  rebuild encounters an issue, the table rewrite remains committed and rollups can be
+  rebuilt manually via `scripts.backfill_rollups.backfill(provider_id)`.
+
 Usage:
   # Dry run preview (default):
   RUNWAY_CONFIG_DIR=~/.config/runway python scripts/reclassify_hermes_pending.py
