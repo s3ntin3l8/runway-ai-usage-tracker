@@ -177,8 +177,15 @@ async def test_collector_continues_after_non_auth_source_error(monkeypatch):
         )
     collector = _CredentialProbeCollector(cache)
     manager = CollectorManager()
+    health_writes: list[tuple[str, str, dict[str, str]]] = []
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
-    monkeypatch.setattr(manager, "_record_source_health", lambda *_args: None)
+    monkeypatch.setattr(
+        manager,
+        "_record_source_health",
+        lambda provider_id, account_id, updates: health_writes.append(
+            (provider_id, account_id, dict(updates))
+        ),
+    )
     manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
         collector, "OpenRouter", ttl=0
     )
@@ -187,6 +194,13 @@ async def test_collector_continues_after_non_auth_source_error(monkeypatch):
 
     assert result[0]["remaining"] == "healthy"
     assert collector.calls == ["broken", "working"]
+    assert health_writes == [
+        (
+            "openrouter",
+            "alice@example.com",
+            {"first": "unavailable", "last": "healthy"},
+        )
+    ]
     await manager.close()
 
 

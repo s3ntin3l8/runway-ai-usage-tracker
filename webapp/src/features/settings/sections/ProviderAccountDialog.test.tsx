@@ -132,6 +132,17 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
               health: 'unavailable',
               available: false,
             },
+            {
+              source_id: 'config:anthropic:alice@example.com',
+              source_type: 'config',
+              source_label: 'Manual configuration',
+              sidecar_id: null,
+              enabled: true,
+              priority: 2,
+              last_seen: null,
+              health: 'unavailable',
+              available: false,
+            },
           ],
         },
       ],
@@ -142,7 +153,8 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
 
     expect(screen.getByText('Browser cookie')).toBeInTheDocument();
     expect(screen.getByText('Available')).toBeInTheDocument();
-    expect(screen.getByText('Unavailable · awaiting refresh')).toBeInTheDocument();
+    expect(screen.getByText('Sidecar unavailable or credential expired')).toBeInTheDocument();
+    expect(screen.getByText('Manual configuration is not currently available')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('switch', { name: 'Enable Browser cookie' }));
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
@@ -152,6 +164,7 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
       [
         { source_id: 'sidecar:browser', enabled: false, priority: 0 },
         { source_id: 'sidecar:cli', enabled: true, priority: 1 },
+        { source_id: 'config:anthropic:alice@example.com', enabled: true, priority: 2 },
       ],
       false,
     ));

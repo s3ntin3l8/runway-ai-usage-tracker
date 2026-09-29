@@ -263,6 +263,8 @@ class CredentialProvider:
             )
             kind = metadata.get("source_type") or metadata.get("source") or "server"
             return CredentialMap(results, sources=dict.fromkeys(results, kind))
+        # This is true only when this provider owns the active pin; other
+        # providers correctly continue through legacy discovery.
         if token_cache.is_source_selected(provider_id):
             return CredentialMap({}, sources={})
 

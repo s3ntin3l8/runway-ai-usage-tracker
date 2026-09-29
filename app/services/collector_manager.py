@@ -552,7 +552,7 @@ class CollectorManager:
                 return []
 
             health_updates: dict[str, str] = {}
-            result: list[dict[str, Any]] = []
+            successful_result: list[dict[str, Any]] | None = None
             deadline = asyncio.get_running_loop().time() + 25.0
             await smart.reset()
             for index, candidate in enumerate(candidates):
@@ -582,10 +582,10 @@ class CollectorManager:
                     health_updates[candidate["source_id"]] = "unavailable"
                     continue
                 health_updates[candidate["source_id"]] = "healthy"
-                self._record_source_health(provider_id, account_id, health_updates)
-                return result
+                successful_result = result
+                break
             self._record_source_health(provider_id, account_id, health_updates)
-            return []
+            return successful_result if successful_result is not None else []
 
     @staticmethod
     def _record_source_health(provider_id: str, account_id: str, updates: dict[str, str]) -> None:

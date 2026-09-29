@@ -257,7 +257,12 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     )
     session.commit()
     endpoint = "/api/v1/system/provider-config/openrouter/alice@example.com/credential-sources"
-    payload = {"sources": [{"source_id": "host-a-source", "enabled": False, "priority": 3}]}
+    payload = {
+        "sources": [
+            {"source_id": "host-a-source", "enabled": False, "priority": 3},
+            {"source_id": "host-b-source", "enabled": True, "priority": 1},
+        ]
+    }
     response = client.patch(endpoint, json=payload)
     assert response.status_code == 200, response.text
     session.expire_all()
@@ -266,7 +271,14 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     ).one()
     assert host_b.enabled is True
 
-    response = client.patch(endpoint, json={**payload, "all_machines": True})
+    all_machines_payload = {
+        "sources": [
+            {"source_id": "host-a-source", "enabled": False, "priority": 3},
+            {"source_id": "host-b-source", "enabled": False, "priority": 3},
+        ],
+        "all_machines": True,
+    }
+    response = client.patch(endpoint, json=all_machines_payload)
     assert response.status_code == 200, response.text
     session.expire_all()
     siblings = session.exec(
@@ -291,10 +303,22 @@ def test_credential_source_preferences_reject_unknown_and_duplicate_ids(
             source_label="auth.json",
         )
     )
+    session.add(
+        CredentialSource(
+            provider_id="openrouter",
+            account_id="alice@example.com",
+            source_id="omitted-source",
+            source_type="sidecar",
+            source_label="other.json",
+            enabled=False,
+            priority=1,
+        )
+    )
     session.commit()
     endpoint = "/api/v1/system/provider-config/openrouter/alice@example.com/credential-sources"
     preference = {"source_id": "known-source", "enabled": False, "priority": 0}
     duplicate = client.patch(endpoint, json={"sources": [preference, preference]})
+    partial = client.patch(endpoint, json={"sources": [preference]})
     unknown = client.patch(
         endpoint,
         json={"sources": [{"source_id": "unknown-source", "enabled": True, "priority": 0}]},
@@ -305,8 +329,19 @@ def test_credential_source_preferences_reject_unknown_and_duplicate_ids(
     )
 
     assert duplicate.status_code == 422
+    assert partial.status_code == 422
+    assert "include every known source" in partial.json()["detail"]
     assert unknown.status_code == 404
     assert unknown_provider.status_code == 404
+    session.expire_all()
+    known_source = session.exec(
+        select(CredentialSource).where(CredentialSource.source_id == "known-source")
+    ).one()
+    omitted_source = session.exec(
+        select(CredentialSource).where(CredentialSource.source_id == "omitted-source")
+    ).one()
+    assert known_source.enabled is True
+    assert (omitted_source.enabled, omitted_source.priority) == (False, 1)
 
 
 def test_credential_source_audit_is_committed_when_collector_reset_fails(

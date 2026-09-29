@@ -43,7 +43,11 @@ def touch_source(
     credential_origin: str | None = None,
     sidecar_id: str | None = None,
 ) -> CredentialSource:
-    """Create or refresh a source without replacing operator preferences."""
+    """Create or refresh a source without replacing operator preferences.
+
+    Initial priority is assigned only when creating a row. Later refreshes
+    preserve the operator's enabled state and priority.
+    """
     aid = canonical_account_id(account_id)
     row = session.exec(
         select(CredentialSource).where(

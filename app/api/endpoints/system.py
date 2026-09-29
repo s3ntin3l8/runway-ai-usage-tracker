@@ -944,6 +944,7 @@ class _DashboardLayout(BaseModel):
 class _CredentialSourcePreference(BaseModel):
     source_id: str
     enabled: bool
+    # Zero-based ordering rank; duplicate ranks are resolved by source_id.
     priority: int = Field(ge=0)
 
 
@@ -1341,6 +1342,7 @@ async def update_credential_sources(
             scrub_log(provider_id),
             scrub_log(account_id),
         )
+    # audit_log.record commits its row in its own savepoint transaction.
     audit_log.record(
         session,
         request,
@@ -1660,6 +1662,11 @@ async def _update_credential_source_preferences(
     }
     if set(by_id) - set(known):
         raise HTTPException(status_code=404, detail="Unknown credential source")
+    if set(known) - set(by_id):
+        raise HTTPException(
+            status_code=422,
+            detail="Credential source preferences must include every known source",
+        )
     for item in preferences:
         source = known[item.source_id]
         siblings: Sequence[CredentialSource] = [source]

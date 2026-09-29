@@ -147,6 +147,7 @@ function ProviderAccountForm({
         await patchCredentialSources(
           provider.provider_id,
           account.account_id,
+          // Send the complete source set; array position is the zero-based rank.
           credentialSources.map((source, priority) => ({
             source_id: source.source_id,
             enabled: source.enabled,
@@ -558,7 +559,11 @@ function SortableCredentialSourceRow({
             ? source.health === 'auth_failed'
               ? 'Authentication failed'
               : 'Available'
-            : 'Unavailable · awaiting refresh'}
+            : source.source_type === 'config'
+              ? 'Manual configuration is not currently available'
+              : source.sidecar_id
+                ? 'Sidecar unavailable or credential expired'
+                : 'Unavailable · awaiting refresh'}
           {source.last_seen ? ` · seen ${new Date(source.last_seen).toLocaleString()}` : ''}
         </p>
       </div>
