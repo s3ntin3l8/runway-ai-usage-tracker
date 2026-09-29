@@ -362,13 +362,13 @@ function SidecarCard({
               <dt className="text-fg-subtle">Version</dt>
               <dd className="mt-0.5 flex flex-wrap items-center gap-1.5">
                 <span className="font-mono tabular">v{sidecar.sidecar_version ?? '?'}</span>
-                {sidecar.channel === 'edge' ? (
+                {sidecar.channel === 'beta' || sidecar.channel === 'edge' ? (
                   <Badge
                     variant="accent"
                     className="uppercase tracking-wide"
-                    title="Rolling prerelease channel"
+                    title={sidecar.channel === 'beta' ? 'Numbered prerelease channel' : 'Rolling prerelease channel'}
                   >
-                    edge
+                    {sidecar.channel}
                   </Badge>
                 ) : null}
                 {sidecar.update_available ? <Badge variant="warning">update</Badge> : null}

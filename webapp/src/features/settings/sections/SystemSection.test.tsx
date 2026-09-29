@@ -71,6 +71,21 @@ describe('SystemSection', () => {
     });
   });
 
+  it('selects the beta update channel', async () => {
+    vi.mocked(api.fetchAppConfig).mockResolvedValue(appConfig());
+    vi.mocked(api.putAppConfig).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<SystemSection />);
+
+    await screen.findByLabelText(/timezone/i);
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(await screen.findByRole('option', { name: /beta/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(vi.mocked(api.putAppConfig).mock.calls[0][0]).toMatchObject({
+      sidecar_update_channel: 'beta',
+    });
+  });
+
   it('reflects a loaded edge channel and keeps it on save (read-back regression)', async () => {
     // Guards the "channel resets on reload" bug: a config loaded as edge must
     // render as edge and survive a save unchanged.

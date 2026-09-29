@@ -22,31 +22,47 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from collections.abc import Callable
+from typing import Any
 from urllib import error, request
 
 logger = logging.getLogger(__name__)
 
 _LATEST_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest"
+_BETA_RELEASES_API_URL = (
+    "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases?per_page=100"
+)
 _EDGE_REFS_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
 _RELEASES_URL = "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases"
 _CHECK_INTERVAL_SECONDS = 86400  # 24h
 _TIMEOUT_SECONDS = 10
+_BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
+
+
+def normalize_version(version: str) -> str:
+    """Remove whitespace, an optional BOM, and all leading v prefixes."""
+    return version.strip().lstrip("\ufeff").strip().lstrip("vV")
 
 
 def parse_channel(version: str | None) -> tuple[str, str | None]:
     """Classify a version string.
 
-    Returns ``("edge", short_sha)`` when the version carries a ``+edge.<sha>``
-    local segment, otherwise ``("stable", None)``.
+    Returns ``("edge", short_sha)`` for edge builds, ``("beta", None)`` for
+    numbered beta releases, and ``("stable", None)`` otherwise.
     """
     if version and "+edge." in version:
-        return "edge", version.split("+edge.", 1)[1] or None
+        normalized = normalize_version(version)
+        return "edge", normalized.split("+edge.", 1)[1] or None
+    if version:
+        normalized = normalize_version(version)
+        if _BETA_TAG_RE.fullmatch(f"v{normalized}"):
+            return "beta", None
     return "stable", None
 
 
-def _get_json(url: str) -> dict:
+def _get_json(url: str) -> Any:
     from scripts.sidecar_pkg.tls import build_context
 
     req = request.Request(  # noqa: S310 — fixed https GitHub API URL
@@ -65,6 +81,49 @@ def _stable_update(current: str) -> str | None:
         latest = str(_get_json(_LATEST_URL).get("tag_name", "")).lstrip("v").strip()
     except (error.URLError, OSError, ValueError, KeyError):
         return None
+    if not latest:
+        return None
+    try:
+        from packaging.version import InvalidVersion, Version
+
+        try:
+            return latest if Version(latest) > Version(current) else None
+        except InvalidVersion:
+            return None
+    except Exception:
+        return None
+
+
+def latest_beta_release(releases: object) -> dict | None:
+    """Return the newest numbered beta release from GitHub's releases list."""
+    if not isinstance(releases, list):
+        return None
+    candidates = [
+        release
+        for release in releases
+        if isinstance(release, dict)
+        and release.get("prerelease") is True
+        and _BETA_TAG_RE.fullmatch(str(release.get("tag_name") or ""))
+    ]
+    if not candidates:
+        return None
+    try:
+        from packaging.version import Version
+
+        return max(candidates, key=lambda release: Version(str(release["tag_name"]).lstrip("vV")))
+    except Exception:
+        return None
+
+
+def _beta_update(current: str) -> str | None:
+    """Latest beta version if newer than *current*, else None."""
+    try:
+        release = latest_beta_release(_get_json(_BETA_RELEASES_API_URL))
+    except (error.URLError, OSError, ValueError, KeyError):
+        return None
+    if not release:
+        return None
+    latest = str(release.get("tag_name", "")).lstrip("vV").strip()
     if not latest:
         return None
     try:
@@ -106,6 +165,10 @@ def check_once(current_version: str, channel: str | None = None) -> str | None:
     if active == "edge" and embedded_sha:
         sha = _edge_update(embedded_sha)
         return f"edge build {sha}" if sha else None
+
+    if active == "beta":
+        beta = _beta_update(current_version)
+        return f"v{beta}" if beta else None
 
     # Stable channel, or a stable binary that opted into edge (no sha to diff —
     # fall back to offering stable releases so it is never left blind).

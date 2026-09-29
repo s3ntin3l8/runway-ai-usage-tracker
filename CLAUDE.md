@@ -65,7 +65,7 @@ Runway is **event-sourced**. The authoritative table is `usage_events` — one r
 - Insights / rankings: `/api/v1/usage/{top-models,top-projects,top-tools,projects,global-stats}` — cross-provider lifetime totals, session economics, cache-hit ratio, busiest day/hour, and the Top-N model/project/tool rankings that back the `/insights` page.
 - Forecasts: `/api/v1/usage/forecast` (Theil-Sen regression on `quota_snapshots`, anchor-at-now; `include_series=true` returns the drill-down points) and `/api/v1/usage/cost-forecast` (MTD + 7-day burn to EOM).
 - Diagnostics: `/api/v1/usage/anomalies` (z-score spike detection) and `/api/v1/system/debug/raw/{provider_id}`.
-- Sidecar onboarding: `/api/v1/system/sidecar-downloads?channel=stable|edge` (public; cached GitHub release assets for the Fleet page's *Add sidecar* card) and `POST /api/v1/fleet/pair` (unauthenticated one-time-code redeem, 10/min/IP).
+- Sidecar onboarding: `/api/v1/system/sidecar-downloads?channel=stable|beta|edge` (public; cached GitHub release assets for the Fleet page's *Add sidecar* card) and `POST /api/v1/fleet/pair` (unauthenticated one-time-code redeem, 10/min/IP).
 
 **Mutating endpoints:** `POST /api/v1/usage/{reset/{provider},collect/{provider}}`, the `/api/v1/fleet/sidecars/{id}/{pause,resume,update}` controls, `POST /api/v1/fleet/pairing-codes` (sidecar pairing), the `/api/v1/system/{cleanup,wake,force-collect,check-updates}` maintenance set, and the webhook/provider-config/app-config/dashboard-layout CRUD on `/api/v1/system/` — admin writes go through `require_admin_key` and append to `audit_log`.
 
@@ -87,8 +87,8 @@ The core build/release workflows in `.github/workflows/` (alongside CodeQL, depe
   - **test**: pytest with coverage uploaded to Codecov
   - **build-and-push**: Docker image to GHCR — `:edge` on every push to `main`, `:latest` + version tag on a release (via the shared `docker-publish.yml`)
 - **`release-please.yml`** — opens / merges release PRs from Conventional Commits (see *Releases* below).
-- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix, the only place PyInstaller runs. Per release label (`vX.Y.Z` or `edge`) it builds the macOS **`.dmg`** (ad-hoc signed `.app`, `create-dmg`) and Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`) installers, plus the `.zip`/`.tar.gz` self-update payloads for all four targets. Its `attest` job then writes `SHA256SUMS.txt` and Sigstore keyless `.sig`/`.cert` files. Every asset name comes from `scripts/sidecar_pkg/asset_names.py` (the updater's source of truth), and `tests/unit/test_sidecar_release_contract.py` pins it all together.
-- **`release-please.yml`**'s `build-sidecar`/`publish-sidecar` call it for stable releases. **`sidecar-release.yml`** is a manual wrapper (`workflow_dispatch`; empty `tag` = build-only artifacts, handy for testing installers from a branch).
+- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix, the only place PyInstaller runs. Per release label (`vX.Y.Z`, `vX.Y.Z-beta.N`, or `edge`) it builds the macOS **`.dmg`** (ad-hoc signed `.app`, `create-dmg`) and Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`) installers, plus the `.zip`/`.tar.gz` self-update payloads for all four targets. Its `attest` job then writes `SHA256SUMS.txt` and Sigstore keyless `.sig`/`.cert` files. Every asset name comes from `scripts/sidecar_pkg/asset_names.py` (the updater's source of truth), and `tests/unit/test_sidecar_release_contract.py` pins it all together.
+- **`release-please.yml`**'s `build-sidecar`/`publish-sidecar` call it for stable and beta releases. **`sidecar-release.yml`** is a manual wrapper (`workflow_dispatch`; empty `tag` = build-only artifacts, handy for testing installers from a branch).
 - **`sidecar-edge.yml`** — on push to `main` touching sidecar/installer code; calls `sidecar-build.yml` with `label: edge` (version stamped `<base>+edge.<sha>`) and publishes to the always-overwritten `edge` prerelease — the sidecar analog of the Docker `:edge` tag. A flaky non-Linux runner doesn't block the rest (`allow-partial`).
 - `ci-cd.yml` also compiles the NSIS installer on every PR (`installer-check`).
 
@@ -100,6 +100,8 @@ Releases are managed by **Release Please** (`.github/workflows/release-please.ym
 - On qualifying commits to `main`, Release Please opens a PR updating `CHANGELOG.md` and `package.json`
 - Merging that PR creates the GitHub Release and tag automatically
 - To force a version jump (e.g. v1.0.0): tag manually, push the tag, create the GitHub Release by hand — Release Please picks up from there
+
+The prerelease settings in `release-please-config.json` are temporary for the 3.0.0 beta cycle. Before merging a stable release, follow [issue #408](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/408) to remove prerelease mode and promote 3.0.0; otherwise future Release Please releases will also be beta versions.
 
 ## Git Workflow
 - **Branch off the latest remote default branch, never off your local one.**

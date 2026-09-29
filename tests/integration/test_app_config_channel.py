@@ -47,8 +47,14 @@ def test_set_edge_channel_roundtrip(client: TestClient):
     assert client.get("/api/v1/system/app-config").json()["sidecar_update_channel"] == "edge"
 
 
+def test_set_beta_channel_roundtrip(client: TestClient):
+    r = client.put("/api/v1/system/app-config", json={"sidecar_update_channel": "beta"})
+    assert r.status_code == 200
+    assert client.get("/api/v1/system/app-config").json()["sidecar_update_channel"] == "beta"
+
+
 def test_clear_channel_returns_to_stable(client: TestClient):
-    client.put("/api/v1/system/app-config", json={"sidecar_update_channel": "edge"})
+    client.put("/api/v1/system/app-config", json={"sidecar_update_channel": "beta"})
     client.put("/api/v1/system/app-config", json={"sidecar_update_channel": "stable"})
     assert client.get("/api/v1/system/app-config").json()["sidecar_update_channel"] == "stable"
 

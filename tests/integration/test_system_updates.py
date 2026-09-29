@@ -125,6 +125,10 @@ def test_sidecar_downloads_endpoint(client, monkeypatch):
     assert body["assets"][0]["kind"] == "installer"
     assert body["error"] is None
 
+    resp = client.get("/api/v1/system/sidecar-downloads?channel=beta")
+    assert resp.status_code == 200
+    assert seen == ["edge", "beta"]
+
 
 def test_sidecar_downloads_rejects_unknown_channel(client):
     assert client.get("/api/v1/system/sidecar-downloads?channel=nightly").status_code == 422

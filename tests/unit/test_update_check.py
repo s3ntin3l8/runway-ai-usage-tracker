@@ -3,6 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from scripts.sidecar_pkg.update_check import check_once, parse_channel
 
 
@@ -44,6 +46,16 @@ class TestParseChannel:
 
     def test_edge_marker_without_sha(self):
         assert parse_channel("1.1.0+edge.") == ("edge", None)
+
+    def test_numbered_beta_version(self):
+        assert parse_channel("3.0.0-beta.1") == ("beta", None)
+
+    @pytest.mark.parametrize(
+        "version",
+        [" 3.0.0-beta.1", "\ufeff3.0.0-beta.1", "vv3.0.0-beta.1"],
+    )
+    def test_normalizes_beta_version(self, version):
+        assert parse_channel(version) == ("beta", None)
 
 
 # ---------------------------------------------------------------------------
@@ -89,3 +101,27 @@ class TestCheckOnceEdge:
         opener = _make_urlopen({"releases/latest": {"tag_name": "v1.3.0"}})
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             assert check_once("1.1.0", channel="edge") == "v1.3.0"
+
+
+class TestCheckOnceBeta:
+    def test_reports_newest_numbered_beta(self):
+        releases = [
+            {"tag_name": "v3.0.0-beta.2", "prerelease": True},
+            {"tag_name": "v3.0.0-beta.1", "prerelease": True},
+            {"tag_name": "v3.0.0-rc.1", "prerelease": True},
+            {"tag_name": "v3.0.0", "prerelease": False},
+        ]
+        opener = _make_urlopen({"releases?per_page=100": releases})
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            assert check_once("3.0.0-beta.1", channel="beta") == "v3.0.0-beta.2"
+
+    def test_none_when_beta_head_is_current(self):
+        releases = [{"tag_name": "v3.0.0-beta.1", "prerelease": True}]
+        opener = _make_urlopen({"releases?per_page=100": releases})
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            assert check_once("3.0.0-beta.1", channel="beta") is None
+
+    def test_none_when_no_numbered_beta_exists(self):
+        opener = _make_urlopen({"releases?per_page=100": []})
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            assert check_once("3.0.0-beta.1", channel="beta") is None

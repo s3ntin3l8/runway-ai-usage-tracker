@@ -428,7 +428,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         ),  # Per-provider list of real account_ids (multi-account)
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
         # Update channel the sidecar should track for its "update available"
-        # check ("stable" | "edge"). The dashboard owns this setting.
+        # check ("stable" | "beta" | "edge"). The dashboard owns this setting.
         "sidecar_update_channel": (sys_cfg.sidecar_update_channel if sys_cfg else None) or "stable",
         # Fleet-wide opt-in auto-update flag; a sidecar's explicit local config wins.
         "sidecar_auto_update": (sys_cfg.sidecar_auto_update if sys_cfg else None) or False,
@@ -1252,7 +1252,9 @@ async def list_sidecars(
     rows = session.exec(
         select(SidecarRegistry).order_by(col(SidecarRegistry.last_seen).desc())
     ).all()
-    return {"sidecars": [fleet_registry.to_dict(row) for row in rows]}
+    cfg = session.exec(select(SystemConfig)).first()
+    update_channel = (cfg.sidecar_update_channel if cfg else None) or "stable"
+    return {"sidecars": [fleet_registry.to_dict(row, update_channel) for row in rows]}
 
 
 @router.get("/sidecars/{sidecar_id}")
@@ -1266,7 +1268,9 @@ async def get_sidecar(
     row = session.get(SidecarRegistry, sidecar_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
-    return fleet_registry.to_dict(row)
+    cfg = session.exec(select(SystemConfig)).first()
+    update_channel = (cfg.sidecar_update_channel if cfg else None) or "stable"
+    return fleet_registry.to_dict(row, update_channel)
 
 
 @router.patch("/sidecars/{sidecar_id}")
@@ -1289,7 +1293,9 @@ async def update_sidecar(
         target_id=sidecar_id,
         payload={"custom_name": body.custom_name, "tags": body.tags},
     )
-    return fleet_registry.to_dict(row)
+    cfg = session.exec(select(SystemConfig)).first()
+    update_channel = (cfg.sidecar_update_channel if cfg else None) or "stable"
+    return fleet_registry.to_dict(row, update_channel)
 
 
 @router.delete("/sidecars/{sidecar_id}")

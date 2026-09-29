@@ -7,8 +7,8 @@ import { AddSidecarCard } from './AddSidecarCard';
 
 vi.mock('@/api/endpoints');
 
-const release = (channel: 'stable' | 'edge' = 'stable'): SidecarDownloads => {
-  const label = channel === 'edge' ? 'edge' : 'v2.13.0';
+const release = (channel: SidecarDownloads['channel'] = 'stable'): SidecarDownloads => {
+  const label = channel === 'edge' ? 'edge' : channel === 'beta' ? 'v3.0.0-beta.1' : 'v2.13.0';
   const mk = (platform: SidecarDownloads['assets'][number]['platform'], kind: 'installer' | 'payload', name: string) => ({
     platform,
     kind,
@@ -112,6 +112,19 @@ describe('AddSidecarCard', () => {
     const link = await screen.findByRole('link', { name: /download for windows/i });
     expect(link).toHaveAttribute('href', 'https://example/Runway-Sidecar-Windows-edge-setup.exe');
     expect(api.fetchSidecarDownloads).toHaveBeenCalledWith('edge');
+  });
+
+  it('switches to the newest beta sidecar release', async () => {
+    stubPlatform('Win32', 'Mozilla/5.0 (Windows NT 10.0)');
+    renderWithProviders(<AddSidecarCard />);
+    await screen.findByRole('link', { name: /download for windows/i });
+    await userEvent.click(screen.getByRole('button', { name: 'Beta' }));
+    const link = await screen.findByRole('link', { name: /download for windows/i });
+    expect(link).toHaveAttribute(
+      'href',
+      'https://example/Runway-Sidecar-Windows-v3.0.0-beta.1-setup.exe',
+    );
+    expect(api.fetchSidecarDownloads).toHaveBeenCalledWith('beta');
   });
 
   it('falls back to the releases page when GitHub is unreachable', async () => {

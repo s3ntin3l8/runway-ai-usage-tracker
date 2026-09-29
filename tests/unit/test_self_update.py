@@ -72,6 +72,12 @@ class TestResolveAssetName:
         monkeypatch.setattr(sys, "platform", "win32")
         assert resolve_asset_name("tray", "edge", None) == "Runway-Sidecar-Windows-edge.zip"
 
+    def test_beta_uses_its_versioned_release_asset_name(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        assert resolve_asset_name("tray", "beta", "v3.0.0-beta.1") == (
+            "Runway-Sidecar-macOS-v3.0.0-beta.1.zip"
+        )
+
     def test_unknown_platform_edge_unsupported(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "freebsd")
         with pytest.raises(SelfUpdateUnsupportedError):
@@ -129,6 +135,14 @@ class TestFindAssetUrls:
                 },
             ]
         }
+
+    def test_beta_release_lookup_selects_newest_numbered_release(self, monkeypatch):
+        releases = [
+            {"tag_name": "v3.0.0-beta.2", "prerelease": True, "assets": ["new"]},
+            {"tag_name": "v3.0.0-beta.1", "prerelease": True, "assets": ["old"]},
+        ]
+        monkeypatch.setattr(self_update, "_get_json", lambda _url: releases)
+        assert self_update._get_release_json("beta") is releases[0]
 
     def test_returns_both_urls(self):
         asset, sha = find_asset_urls(self._release(), "Runway-Sidecar-Linux-CLI-1.2.0.tar.gz")
