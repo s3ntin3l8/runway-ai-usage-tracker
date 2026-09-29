@@ -359,7 +359,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         from app.services.poller import poller
 
         if tokens_to_store:
-            await manager.reconcile_token_cache_from_durable_tags()
+            affected_providers = dict.fromkeys(p_id for p_id, *_rest in tokens_to_store)
+            for provider_id in affected_providers:
+                await manager.reconcile_token_cache_from_durable_tags(provider_id=provider_id)
         # Force the next collect_all to re-sync per-account collectors so
         # the freshly-pushed accounts get SmartCollectors immediately
         # instead of waiting the 60s sync throttle.

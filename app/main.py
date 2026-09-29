@@ -84,7 +84,7 @@ async def _pending_quota_preview_cleanup_loop(
 
 
 def _pending_quota_preview_cleanup_interval_seconds(max_age_seconds: int) -> int:
-    """Match cleanup to the TTL, capped at the 24h sidecar heartbeat cadence."""
+    """Match cleanup to the TTL, capped at one check per day."""
     return min(max_age_seconds, 86400)
 
 

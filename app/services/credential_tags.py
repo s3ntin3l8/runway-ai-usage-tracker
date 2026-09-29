@@ -598,13 +598,18 @@ class PendingCredentialTagRepo:
     @staticmethod
     def expire_quota_previews(session: Session, *, now: datetime | None = None) -> int:
         """Clear aged preview payloads and return the number cleared."""
+        from app.core.config import settings
+
+        current = now or datetime.now(UTC)
+        ttl = timedelta(seconds=settings.PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS)
         rows = session.exec(select(PendingCredentialTag)).all()
         cleared = 0
         for row in rows:
             had_preview = row.quota_preview_json is not None
-            _preview, _observed_at, stale = PendingCredentialTagRepo.read_quota_preview(
-                row, now=now
-            )
+            observed_at = row.quota_preview_observed_at
+            if observed_at is not None and observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
+            stale = observed_at is not None and current - observed_at > ttl
             if stale and had_preview:
                 row.quota_preview_json = None
                 session.add(row)
