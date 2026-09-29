@@ -41,6 +41,11 @@ _TIMEOUT_SECONDS = 10
 _BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
 
 
+def normalize_version(version: str) -> str:
+    """Remove whitespace, an optional BOM, and all leading v prefixes."""
+    return version.strip().lstrip("\ufeff").strip().lstrip("vV")
+
+
 def parse_channel(version: str | None) -> tuple[str, str | None]:
     """Classify a version string.
 
@@ -48,9 +53,10 @@ def parse_channel(version: str | None) -> tuple[str, str | None]:
     numbered beta releases, and ``("stable", None)`` otherwise.
     """
     if version and "+edge." in version:
-        return "edge", version.split("+edge.", 1)[1] or None
+        normalized = normalize_version(version)
+        return "edge", normalized.split("+edge.", 1)[1] or None
     if version:
-        normalized = version.strip().lstrip("\ufeff").strip().lstrip("vV")
+        normalized = normalize_version(version)
         if _BETA_TAG_RE.fullmatch(f"v{normalized}"):
             return "beta", None
     return "stable", None

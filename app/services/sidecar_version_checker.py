@@ -16,24 +16,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 
 import httpx
 
-from scripts.sidecar_pkg.update_check import latest_beta_release
+from scripts.sidecar_pkg.update_check import (
+    _BETA_RELEASES_API_URL,
+    _BETA_TAG_RE,
+    latest_beta_release,
+    normalize_version,
+)
 
 logger = logging.getLogger(__name__)
 
 _GITHUB_API_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest"
-_GITHUB_BETA_RELEASES_URL = (
-    "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases?per_page=100"
-)
 _GITHUB_EDGE_REFS_URL = (
     "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
 )
 _CHECK_INTERVAL_SECONDS = 24 * 60 * 60  # 24h
 _HTTP_TIMEOUT_SECONDS = 10.0
-_BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
 
 
 def parse_channel(version: str | None) -> tuple[str, str | None]:
@@ -42,9 +42,12 @@ def parse_channel(version: str | None) -> tuple[str, str | None]:
     Edge builds are stamped ``<base>+edge.<short_sha>``; numbered prereleases
     such as ``3.0.0-beta.1`` belong to the beta channel.
     """
-    if version and "+edge." in version:
-        return "edge", version.split("+edge.", 1)[1] or None
-    if version and _BETA_TAG_RE.fullmatch(f"v{version.lstrip('vV')}"):
+    if not version:
+        return "stable", None
+    normalized = normalize_version(version)
+    if "+edge." in normalized:
+        return "edge", normalized.split("+edge.", 1)[1] or None
+    if _BETA_TAG_RE.fullmatch(f"v{normalized}"):
         return "beta", None
     return "stable", None
 
@@ -126,7 +129,7 @@ class SidecarVersionChecker:
                         f"for {self._api_url}; keeping cache"
                     )
 
-                beta_resp = await client.get(_GITHUB_BETA_RELEASES_URL, headers=headers)
+                beta_resp = await client.get(_BETA_RELEASES_API_URL, headers=headers)
                 if beta_resp.status_code == 200:
                     beta_release = latest_beta_release(beta_resp.json())
                     beta_tag = (

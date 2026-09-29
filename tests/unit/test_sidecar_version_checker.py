@@ -104,6 +104,12 @@ class TestIsUpdateAvailable:
             is True
         )
 
+    def test_stable_build_opted_into_edge_falls_back_to_stable(self):
+        assert is_update_available("2.12.0", "3.0.0", target_channel="edge") is True
+
+    def test_beta_build_opted_into_edge_falls_back_to_stable(self):
+        assert is_update_available("2.12.0-beta.1", "3.0.0", target_channel="edge") is True
+
 
 # ---------------------------------------------------------------------------
 # SidecarVersionChecker.check_now
@@ -209,6 +215,13 @@ class TestParseChannel:
 
     def test_numbered_beta_version(self):
         assert parse_channel("3.0.0-beta.1") == ("beta", None)
+
+    @pytest.mark.parametrize(
+        "version",
+        [" 3.0.0-beta.1", "\ufeff3.0.0-beta.1", "vv3.0.0-beta.1"],
+    )
+    def test_normalizes_numbered_beta_version(self, version):
+        assert parse_channel(version) == ("beta", None)
 
 
 # ---------------------------------------------------------------------------
