@@ -79,6 +79,58 @@ class TestGeminiCredentialMapping:
         assert "email" not in mapping
 
 
+class TestClaudeOAuthCredentialRules:
+    def test_oauth_creds_path_and_identity_mapping_are_available_in_both_registries(self):
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
+            rules = providers["anthropic"]["rules"]
+            oauth_file = next(
+                rule
+                for rule in rules
+                if rule.get("type") == "file"
+                and "{{CONFIG_DIR:claude}}/oauth_creds.json" in rule.get("paths", [])
+            )
+            assert oauth_file["mapping"]["claudeAiOauth.accessToken"] == "oauth_token"
+            assert oauth_file["mapping"]["claudeAiOauth.refreshToken"] == "refresh_token"
+            assert oauth_file["mapping"]["oauthAccount.emailAddress|oauthAccount.email"] == (
+                "account_id"
+            )
+
+    def test_sidecar_extracts_oauth_creds_token_and_account(self, monkeypatch, tmp_path):
+        creds_path = tmp_path / "oauth_creds.json"
+        creds_path.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "oauth-access-token",
+                        "refreshToken": "oauth-refresh-token",
+                        "clientId": "claude-client",
+                    },
+                    "oauthAccount": {"emailAddress": "Claude@Example.com"},
+                }
+            )
+        )
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [creds_path])
+
+        config = {
+            **sidecar.__REGISTRY__["providers"]["anthropic"],
+            "rules": [
+                rule
+                for rule in sidecar.__REGISTRY__["providers"]["anthropic"]["rules"]
+                if rule.get("type") == "file"
+                and "{{CONFIG_DIR:claude}}/oauth_creds.json" in rule.get("paths", [])
+            ],
+        }
+        cards, blocked = sidecar.GenericCollector.collect_provider("anthropic", config)
+
+        assert blocked == []
+        token_card = next(card for card in cards if card["unit"] == "oauth")
+        assert token_card["account_id"] == "claude@example.com"
+        assert token_card["metadata"]["oauth_token"] == "oauth-access-token"
+        assert token_card["metadata"]["refresh_token"] == "oauth-refresh-token"
+
+
 class TestOpenCodeCredentialRules:
     def test_sidecar_registry_discovers_file_env_and_both_console_cookies(self):
         opencode = sidecar.__REGISTRY__["providers"]["opencode"]

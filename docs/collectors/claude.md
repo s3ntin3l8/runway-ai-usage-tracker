@@ -96,12 +96,12 @@ This is the preferred method, providing the most reliable and comprehensive data
 | `CLAUDE_CODE_OAUTH_TOKEN` | Optional | OAuth token for API access (auto-discovered from `~/.config/claude/oauth_creds.json` or macOS Keychain if not set) |
 
 **Auto-Discovery:**
-- Credentials file: `~/.config/claude/oauth_creds.json` (Linux/Windows) or Keychain (macOS)
+- Credentials files: `~/.claude/.credentials.json` or the Claude config directory's `oauth_creds.json` (normally `~/.config/claude/oauth_creds.json` on Linux); macOS Keychain is also supported.
 - Projects directory: `~/.config/claude/projects/` (auto-discovered for local logs)
 
 ## Sidecar Support
 
-Sidecar can extract tokens from `~/.claude/.credentials.json` or macOS keychain. See [sidecar documentation](../sidecar.md).
+Sidecar can extract tokens from `~/.claude/.credentials.json`, the Claude config directory's `oauth_creds.json`, or macOS Keychain. See [sidecar documentation](../sidecar.md).
 
 ## Troubleshooting
 

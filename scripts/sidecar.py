@@ -179,12 +179,15 @@ __REGISTRY__: dict[str, Any] = {
                     "paths": [
                         "~/.claude/.credentials.json",
                         "{{CONFIG_DIR:claude}}/.credentials.json",
+                        "{{CONFIG_DIR:claude}}/oauth_creds.json",
                     ],
                     "format": "json",
                     "mapping": {
                         "claudeAiOauth.accessToken": "oauth_token",
                         "claudeAiOauth.refreshToken": "refresh_token",
                         "claudeAiOauth.clientId": "client_id",
+                        "oauthAccount.emailAddress|oauthAccount.email": "account_id",
+                        "oauthAccount.email|oauthAccount.emailAddress": "account_label",
                     },
                 },
                 {
@@ -195,6 +198,8 @@ __REGISTRY__: dict[str, Any] = {
                         "claudeAiOauth.accessToken": "oauth_token",
                         "claudeAiOauth.refreshToken": "refresh_token",
                         "claudeAiOauth.clientId": "client_id",
+                        "oauthAccount.emailAddress|oauthAccount.email": "account_id",
+                        "oauthAccount.email|oauthAccount.emailAddress": "account_label",
                     },
                 },
                 {

@@ -189,6 +189,31 @@ def test_claude_token_file():
         assert token == "claude_file_token"
 
 
+def test_claude_oauth_creds_file_is_discovered():
+    """Read Claude CLI credentials from its documented config-directory file."""
+    mock_data = json.dumps(
+        {
+            "claudeAiOauth": {
+                "accessToken": "claude_oauth_creds_token",
+                "refreshToken": "claude_oauth_creds_refresh",
+            },
+        }
+    )
+
+    with (
+        patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}),
+        patch(
+            "os.path.exists",
+            side_effect=lambda path: str(path).endswith("/claude/oauth_creds.json"),
+        ),
+        patch("builtins.open", mock_open(read_data=mock_data)),
+    ):
+        credentials = CredentialProvider.get_credentials("anthropic")
+
+    assert credentials["oauth_token"] == "claude_oauth_creds_token"
+    assert credentials["refresh_token"] == "claude_oauth_creds_refresh"
+
+
 def test_db_read_failures_are_swallowed():
     """A DB error while reading ProviderConfig must degrade gracefully, not raise.
 
