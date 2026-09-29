@@ -552,38 +552,19 @@ class PendingCredentialTagRepo:
         row.quota_preview_observed_at = observed_at or datetime.now(UTC)
         session.add(row)
         session.flush()
-
-        # Recheck after the write so a concurrent tag commit cannot leave a
-        # preview attached to a source that has just been assigned.
-        if (
-            CredentialTagRepo.get_account_id(
-                session,
-                provider_id=provider_id,
-                credential_origin=credential_origin,
-                sidecar_id=sidecar_id,
-            )
-            is not None
-        ):
-            PendingCredentialTagRepo.delete(
-                session,
-                sidecar_id=sidecar_id,
-                provider_id=provider_id,
-                credential_origin=credential_origin,
-            )
-            return None
         return row
 
     @staticmethod
     def read_quota_preview(
-        session: Session,
         row: PendingCredentialTag,
         *,
         now: datetime | None = None,
     ) -> tuple[list[dict[str, Any]], str | None, bool]:
         """Return preview data, observation time, and staleness.
 
-        Expired values are cleared from storage while their observation time is
-        retained so the UI can explain why no preview is shown.
+        Expired values are hidden immediately while their observation time is
+        retained so the UI can explain why no preview is shown. A maintenance
+        task clears their stored payloads.
         """
         observed_at = row.quota_preview_observed_at
         if observed_at is None:
@@ -598,9 +579,6 @@ class PendingCredentialTagRepo:
         if current - observed_at > timedelta(
             seconds=settings.PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS
         ):
-            if row.quota_preview_json is not None:
-                row.quota_preview_json = None
-                session.add(row)
             return [], observed_at_text, True
 
         try:
@@ -626,9 +604,11 @@ class PendingCredentialTagRepo:
         for row in rows:
             had_preview = row.quota_preview_json is not None
             _preview, _observed_at, stale = PendingCredentialTagRepo.read_quota_preview(
-                session, row, now=now
+                row, now=now
             )
             if stale and had_preview:
+                row.quota_preview_json = None
+                session.add(row)
                 cleared += 1
         if cleared:
             session.flush()

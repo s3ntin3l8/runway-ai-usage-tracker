@@ -846,7 +846,7 @@ def test_pending_endpoint_expires_old_quota_preview(
     assert item["quota_preview_stale"] is True
     assert item["quota_preview_observed_at"] == observed_at.isoformat()
     session.refresh(row)
-    assert row.quota_preview_json is None
+    assert row.quota_preview_json is not None
 
 
 def test_config_response_carries_account_tag_hints(client: TestClient, session: Session):

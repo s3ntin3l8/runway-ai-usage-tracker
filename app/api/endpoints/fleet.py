@@ -1038,9 +1038,6 @@ async def list_pending_credential_tags(
     auto-hint doesn't oscillate, but they're not "untagged" from the
     operator's perspective.
     """
-    expired_previews = PendingCredentialTagRepo.expire_quota_previews(session)
-    if expired_previews:
-        session.commit()
     all_rows = PendingCredentialTagRepo.list_all(session)
 
     # Group by sidecar so hints resolve with that host's scope.
@@ -1064,9 +1061,7 @@ async def list_pending_credential_tags(
 
     items = []
     for row in visible_rows:
-        preview, observed_at, preview_stale = PendingCredentialTagRepo.read_quota_preview(
-            session, row
-        )
+        preview, observed_at, preview_stale = PendingCredentialTagRepo.read_quota_preview(row)
         items.append(
             {
                 "sidecar_id": row.sidecar_id,

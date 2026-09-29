@@ -1269,7 +1269,7 @@ def test_pending_quota_preview_persists_only_safe_fields(session: Session):
     session.commit()
     session.refresh(row)
 
-    preview, observed_at, stale = PendingCredentialTagRepo.read_quota_preview(session, row)
+    preview, observed_at, stale = PendingCredentialTagRepo.read_quota_preview(row)
 
     assert preview == [{"service_name": "Antigravity", "remaining": 7, "pct_used": 30}]
     assert observed_at is not None
@@ -1295,13 +1295,37 @@ def test_pending_quota_preview_expires_and_marks_stale(session: Session, monkeyp
     session.commit()
 
     preview, timestamp, stale = PendingCredentialTagRepo.read_quota_preview(
-        session, row, now=datetime.now(UTC)
+        row, now=datetime.now(UTC)
     )
 
     assert preview == []
     assert timestamp == observed_at.isoformat()
     assert stale is True
+    assert row.quota_preview_json is not None
+
+
+def test_pending_quota_preview_cleanup_clears_expired_payloads(session: Session, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS", 60)
+    observed_at = datetime.now(UTC) - timedelta(seconds=61)
+    row = PendingCredentialTagRepo.set_quota_preview(
+        session,
+        sidecar_id="host-a",
+        provider_id="antigravity",
+        credential_origin="path:/auth.json",
+        preview=[{"remaining": 7}],
+        observed_at=observed_at,
+    )
+    session.commit()
+
+    cleared = PendingCredentialTagRepo.expire_quota_previews(session, now=datetime.now(UTC))
+    session.commit()
+    session.refresh(row)
+
+    assert cleared == 1
     assert row.quota_preview_json is None
+    assert row.quota_preview_observed_at == observed_at
 
 
 def test_pending_preview_columns_have_forward_safe_migrations():

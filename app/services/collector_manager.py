@@ -826,19 +826,19 @@ class CollectorManager:
         moves: list[tuple[str, str, str, str, bool, int]] = []
         for pid in provider_ids:
             candidates = await token_cache.get_source_candidates(pid, "default")
-            for candidate in candidates:
-                candidate_id = candidate.get("source_id")
-                origin = candidate.get("credential_origin")
-                sidecar_id = candidate.get("sidecar_id")
-                if (
-                    candidate.get("source_type") != "sidecar"
-                    or not isinstance(candidate_id, str)
-                    or (source_id is not None and candidate_id != source_id)
-                    or not isinstance(origin, str)
-                    or not isinstance(sidecar_id, str)
-                ):
-                    continue
-                with Session(engine) as session:
+            with Session(engine) as session:
+                for candidate in candidates:
+                    candidate_id = candidate.get("source_id")
+                    origin = candidate.get("credential_origin")
+                    sidecar_id = candidate.get("sidecar_id")
+                    if (
+                        candidate.get("source_type") != "sidecar"
+                        or not isinstance(candidate_id, str)
+                        or (source_id is not None and candidate_id != source_id)
+                        or not isinstance(origin, str)
+                        or not isinstance(sidecar_id, str)
+                    ):
+                        continue
                     target = CredentialTagRepo.get_account_id(
                         session,
                         provider_id=pid,
@@ -856,7 +856,9 @@ class CollectorManager:
                     ).first()
                     enabled = source.enabled if source else candidate.get("enabled", True)
                     priority = source.priority if source else candidate.get("priority", 0)
-                moves.append((pid, candidate_id, target, "default", bool(enabled), int(priority)))
+                    moves.append(
+                        (pid, candidate_id, target, "default", bool(enabled), int(priority))
+                    )
 
         for pid, candidate_id, target, old_account_id, enabled, priority in moves:
             await token_cache.move_source(pid, old_account_id, target, candidate_id)
