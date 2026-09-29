@@ -113,13 +113,21 @@ describe('ProvidersSection', () => {
           last_seen: null,
           quota_preview: [],
         },
+        {
+          sidecar_id: 'desktop',
+          provider_id: 'antigravity',
+          credential_origin: 'path:/other-auth.json',
+          first_seen: null,
+          last_seen: null,
+          quota_preview: [],
+        },
       ],
-      counts_by_sidecar: { laptop: 1 },
+      counts_by_sidecar: { laptop: 1, desktop: 1 },
     });
     renderV2(<ProvidersSection />);
 
     expect(await screen.findByText('Credentials need an account')).toBeInTheDocument();
-    expect(screen.getByText(/could not be matched to a stable identity/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 discovered credentials could not be matched to a stable identity/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /assign accounts/i })).toBeInTheDocument();
   });
 

@@ -107,6 +107,8 @@ describe('UntaggedCredentialsDialog', () => {
           ...entry,
           quota_preview: [
             { service_name: 'Antigravity', remaining: 7, unit: 'requests', pct_used: 30 },
+            { remaining: 4 },
+            { service_name: 'Gemini', window_type: 'weekly' },
           ],
         },
       ],
