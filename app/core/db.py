@@ -105,6 +105,7 @@ def init_db() -> None:
         LatestUsage,
         LatestUsageContribution,
         PendingCredentialTag,
+        ProviderAccountLabel,
         ProviderConfig,
         ProviderPricing,
         QuotaSnapshot,

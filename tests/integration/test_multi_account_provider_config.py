@@ -873,6 +873,81 @@ def test_archived_account_does_not_inflate_active_account_count(client: TestClie
     }
 
 
+def test_discovered_account_label_is_saved_independently(client: TestClient, session: Session):
+    session.add(
+        LatestUsage(
+            provider_id="openrouter",
+            account_id="opaque-account",
+            card_json="{}",
+        )
+    )
+    session.commit()
+    response = client.put(
+        "/api/v1/system/provider-account-label/openrouter/opaque-account",
+        json={"account_label": "Work key"},
+        headers=_admin_headers(),
+    )
+    assert response.status_code == 200, response.text
+
+    provider = next(
+        item
+        for item in client.get("/api/v1/system/provider-configs").json()["providers"]
+        if item["provider_id"] == "openrouter"
+    )
+    account = next(item for item in provider["accounts"] if item["account_id"] == "opaque-account")
+    assert account["source"] == "discovered"
+    assert account["account_label"] == "Work key"
+
+
+def test_account_merge_requires_explicit_confirmation_for_gauge_collision(
+    client: TestClient, session: Session
+):
+    session.add_all(
+        [
+            LatestUsage(
+                provider_id="openrouter",
+                account_id="source@example.com",
+                window_type="weekly",
+                variant="default",
+                model_id="",
+                card_json='{"remaining": 10}',
+            ),
+            LatestUsage(
+                provider_id="openrouter",
+                account_id="target@example.com",
+                window_type="weekly",
+                variant="default",
+                model_id="",
+                card_json='{"remaining": 8}',
+            ),
+        ]
+    )
+    session.commit()
+    body = {
+        "provider_id": "openrouter",
+        "source_account_id": "source@example.com",
+        "destination_account_id": "target@example.com",
+    }
+    preview = client.post(
+        "/api/v1/system/provider-account-merge/preview", json=body, headers=_admin_headers()
+    )
+    assert preview.status_code == 200
+    assert preview.json()["counts"]["latest_usage"]["collisions"] == 1
+
+    apply_url = "/api/v1/system/provider-account-merge/apply"
+    rejected = client.post(apply_url, json=body, headers=_admin_headers())
+    assert rejected.status_code == 409
+
+    applied = client.post(
+        apply_url,
+        json={**body, "confirm_collisions": True},
+        headers=_admin_headers(),
+    )
+    assert applied.status_code == 200, applied.text
+    rows = session.exec(select(LatestUsage).where(LatestUsage.provider_id == "openrouter")).all()
+    assert [row.account_id for row in rows] == ["target@example.com"]
+
+
 def test_opencode_saved_strategy_ids_are_normalized(client: TestClient):
     r = client.put(
         "/api/v1/system/provider-config/opencode/default",

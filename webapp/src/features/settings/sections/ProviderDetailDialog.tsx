@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { deleteProviderConfig, putProviderConfig } from '@/api/endpoints';
+import { deleteProviderConfig, putDiscoveredAccountLabel, putProviderConfig } from '@/api/endpoints';
 import type { ProviderAccount, ProviderConfig } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -39,6 +39,8 @@ export function ProviderDetailDialog({
   const [editingAccount, setEditingAccount] = useState<ProviderAccount | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ProviderAccount | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [editingDiscovered, setEditingDiscovered] = useState<ProviderAccount | null>(null);
+  const [discoveredLabel, setDiscoveredLabel] = useState('');
 
   // Master enabled toggle: enables/disables every account under this provider
   // via N PUTs (one per account). For v1 the backend has no batch endpoint;
@@ -109,6 +111,18 @@ export function ProviderDetailDialog({
       onAccountDeleted?.(provider?.provider_id ?? '', accountId);
       setPendingDelete(null);
       setMenuFor(null);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const saveDiscoveredLabel = useMutation({
+    mutationFn: () => {
+      if (!provider || !editingDiscovered) throw new Error('No discovered account selected');
+      return putDiscoveredAccountLabel(provider.provider_id, editingDiscovered.account_id, discoveredLabel.trim() || null);
+    },
+    onSuccess: () => {
+      toast.success('Account label saved');
+      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+      setEditingDiscovered(null);
     },
     onError: (err) => toast.error(err.message),
   });
@@ -243,7 +257,12 @@ export function ProviderDetailDialog({
                                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2"
                                 onClick={() => {
                                   setMenuFor(null);
-                                  setEditingAccount(account);
+                                  if (account.source === 'discovered') {
+                                    setEditingDiscovered(account);
+                                    setDiscoveredLabel(account.account_label ?? '');
+                                  } else {
+                                    setEditingAccount(account);
+                                  }
                                 }}
                               >
                                 <Pencil className="size-3.5 text-fg-muted" />
@@ -326,6 +345,23 @@ export function ProviderDetailDialog({
           onClose={() => setEditingAccount(null)}
         />
       ) : null}
+      <ResponsiveDialog
+        open={editingDiscovered !== null}
+        onOpenChange={(open) => { if (!open) setEditingDiscovered(null); }}
+        title="Edit discovered account label"
+        description="This changes the display name only. Collection continues to use the discovered credential."
+      >
+        <form className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); saveDiscoveredLabel.mutate(); }}>
+          <label className="flex flex-col gap-1 text-[12px] text-fg-muted">
+            Display label
+            <input autoFocus maxLength={120} value={discoveredLabel} onChange={(event) => setDiscoveredLabel(event.target.value)} className="rounded border border-edge bg-surface-1 px-2 py-1.5 text-fg" />
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditingDiscovered(null)}>Cancel</Button>
+            <Button type="submit" size="sm" loading={saveDiscoveredLabel.isPending}>Save label</Button>
+          </div>
+        </form>
+      </ResponsiveDialog>
     </>
   );
 }
