@@ -55,6 +55,8 @@ import {
 interface UntaggedCredentialsDialogProps {
   /** When set, scope the dialog to one sidecar's pending set (per-card entry point). */
   sidecarId?: string;
+  /** When set with sidecarId, show only pending credentials for this provider. */
+  providerId?: string;
   /** When provided, render only this single entry. Used when a banner row or per-card
    *  badge wants to drive a single-row resolution. */
   singleEntry?: UntaggedCredential;
@@ -78,6 +80,7 @@ const INITIAL: DialogState = {
 
 export function UntaggedCredentialsDialog({
   sidecarId,
+  providerId,
   singleEntry,
   open,
   onClose,
@@ -117,11 +120,24 @@ export function UntaggedCredentialsDialog({
   }, [open, singleEntry?.sidecar_id, singleEntry?.provider_id, singleEntry?.credential_origin]);
 
   const entries = untagged.data?.items ?? [];
-  // When invoked as a per-card / single-entry dialog, only show the
-  // targeted entry; otherwise show every pending entry.
+  // Three entry points use this list: the Fleet banner shows all entries,
+  // per-entry actions show one credential, and identity rows filter to a
+  // provider on one sidecar. The client filter also guards against entries
+  // outside the requested scope if a response ever contains them.
   const visibleEntries = useMemo(
-    () => (singleEntry ? entries.filter((e) => e.credential_origin === singleEntry.credential_origin && e.sidecar_id === singleEntry.sidecar_id) : entries),
-    [entries, singleEntry],
+    () =>
+      singleEntry
+        ? entries.filter(
+            (e) =>
+              e.credential_origin === singleEntry.credential_origin &&
+              e.sidecar_id === singleEntry.sidecar_id,
+          )
+        : entries.filter(
+            (e) =>
+              (!sidecarId || e.sidecar_id === sidecarId) &&
+              (!providerId || e.provider_id === providerId),
+          ),
+    [entries, providerId, sidecarId, singleEntry],
   );
 
   // Per-account rows scoped to each entry's provider_id. The
@@ -176,7 +192,9 @@ export function UntaggedCredentialsDialog({
       description={
         singleEntry
           ? `${singleEntry.provider_id} · ${singleEntry.credential_origin}`
-          : "Choose an account for each credential the sidecar couldn't identify."
+          : providerId
+            ? `${providerId} · credentials reported by ${sidecarId}`
+            : "Choose an account for each credential the sidecar couldn't identify."
       }
     >
       {visibleEntries.length === 0 ? (
