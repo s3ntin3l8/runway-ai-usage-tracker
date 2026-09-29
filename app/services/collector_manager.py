@@ -775,7 +775,7 @@ class CollectorManager:
             provider_id=provider_id, source_id=source_id
         )
         if not moved:
-            # The cache entry may already have left default through another path.
+            # Safety net if reconciliation cannot see the just-committed tag.
             await token_cache.move_source(provider_id, old_account_id, target, source_id)
 
     def _persist_identity_pending_preview(
@@ -824,7 +824,7 @@ class CollectorManager:
         from app.services.credential_tags import CredentialTagRepo
 
         provider_ids = [provider_id] if provider_id else list(self.collector_registry)
-        moves: list[tuple[str, str, str, str, bool, int]] = []
+        moves: list[tuple[str, str, str, str, tuple[bool, int] | None]] = []
         for pid in provider_ids:
             candidates = await token_cache.get_source_candidates(pid, "default")
             with Session(engine) as session:
@@ -855,21 +855,25 @@ class CollectorManager:
                             CredentialSource.source_id == candidate_id,
                         )
                     ).first()
-                    enabled = source.enabled if source else candidate.get("enabled", True)
-                    priority = source.priority if source else candidate.get("priority", 0)
                     moves.append(
-                        (pid, candidate_id, target, "default", bool(enabled), int(priority))
+                        (
+                            pid,
+                            candidate_id,
+                            target,
+                            "default",
+                            (bool(source.enabled), int(source.priority)) if source else None,
+                        )
                     )
 
-        for pid, candidate_id, target, old_account_id, enabled, priority in moves:
+        for pid, candidate_id, target, old_account_id, preference in moves:
             await token_cache.move_source(pid, old_account_id, target, candidate_id)
             old_preferences = self._credential_source_preferences.get((pid, old_account_id))
             if old_preferences is not None:
                 old_preferences.pop(candidate_id, None)
-            self._credential_source_preferences.setdefault((pid, target), {})[candidate_id] = (
-                enabled,
-                priority,
-            )
+            if preference is not None:
+                self._credential_source_preferences.setdefault((pid, target), {})[candidate_id] = (
+                    preference
+                )
         return len(moves)
 
     @staticmethod

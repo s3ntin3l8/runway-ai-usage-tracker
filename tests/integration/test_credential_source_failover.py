@@ -386,6 +386,10 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
     manager = CollectorManager()
+    manager._credential_source_preferences[("antigravity", "alice@example.com")] = {
+        "already-configured": (False, 9),
+        source_id: (False, 4),
+    }
 
     reconciled = await manager.reconcile_token_cache_from_durable_tags(provider_id="antigravity")
 
@@ -394,4 +398,8 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
     target_sources = await cache.get_source_candidates("antigravity", "alice@example.com")
     assert [source["source_id"] for source in target_sources] == [source_id]
     assert target_sources[0]["identity_pending"] is False
+    assert manager._credential_source_preferences[("antigravity", "alice@example.com")] == {
+        "already-configured": (False, 9),
+        source_id: (False, 4),
+    }
     await cache.reset()

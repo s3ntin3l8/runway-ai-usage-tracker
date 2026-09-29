@@ -361,6 +361,9 @@ function UntaggedRow({
       {entry.quota_preview_stale ? (
         <p className="mt-2 rounded-sm bg-surface-2 px-2.5 py-2 text-[11px] text-fg-subtle" role="status">
           The quota preview expired. A fresh preview will appear after the next successful check.
+          {entry.quota_preview_observed_at ? (
+            <> Last observed {new Date(entry.quota_preview_observed_at).toLocaleString()}.</>
+          ) : null}
         </p>
       ) : null}
 

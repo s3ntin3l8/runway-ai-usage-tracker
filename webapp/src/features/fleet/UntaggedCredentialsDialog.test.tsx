@@ -127,7 +127,14 @@ describe('UntaggedCredentialsDialog', () => {
 
   it('shows when a persisted quota preview has expired', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
-      items: [{ ...entry, quota_preview: [], quota_preview_stale: true }],
+      items: [
+        {
+          ...entry,
+          quota_preview: [],
+          quota_preview_stale: true,
+          quota_preview_observed_at: '2026-09-29T17:00:00+00:00',
+        },
+      ],
       counts_by_sidecar: { laptop: 1 },
     });
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
@@ -135,6 +142,7 @@ describe('UntaggedCredentialsDialog', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByRole('status')).toHaveTextContent(/preview expired/i);
+    expect(within(dialog).getByRole('status')).toHaveTextContent(/last observed/i);
   });
 
   it('shows the "Add one in Provider Settings" fallback when no provider row exists', async () => {

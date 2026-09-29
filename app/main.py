@@ -64,14 +64,22 @@ def _expire_pending_quota_previews() -> None:
 
 
 async def _pending_quota_preview_cleanup_loop() -> None:
+    cleanup_interval = _pending_quota_preview_cleanup_interval_seconds(
+        settings.PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS
+    )
     while True:
         try:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(cleanup_interval)
             _expire_pending_quota_previews()
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.warning(f"Pending quota preview cleanup failed: {e}")
+
+
+def _pending_quota_preview_cleanup_interval_seconds(max_age_seconds: int) -> int:
+    """Match cleanup to the TTL, capped at the 24h sidecar heartbeat cadence."""
+    return min(max_age_seconds, 86400)
 
 
 @asynccontextmanager
@@ -132,7 +140,7 @@ async def lifespan(app: FastAPI):
     try:
         await preview_cleanup_task
     except asyncio.CancelledError:
-        pass
+        logger.debug("Pending quota preview cleanup task cancelled during shutdown")
     await poller.stop()
     await token_auto_refresher.stop()
     await sidecar_version_checker.stop()
