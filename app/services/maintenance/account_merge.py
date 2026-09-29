@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from sqlmodel import Session, col, select, text
 
-from app.models.db import LatestUsage, QuotaSnapshot
+from app.models.db import LatestUsage, LatestUsageContribution, QuotaSnapshot
 from app.services.accumulator import merge_card_json
 from app.services.maintenance._chunked_sql import chunked_delete
 
@@ -131,6 +132,46 @@ def merge_gauge_series(
             src.card_json = json.dumps(card)
             session.add(src)
             result.retagged += 1
+
+    # Contributions are the inputs to the merged LatestUsage read model.
+    # Retag non-colliding rows and discard a duplicate source contribution;
+    # the target LatestUsage card above already folded its visible payload.
+    contributions = session.exec(
+        select(LatestUsageContribution).where(
+            LatestUsageContribution.provider_id == provider_id,
+            LatestUsageContribution.account_id == source,
+        )
+    ).all()
+    for contribution in contributions:
+        target_contribution = session.exec(
+            select(LatestUsageContribution.id).where(
+                LatestUsageContribution.provider_id == provider_id,
+                LatestUsageContribution.account_id == target,
+                LatestUsageContribution.source_id == contribution.source_id,
+                LatestUsageContribution.window_type == contribution.window_type,
+                LatestUsageContribution.variant == contribution.variant,
+                LatestUsageContribution.model_id == contribution.model_id,
+            )
+        ).first()
+        if target_contribution is not None:
+            target_row = session.get(LatestUsageContribution, target_contribution)
+            if target_row is not None:
+                incoming = json.loads(contribution.card_json)
+                for key in _IDENTITY_KEYS:
+                    incoming.pop(key, None)
+                target_row.card_json = merge_card_json(target_row.card_json, incoming)
+                incoming_updated_at = contribution.updated_at or datetime.now(UTC)
+                if not target_row.updated_at or incoming_updated_at > target_row.updated_at:
+                    target_row.updated_at = incoming_updated_at
+                session.add(target_row)
+            session.delete(contribution)
+        else:
+            card = json.loads(contribution.card_json)
+            card["account_id"] = target
+            card["account_label"] = target
+            contribution.account_id = target
+            contribution.card_json = json.dumps(card)
+            session.add(contribution)
 
     session.commit()
 

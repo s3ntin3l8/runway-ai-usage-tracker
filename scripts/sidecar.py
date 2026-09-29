@@ -153,6 +153,12 @@ _SIDECAR_VERSION_FALLBACK = (
 )
 _SIDECAR_VERSION = _resolve_sidecar_version()
 
+# Providers whose server collector can ask the upstream API for the identity
+# of the exact credential source currently pinned in TokenCache. Other
+# unidentified credentials stay pending for operator assignment and are not
+# transmitted to the server just to discover that no identity endpoint exists.
+_SERVER_IDENTITY_PROVIDERS = frozenset({"antigravity", "anthropic", "github", "opencode"})
+
 # --- INJECTED REGISTRY ---
 __REGISTRY__: dict[str, Any] = {
     "providers": {
@@ -3021,14 +3027,21 @@ class GenericCollector:
                 if resolved_account_id is None or not source_identity_strong:
                     logging.warning(
                         f"  [{provider_id}] token card blocked (origin={origin}) — "
-                        "no strong account identity resolved; "
-                        "not shipping. Operator will see this in the fleet view's "
-                        "Untagged Credentials panel."
+                        "no strong account identity resolved; shipping only for "
+                        "source-specific server identity verification."
                     )
                     blocked_origins.append(
                         {"provider_id": provider_id, "credential_origin": origin}
                     )
-                else:
+                identity_pending = not bool(resolved_account_id and source_identity_strong)
+                if identity_pending:
+                    # Do not let a default sentinel or an inheritable
+                    # provider-wide hint pick the server cache account. The
+                    # server stores this only in the source-pinned pending
+                    # bucket until that exact source proves its identity.
+                    tokens.pop("account_id", None)
+                    tokens.pop("account_label", None)
+                if not identity_pending or provider_id in _SERVER_IDENTITY_PROVIDERS:
                     results.append(
                         {
                             "service_name": name,
@@ -3040,12 +3053,13 @@ class GenericCollector:
                             "pace": "Token",
                             "detail": "[Token Extracted] [Sidecar]",
                             "data_source": data_source,
-                            "account_id": resolved_account_id,
+                            "account_id": None if identity_pending else resolved_account_id,
                             "account_label": tokens.get("account_label"),
                             "metadata": {
                                 **tokens,
                                 "provider_id": provider_id,
                                 "credential_origin": origin,
+                                "identity_pending": identity_pending,
                             },
                         }
                     )

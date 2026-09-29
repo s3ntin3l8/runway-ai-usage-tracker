@@ -14,7 +14,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent
+from app.models.db import CredentialTag, LatestUsage, QuotaSnapshot, UsageEvent
 from app.services.pricing_seed import seed_pricing_table
 
 TEST_KEY = "test-local-card-ingest-key"
@@ -145,6 +145,50 @@ def test_local_credential_ingest_registers_source_without_sidecar_id(session):
 
     assert mock_touch.call_args.kwargs["source_id"] == sidecar_source_id("local", "claude_code")
     assert mock_touch.call_args.kwargs["sidecar_id"] is None
+
+
+def test_ingest_applies_existing_verified_tag_to_stale_pending_heartbeat(session):
+    session.add(
+        CredentialTag(
+            provider_id="antigravity",
+            credential_origin="path:/home/user/auth.json",
+            account_id="s3ntin3l8@gmail.com",
+            sidecar_id="test-host-01",
+            set_by="identity_verification",
+        )
+    )
+    session.commit()
+    payload = {
+        "provider": "antigravity-sidecar",
+        "sidecar_id": "test-host-01",
+        "metrics": [
+            {
+                "provider_id": "antigravity",
+                "service_name": "Antigravity",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "oauth_token": "old-heartbeat-token",  # pragma: allowlist secret
+                    "credential_origin": "path:/home/user/auth.json",
+                    "identity_pending": True,
+                },
+            }
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.services.credential_sources.touch_source") as mock_touch,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock(return_value="s3ntin3l8@gmail.com")
+        _ingest(TestClient(app), payload)
+
+    assert mock_tc.store.call_args.args[2] == "s3ntin3l8@gmail.com"
+    assert mock_tc.store.call_args.kwargs["source_metadata"]["identity_pending"] is False
+    assert mock_touch.call_args.kwargs["account_id"] == "s3ntin3l8@gmail.com"
 
 
 def test_empty_completed_providers_heartbeat_skips_latest_usage_write_block(session):

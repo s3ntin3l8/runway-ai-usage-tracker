@@ -10,7 +10,10 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.models.db import CredentialSource
+from app.models.db import (
+    CredentialSource,
+    PendingCredentialTag,
+)
 from app.services.collector_manager import CollectorManager
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import TokenCache
@@ -233,3 +236,100 @@ async def test_collector_returns_empty_when_every_source_is_disabled(monkeypatch
     assert result == []
     assert collector.calls == []
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
+    from sqlmodel import SQLModel
+
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    source_id = "sidecar:host-a:path:/home/user/auth.json"
+    origin = "path:/home/user/auth.json"
+    with Session(engine) as session:
+        session.add(
+            CredentialSource(
+                provider_id="antigravity",
+                account_id="default",
+                source_id=source_id,
+                source_type="sidecar",
+                source_label="host-a",
+                credential_origin=origin,
+                sidecar_id="host-a",
+            )
+        )
+        session.add(
+            PendingCredentialTag(
+                sidecar_id="host-a", provider_id="antigravity", credential_origin=origin
+            )
+        )
+        session.commit()
+
+    cache = TokenCache()
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "fake-sidecar-token"},  # pragma: allowlist secret
+        account_id="default",
+        source_id=source_id,
+        source_metadata={"identity_pending": True},
+    )
+    monkeypatch.setattr("app.core.db.engine", engine)
+    # The shared unit fixtures replace sqlmodel.Session with an empty mock;
+    # this test exercises the persistence boundary against its isolated DB.
+    monkeypatch.setattr("sqlmodel.Session", Session)
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    manager = CollectorManager()
+    manager._identity_pending_previews[("antigravity", source_id)] = [{"remaining": 7}]
+    move_source = cache.move_source
+
+    async def heartbeat_before_cache_move(provider, old_account, new_account, source):
+        # Model a concurrent heartbeat after the DB tag commit but before the
+        # collector moves the in-memory source bundle.
+        await cache.store(
+            provider,
+            {"oauth_token": "new-heartbeat-token"},  # pragma: allowlist secret
+            account_id=old_account,
+            source_id=source,
+            source_metadata={"identity_pending": True},
+        )
+        return await move_source(provider, old_account, new_account, source)
+
+    monkeypatch.setattr(cache, "move_source", heartbeat_before_cache_move)
+
+    await manager._promote_source_identity(
+        "antigravity", "default", source_id, "S3ntin3l8@gmail.com"
+    )
+
+    with Session(engine) as session:
+        source = session.exec(
+            select(CredentialSource).where(CredentialSource.source_id == source_id)
+        ).one()
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id="antigravity",
+            credential_origin=origin,
+            sidecar_id="host-a",
+        )
+        pending = PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="host-a",
+            provider_id="antigravity",
+            credential_origin=origin,
+        )
+
+    assert source.account_id == "s3ntin3l8@gmail.com"
+    assert tag is not None and tag.set_by == "identity_verification"
+    assert pending is None
+    assert manager.pending_identity_preview("antigravity", source_id) == []
+    assert await cache.get_source_candidates("antigravity", "default") == []
+    assert [
+        candidate["source_id"]
+        for candidate in await cache.get_source_candidates("antigravity", "s3ntin3l8@gmail.com")
+    ] == [source_id]
+    await cache.reset()

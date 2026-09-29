@@ -71,6 +71,7 @@ class CollectorManager:
         self._client = None
         self._last_sync_time: float = 0.0
         self._credential_source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
+        self._identity_pending_previews: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
         self.last_collection_outcomes: list[dict[str, Any]] = []
@@ -102,19 +103,13 @@ class CollectorManager:
             # We use a nested map to handle multi-account overrides correctly.
             db_configs: dict[str, dict[str, Any]] = {}
             global_poll_interval: int | None = None
-            durable_identities: dict[str, str] = {}
             source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
             try:
-                from sqlmodel import Session, col
+                from sqlmodel import Session
                 from sqlmodel import select as sqlselect
 
                 from app.core.db import engine
-                from app.models.db import (
-                    CredentialSource,
-                    LatestUsage,
-                    ProviderConfig,
-                    SystemConfig,
-                )
+                from app.models.db import CredentialSource, ProviderConfig, SystemConfig
 
                 with Session(engine) as _s:
                     for r in _s.exec(sqlselect(ProviderConfig)).all():
@@ -135,18 +130,6 @@ class CollectorManager:
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
                         global_poll_interval = sys_cfg.default_poll_interval_seconds
-
-                    # Build a provider_id → most-recent non-default account_id map from
-                    # LatestUsage.  This seeds the account_id for default collectors whose
-                    # OAuth token may be stale at startup — the once-resolved email persists
-                    # across restarts without any special write-back to provider_configs.
-                    for pid, aid in _s.exec(
-                        sqlselect(LatestUsage.provider_id, LatestUsage.account_id)
-                        .where(LatestUsage.account_id != "default")
-                        .where(col(LatestUsage.account_id).is_not(None))
-                        .order_by(col(LatestUsage.updated_at).desc())
-                    ).all():
-                        durable_identities.setdefault(pid, aid)
 
                     _s.commit()
 
@@ -179,18 +162,13 @@ class CollectorManager:
                 )
                 key = f"{p_id}:default"
                 db_label = db_cfg.account_label if db_cfg else None
-                # Seed account_id from the most-recent non-default LatestUsage identity
-                # so a once-resolved email (e.g. Antigravity's Google OAuth) survives
-                # server restarts and stale tokens without re-querying userinfo.
-                durable_aid = durable_identities.get(p_id)
                 if key not in self.smart_collectors:
                     logger.info(f"Spawning default collector for {p_id}")
-                    collector_instance = cls(account_id=durable_aid, account_label=db_label)
+                    collector_instance = cls(account_label=db_label)
                     if not collector_instance.CREDENTIALS_KEYED_BY_ACCOUNT_ID:
-                        # The default collector can carry a durable (or runtime-resolved)
-                        # identity for its cards while its credentials remain scoped to
-                        # the default ProviderConfig / server row. Auth-failure flagging
-                        # also attributes rejected default credentials to `default`.
+                        # Display identity may be resolved during collection,
+                        # but credentials and auth-failure tracking remain on
+                        # the default source slot.
                         collector_instance.credential_account_id = "default"
                     # Apply user strategy ordering/toggles if configured
                     if db_cfg and db_cfg.strategies:
@@ -207,10 +185,6 @@ class CollectorManager:
                     # Propagate updated account_label from ProviderConfig
                     if sc.collector.account_label != db_label:
                         sc.collector.account_label = db_label
-                    # Propagate durable account_id to a running collector that
-                    # still has None / "default" (e.g. first run after token resolved)
-                    if durable_aid and not sc.collector.account_id:
-                        sc.collector.account_id = durable_aid
                     # Propagate updated strategy config
                     new_strategies = db_cfg.strategies if db_cfg else None
                     if sc.collector._user_strategies != new_strategies:
@@ -219,6 +193,30 @@ class CollectorManager:
             # 2. Discover active dynamic collectors from TokenCache
             active_accounts = await token_cache.get_all_active_accounts()
             active_keys = set()
+
+            # Identity-pending sources are intentionally absent from the
+            # aggregate account cache so they cannot render as "default".
+            # Still run a temporary default-keyed collector for their exact
+            # source bundle, even when this provider has only named account
+            # configs and the normal default collector was suppressed above.
+            for p_id, (cls, name, ttl) in self.collector_registry.items():
+                key = f"{p_id}:default"
+                if key in self.smart_collectors:
+                    continue
+                pending_sources = await token_cache.get_source_candidates(p_id, "default")
+                if not any(
+                    source.get("source_type") == "sidecar" and source.get("credential_origin")
+                    for source in pending_sources
+                ):
+                    continue
+                full_name = f"{name} (identity pending)"
+                self.smart_collectors[key] = SmartCollector(
+                    collector=cls(account_id="default"),
+                    collector_name=full_name,
+                    ttl=ttl,
+                )
+                logger.info("Spawning identity-verification collector for %s", p_id)
+
             for p_id, acc_id, acc_name in active_accounts:
                 if p_id in self.collector_registry:
                     default_key = f"{p_id}:default"
@@ -546,6 +544,7 @@ class CollectorManager:
             or getattr(collector, "account_id", None)
             or "default"
         )
+        default_account_label = getattr(collector, "account_label", None)
         candidates = (
             await token_cache.get_source_candidates(provider_id, account_id)
             if isinstance(provider_id, str) and isinstance(account_id, str)
@@ -584,6 +583,12 @@ class CollectorManager:
                 break
             if index:
                 await smart.reset()
+            if account_id == "default":
+                # Collectors can mutate account_id after an API response.
+                # Reset before each source attempt so a verified identity from
+                # source A can never be attributed to source B on a later poll.
+                collector.account_id = "default"
+                collector.account_label = default_account_label
             async with token_cache.using_source(
                 provider_id, account_id, candidate["source_id"]
             ) as attempt:
@@ -605,9 +610,123 @@ class CollectorManager:
                 health_updates[candidate["source_id"]] = "unavailable"
                 continue
             health_updates[candidate["source_id"]] = "healthy"
+            # A provider may learn a stable identity only after calling its
+            # upstream API (Antigravity userinfo is one example). Bind that
+            # identity to the exact source used for this successful attempt.
+            # Never infer it from another account's historical usage.
+            resolved_id = getattr(collector, "account_id", None)
+            if (
+                account_id == "default"
+                and candidate.get("source_type") == "sidecar"
+                and candidate.get("credential_origin")
+                and isinstance(resolved_id, str)
+                and resolved_id.strip()
+                and resolved_id.strip().lower() != "default"
+            ):
+                await self._promote_source_identity(
+                    provider_id,
+                    account_id,
+                    candidate["source_id"],
+                    resolved_id,
+                )
+            elif (
+                account_id == "default"
+                and candidate.get("source_type") == "sidecar"
+                and candidate.get("credential_origin")
+            ):
+                # Let an unresolved source call its API so it can prove its
+                # identity, but never publish an unidentified quota card into
+                # the shared default account history.
+                self._identity_pending_previews[(provider_id, candidate["source_id"])] = [
+                    {
+                        key: card[key]
+                        for key in (
+                            "service_name",
+                            "remaining",
+                            "unit",
+                            "unit_type",
+                            "pct_used",
+                            "window_type",
+                            "reset",
+                            "reset_at",
+                        )
+                        if key in card
+                    }
+                    for card in result
+                    if not card.get("error_type")
+                ]
+                successful_result = []
+                break
             successful_result = result
             break
         return successful_result if successful_result is not None else []
+
+    async def _promote_source_identity(
+        self, provider_id: str, old_account_id: str, source_id: str, account_id: str
+    ) -> None:
+        """Move one default source to the stable identity it proved itself."""
+        from datetime import UTC, datetime
+
+        from sqlmodel import Session, select
+
+        from app.core.db import engine
+        from app.models.db import CredentialSource
+        from app.services.account_identity import canonical_account_id
+        from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+        target = canonical_account_id(account_id)
+        if not target or target == "default":
+            return
+        with Session(engine) as session:
+            source = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == provider_id,
+                    CredentialSource.account_id == old_account_id,
+                    CredentialSource.source_id == source_id,
+                )
+            ).first()
+            if source is None or not source.credential_origin:
+                return
+            existing_target = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == provider_id,
+                    CredentialSource.account_id == target,
+                    CredentialSource.source_id == source_id,
+                )
+            ).first()
+            if existing_target is None:
+                source.account_id = target
+                session.add(source)
+            else:
+                existing_target.source_type = source.source_type
+                existing_target.source_label = source.source_label
+                existing_target.credential_origin = source.credential_origin
+                existing_target.sidecar_id = source.sidecar_id
+                existing_target.last_seen = datetime.now(UTC)
+                session.add(existing_target)
+                session.delete(source)
+            if source.sidecar_id:
+                CredentialTagRepo.set_tag(
+                    session,
+                    provider_id=provider_id,
+                    credential_origin=source.credential_origin,
+                    account_id=target,
+                    sidecar_id=source.sidecar_id,
+                    set_by="identity_verification",
+                )
+                PendingCredentialTagRepo.delete(
+                    session,
+                    sidecar_id=source.sidecar_id,
+                    provider_id=provider_id,
+                    credential_origin=source.credential_origin,
+                )
+            session.commit()
+        await token_cache.move_source(provider_id, old_account_id, target, source_id)
+        self._identity_pending_previews.pop((provider_id, source_id), None)
+
+    def pending_identity_preview(self, provider_id: str, source_id: str) -> list[dict[str, Any]]:
+        """Quota preview from an unresolved source's last API response."""
+        return list(self._identity_pending_previews.get((provider_id, source_id), []))
 
     @staticmethod
     def _record_source_health(provider_id: str, account_id: str, updates: dict[str, str]) -> None:

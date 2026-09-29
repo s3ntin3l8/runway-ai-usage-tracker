@@ -536,6 +536,16 @@ export interface UntaggedCredential {
   credential_origin: string;
   first_seen?: string | null;
   last_seen?: string | null;
+  quota_preview?: Array<{
+    service_name?: string;
+    remaining?: string | number;
+    unit?: string;
+    unit_type?: string;
+    pct_used?: number;
+    window_type?: string;
+    reset?: string;
+    reset_at?: string;
+  }>;
 }
 
 // Response shape of GET /api/v1/fleet/credentials/tags/pending — both the

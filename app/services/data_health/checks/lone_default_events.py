@@ -1,12 +1,10 @@
-"""Data Health `lone_default_events` check — events sitting alone under the
-stale `default` account_id for a provider that has since been configured
-under a real one (D4 in the v3.0.0 prod-cleanup audit: minimax 19.5k
-messages + 58 errors). `opencode-byok` has no other configured account for
-its provider, so it is reported not-fixable rather than guessing a target.
+"""Data Health check — usage and quota history still sitting under the
+generic `default` account_id after a specific provider account exists.
 
-Target validation is re-derived from `provider_configs` on every `plan`/
-`apply` call, never trusted verbatim from the request: `target` must name an
-existing, non-archived, non-`default` account for the provider.
+Target validation is re-derived from configured accounts and stable account
+identities in latest usage on every `plan`/`apply` call. Applying the explicit
+preview moves usage events, quota cards, quota snapshots, and their source
+contributions, then rebuilds event rollups/windows.
 """
 
 from __future__ import annotations
@@ -16,7 +14,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from app.models.db import ProviderConfig, UsageEvent
+from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent
 from app.services.data_health._provider_accounts import candidate_targets
 from app.services.data_health.base import (
     AsyncHook,
@@ -29,27 +27,20 @@ from app.services.data_health.base import (
     ParamSpec,
     Severity,
 )
+from app.services.maintenance.account_merge import merge_gauge_series, plan_merge_gauge_series
 from app.services.maintenance.event_reassign import apply_reassign_default, plan_reassign_default
 
 
 class LoneDefaultEventsCheck(Check):
     id = "lone_default_events"
     title = "Usage is assigned to a generic account"
-    description = "Events remain under the “default” account even though a specific account is configured for this provider."
+    description = "Usage events or quota history remain under “default” despite a specific account identity being available."
     impact = "Usage may be missing from the account that actually generated it."
-    recommended_action = "Reassign events to the suggested configured account. If there is no unambiguous target, review the account setup first."
+    recommended_action = "Preview and move default history to the correct account. Choose a target when more than one identity exists."
     severity = Severity.ERROR
     blocked_by = ("config_default_keyed",)
 
     def detect(self, session: Session) -> CheckReport:
-        active_defaults = set(
-            session.exec(
-                select(ProviderConfig.provider_id).where(
-                    col(ProviderConfig.account_id) == "default",
-                    col(ProviderConfig.archived).is_(False),
-                )
-            ).all()
-        )
         counts = session.execute(
             select(UsageEvent.provider_id, UsageEvent.kind, func.count())
             .where(col(UsageEvent.account_id) == "default")
@@ -57,9 +48,20 @@ class LoneDefaultEventsCheck(Check):
         ).all()
         by_provider: dict[str, dict[str, int]] = {}
         for provider_id, kind, n in counts:
-            if provider_id in active_defaults:
-                continue
             by_provider.setdefault(provider_id, {})[kind] = n
+
+        for provider_id, n in session.execute(
+            select(LatestUsage.provider_id, func.count())
+            .where(col(LatestUsage.account_id) == "default")
+            .group_by(LatestUsage.provider_id)
+        ).all():
+            by_provider.setdefault(provider_id, {})["quota_cards"] = n
+        for provider_id, n in session.execute(
+            select(QuotaSnapshot.provider_id, func.count())
+            .where(col(QuotaSnapshot.account_id) == "default")
+            .group_by(QuotaSnapshot.provider_id)
+        ).all():
+            by_provider.setdefault(provider_id, {})["quota_history"] = n
 
         groups: list[FindingGroup] = []
         for provider_id, kinds in sorted(by_provider.items()):
@@ -84,7 +86,7 @@ class LoneDefaultEventsCheck(Check):
                 )
             else:
                 reason = (
-                    "no configured non-default account for this provider"
+                    "no known non-default account for this provider"
                     if not candidates
                     else f"multiple candidate accounts, pick one: {', '.join(candidates)}"
                 )
@@ -112,15 +114,6 @@ class LoneDefaultEventsCheck(Check):
         )
 
     def _resolve_target(self, session: Session, provider_id: str, params: dict[str, Any]) -> str:
-        active_default = session.exec(
-            select(ProviderConfig).where(
-                col(ProviderConfig.provider_id) == provider_id,
-                col(ProviderConfig.account_id) == "default",
-                col(ProviderConfig.archived).is_(False),
-            )
-        ).first()
-        if active_default is not None:
-            raise ValueError(f"{provider_id!r} still has an active default config; rekey it first")
         candidates = candidate_targets(session, provider_id)
         target = params.get("target")
         if not target:
@@ -136,8 +129,7 @@ class LoneDefaultEventsCheck(Check):
             raise ValueError("target account cannot be 'default'")
         if target not in candidates:
             raise ValueError(
-                f"{target!r} is not a configured account for {provider_id!r}; "
-                f"choose one of {candidates}"
+                f"{target!r} is not a known account for {provider_id!r}; choose one of {candidates}"
             )
         return target
 
@@ -147,11 +139,20 @@ class LoneDefaultEventsCheck(Check):
         reassign_plan = plan_reassign_default(
             session, provider_id=provider_id, source="default", target=target
         )
+        gauge_plan = plan_merge_gauge_series(
+            session, provider_id=provider_id, source="default", target=target
+        )
         return FixPlan(
             check_id=self.id,
             group_key=group_key,
-            summary=f"Reassign {provider_id}/default onto {target}",
-            counts={"count": reassign_plan.count},
+            summary=f"Move {provider_id}/default history onto {target}",
+            counts={
+                "usage_events": reassign_plan.count,
+                "quota_cards_merged": gauge_plan.merged,
+                "quota_cards_retagged": gauge_plan.retagged,
+                "quota_snapshots_retagged": gauge_plan.snapshots_retagged,
+                "quota_snapshots_collided": gauge_plan.snapshots_collided,
+            },
         )
 
     def apply(
@@ -162,13 +163,20 @@ class LoneDefaultEventsCheck(Check):
         result = apply_reassign_default(
             session, provider_id=provider_id, source="default", target=target
         )
+        gauge_result = merge_gauge_series(
+            session, provider_id=provider_id, source="default", target=target
+        )
         return (
             FixResult(
                 check_id=self.id,
                 group_key=group_key,
-                summary=f"Reassigned {provider_id}/default onto {target}",
+                summary=f"Moved {provider_id}/default history onto {target}",
                 counts={
-                    "moved": result.moved,
+                    "usage_events_moved": result.moved,
+                    "quota_cards_merged": gauge_result.merged,
+                    "quota_cards_retagged": gauge_result.retagged,
+                    "quota_snapshots_retagged": gauge_result.snapshots_retagged,
+                    "quota_snapshots_collided": gauge_result.snapshots_collided,
                     "rollups_rebuilt_pairs": result.rollups_rebuilt_pairs,
                     "windows_rebuilt": result.windows_rebuilt,
                 },

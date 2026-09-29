@@ -338,7 +338,9 @@ class TestAntigravityTokenStamp:
         ):
             cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert token_cards == []
+        assert len(token_cards) == 1
+        assert token_cards[0]["account_id"] is None
+        assert token_cards[0]["metadata"]["identity_pending"] is True
         assert len(_blocked) == 1
 
     def test_token_card_defaults_when_email_unknown(self, tmp_path):
@@ -347,7 +349,9 @@ class TestAntigravityTokenStamp:
         with patch.dict(sidecar._ACCOUNT_IDENTITIES, {}, clear=True):
             cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert token_cards == []
+        assert len(token_cards) == 1
+        assert token_cards[0]["account_id"] is None
+        assert token_cards[0]["metadata"]["identity_pending"] is True
         assert len(_blocked) == 1
 
 

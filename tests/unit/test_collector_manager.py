@@ -1,5 +1,7 @@
 import asyncio
 import time
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +28,80 @@ class TestCollectorManagerInitialization:
         assert "xai" in manager.collector_registry
         assert "deepseek" in manager.collector_registry
         assert "openai" not in manager.collector_registry  # chatgpt is the key
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("resolved_account", "expected_result"),
+        [
+            (None, []),
+            (
+                "s3ntin3l8@gmail.com",
+                [
+                    {
+                        "service_name": "Antigravity",
+                        "remaining": 7,
+                        "metadata": {"private": "stripped"},
+                    }
+                ],
+            ),
+        ],
+    )
+    async def test_sidecar_source_requires_verified_identity_before_history(
+        self, manager, monkeypatch, resolved_account, expected_result
+    ):
+        collector = SimpleNamespace(
+            PROVIDER_ID="antigravity", account_id="default", account_label="Default"
+        )
+        smart = MagicMock(collector=collector)
+        smart.reset = AsyncMock()
+        quota = {
+            "service_name": "Antigravity",
+            "remaining": 7,
+            "metadata": {"private": "stripped"},
+        }
+
+        async def collect(_client):
+            collector.account_id = resolved_account or "default"
+            return [quota]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["antigravity:default"] = smart
+        candidate = {
+            "source_id": "sidecar:host:path:/home/user/auth.json",
+            "source_type": "sidecar",
+            "credential_origin": "path:/home/user/auth.json",
+        }
+
+        async def get_candidates(*_args):
+            return [candidate]
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+        promote = AsyncMock()
+        monkeypatch.setattr(manager, "_promote_source_identity", promote)
+        health = {}
+
+        result = await manager._collect_with_source_failover(
+            "antigravity:default", MagicMock(), health
+        )
+
+        assert result == expected_result
+        assert health[candidate["source_id"]] == "healthy"
+        if resolved_account:
+            promote.assert_awaited_once_with(
+                "antigravity", "default", candidate["source_id"], resolved_account
+            )
+        else:
+            promote.assert_not_awaited()
+            assert manager.pending_identity_preview("antigravity", candidate["source_id"]) == [
+                {"service_name": "Antigravity", "remaining": 7}
+            ]
 
     def test_registered_collectors_explicitly_opt_into_complete_snapshots(self, manager):
         assert BaseCollector.COMPLETE_SNAPSHOT is False
@@ -173,7 +249,7 @@ class TestCollectorManagerInitialization:
         assert "anthropic:alice@example.com" in manager.smart_collectors
 
     @pytest.mark.asyncio
-    async def test_durable_xai_identity_keeps_its_identity_scoped_token(self, manager):
+    async def test_default_xai_collector_does_not_borrow_durable_identity(self, manager):
         manager.smart_collectors = {}
         with (
             patch(
@@ -195,22 +271,22 @@ class TestCollectorManagerInitialization:
             await manager._sync_collectors(force=True)
 
         xai_default = manager.smart_collectors["xai:default"].collector
-        assert xai_default.account_id == "alice@example.com"
+        assert not xai_default.account_id
         assert xai_default.CREDENTIALS_KEYED_BY_ACCOUNT_ID
         assert not hasattr(xai_default, "credential_account_id")
-        # The default collector reads this same email-keyed cache slot, so the
-        # dynamic twin is correctly skipped without losing the credential.
-        assert "xai:alice@example.com" not in manager.smart_collectors
+        # Historical identity does not prove that the default credential is
+        # owned by Alice. Keep the named credential on its own collector.
+        assert "xai:alice@example.com" in manager.smart_collectors
         with patch(
             "app.services.collectors.xai.token_cache.get_token",
             new_callable=AsyncMock,
             return_value="alice-access-token",  # pragma: allowlist secret
         ) as get_token:
             assert await xai_default.is_configured()
-        get_token.assert_awaited_once_with("xai", "xai_access", account_id="alice@example.com")
+        get_token.assert_awaited_once_with("xai", "xai_access", account_id="default")
 
     @pytest.mark.asyncio
-    async def test_durable_identity_does_not_hide_named_credential_slot(self, manager):
+    async def test_durable_identity_does_not_relabel_default_credential_slot(self, manager):
         manager.smart_collectors = {}
         with (
             patch(
@@ -232,7 +308,7 @@ class TestCollectorManagerInitialization:
             await manager._sync_collectors(force=True)
 
         default_collector = manager.smart_collectors["kimi_coding:default"].collector
-        assert default_collector.account_id == "alice@example.com"
+        assert not default_collector.account_id
         assert default_collector.credential_account_id == "default"
         # The default collector reads the `default` credential slot; the named
         # sidecar credentials must stay available to the account-keyed collector.

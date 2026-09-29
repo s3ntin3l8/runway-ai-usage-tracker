@@ -100,6 +100,84 @@ describe('ProvidersSection', () => {
     expect(screen.getAllByRole('button', { name: /add provider/i })).toHaveLength(1);
   });
 
+  it('surfaces pending credential assignment above the provider list', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          sidecar_id: 'laptop',
+          provider_id: 'antigravity',
+          credential_origin: 'path:/auth.json',
+          first_seen: null,
+          last_seen: null,
+          quota_preview: [],
+        },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Credentials need an account')).toBeInTheDocument();
+    expect(screen.getByText(/could not be matched to a stable identity/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /assign accounts/i })).toBeInTheDocument();
+  });
+
+  it('refreshes the Settings assignment banner after a credential is tagged', async () => {
+    const pending = {
+      sidecar_id: 'laptop',
+      provider_id: 'antigravity',
+      credential_origin: 'path:/auth.json',
+      first_seen: null,
+      last_seen: null,
+      quota_preview: [],
+    };
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          provider_id: 'antigravity',
+          name: 'Antigravity',
+          accounts: [
+            {
+              account_id: 'alice@example.com',
+              account_label: 'Alice',
+              enabled: true,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    let tagSubmitted = false;
+    vi.mocked(api.fetchUntaggedCredentials).mockImplementation(async () => {
+      if (tagSubmitted) return { items: [], counts_by_sidecar: { laptop: 0 } };
+      return { items: [pending], counts_by_sidecar: { laptop: 1 } };
+    });
+    vi.mocked(api.tagCredential).mockImplementation(async () => {
+      tagSubmitted = true;
+      return { status: 'ok' };
+    });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderV2(<ProvidersSection />);
+
+    await user.click(await screen.findByRole('button', { name: /assign accounts/i }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/path:\/auth\.json/);
+    await user.click(within(dialog).getByRole('combobox'));
+    await user.click(await screen.findByText('Alice · alice@example.com'));
+    await user.click(within(dialog).getByRole('button', { name: /^tag$/i }));
+
+    await waitFor(() => expect(api.tagCredential).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByText('Credentials need an account')).not.toBeInTheDocument(),
+    );
+  });
+
   it('renders a card per provider with the N accounts subtitle', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
       providers: [

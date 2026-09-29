@@ -2,8 +2,8 @@
 //
 // The fleet view surfaces credentials the sidecar reported via
 // `/api/v1/fleet/credentials/manifest` but no operator has tagged yet.
-// For each row, the operator selects a configured provider_configs row
-// (scoped to the row's provider_id) and the dialog POSTs to
+// For each row, the operator selects a known account (configured or
+// discovered, scoped to the row's provider_id) and the dialog POSTs to
 // `/api/v1/fleet/credentials/tags`. The server persists the
 // CredentialTag, deletes the matching PendingCredentialTag, and writes
 // an audit row — the sidecar picks up the new tag via
@@ -20,10 +20,9 @@
 // multi-machine deployments tag per machine by re-opening the dialog
 // per entry (singleEntry).
 //
-// No free-form label entry: the dialog always maps to an existing
-// provider_configs row. Empty dropdown state links to the existing
-// provider-config form (precondition: identity must exist server-side
-// before tagging).
+// No free-form label entry: the dialog maps to a configured or discovered
+// account already known to the server. Empty dropdown state links to the
+// provider-config form so an account can be established before tagging.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -177,7 +176,7 @@ export function UntaggedCredentialsDialog({
       description={
         singleEntry
           ? `${singleEntry.provider_id} · ${singleEntry.credential_origin}`
-          : "Pick a configured provider row for each credential the sidecar couldn't identify."
+          : "Choose an account for each credential the sidecar couldn't identify."
       }
     >
       {visibleEntries.length === 0 ? (
@@ -341,6 +340,25 @@ function UntaggedRow({
         </div>
       </div>
 
+      {entry.quota_preview?.length ? (
+        <div className="mt-2 rounded-sm bg-surface-2 px-2.5 py-2 text-[11px]">
+          <p className="font-medium">Live quota from this credential</p>
+          <ul className="mt-1 flex flex-col gap-0.5 text-fg-subtle">
+            {entry.quota_preview.map((quota, index) => (
+              <li key={`${quota.service_name ?? 'quota'}-${quota.window_type ?? index}`}>
+                {quota.service_name ?? entry.provider_id}
+                {quota.window_type ? ` · ${quota.window_type}` : ''}
+                {quota.remaining !== undefined
+                  ? ` · ${quota.remaining}${quota.unit ? ` ${quota.unit}` : ''}`
+                  : ''}
+                {quota.pct_used !== undefined ? ` · ${quota.pct_used}% used` : ''}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-fg-subtle">Not added to account history until assigned.</p>
+        </div>
+      ) : null}
+
       {enabledAccounts.length === 0 ? (
         <p className="mt-2 flex items-center gap-2 text-[12px] text-warning">
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
@@ -383,7 +401,7 @@ function UntaggedRow({
                 id={`tag-${entry.sidecar_id}-${entry.credential_origin}`}
                 className="w-full"
               >
-                <SelectValue placeholder="Pick a configured account…" />
+                <SelectValue placeholder="Pick an account…" />
               </SelectTrigger>
               <SelectContent>
                 {enabledAccounts.map((a) => (
