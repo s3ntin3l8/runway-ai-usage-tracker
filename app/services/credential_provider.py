@@ -351,8 +351,15 @@ class CredentialProvider:
 
     @staticmethod
     def _resolve_mapping_value(data: Any, key_path_str: str) -> Any:
-        """Helper to resolve a dot-notated key path from a data dict, handling keys with dots."""
+        """Resolve dotted paths, including ``|``-separated fallback paths."""
         if not data or not isinstance(data, dict):
+            return None
+
+        if "|" in key_path_str:
+            for fallback_path in key_path_str.split("|"):
+                value = CredentialProvider._resolve_mapping_value(data, fallback_path)
+                if value:
+                    return value
             return None
 
         # Try full key first

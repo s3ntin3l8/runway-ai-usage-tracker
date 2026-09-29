@@ -181,7 +181,11 @@ def test_claude_token_file():
     with (
         patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}),
         patch("os.path.exists", side_effect=lambda p: ".credentials.json" in str(p)),
-        patch("builtins.open", mock_open(read_data=mock_data)),
+        patch(
+            "app.services.credential_provider.open",
+            mock_open(read_data=mock_data),
+            create=True,
+        ),
     ):
         # Clear cache for test
         CredentialProvider._claude_token_cache = None
@@ -197,6 +201,10 @@ def test_claude_oauth_creds_file_is_discovered():
                 "accessToken": "claude_oauth_creds_token",
                 "refreshToken": "claude_oauth_creds_refresh",
             },
+            "oauthAccount": {
+                "emailAddress": "claude@example.com",
+                "email": "Claude CLI",
+            },
         }
     )
 
@@ -206,12 +214,42 @@ def test_claude_oauth_creds_file_is_discovered():
             "os.path.exists",
             side_effect=lambda path: str(path).endswith("/claude/oauth_creds.json"),
         ),
-        patch("builtins.open", mock_open(read_data=mock_data)),
+        patch(
+            "app.services.credential_provider.open",
+            mock_open(read_data=mock_data),
+            create=True,
+        ),
     ):
         credentials = CredentialProvider.get_credentials("anthropic")
 
     assert credentials["oauth_token"] == "claude_oauth_creds_token"
     assert credentials["refresh_token"] == "claude_oauth_creds_refresh"
+    assert credentials["account_id"] == "claude@example.com"
+    assert credentials["account_label"] == "Claude CLI"
+
+
+def test_mapping_value_pipe_syntax_falls_back_and_prefers_first_value():
+    from app.services.credential_provider import CredentialProvider
+
+    account_id_path = "oauthAccount.emailAddress|oauthAccount.email"
+    assert (
+        CredentialProvider._resolve_mapping_value(
+            {"oauthAccount": {"email": "fallback@example.com"}}, account_id_path
+        )
+        == "fallback@example.com"
+    )
+    assert (
+        CredentialProvider._resolve_mapping_value(
+            {
+                "oauthAccount": {
+                    "emailAddress": "preferred@example.com",
+                    "email": "fallback@example.com",
+                }
+            },
+            account_id_path,
+        )
+        == "preferred@example.com"
+    )
 
 
 def test_db_read_failures_are_swallowed():
