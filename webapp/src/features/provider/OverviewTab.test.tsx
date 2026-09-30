@@ -183,9 +183,7 @@ describe('OverviewTab', () => {
     expect(screen.queryAllByTestId('token-donut')).toHaveLength(0);
   });
 
-  it('respects the exclude-cache toggle in the tokens-kind "Token usage" total', async () => {
-    // Same excludeCache-respecting total as the ProviderKpis "Tokens (total)" tile
-    // rendered above it — scope queries to this card so the two "1K"s don't collide.
+  it('shows selected-range token usage from the selected range bucket', async () => {
     const tokenEntry = fleetEntry({
       critical_gauge: limitCard({
         pct_used: undefined,
@@ -194,16 +192,22 @@ describe('OverviewTab', () => {
       }),
     });
 
-    localStorage.setItem('runway_exclude_cache', '0');
-    const { unmount } = renderWithProviders(<OverviewTab entry={tokenEntry} scope={scope} />);
-    const cardOff = (await screen.findByText('Token usage')).closest('.rounded-md') as HTMLElement;
-    expect(within(cardOff).getByText('1K')).toBeInTheDocument();
-    unmount();
+    const rangeResponse = cumulativeResponse({ current_month_key: 'range' });
+    rangeResponse.cumulative[0].range = {
+      tokens_input: 1000,
+      tokens_output: 500,
+      tokens_cache_read: 600,
+      tokens_cache_create: 100,
+      tokens_reasoning: 50,
+      msgs: 12,
+    };
+    vi.mocked(api.fetchCumulative).mockResolvedValue(rangeResponse);
 
-    localStorage.setItem('runway_exclude_cache', '1');
-    renderWithProviders(<OverviewTab entry={tokenEntry} scope={scope} />);
-    const cardOn = (await screen.findByText('Token usage')).closest('.rounded-md') as HTMLElement;
-    expect(within(cardOn).getByText('160')).toBeInTheDocument();
+    const { unmount } = renderWithProviders(<OverviewTab entry={tokenEntry} scope={scope} />);
+    const cardOff = (await screen.findByText('Token usage · Last 7 days')).closest('.rounded-md') as HTMLElement;
+    expect(await within(cardOff).findByText('2K')).toBeInTheDocument();
+    expect(within(cardOff).getByText(/12 messages/)).toBeInTheDocument();
+    unmount();
   });
 
   it('renders secondary limit rows in the quota card', async () => {

@@ -147,17 +147,37 @@ describe('ProviderKpis', () => {
         },
       });
 
-    it('includes cache tokens in the lifetime total when excludeCache is off', async () => {
+    it('shows the selected-month tokens when excludeCache is off', async () => {
+      const monthKey = new Date().toISOString().slice(0, 7);
+      const response = cumulativeResponse({ current_month_key: monthKey });
+      response.cumulative[0].provider_id = 'opencode-free';
+      response.cumulative[0][monthKey] = {
+        tokens_input: 45_000_000,
+        tokens_output: 600_000,
+        tokens_reasoning: 38_000,
+        tokens_cache_read: 700_000_000,
+        tokens_cache_create: 43_000_000,
+      };
+      vi.mocked(api.fetchCumulative).mockResolvedValue(response);
       renderWithProviders(
         <ProviderKpis entry={tokenFleetEntry()} scope={scope} excludeCache={false} />,
       );
-      // 45M + 0.6M + 38K + 700M + 43M = 788,638,000 → "788.64M"
       expect(await screen.findByText('788.64M')).toBeInTheDocument();
     });
 
-    it('excludes cache tokens from the lifetime total when excludeCache is on', async () => {
+    it('excludes cache tokens from the selected-month total when excludeCache is on', async () => {
+      const monthKey = new Date().toISOString().slice(0, 7);
+      const response = cumulativeResponse({ current_month_key: monthKey });
+      response.cumulative[0].provider_id = 'opencode-free';
+      response.cumulative[0][monthKey] = {
+        tokens_input: 45_000_000,
+        tokens_output: 600_000,
+        tokens_reasoning: 38_000,
+        tokens_cache_read: 700_000_000,
+        tokens_cache_create: 43_000_000,
+      };
+      vi.mocked(api.fetchCumulative).mockResolvedValue(response);
       renderWithProviders(<ProviderKpis entry={tokenFleetEntry()} scope={scope} excludeCache />);
-      // 45M + 0.6M + 38K = 45,638,000 → "45.64M"
       expect(await screen.findByText('45.64M')).toBeInTheDocument();
     });
   });

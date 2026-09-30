@@ -89,11 +89,11 @@ def _heatmap_utc(
     if since is not None:
         # Closed range: bound by absolute instants (stored as naive UTC).
         lower_sql = "ts >= :since"
-        params["since"] = since.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        params["since"] = since.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
         upper_sql = ""
         if until is not None:
             upper_sql = "AND ts < :until"
-            params["until"] = until.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+            params["until"] = until.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
         where_range = f"AND {lower_sql} {upper_sql}"
     else:
         # SQLite treats a bound 'now' string the same as the literal, so the

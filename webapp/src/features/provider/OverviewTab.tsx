@@ -13,9 +13,9 @@ import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenBar } from '@/components/charts/TokenBar';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
-import { hasTokenData } from '@/lib/cumulative';
+import { hasTokenData, sumTokens } from '@/lib/cumulative';
 import { formatNumber, formatPct, formatTokens } from '@/lib/format';
-import { cardKind, findForecast, tokenUsageTotal, windowLabel } from '@/lib/quota';
+import { cardKind, findForecast } from '@/lib/quota';
 import { CostOutlookCard } from './CostOutlookCard';
 import { ProviderAlerts } from './ProviderAlerts';
 import { ProviderKpis } from './ProviderKpis';
@@ -158,33 +158,30 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
       {kind === 'tokens' && (
         <Card>
           <CardHeader>
-            <CardTitle>Token usage</CardTitle>
-            <span className="text-[11px] text-fg-subtle">
-              {windowLabel(critical) ?? 'all time'}
-            </span>
+            <CardTitle>Token usage · {scopeLabel}</CardTitle>
+            <span className="text-[11px] text-fg-subtle">Recorded usage</span>
           </CardHeader>
           <CardContent>
             <div className="flex items-baseline gap-3">
               <span className="font-mono text-2xl font-semibold tabular">
-                {formatTokens(
-                  tokenUsageTotal(critical.token_usage, excludeCache) ?? critical.used_value ?? null,
-                )}
+                {formatTokens(sumTokens(scopeBucket, excludeCache))}
               </span>
               <span className="text-xs text-fg-subtle">tokens</span>
             </div>
             <TokenBar
               tokens={{
-                tokens_input: critical.token_usage?.input,
-                tokens_output: critical.token_usage?.output,
-                tokens_cache_read: critical.token_usage?.cache_read,
-                tokens_reasoning: critical.token_usage?.reasoning,
+                tokens_input: scopeBucket?.tokens_input,
+                tokens_output: scopeBucket?.tokens_output,
+                tokens_cache_read: scopeBucket?.tokens_cache_read,
+                tokens_cache_create: scopeBucket?.tokens_cache_create,
+                tokens_reasoning: scopeBucket?.tokens_reasoning,
               }}
               showLegend
               className="mt-3"
             />
-            {critical.msgs != null ? (
+            {scopeBucket?.msgs != null ? (
               <p className="mt-2 text-[11px] text-fg-subtle">
-                {formatNumber(critical.msgs)} messages
+                {formatNumber(scopeBucket.msgs)} messages · {scopeLabel}
               </p>
             ) : null}
           </CardContent>

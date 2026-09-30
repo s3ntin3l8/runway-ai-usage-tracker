@@ -14,6 +14,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session
 
+from app.services.queries._shared import _sqlite_utc_timestamp
+
 
 def query_top_projects(
     session: Session,
@@ -85,9 +87,9 @@ def query_top_projects(
         """
     )
 
-    params: dict[str, Any] = {"since": since.isoformat(), "limit": limit}
+    params: dict[str, Any] = {"since": _sqlite_utc_timestamp(since), "limit": limit}
     if until is not None:
-        params["until"] = until.isoformat()
+        params["until"] = _sqlite_utc_timestamp(until)
     if provider_id:
         params["provider_id"] = provider_id
 
@@ -134,10 +136,10 @@ def query_projects(
         params["provider_id"] = provider_id
     if since is not None:
         clauses.append("ts >= :since")
-        params["since"] = since.isoformat()
+        params["since"] = _sqlite_utc_timestamp(since)
     if until is not None:
         clauses.append("ts < :until")
-        params["until"] = until.isoformat()
+        params["until"] = _sqlite_utc_timestamp(until)
     where = " AND ".join(clauses)
     sql = text(f"SELECT DISTINCT project FROM usage_events WHERE {where} ORDER BY project")
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]

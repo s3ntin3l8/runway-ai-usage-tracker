@@ -13,6 +13,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session
 
+from app.services.queries._shared import _sqlite_utc_timestamp
+
 
 def query_top_tools(
     session: Session,
@@ -49,9 +51,9 @@ def query_top_tools(
         """
     )
 
-    params: dict[str, Any] = {"since": since.isoformat(), "limit": limit}
+    params: dict[str, Any] = {"since": _sqlite_utc_timestamp(since), "limit": limit}
     if until is not None:
-        params["until"] = until.isoformat()
+        params["until"] = _sqlite_utc_timestamp(until)
     if provider_id:
         params["provider_id"] = provider_id
 

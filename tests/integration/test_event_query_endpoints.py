@@ -254,6 +254,7 @@ class TestEventsEndpoint:
         now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
         session.add(_event(event_id="before", ts=now - timedelta(hours=2)))
         session.add(_event(event_id="in_window", ts=now))
+        session.add(_event(event_id="at_until", ts=now + timedelta(hours=1)))
         session.add(_event(event_id="after", ts=now + timedelta(hours=2)))
         session.commit()
 
@@ -820,6 +821,53 @@ class TestSessionsEndpoint:
         assert r.status_code == 200, r.text
         session_ids = {s["session_id"] for s in r.json()["sessions"]}
         assert session_ids == {"apr-sess"}
+
+    def test_sessions_same_day_range_and_breakdowns_use_exact_bounds(self, session):
+        session.add(
+            _event(
+                event_id="in-range",
+                session_id="range-session",
+                model_id="sonnet",
+                ts=datetime(2026, 5, 8, 12, 0, tzinfo=UTC),
+                tokens_input=10,
+            )
+        )
+        session.add(
+            _event(
+                event_id="before-range",
+                session_id="range-session",
+                model_id="haiku",
+                ts=datetime(2026, 5, 8, 11, 59, tzinfo=UTC),
+                tokens_input=100,
+            )
+        )
+        session.add(
+            _event(
+                event_id="at-end",
+                session_id="range-session",
+                model_id="haiku",
+                ts=datetime(2026, 5, 8, 18, 0, tzinfo=UTC),
+                tokens_input=1000,
+            )
+        )
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/sessions",
+            params={
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "since": "2026-05-08T12:00:00Z",
+                "until": "2026-05-08T18:00:00Z",
+            },
+        )
+        assert r.status_code == 200, r.text
+        result = r.json()["sessions"]
+        assert len(result) == 1
+        assert result[0]["msgs"] == 1
+        assert result[0]["tokens_input"] == 10
+        assert result[0]["models"] == ["sonnet"]
+        assert [item["model_id"] for item in result[0]["by_model"]] == ["sonnet"]
 
     def test_sessions_excludes_null_session_id(self, session):
         now = datetime.now(UTC)

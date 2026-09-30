@@ -42,7 +42,7 @@ def query_events(  # noqa: PLR0913 — mirrors the endpoint's filter set (since/
     if since is not None:
         stmt = stmt.where(UsageEvent.ts >= since)
     if until is not None:
-        stmt = stmt.where(UsageEvent.ts <= until)
+        stmt = stmt.where(UsageEvent.ts < until)
     if model_id is not None:
         stmt = stmt.where(UsageEvent.model_id == model_id)
     if sidecar_id is not None:
@@ -84,7 +84,7 @@ def count_events(
     if since is not None:
         stmt = stmt.where(UsageEvent.ts >= since)
     if until is not None:
-        stmt = stmt.where(UsageEvent.ts <= until)
+        stmt = stmt.where(UsageEvent.ts < until)
     if model_id is not None:
         stmt = stmt.where(UsageEvent.model_id == model_id)
     if sidecar_id is not None:

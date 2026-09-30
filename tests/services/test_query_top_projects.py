@@ -120,3 +120,33 @@ def test_query_projects_distinct_sorted(db_session):
     _add(db_session, event_id="d", project=None, tokens_input=1)
 
     assert query_projects(db_session) == ["alpha", "zeta"]
+
+
+def test_same_day_bounds_filter_top_projects_and_project_options(db_session):
+    since = datetime(2026, 5, 21, 11, tzinfo=UTC)
+    until = datetime(2026, 5, 21, 13, tzinfo=UTC)
+    _add(
+        db_session,
+        event_id="before",
+        project="before",
+        ts=datetime(2026, 5, 21, 10, 59, tzinfo=UTC),
+        tokens_input=100,
+    )
+    _add(
+        db_session,
+        event_id="inside",
+        project="inside",
+        ts=datetime(2026, 5, 21, 12, tzinfo=UTC),
+        tokens_input=10,
+    )
+    _add(
+        db_session,
+        event_id="at-until",
+        project="at-until",
+        ts=until,
+        tokens_input=1000,
+    )
+
+    rows = query_top_projects(db_session, since=since, until=until, metric="tokens")
+    assert [row["project"] for row in rows] == ["inside"]
+    assert query_projects(db_session, since=since, until=until) == ["inside"]
