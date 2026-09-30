@@ -584,6 +584,8 @@ function PreviewBlock({
 // Step 3 — confirm + save
 // ---------------------------------------------------------------------------
 
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$/;
+
 function Step3({
   provider,
   step2Result,
@@ -597,13 +599,18 @@ function Step3({
 }) {
   const queryClient = useQueryClient();
   const accountId = step2Result.preview.suggested_account_id;
-  const maskedAccountId = maskAccountId(accountId);
   const [label, setLabel] = useState<string>(step2Result.preview.suggested_label ?? '');
   const [workspaceId, setWorkspaceId] = useState('');
   const [pollInterval, setPollInterval] = useState('');
   const [strategies, setStrategies] = useState<{ id: string; enabled: boolean }[]>(() =>
     initStrategies(provider),
   );
+
+  const effectiveAccountId =
+    step2Result.preview.label_source === 'credential_hash' && EMAIL_RE.test(label.trim())
+      ? label.trim().toLowerCase()
+      : accountId;
+  const maskedEffectiveAccountId = maskAccountId(effectiveAccountId);
 
   const save = useMutation({
     mutationFn: () => {
@@ -625,13 +632,13 @@ function Step3({
       if (step2Result.sessionCookie.trim() !== '') {
         body.session_cookie = step2Result.sessionCookie.trim();
       }
-      return putProviderConfig(provider.provider_id, accountId, body);
+      return putProviderConfig(provider.provider_id, effectiveAccountId, body);
     },
     onSuccess: (data) => {
-      toast.success(`${provider.name} · ${label.trim() || maskedAccountId} saved`);
+      toast.success(`${provider.name} · ${label.trim() || maskedEffectiveAccountId} saved`);
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       queryClient.invalidateQueries({ queryKey: ['usage'] });
-      onSaved(data?.account_id);
+      onSaved(data?.account_id ?? effectiveAccountId);
     },
     onError: (err) => toast.error(err.message),
   });
@@ -645,11 +652,13 @@ function Step3({
             id="wiz-label"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder={accountId === 'default' ? 'Default account' : maskedAccountId}
+            placeholder={accountId === 'default' ? 'Default account' : maskAccountId(accountId)}
           />
           <HelperText>
-            Saved under account_id={maskedAccountId || 'default'}
-            {maskedAccountId && maskedAccountId !== accountId ? ' (masked)' : ''}
+            Saved under account_id={maskedEffectiveAccountId || 'default'}
+            {maskedEffectiveAccountId && maskedEffectiveAccountId !== effectiveAccountId
+              ? ' (masked)'
+              : ''}
           </HelperText>
         </div>
         <div className="flex flex-col gap-1.5">

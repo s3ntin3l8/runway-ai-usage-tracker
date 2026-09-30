@@ -285,6 +285,39 @@ describe('AddProviderWizard', () => {
     );
   });
 
+  it('adopts email account_id when typing an email label for a credential_hash preview', async () => {
+    const hash = '72ca8b0011223344556677889900aabbccddeeff00112233445566778899a9f5'; // pragma: allowlist secret
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      suggested_account_id: hash,
+      suggested_label: null,
+      label_source: 'credential_hash',
+      already_exists: false,
+    });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+
+    renderPreScopedWizard();
+    await userEvent.type(screen.getByLabelText(/API key/i), 'sk-opaque'); // pragma: allowlist secret
+
+    expect(await screen.findByText('No identity in credential')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    // In Step 3, typing an email in the account label changes the effective account_id.
+    const labelInput = screen.getByLabelText(/Account label/i);
+    await userEvent.type(labelInput, 'user@example.com');
+
+    expect(screen.getByText(/Saved under account_id=user@example\.com/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(api.putProviderConfig).toHaveBeenCalledWith(
+      'anthropic',
+      'user@example.com',
+      expect.objectContaining({
+        enabled: true,
+        account_label: 'user@example.com',
+      }),
+    );
+  });
+
   it('cuts strategies from the existing account when adding a 2nd account (#287 B2)', async () => {
     // Override the provider's first account to have a customized
     // collection_strategies — when the wizard opens (pre-scoped), the

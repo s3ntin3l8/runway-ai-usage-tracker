@@ -167,3 +167,64 @@ def test_collision_preview_shows_both_identities_and_requires_attestation(sessio
     ]
     assert plan.counts["usage_events_to_move"] == 0
     assert plan.counts["usage_events_retained_on_default"] == 0
+
+
+_TEST_HASH_ID = "1692b86a1d20fa0877d379ee299ad1e90b06b2c0ef0c3021d2a75c5fb5bac2ef"
+
+
+def test_detect_finds_a_hash_keyed_config_with_an_email_label(session):
+    make_config(
+        session,
+        provider_id="openrouter",
+        account_id=_TEST_HASH_ID,
+        account_label="s3ntin3l8@gmail.com",
+    )
+
+    report = _check().detect(session)
+
+    assert report.total_count == 1
+    assert report.groups[0].key == f"openrouter:{_TEST_HASH_ID}"
+    assert report.groups[0].detail["suggested_new_account_id"] == "s3ntin3l8@gmail.com"
+
+
+def test_detect_ignores_a_hash_keyed_config_with_a_non_email_label(session):
+    make_config(
+        session,
+        provider_id="openrouter",
+        account_id=_TEST_HASH_ID,
+        account_label="Production API Key",
+    )
+
+    report = _check().detect(session)
+
+    assert report.total_count == 0
+
+
+def test_apply_rekeys_hash_keyed_config_and_moves_events(session):
+    make_config(
+        session,
+        provider_id="openrouter",
+        account_id=_TEST_HASH_ID,
+        account_label="s3ntin3l8@gmail.com",
+    )
+    session.add(
+        UsageEvent(
+            provider_id="openrouter",
+            account_id=_TEST_HASH_ID,
+            sidecar_id="test-sidecar",
+            event_id="event-or-1",
+            ts=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+    )
+    session.commit()
+
+    result, hooks = _check().apply(session, f"openrouter:{_TEST_HASH_ID}", {})
+
+    assert "s3ntin3l8@gmail.com" in result.summary
+    assert len(hooks) == 1
+    row = session.exec(select(ProviderConfig)).one()
+    assert row.account_id == "s3ntin3l8@gmail.com"
+    event = session.exec(select(UsageEvent)).one()
+    assert event.account_id == "s3ntin3l8@gmail.com"
+    assert result.counts["usage_events_moved"] == 1
+    assert _check().detect(session).total_count == 0
