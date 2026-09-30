@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from app.core.date_utils import parse_iso8601_utc
 from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
-from app.services.queries._shared import _parse_period_key
+from app.services.queries._shared import _parse_period_key, _sqlite_utc_timestamp
 from app.services.queries.windows import query_window_aggregation
 from app.services.window_closer import WINDOW_DURATION
 
@@ -819,7 +819,7 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
         UsagePeriodRollup.sidecar_id == "",
     )
     boundary_ranges: list[tuple[datetime, datetime]] = []
-    range_until: datetime | None = until
+    bar_until: datetime | None = until
     if period_type == "day" and explicit_range:
         since_utc = since.astimezone(UTC) if since.tzinfo else since.replace(tzinfo=UTC)
         until_utc = (
@@ -827,13 +827,17 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
             if until
             else datetime.now(UTC)
         )
-        range_until = until_utc
+        bar_until = until_utc
         since_day = datetime.combine(since_utc.date(), time.min, tzinfo=UTC)
         until_day = datetime.combine(until_utc.date(), time.min, tzinfo=UTC)
         full_start = since_day if since_utc == since_day else since_day + timedelta(days=1)
         since_key = full_start.strftime("%Y-%m-%d")
+        # A partial UTC day cannot use its whole-day rollup: that would include
+        # usage outside [since, until). Use exact raw events for that day instead.
         if since_utc < full_start:
             boundary_ranges.append((since_utc, min(full_start, until_utc)))
+        # Include the end day when it is partial, including when it is also the
+        # first day (until_day == full_start for a midnight start).
         if until_utc > until_day >= full_start:
             boundary_ranges.append((max(until_day, since_utc), until_utc))
     else:
@@ -841,13 +845,13 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
             since.strftime("%Y-%m-%dT%H") if period_type == "hour" else since.strftime("%Y-%m-%d")
         )
     bar_stmt = bar_stmt.where(UsagePeriodRollup.period_key >= since_key)
-    if range_until is not None:
+    if bar_until is not None:
         # Complete daily rollups stop at the UTC midnight containing `until`;
         # the partial end day is aggregated from raw events below.
         until_key = (
-            range_until.strftime("%Y-%m-%dT%H")
+            bar_until.strftime("%Y-%m-%dT%H")
             if period_type == "hour"
-            else range_until.strftime("%Y-%m-%d")
+            else bar_until.strftime("%Y-%m-%d")
         )
         bar_stmt = bar_stmt.where(UsagePeriodRollup.period_key < until_key)
     if provider_id:
@@ -863,12 +867,12 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
             for i in range(len(boundary_ranges))
         ]
         params: dict[str, Any] = {
-            f"boundary_since_{i}": start.strftime("%Y-%m-%d %H:%M:%S.%f")
+            f"boundary_since_{i}": _sqlite_utc_timestamp(start)
             for i, (start, _) in enumerate(boundary_ranges)
         }
         params.update(
             {
-                f"boundary_until_{i}": end.strftime("%Y-%m-%d %H:%M:%S.%f")
+                f"boundary_until_{i}": _sqlite_utc_timestamp(end)
                 for i, (_, end) in enumerate(boundary_ranges)
             }
         )
@@ -947,7 +951,7 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
         if key not in bars_map:
             bars_map[key] = []
         value = (
-            r["cost_usd"]
+            (r["cost_usd"] or 0)
             if metric == "cost"
             else (r["tokens_input"] or 0)
             + (r["tokens_output"] or 0)

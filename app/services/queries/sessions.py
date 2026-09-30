@@ -70,6 +70,8 @@ def query_sessions(
     until_clause = "AND ts < :until" if until is not None else ""
     project_clause = "AND project = :project" if project is not None else ""
 
+    # These SQL f-strings interpolate only server-built clauses from fixed
+    # conditions above; all request values stay in bound parameters below.
     # Main aggregation query
     agg_sql = text(
         f"""

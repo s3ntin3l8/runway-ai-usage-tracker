@@ -177,8 +177,9 @@ export function ProviderKpis({
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile
-          label={`Messages · ${scopeLabel}`}
+          label="Messages"
           value={formatNumber(bucket?.msgs ?? 0)}
+          hint={scopeLabel}
           loading={bucketLoading}
         />
         <StatTile
