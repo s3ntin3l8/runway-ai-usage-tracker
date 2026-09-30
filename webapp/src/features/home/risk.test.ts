@@ -138,6 +138,23 @@ describe('buildRiskItems', () => {
     expect(buildRiskItems([lowBalance], [])[0].level).toBe('warning');
   });
 
+  it('keeps health-based risk when a spend card has no numeric balance', () => {
+    const unknownBalance: FleetEntry = {
+      provider_id: 'payg',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Pay as you go',
+        remaining: '',
+        unit_type: 'currency',
+        currency: 'USD',
+        health: 'critical',
+      } as LimitCard,
+      secondary_limits: [],
+    };
+
+    expect(buildRiskItems([unknownBalance], [])[0].level).toBe('critical');
+  });
+
   it('preserves risk for a fixed spending cap and for collection errors', () => {
     const cappedSpend: FleetEntry = {
       provider_id: 'capped',
@@ -188,9 +205,9 @@ describe('buildRiskItems', () => {
       secondary_limits: [],
     };
 
-    expect(buildRiskItems([zeroBalance], [forecast('payg', 'risk', 120)])[0].level).toBe(
-      'critical',
-    );
+    const item = buildRiskItems([zeroBalance], [forecast('payg', 'risk', 120)])[0];
+    expect(item.level).toBe('critical');
+    expect(item.forecast?.status).toBe('risk');
   });
 });
 
