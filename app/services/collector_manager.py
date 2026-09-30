@@ -669,25 +669,33 @@ class CollectorManager:
                     )
                     health_updates[candidate["source_id"]] = "unavailable"
                     continue
+
+            empty_allowed = bool(getattr(collector, "successful_empty_result", False))
             has_usable_card = any(
                 card.get("data_source") != "error"
                 and card.get("remaining") != "ERR"
                 and not card.get("error_type")
                 for card in result
             )
-            result_failed = not result or not has_usable_card
-            is_auth_failure = attempt["auth_failed"] or any(
+            result_failed = (not result and not empty_allowed) or (result and not has_usable_card)
+            has_auth_failure = attempt["auth_failed"] or any(
                 card.get("error_type") in {"auth_failed", "invalid_api_key"} for card in result
             )
-            if is_auth_failure and result_failed:
+            if has_auth_failure and result_failed:
                 health_updates[candidate["source_id"]] = "auth_failed"
                 continue
             if attempt["auth_failed"]:
-                # An optional request or a refresh retry may return 401 even
+                # An optional request or a refresh retry may return 401/403 even
                 # though the collector produced usable quota. Keep the data;
                 # preserve the partial failure for the source diagnostics.
                 health_updates[candidate["source_id"]] = "degraded"
             if result_failed:
+                # Any failed attempt that did not trigger the auth_failed short-circuit
+                # (e.g. missing_config, api_error, or empty response) is functionally down.
+                # Note: Transient errors (rate_limited, timeout) trigger failover to try the
+                # next candidate; rate-limit backoff is managed upstream by SmartCollector._mark_429.
+                # The 'unavailable' status persists across polls until overwritten by the next
+                # successful collection pass.
                 health_updates[candidate["source_id"]] = "unavailable"
                 continue
             if not attempt["auth_failed"]:

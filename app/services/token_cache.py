@@ -464,9 +464,9 @@ class TokenCache:
             _active_source.reset(token)
 
     async def observe_response(self, response: Any) -> None:
-        """Mark the active bundle rejected when its credential gets HTTP 401."""
+        """Mark the active bundle rejected when its credential gets HTTP 401 or 403."""
         attempt = _active_attempt.get()
-        if attempt is None or getattr(response, "status_code", None) != 401:
+        if attempt is None or getattr(response, "status_code", None) not in (401, 403):
             return
 
         request = getattr(response, "request", None)
