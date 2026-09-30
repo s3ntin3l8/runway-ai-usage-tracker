@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 class XaiCollector(BaseCollector):
     PROVIDER_ID = "xai"
     COMPLETE_SNAPSHOT = True
-    DEFAULT_WINDOW_TYPE = "monthly"
+    DEFAULT_WINDOW_TYPE = "weekly"
     CREDENTIALS_KEYED_BY_ACCOUNT_ID = True
 
     STRATEGIES: dict[str, tuple[str, str] | tuple[str, str, dict]] = {

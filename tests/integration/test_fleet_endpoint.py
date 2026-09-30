@@ -572,3 +572,51 @@ def test_fleet_window_aggregations_falls_back_to_model_card(session: Session):
     assert set(longest["by_model"].keys()) == {"flash", "pro"}
     assert longest["by_model"]["flash"]["tokens_input"] == 100
     assert longest["by_model"]["pro"]["tokens_input"] == 200
+
+
+def test_fleet_suppresses_residual_error_cards_when_healthy_card_exists(session: Session):
+    """When an account has both a healthy card (e.g. weekly) and a stale error card (e.g. monthly),
+    fleet view must suppress the error card and not include it as a secondary limit."""
+    _seed_card(
+        session,
+        provider_id="xai",
+        account_id="user@example.com",
+        window_type="weekly",
+        pct_used=100.0,
+    )
+    # Seed a stale error card directly into LatestUsage
+    session.add(
+        LatestUsage(
+            provider_id="xai",
+            account_id="user@example.com",
+            sidecar_id="local",
+            window_type="monthly",
+            variant="default",
+            model_id="",
+            card_json=json.dumps(
+                {
+                    "service_name": "xAI",
+                    "icon": "🤖",
+                    "remaining": "ERR",
+                    "unit": "Check State",
+                    "health": "critical",
+                    "detail": "xAI session expired",
+                    "error_type": "auth_failed",
+                    "data_source": "error",
+                    "provider_id": "xai",
+                    "account_id": "user@example.com",
+                    "window_type": "monthly",
+                }
+            ),
+        )
+    )
+    session.commit()
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+
+    entry = next(e for e in resp.json()["fleet"] if e["provider_id"] == "xai")
+    assert entry["critical_gauge"]["window_type"] == "weekly"
+    assert entry["critical_gauge"]["pct_used"] == 100.0
+    # Secondary limits must NOT contain the monthly error card
+    assert entry["secondary_limits"] == []

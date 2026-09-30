@@ -448,6 +448,34 @@ def test_success_evicts_cross_variant_error_on_write(session: Session):
     assert rows[0].variant == "Codex"
 
 
+def test_success_evicts_cross_window_error_on_write(session: Session):
+    """Success card (window_type=weekly) evicts stale error card with a different window_type (e.g. monthly)."""
+    stale = _error_card(
+        account_id="alice@example.com",
+        account_label="alice@example.com",
+        variant="default",
+        window_type="monthly",
+    )
+    upsert_latest_usage(session, stale)
+    session.commit()
+
+    upsert_latest_usage(
+        session,
+        _success_card(
+            account_id="alice@example.com",
+            account_label="alice@example.com",
+            variant="default",
+            window_type="weekly",
+        ),
+    )
+    session.commit()
+
+    rows = session.exec(select(LatestUsage)).all()
+    assert len(rows) == 1
+    assert rows[0].window_type == "weekly"
+    assert json.loads(rows[0].card_json).get("error_type") is None
+
+
 def test_success_preserves_healthy_other_variant(session: Session):
     """Success write does NOT evict another healthy row under a different variant."""
     other_healthy = _success_card(

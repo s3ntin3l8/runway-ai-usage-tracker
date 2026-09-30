@@ -691,40 +691,37 @@ def upsert_latest_usage(  # noqa: PLR0915
                 f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
             )
 
-    # When a healthy real-account card lands, evict stale orphaned error rows:
-    # - default-account error rows written by past failed poll cycles
-    # - same-account error rows under a different variant (left by prior code)
-    if not is_error and canonical_account_id != "default":
+    # When a healthy card lands, evict stale orphaned error rows:
+    # - any error rows for this exact (provider_id, canonical_account_id),
+    #   regardless of window_type or variant (a healthy card means the account
+    #   is working and any failure placeholder is obsolete)
+    # - default-account error rows in the same slot when this is a real account
+    if not is_error:
         try:
             with session.begin_nested():
-                # Multi-account hardening: evict the default-orphan ONLY for the
-                # same (provider_id, window_type, variant, model_id) slot the
-                # incoming real-account card is filling. Pre-fix logic swept
-                # every default-tagged error row for the provider — wrong for
-                # multi-account because a real-account card for slot A must
-                # not kill a legitimate default-tagged error row at slot B.
-                slot_default_errors = session.exec(
-                    select(LatestUsage).where(
-                        LatestUsage.provider_id == card.provider_id,
-                        LatestUsage.account_id == "default",
-                        LatestUsage.window_type == card.window_type,
-                        LatestUsage.variant == variant,
-                        LatestUsage.model_id == model_id,
-                    )
-                ).all()
-                for row in slot_default_errors:
-                    if _is_error_card(row.card_json):
-                        session.delete(row)
-                cross_variant_errors = session.exec(
+                same_account_errors = session.exec(
                     select(LatestUsage).where(
                         LatestUsage.provider_id == card.provider_id,
                         LatestUsage.account_id == canonical_account_id,
-                        LatestUsage.variant != variant,
                     )
                 ).all()
-                for row in cross_variant_errors:
+                for row in same_account_errors:
                     if _is_error_card(row.card_json):
                         session.delete(row)
+
+                if canonical_account_id != "default":
+                    slot_default_errors = session.exec(
+                        select(LatestUsage).where(
+                            LatestUsage.provider_id == card.provider_id,
+                            LatestUsage.account_id == "default",
+                            LatestUsage.window_type == card.window_type,
+                            LatestUsage.variant == variant,
+                            LatestUsage.model_id == model_id,
+                        )
+                    ).all()
+                    for row in slot_default_errors:
+                        if _is_error_card(row.card_json):
+                            session.delete(row)
         except Exception as e:
             logger.warning(
                 "Orphan error row eviction failed for %s/%s: %s",

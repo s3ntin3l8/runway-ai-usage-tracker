@@ -209,6 +209,31 @@ async def fetch_fleet_view(
     return result
 
 
+def _suppress_residual_error_cards(
+    groups: dict[tuple[str, str], list[dict[str, Any]]],
+) -> None:
+    """Suppress residual error cards when an account group has at least one healthy card."""
+    for key, gcards in list(groups.items()):
+        has_healthy = any(
+            not (
+                c.get("data_source") == "error"
+                or c.get("remaining") == "ERR"
+                or bool(c.get("error_type"))
+            )
+            for c in gcards
+        )
+        if has_healthy:
+            groups[key] = [
+                c
+                for c in gcards
+                if not (
+                    c.get("data_source") == "error"
+                    or c.get("remaining") == "ERR"
+                    or bool(c.get("error_type"))
+                )
+            ]
+
+
 def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
     from app.models.db import LatestUsage, ProviderConfig
 
@@ -253,6 +278,8 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         ):
             continue
         groups.setdefault((pid, aid), []).append(c)
+
+    _suppress_residual_error_cards(groups)
 
     # Synthesize fleet entries for (provider_id, account_id) pairs that have
     # ingested events but no LatestUsage card — typical case is OpenCode Free,
