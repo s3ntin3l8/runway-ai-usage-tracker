@@ -178,7 +178,7 @@ export function ProviderKpis({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile
           label="Messages"
-          value={formatNumber(bucket?.msgs ?? 0)}
+          value={bucket?.msgs != null ? formatNumber(bucket.msgs) : '—'}
           hint={scopeLabel}
           loading={bucketLoading}
         />

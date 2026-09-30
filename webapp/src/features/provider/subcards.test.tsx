@@ -1,6 +1,6 @@
 // Sub-card components: ProviderKpis, ProviderAlerts, ProviderTrendCard,
 // QuotaWindowRow, RecentSessions.
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { ProviderKpis } from './ProviderKpis';
 import { ProviderAlerts } from './ProviderAlerts';
@@ -169,6 +169,18 @@ describe('ProviderKpis', () => {
         <ProviderKpis entry={tokenFleetEntry()} scope={scope} excludeCache={excludeCache} />,
       );
       expect(await screen.findByText(expected)).toBeInTheDocument();
+    });
+
+    it('shows an em dash when the selected bucket has no data', async () => {
+      const response = cumulativeResponse();
+      response.cumulative = [];
+      vi.mocked(api.fetchCumulative).mockResolvedValue(response);
+      renderWithProviders(<ProviderKpis entry={tokenFleetEntry()} scope={scope} />);
+
+      await waitFor(() => {
+        const messagesTile = screen.getByText('Messages').parentElement;
+        expect(messagesTile).toHaveTextContent('—');
+      });
     });
   });
 });

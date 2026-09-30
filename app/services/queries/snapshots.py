@@ -882,6 +882,7 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
         account_clause = "AND account_id = :account_id" if account_id else ""
         # These f-strings interpolate only server-built SQL clauses above;
         # provider, account, and timestamp values remain bound parameters.
+        # Like the rollup's empty sidecar_id, this event query covers all sidecars.
         sql = text(
             f"""
             SELECT provider_id, account_id, model_id,
