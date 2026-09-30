@@ -160,6 +160,45 @@ class TestFleetFilterArchived:
         provider_ids = [e["provider_id"] for e in fleet]
         assert "anthropic" in provider_ids
 
+    def test_inactive_provider_hides_unmatched_stale_card_but_retains_row(self, session: Session):
+        """A stale default card cannot warn after the provider's only account is archived."""
+        stale = {
+            "service_name": "Gemini",
+            "provider_id": "gemini",
+            "account_id": "default",
+            "window_type": "daily",
+            "variant": "default",
+            "stale": True,
+            "collection_failing": True,
+        }
+        session.add(
+            LatestUsage(
+                provider_id="gemini",
+                account_id="default",
+                sidecar_id="local",
+                window_type="daily",
+                variant="default",
+                model_id="",
+                card_json=json.dumps(stale),
+            )
+        )
+        _add_provider_config(
+            session, provider_id="gemini", account_id="old@example.com", archived=True
+        )
+
+        response = _client().get("/api/v1/usage/fleet")
+
+        assert response.status_code == 200
+        assert not any(entry["provider_id"] == "gemini" for entry in response.json()["fleet"])
+        assert (
+            session.exec(
+                select(LatestUsage).where(
+                    LatestUsage.provider_id == "gemini", LatestUsage.account_id == "default"
+                )
+            ).first()
+            is not None
+        )
+
     def test_archived_synthetic_entry_excluded(self, session: Session):
         """A passive provider (events but no card) that is archived gets no synthetic entry."""
         _seed_event(session, "evt-1", provider_id="ollama", account_id="local")

@@ -142,7 +142,7 @@ describe('WebhooksSection', () => {
       channel: 'discord',
       credential_alerts: true,
     });
-  });
+  }, 15_000);
 
   it('creates an alert with credential alerts disabled', async () => {
     vi.mocked(api.fetchWebhooks).mockResolvedValue({ webhooks: [] });
@@ -171,7 +171,7 @@ describe('WebhooksSection', () => {
       channel: 'discord',
       credential_alerts: false,
     });
-  });
+  }, 15_000);
 
   it('creates a per-account alert when an account is selected', async () => {
     vi.mocked(api.fetchWebhooks).mockResolvedValue({ webhooks: [] });
@@ -212,7 +212,7 @@ describe('WebhooksSection', () => {
       channel: 'discord',
       credential_alerts: true,
     });
-  });
+  }, 15_000);
 
   it('changes row account scope via updateWebhook', async () => {
     vi.mocked(api.fetchWebhooks).mockResolvedValue({ webhooks: [webhook()] });

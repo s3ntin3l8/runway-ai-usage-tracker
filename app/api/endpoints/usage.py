@@ -224,6 +224,11 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
     # (no deletion) but they should not appear in the active fleet view.
     provider_configs = session.exec(select(ProviderConfig)).all()
     archived_pairs = {(r.provider_id, r.account_id) for r in provider_configs if r.archived}
+    configured_provider_ids = {r.provider_id for r in provider_configs}
+    active_config_provider_ids = {
+        r.provider_id for r in provider_configs if r.enabled and not r.archived
+    }
+    inactive_config_provider_ids = configured_provider_ids - active_config_provider_ids
     billing_types = {
         (r.provider_id, r.account_id): r.billing_type or "unknown" for r in provider_configs
     }
@@ -236,6 +241,14 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         if not pid:
             continue
         if (pid, aid) in archived_pairs:
+            continue
+        # A stale card under an unresolved/discovered account can outlive the
+        # account that was archived. Keep its durable row for restoration and
+        # history, but don't surface a collection-failure warning when the
+        # operator has disabled every configured account for this provider.
+        if pid in inactive_config_provider_ids and (
+            c.get("stale") is True or c.get("collection_failing") is True
+        ):
             continue
         groups.setdefault((pid, aid), []).append(c)
 
