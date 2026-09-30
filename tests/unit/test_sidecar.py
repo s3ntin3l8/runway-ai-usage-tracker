@@ -1774,6 +1774,33 @@ class TestPostCredentialManifest:
         }
         assert "private-token-value" not in json.dumps(observation)
 
+    def test_health_observations_union_token_types_for_one_origin(self):
+        cards = [
+            {
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "provider_id": "antigravity",
+                    "credential_origin": "path:/auth.json",
+                    "oauth_token": "opaque-oauth",
+                },
+            },
+            {
+                "remaining": "Token",
+                "unit": "api_key",
+                "metadata": {
+                    "provider_id": "antigravity",
+                    "credential_origin": "path:/auth.json",
+                    "api_key": "opaque-api-key",  # pragma: allowlist secret
+                },
+            },
+        ]
+
+        observations = sidecar._credential_health_observations(cards)
+
+        assert len(observations) == 1
+        assert observations[0]["token_types"] == ["api_key", "oauth_token"]
+
     def test_health_observation_accepts_epoch_zero_jwt_expiry(self):
         header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
         epoch_payload = base64.urlsafe_b64encode(b'{"exp":0}').rstrip(b"=").decode()

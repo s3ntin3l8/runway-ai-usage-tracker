@@ -723,7 +723,7 @@ class CredentialManifestRequest(BaseModel):
     # Older sidecars omit this field; their partial manifests are upsert-only.
     completed_providers: list[str] | None = None
     # Safe source metadata only: never include credential values.
-    observations: list[CredentialHealthObservation] = Field(default_factory=list)
+    observations: list[CredentialHealthObservation] = Field(default_factory=list, max_length=256)
 
 
 @router.post("/credentials/manifest")

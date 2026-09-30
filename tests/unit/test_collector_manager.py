@@ -278,6 +278,7 @@ class TestCollectorManagerInitialization:
                     {
                         "source_id": "sidecar:laptop:auth-json",
                         "source_type": "sidecar",
+                        "sidecar_id": "laptop",
                         "credential_origin": "path:/auth.json",
                         "identity_pending": True,
                     }
@@ -324,6 +325,7 @@ class TestCollectorManagerInitialization:
             {
                 "source_id": f"sidecar:laptop:{origin}",
                 "source_type": "sidecar",
+                "sidecar_id": "laptop",
                 "credential_origin": origin,
                 "identity_pending": True,
             }

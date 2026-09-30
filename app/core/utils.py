@@ -90,9 +90,9 @@ class IdentityExtractor:
     _EXP_TOKEN_KEYS = (
         "oauth_token",
         "access_token",
-        "id_token",
-        "xai_access",
         "cli_access_token",
+        "xai_access",
+        "id_token",
     )
 
     @classmethod

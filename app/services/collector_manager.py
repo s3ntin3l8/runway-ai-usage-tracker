@@ -640,7 +640,7 @@ class CollectorManager:
             return []
 
         successful_result: list[dict[str, Any]] | None = None
-        last_failure_result: list[dict[str, Any]] | None = None
+        last_kept_failure_result: list[dict[str, Any]] | None = None
         deadline = asyncio.get_running_loop().time() + 25.0
         await smart.reset()
         for index, candidate in enumerate(candidates):
@@ -688,7 +688,7 @@ class CollectorManager:
             # Keep the last useful failure card if a later source fails silently.
             if has_auth_failure and result_failed:
                 health_updates[candidate["source_id"]] = "auth_failed"
-                last_failure_result = result or last_failure_result
+                last_kept_failure_result = result or last_kept_failure_result
                 continue
             if attempt["auth_failed"]:
                 # An optional request or a refresh retry may return 401/403 even
@@ -703,7 +703,7 @@ class CollectorManager:
                 # The 'unavailable' status persists across polls until overwritten by the next
                 # successful collection pass.
                 health_updates[candidate["source_id"]] = "unavailable"
-                last_failure_result = result or last_failure_result
+                last_kept_failure_result = result or last_kept_failure_result
                 continue
             if not attempt["auth_failed"]:
                 health_updates[candidate["source_id"]] = "healthy"
@@ -746,7 +746,9 @@ class CollectorManager:
                 break
             successful_result = result
             break
-        return successful_result if successful_result is not None else (last_failure_result or [])
+        return (
+            successful_result if successful_result is not None else (last_kept_failure_result or [])
+        )
 
     async def _promote_source_identity(
         self, provider_id: str, old_account_id: str, source_id: str, account_id: str
@@ -884,7 +886,7 @@ class CollectorManager:
         moves: list[tuple[str, str, str, str, tuple[bool, int] | None]] = []
         candidates_by_provider: dict[str, list[dict[str, Any]]] = {}
         for pid in provider_ids:
-            candidates_by_provider[pid] = await token_cache.get_all_source_candidates(pid)
+            candidates_by_provider[pid] = await token_cache.get_all_source_descriptors(pid)
         with Session(engine) as session:
             for pid in provider_ids:
                 candidates = candidates_by_provider[pid]
@@ -959,6 +961,8 @@ class CollectorManager:
                             preference,
                         )
                     )
+            # Durable tags are authoritative; a failed cache move is retried
+            # from this mapping by the next startup or reconciliation pass.
             session.commit()
 
         for pid, candidate_id, target, old_account_id, preference in moves:

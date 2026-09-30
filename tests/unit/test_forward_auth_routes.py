@@ -50,11 +50,13 @@ def test_forward_auth_documentation_lists_every_hmac_only_route():
         if fleet_routes:
             bypass_rules.append((router_name, rule, fleet_routes))
 
-    assert len(bypass_rules) == 1
-    router_name, rule, documented = bypass_rules[0]
-    assert documented == expected
-    assert all(rule.count(f"Path(`{route}`)") == 1 for route in expected)
-    assert re.findall(
-        rf"traefik\.http\.routers\.{re.escape(router_name)}\.service=([^\s`]+)",
-        docs,
-    ) == ["runway"]
+    documented: list[str] = []
+    for router_name, rule, routes in bypass_rules:
+        documented.extend(routes)
+        assert all(rule.count(f"Path(`{route}`)") == 1 for route in routes)
+        assert re.findall(
+            rf"traefik\.http\.routers\.{re.escape(router_name)}\.service=([^\s`]+)",
+            docs,
+        ) == ["runway"]
+    assert sorted(documented) == sorted(expected)
+    assert len(documented) == len(set(documented))

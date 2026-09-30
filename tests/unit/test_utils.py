@@ -122,6 +122,14 @@ class TestIdentityExtractorExpFromTokens:
         }
         assert IdentityExtractor.exp_from_tokens(tokens) == 100.0
 
+    def test_cli_access_expiry_precedes_identity_token_expiry(self):
+        tokens = {
+            "oauth_token": "opaque-oauth",
+            "id_token": _make_jwt({"exp": 200.0}),
+            "cli_access_token": _make_jwt({"exp": 100.0}),
+        }
+        assert IdentityExtractor.exp_from_tokens(tokens) == 100.0
+
     def test_falls_through_to_id_token_when_oauth_is_opaque(self):
         tokens = {"oauth_token": "opaque-no-exp", "id_token": _make_jwt({"exp": 200.0})}
         assert IdentityExtractor.exp_from_tokens(tokens) == 200.0

@@ -3315,6 +3315,8 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
 
     Only the ``oauth``, ``api_key``, and ``cookie`` token-card units emitted by
     the sidecar are treated as credential observations.
+    Multiple unit cards for one origin are combined: token types are unioned,
+    while the last card's expiry remains authoritative.
     A decoded expiry of zero is retained as the Unix epoch, marking the token
     expired rather than treating the claim as missing.
     """
@@ -3380,12 +3382,17 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
                 if expires_at is not None:
                     break
         key_tuple = (provider_id, origin)
-        found[key_tuple] = {
-            "provider_id": provider_id,
-            "credential_origin": origin,
-            "token_types": token_types,
-            "expires_at": expires_at,
-        }
+        observation = found.get(key_tuple)
+        if observation is None:
+            found[key_tuple] = {
+                "provider_id": provider_id,
+                "credential_origin": origin,
+                "token_types": token_types,
+                "expires_at": expires_at,
+            }
+        else:
+            observation["token_types"] = sorted(set(observation["token_types"]) | set(token_types))
+            observation["expires_at"] = expires_at
     return list(found.values())
 
 

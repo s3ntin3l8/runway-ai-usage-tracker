@@ -21,9 +21,11 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
+from app.api.endpoints.fleet import CredentialManifestRequest
 from app.core.db import get_session
 from app.main import app
 from app.models.db import CredentialSource, ProviderConfig
@@ -420,6 +422,16 @@ def test_manifest_persists_safe_health_metadata_without_token_values(
         1_700_000_000, tz=UTC
     )
     assert "oauth_creds" not in response.text
+
+
+def test_manifest_limits_health_observation_count():
+    observations = [
+        {"provider_id": "antigravity", "credential_origin": f"path:/{index}.json"}
+        for index in range(257)
+    ]
+
+    with pytest.raises(ValidationError):
+        CredentialManifestRequest(sidecar_id="health-host", observations=observations)
 
 
 def test_manifest_prunes_origins_missing_from_complete_snapshot(

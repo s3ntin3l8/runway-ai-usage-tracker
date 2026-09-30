@@ -515,14 +515,19 @@ class TokenCache:
                 key=lambda row: (int(row.get("priority", 0)), row["source_id"]),
             )
 
-    async def get_all_source_candidates(self, provider: str) -> list[dict[str, Any]]:
-        """Return all source bundles for a provider, including identity-pending slots."""
+    async def get_all_source_descriptors(self, provider: str) -> list[dict[str, Any]]:
+        """Return sidecar ownership metadata without exposing credential values."""
         async with self._lock:
             self._clear_expired_unlocked()
             candidates = [
-                {"account_id": account_id, "source_id": source_id, "tokens": tokens, **metadata}
+                {
+                    "account_id": account_id,
+                    "source_id": source_id,
+                    "sidecar_id": metadata.get("sidecar_id"),
+                    "credential_origin": metadata.get("credential_origin"),
+                }
                 for account_id, sources in self._source_cache.get(provider, {}).items()
-                for source_id, (tokens, metadata, _timestamp) in sources.items()
+                for source_id, (_tokens, metadata, _timestamp) in sources.items()
             ]
             return sorted(candidates, key=lambda row: (row["account_id"], row["source_id"]))
 

@@ -23,6 +23,32 @@ def cache():
 
 
 @pytest.mark.asyncio
+async def test_all_source_descriptors_never_include_token_values(cache):
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "secret-token-value"},  # pragma: allowlist secret
+        account_id="default",
+        source_id="sidecar:host:oauth",
+        source_metadata={
+            "sidecar_id": "host",
+            "credential_origin": "path:/oauth.json",
+        },
+    )
+
+    descriptors = await cache.get_all_source_descriptors("antigravity")
+
+    assert descriptors == [
+        {
+            "account_id": "default",
+            "source_id": "sidecar:host:oauth",
+            "sidecar_id": "host",
+            "credential_origin": "path:/oauth.json",
+        }
+    ]
+    assert "secret-token-value" not in repr(descriptors)
+
+
+@pytest.mark.asyncio
 async def test_retiring_moved_claude_source_keeps_independent_cookie(cache):
     source_id = "sidecar:claude-cli"
     await cache.store(

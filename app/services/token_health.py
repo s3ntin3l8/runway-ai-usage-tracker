@@ -280,9 +280,17 @@ class TokenHealthService:
                 source_val = info.get("source")
                 has_refresh_token = "refresh_token" in tokens or "xai_refresh" in tokens
                 source_candidates = await token_cache.get_source_candidates(provider, acc_id)
-                # Source-specific records below are more precise than this
-                # compatibility aggregate and keep independent credentials visible.
-                if source_candidates:
+                durable_source_ids = {
+                    item.source_id
+                    for item in durable_sources
+                    if item.provider_id == provider and item.account_id == acc_id
+                }
+                if any(
+                    candidate.get("source_id") in durable_source_ids
+                    for candidate in source_candidates
+                ):
+                    # The source-specific durable row below carries this exact
+                    # live credential, so suppress the compatibility aggregate.
                     continue
                 result.append(
                     _row(
@@ -347,10 +355,11 @@ class TokenHealthService:
                 None,
             )
             if live and any(
-                row["provider"] == provider_id and row["account_id"] == account_id for row in result
+                row["provider"] == provider_id and row.get("source_id") == durable_source.source_id
+                for row in result
             ):
-                # The live aggregate row already represents this account. A
-                # second row for its durable source would describe it twice.
+                # A source-specific row (including pending Claude OAuth) already
+                # represents this exact durable source.
                 continue
             token_types: list[str] = []
             exp: float | None = None
@@ -378,6 +387,7 @@ class TokenHealthService:
                 can_refresh=False,
             )
             row["removable"] = False
+            row["source_id"] = durable_source.source_id
             row["sidecar_id"] = durable_source.sidecar_id
             row["identity_pending"] = account_id == "default"
             result.append(row)

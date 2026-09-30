@@ -261,6 +261,7 @@ async def test_empty_auth_failure_preserves_previous_failure_card(monkeypatch):
             source_metadata={"enabled": True, "priority": priority},
         )
     calls = 0
+    health_writes: list[dict[str, str]] = []
 
     async def collect_with_auth_failures(_client):
         nonlocal calls
@@ -272,7 +273,11 @@ async def test_empty_auth_failure_preserves_previous_failure_card(monkeypatch):
 
     manager = CollectorManager()
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
-    monkeypatch.setattr(manager, "_record_source_health", lambda *_args: None)
+    monkeypatch.setattr(
+        manager,
+        "_record_source_health",
+        lambda _provider, _account, updates: health_writes.append(dict(updates)),
+    )
     smart = SmartCollector(_CredentialProbeCollector(cache), "OpenRouter", ttl=0)
     smart.collect = AsyncMock(side_effect=collect_with_auth_failures)
     manager.smart_collectors["openrouter:alice@example.com"] = smart
@@ -283,11 +288,12 @@ async def test_empty_auth_failure_preserves_previous_failure_card(monkeypatch):
     assert len(result) == 1
     assert result[0]["error_type"] == "auth_failed"
     assert calls == 2
+    assert health_writes == [{"first": "auth_failed", "second": "auth_failed"}]
     await manager.close()
 
 
 @pytest.mark.asyncio
-async def test_failed_collection_state_falls_through_after_partial_result(monkeypatch):
+async def test_failed_collection_state_preserves_usable_partial_result(monkeypatch):
     cache = TokenCache()
     for source_id, priority in (("first", 0), ("second", 1)):
         await cache.store(
@@ -306,11 +312,8 @@ async def test_failed_collection_state_falls_through_after_partial_result(monkey
     async def collect_with_partial_failure(_client):
         nonlocal calls
         calls += 1
-        if calls == 1:
-            smart.last_collection_state = "failed"
-            return [{"remaining": "old quota", "source": "cached"}]
-        smart.last_collection_state = "complete"
-        return [{"remaining": "fresh quota", "source": "second"}]
+        smart.last_collection_state = "failed"
+        return [{"remaining": "partial quota", "source": "cached"}]
 
     smart.collect = AsyncMock(side_effect=collect_with_partial_failure)
     manager.smart_collectors["openrouter:alice@example.com"] = smart
@@ -318,8 +321,8 @@ async def test_failed_collection_state_falls_through_after_partial_result(monkey
     async with httpx.AsyncClient() as client:
         result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
 
-    assert result == [{"remaining": "fresh quota", "source": "second"}]
-    assert calls == 2
+    assert result == [{"remaining": "partial quota", "source": "cached"}]
+    assert calls == 1
     await manager.close()
 
 
