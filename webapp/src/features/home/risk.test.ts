@@ -87,6 +87,128 @@ describe('buildRiskItems', () => {
     expect(items[0].lead.card.window_type).toBe('monthly');
     expect(items[0].level).toBe('critical');
   });
+
+  it('keeps zero-balance, spend-only pay-as-you-go cards out of At Risk', () => {
+    const openrouter: FleetEntry = {
+      provider_id: 'openrouter',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'OpenRouter',
+        remaining: '$0.00',
+        used_value: 0,
+        limit_value: 0,
+        unit_type: 'currency',
+        currency: 'USD',
+        health: 'critical',
+      } as LimitCard,
+      secondary_limits: [],
+    };
+    const deepseek: FleetEntry = {
+      provider_id: 'deepseek',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'DeepSeek',
+        remaining: 'USD 0.00',
+        unit_type: 'currency',
+        currency: 'USD',
+        health: 'critical',
+      } as LimitCard,
+      secondary_limits: [],
+    };
+
+    const items = buildRiskItems([openrouter, deepseek], []);
+    expect(items.map((item) => item.level)).toEqual(['ok', 'ok']);
+    expect(atRiskItems(items)).toEqual([]);
+  });
+
+  it('keeps a low positive balance at risk', () => {
+    const lowBalance: FleetEntry = {
+      provider_id: 'payg',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Pay as you go',
+        remaining: '$3.00',
+        unit_type: 'currency',
+        currency: 'USD',
+        health: 'warning',
+      } as LimitCard,
+      secondary_limits: [],
+    };
+
+    expect(buildRiskItems([lowBalance], [])[0].level).toBe('warning');
+  });
+
+  it('keeps health-based risk when a spend card has no numeric balance', () => {
+    const unknownBalance: FleetEntry = {
+      provider_id: 'payg',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Pay as you go',
+        remaining: '',
+        unit_type: 'currency',
+        currency: 'USD',
+        health: 'critical',
+      } as LimitCard,
+      secondary_limits: [],
+    };
+
+    expect(buildRiskItems([unknownBalance], [])[0].level).toBe('critical');
+  });
+
+  it('preserves risk for a fixed spending cap and for collection errors', () => {
+    const cappedSpend: FleetEntry = {
+      provider_id: 'capped',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Capped spend',
+        remaining: '$0.00',
+        used_value: 100,
+        limit_value: 100,
+        pct_used: 100,
+        unit_type: 'currency',
+        currency: 'USD',
+        health: 'critical',
+      } as LimitCard,
+      secondary_limits: [],
+    };
+    const error: FleetEntry = {
+      provider_id: 'error',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Pay as you go',
+        remaining: '$0.00',
+        unit_type: 'currency',
+        currency: 'USD',
+        health: 'critical',
+        error_type: 'api_error',
+      } as LimitCard,
+      secondary_limits: [],
+    };
+
+    expect(buildRiskItems([cappedSpend, error], []).map((item) => item.level)).toEqual([
+      'critical',
+      'critical',
+    ]);
+  });
+
+  it('keeps a forecast risk signal for a zero-balance spend card', () => {
+    const zeroBalance: FleetEntry = {
+      provider_id: 'payg',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'Pay as you go',
+        remaining: '$0.00',
+        unit_type: 'currency',
+        currency: 'USD',
+        health: 'critical',
+      } as LimitCard,
+      secondary_limits: [],
+    };
+
+    const item = buildRiskItems([zeroBalance], [forecast('payg', 'risk', 120)])[0];
+    expect(item.level).toBe('critical');
+    expect(item.forecast?.status).toBe('risk');
+  });
 });
 
 describe('atRiskItems', () => {
