@@ -571,6 +571,8 @@ class TokenCache:
                         if retire_all_oauth
                         or (source_tokens.get(key) and source_tokens[key] == tokens.get(key))
                     }
+                    # `tokens` aliases the live dict in `aggregate`; pop in
+                    # place before reassigning the tuple.
                     for key in keys_to_remove:
                         tokens.pop(key, None)
                         key_timestamps.pop(key, None)

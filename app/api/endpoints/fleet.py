@@ -140,6 +140,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 identity_pending = bool(
                     card.metadata and card.metadata.get("identity_pending") is True
                 )
+                verified_tag = None
                 if identity_pending and credential_origin and payload.sidecar_id:
                     # A verified identity can race one more heartbeat with
                     # stale pending metadata. Trust only the durable tag for
@@ -158,12 +159,14 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     # OAuth token. A sidecar can claim that email, but only an
                     # exact configured account (or an operator tag) may receive
                     # the token. Otherwise keep it source-pinned for assignment.
-                    tagged = CredentialTagRepo.get(
-                        session,
-                        provider_id=provider_id,
-                        credential_origin=credential_origin,
-                        sidecar_id=payload.sidecar_id,
-                    )
+                    tagged = verified_tag
+                    if tagged is None:
+                        tagged = CredentialTagRepo.get(
+                            session,
+                            provider_id=provider_id,
+                            credential_origin=credential_origin,
+                            sidecar_id=payload.sidecar_id,
+                        )
                     if tagged is not None and tagged.set_by != "identity_claim":
                         acc_id = tagged.account_id
                         identity_pending = False

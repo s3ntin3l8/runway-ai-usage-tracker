@@ -42,7 +42,11 @@ logger = logging.getLogger(__name__)
 
 
 def response_url_was_redirected(requested_url: str, response_url: str) -> bool:
-    """Detect a destination change while ignoring harmless URL normalization."""
+    """Detect destination changes while ignoring harmless URL normalization.
+
+    Path percent-encoding is preserved, so ``%2F`` and ``/`` count as a
+    destination change.
+    """
 
     def normalized(url: str) -> tuple[str, str, int | None, str, str] | None:
         try:
