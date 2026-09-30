@@ -14,7 +14,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
-from app.core.utils import resolve_user_tz
+from app.core.utils import is_error_card_dict, resolve_user_tz
 from app.models._datetime import iso_utc
 from app.models.schemas import (
     ForecastResponse,
@@ -214,24 +214,9 @@ def _suppress_residual_error_cards(
 ) -> None:
     """Suppress residual error cards when an account group has at least one healthy card."""
     for key, gcards in list(groups.items()):
-        has_healthy = any(
-            not (
-                c.get("data_source") == "error"
-                or c.get("remaining") == "ERR"
-                or bool(c.get("error_type"))
-            )
-            for c in gcards
-        )
+        has_healthy = any(not is_error_card_dict(c) for c in gcards)
         if has_healthy:
-            groups[key] = [
-                c
-                for c in gcards
-                if not (
-                    c.get("data_source") == "error"
-                    or c.get("remaining") == "ERR"
-                    or bool(c.get("error_type"))
-                )
-            ]
+            groups[key] = [c for c in gcards if not is_error_card_dict(c)]
 
 
 def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:

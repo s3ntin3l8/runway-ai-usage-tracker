@@ -6,9 +6,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, delete, select
+from sqlmodel import Session, col, delete, or_, select
 
 from app.core.date_utils import parse_iso8601_utc
+from app.core.utils import is_error_card_dict
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +155,11 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
 
 
 def _is_error_card(card_json: str | None) -> bool:
-    data = json.loads(card_json or "{}")
-    return (
-        bool(data.get("error_type"))
-        or data.get("data_source") == "error"
-        or data.get("remaining") == "ERR"
-    )
+    try:
+        data = json.loads(card_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return is_error_card_dict(data)
 
 
 def _latest_usage_sidecar_id(contributions: Iterable[Any], *, provider_id: str) -> str:
@@ -691,10 +691,9 @@ def upsert_latest_usage(  # noqa: PLR0915
                 f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
             )
 
-    # When a healthy card lands, evict stale orphaned error rows:
-    # - any error rows for this exact (provider_id, canonical_account_id),
-    #   regardless of window_type or variant (a healthy card means the account
-    #   is working and any failure placeholder is obsolete)
+    # When any healthy card lands, evict stale orphaned error rows:
+    # - error rows for this exact (provider_id, canonical_account_id) outside
+    #   the slot just written (different window_type, variant, or model_id)
     # - default-account error rows in the same slot when this is a real account
     if not is_error:
         try:
@@ -703,6 +702,11 @@ def upsert_latest_usage(  # noqa: PLR0915
                     select(LatestUsage).where(
                         LatestUsage.provider_id == card.provider_id,
                         LatestUsage.account_id == canonical_account_id,
+                        or_(
+                            LatestUsage.window_type != card.window_type,
+                            LatestUsage.variant != variant,
+                            LatestUsage.model_id != model_id,
+                        ),
                     )
                 ).all()
                 for row in same_account_errors:
