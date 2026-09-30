@@ -718,6 +718,7 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     sidecar_id: str  # indexed via ``ix_pending_credential_tags_sidecar``
     provider_id: str
     credential_origin: str
+    claimed_account_id: str | None = None
     first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     # Safe quota fields only; tokens and cookies are never written here.

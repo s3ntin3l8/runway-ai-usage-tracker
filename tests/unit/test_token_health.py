@@ -339,6 +339,55 @@ class TestPerAccountAndInvalid:
         return {r["account_id"]: r for r in rows}
 
     @pytest.mark.asyncio
+    async def test_pending_claude_sidecar_oauth_is_visible(self):
+        from app.services.token_cache import TokenCache
+
+        cache = TokenCache()
+        await cache.store(
+            "anthropic",
+            {"oauth_token": "claude-access-token", "expiry_date": "1790784000000"},
+            account_id=None,
+            source_id="sidecar:host-a:path:/claude",
+            source_metadata={
+                "sidecar_id": "host-a",
+                "identity_pending": True,
+                "identity_hint": "alice@example.com",
+            },
+        )
+
+        rows = await self._health(cache)
+
+        pending = rows["unassigned:sidecar:host-a:path:/claude"]
+        assert pending["assignment_pending"] is True
+        assert pending["account_label"] == "Unassigned (alice@example.com)"
+        assert pending["source"] == "host-a"
+        assert pending["expires_at"] is not None
+        assert pending["removable"] is False
+
+    @pytest.mark.asyncio
+    async def test_resolved_claude_sidecar_oauth_stays_on_canonical_health_row(self):
+        from app.services.token_cache import TokenCache
+
+        cache = TokenCache()
+        await cache.store(
+            "anthropic",
+            {"oauth_token": "claude-assigned-token"},
+            account_id="alice@example.com",
+            source_id="sidecar:host-a:path:/claude",
+            source_metadata={"sidecar_id": "host-a", "identity_pending": False},
+        )
+        await cache.store(
+            "anthropic",
+            {"api_key": "configured-key"},  # pragma: allowlist secret
+            account_id="alice@example.com",
+        )
+
+        rows = await self._health(cache)
+
+        assert list(rows) == ["alice@example.com"]
+        assert set(rows["alice@example.com"]["token_types"]) == {"oauth_token", "api_key"}
+
+    @pytest.mark.asyncio
     async def test_expired_account_not_hidden_by_other_accounts_healthy_token(self):
         cache = self._cache(
             [

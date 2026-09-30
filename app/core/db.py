@@ -230,6 +230,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("webhook_configs", "credential_alerts", "BOOLEAN NOT NULL DEFAULT 1"),
     ("pending_credential_tags", "quota_preview_json", "TEXT"),
     ("pending_credential_tags", "quota_preview_observed_at", "DATETIME"),
+    ("pending_credential_tags", "claimed_account_id", "VARCHAR"),
 ]
 
 

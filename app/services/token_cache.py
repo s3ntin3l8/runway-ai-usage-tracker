@@ -539,13 +539,53 @@ class TokenCache:
             entry = self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
         return dict(entry[1]) if entry else None
 
-    async def remove_source(self, provider: str, account_id: str, source_id: str) -> bool:
+    async def remove_source(
+        self,
+        provider: str,
+        account_id: str,
+        source_id: str,
+        *,
+        retire_matching_oauth: bool = False,
+    ) -> bool:
         """Remove one live secret bundle while preserving its durable metadata."""
         account_id = canonical_account_id(account_id)
         async with self._lock:
             sources = self._source_cache.get(provider, {}).get(account_id)
             if not sources or source_id not in sources:
                 return False
+            source_tokens = sources[source_id][0]
+            if retire_matching_oauth:
+                aggregate = self._cache.get(provider, {}).get(account_id)
+                if aggregate:
+                    tokens, metadata, timestamp = aggregate
+                    key_timestamps = self._token_timestamps.get(provider, {}).get(account_id, {})
+                    # A pending Claude source uses its source_id as the account
+                    # key, so that aggregate belongs exclusively to this source.
+                    # For shared account aggregates, remove only OAuth fields
+                    # whose values still match the source being retired.
+                    retire_all_oauth = account_id == source_id
+                    oauth_keys = _OAUTH_CREDENTIAL_KEYS | {"access_token"}
+                    keys_to_remove = {
+                        key
+                        for key in oauth_keys
+                        if retire_all_oauth
+                        or (source_tokens.get(key) and source_tokens[key] == tokens.get(key))
+                    }
+                    # `tokens` aliases the live dict in `aggregate`; pop in
+                    # place before reassigning the tuple.
+                    for key in keys_to_remove:
+                        tokens.pop(key, None)
+                        key_timestamps.pop(key, None)
+                    if keys_to_remove:
+                        metadata = {**metadata, "identity_pending": False}
+                        if tokens:
+                            self._cache[provider][account_id] = (tokens, metadata, timestamp)
+                        else:
+                            del self._cache[provider][account_id]
+                            self._token_timestamps.get(provider, {}).pop(account_id, None)
+                            if not self._cache[provider]:
+                                del self._cache[provider]
+                                self._token_timestamps.pop(provider, None)
             del sources[source_id]
             if not sources:
                 self._source_cache[provider].pop(account_id, None)
@@ -799,6 +839,23 @@ class TokenCache:
                     for acc_id, (tokens, metadata, ts) in accounts.items()
                 }
             return stats
+
+    async def _get_source_credentials(self, provider: str) -> list[dict[str, Any]]:
+        """Internal Token Health helper; returned token values must never be exposed."""
+        async with self._lock:
+            self._clear_expired_unlocked()
+            now = time.time()
+            return [
+                {
+                    "account_id": account_id,
+                    "source_id": source_id,
+                    "tokens": dict(tokens),
+                    "metadata": dict(metadata),
+                    "ttl_remaining": max(0, int(self._ttl - (now - timestamp))),
+                }
+                for account_id, sources in self._source_cache.get(provider, {}).items()
+                for source_id, (tokens, metadata, timestamp) in sources.items()
+            ]
 
     async def reset(self) -> None:
         """Clear all cached tokens (used in tests)."""

@@ -333,6 +333,18 @@ describe('UntaggedCredentialsDialog', () => {
     expect(within(dialog).getByText(/provider:chatgpt/)).toBeInTheDocument();
   });
 
+  it('shows the discovered Claude login for an unassigned credential', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [{ ...entry, provider_id: 'anthropic', claimed_account_id: 'alice@example.com' }],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    expect(await screen.findByText('alice@example.com')).toBeInTheDocument();
+    expect(screen.getByText(/Discovered login:/)).toBeInTheDocument();
+  });
+
   it('filters disabled accounts from the dropdown and surfaces an Enable hint', async () => {
     // PR #290 round-2 review (Hermes body suggestion #4): tagging to
     // a disabled row stores a hint the server won't collect (the
