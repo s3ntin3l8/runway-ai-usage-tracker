@@ -144,8 +144,10 @@ function useTokenActions(token: TokenHealthEntry) {
     token.removable === false
       ? origin === 'server'
         ? 'Set via the server environment — change it there'
-        : token.source_id
-          ? 'Managed by the sidecar'
+        : token.sidecar_id
+          ? 'Provided by a sidecar — manage it on that host'
+          : token.source_id
+            ? 'Managed by the sidecar'
           : 'Managed in Settings → Providers'
       : null;
   const typesLabel = (token.token_types ?? []).join(', ') || '—';
@@ -448,6 +450,7 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
         ) : (
           <span className="text-xs text-fg-subtle">{origin}</span>
         )}
+        {token.identity_pending ? <Badge variant="warning">Identity pending</Badge> : null}
       </TD>
 
       {/* Validity */}

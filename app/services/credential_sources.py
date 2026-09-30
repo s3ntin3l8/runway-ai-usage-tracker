@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlmodel import Session, col, select
 
@@ -32,6 +35,16 @@ def sidecar_source_id(sidecar_id: str, origin: str | None) -> str:
     return f"sidecar:{digest}"
 
 
+def is_sidecar_source(source: Mapping[str, Any]) -> bool:
+    """Whether a credential source was reported by a sidecar.
+
+    ``source_type`` describes the credential itself (file, env, cookie), not
+    where it was observed. Sidecar ownership is established by its id and
+    origin metadata.
+    """
+    return bool(source.get("sidecar_id") and source.get("credential_origin"))
+
+
 def touch_source(
     session: Session,
     *,
@@ -42,6 +55,8 @@ def touch_source(
     source_label: str,
     credential_origin: str | None = None,
     sidecar_id: str | None = None,
+    credential_expires_at: datetime | None = None,
+    token_types: list[str] | None = None,
 ) -> CredentialSource:
     """Create or refresh a source without replacing operator preferences.
 
@@ -64,6 +79,8 @@ def touch_source(
                 CredentialSource.account_id == aid,
             )
         ).all()
+        # New discovered sources take the next slot so they follow existing
+        # operator-configured and sidecar sources unless config claims slot 0.
         priority = max((item.priority for item in count), default=-1) + 1
         if source_type == "config":
             for item in count:
@@ -78,6 +95,8 @@ def touch_source(
             source_label=source_label,
             credential_origin=credential_origin,
             sidecar_id=sidecar_id,
+            credential_expires_at=credential_expires_at,
+            token_types_json=json.dumps(token_types or []),
             priority=priority,
         )
         session.add(row)
@@ -86,6 +105,8 @@ def touch_source(
         row.source_label = source_label
         row.credential_origin = credential_origin
         row.sidecar_id = sidecar_id
+        row.credential_expires_at = credential_expires_at
+        row.token_types_json = json.dumps(token_types or [])
         row.last_seen = datetime.now(UTC)
     session.flush()
     return row

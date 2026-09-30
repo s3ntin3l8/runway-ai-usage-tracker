@@ -846,6 +846,9 @@ export interface TokenHealthEntry {
    * server env/file discoveries): they are re-seeded every cycle, so they are
    * changed in Settings → Providers / the environment, not removed here. */
   removable?: boolean;
+  /** Sidecar host that reported this source; the source is informational. */
+  sidecar_id?: string | null;
+  identity_pending?: boolean;
 }
 
 export interface AuditEntry {

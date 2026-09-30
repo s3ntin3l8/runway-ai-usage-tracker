@@ -1751,6 +1751,89 @@ class TestPostCredentialManifest:
         ctx.__exit__ = MagicMock(return_value=False)
         return ctx
 
+    def test_health_observations_include_only_token_types_and_expiry(self):
+        card = {
+            "remaining": "Token",
+            "unit": "oauth",
+            "metadata": {
+                "provider_id": "antigravity",
+                "credential_origin": "path:/agy/oauth.json",
+                "oauth_token": "private-token-value",
+                "refresh_token": "private-refresh-value",
+                "expiry_date": str(1_700_000_000_000),
+            },
+        }
+
+        observation = sidecar._credential_health_observations([card])[0]
+
+        assert observation == {
+            "provider_id": "antigravity",
+            "credential_origin": "path:/agy/oauth.json",
+            "token_types": ["oauth_token", "refresh_token"],
+            "expires_at": 1_700_000_000,
+        }
+        assert "private-token-value" not in json.dumps(observation)
+
+    def test_health_observations_union_token_types_for_one_origin(self):
+        cards = [
+            {
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "provider_id": "antigravity",
+                    "credential_origin": "path:/auth.json",
+                    "oauth_token": "opaque-oauth",
+                },
+            },
+            {
+                "remaining": "Token",
+                "unit": "api_key",
+                "metadata": {
+                    "provider_id": "antigravity",
+                    "credential_origin": "path:/auth.json",
+                    "api_key": "opaque-api-key",  # pragma: allowlist secret
+                },
+            },
+        ]
+
+        observations = sidecar._credential_health_observations(cards)
+
+        assert len(observations) == 1
+        assert observations[0]["token_types"] == ["api_key", "oauth_token"]
+
+    def test_health_observation_accepts_epoch_zero_jwt_expiry(self):
+        header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
+        epoch_payload = base64.urlsafe_b64encode(b'{"exp":0}').rstrip(b"=").decode()
+        later_payload = base64.urlsafe_b64encode(b'{"exp":123}').rstrip(b"=").decode()
+        metadata = {
+            "provider_id": "chatgpt",
+            "credential_origin": "path:/auth.json",
+            "id_token": f"{header}.{epoch_payload}.sig",
+            "oauth_token": f"{header}.{later_payload}.sig",
+        }
+
+        observation = sidecar._credential_health_observations(
+            [{"remaining": "Token", "unit": "oauth", "metadata": metadata}]
+        )[0]
+
+        assert observation["expires_at"] == 0
+
+    def test_health_observation_accepts_epoch_zero_expiry_date(self):
+        card = {
+            "remaining": "Token",
+            "unit": "oauth",
+            "metadata": {
+                "provider_id": "antigravity",
+                "credential_origin": "path:/agy/oauth.json",
+                "oauth_token": "opaque-token",
+                "expiry_date": 0,
+            },
+        }
+
+        observation = sidecar._credential_health_observations([card])[0]
+
+        assert observation["expires_at"] == 0
+
     def test_consumes_resolved_field_into_callback(self, monkeypatch):
         """The server's ``resolved`` map is delivered to ``on_resolved``
         so the local hint cache merges operator tags on the same cycle

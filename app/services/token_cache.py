@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from app.core.utils import IdentityExtractor, scrub_log
+from app.core.utils import CREDENTIAL_VALUE_KEYS, IdentityExtractor, scrub_log
 from app.services.account_identity import canonical_account_id
 
 logger = logging.getLogger(__name__)
@@ -33,24 +33,14 @@ _OAUTH_CREDENTIAL_KEYS = {
     "oauth_token",
     "refresh_token",
     "id_token",
+    "access_token",
+    "cli_access_token",
     "expiry_date",
     "client_id",
     "xai_access",
     "xai_refresh",
 }
-AUTH_VALUE_KEYS = frozenset(
-    {
-        "api_key",
-        "oauth_token",
-        "access_token",
-        "refresh_token",
-        "id_token",
-        "xai_access",
-        "xai_refresh",
-        "cli_access_token",
-        "session_cookie",
-    }
-)
+AUTH_VALUE_KEYS = CREDENTIAL_VALUE_KEYS
 OAUTH_TOKEN_VALUE_KEYS = AUTH_VALUE_KEYS - {"api_key", "session_cookie"}
 
 # Origins the user typed into the dashboard. They outrank every other origin
@@ -513,6 +503,22 @@ class TokenCache:
                 key=lambda row: (int(row.get("priority", 0)), row["source_id"]),
             )
 
+    async def get_all_source_descriptors(self, provider: str) -> list[dict[str, Any]]:
+        """Return sidecar ownership metadata without exposing credential values."""
+        async with self._lock:
+            self._clear_expired_unlocked()
+            candidates = [
+                {
+                    "account_id": account_id,
+                    "source_id": source_id,
+                    "sidecar_id": metadata.get("sidecar_id"),
+                    "credential_origin": metadata.get("credential_origin"),
+                }
+                for account_id, sources in self._source_cache.get(provider, {}).items()
+                for source_id, (_tokens, metadata, _timestamp) in sources.items()
+            ]
+            return sorted(candidates, key=lambda row: (row["account_id"], row["source_id"]))
+
     def current_source_tokens(self, provider: str, account_id: str) -> dict[str, str] | None:
         """Synchronous lookup used by legacy credential-provider helpers."""
         selection = _active_source.get()
@@ -617,13 +623,58 @@ class TokenCache:
             if not source_accounts:
                 self._source_cache[provider].pop(from_id, None)
             tokens, metadata, timestamp = entry
-            entry = (tokens, {**metadata, "identity_pending": False}, timestamp)
-            self._source_cache.setdefault(provider, {}).setdefault(to_id, {})[source_id] = entry
+            target_sources = self._source_cache.setdefault(provider, {}).setdefault(to_id, {})
+            existing_target = target_sources.get(source_id)
+            # Only an already-live entry for this exact source can win the
+            # per-key expiry comparison against the bundle being promoted.
+            if existing_target:
+                target_tokens, target_metadata, target_timestamp = existing_target
+                merged_tokens = dict(target_tokens)
+                from_oauth_is_staler = self._is_staler(tokens, target_tokens)
+                for key, value in tokens.items():
+                    if key in merged_tokens:
+                        if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
+                            {key: merged_tokens[key]}, {key: value}
+                        ):
+                            merged_tokens[key] = value
+                        continue
+                    if from_oauth_is_staler and key in _OAUTH_CREDENTIAL_KEYS:
+                        continue
+                    merged_tokens[key] = value
+                # Existing target metadata wins on collisions, preserving its
+                # source ownership and last-seen details during promotion.
+                merged_metadata = {**metadata, **target_metadata, "identity_pending": False}
+                entry = (merged_tokens, merged_metadata, max(timestamp, target_timestamp))
+            else:
+                entry = (tokens, {**metadata, "identity_pending": False}, timestamp)
+            target_sources[source_id] = entry
             # Keep the compatibility cache coherent when it represents this
             # same source bundle; never overwrite another account's aggregate.
             old_aggregate = self._cache.get(provider, {}).get(from_id)
             if old_aggregate and old_aggregate[1].get("source_id") == source_id:
-                self._cache.setdefault(provider, {})[to_id] = old_aggregate
+                target_aggregate = self._cache.setdefault(provider, {}).get(to_id)
+                if target_aggregate is None:
+                    self._cache[provider][to_id] = old_aggregate
+                else:
+                    for key, value in old_aggregate[0].items():
+                        if key in target_aggregate[0]:
+                            # Keep the better known-expiry OAuth value when a
+                            # stale target survived an earlier legacy migration.
+                            if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
+                                {key: target_aggregate[0][key]}, {key: value}
+                            ):
+                                target_aggregate[0][key] = value
+                                self._mark_token_seen(provider, to_id, key)
+                            continue
+                        if self._is_staler({key: value}, target_aggregate[0]):
+                            # Use the target's full expiry context, not just the
+                            # missing key, so another OAuth field can veto it.
+                            # Opaque non-OAuth keys have no expiry to compare and pass.
+                            continue
+                        target_aggregate[0][key] = value
+                        self._mark_token_seen(provider, to_id, key)
+                    if not target_aggregate[1].get("account_label"):
+                        target_aggregate[1]["account_label"] = old_aggregate[1].get("account_label")
                 self._cache[provider].pop(from_id, None)
             elif entry:
                 tokens, metadata, timestamp = entry

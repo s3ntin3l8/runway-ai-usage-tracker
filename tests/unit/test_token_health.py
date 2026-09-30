@@ -121,6 +121,273 @@ class TestTokenHealthService:
         assert r["can_refresh"] is True
 
     @pytest.mark.asyncio
+    async def test_keeps_healthy_aggregate_with_live_sidecar_source(self):
+        """A sidecar source must not hide an existing healthy account row."""
+        service = TokenHealthService()
+        valid_jwt = _make_jwt(time.time() + 86400 * 7)
+        mock_stats = {
+            "chatgpt": {
+                "alice@example.com": {
+                    "tokens": ["oauth_token"],
+                    "account_label": "Alice",
+                    "ttl_remaining": 900,
+                    "source": "server",
+                }
+            }
+        }
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value=mock_stats),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value={"oauth_token": valid_jwt}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(
+                    return_value=[
+                        {
+                            "source_id": "sidecar:host:cookie",
+                            "sidecar_id": "host",
+                            "credential_origin": "cookie:browser",
+                        }
+                    ]
+                ),
+            ),
+            patch("os.path.exists", return_value=False),
+            _mock_no_db_configs(),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["provider"] == "chatgpt"
+        assert result[0]["account_id"] == "alice@example.com"
+        assert result[0]["status"] == "valid"
+
+    @pytest.mark.asyncio
+    async def test_expired_sidecar_source_remains_visible_after_cache_expiry(self):
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.db import CredentialSource, SidecarRegistry
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="antigravity",
+            account_id="default",
+            source_id="sidecar:dev-01:oauth",
+            source_type="file",
+            source_label="oauth_creds.json",
+            credential_origin="path:/home/user/.config/agy/oauth_creds.json",
+            sidecar_id="dev-01",
+            credential_expires_at=datetime.now(UTC) - timedelta(days=1),
+            token_types_json='["oauth_token", "refresh_token"]',
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [
+            [sidecar],
+            [source],
+            [],
+        ]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch(
+                "app.services.token_health._collect_server_credentials",
+                return_value={},
+            ),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["provider"] == "antigravity"
+        assert result[0]["account_id"] == "default"
+        assert result[0]["account_label"] == "Pending identity"
+        assert result[0]["source_name"] == "dev-01"
+        assert result[0]["identity_pending"] is True
+        assert result[0]["status"] == "expired"
+        assert result[0]["token_types"] == ["oauth_token", "refresh_token"]
+
+    @pytest.mark.asyncio
+    async def test_pending_claude_source_is_not_duplicated_by_durable_row(self):
+        from app.models.db import CredentialSource, SidecarRegistry
+
+        service = TokenHealthService()
+        source_id = "sidecar:dev-01:path:/claude/.credentials.json"
+        source = CredentialSource(
+            provider_id="anthropic",
+            account_id="default",
+            source_id=source_id,
+            source_type="file",
+            source_label=".credentials.json",
+            credential_origin="path:/claude/.credentials.json",
+            sidecar_id="dev-01",
+            token_types_json='["oauth_token"]',
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [[sidecar], [source], []]
+        live = {
+            "account_id": "default",
+            "source_id": source_id,
+            "tokens": {"oauth_token": "opaque-oauth"},
+            "metadata": {"sidecar_id": "dev-01", "identity_pending": True},
+            "ttl_remaining": 300,
+        }
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache._get_source_credentials",
+                new=AsyncMock(return_value=[live]),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[live]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch(
+                "app.services.token_health._collect_server_credentials",
+                return_value={},
+            ),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["account_id"] == f"unassigned:{source_id}"
+        assert result[0]["assignment_pending"] is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_durable_token_types_fall_back_to_empty_list(self):
+        from app.models.db import CredentialSource, SidecarRegistry
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="antigravity",
+            account_id="default",
+            source_id="sidecar:dev-01:malformed",
+            source_type="file",
+            source_label="auth.json",
+            credential_origin="path:/auth.json",
+            sidecar_id="dev-01",
+            token_types_json="not-json",
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [[sidecar], [source], []]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache._get_source_credentials",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch(
+                "app.services.token_health._collect_server_credentials",
+                return_value={},
+            ),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["token_types"] == []
+        assert result[0]["status"] == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_live_sidecar_source_uses_cached_token_expiry(self):
+        from app.models.db import CredentialSource, SidecarRegistry
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="antigravity",
+            account_id="alice@example.com",
+            source_id="sidecar:dev-01:oauth",
+            source_type="file",
+            source_label="oauth_creds.json",
+            credential_origin="path:/home/user/.config/agy/oauth_creds.json",
+            sidecar_id="dev-01",
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [[sidecar], [source], []]
+        live_token = _make_jwt(time.time() + 86400 * 7)
+        get_candidates = AsyncMock(
+            return_value=[
+                {
+                    "source_id": source.source_id,
+                    "tokens": {"oauth_token": live_token},
+                }
+            ]
+        )
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(
+                    return_value={
+                        "antigravity": {
+                            "alice@example.com": {
+                                "account_label": "Alice",
+                                "ttl_remaining": 900,
+                                "source": "dev-01",
+                            }
+                        }
+                    }
+                ),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value={"oauth_token": live_token}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=get_candidates,
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch(
+                "app.services.token_health._collect_server_credentials",
+                return_value={},
+            ),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["account_id"] == "alice@example.com"
+        assert result[0]["status"] == "valid"
+        assert result[0]["token_types"] == ["oauth_token"]
+        get_candidates.assert_awaited_once_with("antigravity", "alice@example.com")
+
+    @pytest.mark.asyncio
     async def test_expired_token_status(self):
         service = TokenHealthService()
         past_exp = time.time() - 3600

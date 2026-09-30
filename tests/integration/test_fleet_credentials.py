@@ -21,9 +21,11 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
+from app.api.endpoints.fleet import CredentialManifestRequest
 from app.core.db import get_session
 from app.main import app
 from app.models.db import CredentialSource, ProviderConfig
@@ -389,6 +391,75 @@ def test_manifest_upserts_pending_and_returns_resolved_for_tagged_origins(
     }
 
 
+def test_manifest_persists_safe_health_metadata_without_token_values(
+    client: TestClient, session: Session
+):
+    from datetime import UTC, datetime
+
+    body = {
+        "sidecar_id": "health-host",
+        "entries": [],
+        "observations": [
+            {
+                "provider_id": "antigravity",
+                "credential_origin": "path:/home/user/.config/agy/oauth_creds.json",
+                "token_types": ["oauth_token", "refresh_token"],
+                "expires_at": 1_700_000_000,
+            }
+        ],
+    }
+    response = _post_manifest(client, body)
+
+    assert response.status_code == 200
+    source = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == "antigravity",
+            CredentialSource.account_id == "default",
+        )
+    ).one()
+    assert source.token_types_json == '["oauth_token", "refresh_token"]'
+    assert source.credential_expires_at.replace(tzinfo=UTC) == datetime.fromtimestamp(
+        1_700_000_000, tz=UTC
+    )
+    assert "oauth_creds" not in response.text
+
+
+def test_manifest_limits_health_observation_count():
+    observations = [
+        {"provider_id": "antigravity", "credential_origin": f"path:/{index}.json"}
+        for index in range(257)
+    ]
+
+    with pytest.raises(ValidationError):
+        CredentialManifestRequest(sidecar_id="health-host", observations=observations)
+
+
+def test_manifest_ignores_unrepresentable_health_expiry(client: TestClient, session: Session):
+    response = _post_manifest(
+        client,
+        {
+            "sidecar_id": "health-host",
+            "entries": [],
+            "observations": [
+                {
+                    "provider_id": "antigravity",
+                    "credential_origin": "path:/overflow.json",
+                    "token_types": ["oauth_token"],
+                    "expires_at": 1e300,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    source = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.source_label == "overflow.json",
+        )
+    ).one()
+    assert source.credential_expires_at is None
+
+
 def test_manifest_prunes_origins_missing_from_complete_snapshot(
     client: TestClient, session: Session
 ):
@@ -663,7 +734,7 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
                 provider_id="anthropic",
                 account_id="default",
                 source_id=source_id,
-                source_type="sidecar",
+                source_type="file",
                 source_label="new machine label",
                 credential_origin=origin,
                 sidecar_id="alpha",
@@ -702,7 +773,7 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
     )
     assert len(sources) == 1
     assert sources[0].account_id == "alice@example.com"
-    assert sources[0].source_type == "sidecar"
+    assert sources[0].source_type == "file"
     assert sources[0].source_label == "new machine label"
     assert sources[0].credential_origin == origin
     assert sources[0].sidecar_id == "alpha"

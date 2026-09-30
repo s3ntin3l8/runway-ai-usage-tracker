@@ -18,6 +18,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Credential field names shared by server-side redaction and sidecar health
+# observations. Keep token-type recognition aligned with the cache's auth keys.
+CREDENTIAL_VALUE_KEYS = frozenset(
+    {
+        "api_key",
+        "oauth_token",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "xai_access",
+        "xai_refresh",
+        "cli_access_token",
+        "session_cookie",
+        "cookie",
+    }
+)
+
+
 _USER_TZ_CACHE_KEY = "user_tz"
 _USER_TZ_CACHE_TTL = 60.0  # SystemConfig write path calls cache_clear(), so this is a safety net
 
@@ -87,11 +105,20 @@ class IdentityExtractor:
             return {}
 
     # Token fields that may carry a JWT `exp`, in preference order.
-    _EXP_TOKEN_KEYS = ("oauth_token", "access_token", "id_token", "xai_access")
+    _EXP_TOKEN_KEYS = (
+        "oauth_token",
+        "access_token",
+        "cli_access_token",
+        "xai_access",
+        "id_token",
+    )
 
     @classmethod
     def extract_jwt_exp(cls, token: str) -> float | None:
-        """Extract the `exp` claim (seconds since epoch) from a JWT, or None."""
+        """Extract JWT `exp` seconds since epoch, or None.
+
+        Zero is a valid epoch value and represents an already expired token.
+        """
         exp = cls.extract_jwt_payload(token).get("exp")
         if exp is None:
             return None

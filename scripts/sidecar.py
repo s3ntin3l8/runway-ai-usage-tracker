@@ -3310,6 +3310,80 @@ def _hermes_account_identity() -> str:
     return os.getenv("HERMES_ACCOUNT_LABEL") or "default"
 
 
+def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return source ids, token types, and expiry only; never return token values.
+
+    Only the ``oauth``, ``api_key``, and ``cookie`` token-card units emitted by
+    the sidecar are treated as credential observations.
+    Multiple unit cards for one origin are combined: token types are unioned,
+    while the last card's expiry remains authoritative.
+    A decoded expiry of zero is retained as the Unix epoch, marking the token
+    expired rather than treating the claim as missing.
+    """
+
+    # Load shared server utilities only when manifest observations are built,
+    # keeping sidecar startup independent of the server application stack.
+    from app.core.utils import CREDENTIAL_VALUE_KEYS, IdentityExtractor
+
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+    for card in metrics:
+        if card.get("remaining") != "Token" or card.get("unit") not in (
+            "oauth",
+            "api_key",
+            "cookie",
+        ):
+            continue
+        metadata = card.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        provider_id = metadata.get("provider_id") or card.get("provider_id")
+        origin = metadata.get("credential_origin")
+        if not isinstance(provider_id, str) or not isinstance(origin, str):
+            continue
+        token_types = sorted(
+            key
+            for key, value in metadata.items()
+            if (key in CREDENTIAL_VALUE_KEYS or key.startswith("cookie_"))
+            and isinstance(value, str)
+            and value
+        )
+        expires_at = None
+        for key in ("expiry_date", "cli_expires_at", "expires_at"):
+            try:
+                candidate = float(metadata.get(key))
+                if key == "expiry_date" and candidate > 10_000_000_000:
+                    candidate /= 1000
+                # An explicit zero expiry is the Unix epoch, matching JWT exp=0.
+                if candidate >= 0:
+                    expires_at = candidate
+                    break
+            except (TypeError, ValueError):
+                # Malformed optional expiry metadata should not hide another
+                # usable expiry field on this same credential.
+                continue
+        if expires_at is None:
+            for key in ("id_token", "oauth_token", "cli_access_token", "access_token"):
+                token = metadata.get(key)
+                if not isinstance(token, str) or token.count(".") < 2:
+                    continue
+                expires_at = IdentityExtractor.extract_jwt_exp(token)
+                if expires_at is not None:
+                    break
+        key_tuple = (provider_id, origin)
+        observation = found.get(key_tuple)
+        if observation is None:
+            found[key_tuple] = {
+                "provider_id": provider_id,
+                "credential_origin": origin,
+                "token_types": token_types,
+                "expires_at": expires_at,
+            }
+        else:
+            observation["token_types"] = sorted(set(observation["token_types"]) | set(token_types))
+            observation["expires_at"] = expires_at
+    return list(found.values())
+
+
 def _post_credential_manifest(
     *,
     api_url: str | None,
@@ -3317,6 +3391,7 @@ def _post_credential_manifest(
     sidecar_id: str,
     entries: list[dict[str, str]],
     completed_providers: list[str] | None = None,
+    observations: list[dict[str, Any]] | None = None,
     on_resolved: Callable[[dict[str, dict[str, str]]], None] | None = None,
     config: dict[str, Any] | None = None,
 ) -> None:
@@ -3350,6 +3425,7 @@ def _post_credential_manifest(
                 if completed_providers is not None
                 else {}
             ),
+            "observations": observations or [],
         }
     ).encode("utf-8")
     ts = str(int(time.time()))
@@ -3850,6 +3926,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
             sidecar_id=get_hostname(),
             entries=blocked_origins_this_cycle,
             completed_providers=completed_providers_this_cycle,
+            observations=_credential_health_observations(all_metrics),
             on_resolved=_consume_resolved_into_cache,
             config=config,
         )
