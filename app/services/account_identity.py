@@ -18,8 +18,10 @@ def normalize_sidecar_id(raw: str) -> str:
     return h.split(".", 1)[0].lower()
 
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
-_HASH_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
+HASH_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+_EMAIL_RE = EMAIL_RE
+_HASH_RE = HASH_RE
 
 # OpenCode's subscription, Zen, and free usage streams have distinct provider
 # IDs in the event store, but share one OpenCode account identity/config.

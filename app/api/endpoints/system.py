@@ -38,8 +38,8 @@ from app.models.db import (
 from app.models.schemas import LimitCard, SidecarDownloadsResponse
 from app.services import audit_log, auth_failures
 from app.services.account_identity import (
-    _EMAIL_RE,
-    _HASH_RE,
+    EMAIL_RE,
+    HASH_RE,
     account_usage_provider_ids,
     canonical_account_id,
 )
@@ -1680,22 +1680,32 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
 
     # Store under the canonical form every other write path uses, so a
     # typed ``Alice@X.com`` lines up with the cards/events for alice@x.com.
+    original_account_id = account_id
     account_id = canonical_account_id(account_id)
     # If this is a generic or derived hash account_id and the caller supplied a valid
     # email label, adopt the email as the authoritative account_id on creation so
     # API key accounts don't linger under opaque hashes.
-    if body.account_label and _EMAIL_RE.match(body.account_label.strip()):
+    rewritten_from: str | None = None
+    if body.account_label and EMAIL_RE.match(body.account_label.strip()):
         existing = session.exec(
             select(ProviderConfig).where(
                 ProviderConfig.provider_id == provider_id,
                 ProviderConfig.account_id == account_id,
             )
         ).first()
-        if existing is None and (account_id == "default" or bool(_HASH_RE.match(account_id))):
+        if existing is None and (account_id == "default" or bool(HASH_RE.match(account_id))):
+            rewritten_from = original_account_id
             account_id = canonical_account_id(body.account_label)
 
     await _apply_provider_config_update(session, provider_id, account_id, body)
-    return {"status": "saved", "provider_id": provider_id, "account_id": account_id}
+    response_data: dict[str, str] = {
+        "status": "saved",
+        "provider_id": provider_id,
+        "account_id": account_id,
+    }
+    if rewritten_from is not None:
+        response_data["original_account_id"] = rewritten_from
+    return response_data
 
 
 @router.patch("/provider-config/{provider_id}/{account_id}/credential-sources")

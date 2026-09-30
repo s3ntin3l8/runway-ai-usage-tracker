@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
-from app.services.account_identity import _EMAIL_RE, _HASH_RE
+from app.services.account_identity import EMAIL_RE, HASH_RE
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -47,7 +47,7 @@ def _is_rekey_candidate(row: ProviderConfig) -> bool:
         return False
     if row.account_id == "default":
         return True
-    if bool(_HASH_RE.match(row.account_id)) and bool(_EMAIL_RE.match(label)):
+    if bool(HASH_RE.match(row.account_id)) and bool(EMAIL_RE.match(label)):
         return True
     return False
 
@@ -58,7 +58,7 @@ def _suggested_target(row: ProviderConfig) -> str | None:
         return None
     if row.account_id == "default":
         return label
-    if bool(_HASH_RE.match(row.account_id)):
+    if bool(HASH_RE.match(row.account_id)):
         return label.lower()
     return None
 
@@ -85,6 +85,8 @@ def _find_row(
     if default_row is not None:
         return default_row
 
+    # Intentional fallback for callers that omit account_id (or legacy group keys):
+    # scan active configs for the first rekey candidate (e.g. hash-keyed row with email label).
     candidates = session.exec(
         select(ProviderConfig).where(
             col(ProviderConfig.provider_id) == provider_id,

@@ -162,6 +162,7 @@ def test_explicit_put_with_hash_account_id_and_email_label_adopts_email(client: 
     )
     assert resp.status_code == 200
     assert resp.json()["account_id"] == "user@example.com"
+    assert resp.json()["original_account_id"] == hash_id
 
     listing = client.get("/api/v1/system/provider-configs").json()["providers"]
     openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
