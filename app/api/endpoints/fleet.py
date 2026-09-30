@@ -198,6 +198,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 # token_cache would otherwise hash the token and strand it away
                 # from the verifier's default candidates.
                 if identity_pending:
+                    # Give every pending token bundle an explicit account slot.
                     acc_id = "default"
                 if card.metadata:
                     for key, val in card.metadata.items():

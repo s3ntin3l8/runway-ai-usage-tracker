@@ -287,6 +287,43 @@ async def test_empty_auth_failure_preserves_previous_failure_card(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_failed_collection_state_falls_through_after_partial_result(monkeypatch):
+    cache = TokenCache()
+    for source_id, priority in (("first", 0), ("second", 1)):
+        await cache.store(
+            "openrouter",
+            {"api_key": source_id},  # pragma: allowlist secret — fake source values
+            account_id="alice@example.com",
+            source_id=source_id,
+            source_metadata={"enabled": True, "priority": priority},
+        )
+    manager = CollectorManager()
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr(manager, "_record_source_health", lambda *_args: None)
+    smart = SmartCollector(_CredentialProbeCollector(cache), "OpenRouter", ttl=0)
+    calls = 0
+
+    async def collect_with_partial_failure(_client):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            smart.last_collection_state = "failed"
+            return [{"remaining": "old quota", "source": "cached"}]
+        smart.last_collection_state = "complete"
+        return [{"remaining": "fresh quota", "source": "second"}]
+
+    smart.collect = AsyncMock(side_effect=collect_with_partial_failure)
+    manager.smart_collectors["openrouter:alice@example.com"] = smart
+
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert result == [{"remaining": "fresh quota", "source": "second"}]
+    assert calls == 2
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_collector_continues_after_non_auth_source_error(monkeypatch):
     cache = TokenCache()
     for source_id, value, priority in (("first", "broken", 0), ("last", "working", 1)):

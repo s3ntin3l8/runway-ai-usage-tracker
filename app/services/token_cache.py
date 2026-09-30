@@ -646,6 +646,8 @@ class TokenCache:
                     if target_oauth_is_fresher and key in _OAUTH_CREDENTIAL_KEYS:
                         continue
                     merged_tokens[key] = value
+                # Existing target metadata wins on collisions, preserving its
+                # source ownership and last-seen details during promotion.
                 merged_metadata = {**metadata, **target_metadata, "identity_pending": False}
                 entry = (merged_tokens, merged_metadata, max(timestamp, target_timestamp))
             else:
@@ -672,6 +674,7 @@ class TokenCache:
                         if self._is_staler({key: value}, target_aggregate[0]):
                             # Use the target's full expiry context, not just the
                             # missing key, so another OAuth field can veto it.
+                            # Opaque non-OAuth keys have no expiry to compare and pass.
                             continue
                         target_aggregate[0][key] = value
                         self._mark_token_seen(provider, to_id, key)
