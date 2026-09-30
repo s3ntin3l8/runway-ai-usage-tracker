@@ -225,7 +225,7 @@ class TokenHealthService:
         seen_token_values: set[str] = set()
         claude_sources = [
             source
-            for source in await token_cache.get_source_credentials("anthropic")
+            for source in await token_cache._get_source_credentials("anthropic")
             if source["tokens"].get("oauth_token") and source["metadata"].get("sidecar_id")
         ]
         source_oauth_values = {source["tokens"]["oauth_token"] for source in claude_sources}

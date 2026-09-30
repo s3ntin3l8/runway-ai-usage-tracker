@@ -565,6 +565,7 @@ class TokenCache:
                     for key in _OAUTH_CREDENTIAL_KEYS | {"access_token"}:
                         tokens.pop(key, None)
                         key_timestamps.pop(key, None)
+                    metadata = {**metadata, "identity_pending": False}
                     if tokens:
                         self._cache[provider][account_id] = (tokens, metadata, timestamp)
                     else:
@@ -827,8 +828,8 @@ class TokenCache:
                 }
             return stats
 
-    async def get_source_credentials(self, provider: str) -> list[dict[str, Any]]:
-        """Return live source bundles for internal health reporting."""
+    async def _get_source_credentials(self, provider: str) -> list[dict[str, Any]]:
+        """Internal Token Health helper; returned token values must never be exposed."""
         async with self._lock:
             self._clear_expired_unlocked()
             now = time.time()

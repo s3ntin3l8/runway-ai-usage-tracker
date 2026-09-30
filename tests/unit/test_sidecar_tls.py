@@ -168,6 +168,19 @@ def test_fetch_config_payload_honours_tls_insecure_config(monkeypatch):
     assert captured["context"].verify_mode == ssl.CERT_NONE
 
 
+def test_response_url_redirect_check_ignores_normalization_but_detects_login():
+    from scripts.sidecar_pkg.credentials import response_url_was_redirected
+
+    assert not response_url_was_redirected(
+        "https://Runway.example:443/api/v1/fleet/config?sidecar_id=host",
+        "https://runway.example/api/v1/fleet/config/?sidecar_id=host",
+    )
+    assert response_url_was_redirected(
+        "https://runway.example/api/v1/fleet/config",
+        "https://auth.example/login?next=%2Fapi%2Fv1%2Ffleet%2Fconfig",
+    )
+
+
 def test_pairing_redeem_honours_tls_insecure_config(monkeypatch):
     from scripts.sidecar_pkg import pairing
 

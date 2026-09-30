@@ -56,6 +56,21 @@ async def test_retiring_moved_claude_source_keeps_independent_cookie(cache):
 
 
 @pytest.mark.asyncio
+async def test_identity_pending_anthropic_source_uses_stable_source_id(cache):
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "rotating-token"},  # pragma: allowlist secret
+        account_id="sidecar:stable-origin",
+        source_id="sidecar:stable-origin",
+        source_metadata={"identity_pending": True, "sidecar_id": "host-a"},
+    )
+
+    rows = await cache._get_source_credentials("anthropic")
+    assert len(rows) == 1
+    assert rows[0]["account_id"] == "sidecar:stable-origin"
+
+
+@pytest.mark.asyncio
 async def test_identity_pending_source_stays_hidden_until_promoted(cache):
     await cache.store(
         "antigravity",

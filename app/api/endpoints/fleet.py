@@ -308,10 +308,14 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             if p_id == "anthropic"
             else []
         )
+        # Claude OAuth sources from older sidecars may still be keyed by the
+        # token-derived placeholder identity; use a stable host+origin key while
+        # identity is pending so token rotations do not create orphan entries.
+        cache_account_id = source_id if p_id == "anthropic" and identity_pending else a_id
         actual_acc_id = await token_cache.store(
             p_id,
             p_tokens,
-            a_id,
+            cache_account_id,
             a_name,
             source=payload.sidecar_id,
             source_id=source_id,

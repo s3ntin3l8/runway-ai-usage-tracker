@@ -2695,6 +2695,8 @@ class GenericCollector:
                                 else None
                             )
                             if isinstance(expires_at, int | float) and expires_at > 0:
+                                # Anthropic stores this as milliseconds since epoch,
+                                # matching IdentityExtractor.exp_from_tokens.
                                 candidate_tokens["expiry_date"] = str(int(expires_at))
                         if candidate_tokens:
                             token_candidates.append(
@@ -3350,8 +3352,10 @@ def _post_credential_manifest(
         with urllib.request.urlopen(
             req, timeout=5, context=build_context_from_config(url, config)
         ) as resp:
+            from scripts.sidecar_pkg.credentials import response_url_was_redirected
+
             response_url = resp.geturl()
-            if isinstance(response_url, str) and response_url != url:
+            if isinstance(response_url, str) and response_url_was_redirected(url, response_url):
                 logging.warning("manifest was redirected; check reverse proxy sidecar access")
                 return
             if resp.getcode() != 200:

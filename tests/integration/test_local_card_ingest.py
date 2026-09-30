@@ -200,6 +200,9 @@ def test_ingest_applies_existing_verified_tag_to_stale_pending_heartbeat(session
 
 @pytest.mark.parametrize("configured", [False, True])
 def test_claude_oauth_email_requires_matching_account(session, configured):
+    from app.services.credential_sources import sidecar_source_id
+
+    source_id = sidecar_source_id("test-host-01", "path:/home/user/.claude/.credentials.json")
     if configured:
         session.add(
             ProviderConfig(
@@ -234,10 +237,10 @@ def test_claude_oauth_email_requires_matching_account(session, configured):
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
-        mock_tc.store = AsyncMock(return_value="alice@example.com" if configured else "default")
+        mock_tc.store = AsyncMock(return_value="alice@example.com" if configured else source_id)
         _ingest(TestClient(app), payload)
 
-    assert mock_tc.store.call_args.args[2] == ("alice@example.com" if configured else None)
+    assert mock_tc.store.call_args.args[2] == ("alice@example.com" if configured else source_id)
     assert mock_tc.store.call_args.args[1]["expiry_date"] == "1790784000000"
     assert mock_tc.store.call_args.kwargs["source_metadata"]["identity_pending"] is not configured
 
