@@ -345,6 +345,12 @@ class TokenHealthService:
             live = next(
                 (item for item in candidates if item.get("source_id") == source.source_id), None
             )
+            if live and any(
+                row["provider"] == provider_id and row["account_id"] == account_id for row in result
+            ):
+                # The live aggregate row already represents this account. A
+                # second row for its durable source would describe it twice.
+                continue
             token_types: list[str] = []
             exp: float | None = None
             if live:

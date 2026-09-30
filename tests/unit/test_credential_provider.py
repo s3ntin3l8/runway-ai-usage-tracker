@@ -23,7 +23,11 @@ async def test_credential_provider_reads_the_selected_source_bundle(monkeypatch)
         },
         account_id="alice@example.com",
         source_id="sidecar:host-a",
-        source_metadata={"source_type": "sidecar"},
+        source_metadata={
+            "source_type": "file",
+            "sidecar_id": "host-a",
+            "credential_origin": "path:/auth.json",
+        },
     )
 
     async with cache.using_source("anthropic", "alice@example.com", "sidecar:host-a"):
@@ -32,7 +36,7 @@ async def test_credential_provider_reads_the_selected_source_bundle(monkeypatch)
         )
         assert credentials["api_key"] == "source-oauth"  # pragma: allowlist secret
         assert credentials["access_token"] == "source-oauth"  # pragma: allowlist secret
-        assert credentials.sources["oauth_token"] == "sidecar"
+        assert credentials.sources["oauth_token"] == "file"
         assert (
             CredentialProvider.get_provider_api_key("anthropic", account_id="alice@example.com")
             == "source-oauth"  # pragma: allowlist secret

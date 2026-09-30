@@ -416,7 +416,9 @@ def test_manifest_persists_safe_health_metadata_without_token_values(
         )
     ).one()
     assert source.token_types_json == '["oauth_token", "refresh_token"]'
-    assert source.credential_expires_at == datetime.fromtimestamp(1_700_000_000, tz=UTC)
+    assert source.credential_expires_at.replace(tzinfo=UTC) == datetime.fromtimestamp(
+        1_700_000_000, tz=UTC
+    )
     assert "oauth_creds" not in response.text
 
 
@@ -694,7 +696,7 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
                 provider_id="anthropic",
                 account_id="default",
                 source_id=source_id,
-                source_type="sidecar",
+                source_type="file",
                 source_label="new machine label",
                 credential_origin=origin,
                 sidecar_id="alpha",
@@ -733,7 +735,7 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
     )
     assert len(sources) == 1
     assert sources[0].account_id == "alice@example.com"
-    assert sources[0].source_type == "sidecar"
+    assert sources[0].source_type == "file"
     assert sources[0].source_label == "new machine label"
     assert sources[0].credential_origin == origin
     assert sources[0].sidecar_id == "alpha"

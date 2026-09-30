@@ -33,6 +33,8 @@ _OAUTH_CREDENTIAL_KEYS = {
     "oauth_token",
     "refresh_token",
     "id_token",
+    "access_token",
+    "cli_access_token",
     "expiry_date",
     "client_id",
     "xai_access",
@@ -636,6 +638,10 @@ class TokenCache:
                 incoming_is_staler = self._is_staler(tokens, target_tokens)
                 for key, value in tokens.items():
                     if key in merged_tokens:
+                        if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
+                            {key: merged_tokens[key]}, {key: value}
+                        ):
+                            merged_tokens[key] = value
                         continue
                     if incoming_is_staler and key in _OAUTH_CREDENTIAL_KEYS:
                         continue
@@ -655,6 +661,13 @@ class TokenCache:
                 else:
                     for key, value in old_aggregate[0].items():
                         if key in target_aggregate[0]:
+                            # Keep the better known-expiry OAuth value when a
+                            # stale target survived an earlier legacy migration.
+                            if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
+                                {key: target_aggregate[0][key]}, {key: value}
+                            ):
+                                target_aggregate[0][key] = value
+                                self._mark_token_seen(provider, to_id, key)
                             continue
                         if self._is_staler({key: value}, target_aggregate[0]):
                             continue

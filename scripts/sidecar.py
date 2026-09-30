@@ -3359,7 +3359,8 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
                 candidate = float(metadata.get(key))
                 if key == "expiry_date" and candidate > 10_000_000_000:
                     candidate /= 1000
-                if candidate > 0:
+                # An explicit zero expiry is the Unix epoch, matching JWT exp=0.
+                if candidate >= 0:
                     expires_at = candidate
                     break
             except (TypeError, ValueError):

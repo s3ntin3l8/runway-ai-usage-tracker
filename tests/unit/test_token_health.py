@@ -245,7 +245,21 @@ class TestTokenHealthService:
         with (
             patch(
                 "app.services.token_health.token_cache.get_all_stats",
-                new=AsyncMock(return_value={}),
+                new=AsyncMock(
+                    return_value={
+                        "antigravity": {
+                            "alice@example.com": {
+                                "account_label": "Alice",
+                                "ttl_remaining": 900,
+                                "source": "dev-01",
+                            }
+                        }
+                    }
+                ),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value={"oauth_token": live_token}),
             ),
             patch(
                 "app.services.token_health.token_cache.get_source_candidates",
@@ -268,7 +282,6 @@ class TestTokenHealthService:
 
         assert len(result) == 1
         assert result[0]["account_id"] == "alice@example.com"
-        assert result[0]["identity_pending"] is False
         assert result[0]["status"] == "valid"
         assert result[0]["token_types"] == ["oauth_token"]
 

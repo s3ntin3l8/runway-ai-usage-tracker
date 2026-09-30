@@ -124,8 +124,10 @@ def test_record_source_health_updates_only_matching_source():
                 provider_id="openrouter",
                 account_id="alice@example.com",
                 source_id="host-a",
-                source_type="sidecar",
+                source_type="file",
                 source_label="auth.json",
+                sidecar_id="host-a",
+                credential_origin="path:/auth.json",
                 last_seen=datetime.now(UTC),
             )
         )

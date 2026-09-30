@@ -161,9 +161,10 @@ async def test_credential_source_preferences_and_safe_listing(client: TestClient
                 provider_id="openrouter",
                 account_id="alice@example.com",
                 source_id="sidecar:first",
-                source_type="sidecar",
+                source_type="file",
                 source_label="OpenCode auth.json",
                 sidecar_id="host-a",
+                credential_origin="path:/auth.json",
                 priority=0,
             ),
             CredentialSource(
@@ -183,7 +184,12 @@ async def test_credential_source_preferences_and_safe_listing(client: TestClient
         {"api_key": "private-one"},  # pragma: allowlist secret — assert response redaction
         account_id="alice@example.com",
         source_id="sidecar:first",
-        source_metadata={"source_type": "sidecar", "source_label": "OpenCode auth.json"},
+        source_metadata={
+            "source_type": "file",
+            "sidecar_id": "host-a",
+            "credential_origin": "path:/auth.json",
+            "source_label": "OpenCode auth.json",
+        },
     )
     await token_cache.store(
         "openrouter",
@@ -310,8 +316,10 @@ def test_credential_source_preferences_reject_unknown_and_duplicate_ids(
             provider_id="openrouter",
             account_id="alice@example.com",
             source_id="known-source",
-            source_type="sidecar",
+            source_type="file",
             source_label="auth.json",
+            sidecar_id="test-sidecar",
+            credential_origin="path:/auth.json",
         )
     )
     session.add(
@@ -319,8 +327,10 @@ def test_credential_source_preferences_reject_unknown_and_duplicate_ids(
             provider_id="openrouter",
             account_id="alice@example.com",
             source_id="omitted-source",
-            source_type="sidecar",
+            source_type="file",
             source_label="other.json",
+            sidecar_id="test-sidecar",
+            credential_origin="path:/other.json",
             enabled=False,
             priority=1,
         )
@@ -363,8 +373,10 @@ def test_credential_source_audit_is_committed_when_collector_reset_fails(
             provider_id="openrouter",
             account_id="alice@example.com",
             source_id="source-a",
-            source_type="sidecar",
+            source_type="file",
             source_label="Laptop",
+            sidecar_id="test-sidecar",
+            credential_origin="path:/auth.json",
         )
     )
     session.commit()

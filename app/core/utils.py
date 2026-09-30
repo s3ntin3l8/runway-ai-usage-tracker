@@ -87,7 +87,13 @@ class IdentityExtractor:
             return {}
 
     # Token fields that may carry a JWT `exp`, in preference order.
-    _EXP_TOKEN_KEYS = ("oauth_token", "access_token", "id_token", "xai_access")
+    _EXP_TOKEN_KEYS = (
+        "oauth_token",
+        "access_token",
+        "id_token",
+        "xai_access",
+        "cli_access_token",
+    )
 
     @classmethod
     def extract_jwt_exp(cls, token: str) -> float | None:

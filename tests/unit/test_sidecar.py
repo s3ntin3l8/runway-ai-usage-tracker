@@ -1791,6 +1791,22 @@ class TestPostCredentialManifest:
 
         assert observation["expires_at"] == 0
 
+    def test_health_observation_accepts_epoch_zero_expiry_date(self):
+        card = {
+            "remaining": "Token",
+            "unit": "oauth",
+            "metadata": {
+                "provider_id": "antigravity",
+                "credential_origin": "path:/agy/oauth.json",
+                "oauth_token": "opaque-token",
+                "expiry_date": 0,
+            },
+        }
+
+        observation = sidecar._credential_health_observations([card])[0]
+
+        assert observation["expires_at"] == 0
+
     def test_consumes_resolved_field_into_callback(self, monkeypatch):
         """The server's ``resolved`` map is delivered to ``on_resolved``
         so the local hint cache merges operator tags on the same cycle

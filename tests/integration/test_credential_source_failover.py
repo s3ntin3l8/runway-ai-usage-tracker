@@ -73,9 +73,10 @@ async def test_collector_retries_next_enabled_source_after_401(monkeypatch):
                     provider_id="openrouter",
                     account_id="alice@example.com",
                     source_id="first",
-                    source_type="sidecar",
+                    source_type="file",
                     source_label="first host",
                     sidecar_id="host-a",
+                    credential_origin="path:/first",
                     enabled=True,
                     priority=0,
                     last_seen=datetime.now(UTC),
@@ -84,9 +85,10 @@ async def test_collector_retries_next_enabled_source_after_401(monkeypatch):
                     provider_id="openrouter",
                     account_id="alice@example.com",
                     source_id="disabled",
-                    source_type="sidecar",
+                    source_type="file",
                     source_label="disabled host",
                     sidecar_id="host-b",
+                    credential_origin="path:/disabled",
                     enabled=False,
                     priority=1,
                     last_seen=datetime.now(UTC),
@@ -335,7 +337,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
                 provider_id="antigravity",
                 account_id="default",
                 source_id=source_id,
-                source_type="sidecar",
+                source_type="file",
                 source_label="host-a",
                 credential_origin=origin,
                 sidecar_id="host-a",
@@ -352,7 +354,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
                 provider_id="antigravity",
                 account_id="s3ntin3l8@gmail.com",
                 source_id=source_id,
-                source_type="sidecar",
+                source_type="file",
                 source_label="host-a",
                 credential_origin=origin,
                 sidecar_id="host-a",
@@ -367,7 +369,12 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
         {"oauth_token": "fake-sidecar-token"},  # pragma: allowlist secret
         account_id="default",
         source_id=source_id,
-        source_metadata={"identity_pending": True},
+        source_metadata={
+            "source_type": "file",
+            "sidecar_id": "host-a",
+            "credential_origin": origin,
+            "identity_pending": True,
+        },
     )
     monkeypatch.setattr("app.core.db.engine", engine)
     # The shared unit fixtures replace sqlmodel.Session with an empty mock;
@@ -385,7 +392,12 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
             {"oauth_token": "new-heartbeat-token"},  # pragma: allowlist secret
             account_id=old_account,
             source_id=source,
-            source_metadata={"identity_pending": True},
+            source_metadata={
+                "source_type": "file",
+                "sidecar_id": "host-a",
+                "credential_origin": origin,
+                "identity_pending": True,
+            },
         )
         return await move_source(provider, old_account, new_account, source)
 
@@ -493,11 +505,12 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
                 provider_id="antigravity",
                 account_id="alice@example.com",
                 source_id=configured_source_id,
-                source_type="sidecar",
+                source_type="file",
                 source_label="OAuth file",
                 enabled=False,
                 priority=3,
                 sidecar_id="host-a",
+                credential_origin="path:/auth.json",
             )
         )
         session.add(
@@ -522,7 +535,7 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
         account_id="default",
         source_id=source_id,
         source_metadata={
-            "source_type": "sidecar",
+            "source_type": "file",
             "credential_origin": "path:/auth.json",
             "sidecar_id": "host-a",
             "identity_pending": True,
@@ -534,7 +547,7 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
         account_id="default",
         source_id=configured_source_id,
         source_metadata={
-            "source_type": "sidecar",
+            "source_type": "file",
             "credential_origin": "path:/oauth.json",
             "sidecar_id": "host-a",
             "identity_pending": True,
