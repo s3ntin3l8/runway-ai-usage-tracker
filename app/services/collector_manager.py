@@ -36,10 +36,6 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 
-def _is_sidecar_credential_source(source: dict[str, Any]) -> bool:
-    return is_sidecar_source(source)
-
-
 class CollectorManager:
     """
     Manages collection of all AI provider quotas with support for multiple accounts.
@@ -235,7 +231,7 @@ class CollectorManager:
                     continue
                 pending_sources = await token_cache.get_source_candidates(p_id, "default")
                 has_pending_source = any(
-                    _is_sidecar_credential_source(source)
+                    is_sidecar_source(source)
                     and source.get("credential_origin")
                     and source.get("identity_pending") is True
                     for source in pending_sources
@@ -718,7 +714,7 @@ class CollectorManager:
             resolved_id = getattr(collector, "account_id", None)
             if (
                 account_id == "default"
-                and _is_sidecar_credential_source(candidate)
+                and is_sidecar_source(candidate)
                 and candidate.get("credential_origin")
                 and isinstance(resolved_id, str)
                 and resolved_id.strip()
@@ -732,7 +728,7 @@ class CollectorManager:
                 )
             elif (
                 account_id == "default"
-                and _is_sidecar_credential_source(candidate)
+                and is_sidecar_source(candidate)
                 and candidate.get("credential_origin")
             ):
                 # Let an unresolved source call its API so it can prove its
@@ -897,7 +893,7 @@ class CollectorManager:
                     origin = candidate.get("credential_origin")
                     sidecar_id = candidate.get("sidecar_id")
                     if (
-                        not _is_sidecar_credential_source(candidate)
+                        not is_sidecar_source(candidate)
                         or not isinstance(candidate_id, str)
                         or (source_id is not None and candidate_id != source_id)
                         or not isinstance(origin, str)

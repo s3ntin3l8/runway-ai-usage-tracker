@@ -99,6 +99,7 @@ services:
 
       # Sidecar endpoints bypass SSO — each request has its own HMAC auth.
       # Keep this exact list aligned with HMAC-only fleet routes in fleet.py;
+      # tests/unit/test_forward_auth_routes.py checks route and doc parity.
       # newly added routes stay behind Authentik until explicitly listed here.
       - "traefik.http.routers.runway-ingest.rule=Host(`runway.example.com`) && (Path(`/api/v1/fleet/ingest`) || Path(`/api/v1/fleet/config`) || Path(`/api/v1/fleet/credentials/manifest`))"
       - traefik.http.routers.runway-ingest.entrypoints=websecure

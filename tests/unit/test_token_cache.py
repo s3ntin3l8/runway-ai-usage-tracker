@@ -198,6 +198,31 @@ async def test_move_source_keeps_newer_report_when_migrating_legacy_hash_bucket(
 
 
 @pytest.mark.asyncio
+async def test_move_source_keeps_opaque_refresh_when_target_oauth_is_expired(cache):
+    source_id = "sidecar:host:oauth-json"
+    await cache.store(
+        "antigravity",
+        {"refresh_token": "fresh-refresh"},  # pragma: allowlist secret
+        account_id="legacy-hash",
+        source_id=source_id,
+        source_metadata={"sidecar_id": "host", "credential_origin": "path:/oauth.json"},
+    )
+    await cache.store(
+        "antigravity",
+        {"oauth_token": _jwt_exp(time.time() - 60)},
+        account_id="alice@example.com",
+        source_id="other-source",
+    )
+    cache._cache["antigravity"]["legacy-hash"][1]["source_id"] = source_id
+
+    assert await cache.move_source("antigravity", "legacy-hash", "alice@example.com", source_id)
+
+    aggregate = await cache.get("antigravity", "alice@example.com")
+    assert aggregate is not None
+    assert aggregate["refresh_token"] == "fresh-refresh"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
 async def test_move_source_migrates_legacy_aggregate_when_target_has_none(cache):
     source_id = "sidecar:host:legacy-oauth"
     await cache.store(

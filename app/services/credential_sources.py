@@ -79,6 +79,8 @@ def touch_source(
                 CredentialSource.account_id == aid,
             )
         ).all()
+        # New discovered sources take the next slot so they follow existing
+        # operator-configured and sidecar sources unless config claims slot 0.
         priority = max((item.priority for item in count), default=-1) + 1
         if source_type == "config":
             for item in count:

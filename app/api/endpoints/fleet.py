@@ -766,6 +766,8 @@ async def post_credential_manifest(
 
     from app.services.credential_sources import describe_origin, sidecar_source_id, touch_source
 
+    # Each manifest is authoritative: the latest observed token names and
+    # expiry replace the prior health metadata for that source.
     for observation in payload.observations:
         observation_provider = observation.provider_id
         observation_origin = observation.credential_origin
