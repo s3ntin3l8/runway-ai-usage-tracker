@@ -31,13 +31,21 @@ def db_session():
         os.remove(db_path)
 
 
-def test_sqlite_utc_timestamp_matches_stored_boundary_comparisons():
+def test_sqlite_utc_timestamp_matches_stored_boundary_comparisons(db_session):
     stored = "2026-05-08 12:00:00.000000"
     boundary = _sqlite_utc_timestamp(datetime(2026, 5, 8, 12, tzinfo=UTC))
 
     assert boundary == stored
-    assert stored >= boundary  # an event at `since` is included
-    assert not stored < boundary  # an event at `until` is excluded
+    comparisons = (
+        db_session.connection()
+        .exec_driver_sql(
+            "SELECT :stored >= :since, :stored < :until",
+            {"stored": stored, "since": boundary, "until": boundary},
+        )
+        .one()
+    )
+    assert comparisons[0]  # an event at `since` is included
+    assert not comparisons[1]  # an event at `until` is excluded
 
 
 _NOW = datetime.now(UTC).replace(microsecond=0)
