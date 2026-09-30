@@ -19,6 +19,7 @@ from app.core.security import (
 from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
+    CredentialSource,
     CredentialTag,
     LatestUsage,
     PendingUsageEvent,
@@ -32,6 +33,7 @@ from app.services import audit_log, pairing
 from app.services.account_identity import (
     FINGERPRINTED_ORIGIN_PROVIDERS,
     account_config_provider_id,
+    canonical_account_id,
     credential_fingerprint,
     keyed_credential_origin,
     normalize_sidecar_id,
@@ -138,6 +140,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 identity_pending = bool(
                     card.metadata and card.metadata.get("identity_pending") is True
                 )
+                verified_tag = None
                 if identity_pending and credential_origin and payload.sidecar_id:
                     # A verified identity can race one more heartbeat with
                     # stale pending metadata. Trust only the durable tag for
@@ -148,9 +151,43 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         credential_origin=credential_origin,
                         sidecar_id=payload.sidecar_id,
                     )
-                    if verified_tag is not None:
+                    if verified_tag is not None and verified_tag.set_by != "identity_claim":
                         acc_id = verified_tag.account_id
                         identity_pending = False
+                if provider_id == "anthropic" and credential_origin and payload.sidecar_id:
+                    # Claude Code commonly stores its email separately from its
+                    # OAuth token. A sidecar can claim that email, but only an
+                    # exact configured account (or an operator tag) may receive
+                    # the token. Otherwise keep it source-pinned for assignment.
+                    tagged = verified_tag
+                    if tagged is None:
+                        tagged = CredentialTagRepo.get(
+                            session,
+                            provider_id=provider_id,
+                            credential_origin=credential_origin,
+                            sidecar_id=payload.sidecar_id,
+                        )
+                    if tagged is not None and tagged.set_by != "identity_claim":
+                        acc_id = tagged.account_id
+                        identity_pending = False
+                    elif card.unit == "oauth":
+                        claimed_id = canonical_account_id(acc_id)
+                        matched_account = (
+                            session.exec(
+                                select(ProviderConfig.id).where(
+                                    ProviderConfig.provider_id == provider_id,
+                                    ProviderConfig.account_id == claimed_id,
+                                    ProviderConfig.enabled == True,  # noqa: E712
+                                )
+                            ).first()
+                            is not None
+                            if claimed_id != "default"
+                            else False
+                        )
+                        if not matched_account:
+                            acc_label = claimed_id if claimed_id != "default" else None
+                            acc_id = None
+                            identity_pending = True
                 if card.metadata:
                     for key, val in card.metadata.items():
                         # Store tokens but skip the provider/account identifiers
@@ -262,10 +299,31 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
         source_type, source_label = describe_origin(origin)
         source_id = sidecar_source_id(sidecar_id, origin)
+        prior_sources = (
+            list(
+                session.exec(
+                    select(CredentialSource).where(
+                        CredentialSource.provider_id == p_id,
+                        CredentialSource.source_id == source_id,
+                    )
+                ).all()
+            )
+            if p_id == "anthropic"
+            else []
+        )
+        # Claude OAuth sources from older sidecars may still be keyed by the
+        # token-derived placeholder identity; use a stable host+origin key while
+        # identity is pending so token rotations do not create orphan entries.
+        cache_account_id = source_id if p_id == "anthropic" and identity_pending else a_id
+        if p_id == "anthropic" and not identity_pending:
+            # A pending source is cache-keyed by its stable source_id. Retire
+            # that placeholder even if its durable CredentialSource row was
+            # lost; otherwise its OAuth bundle survives beside the resolved one.
+            await token_cache.remove_source(p_id, source_id, source_id, retire_matching_oauth=True)
         actual_acc_id = await token_cache.store(
             p_id,
             p_tokens,
-            a_id,
+            cache_account_id,
             a_name,
             source=payload.sidecar_id,
             source_id=source_id,
@@ -275,10 +333,29 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 "credential_origin": origin,
                 "sidecar_id": payload.sidecar_id,
                 "identity_pending": identity_pending,
+                "identity_hint": a_name if identity_pending else None,
             },
         )
         if not isinstance(actual_acc_id, str):
             actual_acc_id = a_id or "default"
+        old_accounts = {row.account_id for row in prior_sources if row.account_id != actual_acc_id}
+        target_exists = any(row.account_id == actual_acc_id for row in prior_sources)
+        transferable = (
+            max(
+                (row for row in prior_sources if row.account_id != actual_acc_id),
+                key=lambda row: row.last_seen,
+                default=None,
+            )
+            if not target_exists
+            else None
+        )
+        for row in prior_sources:
+            if row is transferable:
+                row.account_id = actual_acc_id
+                session.add(row)
+            elif row.account_id != actual_acc_id:
+                session.delete(row)
+        session.flush()
         touch_source(
             session,
             provider_id=p_id,
@@ -289,6 +366,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             credential_origin=origin,
             sidecar_id=payload.sidecar_id,
         )
+        for old_account in old_accounts:
+            await token_cache.remove_source(
+                p_id, old_account, source_id, retire_matching_oauth=True
+            )
         tokens_received_count += len(p_tokens)
         logger.info(
             f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {payload.provider}"
@@ -671,12 +752,13 @@ async def post_credential_manifest(
         if not isinstance(origin, str) or not origin:
             continue
         entries_received += 1
-        if CredentialTagRepo.get(
+        existing_tag = CredentialTagRepo.get(
             session,
             provider_id=provider_id,
             credential_origin=origin,
             sidecar_id=payload.sidecar_id,
-        ):
+        )
+        if existing_tag is not None and existing_tag.set_by != "identity_claim":
             # A prior operator assignment or source-verified identity already
             # resolves this origin. Do not re-open it as pending each heartbeat.
             PendingCredentialTagRepo.delete(
@@ -686,13 +768,54 @@ async def post_credential_manifest(
                 credential_origin=origin,
             )
             continue
+        claimed_id = entry.get("account_id")
+        if provider_id == "anthropic" and isinstance(claimed_id, str):
+            matched = session.exec(
+                select(ProviderConfig.id).where(
+                    ProviderConfig.provider_id == provider_id,
+                    ProviderConfig.account_id == canonical_account_id(claimed_id),
+                    ProviderConfig.enabled == True,  # noqa: E712
+                )
+            ).first()
+            if matched is not None:
+                CredentialTagRepo.set_tag(
+                    session,
+                    provider_id=provider_id,
+                    credential_origin=origin,
+                    account_id=canonical_account_id(claimed_id),
+                    sidecar_id=payload.sidecar_id,
+                    set_by="identity_claim",
+                )
+                PendingCredentialTagRepo.delete(
+                    session,
+                    sidecar_id=payload.sidecar_id,
+                    provider_id=provider_id,
+                    credential_origin=origin,
+                )
+                continue
+        if existing_tag is not None and existing_tag.set_by == "identity_claim":
+            # Identity-claim rows are a visible record of automatic matching,
+            # not durable operator assignments. Drop a stale claim so the
+            # origin can return to the pending queue after account changes.
+            CredentialTagRepo.delete_tag_in_scope(
+                session,
+                provider_id=provider_id,
+                credential_origin=origin,
+                sidecar_id=payload.sidecar_id,
+            )
         keep_by_provider.setdefault(provider_id, set()).add(origin)
-        PendingCredentialTagRepo.upsert(
+        pending = PendingCredentialTagRepo.upsert(
             session,
             sidecar_id=payload.sidecar_id,
             provider_id=provider_id,
             credential_origin=origin,
         )
+        pending.claimed_account_id = (
+            canonical_account_id(claimed_id)
+            if provider_id == "anthropic" and isinstance(claimed_id, str) and "@" in claimed_id
+            else None
+        )
+        session.add(pending)
 
     # Retain currently reported origins and prune origins no longer present.
     existing_rows = PendingCredentialTagRepo.list_all(session, sidecar_id=payload.sidecar_id)
@@ -1069,6 +1192,7 @@ async def list_pending_credential_tags(
                 "sidecar_id": row.sidecar_id,
                 "provider_id": row.provider_id,
                 "credential_origin": row.credential_origin,
+                "claimed_account_id": row.claimed_account_id,
                 "first_seen": row.first_seen.isoformat() if row.first_seen else None,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
                 "quota_preview": preview,

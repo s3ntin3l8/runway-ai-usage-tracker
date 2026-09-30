@@ -365,7 +365,7 @@ class CredentialTagRepo:
             CredentialTag.credential_origin,
             CredentialTag.account_id,
             CredentialTag.sidecar_id,
-        ).where(or_(*predicates))
+        ).where(or_(*predicates), CredentialTag.set_by != "identity_claim")
         if sidecar_id is None:
             stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
         else:

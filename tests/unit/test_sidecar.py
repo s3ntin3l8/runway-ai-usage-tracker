@@ -80,6 +80,67 @@ class TestGeminiCredentialMapping:
 
 
 class TestClaudeOAuthCredentialRules:
+    def test_standard_claude_code_files_supply_token_email_and_expiry(self, monkeypatch, tmp_path):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        credentials_path = claude_dir / ".credentials.json"
+        credentials_path.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "oauth-access-token",
+                        "refreshToken": "oauth-refresh-token",
+                        "expiresAt": 1790784000000,
+                    }
+                }
+            )
+        )
+        (tmp_path / ".claude.json").write_text(
+            json.dumps(
+                {
+                    "oauthAccount": {"emailAddress": "Alice@Example.com"},
+                }
+            )
+        )
+        monkeypatch.setattr(sidecar.Path, "home", staticmethod(lambda: tmp_path))
+        original_expanduser = sidecar.os.path.expanduser
+        monkeypatch.setattr(
+            sidecar.os.path,
+            "expanduser",
+            lambda path: (
+                str(tmp_path / path[2:])
+                if isinstance(path, str) and path.startswith("~/")
+                else original_expanduser(path)
+            ),
+        )
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [credentials_path])
+        config = {
+            "name": "Claude",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": [str(credentials_path)],
+                    "format": "json",
+                    "mapping": {
+                        "claudeAiOauth.accessToken": "oauth_token",
+                        "claudeAiOauth.refreshToken": "refresh_token",
+                    },
+                }
+            ],
+        }
+
+        cards, entries = sidecar.GenericCollector.collect_provider("anthropic", config)
+
+        assert cards[0]["account_id"] == "alice@example.com"
+        assert cards[0]["metadata"]["expiry_date"] == "1790784000000"
+        assert entries == [
+            {
+                "provider_id": "anthropic",
+                "credential_origin": f"path:{credentials_path.resolve()}",
+                "account_id": "alice@example.com",
+            }
+        ]
+
     def test_oauth_creds_path_and_identity_mapping_are_available_in_both_registries(self):
         registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
         for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
@@ -124,7 +185,13 @@ class TestClaudeOAuthCredentialRules:
         }
         cards, blocked = sidecar.GenericCollector.collect_provider("anthropic", config)
 
-        assert blocked == []
+        assert blocked == [
+            {
+                "provider_id": "anthropic",
+                "credential_origin": f"path:{creds_path.resolve()}",
+                "account_id": "claude@example.com",
+            }
+        ]
         token_card = next(card for card in cards if card["unit"] == "oauth")
         assert token_card["account_id"] == "claude@example.com"
         assert token_card["metadata"]["oauth_token"] == "oauth-access-token"

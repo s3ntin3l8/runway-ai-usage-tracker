@@ -326,6 +326,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     SQLModel.metadata.create_all(engine)
     source_id = "sidecar:host-a:path:/home/user/auth.json"
     origin = "path:/home/user/auth.json"
+    # Keep this target newer than the freshly created source on any test day.
     target_seen = datetime.now(UTC) + timedelta(days=1)
     with Session(engine) as session:
         session.add(
@@ -411,20 +412,9 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
         )
 
     assert source.account_id == "s3ntin3l8@gmail.com"
-    # The concurrent heartbeat above may advance last_seen while the source is
-    # promoted; promotion must preserve at least the prior target timestamp.
+    # The concurrent heartbeat may advance last_seen; promotion preserves the later timestamp.
     assert source.last_seen is not None
-    norm_seen = (
-        source.last_seen.replace(tzinfo=UTC)
-        if source.last_seen.tzinfo is None
-        else source.last_seen.astimezone(UTC)
-    )
-    norm_target = (
-        target_seen.replace(tzinfo=UTC)
-        if target_seen.tzinfo is None
-        else target_seen.astimezone(UTC)
-    )
-    assert norm_seen >= norm_target
+    assert source.last_seen.replace(tzinfo=UTC) >= target_seen
     assert tag is not None and tag.set_by == "identity_verification"
     assert pending is None
     assert await cache.get_source_candidates("antigravity", "default") == []

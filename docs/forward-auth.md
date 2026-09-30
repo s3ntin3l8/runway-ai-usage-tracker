@@ -82,9 +82,9 @@ If `is_authenticated` is `false`:
 
 ## 5. Production hardening: split the Traefik router
 
-Gating the *entire* host behind `chain-authentik@file` (or whatever your forwardAuth middleware is named) breaks three things that don't authenticate as a browser:
+Gating the *entire* host behind `chain-authentik@file` (or whatever your forwardAuth middleware is named) breaks requests that don't authenticate as a browser:
 
-- **Sidecar ingestion.** `POST /api/v1/fleet/ingest` authenticates via its own HMAC signing (`INGEST_API_KEY`), not Authentik. A remote sidecar's push would get redirected into the SSO challenge instead of ever reaching Runway.
+- **Sidecar requests.** `POST /api/v1/fleet/ingest`, `GET /api/v1/fleet/config`, and `POST /api/v1/fleet/credentials/manifest` use sidecar HMAC signing (`INGEST_API_KEY`). A proxy SSO redirect prevents account hints and discovered credentials from reaching Runway even if ingest still works. Runway validates signatures and limits unsigned config responses; bypassing proxy SSO does not bypass Runway's endpoint checks.
 - **Performance.** Vite's content-hashed JS/CSS/font bundle (`/assets/*`) is a couple dozen separate requests per page load, and each one would separately pay the forwardAuth round-trip cost (see *Why this matters* below).
 - **The PWA's own update mechanism.** The browser's periodic fetch of `/sw.js` treats a redirect response as a failed update — that's spec behavior, not a Runway quirk. If `/sw.js` is SSO-gated, then the moment a client's Authentik session lapses, its service worker can no longer fetch its own successor and is stuck forever replaying whatever build was cached when the session was last valid. Concretely: a stale pre-fix service worker doesn't know how to distinguish an SSO bounce from a real backend outage, so it renders "Backend unreachable" instead of a login prompt — and re-authenticating in the browser doesn't fix it, because the broken SW is what's serving the page. `/manifest.webmanifest` and the install/splash icons need the same bypass so the PWA install experience isn't degraded either.
 
@@ -97,8 +97,8 @@ services:
       - traefik.enable=true
       - traefik.http.services.runway.loadbalancer.server.port=8765
 
-      # Sidecar ingestion bypasses SSO — it has its own HMAC auth.
-      - "traefik.http.routers.runway-ingest.rule=Host(`runway.example.com`) && PathPrefix(`/api/v1/fleet/ingest`)"
+      # Sidecar endpoints bypass SSO; Runway applies its own request checks.
+      - "traefik.http.routers.runway-ingest.rule=Host(`runway.example.com`) && (Path(`/api/v1/fleet/ingest`) || Path(`/api/v1/fleet/config`) || Path(`/api/v1/fleet/credentials/manifest`))"
       - traefik.http.routers.runway-ingest.entrypoints=websecure
       - traefik.http.routers.runway-ingest.tls.certresolver=le
       - traefik.http.routers.runway-ingest.priority=100

@@ -310,6 +310,28 @@ describe('TokensSection', () => {
     expect(screen.queryByRole('button', { name: /remove from cache/i })).not.toBeInTheDocument();
     expect(screen.getAllByText('managed')).toHaveLength(2);
   });
+
+  it('links an unassigned Claude sidecar token to Fleet', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [token({
+        provider: 'anthropic',
+        account_id: 'unassigned:sidecar:abc',
+        account_label: 'Unassigned',
+        source: 'dev-01',
+        source_name: 'dev-01',
+        source_id: 'sidecar:abc',
+        assignment_pending: true,
+        removable: false,
+        can_refresh: false,
+        token_types: ['oauth_token'],
+      })],
+    });
+    renderWithProviders(<TokensSection />);
+
+    expect(await screen.findByText('Unassigned')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Assign in Fleet' })).toHaveAttribute('href', '/fleet');
+    expect(screen.queryByRole('button', { name: /remove from cache/i })).not.toBeInTheDocument();
+  });
   describe('mobile card layout (<md)', () => {
     beforeEach(() => {
       media.isMd = false;
