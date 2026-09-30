@@ -1926,6 +1926,24 @@ def discover_anthropic_email() -> str:
     return ""
 
 
+def discover_anthropic_oauth_email(credentials_path: Path) -> str:
+    """Read the account paired with Claude Code's standard credentials file.
+
+    Claude Code keeps ``claudeAiOauth`` in ``~/.claude/.credentials.json`` and
+    ``oauthAccount`` in ``~/.claude.json``. Other credential files may belong
+    to a different login, so only pair the standard file with that metadata.
+    """
+    if credentials_path.resolve() != Path.home().joinpath(".claude", ".credentials.json").resolve():
+        return ""
+    try:
+        with Path.home().joinpath(".claude.json").open(encoding="utf-8") as file:
+            account = json.load(file).get("oauthAccount", {})
+        email = account.get("emailAddress") or account.get("email")
+        return email if isinstance(email, str) and "@" in email else ""
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
 # --- Account Email Helpers (JWT id_token extraction) ---
 
 
@@ -2664,6 +2682,20 @@ class GenericCollector:
                                 )
                                 if email:
                                     candidate_tokens["account_id"] = email
+                            if not candidate_tokens.get("account_id") and candidate_tokens.get(
+                                "oauth_token"
+                            ):
+                                email = discover_anthropic_oauth_email(Path(path))
+                                if email:
+                                    candidate_tokens["account_id"] = email
+                            oauth_data = data.get("claudeAiOauth")
+                            expires_at = (
+                                oauth_data.get("expiresAt")
+                                if isinstance(oauth_data, dict)
+                                else None
+                            )
+                            if isinstance(expires_at, int | float) and expires_at > 0:
+                                candidate_tokens["expiry_date"] = str(int(expires_at))
                         if candidate_tokens:
                             token_candidates.append(
                                 (
@@ -3049,6 +3081,21 @@ class GenericCollector:
                         {"provider_id": provider_id, "credential_origin": origin}
                     )
                 identity_pending = not bool(resolved_account_id and source_identity_strong)
+                if (
+                    provider_id == "anthropic"
+                    and candidate_kind in {"file", "keychain"}
+                    and tokens.get("oauth_token")
+                    and not identity_pending
+                ):
+                    # Let the server check this claimed email against configured
+                    # accounts. Unmatched credentials remain assignable in Fleet.
+                    blocked_origins.append(
+                        {
+                            "provider_id": provider_id,
+                            "credential_origin": origin,
+                            "account_id": str(resolved_account_id),
+                        }
+                    )
                 if identity_pending:
                     # Do not let a default sentinel or an inheritable
                     # provider-wide hint pick the server cache account. The
@@ -3303,16 +3350,20 @@ def _post_credential_manifest(
         with urllib.request.urlopen(
             req, timeout=5, context=build_context_from_config(url, config)
         ) as resp:
+            response_url = resp.geturl()
+            if isinstance(response_url, str) and response_url != url:
+                logging.warning("manifest was redirected; check reverse proxy sidecar access")
+                return
             if resp.getcode() != 200:
-                logging.debug(f"manifest: server returned {resp.getcode()}")
+                logging.warning(f"manifest: server returned HTTP {resp.getcode()}")
                 return
             try:
                 payload = json.loads(resp.read().decode("utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                logging.debug(f"manifest: response not JSON ({exc})")
+                logging.warning(f"manifest: response not JSON ({type(exc).__name__})")
                 return
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
-        logging.debug(f"manifest: skipped ({exc})")
+        logging.warning(f"manifest: request failed ({type(exc).__name__})")
         return
 
     if on_resolved is None:

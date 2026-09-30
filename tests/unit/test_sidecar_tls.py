@@ -90,9 +90,10 @@ def test_reaped_certifi_bundle_falls_through_to_default(monkeypatch):
 
 
 class _FakeResp:
-    def __init__(self, body=b"{}", code=200):
+    def __init__(self, body=b"{}", code=200, url=None):
         self._body = body
         self.code = code
+        self.url = url
 
     def __enter__(self):
         return self
@@ -102,6 +103,9 @@ class _FakeResp:
 
     def getcode(self):
         return self.code
+
+    def geturl(self):
+        return self.url
 
     def read(self):
         return self._body
@@ -156,7 +160,7 @@ def test_fetch_config_payload_honours_tls_insecure_config(monkeypatch):
 
     def fake_urlopen(req, timeout=None, context=None):
         captured["context"] = context
-        return _FakeResp(body=b'{"config": {}}')
+        return _FakeResp(body=b'{"config": {}}', url=req.full_url)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     payload = credentials._fetch_config_payload("https://server", config={"tls_insecure": True})
@@ -185,7 +189,7 @@ def test_manifest_post_honours_tls_insecure_config(monkeypatch):
 
     def fake_urlopen(req, timeout=None, context=None):
         captured["context"] = context
-        return _FakeResp(body=b"{}")
+        return _FakeResp(body=b"{}", url=req.full_url)
 
     monkeypatch.setattr(sidecar.urllib.request, "urlopen", fake_urlopen)
     sidecar._post_credential_manifest(

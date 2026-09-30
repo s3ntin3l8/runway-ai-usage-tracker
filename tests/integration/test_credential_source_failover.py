@@ -285,6 +285,10 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     SQLModel.metadata.create_all(engine)
     source_id = "sidecar:host-a:path:/home/user/auth.json"
     origin = "path:/home/user/auth.json"
+<<<<<<< HEAD
+=======
+    # Keep this target newer than the freshly created source on any test day.
+>>>>>>> 3e788b61 (fix: discover and surface Claude Code OAuth credentials)
     target_seen = datetime.now(UTC) + timedelta(days=1)
     with Session(engine) as session:
         session.add(

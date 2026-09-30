@@ -100,12 +100,20 @@ def _fetch_config_payload(
         with request.urlopen(
             req, timeout=timeout, context=build_context_from_config(url, config)
         ) as resp:
-            if resp.getcode() != 200:
-                logger.debug("fetch_config: %s returned %s", url, resp.getcode())
+            response_url = resp.geturl()
+            if isinstance(response_url, str) and response_url != url:
+                logger.warning("fleet config was redirected; check reverse proxy sidecar access")
                 return None
-            return json.loads(resp.read().decode("utf-8"))
+            if resp.getcode() != 200:
+                logger.warning("fleet config returned HTTP %s", resp.getcode())
+                return None
+            payload = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(payload, dict) or not isinstance(payload.get("config"), dict):
+                logger.warning("fleet config response is missing config; check reverse proxy")
+                return None
+            return payload
     except (error.HTTPError, error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        logger.debug("fetch_config: %s failed: %s", url, exc)
+        logger.warning("fleet config request failed: %s", type(exc).__name__)
         return None
 
 

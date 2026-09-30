@@ -260,6 +260,37 @@ def test_manifest_503_when_ingest_key_missing(monkeypatch):
     assert r.status_code == 503
 
 
+def test_claude_manifest_only_surfaces_unmatched_oauth_account(client, session):
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["anthropic"],
+        "entries": [
+            {
+                "provider_id": "anthropic",
+                "credential_origin": "path:/alice",
+                "account_id": "alice@example.com",
+            },
+            {
+                "provider_id": "anthropic",
+                "credential_origin": "path:/bob",
+                "account_id": "bob@example.com",
+            },
+        ],
+    }
+    result = _post_manifest(client, body)
+
+    assert result.status_code == 200
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert [row.credential_origin for row in pending] == ["path:/bob"]
+    assert pending[0].claimed_account_id == "bob@example.com"
+    listed = client.get("/api/v1/fleet/credentials/tags/pending")
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["claimed_account_id"] == "bob@example.com"
+
+
 def test_manifest_401_on_bad_signature(client: TestClient):
     """A signature that doesn't match the HMAC scheme returns 401 (not 400
     for skew). Use a valid timestamp so we exercise the signature-comparison

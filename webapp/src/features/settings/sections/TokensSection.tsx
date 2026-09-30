@@ -143,7 +143,9 @@ function useTokenActions(token: TokenHealthEntry) {
     token.removable === false
       ? origin === 'server'
         ? 'Set via the server environment — change it there'
-        : 'Managed in Settings → Providers'
+        : token.source_id
+          ? 'Managed by the sidecar'
+          : 'Managed in Settings → Providers'
       : null;
   const typesLabel = (token.token_types ?? []).join(', ') || '—';
 
@@ -424,6 +426,9 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
       {/* Identifier */}
       <TD className="text-fg-subtle">
         {credentialAccountName(token.account_id, token.account_label)}
+        {token.assignment_pending ? (
+          <a href="/fleet" className="ml-2 text-accent underline underline-offset-2">Assign in Fleet</a>
+        ) : null}
       </TD>
 
       {/* Detail */}
@@ -586,6 +591,9 @@ function TokenCard({ token }: { token: TokenHealthEntry }) {
       {/* Identifier */}
       <p className="mt-1 text-[13px] text-fg-subtle">
         {credentialAccountName(token.account_id, token.account_label)}
+        {token.assignment_pending ? (
+          <a href="/fleet" className="ml-2 text-accent underline underline-offset-2">Assign in Fleet</a>
+        ) : null}
       </p>
 
       {/* Credential types · origin */}

@@ -17,7 +17,7 @@ The Claude collector supports multiple authentication and data collection method
 
 1.  **OAuth Token (Preferred)**:
     *   **Method 1**: Set the `CLAUDE_CODE_OAUTH_TOKEN` environment variable.
-    *   **Method 2 (Auto-discovered)**: Log in via the `claude` CLI, which creates `~/.config/claude/oauth_creds.json`.
+    *   **Method 2 (Auto-discovered)**: Log in via the `claude` CLI. Standard Claude Code stores the token in `~/.claude/.credentials.json` and account identity in `~/.claude.json`; other installations may use `~/.config/claude/oauth_creds.json` or macOS Keychain.
     *   **Method 3 (Auto-discovered, macOS only)**: OAuth token stored in macOS Keychain.
     *   **Details**: See [Primary: Hybrid (Statusline + OAuth API)](#primary-hybrid-statusline--oauth-api) and [Configuration section](#configuration).
 
@@ -93,15 +93,15 @@ This is the preferred method, providing the most reliable and comprehensive data
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Optional | OAuth token for API access (auto-discovered from `~/.config/claude/oauth_creds.json` or macOS Keychain if not set) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Optional | OAuth token for API access (auto-discovered from Claude Code credentials or macOS Keychain if not set) |
 
 **Auto-Discovery:**
-- Credentials files: `~/.claude/.credentials.json` or the Claude config directory's `oauth_creds.json` (normally `~/.config/claude/oauth_creds.json` on Linux); macOS Keychain is also supported.
+- Credentials files: `~/.claude/.credentials.json` (paired with `~/.claude.json` for `oauthAccount.emailAddress`) or the Claude config directory's `oauth_creds.json` (normally `~/.config/claude/oauth_creds.json` on Linux); macOS Keychain is also supported.
 - Projects directory: `~/.config/claude/projects/` (auto-discovered for local logs)
 
 ## Sidecar Support
 
-Sidecar can extract tokens from `~/.claude/.credentials.json`, the Claude config directory's `oauth_creds.json`, or macOS Keychain. See [sidecar documentation](../sidecar.md).
+The sidecar extracts the token and expiry from `~/.claude/.credentials.json`, and the email from `~/.claude.json`. If the email matches an enabled Claude account, Runway attaches the OAuth source to it. Otherwise the source appears in Fleet for assignment with the discovered login displayed, and in Token Health as unassigned. A manually assigned origin takes precedence over the discovered email. The sidecar also supports the Claude config directory's `oauth_creds.json` and macOS Keychain. See [sidecar documentation](../sidecar.md). A reverse proxy must let sidecars reach `/api/v1/fleet/config` and `/api/v1/fleet/credentials/manifest` as well as `/api/v1/fleet/ingest` ([example](../forward-auth.md#5-production-hardening-split-the-traefik-router)).
 
 ## Troubleshooting
 
@@ -111,7 +111,7 @@ Sidecar can extract tokens from `~/.claude/.credentials.json`, the Claude config
 1.  **LSP/Statusline**: Ensure the `claude` CLI is running and actively being used.
 2.  **OAuth Token**:
     -   Set `export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-..."`
-    -   Or run `claude login` to create credentials file (`~/.config/claude/oauth_creds.json`).
+    -   Or run `claude login` to create the Claude Code credentials files.
 3.  **Chrome Cookies**: Log in to `https://claude.ai` in Chrome.
 4.  **CLI PTY**: Ensure the `claude` CLI is installed and in your PATH, and you're logged in.
 

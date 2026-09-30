@@ -14,7 +14,14 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import CredentialTag, LatestUsage, QuotaSnapshot, UsageEvent
+from app.models.db import (
+    CredentialSource,
+    CredentialTag,
+    LatestUsage,
+    ProviderConfig,
+    QuotaSnapshot,
+    UsageEvent,
+)
 from app.services.pricing_seed import seed_pricing_table
 
 TEST_KEY = "test-local-card-ingest-key"
@@ -189,6 +196,99 @@ def test_ingest_applies_existing_verified_tag_to_stale_pending_heartbeat(session
     assert mock_tc.store.call_args.args[2] == "s3ntin3l8@gmail.com"
     assert mock_tc.store.call_args.kwargs["source_metadata"]["identity_pending"] is False
     assert mock_touch.call_args.kwargs["account_id"] == "s3ntin3l8@gmail.com"
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_claude_oauth_email_requires_matching_account(session, configured):
+    if configured:
+        session.add(
+            ProviderConfig(
+                provider_id="anthropic",
+                account_id="alice@example.com",
+                enabled=True,
+            )
+        )
+        session.commit()
+    payload = {
+        "provider": "anthropic-sidecar",
+        "sidecar_id": "test-host-01",
+        "metrics": [
+            {
+                "provider_id": "anthropic",
+                "service_name": "Claude",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "oauth_token": "claude-access-token",  # pragma: allowlist secret
+                    "expiry_date": "1790784000000",
+                    "credential_origin": "path:/home/user/.claude/.credentials.json",
+                },
+            }
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock(return_value="alice@example.com" if configured else "default")
+        _ingest(TestClient(app), payload)
+
+    assert mock_tc.store.call_args.args[2] == ("alice@example.com" if configured else None)
+    assert mock_tc.store.call_args.args[1]["expiry_date"] == "1790784000000"
+    assert mock_tc.store.call_args.kwargs["source_metadata"]["identity_pending"] is not configured
+
+
+def test_claude_oauth_source_moves_to_matching_account(session):
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    origin = "path:/home/user/.claude/.credentials.json"
+    payload = {
+        "provider": "anthropic-sidecar",
+        "sidecar_id": "test-host-01",
+        "metrics": [
+            {
+                "provider_id": "anthropic",
+                "service_name": "Claude",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "oauth_token": "claude-access-token",  # pragma: allowlist secret
+                    "credential_origin": origin,
+                },
+            }
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache", cache),
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        _ingest(TestClient(app), payload)
+        old_source = session.exec(select(CredentialSource)).one()
+        assert old_source.account_id != "alice@example.com"
+
+        session.add(
+            ProviderConfig(
+                provider_id="anthropic",
+                account_id="alice@example.com",
+                enabled=True,
+            )
+        )
+        session.commit()
+        _ingest(TestClient(app), payload)
+
+    sources = session.exec(select(CredentialSource)).all()
+    assert len(sources) == 1
+    assert sources[0].id == old_source.id
+    assert sources[0].account_id == "alice@example.com"
 
 
 def test_empty_completed_providers_heartbeat_skips_latest_usage_write_block(session):
