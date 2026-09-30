@@ -1848,6 +1848,99 @@ class TestGitHubCollector:
         assert collector.account_id == "bjoern@example.com"
         assert collector.account_label == "bjoern@example.com"
 
+    @pytest.mark.asyncio
+    async def test_default_collector_ignores_leaked_email_label(self, mock_http_client):
+        """Default collector with a leaked email account_label does NOT short-circuit identity.
+
+        If account_label was populated with an email (e.g. from token_cache metadata
+        leaked across providers), a default collector must still hit the /user API
+        instead of falsely claiming the email as its identity.
+        """
+        collector = GitHubCollector()
+        collector.account_label = "leaked@example.com"
+
+        def _resp(status: int, data) -> MagicMock:
+            r = MagicMock(spec=httpx.Response)
+            r.status_code = status
+            r.json.return_value = data
+            r.headers = {}
+            return r
+
+        copilot_user = _resp(
+            200,
+            {
+                "quota_snapshots": [
+                    {"metric": "chat", "used": 5, "included": 200, "quota_reset_at": 0}
+                ],
+                "copilot_plan": "Individual",
+            },
+        )
+        std_user = _resp(200, {"login": "real_github_login", "email": None})
+        emails_list = _resp(200, [])
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with (
+            patch.object(
+                collector, "_get_token", new_callable=AsyncMock, return_value="ghp_testtoken"
+            ),
+            patch(
+                "app.services.collectors.github.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[copilot_user, std_user, emails_list],
+            ) as mock_req,
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc),
+        ):
+            await collector._strategy_api(mock_http_client)
+
+        # /user was indeed called (side_effect had std_user and emails_list)
+        assert mock_req.await_count >= 2
+        # account_id is pinned to real_github_login instead of leaked@example.com
+        assert collector.account_id == "real_github_login"
+        # leaked email label is also discarded and replaced with real_github_login
+        assert collector.account_label == "real_github_login"
+
+    @pytest.mark.asyncio
+    async def test_scoped_collector_uses_matching_email_label(self, mock_http_client):
+        """Scoped collector whose account_id matches the email label skips /user lookup."""
+        collector = GitHubCollector(account_id="pinned@example.com")
+        collector.account_label = "pinned@example.com"
+
+        def _resp(status: int, data) -> MagicMock:
+            r = MagicMock(spec=httpx.Response)
+            r.status_code = status
+            r.json.return_value = data
+            r.headers = {}
+            return r
+
+        copilot_user = _resp(
+            200,
+            {
+                "quota_snapshots": [
+                    {"metric": "chat", "used": 5, "included": 200, "quota_reset_at": 0}
+                ],
+                "copilot_plan": "Individual",
+            },
+        )
+
+        with (
+            patch.object(
+                collector, "_get_token", new_callable=AsyncMock, return_value="ghp_testtoken"
+            ),
+            patch(
+                "app.services.collectors.github.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=copilot_user,
+            ) as mock_req,
+        ):
+            await collector._strategy_api(mock_http_client)
+
+        # Only copilot internal API called, /user skipped because identity was already shortcutted
+        assert mock_req.await_count == 1
+        assert collector.account_id == "pinned@example.com"
+
 
 class TestChatGPTCollector:
     """Test suite for ChatGPT collector."""

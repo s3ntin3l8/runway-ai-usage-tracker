@@ -189,8 +189,20 @@ class GitHubCollector(BaseCollector):
             # Try to discover identity — call the standard /user endpoint (not Copilot internal)
             identity = getattr(self, "_identity", None)
 
-            # Use sidecar-provided label if it looks like an email
-            if not identity and self.account_label and "@" in self.account_label:
+            # Use sidecar-provided label if it looks like an email — but only
+            # when the collector was explicitly spawned for that email account
+            # (account_id already matches the label).  A default collector must
+            # always hit the /user API; an email label leaked from another
+            # provider's token-cache metadata must not short-circuit identity
+            # resolution and cause cards to land under the wrong account_id.
+            if (
+                not identity
+                and self.account_label
+                and "@" in self.account_label
+                and self.account_id
+                and self.account_id not in ("default", "")
+                and normalize_account_id(self.account_label) == self.account_id
+            ):
                 identity = self.account_label
 
             login: str | None = None
@@ -281,7 +293,21 @@ class GitHubCollector(BaseCollector):
                 self._identity = identity
                 # Only update label if it's currently NOT set, empty string, or the placeholder 'Default'
                 # This allows clearing the field in settings to revert to auto-discovery.
-                if not self.account_label or self.account_label.lower() == "default":
+                # In addition, if this is a default collector whose account_label holds an email that
+                # does not match the real discovered identity (e.g. leaked from another provider's
+                # token cache), overwrite it so the card and cache metadata use the real identity.
+                is_default_collector = not self.account_id or self.account_id in ("default", "")
+                leaked_label = bool(
+                    is_default_collector
+                    and self.account_label
+                    and "@" in self.account_label
+                    and normalize_account_id(self.account_label) != normalize_account_id(identity)
+                )
+                if (
+                    not self.account_label
+                    or self.account_label.lower() == "default"
+                    or leaked_label
+                ):
                     self.account_label = identity
 
             # Stable account_id: email when discoverable (identity contains "@"), else the
