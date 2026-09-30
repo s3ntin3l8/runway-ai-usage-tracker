@@ -159,6 +159,18 @@ describe('DebugTab', () => {
     expect(api.fetchDebugRaw).not.toHaveBeenCalled();
   });
 
+  it('honors an explicit no-server-collector capability', () => {
+    const entry = fleetEntry({
+      server_collector_available: false,
+      critical_gauge: limitCard({ data_source: 'api' }),
+    });
+    renderWithProviders(
+      <DebugTab providerId="anthropic" accountId="me@example.com" entry={entry} active />,
+    );
+    expect(screen.getByText(/raw capture unavailable/i)).toBeInTheDocument();
+    expect(api.fetchDebugRaw).not.toHaveBeenCalled();
+  });
+
   it('allows capture for a local usage card when the provider has a server collector', () => {
     const localKimiEntry = fleetEntry({
       provider_id: 'kimi_coding',
@@ -226,7 +238,7 @@ describe('DebugTab', () => {
           cards_summary: [
             { service_name: 'Claude', remaining: '45%' },
             { service_name: 'Kimi', detail: 'Credential rejected', error_type: 'auth_failed' },
-            { service_name: 'Empty card' },
+            {},
           ],
           requests: [
             { method: 'GET', url: 'https://claude.ai/api/usage', timestamp: 1000 },
@@ -281,7 +293,7 @@ describe('DebugTab', () => {
     expect(screen.getByText('HTTPStatusError')).toBeInTheDocument();
     expect(screen.getByText('Credential rejected')).toBeInTheDocument();
     expect(screen.getByText('(auth_failed)')).toBeInTheDocument();
-    expect(screen.getByText('Empty card:')).toBeInTheDocument();
+    expect(screen.getByText('Card:')).toBeInTheDocument();
     expect(screen.getByText('returned')).toBeInTheDocument();
   });
 
