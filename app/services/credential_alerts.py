@@ -176,6 +176,8 @@ async def check_credential_alerts(session: Session) -> None:
     keys: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         if row.get("identity_pending"):
+            # Pending sources remain visible in Token Health, but cannot be
+            # matched safely to account-scoped webhooks until identity verifies.
             continue
         provider = row["provider"]
         underlying = _underlying_account(row["account_id"])

@@ -121,6 +121,107 @@ class TestTokenHealthService:
         assert r["can_refresh"] is True
 
     @pytest.mark.asyncio
+    async def test_keeps_healthy_aggregate_with_live_sidecar_source(self):
+        """A sidecar source must not hide an existing healthy account row."""
+        service = TokenHealthService()
+        valid_jwt = _make_jwt(time.time() + 86400 * 7)
+        mock_stats = {
+            "chatgpt": {
+                "alice@example.com": {
+                    "tokens": ["oauth_token"],
+                    "account_label": "Alice",
+                    "ttl_remaining": 900,
+                    "source": "server",
+                }
+            }
+        }
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value=mock_stats),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value={"oauth_token": valid_jwt}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(
+                    return_value=[
+                        {
+                            "source_id": "sidecar:host:cookie",
+                            "sidecar_id": "host",
+                            "credential_origin": "cookie:browser",
+                        }
+                    ]
+                ),
+            ),
+            patch("os.path.exists", return_value=False),
+            _mock_no_db_configs(),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["provider"] == "chatgpt"
+        assert result[0]["account_id"] == "alice@example.com"
+        assert result[0]["status"] == "valid"
+
+    @pytest.mark.asyncio
+    async def test_expired_sidecar_source_remains_visible_after_cache_expiry(self):
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.db import CredentialSource, SidecarRegistry
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="antigravity",
+            account_id="default",
+            source_id="sidecar:dev-01:oauth",
+            source_type="file",
+            source_label="oauth_creds.json",
+            credential_origin="path:/home/user/.config/agy/oauth_creds.json",
+            sidecar_id="dev-01",
+            credential_expires_at=datetime.now(UTC) - timedelta(days=1),
+            token_types_json='["oauth_token", "refresh_token"]',
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [
+            [sidecar],
+            [source],
+            [],
+        ]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch(
+                "app.services.token_health._collect_server_credentials",
+                return_value={},
+            ),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["provider"] == "antigravity"
+        assert result[0]["account_id"] == "default"
+        assert result[0]["account_label"] == "Pending identity"
+        assert result[0]["source_name"] == "dev-01"
+        assert result[0]["identity_pending"] is True
+        assert result[0]["status"] == "expired"
+        assert result[0]["token_types"] == ["oauth_token", "refresh_token"]
+
+    @pytest.mark.asyncio
     async def test_expired_token_status(self):
         service = TokenHealthService()
         past_exp = time.time() - 3600

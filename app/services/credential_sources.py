@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlmodel import Session, col, select
 
@@ -33,7 +35,7 @@ def sidecar_source_id(sidecar_id: str, origin: str | None) -> str:
     return f"sidecar:{digest}"
 
 
-def is_sidecar_source(source: dict[str, object]) -> bool:
+def is_sidecar_source(source: Mapping[str, Any]) -> bool:
     """Whether a credential source was reported by a sidecar.
 
     ``source_type`` describes the credential itself (file, env, cookie), not

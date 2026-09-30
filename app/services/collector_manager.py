@@ -29,6 +29,7 @@ from app.services.collectors.opencode import OpenCodeCollector
 from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.xai import XaiCollector
 from app.services.collectors.zai import ZaiCollector
+from app.services.credential_sources import is_sidecar_source
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import token_cache
 
@@ -36,8 +37,6 @@ logger = logging.getLogger(__name__)
 
 
 def _is_sidecar_credential_source(source: dict[str, Any]) -> bool:
-    from app.services.credential_sources import is_sidecar_source
-
     return is_sidecar_source(source)
 
 
@@ -235,10 +234,8 @@ class CollectorManager:
                     self.smart_collectors.pop(f"{p_id}:default:identity-pending", None)
                     continue
                 pending_sources = await token_cache.get_source_candidates(p_id, "default")
-                from app.services.credential_sources import is_sidecar_source
-
                 has_pending_source = any(
-                    is_sidecar_source(source)
+                    _is_sidecar_credential_source(source)
                     and source.get("credential_origin")
                     and source.get("identity_pending") is True
                     for source in pending_sources
@@ -927,30 +924,38 @@ class CollectorManager:
                             CredentialSource.source_id == candidate_id,
                         )
                     ).first()
+                    preference: tuple[bool, int] | None = None
                     if source is not None and old_account_id != target:
                         if existing_target is None:
+                            preference = (bool(source.enabled), int(source.priority))
                             source.account_id = target
                             session.add(source)
                         else:
+                            preference = (
+                                bool(existing_target.enabled),
+                                int(existing_target.priority),
+                            )
                             existing_target.credential_origin = source.credential_origin
                             existing_target.sidecar_id = source.sidecar_id
                             existing_target.source_type = source.source_type
                             existing_target.source_label = source.source_label
                             session.add(existing_target)
                             session.delete(source)
+                    else:
+                        preference = (
+                            (bool(source.enabled), int(source.priority))
+                            if source
+                            else (bool(existing_target.enabled), int(existing_target.priority))
+                            if existing_target
+                            else None
+                        )
                     moves.append(
                         (
                             pid,
                             candidate_id,
                             target,
                             old_account_id,
-                            (
-                                (bool(source.enabled), int(source.priority))
-                                if source
-                                else (bool(existing_target.enabled), int(existing_target.priority))
-                                if existing_target
-                                else None
-                            ),
+                            preference,
                         )
                     )
                 session.commit()

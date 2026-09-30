@@ -1774,6 +1774,23 @@ class TestPostCredentialManifest:
         }
         assert "private-token-value" not in json.dumps(observation)
 
+    def test_health_observation_accepts_epoch_zero_jwt_expiry(self):
+        header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
+        epoch_payload = base64.urlsafe_b64encode(b'{"exp":0}').rstrip(b"=").decode()
+        later_payload = base64.urlsafe_b64encode(b'{"exp":123}').rstrip(b"=").decode()
+        metadata = {
+            "provider_id": "chatgpt",
+            "credential_origin": "path:/auth.json",
+            "id_token": f"{header}.{epoch_payload}.sig",
+            "oauth_token": f"{header}.{later_payload}.sig",
+        }
+
+        observation = sidecar._credential_health_observations(
+            [{"remaining": "Token", "unit": "oauth", "metadata": metadata}]
+        )[0]
+
+        assert observation["expires_at"] == 0
+
     def test_consumes_resolved_field_into_callback(self, monkeypatch):
         """The server's ``resolved`` map is delivered to ``on_resolved``
         so the local hint cache merges operator tags on the same cycle

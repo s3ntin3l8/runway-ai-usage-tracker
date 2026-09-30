@@ -700,6 +700,15 @@ def _account_tag_hints_for_providers(
 # silent-listener loop without touching identity-local discovery paths.
 
 
+class CredentialHealthObservation(BaseModel):
+    """Non-secret health metadata for one sidecar credential source."""
+
+    provider_id: str
+    credential_origin: str
+    token_types: list[str] = Field(default_factory=list)
+    expires_at: float | None = None
+
+
 class CredentialManifestRequest(BaseModel):
     """Body shape for POST /fleet/credentials/manifest."""
 
@@ -709,7 +718,7 @@ class CredentialManifestRequest(BaseModel):
     # Older sidecars omit this field; their partial manifests are upsert-only.
     completed_providers: list[str] | None = None
     # Safe source metadata only: never include credential values.
-    observations: list[dict[str, Any]] = Field(default_factory=list)
+    observations: list[CredentialHealthObservation] = Field(default_factory=list)
 
 
 @router.post("/credentials/manifest")
@@ -754,42 +763,34 @@ async def post_credential_manifest(
     from app.services.credential_sources import describe_origin, sidecar_source_id, touch_source
 
     for observation in payload.observations:
-        provider_id = observation.get("provider_id")
-        origin = observation.get("credential_origin")
-        if (
-            not isinstance(provider_id, str)
-            or not provider_id
-            or not isinstance(origin, str)
-            or not origin
-        ):
+        observation_provider = observation.provider_id
+        observation_origin = observation.credential_origin
+        if not observation_provider or not observation_origin:
             continue
-        source_type, source_label = describe_origin(origin)
-        expiry = observation.get("expires_at")
+        source_type, source_label = describe_origin(observation_origin)
         try:
             expires_at = (
-                datetime.fromtimestamp(float(expiry), tz=UTC) if expiry is not None else None
+                datetime.fromtimestamp(observation.expires_at, tz=UTC)
+                if observation.expires_at is not None
+                else None
             )
         except (TypeError, ValueError, OverflowError, OSError):
             expires_at = None
-        token_types = observation.get("token_types")
-        if not isinstance(token_types, list) or not all(
-            isinstance(item, str) for item in token_types
-        ):
-            token_types = []
+        token_types = observation.token_types
         tag = CredentialTagRepo.get(
             session,
-            provider_id=provider_id,
-            credential_origin=origin,
+            provider_id=observation_provider,
+            credential_origin=observation_origin,
             sidecar_id=payload.sidecar_id,
         )
         touch_source(
             session,
-            provider_id=provider_id,
+            provider_id=observation_provider,
             account_id=tag.account_id if tag else "default",
-            source_id=sidecar_source_id(payload.sidecar_id, origin),
+            source_id=sidecar_source_id(payload.sidecar_id, observation_origin),
             source_type=source_type,
             source_label=source_label,
-            credential_origin=origin,
+            credential_origin=observation_origin,
             sidecar_id=payload.sidecar_id,
             credential_expires_at=expires_at,
             token_types=token_types,

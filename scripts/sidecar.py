@@ -3358,7 +3358,9 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
                     expires_at = candidate
                     break
             except (TypeError, ValueError):
-                pass
+                # Malformed optional expiry metadata should not hide another
+                # usable expiry field on this same credential.
+                continue
         if expires_at is None:
             for key in ("id_token", "oauth_token", "cli_access_token", "access_token"):
                 token = metadata.get(key)
@@ -3369,7 +3371,7 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
                     payload += "=" * (-len(payload) % 4)
                     exp = json.loads(base64.urlsafe_b64decode(payload.encode())).get("exp")
                     expires_at = float(exp) if exp is not None else None
-                    if expires_at:
+                    if expires_at is not None:
                         break
                 except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
                     continue

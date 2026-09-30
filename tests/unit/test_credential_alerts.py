@@ -130,6 +130,17 @@ async def test_fires_on_non_rollable_expired(session):
 
 
 @pytest.mark.asyncio
+async def test_pending_expired_identity_is_visible_but_not_account_alerted(session):
+    _config(session)
+    pending = {**_row(status="expired"), "identity_pending": True}
+
+    client = await _run(session, [pending])
+
+    assert not client.post.called
+    assert session.exec(select(WebhookCredentialAlert)).all() == []
+
+
+@pytest.mark.asyncio
 async def test_rollable_expired_does_not_fire(session):
     """A refresh_token-bearing expired row is a normal OAuth rollover, not a rejection."""
     _config(session)
