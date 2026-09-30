@@ -261,7 +261,7 @@ def test_manifest_503_when_ingest_key_missing(monkeypatch):
 
 
 def test_claude_manifest_only_surfaces_unmatched_oauth_account(client, session):
-    from app.services.credential_tags import PendingCredentialTagRepo
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
 
     _add_provider_config(session, provider_id="anthropic", account_id="alice@example.com")
     body = {
@@ -286,9 +286,50 @@ def test_claude_manifest_only_surfaces_unmatched_oauth_account(client, session):
     pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
     assert [row.credential_origin for row in pending] == ["path:/bob"]
     assert pending[0].claimed_account_id == "bob@example.com"
+    matched = CredentialTagRepo.get(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/alice",
+        sidecar_id="alpha-host",
+    )
+    assert matched is not None
+    assert matched.account_id == "alice@example.com"
+    assert matched.set_by == "identity_claim"
+    assert (
+        CredentialTagRepo.list_pending_payload(
+            session, providers=["anthropic"], sidecar_id="alpha-host"
+        )
+        == {}
+    )
+
+    # Automatic claim records are refreshed from current account configuration;
+    # they do not become sticky operator assignments if the account is disabled.
+    alice = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == "anthropic",
+            ProviderConfig.account_id == "alice@example.com",
+        )
+    ).one()
+    alice.enabled = False
+    session.add(alice)
+    session.commit()
+    _post_manifest(client, body)
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert {row.credential_origin for row in pending} == {"path:/alice", "path:/bob"}
+    assert (
+        CredentialTagRepo.get(
+            session,
+            provider_id="anthropic",
+            credential_origin="path:/alice",
+            sidecar_id="alpha-host",
+        )
+        is None
+    )
     listed = client.get("/api/v1/fleet/credentials/tags/pending")
     assert listed.status_code == 200
-    assert listed.json()["items"][0]["claimed_account_id"] == "bob@example.com"
+    assert {
+        item["credential_origin"]: item["claimed_account_id"] for item in listed.json()["items"]
+    } == {"path:/alice": "alice@example.com", "path:/bob": "bob@example.com"}
 
 
 def test_manifest_401_on_bad_signature(client: TestClient):

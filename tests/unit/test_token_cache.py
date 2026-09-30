@@ -71,6 +71,30 @@ async def test_identity_pending_anthropic_source_uses_stable_source_id(cache):
 
 
 @pytest.mark.asyncio
+async def test_retiring_pending_source_drops_rotated_oauth_but_keeps_cookie(cache):
+    source_id = "sidecar:stable-origin"
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "old-token", "refresh_token": "old-refresh"},  # pragma: allowlist secret
+        account_id=source_id,
+        source_id=source_id,
+        source_metadata={"identity_pending": True, "sidecar_id": "host-a"},
+    )
+    cache._cache.setdefault("anthropic", {})[source_id] = (
+        {
+            "oauth_token": "rotated-token",
+            "refresh_token": "rotated-refresh",  # pragma: allowlist secret
+            "cookie_sessionKey": "independent-cookie",
+        },
+        {"identity_pending": True},
+        time.time(),
+    )
+
+    assert await cache.remove_source("anthropic", source_id, source_id, retire_matching_oauth=True)
+    assert await cache.get("anthropic", source_id) == {"cookie_sessionKey": "independent-cookie"}
+
+
+@pytest.mark.asyncio
 async def test_identity_pending_source_stays_hidden_until_promoted(cache):
     await cache.store(
         "antigravity",

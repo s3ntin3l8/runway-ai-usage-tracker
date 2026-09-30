@@ -164,6 +164,8 @@ async def check_credential_alerts(session: Session) -> None:
     }
 
     rows = await token_health_service.get_health()
+    # Unassigned sources have no account to notify; Token Health still shows
+    # them with an explicit Fleet assignment link.
     rows = [row for row in rows if not row.get("assignment_pending")]
     if not rows:
         return

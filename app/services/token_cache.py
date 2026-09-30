@@ -556,24 +556,34 @@ class TokenCache:
             source_tokens = sources[source_id][0]
             if retire_matching_oauth:
                 aggregate = self._cache.get(provider, {}).get(account_id)
-                if aggregate and any(
-                    source_tokens.get(key) and source_tokens[key] == aggregate[0].get(key)
-                    for key in ("oauth_token", "refresh_token")
-                ):
+                if aggregate:
                     tokens, metadata, timestamp = aggregate
                     key_timestamps = self._token_timestamps.get(provider, {}).get(account_id, {})
-                    for key in _OAUTH_CREDENTIAL_KEYS | {"access_token"}:
+                    # A pending Claude source uses its source_id as the account
+                    # key, so that aggregate belongs exclusively to this source.
+                    # For shared account aggregates, remove only OAuth fields
+                    # whose values still match the source being retired.
+                    retire_all_oauth = account_id == source_id
+                    oauth_keys = _OAUTH_CREDENTIAL_KEYS | {"access_token"}
+                    keys_to_remove = {
+                        key
+                        for key in oauth_keys
+                        if retire_all_oauth
+                        or (source_tokens.get(key) and source_tokens[key] == tokens.get(key))
+                    }
+                    for key in keys_to_remove:
                         tokens.pop(key, None)
                         key_timestamps.pop(key, None)
-                    metadata = {**metadata, "identity_pending": False}
-                    if tokens:
-                        self._cache[provider][account_id] = (tokens, metadata, timestamp)
-                    else:
-                        del self._cache[provider][account_id]
-                        self._token_timestamps.get(provider, {}).pop(account_id, None)
-                        if not self._cache[provider]:
-                            del self._cache[provider]
-                            self._token_timestamps.pop(provider, None)
+                    if keys_to_remove:
+                        metadata = {**metadata, "identity_pending": False}
+                        if tokens:
+                            self._cache[provider][account_id] = (tokens, metadata, timestamp)
+                        else:
+                            del self._cache[provider][account_id]
+                            self._token_timestamps.get(provider, {}).pop(account_id, None)
+                            if not self._cache[provider]:
+                                del self._cache[provider]
+                                self._token_timestamps.pop(provider, None)
             del sources[source_id]
             if not sources:
                 self._source_cache[provider].pop(account_id, None)

@@ -150,7 +150,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         credential_origin=credential_origin,
                         sidecar_id=payload.sidecar_id,
                     )
-                    if verified_tag is not None:
+                    if verified_tag is not None and verified_tag.set_by != "identity_claim":
                         acc_id = verified_tag.account_id
                         identity_pending = False
                 if provider_id == "anthropic" and credential_origin and payload.sidecar_id:
@@ -164,7 +164,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         credential_origin=credential_origin,
                         sidecar_id=payload.sidecar_id,
                     )
-                    if tagged is not None:
+                    if tagged is not None and tagged.set_by != "identity_claim":
                         acc_id = tagged.account_id
                         identity_pending = False
                     elif card.unit == "oauth":
@@ -749,12 +749,13 @@ async def post_credential_manifest(
         if not isinstance(origin, str) or not origin:
             continue
         entries_received += 1
-        if CredentialTagRepo.get(
+        existing_tag = CredentialTagRepo.get(
             session,
             provider_id=provider_id,
             credential_origin=origin,
             sidecar_id=payload.sidecar_id,
-        ):
+        )
+        if existing_tag is not None and existing_tag.set_by != "identity_claim":
             # A prior operator assignment or source-verified identity already
             # resolves this origin. Do not re-open it as pending each heartbeat.
             PendingCredentialTagRepo.delete(
@@ -774,6 +775,14 @@ async def post_credential_manifest(
                 )
             ).first()
             if matched is not None:
+                CredentialTagRepo.set_tag(
+                    session,
+                    provider_id=provider_id,
+                    credential_origin=origin,
+                    account_id=canonical_account_id(claimed_id),
+                    sidecar_id=payload.sidecar_id,
+                    set_by="identity_claim",
+                )
                 PendingCredentialTagRepo.delete(
                     session,
                     sidecar_id=payload.sidecar_id,
@@ -781,6 +790,16 @@ async def post_credential_manifest(
                     credential_origin=origin,
                 )
                 continue
+        if existing_tag is not None and existing_tag.set_by == "identity_claim":
+            # Identity-claim rows are a visible record of automatic matching,
+            # not durable operator assignments. Drop a stale claim so the
+            # origin can return to the pending queue after account changes.
+            CredentialTagRepo.delete_tag_in_scope(
+                session,
+                provider_id=provider_id,
+                credential_origin=origin,
+                sidecar_id=payload.sidecar_id,
+            )
         keep_by_provider.setdefault(provider_id, set()).add(origin)
         pending = PendingCredentialTagRepo.upsert(
             session,
