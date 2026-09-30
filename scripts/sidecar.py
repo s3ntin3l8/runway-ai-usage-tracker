@@ -3313,6 +3313,8 @@ def _hermes_account_identity() -> str:
 def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return source ids, token types, and expiry only; never return token values.
 
+    Only the ``oauth``, ``api_key``, and ``cookie`` token-card units emitted by
+    the sidecar are treated as credential observations.
     A decoded expiry of zero is retained as the Unix epoch, marking the token
     expired rather than treating the claim as missing.
     """

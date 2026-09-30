@@ -635,7 +635,7 @@ class TokenCache:
             if existing_target:
                 target_tokens, target_metadata, target_timestamp = existing_target
                 merged_tokens = dict(target_tokens)
-                incoming_is_staler = self._is_staler(tokens, target_tokens)
+                target_oauth_is_fresher = self._is_staler(tokens, target_tokens)
                 for key, value in tokens.items():
                     if key in merged_tokens:
                         if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
@@ -643,7 +643,7 @@ class TokenCache:
                         ):
                             merged_tokens[key] = value
                         continue
-                    if incoming_is_staler and key in _OAUTH_CREDENTIAL_KEYS:
+                    if target_oauth_is_fresher and key in _OAUTH_CREDENTIAL_KEYS:
                         continue
                     merged_tokens[key] = value
                 merged_metadata = {**metadata, **target_metadata, "identity_pending": False}

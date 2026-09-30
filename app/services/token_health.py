@@ -249,8 +249,8 @@ class TokenHealthService:
                 durable_sources = [
                     item
                     for item in durable_sources
-                    # Require the exact mapped row type so future CredentialSource
-                    # subclasses do not accidentally become sidecar health rows.
+                    # Prevent future CredentialSource subclasses with different
+                    # field contracts from leaking rows without required strings.
                     if type(item) is CredentialSource
                     and isinstance(item.provider_id, str)
                     and isinstance(item.source_id, str)
