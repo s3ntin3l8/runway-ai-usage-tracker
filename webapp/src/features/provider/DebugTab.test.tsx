@@ -159,21 +159,86 @@ describe('DebugTab', () => {
     expect(api.fetchDebugRaw).not.toHaveBeenCalled();
   });
 
+  it('honors an explicit no-server-collector capability', () => {
+    const entry = fleetEntry({
+      server_collector_available: false,
+      critical_gauge: limitCard({ data_source: 'api' }),
+    });
+    renderWithProviders(
+      <DebugTab providerId="anthropic" accountId="me@example.com" entry={entry} active />,
+    );
+    expect(screen.getByText(/raw capture unavailable/i)).toBeInTheDocument();
+    expect(api.fetchDebugRaw).not.toHaveBeenCalled();
+  });
+
+  it('allows capture for a local usage card when the provider has a server collector', () => {
+    const localKimiEntry = fleetEntry({
+      provider_id: 'kimi_coding',
+      server_collector_available: true,
+      critical_gauge: limitCard({
+        provider_id: 'kimi_coding',
+        data_source: 'local',
+        input_source: 'sidecar',
+        is_unlimited: true,
+        window_type: 'lifetime',
+      }),
+    });
+    renderWithProviders(
+      <DebugTab
+        providerId="kimi_coding"
+        accountId="me@example.com"
+        entry={localKimiEntry}
+        active
+      />,
+    );
+    expect(screen.getByText(/usage only · quota unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/capture raw collector output/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      label: 'unlimited',
+      gauge: limitCard({ data_source: 'api', is_unlimited: true }),
+      expected: 'unlimited',
+    },
+    {
+      label: 'error',
+      gauge: limitCard({ data_source: 'api', error_type: 'api_error' }),
+      expected: 'error',
+    },
+    {
+      label: 'quota',
+      gauge: limitCard({ data_source: 'api', is_unlimited: false }),
+      expected: 'quota',
+    },
+  ])('labels a registered API card as $label', ({ gauge, expected }) => {
+    const entry = fleetEntry({
+      server_collector_available: true,
+      critical_gauge: gauge,
+    });
+    renderWithProviders(
+      <DebugTab providerId="anthropic" accountId="me@example.com" entry={entry} active />,
+    );
+    expect(screen.getByText(expected, { selector: 'dd' })).toBeInTheDocument();
+  });
+
   it('runs the capture and renders the strategy accordion', async () => {
     const mockData: DebugRawResponse = {
       provider_id: 'anthropic',
       is_configured: true,
       credentials: { token_found: true, token_source: 'config' },
       active_strategy: 'web',
-      active_strategy_card_count: 2,
+      active_strategy_card_count: 3,
       strategies: {
         web: {
           label: 'Web API (web)',
           kind: 'primary',
           status: 'success',
-          cards_returned: 2,
+          cards_returned: 3,
           cards_summary: [
             { service_name: 'Claude', remaining: '45%' },
+            { service_name: 'Kimi', detail: 'Credential rejected', error_type: 'auth_failed' },
+            {},
           ],
           requests: [
             { method: 'GET', url: 'https://claude.ai/api/usage', timestamp: 1000 },
@@ -208,11 +273,14 @@ describe('DebugTab', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /run capture/i }));
     expect(await screen.findByText('Raw collector exchange')).toBeInTheDocument();
-    await waitFor(() => expect(api.fetchDebugRaw).toHaveBeenCalledWith('anthropic'));
+    await waitFor(() =>
+      expect(api.fetchDebugRaw).toHaveBeenCalledWith('anthropic', 'me@example.com'),
+    );
 
     // Strategy sections rendered
     expect(screen.getByText('Web API (web)')).toBeInTheDocument();
     expect(screen.getByText('OAuth API (api)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Web API \(web\)/i }));
 
     // Kind badges
     expect(screen.getAllByText('primary')).toHaveLength(2);
@@ -223,6 +291,10 @@ describe('DebugTab', () => {
     // Status badges
     expect(screen.getByText('success')).toBeInTheDocument();
     expect(screen.getByText('HTTPStatusError')).toBeInTheDocument();
+    expect(screen.getByText('Credential rejected')).toBeInTheDocument();
+    expect(screen.getByText('(auth_failed)')).toBeInTheDocument();
+    expect(screen.getByText('Card:')).toBeInTheDocument();
+    expect(screen.getByText('returned')).toBeInTheDocument();
   });
 
   it('shows a failure state with retry on error', async () => {

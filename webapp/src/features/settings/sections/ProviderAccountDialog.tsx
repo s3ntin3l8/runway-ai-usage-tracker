@@ -558,6 +558,8 @@ function SortableCredentialSourceRow({
           {source.available
             ? source.health === 'auth_failed'
               ? 'Authentication failed'
+              : source.health === 'degraded'
+                ? 'Quota collected; some requests were rejected'
               : 'Available'
             : source.source_type === 'config'
               ? 'Manual configuration is not currently available'

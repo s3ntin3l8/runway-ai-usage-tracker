@@ -2875,11 +2875,62 @@ class TestKimiCodingCollector:
         assert all("@" not in str(c.get("account_label") or "") for c in result)
 
     @pytest.mark.asyncio
-    async def test_collect_api_key_401_error_card(self, mock_http_client):
-        """401 with an explicit API key -> invalid-key error card, no cookie fallthrough."""
+    async def test_collect_api_key_401_falls_back_to_web_cookie(self, mock_http_client):
+        """A rejected API key does not prevent a working web cookie from collecting quota."""
         collector = KimiCodingCollector()
         patchers = [
             self._patch_credentials(api_key="bad_key", session_cookie="jwt_cookie"),
+            self._mock_settings(),
+        ]
+        self._http_router(
+            mock_http_client,
+            [
+                ("/coding/v1/usages", 401),
+                ("GetUsages", self.WEB_USAGES_RESPONSE),
+                ("GetSubscriptionStats", self.WEB_STATS_RESPONSE),
+                ("GetSubscription", self.WEB_SUBSCRIPTION_RESPONSE),
+            ],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert result
+        assert all(card.get("remaining") != "ERR" for card in result)
+        assert any(card.get("data_source") == "web" for card in result)
+
+    @pytest.mark.asyncio
+    async def test_collect_both_kimi_strategies_auth_failed(self, mock_http_client):
+        """When both configured Kimi credentials are rejected, surface auth failure."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="bad_key", session_cookie="bad_cookie"),
+            self._mock_settings(),
+        ]
+        self._http_router(
+            mock_http_client,
+            [("/coding/v1/usages", 401), ("GetUsages", 401)],
+        )
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert result[0]["error_type"] == "auth_failed"
+
+    @pytest.mark.asyncio
+    async def test_collect_api_key_401_without_fallback_returns_auth_failed(self, mock_http_client):
+        """A rejected API key still surfaces auth failure when no web credential exists."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="bad_key"),
             self._mock_settings(),
         ]
         self._http_router(mock_http_client, [("/coding/v1/usages", 401)])

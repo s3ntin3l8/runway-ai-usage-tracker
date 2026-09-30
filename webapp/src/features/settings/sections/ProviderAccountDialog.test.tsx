@@ -127,10 +127,21 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
               source_label: 'CLI credentials',
               sidecar_id: 'laptop',
               enabled: true,
-              priority: 1,
+              priority: 2,
               last_seen: null,
               health: 'unavailable',
               available: false,
+            },
+            {
+              source_id: 'sidecar:partial',
+              source_type: 'sidecar',
+              source_label: 'Partially successful collector',
+              sidecar_id: 'server',
+              enabled: true,
+              priority: 1,
+              last_seen: null,
+              health: 'degraded',
+              available: true,
             },
             {
               source_id: 'config:anthropic:alice@example.com',
@@ -138,7 +149,7 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
               source_label: 'Manual configuration',
               sidecar_id: null,
               enabled: true,
-              priority: 2,
+              priority: 3,
               last_seen: null,
               health: 'unavailable',
               available: false,
@@ -153,6 +164,7 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
 
     expect(screen.getByText('Browser cookie')).toBeInTheDocument();
     expect(screen.getByText('Available')).toBeInTheDocument();
+    expect(screen.getByText('Quota collected; some requests were rejected')).toBeInTheDocument();
     expect(screen.getByText('Sidecar unavailable or credential expired')).toBeInTheDocument();
     expect(screen.getByText('Manual configuration is not currently available')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('switch', { name: 'Enable Browser cookie' }));
@@ -163,8 +175,9 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
       'alice@example.com',
       [
         { source_id: 'sidecar:browser', enabled: false, priority: 0 },
-        { source_id: 'sidecar:cli', enabled: true, priority: 1 },
-        { source_id: 'config:anthropic:alice@example.com', enabled: true, priority: 2 },
+        { source_id: 'sidecar:partial', enabled: true, priority: 1 },
+        { source_id: 'sidecar:cli', enabled: true, priority: 2 },
+        { source_id: 'config:anthropic:alice@example.com', enabled: true, priority: 3 },
       ],
       false,
     ));

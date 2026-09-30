@@ -638,13 +638,27 @@ class CollectorManager:
                     )
                     health_updates[candidate["source_id"]] = "unavailable"
                     continue
-            if attempt["auth_failed"]:
+            result_failed = not result or any(
+                card.get("data_source") == "error"
+                or card.get("remaining") == "ERR"
+                or card.get("error_type") in {"api_error", "parse_error"}
+                for card in result
+            )
+            if attempt["auth_failed"] and result_failed:
                 health_updates[candidate["source_id"]] = "auth_failed"
                 continue
-            if any(card.get("error_type") in {"api_error", "parse_error"} for card in result):
+            if attempt["auth_failed"]:
+                # An optional request or a refresh retry may return 401 even
+                # though the collector produced usable quota. Keep the data;
+                # preserve the partial failure for the source diagnostics.
+                health_updates[candidate["source_id"]] = "degraded"
+            if result_failed and any(
+                card.get("error_type") in {"api_error", "parse_error"} for card in result
+            ):
                 health_updates[candidate["source_id"]] = "unavailable"
                 continue
-            health_updates[candidate["source_id"]] = "healthy"
+            if not attempt["auth_failed"]:
+                health_updates[candidate["source_id"]] = "healthy"
             # A provider may learn a stable identity only after calling its
             # upstream API (Antigravity userinfo is one example). Bind that
             # identity to the exact source used for this successful attempt.
@@ -896,6 +910,7 @@ class CollectorManager:
                 row.health_detail = {
                     "auth_failed": "Authentication failed",
                     "unavailable": "Collection failed",
+                    "degraded": "Some requests were rejected; quota was collected",
                 }.get(health)
                 session.add(row)
             session.commit()

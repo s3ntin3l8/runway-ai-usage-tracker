@@ -116,7 +116,6 @@ class KimiCodingCollector(BaseCollector):
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
         self._ephemeral_device_id: str | None = None
-        self._api_key_auth_failed = False
         # Set when a CLI credential file exists but its access token is past
         # expires_at — surfaces a re-login hint instead of a silent no-card.
         self._stale_cli_token = False
@@ -154,16 +153,6 @@ class KimiCodingCollector(BaseCollector):
                 logger.warning("Kimi Coding strategy %s failed: %s", s_id, e)
                 self._record_strategy_error(e)
                 continue
-
-            # An explicit API key that gets rejected is authoritative — surface
-            # the invalid-key error instead of silently falling back to web.
-            if (
-                s_id == "api"
-                and results
-                and results[0].get("error_type") == "auth_failed"
-                and self._api_key_auth_failed
-            ):
-                return self._tag_results([results[0]])
 
             if self._is_error_result(results):
                 if results:
@@ -390,7 +379,6 @@ class KimiCodingCollector(BaseCollector):
 
     async def _strategy_code_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect via the Kimi Code API (API key or CLI access token)."""
-        self._api_key_auth_failed = False
         resolved = await self._resolve_code_bearer()
         if resolved is None:
             return []
@@ -410,11 +398,6 @@ class KimiCodingCollector(BaseCollector):
             return []
 
         if resp.status_code == 401 and not is_cli:
-            # Only an *explicit* key (UI paste / env) is authoritative for
-            # suppressing the web fallback below. A sidecar-discovered key
-            # that 401s must not mask a working cookie card.
-            if input_source in (self.INPUT_SOURCE_CONFIG, self.INPUT_SOURCE_SERVER):
-                self._api_key_auth_failed = True
             return [
                 error_card(
                     "Kimi Coding",

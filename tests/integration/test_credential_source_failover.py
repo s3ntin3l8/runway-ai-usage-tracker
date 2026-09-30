@@ -39,6 +39,9 @@ class _CredentialProbeCollector:
         if value == "rejected":
             await self.cache.observe_response(SimpleNamespace(status_code=401))
             return [{"remaining": "ERR", "error_type": "auth_failed"}]
+        if value == "partial":
+            await self.cache.observe_response(SimpleNamespace(status_code=401))
+            return [{"remaining": "healthy", "data_source": "api"}]
         return [{"remaining": "healthy", "data_source": "api"}]
 
     async def reset(self) -> None:
@@ -168,6 +171,36 @@ async def test_collector_returns_empty_when_all_sources_fail_auth(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_usable_result_survives_other_401_in_same_source(monkeypatch):
+    cache = TokenCache()
+    await cache.store(
+        "openrouter",
+        {"api_key": "partial"},  # pragma: allowlist secret — fake value for partial-failure test
+        account_id="alice@example.com",
+        source_id="one-source",
+        source_metadata={"enabled": True, "priority": 0},
+    )
+    collector = _CredentialProbeCollector(cache)
+    manager = CollectorManager()
+    health_writes: list[dict[str, str]] = []
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr(
+        manager,
+        "_record_source_health",
+        lambda _provider, _account, updates: health_writes.append(dict(updates)),
+    )
+    manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
+        collector, "OpenRouter", ttl=0
+    )
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert result == [{"remaining": "healthy", "data_source": "api"}]
+    assert health_writes == [{"one-source": "degraded"}]
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_collector_continues_after_non_auth_source_error(monkeypatch):
     cache = TokenCache()
     for source_id, value, priority in (("first", "broken", 0), ("last", "working", 1)):
@@ -263,6 +296,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
                 source_label="host-a",
                 credential_origin=origin,
                 sidecar_id="host-a",
+                last_seen=datetime(2026, 9, 29, tzinfo=UTC),
             )
         )
         session.add(

@@ -141,4 +141,9 @@ def test_record_source_health_updates_only_matching_source():
         session.refresh(row)
         assert row.health == "unavailable"
         assert row.health_detail == "Collection failed"
+        record_source_health(session, "openrouter", "alice@example.com", "host-a", "degraded")
+        session.commit()
+        session.refresh(row)
+        assert row.health == "degraded"
+        assert row.health_detail == "Some requests were rejected; quota was collected"
         record_source_health(session, "openrouter", "alice@example.com", "unknown", "healthy")

@@ -74,6 +74,7 @@ export interface WindowAggregation {
 export interface FleetEntry {
   provider_id: string;
   account_id: string;
+  server_collector_available?: boolean;
   billing_type?: 'unknown' | 'subscription' | 'pay_as_you_go';
   critical_gauge: LimitCard;
   secondary_limits: LimitCard[];
@@ -956,7 +957,12 @@ export interface StrategyCapture {
   kind: 'primary' | 'enrichment';
   status: 'success' | 'error' | 'skipped';
   cards_returned: number;
-  cards_summary: Array<{ service_name?: string; remaining?: string }>;
+  cards_summary: Array<{
+    service_name?: string;
+    remaining?: string;
+    error_type?: string;
+    detail?: string;
+  }>;
   requests: StrategyCaptureRequest[];
   responses: StrategyCaptureResponse[];
   errors: StrategyCaptureError[];
@@ -964,6 +970,7 @@ export interface StrategyCapture {
 
 export interface DebugRawResponse {
   provider_id: string;
+  account_id?: string | null;
   is_configured: boolean;
   credentials: { token_found: boolean; token_source: string | null };
   active_strategy: string | null;

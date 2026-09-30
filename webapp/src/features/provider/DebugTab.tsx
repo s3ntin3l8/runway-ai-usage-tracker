@@ -35,19 +35,18 @@ export function DebugTab({
   active: boolean;
 }) {
   const g = entry.critical_gauge;
-  // Raw capture replays a server-side api/web collector. Providers whose
-  // critical gauge has data_source='local' are sidecar-only (enrichment-only
-  // providers like OpenCode events) and have no server collector.
-  // input_source='sidecar' only means credentials came from a remote agent;
-  // the server still makes the HTTP calls, so capture is supported.
-  const captureSupported = g.data_source !== 'local';
+  // Local event cards can be synthesized for registered quota providers when
+  // their server collector has not returned a quota card yet. Use capability
+  // from the fleet registry when available; fall back for older API responses.
+  const captureSupported = entry.server_collector_available ?? g.data_source !== 'local';
 
   return (
     <div className="flex flex-col gap-4">
-      <SourcePane entry={entry} />
+      <SourcePane entry={entry} captureSupported={captureSupported} />
       <TokenHealthPane providerId={providerId} accountId={accountId} />
       <RawCapturePane
         providerId={providerId}
+        accountId={accountId}
         active={active}
         captureSupported={captureSupported}
       />
@@ -57,14 +56,21 @@ export function DebugTab({
 
 // "Authoritative source": where this provider's primary card came from, and
 // the poll cadence behind it — read straight off the critical_gauge.
-function SourcePane({ entry }: { entry: FleetEntry }) {
+function SourcePane({ entry, captureSupported }: { entry: FleetEntry; captureSupported: boolean }) {
   const g = entry.critical_gauge;
   const source = [g.data_source, g.input_source].filter(Boolean).join(' · ') || '—';
+  const kind = captureSupported && g.data_source === 'local'
+    ? 'usage only · quota unavailable'
+    : g.is_unlimited
+      ? 'unlimited'
+      : g.error_type
+        ? 'error'
+        : 'quota';
   const rows: [string, string][] = [
     ['Account', g.account_label || entry.account_id],
     ['Plan', g.tier || '—'],
     ['Window', g.window_type || '—'],
-    ['Kind', g.is_unlimited ? 'unlimited' : g.error_type ? 'error' : 'quota'],
+    ['Kind', kind],
     ['Source', source],
     ['Cache TTL', g.cache_ttl_seconds != null ? `${g.cache_ttl_seconds}s` : '—'],
     ['Last poll', g.fetched_at ? timeAgo(g.fetched_at) : '—'],
@@ -179,22 +185,24 @@ function tokenStatus(status: TokenHealthStatus): QuotaStatus {
 
 function RawCapturePane({
   providerId,
+  accountId,
   active,
   captureSupported,
 }: {
   providerId: string;
+  accountId: string;
   active: boolean;
   captureSupported: boolean;
 }) {
   const [requested, setRequested] = useState(false);
-  const debug = useDebugRaw(providerId, captureSupported && active && requested);
+  const debug = useDebugRaw(providerId, accountId, captureSupported && active && requested);
 
   if (!captureSupported) {
     return (
       <EmptyState
         icon={Bug}
         title="Raw capture unavailable"
-        description={`${providerId} is enrichment-only (sidecar-side event extraction) — there is no server-side HTTP exchange to capture.`}
+        description={`${providerId} has no server quota collector, so there is no server-side HTTP exchange to capture.`}
       />
     );
   }
@@ -318,6 +326,17 @@ function StrategySection({
               {capture.errors.map((e, i) => (
                 <div key={i} className="mb-1 text-[12px] text-critical">
                   <strong>{e.type}:</strong> {e.message}
+                </div>
+              ))}
+            </Section>
+          )}
+          {capture.cards_summary.length > 0 && (
+            <Section title={`Collector result (${capture.cards_summary.length})`} defaultOpen>
+              {capture.cards_summary.map((card, i) => (
+                <div key={i} className="mb-1 text-[12px]">
+                  <strong>{card.service_name || 'Card'}:</strong>{' '}
+                  {card.detail || card.remaining || 'returned'}
+                  {card.error_type ? <span className="ml-1 text-critical">({card.error_type})</span> : null}
                 </div>
               ))}
             </Section>
