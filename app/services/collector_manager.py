@@ -685,6 +685,7 @@ class CollectorManager:
             has_auth_failure = attempt["auth_failed"] or any(
                 card.get("error_type") in {"auth_failed", "invalid_api_key"} for card in result
             )
+            # Keep the last useful failure card if a later source fails silently.
             if has_auth_failure and result_failed:
                 health_updates[candidate["source_id"]] = "auth_failed"
                 last_failure_result = result or last_failure_result
@@ -702,8 +703,7 @@ class CollectorManager:
                 # The 'unavailable' status persists across polls until overwritten by the next
                 # successful collection pass.
                 health_updates[candidate["source_id"]] = "unavailable"
-                if result:
-                    last_failure_result = result
+                last_failure_result = result or last_failure_result
                 continue
             if not attempt["auth_failed"]:
                 health_updates[candidate["source_id"]] = "healthy"

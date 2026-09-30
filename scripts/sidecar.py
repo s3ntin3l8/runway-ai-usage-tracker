@@ -3319,6 +3319,8 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
     expired rather than treating the claim as missing.
     """
 
+    # Load shared server utilities only when manifest observations are built,
+    # keeping sidecar startup independent of the server application stack.
     from app.core.utils import IdentityExtractor
 
     secret_keys = {
