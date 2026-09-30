@@ -502,6 +502,80 @@ async def test_staler_push_does_not_clobber_fresher(cache):
 
 
 @pytest.mark.asyncio
+async def test_staler_push_does_not_clobber_server_rotated_xai_refresh(cache):
+    """A staler sidecar push must not overwrite a server-rotated xai_refresh."""
+    now_ms = int(time.time() * 1000)
+    # Server-refreshed token with rotated xai_refresh:
+    await cache.store(
+        "xai",
+        {
+            "xai_access": "fresh_jwt",
+            "xai_refresh": "rt-rotated",
+            "expiry_date": str(now_ms + 3_600_000),
+        },
+        account_id="user@example.com",
+        source_id="sidecar-source",
+    )
+
+    # Sidecar re-pushes its stale local token with the old xai_refresh:
+    await cache.store(
+        "xai",
+        {
+            "xai_access": "stale_jwt",
+            "xai_refresh": "rt-old",
+            "expiry_date": str(now_ms - 3_600_000),
+        },
+        account_id="user@example.com",
+        source_id="sidecar-source",
+    )
+
+    # Check top-level cache
+    tokens = await cache.get("xai", "user@example.com")
+    assert tokens["xai_access"] == "fresh_jwt"
+    assert tokens["xai_refresh"] == "rt-rotated"
+
+    # Check source_cache
+    async with cache.using_source("xai", "user@example.com", "sidecar-source"):
+        src_tokens = cache.current_source_tokens("xai", "user@example.com")
+        assert src_tokens["xai_access"] == "fresh_jwt"
+        assert src_tokens["xai_refresh"] == "rt-rotated"
+
+
+@pytest.mark.asyncio
+async def test_staler_push_absorbs_missing_xai_refresh(cache):
+    """A staler push should provide xai_refresh if the cache did not have one."""
+    now_ms = int(time.time() * 1000)
+    # Cached token without xai_refresh:
+    await cache.store(
+        "xai",
+        {"xai_access": "fresh_jwt", "expiry_date": str(now_ms + 3_600_000)},
+        account_id="user@example.com",
+        source_id="sidecar-source",
+    )
+
+    # Staler push containing xai_refresh:
+    await cache.store(
+        "xai",
+        {
+            "xai_access": "stale_jwt",
+            "xai_refresh": "newly-discovered-rt",
+            "expiry_date": str(now_ms - 3_600_000),
+        },
+        account_id="user@example.com",
+        source_id="sidecar-source",
+    )
+
+    tokens = await cache.get("xai", "user@example.com")
+    assert tokens["xai_access"] == "fresh_jwt"
+    assert tokens["xai_refresh"] == "newly-discovered-rt"
+
+    async with cache.using_source("xai", "user@example.com", "sidecar-source"):
+        src_tokens = cache.current_source_tokens("xai", "user@example.com")
+        assert src_tokens["xai_access"] == "fresh_jwt"
+        assert src_tokens["xai_refresh"] == "newly-discovered-rt"
+
+
+@pytest.mark.asyncio
 async def test_sibling_credential_push_does_not_keep_removed_family_alive(monkeypatch):
     """A live CLI push must not extend the TTL of a browser credential no longer reported."""
     short_cache = TokenCache(ttl_seconds=10)

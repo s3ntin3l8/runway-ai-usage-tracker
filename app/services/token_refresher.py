@@ -47,6 +47,8 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     if not endpoint:
         raise ValueError(f"No refresh endpoint known for provider: {provider}")
 
+    # The provider supports token refresh, but this specific credential set
+    # lacks a refresh token (e.g. static API key or session cookie).
     refresh_val = tokens.get("refresh_token") or tokens.get("xai_refresh")
     if not refresh_val:
         raise ValueError(f"No refresh_token found in tokens for provider: {provider}")

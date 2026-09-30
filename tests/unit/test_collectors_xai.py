@@ -409,6 +409,10 @@ class TestGetXaiApi:
                 side_effect=fake_get_token,
             ),
             patch(
+                "app.services.collectors.xai.token_cache.observe_response",
+                new_callable=AsyncMock,
+            ) as mock_observe,
+            patch(
                 "app.services.collectors.xai.http_request_with_retry",
                 new_callable=AsyncMock,
                 side_effect=[
@@ -423,6 +427,7 @@ class TestGetXaiApi:
 
         assert cards == []
         assert c._last_error_reason == "invalid_api_key"
+        mock_observe.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_billing_401_through_collect_emits_auth_error_card(self):
@@ -603,6 +608,10 @@ class TestGetXaiApi:
                 side_effect=fake_get_token,
             ),
             patch(
+                "app.services.collectors.xai.token_cache.observe_response",
+                new_callable=AsyncMock,
+            ) as mock_observe,
+            patch(
                 "app.services.collectors.xai.http_request_with_retry",
                 new_callable=AsyncMock,
                 side_effect=[
@@ -615,6 +624,7 @@ class TestGetXaiApi:
 
         assert cards == []
         assert c._last_error_reason == "invalid_api_key"
+        mock_observe.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_collect_empty_results_falls_through_to_error_handler(self):

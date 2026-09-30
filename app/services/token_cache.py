@@ -189,7 +189,7 @@ class TokenCache:
                             stored_tokens[key] = value
                     if tokens.get("refresh_token"):
                         stored_tokens["refresh_token"] = tokens["refresh_token"]
-                    if tokens.get("xai_refresh"):
+                    if tokens.get("xai_refresh") and "xai_refresh" not in stored_tokens:
                         stored_tokens["xai_refresh"] = tokens["xai_refresh"]
                 else:
                     stored_tokens.update(tokens)
@@ -227,7 +227,7 @@ class TokenCache:
                             kept_tokens[key] = value
                 if tokens.get("refresh_token"):
                     kept_tokens["refresh_token"] = tokens["refresh_token"]
-                if tokens.get("xai_refresh"):
+                if tokens.get("xai_refresh") and "xai_refresh" not in kept_tokens:
                     kept_tokens["xai_refresh"] = tokens["xai_refresh"]
                 if account_label and not kept_meta.get("account_label"):
                     kept_meta["account_label"] = account_label

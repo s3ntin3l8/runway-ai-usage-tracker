@@ -677,7 +677,7 @@ class CollectorManager:
             )
             result_failed = not result or not has_usable_card
             is_auth_failure = attempt["auth_failed"] or any(
-                card.get("error_type") == "auth_failed" for card in result
+                card.get("error_type") in {"auth_failed", "invalid_api_key"} for card in result
             )
             if is_auth_failure and result_failed:
                 health_updates[candidate["source_id"]] = "auth_failed"
