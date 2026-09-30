@@ -152,6 +152,33 @@ async def test_move_source_refreshes_timestamp_when_merging_into_existing_accoun
 
 
 @pytest.mark.asyncio
+async def test_move_source_keeps_newer_report_when_migrating_legacy_hash_bucket(cache):
+    source_id = "sidecar:host:oauth-json"
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "old-token"},  # pragma: allowlist secret
+        account_id="legacy-hash",
+        source_id=source_id,
+        source_metadata={"sidecar_id": "host", "credential_origin": "path:/oauth.json"},
+    )
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "fresh-token"},  # pragma: allowlist secret
+        account_id="alice@example.com",
+        source_id=source_id,
+        source_metadata={"sidecar_id": "host", "credential_origin": "path:/oauth.json"},
+    )
+
+    assert await cache.move_source("antigravity", "legacy-hash", "alice@example.com", source_id)
+
+    candidates = await cache.get_source_candidates("antigravity", "alice@example.com")
+    assert candidates[0]["tokens"]["oauth_token"] == "fresh-token"
+    aggregate = await cache.get("antigravity", "alice@example.com")
+    assert aggregate is not None and aggregate["oauth_token"] == "fresh-token"
+    assert await cache.get_source_candidates("antigravity", "legacy-hash") == []
+
+
+@pytest.mark.asyncio
 async def test_store_and_get_token(cache):
     # Test default account (auto-id)
     acc_id = await cache.store("anthropic", {"api_key": "secret123"})

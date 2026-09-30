@@ -175,6 +175,8 @@ async def check_credential_alerts(session: Session) -> None:
     # across every Token Health row that maps to that identity.
     keys: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
+        if row.get("identity_pending"):
+            continue
         provider = row["provider"]
         underlying = _underlying_account(row["account_id"])
         # Synthetic rows the service builds itself (`server`, in

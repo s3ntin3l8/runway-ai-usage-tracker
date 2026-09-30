@@ -175,7 +175,8 @@ async def test_collector_returns_empty_when_all_sources_fail_auth(monkeypatch):
     async with httpx.AsyncClient() as client:
         result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
 
-    assert result == []
+    assert len(result) == 1
+    assert result[0]["error_type"] == "auth_failed"
     assert collector.calls == ["rejected"]
     await manager.close()
 

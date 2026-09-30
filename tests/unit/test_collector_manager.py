@@ -354,6 +354,63 @@ class TestCollectorManagerInitialization:
             "antigravity", "default", candidates[1]["source_id"], "bob@example.com"
         )
 
+    @pytest.mark.parametrize(
+        "first_result",
+        [[], [{"error_type": "auth_failed", "remaining": "ERR"}]],
+    )
+    @pytest.mark.asyncio
+    async def test_source_failover_skips_empty_or_error_results(
+        self, manager, monkeypatch, first_result
+    ):
+        collector = SimpleNamespace(
+            PROVIDER_ID="chatgpt",
+            account_id="default",
+            account_label=None,
+            credential_account_id="default",
+        )
+        smart = MagicMock(collector=collector, last_collection_state="failed")
+        smart.reset = AsyncMock()
+        results = iter([first_result, [{"service_name": "ChatGPT", "remaining": 5}]])
+
+        async def collect(_client):
+            result = next(results)
+            smart.last_collection_state = "failed" if result == first_result else "fresh"
+            if result and not result[0].get("error_type"):
+                collector.account_id = "alice@example.com"
+            return result
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["chatgpt:default"] = smart
+        candidates = [
+            {
+                "source_id": f"sidecar:host:{idx}",
+                "sidecar_id": "host",
+                "credential_origin": f"path:/{idx}.json",
+                "source_type": "file",
+            }
+            for idx in (1, 2)
+        ]
+
+        async def get_candidates(*_args):
+            return candidates
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+        promote = AsyncMock()
+        monkeypatch.setattr(manager, "_promote_source_identity", promote)
+
+        result = await manager._collect_with_source_failover("chatgpt:default", MagicMock(), {})
+
+        assert result == [{"service_name": "ChatGPT", "remaining": 5}]
+        assert smart.collect.await_count == 2
+        promote.assert_awaited_once()
+
     @pytest.mark.asyncio
     async def test_collect_with_source_failover_handles_auth_failed_card(
         self, manager, monkeypatch

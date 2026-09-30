@@ -513,6 +513,17 @@ class TokenCache:
                 key=lambda row: (int(row.get("priority", 0)), row["source_id"]),
             )
 
+    async def get_all_source_candidates(self, provider: str) -> list[dict[str, Any]]:
+        """Return all source bundles for a provider, including identity-pending slots."""
+        async with self._lock:
+            self._clear_expired_unlocked()
+            candidates = [
+                {"account_id": account_id, "source_id": source_id, "tokens": tokens, **metadata}
+                for account_id, sources in self._source_cache.get(provider, {}).items()
+                for source_id, (tokens, metadata, _timestamp) in sources.items()
+            ]
+            return sorted(candidates, key=lambda row: (row["account_id"], row["source_id"]))
+
     def current_source_tokens(self, provider: str, account_id: str) -> dict[str, str] | None:
         """Synchronous lookup used by legacy credential-provider helpers."""
         selection = _active_source.get()
@@ -617,13 +628,34 @@ class TokenCache:
             if not source_accounts:
                 self._source_cache[provider].pop(from_id, None)
             tokens, metadata, timestamp = entry
-            entry = (tokens, {**metadata, "identity_pending": False}, timestamp)
-            self._source_cache.setdefault(provider, {}).setdefault(to_id, {})[source_id] = entry
+            target_sources = self._source_cache.setdefault(provider, {}).setdefault(to_id, {})
+            existing_target = target_sources.get(source_id)
+            if existing_target:
+                target_tokens, target_metadata, target_timestamp = existing_target
+                merged_tokens = dict(target_tokens)
+                for key, value in tokens.items():
+                    if key not in merged_tokens:
+                        merged_tokens[key] = value
+                if tokens.get("refresh_token"):
+                    merged_tokens["refresh_token"] = tokens["refresh_token"]
+                merged_metadata = {**metadata, **target_metadata, "identity_pending": False}
+                entry = (merged_tokens, merged_metadata, max(timestamp, target_timestamp))
+            else:
+                entry = (tokens, {**metadata, "identity_pending": False}, timestamp)
+            target_sources[source_id] = entry
             # Keep the compatibility cache coherent when it represents this
             # same source bundle; never overwrite another account's aggregate.
             old_aggregate = self._cache.get(provider, {}).get(from_id)
             if old_aggregate and old_aggregate[1].get("source_id") == source_id:
-                self._cache.setdefault(provider, {})[to_id] = old_aggregate
+                target_aggregate = self._cache.setdefault(provider, {}).get(to_id)
+                if target_aggregate is None:
+                    self._cache[provider][to_id] = old_aggregate
+                else:
+                    for key, value in old_aggregate[0].items():
+                        target_aggregate[0].setdefault(key, value)
+                        self._mark_token_seen(provider, to_id, key)
+                    if not target_aggregate[1].get("account_label"):
+                        target_aggregate[1]["account_label"] = old_aggregate[1].get("account_label")
                 self._cache[provider].pop(from_id, None)
             elif entry:
                 tokens, metadata, timestamp = entry

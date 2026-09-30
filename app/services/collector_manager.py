@@ -35,6 +35,12 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 
+def _is_sidecar_credential_source(source: dict[str, Any]) -> bool:
+    from app.services.credential_sources import is_sidecar_source
+
+    return is_sidecar_source(source)
+
+
 class CollectorManager:
     """
     Manages collection of all AI provider quotas with support for multiple accounts.
@@ -229,8 +235,10 @@ class CollectorManager:
                     self.smart_collectors.pop(f"{p_id}:default:identity-pending", None)
                     continue
                 pending_sources = await token_cache.get_source_candidates(p_id, "default")
+                from app.services.credential_sources import is_sidecar_source
+
                 has_pending_source = any(
-                    source.get("source_type") == "sidecar"
+                    is_sidecar_source(source)
                     and source.get("credential_origin")
                     and source.get("identity_pending") is True
                     for source in pending_sources
@@ -639,6 +647,7 @@ class CollectorManager:
             return []
 
         successful_result: list[dict[str, Any]] | None = None
+        last_failure_result: list[dict[str, Any]] | None = None
         deadline = asyncio.get_running_loop().time() + 25.0
         await smart.reset()
         for index, candidate in enumerate(candidates):
@@ -658,6 +667,7 @@ class CollectorManager:
             async with token_cache.using_source(
                 provider_id, account_id, candidate["source_id"]
             ) as attempt:
+                result: list[dict[str, Any]] = []
                 try:
                     result = await asyncio.wait_for(smart.collect(client), timeout=remaining)
                 except Exception:
@@ -669,7 +679,6 @@ class CollectorManager:
                     )
                     health_updates[candidate["source_id"]] = "unavailable"
                     continue
-
             empty_allowed = bool(getattr(collector, "successful_empty_result", False))
             has_usable_card = any(
                 card.get("data_source") != "error"
@@ -677,12 +686,15 @@ class CollectorManager:
                 and not card.get("error_type")
                 for card in result
             )
+            # A failed fetch may still carry cached or partial usable cards;
+            # fail over only when the response has no usable card at all.
             result_failed = (not result and not empty_allowed) or (result and not has_usable_card)
             has_auth_failure = attempt["auth_failed"] or any(
                 card.get("error_type") in {"auth_failed", "invalid_api_key"} for card in result
             )
             if has_auth_failure and result_failed:
                 health_updates[candidate["source_id"]] = "auth_failed"
+                last_failure_result = result or last_failure_result
                 continue
             if attempt["auth_failed"]:
                 # An optional request or a refresh retry may return 401/403 even
@@ -697,6 +709,8 @@ class CollectorManager:
                 # The 'unavailable' status persists across polls until overwritten by the next
                 # successful collection pass.
                 health_updates[candidate["source_id"]] = "unavailable"
+                if result:
+                    last_failure_result = result
                 continue
             if not attempt["auth_failed"]:
                 health_updates[candidate["source_id"]] = "healthy"
@@ -707,7 +721,7 @@ class CollectorManager:
             resolved_id = getattr(collector, "account_id", None)
             if (
                 account_id == "default"
-                and candidate.get("source_type") == "sidecar"
+                and _is_sidecar_credential_source(candidate)
                 and candidate.get("credential_origin")
                 and isinstance(resolved_id, str)
                 and resolved_id.strip()
@@ -721,7 +735,7 @@ class CollectorManager:
                 )
             elif (
                 account_id == "default"
-                and candidate.get("source_type") == "sidecar"
+                and _is_sidecar_credential_source(candidate)
                 and candidate.get("credential_origin")
             ):
                 # Let an unresolved source call its API so it can prove its
@@ -739,7 +753,7 @@ class CollectorManager:
                 break
             successful_result = result
             break
-        return successful_result if successful_result is not None else []
+        return successful_result if successful_result is not None else (last_failure_result or [])
 
     async def _promote_source_identity(
         self, provider_id: str, old_account_id: str, source_id: str, account_id: str
@@ -876,14 +890,14 @@ class CollectorManager:
         provider_ids = [provider_id] if provider_id else list(self.collector_registry)
         moves: list[tuple[str, str, str, str, tuple[bool, int] | None]] = []
         for pid in provider_ids:
-            candidates = await token_cache.get_source_candidates(pid, "default")
+            candidates = await token_cache.get_all_source_candidates(pid)
             with Session(engine) as session:
                 for candidate in candidates:
                     candidate_id = candidate.get("source_id")
                     origin = candidate.get("credential_origin")
                     sidecar_id = candidate.get("sidecar_id")
                     if (
-                        candidate.get("source_type") != "sidecar"
+                        not _is_sidecar_credential_source(candidate)
                         or not isinstance(candidate_id, str)
                         or (source_id is not None and candidate_id != source_id)
                         or not isinstance(origin, str)
@@ -898,22 +912,48 @@ class CollectorManager:
                     )
                     if not target or target == "default":
                         continue
+                    old_account_id = str(candidate.get("account_id") or "default")
                     source = session.exec(
+                        select(CredentialSource).where(
+                            CredentialSource.provider_id == pid,
+                            CredentialSource.account_id == old_account_id,
+                            CredentialSource.source_id == candidate_id,
+                        )
+                    ).first()
+                    existing_target = session.exec(
                         select(CredentialSource).where(
                             CredentialSource.provider_id == pid,
                             CredentialSource.account_id == target,
                             CredentialSource.source_id == candidate_id,
                         )
                     ).first()
+                    if source is not None and old_account_id != target:
+                        if existing_target is None:
+                            source.account_id = target
+                            session.add(source)
+                        else:
+                            existing_target.credential_origin = source.credential_origin
+                            existing_target.sidecar_id = source.sidecar_id
+                            existing_target.source_type = source.source_type
+                            existing_target.source_label = source.source_label
+                            session.add(existing_target)
+                            session.delete(source)
                     moves.append(
                         (
                             pid,
                             candidate_id,
                             target,
-                            "default",
-                            (bool(source.enabled), int(source.priority)) if source else None,
+                            old_account_id,
+                            (
+                                (bool(source.enabled), int(source.priority))
+                                if source
+                                else (bool(existing_target.enabled), int(existing_target.priority))
+                                if existing_target
+                                else None
+                            ),
                         )
                     )
+                session.commit()
 
         for pid, candidate_id, target, old_account_id, preference in moves:
             await token_cache.move_source(pid, old_account_id, target, candidate_id)

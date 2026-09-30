@@ -227,6 +227,8 @@ class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
     source_label: str
     credential_origin: str | None = None
     sidecar_id: str | None = None
+    credential_expires_at: UTCDateTime | None = None
+    token_types_json: str | None = None
     enabled: bool = Field(default=True)
     priority: int = Field(default=0)
     last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))

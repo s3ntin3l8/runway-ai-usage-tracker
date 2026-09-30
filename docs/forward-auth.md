@@ -97,7 +97,9 @@ services:
       - traefik.enable=true
       - traefik.http.services.runway.loadbalancer.server.port=8765
 
-      # Sidecar endpoints bypass SSO; Runway applies its own request checks.
+      # Sidecar endpoints bypass SSO — each request has its own HMAC auth.
+      # Keep this exact list aligned with HMAC-only fleet routes in fleet.py;
+      # newly added routes stay behind Authentik until explicitly listed here.
       - "traefik.http.routers.runway-ingest.rule=Host(`runway.example.com`) && (Path(`/api/v1/fleet/ingest`) || Path(`/api/v1/fleet/config`) || Path(`/api/v1/fleet/credentials/manifest`))"
       - traefik.http.routers.runway-ingest.entrypoints=websecure
       - traefik.http.routers.runway-ingest.tls.certresolver=le

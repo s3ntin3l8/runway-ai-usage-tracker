@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from datetime import UTC, datetime
 
@@ -32,6 +33,16 @@ def sidecar_source_id(sidecar_id: str, origin: str | None) -> str:
     return f"sidecar:{digest}"
 
 
+def is_sidecar_source(source: dict[str, object]) -> bool:
+    """Whether a credential source was reported by a sidecar.
+
+    ``source_type`` describes the credential itself (file, env, cookie), not
+    where it was observed. Sidecar ownership is established by its id and
+    origin metadata.
+    """
+    return bool(source.get("sidecar_id") and source.get("credential_origin"))
+
+
 def touch_source(
     session: Session,
     *,
@@ -42,6 +53,8 @@ def touch_source(
     source_label: str,
     credential_origin: str | None = None,
     sidecar_id: str | None = None,
+    credential_expires_at: datetime | None = None,
+    token_types: list[str] | None = None,
 ) -> CredentialSource:
     """Create or refresh a source without replacing operator preferences.
 
@@ -78,6 +91,8 @@ def touch_source(
             source_label=source_label,
             credential_origin=credential_origin,
             sidecar_id=sidecar_id,
+            credential_expires_at=credential_expires_at,
+            token_types_json=json.dumps(token_types or []),
             priority=priority,
         )
         session.add(row)
@@ -86,6 +101,8 @@ def touch_source(
         row.source_label = source_label
         row.credential_origin = credential_origin
         row.sidecar_id = sidecar_id
+        row.credential_expires_at = credential_expires_at
+        row.token_types_json = json.dumps(token_types or [])
         row.last_seen = datetime.now(UTC)
     session.flush()
     return row

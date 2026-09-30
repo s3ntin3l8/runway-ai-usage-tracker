@@ -389,6 +389,37 @@ def test_manifest_upserts_pending_and_returns_resolved_for_tagged_origins(
     }
 
 
+def test_manifest_persists_safe_health_metadata_without_token_values(
+    client: TestClient, session: Session
+):
+    from datetime import UTC, datetime
+
+    body = {
+        "sidecar_id": "health-host",
+        "entries": [],
+        "observations": [
+            {
+                "provider_id": "antigravity",
+                "credential_origin": "path:/home/user/.config/agy/oauth_creds.json",
+                "token_types": ["oauth_token", "refresh_token"],
+                "expires_at": 1_700_000_000,
+            }
+        ],
+    }
+    response = _post_manifest(client, body)
+
+    assert response.status_code == 200
+    source = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == "antigravity",
+            CredentialSource.account_id == "default",
+        )
+    ).one()
+    assert source.token_types_json == '["oauth_token", "refresh_token"]'
+    assert source.credential_expires_at == datetime.fromtimestamp(1_700_000_000, tz=UTC)
+    assert "oauth_creds" not in response.text
+
+
 def test_manifest_prunes_origins_missing_from_complete_snapshot(
     client: TestClient, session: Session
 ):

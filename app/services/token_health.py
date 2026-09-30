@@ -1,19 +1,20 @@
 """Token health inspection — expiry parsing, status classification."""
 
 import asyncio
+import json
 import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlmodel import Session
+from sqlmodel import Session, col
 from sqlmodel import select as sqlselect
 
 from app.core.config import settings
 from app.core.db import engine
 from app.core.registry import registry
 from app.core.utils import IdentityExtractor, scrub_log
-from app.models.db import ProviderConfig, SidecarRegistry
+from app.models.db import CredentialSource, ProviderConfig, SidecarRegistry
 from app.services import auth_failures
 from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
@@ -83,7 +84,7 @@ def _is_synthetic(account_id: str) -> bool:
 def _build_accounts_by_provider(rows: list[dict[str, Any]]) -> dict[str, set[str]]:
     accounts_by_provider: dict[str, set[str]] = {}
     for r in rows:
-        if r.get("assignment_pending"):
+        if r.get("assignment_pending") or r.get("identity_pending"):
             continue
         accounts_by_provider.setdefault(r["provider"], set()).add(
             canonical_account_id(_underlying_account(r["account_id"]))
@@ -129,7 +130,7 @@ def _apply_invalid(rows: list[dict[str, Any]]) -> None:
     """
     accounts_by_provider = _build_accounts_by_provider(rows)
     for r in rows:
-        if r.get("assignment_pending"):
+        if r.get("assignment_pending") or r.get("identity_pending"):
             continue
         if r["status"] not in ("valid", "unknown"):
             continue
@@ -233,10 +234,26 @@ class TokenHealthService:
         source_oauth_values = {source["tokens"]["oauth_token"] for source in claude_sources}
 
         sidecar_names = {}
+        durable_sources: list[CredentialSource] = []
         try:
             with Session(engine) as _s:
                 for sc in _s.exec(sqlselect(SidecarRegistry)).all():
                     sidecar_names[sc.sidecar_id] = sc.custom_name or sc.hostname or sc.sidecar_id
+                durable_sources = list(
+                    _s.exec(
+                        sqlselect(CredentialSource).where(
+                            col(CredentialSource.sidecar_id).is_not(None)
+                        )
+                    ).all()
+                )
+                durable_sources = [
+                    item
+                    for item in durable_sources
+                    if type(item) is CredentialSource
+                    and isinstance(item.provider_id, str)
+                    and isinstance(item.source_id, str)
+                    and isinstance(item.sidecar_id, str)
+                ]
         except Exception as e:
             logger.warning(f"Could not load sidecar names for token health: {e}")
 
@@ -260,6 +277,11 @@ class TokenHealthService:
 
                 source_val = info.get("source")
                 has_refresh_token = "refresh_token" in tokens or "xai_refresh" in tokens
+                source_candidates = await token_cache.get_source_candidates(provider, acc_id)
+                # Source-specific records below are more precise than this
+                # compatibility aggregate and keep independent credentials visible.
+                if source_candidates:
+                    continue
                 result.append(
                     _row(
                         provider,
@@ -312,6 +334,41 @@ class TokenHealthService:
                 assignment_pending=pending,
                 removable=False,
             )
+            result.append(row)
+
+        for source in durable_sources:
+            provider_id = source.provider_id
+            account_id = source.account_id
+            candidates = await token_cache.get_source_candidates(provider_id, account_id)
+            live = next(
+                (item for item in candidates if item.get("source_id") == source.source_id), None
+            )
+            token_types: list[str] = []
+            exp: float | None = None
+            if live:
+                live_tokens = live.get("tokens") or {}
+                token_types = list(live_tokens)
+                exp = IdentityExtractor.exp_from_tokens(live_tokens)
+            else:
+                try:
+                    token_types = json.loads(source.token_types_json or "[]")
+                except (TypeError, ValueError):
+                    token_types = []
+                if isinstance(source.credential_expires_at, datetime):
+                    exp = source.credential_expires_at.timestamp()
+            row = _row(
+                provider_id,
+                account_id,
+                label="Pending identity" if account_id == "default" else None,
+                source=source.source_type,
+                source_name=sidecar_names.get(source.sidecar_id or "", source.sidecar_id),
+                token_types=token_types,
+                exp=exp,
+                can_refresh=False,
+            )
+            row["removable"] = False
+            row["sidecar_id"] = source.sidecar_id
+            row["identity_pending"] = account_id == "default"
             result.append(row)
 
         # Also surface API keys / session cookies configured in Settings → Providers.

@@ -1,9 +1,10 @@
 import json
 import logging
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlmodel import Session, col, func, select
 
@@ -139,7 +140,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 )
                 identity_pending = bool(
                     card.metadata and card.metadata.get("identity_pending") is True
-                )
+                ) or bool(credential_origin and payload.sidecar_id and not acc_id)
                 verified_tag = None
                 if identity_pending and credential_origin and payload.sidecar_id:
                     # A verified identity can race one more heartbeat with
@@ -188,6 +189,12 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                             acc_label = claimed_id if claimed_id != "default" else None
                             acc_id = None
                             identity_pending = True
+                # Keep unidentified bundles in the isolated verifier slot. Older
+                # sidecars omitted identity_pending and supplied no account id;
+                # token_cache would otherwise hash the token and strand it away
+                # from the verifier's default candidates.
+                if identity_pending:
+                    acc_id = "default"
                 if card.metadata:
                     for key, val in card.metadata.items():
                         # Store tokens but skip the provider/account identifiers
@@ -701,6 +708,8 @@ class CredentialManifestRequest(BaseModel):
     # A provider is listed only when its collection completed successfully.
     # Older sidecars omit this field; their partial manifests are upsert-only.
     completed_providers: list[str] | None = None
+    # Safe source metadata only: never include credential values.
+    observations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @router.post("/credentials/manifest")
@@ -741,6 +750,52 @@ async def post_credential_manifest(
     # client-side, but a future reporter (custom integration, scripted
     # curl) might not (PR #290 round-2 review, Hermes suggestion #7).
     payload.sidecar_id = normalize_sidecar_id(payload.sidecar_id)
+
+    from app.services.credential_sources import describe_origin, sidecar_source_id, touch_source
+
+    for observation in payload.observations:
+        provider_id = observation.get("provider_id")
+        origin = observation.get("credential_origin")
+        if (
+            not isinstance(provider_id, str)
+            or not provider_id
+            or not isinstance(origin, str)
+            or not origin
+        ):
+            continue
+        source_type, source_label = describe_origin(origin)
+        expiry = observation.get("expires_at")
+        try:
+            expires_at = (
+                datetime.fromtimestamp(float(expiry), tz=UTC) if expiry is not None else None
+            )
+        except (TypeError, ValueError, OverflowError, OSError):
+            expires_at = None
+        token_types = observation.get("token_types")
+        if not isinstance(token_types, list) or not all(
+            isinstance(item, str) for item in token_types
+        ):
+            token_types = []
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id=provider_id,
+            credential_origin=origin,
+            sidecar_id=payload.sidecar_id,
+        )
+        touch_source(
+            session,
+            provider_id=provider_id,
+            account_id=tag.account_id if tag else "default",
+            source_id=sidecar_source_id(payload.sidecar_id, origin),
+            source_type=source_type,
+            source_label=source_label,
+            credential_origin=origin,
+            sidecar_id=payload.sidecar_id,
+            credential_expires_at=expires_at,
+            token_types=token_types,
+        )
+    if payload.observations:
+        session.flush()
 
     keep_by_provider: dict[str, set[str]] = {}
     entries_received = 0

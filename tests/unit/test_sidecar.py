@@ -1751,6 +1751,29 @@ class TestPostCredentialManifest:
         ctx.__exit__ = MagicMock(return_value=False)
         return ctx
 
+    def test_health_observations_include_only_token_types_and_expiry(self):
+        card = {
+            "remaining": "Token",
+            "unit": "oauth",
+            "metadata": {
+                "provider_id": "antigravity",
+                "credential_origin": "path:/agy/oauth.json",
+                "oauth_token": "private-token-value",
+                "refresh_token": "private-refresh-value",
+                "expiry_date": str(1_700_000_000_000),
+            },
+        }
+
+        observation = sidecar._credential_health_observations([card])[0]
+
+        assert observation == {
+            "provider_id": "antigravity",
+            "credential_origin": "path:/agy/oauth.json",
+            "token_types": ["oauth_token", "refresh_token"],
+            "expires_at": 1_700_000_000,
+        }
+        assert "private-token-value" not in json.dumps(observation)
+
     def test_consumes_resolved_field_into_callback(self, monkeypatch):
         """The server's ``resolved`` map is delivered to ``on_resolved``
         so the local hint cache merges operator tags on the same cycle
