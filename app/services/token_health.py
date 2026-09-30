@@ -259,6 +259,22 @@ class TokenHealthService:
         except Exception as e:
             logger.warning(f"Could not load sidecar names for token health: {e}")
 
+        candidate_accounts = sorted(
+            {
+                (provider, account_id)
+                for provider, accounts in stats.items()
+                for account_id in accounts
+            }
+            | {(item.provider_id, item.account_id) for item in durable_sources}
+        )
+        candidate_rows = await asyncio.gather(
+            *(
+                token_cache.get_source_candidates(provider, account_id)
+                for provider, account_id in candidate_accounts
+            )
+        )
+        candidates_by_account = dict(zip(candidate_accounts, candidate_rows, strict=True))
+
         for provider, accounts in stats.items():
             for acc_id, info in accounts.items():
                 tokens = await token_cache.get(provider, acc_id) or {}
@@ -279,7 +295,7 @@ class TokenHealthService:
 
                 source_val = info.get("source")
                 has_refresh_token = "refresh_token" in tokens or "xai_refresh" in tokens
-                source_candidates = await token_cache.get_source_candidates(provider, acc_id)
+                source_candidates = candidates_by_account.get((provider, acc_id), [])
                 durable_source_ids = {
                     item.source_id
                     for item in durable_sources
@@ -349,11 +365,13 @@ class TokenHealthService:
         for durable_source in durable_sources:
             provider_id = durable_source.provider_id
             account_id = durable_source.account_id
-            candidates = await token_cache.get_source_candidates(provider_id, account_id)
+            candidates = candidates_by_account.get((provider_id, account_id), [])
             live = next(
                 (item for item in candidates if item.get("source_id") == durable_source.source_id),
                 None,
             )
+            # Aggregate compatibility rows intentionally have no source_id;
+            # this exact-source check only coalesces rows created above.
             if live and any(
                 row["provider"] == provider_id and row.get("source_id") == durable_source.source_id
                 for row in result

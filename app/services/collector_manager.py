@@ -671,6 +671,8 @@ class CollectorManager:
                         scrub_log(candidate["source_id"]),
                     )
                     health_updates[candidate["source_id"]] = "unavailable"
+                    # Do not retain a result from a crashed collector; returned
+                    # failure cards are handled below, after collection completes.
                     continue
             empty_allowed = bool(getattr(collector, "successful_empty_result", False))
             has_usable_card = any(

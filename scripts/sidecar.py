@@ -3323,20 +3323,8 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
 
     # Load shared server utilities only when manifest observations are built,
     # keeping sidecar startup independent of the server application stack.
-    from app.core.utils import IdentityExtractor
+    from app.core.utils import CREDENTIAL_VALUE_KEYS, IdentityExtractor
 
-    secret_keys = {
-        "oauth_token",
-        "refresh_token",
-        "api_key",
-        "id_token",
-        "access_token",
-        "xai_access",
-        "xai_refresh",
-        "cli_access_token",
-        "cookie",
-        "session_cookie",
-    }
     found: dict[tuple[str, str], dict[str, Any]] = {}
     for card in metrics:
         if card.get("remaining") != "Token" or card.get("unit") not in (
@@ -3355,7 +3343,7 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
         token_types = sorted(
             key
             for key, value in metadata.items()
-            if (key in secret_keys or key.startswith("cookie_"))
+            if (key in CREDENTIAL_VALUE_KEYS or key.startswith("cookie_"))
             and isinstance(value, str)
             and value
         )

@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from app.core.utils import IdentityExtractor, scrub_log
+from app.core.utils import CREDENTIAL_VALUE_KEYS, IdentityExtractor, scrub_log
 from app.services.account_identity import canonical_account_id
 
 logger = logging.getLogger(__name__)
@@ -40,19 +40,7 @@ _OAUTH_CREDENTIAL_KEYS = {
     "xai_access",
     "xai_refresh",
 }
-AUTH_VALUE_KEYS = frozenset(
-    {
-        "api_key",
-        "oauth_token",
-        "access_token",
-        "refresh_token",
-        "id_token",
-        "xai_access",
-        "xai_refresh",
-        "cli_access_token",
-        "session_cookie",
-    }
-)
+AUTH_VALUE_KEYS = CREDENTIAL_VALUE_KEYS
 OAUTH_TOKEN_VALUE_KEYS = AUTH_VALUE_KEYS - {"api_key", "session_cookie"}
 
 # Origins the user typed into the dashboard. They outrank every other origin
@@ -637,10 +625,12 @@ class TokenCache:
             tokens, metadata, timestamp = entry
             target_sources = self._source_cache.setdefault(provider, {}).setdefault(to_id, {})
             existing_target = target_sources.get(source_id)
+            # Only an already-live entry for this exact source can win the
+            # per-key expiry comparison against the bundle being promoted.
             if existing_target:
                 target_tokens, target_metadata, target_timestamp = existing_target
                 merged_tokens = dict(target_tokens)
-                target_oauth_is_fresher = self._is_staler(tokens, target_tokens)
+                from_oauth_is_staler = self._is_staler(tokens, target_tokens)
                 for key, value in tokens.items():
                     if key in merged_tokens:
                         if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
@@ -648,7 +638,7 @@ class TokenCache:
                         ):
                             merged_tokens[key] = value
                         continue
-                    if target_oauth_is_fresher and key in _OAUTH_CREDENTIAL_KEYS:
+                    if from_oauth_is_staler and key in _OAUTH_CREDENTIAL_KEYS:
                         continue
                     merged_tokens[key] = value
                 # Existing target metadata wins on collisions, preserving its

@@ -341,6 +341,14 @@ class TestTokenHealthService:
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session.exec.return_value.all.side_effect = [[sidecar], [source], []]
         live_token = _make_jwt(time.time() + 86400 * 7)
+        get_candidates = AsyncMock(
+            return_value=[
+                {
+                    "source_id": source.source_id,
+                    "tokens": {"oauth_token": live_token},
+                }
+            ]
+        )
 
         with (
             patch(
@@ -363,14 +371,7 @@ class TestTokenHealthService:
             ),
             patch(
                 "app.services.token_health.token_cache.get_source_candidates",
-                new=AsyncMock(
-                    return_value=[
-                        {
-                            "source_id": source.source_id,
-                            "tokens": {"oauth_token": live_token},
-                        }
-                    ]
-                ),
+                new=get_candidates,
             ),
             patch("app.services.token_health.Session", return_value=mock_session),
             patch(
@@ -384,6 +385,7 @@ class TestTokenHealthService:
         assert result[0]["account_id"] == "alice@example.com"
         assert result[0]["status"] == "valid"
         assert result[0]["token_types"] == ["oauth_token"]
+        get_candidates.assert_awaited_once_with("antigravity", "alice@example.com")
 
     @pytest.mark.asyncio
     async def test_expired_token_status(self):

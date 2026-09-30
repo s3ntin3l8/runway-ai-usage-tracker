@@ -18,6 +18,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Credential field names shared by server-side redaction and sidecar health
+# observations. Keep token-type recognition aligned with the cache's auth keys.
+CREDENTIAL_VALUE_KEYS = frozenset(
+    {
+        "api_key",
+        "oauth_token",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "xai_access",
+        "xai_refresh",
+        "cli_access_token",
+        "session_cookie",
+        "cookie",
+    }
+)
+
+
 _USER_TZ_CACHE_KEY = "user_tz"
 _USER_TZ_CACHE_TTL = 60.0  # SystemConfig write path calls cache_clear(), so this is a safety net
 
