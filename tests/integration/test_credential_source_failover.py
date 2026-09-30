@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -285,7 +285,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     SQLModel.metadata.create_all(engine)
     source_id = "sidecar:host-a:path:/home/user/auth.json"
     origin = "path:/home/user/auth.json"
-    target_seen = datetime(2026, 9, 30, tzinfo=UTC)
+    target_seen = datetime.now(UTC) + timedelta(days=1)
     with Session(engine) as session:
         session.add(
             CredentialSource(

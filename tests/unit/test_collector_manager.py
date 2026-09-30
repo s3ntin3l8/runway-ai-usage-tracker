@@ -464,6 +464,7 @@ class TestCollectorManagerInitialization:
             provider_id = "anthropic"
             account_id = "alice@example.com"
             enabled = True
+            archived = False
             poll_interval_seconds = None
             account_label = None
             strategies = None
@@ -504,6 +505,7 @@ class TestCollectorManagerInitialization:
             provider_id = "anthropic"
             account_id = "alice@example.com"
             enabled = False  # the account was just disabled
+            archived = False
             poll_interval_seconds = None
             account_label = None
             strategies = None
@@ -534,6 +536,83 @@ class TestCollectorManagerInitialization:
         assert "anthropic:default" not in manager.smart_collectors
 
     @pytest.mark.asyncio
+    async def test_archived_only_provider_ignores_sidecar_accounts_and_pending_sources(
+        self, manager
+    ):
+        """Sidecar credentials cannot reactivate a provider after all accounts are archived."""
+        manager.smart_collectors = {
+            "gemini:default": MagicMock(),
+            "gemini:default:identity-pending": MagicMock(),
+            "gemini:new@example.com": MagicMock(),
+        }
+
+        archived = SimpleNamespace(
+            provider_id="gemini",
+            account_id="old@example.com",
+            enabled=False,
+            archived=True,
+            poll_interval_seconds=None,
+            account_label=None,
+            strategies=None,
+            api_key=None,
+            session_cookie=None,
+        )
+
+        async def source_candidates(provider_id, _account_id):
+            if provider_id == "gemini":
+                return [
+                    {
+                        "source_id": "sidecar:hermes-01:gemini-auth",
+                        "source_type": "sidecar",
+                        "credential_origin": "path:/home/user/.gemini/oauth_creds.json",
+                        "identity_pending": True,
+                    }
+                ]
+            return []
+
+        with (
+            patch(
+                "app.services.collector_manager.token_cache.get_all_active_accounts",
+                new_callable=AsyncMock,
+                return_value=[("gemini", "new@example.com", "New")],
+            ),
+            patch(
+                "app.services.collector_manager.token_cache.get_source_candidates",
+                side_effect=source_candidates,
+            ),
+            patch("sqlmodel.Session") as session_cls,
+        ):
+            inner = MagicMock()
+            inner.exec.return_value.all.side_effect = [[archived], []]
+            inner.exec.return_value.first.return_value = None
+            session_cls.return_value.__enter__.return_value = inner
+            manager.reconcile_token_cache_from_durable_tags = AsyncMock()
+
+            await manager._sync_collectors(force=True)
+
+        assert not any(key.startswith("gemini:") for key in manager.smart_collectors)
+
+    @pytest.mark.asyncio
+    async def test_unresolved_identity_failure_does_not_create_default_stale_outcome(self, manager):
+        collector = SimpleNamespace(PROVIDER_ID="gemini", account_id="default")
+        smart = MagicMock(collector=collector, last_collection_state="failed")
+        manager.smart_collectors = {"gemini:default:identity-pending": smart}
+
+        async def sync(_force=False):
+            return None
+
+        async def fail(_key, _client):
+            raise RuntimeError("upstream unavailable")
+
+        manager._sync_collectors = sync
+        manager._get_client = AsyncMock(return_value=MagicMock())
+        manager._collect_with_semaphore = fail
+
+        await manager._do_collect()
+
+        assert manager.last_collection_outcomes == []
+
+    @pytest.mark.asyncio
     async def test_step2_does_not_respawn_default_from_cache(self, manager):
         """Sidecar may stamp the token cache with account_id="default"
         (`_gemini_account_email` / `_ag_account_email` fallbacks). When config
@@ -546,6 +625,7 @@ class TestCollectorManagerInitialization:
             provider_id = "anthropic"
             account_id = "alice@example.com"
             enabled = False  # sole account disabled
+            archived = False
             poll_interval_seconds = None
             account_label = None
             strategies = None

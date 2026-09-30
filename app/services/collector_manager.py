@@ -122,6 +122,7 @@ class CollectorManager:
 
                         db_configs[r.provider_id][r.account_id] = SimpleNamespace(
                             enabled=r.enabled,
+                            archived=r.archived,
                             poll_interval_seconds=r.poll_interval_seconds,
                             account_label=r.account_label,
                             strategies=r.strategies,
@@ -145,11 +146,24 @@ class CollectorManager:
 
             except Exception as e:
                 logger.debug(f"Could not load provider configs from DB: {e}")
+            # A saved configuration is an explicit opt-in boundary. If every
+            # account is disabled or archived, credentials arriving from a
+            # sidecar must not silently reactivate collection under a newly
+            # discovered identity.
+            inactive_providers = {
+                provider_id
+                for provider_id, accounts in db_configs.items()
+                if accounts
+                and not any(cfg.enabled and not cfg.archived for cfg in accounts.values())
+            }
             self._credential_source_preferences = source_preferences
             await self.reconcile_token_cache_from_durable_tags()
 
             # 1. Ensure Default/Static collectors are present
             for p_id, (cls, name, ttl) in self.collector_registry.items():
+                if p_id in inactive_providers:
+                    self.smart_collectors.pop(f"{p_id}:default", None)
+                    continue
                 # For default collector, we look for account_id="default"
                 provider_acc_configs = db_configs.get(p_id, {})
                 db_cfg = provider_acc_configs.get("default")
@@ -211,6 +225,9 @@ class CollectorManager:
             # collector exists: that collector may already have a resolved
             # display identity and therefore read another credential slot.
             for p_id, (cls, name, ttl) in self.collector_registry.items():
+                if p_id in inactive_providers:
+                    self.smart_collectors.pop(f"{p_id}:default:identity-pending", None)
+                    continue
                 pending_sources = await token_cache.get_source_candidates(p_id, "default")
                 has_pending_source = any(
                     source.get("source_type") == "sidecar"
@@ -237,6 +254,9 @@ class CollectorManager:
 
             for p_id, acc_id, acc_name in active_accounts:
                 if p_id in self.collector_registry:
+                    if p_id in inactive_providers:
+                        self.smart_collectors.pop(f"{p_id}:{acc_id}", None)
+                        continue
                     default_key = f"{p_id}:default"
                     default_collector = self.smart_collectors.get(default_key)
                     # Skip only the cache entry whose slot the default collector
@@ -509,6 +529,17 @@ class CollectorManager:
             account_id = getattr(getattr(smart, "collector", None), "account_id", None) or "default"
             failed = isinstance(res, (Exception, asyncio.CancelledError))
             state = "failed" if failed else (smart.last_collection_state if smart else "failed")
+            # A pending verifier has no proven account identity yet. Its
+            # failure must not be attributed to the shared server:<provider>
+            # contribution under `default` (which may belong to another
+            # credential or an archived account).
+            if key.endswith(":identity-pending") and account_id == "default":
+                if failed:
+                    logger.debug(
+                        "Identity-pending collection failed for %s; no account outcome recorded",
+                        scrub_log(provider_id),
+                    )
+                continue
             outcomes.append(
                 {
                     "provider_id": provider_id,
