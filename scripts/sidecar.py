@@ -2940,17 +2940,22 @@ class GenericCollector:
                 and not tokens.get("expiry_date")
             ):
                 try:
-                    import base64 as _base64
+                    import binascii
 
-                    parts = tokens["xai_access"].split(".")
-                    if len(parts) >= 2:
-                        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
-                        jwt_payload = json.loads(_base64.urlsafe_b64decode(payload_b64))
-                        exp = jwt_payload.get("exp")
-                        if exp is not None:
-                            tokens["expiry_date"] = str(int(float(exp) * 1000))
-                except Exception:
-                    pass
+                    from app.core.utils import IdentityExtractor
+
+                    payload = IdentityExtractor.extract_jwt_payload(tokens["xai_access"])
+                    exp = payload.get("exp")
+                    if exp is not None:
+                        tokens["expiry_date"] = str(int(float(exp) * 1000))
+                except (
+                    ValueError,
+                    KeyError,
+                    binascii.Error,
+                    json.JSONDecodeError,
+                    TypeError,
+                ) as exc:
+                    logging.debug("Failed to extract JWT expiry from xai_access: %s", exc)
             if tokens and tokens.get("account_id"):
                 from scripts.sidecar_pkg.identity import canonical_account_id
 

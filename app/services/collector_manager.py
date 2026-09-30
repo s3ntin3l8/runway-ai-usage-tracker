@@ -669,12 +669,13 @@ class CollectorManager:
                     )
                     health_updates[candidate["source_id"]] = "unavailable"
                     continue
-            result_failed = not result or any(
-                card.get("data_source") == "error"
-                or card.get("remaining") == "ERR"
-                or card.get("error_type") in {"api_error", "parse_error", "auth_failed"}
+            has_usable_card = any(
+                card.get("data_source") != "error"
+                and card.get("remaining") != "ERR"
+                and not card.get("error_type")
                 for card in result
             )
+            result_failed = not result or not has_usable_card
             is_auth_failure = attempt["auth_failed"] or any(
                 card.get("error_type") == "auth_failed" for card in result
             )

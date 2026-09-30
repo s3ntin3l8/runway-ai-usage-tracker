@@ -376,3 +376,24 @@ class TestRefreshOAuthTokenXai:
         assert "expiry_date" in result
         exp_ms = int(result["expiry_date"])
         assert exp_ms > int(time.time() * 1000)
+
+    async def test_non_xai_refresh_does_not_update_xai_keys(self):
+        body = {
+            "access_token": "new_anthropic_token",
+            "refresh_token": "new_anthropic_refresh",
+        }
+        resp = _make_mock_response(200, body)
+        ctx = _make_async_client(resp)
+        tokens = {
+            "oauth_token": "old_token",
+            "refresh_token": "old_refresh",
+            "xai_access": "should_not_change",
+            "xai_refresh": "should_not_change",
+        }
+        with patch("httpx.AsyncClient", return_value=ctx):
+            result = await refresh_oauth_token("anthropic", tokens)
+
+        assert result["oauth_token"] == "new_anthropic_token"
+        assert result["refresh_token"] == "new_anthropic_refresh"
+        assert result["xai_access"] == "should_not_change"
+        assert result["xai_refresh"] == "should_not_change"

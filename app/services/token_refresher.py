@@ -105,11 +105,11 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     updated = dict(tokens)
     if "access_token" in data:
         updated["oauth_token"] = data["access_token"]
-        if provider == "xai" or "xai_access" in tokens:
+        if provider == "xai":
             updated["xai_access"] = data["access_token"]
     if "refresh_token" in data:
         updated["refresh_token"] = data["refresh_token"]
-        if provider == "xai" or "xai_refresh" in tokens:
+        if provider == "xai":
             updated["xai_refresh"] = data["refresh_token"]
     # Google returns a fresh id_token when the scope includes openid — we have
     # to capture it because token_health uses its `exp` claim to classify the
