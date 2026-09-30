@@ -80,6 +80,46 @@ describe('TokensSection', () => {
     expect(screen.getByText('dev-01')).toBeInTheDocument();
   });
 
+  it('explains where non-removable credentials must be managed', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [
+        token({
+          account_id: 'sidecar-account',
+          account_label: 'Sidecar account',
+          removable: false,
+          sidecar_id: 'dev-01',
+          source_id: 'sidecar:dev-01:auth.json',
+        }),
+        token({
+          account_id: 'legacy-sidecar-account',
+          account_label: 'Legacy sidecar account',
+          removable: false,
+          source_id: 'sidecar:legacy',
+        }),
+        token({
+          account_id: 'config-account',
+          account_label: 'Config account',
+          removable: false,
+        }),
+      ],
+    });
+    renderWithProviders(<TokensSection />);
+
+    const sidecarRow = (await screen.findByText('Sidecar account')).closest('tr');
+    const legacyRow = screen.getByText('Legacy sidecar account').closest('tr');
+    const configRow = screen.getByText('Config account').closest('tr');
+    expect(sidecarRow).not.toBeNull();
+    expect(legacyRow).not.toBeNull();
+    expect(configRow).not.toBeNull();
+
+    await userEvent.hover(within(sidecarRow!).getByText('managed'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/Provided by a sidecar/);
+    await userEvent.hover(within(legacyRow!).getByText('managed'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Managed by the sidecar');
+    await userEvent.hover(within(configRow!).getByText('managed'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/Managed in Settings/);
+  });
+
   it('refreshes a token via the refresh endpoint', async () => {
     vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [token()] });
     vi.mocked(api.postTokenRefresh).mockResolvedValue(undefined as never);
