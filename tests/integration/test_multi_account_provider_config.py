@@ -151,6 +151,24 @@ def test_explicit_put_creates_second_account_for_same_provider(client: TestClien
     assert account_ids == {"alice@example.com", "bob@example.com"}
 
 
+def test_explicit_put_with_hash_account_id_and_email_label_adopts_email(client: TestClient):
+    """When a new config is saved with a credential hash ID and an email label,
+    the endpoint adopts the email as the authoritative account_id."""
+    hash_id = "1692b86a1d20fa0877d379ee299ad1e90b06b2c0ef0c3021d2a75c5fb5bac2ef"
+    resp = client.put(
+        f"/api/v1/system/provider-config/openrouter/{hash_id}",
+        json={"account_label": "User@Example.com"},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["account_id"] == "user@example.com"
+
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
+    assert any(row["account_id"] == "user@example.com" for row in openrouter["accounts"])
+    assert not any(row["account_id"] == hash_id for row in openrouter["accounts"])
+
+
 @pytest.mark.asyncio
 async def test_credential_source_preferences_and_safe_listing(client: TestClient, session: Session):
     from app.services.token_cache import token_cache
