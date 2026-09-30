@@ -58,6 +58,10 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# HMAC-only sidecar routes: POST /ingest, POST /credentials/manifest, and
+# GET /config. Keep docs/forward-auth.md's exact bypass route list in sync;
+# other fleet routes remain protected by Authentik.
+
 
 class SidecarUpdateRequest(BaseModel):
     custom_name: str | None = None

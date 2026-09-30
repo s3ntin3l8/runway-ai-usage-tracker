@@ -886,9 +886,12 @@ class CollectorManager:
 
         provider_ids = [provider_id] if provider_id else list(self.collector_registry)
         moves: list[tuple[str, str, str, str, tuple[bool, int] | None]] = []
+        candidates_by_provider: dict[str, list[dict[str, Any]]] = {}
         for pid in provider_ids:
-            candidates = await token_cache.get_all_source_candidates(pid)
-            with Session(engine) as session:
+            candidates_by_provider[pid] = await token_cache.get_all_source_candidates(pid)
+        with Session(engine) as session:
+            for pid in provider_ids:
+                candidates = candidates_by_provider[pid]
                 for candidate in candidates:
                     candidate_id = candidate.get("source_id")
                     origin = candidate.get("credential_origin")
@@ -958,7 +961,7 @@ class CollectorManager:
                             preference,
                         )
                     )
-                session.commit()
+            session.commit()
 
         for pid, candidate_id, target, old_account_id, preference in moves:
             await token_cache.move_source(pid, old_account_id, target, candidate_id)

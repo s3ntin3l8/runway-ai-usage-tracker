@@ -91,7 +91,10 @@ class IdentityExtractor:
 
     @classmethod
     def extract_jwt_exp(cls, token: str) -> float | None:
-        """Extract the `exp` claim (seconds since epoch) from a JWT, or None."""
+        """Extract JWT `exp` seconds since epoch, or None.
+
+        Zero is a valid epoch value and represents an already expired token.
+        """
         exp = cls.extract_jwt_payload(token).get("exp")
         if exp is None:
             return None

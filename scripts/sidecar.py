@@ -3311,8 +3311,13 @@ def _hermes_account_identity() -> str:
 
 
 def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return source ids, token types, and expiry only; never return token values."""
-    import base64
+    """Return source ids, token types, and expiry only; never return token values.
+
+    A decoded expiry of zero is retained as the Unix epoch, marking the token
+    expired rather than treating the claim as missing.
+    """
+
+    from app.core.utils import IdentityExtractor
 
     secret_keys = {
         "oauth_token",
@@ -3366,15 +3371,9 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
                 token = metadata.get(key)
                 if not isinstance(token, str) or token.count(".") < 2:
                     continue
-                try:
-                    payload = token.split(".")[1]
-                    payload += "=" * (-len(payload) % 4)
-                    exp = json.loads(base64.urlsafe_b64decode(payload.encode())).get("exp")
-                    expires_at = float(exp) if exp is not None else None
-                    if expires_at is not None:
-                        break
-                except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
-                    continue
+                expires_at = IdentityExtractor.extract_jwt_exp(token)
+                if expires_at is not None:
+                    break
         key_tuple = (provider_id, origin)
         found[key_tuple] = {
             "provider_id": provider_id,

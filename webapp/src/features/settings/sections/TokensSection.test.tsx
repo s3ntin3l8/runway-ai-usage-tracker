@@ -61,6 +61,25 @@ describe('TokensSection', () => {
     expect(screen.getByText('valid')).toBeInTheDocument();
   });
 
+  it('shows expiry and pending identity for an expired sidecar source', async () => {
+    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
+      tokens: [
+        token({
+          identity_pending: true,
+          sidecar_id: 'dev-01',
+          source_name: 'dev-01',
+          status: 'expired',
+          token_types: ['refresh_token'],
+        }),
+      ],
+    });
+    renderWithProviders(<TokensSection />);
+
+    expect(await screen.findByText('Identity pending')).toBeInTheDocument();
+    expect(screen.getByText('expired')).toBeInTheDocument();
+    expect(screen.getByText('dev-01')).toBeInTheDocument();
+  });
+
   it('refreshes a token via the refresh endpoint', async () => {
     vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [token()] });
     vi.mocked(api.postTokenRefresh).mockResolvedValue(undefined as never);

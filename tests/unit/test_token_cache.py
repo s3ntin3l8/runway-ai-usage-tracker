@@ -177,17 +177,22 @@ async def test_move_source_keeps_newer_report_when_migrating_legacy_hash_bucket(
         source_metadata={"sidecar_id": "host", "credential_origin": "path:/oauth.json"},
     )
     cache._cache["antigravity"]["legacy-hash"][1]["source_id"] = source_id
+    prior_oauth_seen = cache._token_timestamps["antigravity"]["alice@example.com"]["oauth_token"]
 
     assert await cache.move_source("antigravity", "legacy-hash", "alice@example.com", source_id)
 
     candidates = await cache.get_source_candidates("antigravity", "alice@example.com")
     assert candidates[0]["tokens"]["oauth_token"] == "fresh-token"
-    assert candidates[0]["tokens"]["refresh_token"] == "old-refresh"
+    assert candidates[0]["tokens"]["refresh_token"] == "target-refresh"
     assert candidates[0]["tokens"]["api_key"] == "legacy-api"  # pragma: allowlist secret
     aggregate = await cache.get("antigravity", "alice@example.com")
     assert aggregate is not None and aggregate["oauth_token"] == "fresh-token"
     assert aggregate["api_key"] == "legacy-api"  # pragma: allowlist secret
     assert cache._cache["antigravity"]["alice@example.com"][1]["account_label"] == "Legacy"
+    assert (
+        cache._token_timestamps["antigravity"]["alice@example.com"]["oauth_token"]
+        == prior_oauth_seen
+    )
     assert await cache.get_source_candidates("antigravity", "legacy-hash") == []
 
 
@@ -213,6 +218,33 @@ async def test_move_source_migrates_legacy_aggregate_when_target_has_none(cache)
 
     assert await cache.get("antigravity", "alice@example.com") == {"oauth_token": "pending-token"}
     assert await cache.get("antigravity", "legacy-hash") is None
+
+
+@pytest.mark.asyncio
+async def test_move_source_does_not_promote_expired_legacy_token(cache):
+    source_id = "sidecar:host:expired-oauth"
+    expired_oauth = _make_id_token({"exp": time.time() - 60})
+    await cache.store(
+        "antigravity",
+        {"oauth_token": expired_oauth},  # pragma: allowlist secret
+        account_id="legacy-hash",
+        source_id=source_id,
+    )
+    await cache.store(
+        "antigravity",
+        {"api_key": "target-api"},  # pragma: allowlist secret
+        account_id="alice@example.com",
+        source_id=source_id,
+    )
+    cache._cache["antigravity"]["legacy-hash"][1]["source_id"] = source_id
+
+    assert await cache.move_source("antigravity", "legacy-hash", "alice@example.com", source_id)
+
+    source = (await cache.get_source_candidates("antigravity", "alice@example.com"))[0]
+    assert "oauth_token" not in source["tokens"]
+    assert source["tokens"]["api_key"] == "target-api"  # pragma: allowlist secret
+    aggregate = await cache.get("antigravity", "alice@example.com")
+    assert aggregate == {"api_key": "target-api"}  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio

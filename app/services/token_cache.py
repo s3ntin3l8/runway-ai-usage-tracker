@@ -633,11 +633,13 @@ class TokenCache:
             if existing_target:
                 target_tokens, target_metadata, target_timestamp = existing_target
                 merged_tokens = dict(target_tokens)
+                incoming_is_staler = self._is_staler(tokens, target_tokens)
                 for key, value in tokens.items():
-                    if key not in merged_tokens:
-                        merged_tokens[key] = value
-                if tokens.get("refresh_token"):
-                    merged_tokens["refresh_token"] = tokens["refresh_token"]
+                    if key in merged_tokens:
+                        continue
+                    if incoming_is_staler and key in _OAUTH_CREDENTIAL_KEYS:
+                        continue
+                    merged_tokens[key] = value
                 merged_metadata = {**metadata, **target_metadata, "identity_pending": False}
                 entry = (merged_tokens, merged_metadata, max(timestamp, target_timestamp))
             else:
@@ -652,7 +654,11 @@ class TokenCache:
                     self._cache[provider][to_id] = old_aggregate
                 else:
                     for key, value in old_aggregate[0].items():
-                        target_aggregate[0].setdefault(key, value)
+                        if key in target_aggregate[0]:
+                            continue
+                        if self._is_staler({key: value}, target_aggregate[0]):
+                            continue
+                        target_aggregate[0][key] = value
                         self._mark_token_seen(provider, to_id, key)
                     if not target_aggregate[1].get("account_label"):
                         target_aggregate[1]["account_label"] = old_aggregate[1].get("account_label")
