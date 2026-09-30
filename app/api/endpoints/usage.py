@@ -224,6 +224,8 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
     # (no deletion) but they should not appear in the active fleet view.
     provider_configs = session.exec(select(ProviderConfig)).all()
     archived_pairs = {(r.provider_id, r.account_id) for r in provider_configs if r.archived}
+    # Only saved configurations express an opt-out. Providers with no config
+    # rows retain their existing sidecar auto-discovery behavior.
     configured_provider_ids = {r.provider_id for r in provider_configs}
     active_config_provider_ids = {
         r.provider_id for r in provider_configs if r.enabled and not r.archived

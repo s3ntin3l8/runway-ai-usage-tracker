@@ -464,6 +464,7 @@ class TestCollectorManagerInitialization:
             provider_id = "anthropic"
             account_id = "alice@example.com"
             enabled = True
+            archived = False
             poll_interval_seconds = None
             account_label = None
             strategies = None
@@ -504,6 +505,7 @@ class TestCollectorManagerInitialization:
             provider_id = "anthropic"
             account_id = "alice@example.com"
             enabled = False  # the account was just disabled
+            archived = False
             poll_interval_seconds = None
             account_label = None
             strategies = None
@@ -623,6 +625,7 @@ class TestCollectorManagerInitialization:
             provider_id = "anthropic"
             account_id = "alice@example.com"
             enabled = False  # sole account disabled
+            archived = False
             poll_interval_seconds = None
             account_label = None
             strategies = None

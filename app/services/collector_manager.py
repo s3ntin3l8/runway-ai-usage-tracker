@@ -122,7 +122,7 @@ class CollectorManager:
 
                         db_configs[r.provider_id][r.account_id] = SimpleNamespace(
                             enabled=r.enabled,
-                            archived=getattr(r, "archived", False),
+                            archived=r.archived,
                             poll_interval_seconds=r.poll_interval_seconds,
                             account_label=r.account_label,
                             strategies=r.strategies,
@@ -534,6 +534,11 @@ class CollectorManager:
             # contribution under `default` (which may belong to another
             # credential or an archived account).
             if key.endswith(":identity-pending") and account_id == "default":
+                if failed:
+                    logger.debug(
+                        "Identity-pending collection failed for %s; no account outcome recorded",
+                        scrub_log(provider_id),
+                    )
                 continue
             outcomes.append(
                 {
