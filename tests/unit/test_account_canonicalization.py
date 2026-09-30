@@ -420,7 +420,13 @@ class TestSidecarIdentityPrecedence:
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         # Same (canonical) identity the anthropic events are stamped with.
         assert [c["account_id"] for c in token_cards] == ["alice@example.com"]
-        assert blocked == []
+        assert blocked == [
+            {
+                "provider_id": "anthropic",
+                "credential_origin": f"path:{creds.resolve()}",
+                "account_id": "alice@example.com",
+            }
+        ]
 
     def test_anthropic_stamp_skipped_when_browser_cookie_collected(self, tmp_path, monkeypatch):
         """A claude.ai cookie may belong to another account than the CLI
@@ -467,7 +473,12 @@ class TestSidecarIdentityPrecedence:
         assert [c["account_id"] for c in token_cards] == ["cli@example.com", None]
         assert token_cards[1]["metadata"]["identity_pending"] is True
         assert blocked == [
-            {"provider_id": "anthropic", "credential_origin": "cookie:anthropic/session"}
+            {
+                "provider_id": "anthropic",
+                "credential_origin": f"path:{creds.resolve()}",
+                "account_id": "cli@example.com",
+            },
+            {"provider_id": "anthropic", "credential_origin": "cookie:anthropic/session"},
         ]
 
     def test_anthropic_keychain_identity_comes_from_its_own_payload(self, monkeypatch):
@@ -506,7 +517,13 @@ class TestSidecarIdentityPrecedence:
             },
         )
         assert [card["account_id"] for card in cards] == ["keychain@example.com"]
-        assert blocked == []
+        assert blocked == [
+            {
+                "provider_id": "anthropic",
+                "credential_origin": "keychain:Claude Code-credentials",
+                "account_id": "keychain@example.com",
+            }
+        ]
 
     def test_gemini_stamp_reads_collected_id_token(self, tmp_path, monkeypatch):
         """Covers creds under {{CONFIG_DIR:gemini}}, not just ~/.gemini."""

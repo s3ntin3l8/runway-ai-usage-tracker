@@ -532,6 +532,7 @@ export interface SidecarIdentitySource {
 export interface UntaggedCredential {
   sidecar_id: string;
   provider_id: string;
+  claimed_account_id?: string | null;
   // Stable host-side descriptor; phase 1 ships `provider:<id>`,
   // per-rule expansion is the follow-up issue.
   credential_origin: string;
@@ -829,6 +830,8 @@ export interface TokenHealthEntry {
   account_label?: string | null;
   source?: string | null;
   source_name?: string | null;
+  source_id?: string;
+  assignment_pending?: boolean;
   token_types?: string[];
   status: TokenHealthStatus;
   expires_at?: string | null;

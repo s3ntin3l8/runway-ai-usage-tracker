@@ -83,6 +83,8 @@ def _is_synthetic(account_id: str) -> bool:
 def _build_accounts_by_provider(rows: list[dict[str, Any]]) -> dict[str, set[str]]:
     accounts_by_provider: dict[str, set[str]] = {}
     for r in rows:
+        if r.get("assignment_pending"):
+            continue
         accounts_by_provider.setdefault(r["provider"], set()).add(
             canonical_account_id(_underlying_account(r["account_id"]))
         )
@@ -127,6 +129,8 @@ def _apply_invalid(rows: list[dict[str, Any]]) -> None:
     """
     accounts_by_provider = _build_accounts_by_provider(rows)
     for r in rows:
+        if r.get("assignment_pending"):
+            continue
         if r["status"] not in ("valid", "unknown"):
             continue
         if is_flagged(r, accounts_by_provider):
@@ -219,6 +223,14 @@ class TokenHealthService:
         stats = await token_cache.get_all_stats()
         result: list[dict[str, Any]] = []
         seen_token_values: set[str] = set()
+        claude_sources = [
+            source
+            for source in await token_cache._get_source_credentials("anthropic")
+            if source["tokens"].get("oauth_token")
+            and source["metadata"].get("sidecar_id")
+            and source["metadata"].get("identity_pending") is True
+        ]
+        source_oauth_values = {source["tokens"]["oauth_token"] for source in claude_sources}
 
         sidecar_names = {}
         try:
@@ -231,6 +243,14 @@ class TokenHealthService:
         for provider, accounts in stats.items():
             for acc_id, info in accounts.items():
                 tokens = await token_cache.get(provider, acc_id) or {}
+                if provider == "anthropic" and tokens.get("oauth_token") in source_oauth_values:
+                    tokens = {
+                        key: value
+                        for key, value in tokens.items()
+                        if key not in _OAUTH_FAMILY_KEYS | {"client_id", "expiry_date"}
+                    }
+                    if not tokens:
+                        continue
                 logger.debug(f"Token health check for {provider}/{acc_id}: {list(tokens.keys())}")
 
                 # If we have any tokens, track their values to deduplicate later
@@ -259,6 +279,40 @@ class TokenHealthService:
                         rollable=has_refresh_token,
                     )
                 )
+
+        for source in claude_sources:
+            tokens = source["tokens"]
+            metadata = source["metadata"]
+            pending = bool(metadata.get("identity_pending"))
+            sidecar_id = str(metadata["sidecar_id"])
+            account_id = source["account_id"]
+            identity_hint = metadata.get("identity_hint")
+            pending_label = (
+                f"Unassigned ({identity_hint})"
+                if isinstance(identity_hint, str) and "@" in identity_hint
+                else "Unassigned"
+            )
+            for value in tokens.values():
+                if value:
+                    seen_token_values.add(f"anthropic:{value}")
+            row = _row(
+                "anthropic",
+                f"unassigned:{source['source_id']}" if pending else account_id,
+                label=pending_label if pending else None,
+                source=sidecar_id,
+                source_name=sidecar_names.get(sidecar_id, sidecar_id),
+                token_types=[key for key in tokens if key in _OAUTH_FAMILY_KEYS],
+                exp=IdentityExtractor.exp_from_tokens(tokens),
+                can_refresh=False,
+                ttl_remaining=source["ttl_remaining"],
+                rollable="refresh_token" in tokens,
+            )
+            row.update(
+                source_id=source["source_id"],
+                assignment_pending=pending,
+                removable=False,
+            )
+            result.append(row)
 
         # Also surface API keys / session cookies configured in Settings → Providers.
         # These are stored encrypted in ProviderConfig but never flow through token_cache

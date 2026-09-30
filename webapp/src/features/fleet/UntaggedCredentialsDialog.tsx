@@ -355,6 +355,11 @@ function UntaggedRow({
               <span className="text-accent"> · applies to all machines</span>
             )}
           </p>
+          {entry.claimed_account_id && (
+            <p className="text-[11px] text-fg-subtle">
+              Discovered login: <span className="font-mono">{entry.claimed_account_id}</span>
+            </p>
+          )}
         </div>
       </div>
 

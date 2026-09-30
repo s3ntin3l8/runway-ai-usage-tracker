@@ -7,6 +7,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { Link } from 'react-router';
 import { ArrowDown, ArrowUp, KeyRound, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteTokenHealth, postTokenRefresh } from '@/api/endpoints';
@@ -143,7 +144,9 @@ function useTokenActions(token: TokenHealthEntry) {
     token.removable === false
       ? origin === 'server'
         ? 'Set via the server environment — change it there'
-        : 'Managed in Settings → Providers'
+        : token.source_id
+          ? 'Managed by the sidecar'
+          : 'Managed in Settings → Providers'
       : null;
   const typesLabel = (token.token_types ?? []).join(', ') || '—';
 
@@ -424,6 +427,9 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
       {/* Identifier */}
       <TD className="text-fg-subtle">
         {credentialAccountName(token.account_id, token.account_label)}
+        {token.assignment_pending ? (
+          <Link to="/fleet" className="ml-2 text-accent underline underline-offset-2">Assign in Fleet</Link>
+        ) : null}
       </TD>
 
       {/* Detail */}
@@ -586,6 +592,9 @@ function TokenCard({ token }: { token: TokenHealthEntry }) {
       {/* Identifier */}
       <p className="mt-1 text-[13px] text-fg-subtle">
         {credentialAccountName(token.account_id, token.account_label)}
+        {token.assignment_pending ? (
+          <Link to="/fleet" className="ml-2 text-accent underline underline-offset-2">Assign in Fleet</Link>
+        ) : null}
       </p>
 
       {/* Credential types · origin */}

@@ -36,8 +36,36 @@ import json
 import logging
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+
+def response_url_was_redirected(requested_url: str, response_url: str) -> bool:
+    """Detect destination changes while ignoring harmless URL normalization.
+
+    Path percent-encoding is preserved, so ``%2F`` and ``/`` count as a
+    destination change.
+    """
+
+    def normalized(url: str) -> tuple[str, str, int | None, str, str] | None:
+        try:
+            parsed = urlsplit(url)
+            scheme = parsed.scheme.lower()
+            hostname = (parsed.hostname or "").lower()
+            port = parsed.port
+        except ValueError:
+            return None
+        if not scheme or not hostname:
+            return None
+        if (scheme, port) in {("http", 80), ("https", 443)}:
+            port = None
+        path = parsed.path.rstrip("/") or "/"
+        return scheme, hostname, port, path, parsed.query
+
+    requested = normalized(requested_url)
+    response = normalized(response_url)
+    return requested is not None and response is not None and requested != response
 
 
 def config_request_signature(api_key: str, timestamp: str, query: str) -> str:
@@ -100,12 +128,20 @@ def _fetch_config_payload(
         with request.urlopen(
             req, timeout=timeout, context=build_context_from_config(url, config)
         ) as resp:
-            if resp.getcode() != 200:
-                logger.debug("fetch_config: %s returned %s", url, resp.getcode())
+            response_url = resp.geturl()
+            if isinstance(response_url, str) and response_url_was_redirected(url, response_url):
+                logger.warning("fleet config was redirected; check reverse proxy sidecar access")
                 return None
-            return json.loads(resp.read().decode("utf-8"))
+            if resp.getcode() != 200:
+                logger.warning("fleet config returned HTTP %s", resp.getcode())
+                return None
+            payload = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(payload, dict) or not isinstance(payload.get("config"), dict):
+                logger.warning("fleet config response is missing config; check reverse proxy")
+                return None
+            return payload
     except (error.HTTPError, error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        logger.debug("fetch_config: %s failed: %s", url, exc)
+        logger.warning("fleet config request failed: %s", type(exc).__name__)
         return None
 
 
