@@ -183,6 +183,33 @@ describe('DebugTab', () => {
     expect(screen.getByText(/capture raw collector output/i)).toBeInTheDocument();
   });
 
+  it.each([
+    {
+      label: 'unlimited',
+      gauge: limitCard({ data_source: 'api', is_unlimited: true }),
+      expected: 'unlimited',
+    },
+    {
+      label: 'error',
+      gauge: limitCard({ data_source: 'api', error_type: 'api_error' }),
+      expected: 'error',
+    },
+    {
+      label: 'quota',
+      gauge: limitCard({ data_source: 'api', is_unlimited: false }),
+      expected: 'quota',
+    },
+  ])('labels a registered API card as $label', ({ gauge, expected }) => {
+    const entry = fleetEntry({
+      server_collector_available: true,
+      critical_gauge: gauge,
+    });
+    renderWithProviders(
+      <DebugTab providerId="anthropic" accountId="me@example.com" entry={entry} active />,
+    );
+    expect(screen.getByText(expected, { selector: 'dd' })).toBeInTheDocument();
+  });
+
   it('runs the capture and renders the strategy accordion', async () => {
     const mockData: DebugRawResponse = {
       provider_id: 'anthropic',

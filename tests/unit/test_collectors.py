@@ -2926,6 +2926,26 @@ class TestKimiCodingCollector:
         assert result[0]["error_type"] == "auth_failed"
 
     @pytest.mark.asyncio
+    async def test_collect_api_key_401_without_fallback_returns_auth_failed(self, mock_http_client):
+        """A rejected API key still surfaces auth failure when no web credential exists."""
+        collector = KimiCodingCollector()
+        patchers = [
+            self._patch_credentials(api_key="bad_key"),
+            self._mock_settings(),
+        ]
+        self._http_router(mock_http_client, [("/coding/v1/usages", 401)])
+
+        try:
+            result = await collector.collect(mock_http_client)
+        finally:
+            for p in patchers:
+                p.stop()
+
+        assert len(result) == 1
+        assert result[0]["remaining"] == "ERR"
+        assert result[0]["error_type"] == "auth_failed"
+
+    @pytest.mark.asyncio
     async def test_collect_merge_api_first_web_enriches(self, mock_http_client):
         """Default order: api is the base; web adds weekly + tier; counts stay authoritative."""
         collector = KimiCodingCollector()

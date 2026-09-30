@@ -296,6 +296,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
                 source_label="host-a",
                 credential_origin=origin,
                 sidecar_id="host-a",
+                last_seen=datetime(2026, 9, 29, tzinfo=UTC),
             )
         )
         session.add(
@@ -369,9 +370,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
         )
 
     assert source.account_id == "s3ntin3l8@gmail.com"
-    # The target row may have a newer database-default timestamp than the
-    # seeded value; identity promotion preserves the newest observation.
-    assert source.last_seen >= target_seen
+    assert source.last_seen == target_seen
     assert tag is not None and tag.set_by == "identity_verification"
     assert pending is None
     assert await cache.get_source_candidates("antigravity", "default") == []

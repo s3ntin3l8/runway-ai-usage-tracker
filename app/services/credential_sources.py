@@ -119,5 +119,6 @@ def record_source_health(
         row.health_detail = {
             "auth_failed": "Authentication failed",
             "unavailable": "Collection failed",
+            "degraded": "Some requests were rejected; quota was collected",
         }.get(health)
         session.add(row)

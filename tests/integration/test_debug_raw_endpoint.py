@@ -390,6 +390,9 @@ def test_debug_raw_endpoint_selects_requested_account(client, monkeypatch):
     manager.smart_collectors["account_test:bob"] = SmartCollector(
         _AccountCollector(account_id="bob"), "Account Test Bob", ttl=9999
     )
+    manager.smart_collectors["account_test:identity-pending"] = SmartCollector(
+        _AccountCollector(account_id="resolved@example.com"), "Resolved Account", ttl=9999
+    )
 
     try:
         r = client.get("/api/v1/system/debug/raw/account_test?account_id=bob")
@@ -397,9 +400,22 @@ def test_debug_raw_endpoint_selects_requested_account(client, monkeypatch):
         data = r.json()
         assert data["account_id"] == "bob"
         assert data["strategies"]["api"]["cards_summary"][0]["service_name"] == "bob"
+
+        resolved = client.get(
+            "/api/v1/system/debug/raw/account_test?account_id=resolved%40example.com"
+        )
+        assert resolved.status_code == 200
+        assert (
+            resolved.json()["strategies"]["api"]["cards_summary"][0]["service_name"]
+            == "resolved@example.com"
+        )
+
+        missing = client.get("/api/v1/system/debug/raw/account_test?account_id=unknown")
+        assert missing.status_code == 404
     finally:
         manager.smart_collectors.pop("account_test:alice", None)
         manager.smart_collectors.pop("account_test:bob", None)
+        manager.smart_collectors.pop("account_test:identity-pending", None)
 
 
 def test_debug_raw_endpoint_legacy_collector(client, monkeypatch):
