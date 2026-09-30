@@ -49,6 +49,9 @@ class _CredentialProbeCollector:
         if value == "partial":
             await self.cache.observe_response(SimpleNamespace(status_code=401))
             return [{"remaining": "healthy", "data_source": "api"}]
+        if value == "partial_403":
+            await self.cache.observe_response(SimpleNamespace(status_code=403))
+            return [{"remaining": "healthy", "data_source": "api"}]
         return [{"remaining": "healthy", "data_source": "api"}]
 
     async def reset(self) -> None:
@@ -183,6 +186,37 @@ async def test_usable_result_survives_other_401_in_same_source(monkeypatch):
     await cache.store(
         "openrouter",
         {"api_key": "partial"},  # pragma: allowlist secret — fake value for partial-failure test
+        account_id="alice@example.com",
+        source_id="one-source",
+        source_metadata={"enabled": True, "priority": 0},
+    )
+    collector = _CredentialProbeCollector(cache)
+    manager = CollectorManager()
+    health_writes: list[dict[str, str]] = []
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr(
+        manager,
+        "_record_source_health",
+        lambda _provider, _account, updates: health_writes.append(dict(updates)),
+    )
+    manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
+        collector, "OpenRouter", ttl=0
+    )
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert result == [{"remaining": "healthy", "data_source": "api"}]
+    assert health_writes == [{"one-source": "degraded"}]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_usable_result_survives_other_403_in_same_source(monkeypatch):
+    cache = TokenCache()
+    tokens = {"api_key": "partial_403"}  # pragma: allowlist secret — fake value for test
+    await cache.store(
+        "openrouter",
+        tokens,
         account_id="alice@example.com",
         source_id="one-source",
         source_metadata={"enabled": True, "priority": 0},
@@ -379,7 +413,18 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     assert source.account_id == "s3ntin3l8@gmail.com"
     # The concurrent heartbeat above may advance last_seen while the source is
     # promoted; promotion must preserve at least the prior target timestamp.
-    assert source.last_seen is not None and source.last_seen >= target_seen
+    assert source.last_seen is not None
+    norm_seen = (
+        source.last_seen.replace(tzinfo=UTC)
+        if source.last_seen.tzinfo is None
+        else source.last_seen.astimezone(UTC)
+    )
+    norm_target = (
+        target_seen.replace(tzinfo=UTC)
+        if target_seen.tzinfo is None
+        else target_seen.astimezone(UTC)
+    )
+    assert norm_seen >= norm_target
     assert tag is not None and tag.set_by == "identity_verification"
     assert pending is None
     assert await cache.get_source_candidates("antigravity", "default") == []
@@ -492,13 +537,17 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
 @pytest.mark.asyncio
 async def test_collector_retries_next_enabled_source_after_403(monkeypatch):
     cache = TokenCache()
-    for source_id, value, priority in (("first", "forbidden", 0), ("last", "working", 1)):
+    for source_id, value, priority, enabled in (
+        ("first", "forbidden", 0, True),
+        ("disabled", "broken", 1, False),
+        ("last", "working", 2, True),
+    ):
         await cache.store(
             "openrouter",
             {"api_key": value},  # pragma: allowlist secret — fake values for failover test
             account_id="alice@example.com",
             source_id=source_id,
-            source_metadata={"enabled": True, "priority": priority},
+            source_metadata={"enabled": enabled, "priority": priority},
         )
     collector = _CredentialProbeCollector(cache)
     manager = CollectorManager()

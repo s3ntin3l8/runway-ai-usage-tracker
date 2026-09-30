@@ -686,6 +686,8 @@ class CollectorManager:
                 # preserve the partial failure for the source diagnostics.
                 health_updates[candidate["source_id"]] = "degraded"
             if result_failed:
+                # Any failed attempt that did not trigger the auth_failed short-circuit
+                # (e.g. missing_config, api_error, or empty response) is functionally down.
                 health_updates[candidate["source_id"]] = "unavailable"
                 continue
             if not attempt["auth_failed"]:
