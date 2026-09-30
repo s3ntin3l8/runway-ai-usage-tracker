@@ -670,6 +670,8 @@ class TokenCache:
                                 self._mark_token_seen(provider, to_id, key)
                             continue
                         if self._is_staler({key: value}, target_aggregate[0]):
+                            # Use the target's full expiry context, not just the
+                            # missing key, so another OAuth field can veto it.
                             continue
                         target_aggregate[0][key] = value
                         self._mark_token_seen(provider, to_id, key)

@@ -52,6 +52,9 @@ class _CredentialProbeCollector:
         if value == "partial_403":
             await self.cache.observe_response(SimpleNamespace(status_code=403))
             return [{"remaining": "healthy", "data_source": "api"}]
+        if value == "silent-rejected":
+            await self.cache.observe_response(SimpleNamespace(status_code=401))
+            return []
         return [{"remaining": "healthy", "data_source": "api"}]
 
     async def reset(self) -> None:
@@ -241,6 +244,45 @@ async def test_usable_result_survives_other_403_in_same_source(monkeypatch):
 
     assert result == [{"remaining": "healthy", "data_source": "api"}]
     assert health_writes == [{"one-source": "degraded"}]
+
+
+@pytest.mark.asyncio
+async def test_empty_auth_failure_preserves_previous_failure_card(monkeypatch):
+    cache = TokenCache()
+    for source_id, value, priority in (
+        ("first", "rejected", 0),
+        ("second", "silent-rejected", 1),
+    ):
+        await cache.store(
+            "openrouter",
+            {"api_key": value},  # pragma: allowlist secret — fake credentials
+            account_id="alice@example.com",
+            source_id=source_id,
+            source_metadata={"enabled": True, "priority": priority},
+        )
+    calls = 0
+
+    async def collect_with_auth_failures(_client):
+        nonlocal calls
+        calls += 1
+        await cache.observe_response(SimpleNamespace(status_code=401))
+        if calls == 1:
+            return [{"remaining": "ERR", "error_type": "auth_failed"}]
+        return []
+
+    manager = CollectorManager()
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr(manager, "_record_source_health", lambda *_args: None)
+    smart = SmartCollector(_CredentialProbeCollector(cache), "OpenRouter", ttl=0)
+    smart.collect = AsyncMock(side_effect=collect_with_auth_failures)
+    manager.smart_collectors["openrouter:alice@example.com"] = smart
+
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert len(result) == 1
+    assert result[0]["error_type"] == "auth_failed"
+    assert calls == 2
     await manager.close()
 
 

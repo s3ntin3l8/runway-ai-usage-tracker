@@ -934,6 +934,8 @@ class CollectorManager:
                             source.account_id = target
                             session.add(source)
                         else:
+                            # Preserve a target row if legacy data or a future
+                            # source-id re-key leaves both rows for one source.
                             preference = (
                                 bool(existing_target.enabled),
                                 int(existing_target.priority),

@@ -41,10 +41,19 @@ def _hmac_only_fleet_routes() -> set[str]:
 
 def test_forward_auth_documentation_lists_every_hmac_only_route():
     docs = (ROOT / "docs/forward-auth.md").read_text()
-    documented = {
-        route
-        for route in re.findall(r"Path\(`([^`]+)`\)", docs)
-        if route.startswith(f"{FLEET_PREFIX}/")
-    }
+    expected = _hmac_only_fleet_routes()
+    bypass_rules = []
+    for router_name, rule in re.findall(r"traefik\.http\.routers\.([^.]+)\.rule=([^\n]+)", docs):
+        routes = re.findall(r"Path\(`([^`]+)`\)", rule)
+        fleet_routes = {route for route in routes if route.startswith(f"{FLEET_PREFIX}/")}
+        if fleet_routes:
+            bypass_rules.append((router_name, rule, fleet_routes))
 
-    assert _hmac_only_fleet_routes() == documented
+    assert len(bypass_rules) == 1
+    router_name, rule, documented = bypass_rules[0]
+    assert documented == expected
+    assert all(rule.count(f"Path(`{route}`)") == 1 for route in expected)
+    assert re.findall(
+        rf"traefik\.http\.routers\.{re.escape(router_name)}\.service=([^\s`]+)",
+        docs,
+    ) == ["runway"]
