@@ -276,6 +276,52 @@ class TestTokenHealthService:
         assert result[0]["assignment_pending"] is True
 
     @pytest.mark.asyncio
+    async def test_invalid_durable_token_types_fall_back_to_empty_list(self):
+        from app.models.db import CredentialSource, SidecarRegistry
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="antigravity",
+            account_id="default",
+            source_id="sidecar:dev-01:malformed",
+            source_type="file",
+            source_label="auth.json",
+            credential_origin="path:/auth.json",
+            sidecar_id="dev-01",
+            token_types_json="not-json",
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [[sidecar], [source], []]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache._get_source_credentials",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch(
+                "app.services.token_health._collect_server_credentials",
+                return_value={},
+            ),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["token_types"] == []
+        assert result[0]["status"] == "unknown"
+
+    @pytest.mark.asyncio
     async def test_live_sidecar_source_uses_cached_token_expiry(self):
         from app.models.db import CredentialSource, SidecarRegistry
 

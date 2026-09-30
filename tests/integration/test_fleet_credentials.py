@@ -434,6 +434,32 @@ def test_manifest_limits_health_observation_count():
         CredentialManifestRequest(sidecar_id="health-host", observations=observations)
 
 
+def test_manifest_ignores_unrepresentable_health_expiry(client: TestClient, session: Session):
+    response = _post_manifest(
+        client,
+        {
+            "sidecar_id": "health-host",
+            "entries": [],
+            "observations": [
+                {
+                    "provider_id": "antigravity",
+                    "credential_origin": "path:/overflow.json",
+                    "token_types": ["oauth_token"],
+                    "expires_at": 1e300,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    source = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.source_label == "overflow.json",
+        )
+    ).one()
+    assert source.credential_expires_at is None
+
+
 def test_manifest_prunes_origins_missing_from_complete_snapshot(
     client: TestClient, session: Session
 ):
