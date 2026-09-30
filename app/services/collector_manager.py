@@ -667,15 +667,19 @@ class CollectorManager:
                         scrub_log(account_id),
                         scrub_log(candidate["source_id"]),
                     )
+                    health_updates[candidate["source_id"]] = "unavailable"
+                    continue
+
             empty_allowed = bool(getattr(collector, "successful_empty_result", False))
-            result_failed = (not result and not empty_allowed) or any(
-                card.get("data_source") == "error"
-                or card.get("remaining") == "ERR"
-                or bool(card.get("error_type"))
+            has_usable_card = any(
+                card.get("data_source") != "error"
+                and card.get("remaining") != "ERR"
+                and not card.get("error_type")
                 for card in result
             )
+            result_failed = (not result and not empty_allowed) or (result and not has_usable_card)
             has_auth_failure = attempt["auth_failed"] or any(
-                card.get("error_type") == "auth_failed" for card in result
+                card.get("error_type") in {"auth_failed", "invalid_api_key"} for card in result
             )
             if has_auth_failure and result_failed:
                 health_updates[candidate["source_id"]] = "auth_failed"

@@ -2968,6 +2968,29 @@ class GenericCollector:
                 opencode_env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
                 if opencode_env_label:
                     tokens["account_id"] = opencode_env_label
+            if (
+                provider_id == "xai"
+                and tokens
+                and tokens.get("xai_access")
+                and not tokens.get("expiry_date")
+            ):
+                try:
+                    import binascii
+
+                    from app.core.utils import IdentityExtractor
+
+                    payload = IdentityExtractor.extract_jwt_payload(tokens["xai_access"])
+                    exp = payload.get("exp")
+                    if exp is not None:
+                        tokens["expiry_date"] = str(int(float(exp) * 1000))
+                except (
+                    ValueError,
+                    KeyError,
+                    binascii.Error,
+                    json.JSONDecodeError,
+                    TypeError,
+                ) as exc:
+                    logging.debug("Failed to extract JWT expiry from xai_access: %s", exc)
             if tokens and tokens.get("account_id"):
                 from scripts.sidecar_pkg.identity import canonical_account_id
 

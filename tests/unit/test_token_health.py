@@ -682,6 +682,16 @@ class TestPerAccountAndInvalid:
         assert rows["a@x.com"]["status"] == "valid"
 
     @pytest.mark.asyncio
+    async def test_xai_with_xai_refresh_can_refresh(self):
+        exp = time.time() + 3600
+        tokens = {"xai_access": _make_jwt(exp), "xai_refresh": "rt"}
+        cache = self._cache([("xai", "alice@example.com", tokens, {})])
+        rows = await self._health(cache)
+        assert rows["alice@example.com"]["can_refresh"] is True
+        assert rows["alice@example.com"]["status"] == "valid"
+        assert rows["alice@example.com"]["expires_at"] is not None
+
+    @pytest.mark.asyncio
     async def test_delete_refuses_managed_credentials(self):
         from app.services.token_health import CredentialNotRemovableError
 

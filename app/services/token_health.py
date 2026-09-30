@@ -259,7 +259,7 @@ class TokenHealthService:
                         seen_token_values.add(f"{provider}:{val}")
 
                 source_val = info.get("source")
-                has_refresh_token = "refresh_token" in tokens
+                has_refresh_token = "refresh_token" in tokens or "xai_refresh" in tokens
                 result.append(
                     _row(
                         provider,

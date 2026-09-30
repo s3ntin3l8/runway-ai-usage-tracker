@@ -355,6 +355,339 @@ class TestCollectorManagerInitialization:
         )
 
     @pytest.mark.asyncio
+    async def test_collect_with_source_failover_handles_auth_failed_card(
+        self, manager, monkeypatch
+    ):
+        smart = MagicMock()
+        smart.reset = AsyncMock()
+        collector = MagicMock()
+        collector.PROVIDER_ID = "xai"
+        collector.account_id = "alice@example.com"
+        collector.credential_account_id = "alice@example.com"
+        collector.account_label = "Alice"
+        smart.collector = collector
+
+        attempts = 0
+
+        async def collect(_client):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return [
+                    {
+                        "error_type": "auth_failed",
+                        "data_source": "error",
+                        "detail": "xAI session expired",
+                    }
+                ]
+            return [{"service_name": "xAI", "remaining": "80%"}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["xai:alice@example.com"] = smart
+        candidates = [
+            {
+                "source_id": "sidecar:a:path:/auth.json",
+                "source_type": "sidecar",
+                "credential_origin": "path:/auth.json",
+                "identity_pending": False,
+                "priority": 0,
+            },
+            {
+                "source_id": "sidecar:b:path:/auth.json",
+                "source_type": "sidecar",
+                "credential_origin": "path:/auth.json",
+                "identity_pending": False,
+                "priority": 1,
+            },
+        ]
+
+        async def get_candidates(*_args):
+            return candidates
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+
+        health_updates = {}
+        result = await manager._collect_with_source_failover(
+            "xai:alice@example.com", MagicMock(), health_updates
+        )
+
+        assert attempts == 2
+        assert result == [{"service_name": "xAI", "remaining": "80%"}]
+        assert health_updates[candidates[0]["source_id"]] == "auth_failed"
+        assert health_updates[candidates[1]["source_id"]] == "healthy"
+
+    @pytest.mark.asyncio
+    async def test_collect_with_source_failover_handles_empty_result_with_invalid_api_key_reason(
+        self, manager, monkeypatch
+    ):
+        from app.services.collectors.xai import XaiCollector
+
+        collector = XaiCollector(account_id="alice@example.com")
+        smart = MagicMock()
+        smart.reset = AsyncMock()
+        smart.collector = collector
+
+        attempts = 0
+
+        async def collect(_client):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                collector._last_error_reason = "invalid_api_key"
+                return await collector._error_handler()
+            return [{"service_name": "xAI", "remaining": "80%"}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["xai:alice@example.com"] = smart
+        candidates = [
+            {
+                "source_id": "sidecar:a:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 0,
+            },
+            {
+                "source_id": "sidecar:b:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 1,
+            },
+        ]
+
+        async def get_candidates(*_args):
+            return candidates
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+
+        health_updates = {}
+        result = await manager._collect_with_source_failover(
+            "xai:alice@example.com", MagicMock(), health_updates
+        )
+
+        assert attempts == 2
+        assert result == [{"service_name": "xAI", "remaining": "80%"}]
+        assert health_updates[candidates[0]["source_id"]] == "auth_failed"
+        assert health_updates[candidates[1]["source_id"]] == "healthy"
+
+    @pytest.mark.asyncio
+    async def test_collect_with_source_failover_preserves_partial_failure_from_usable_source(
+        self, manager, monkeypatch
+    ):
+        smart = MagicMock()
+        smart.reset = AsyncMock()
+        collector = MagicMock()
+        collector.PROVIDER_ID = "anthropic"
+        collector.account_id = "alice@example.com"
+        collector.credential_account_id = "alice@example.com"
+        collector.account_label = "Alice"
+        smart.collector = collector
+
+        attempts = 0
+
+        async def collect(_client):
+            nonlocal attempts
+            attempts += 1
+            # Source returns a usable quota card alongside a partial failure card
+            return [
+                {"service_name": "Claude 3.7 Sonnet", "remaining": "80%"},
+                {"service_name": "Claude Opus", "remaining": "ERR"},
+            ]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["anthropic:alice@example.com"] = smart
+        candidates = [
+            {
+                "source_id": "sidecar:a:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 0,
+            },
+            {
+                "source_id": "sidecar:b:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 1,
+            },
+        ]
+
+        async def get_candidates(*_args):
+            return candidates
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+
+        health_updates = {}
+        result = await manager._collect_with_source_failover(
+            "anthropic:alice@example.com", MagicMock(), health_updates
+        )
+
+        assert attempts == 1
+        assert len(result) == 2
+        assert result[0]["remaining"] == "80%"
+        assert result[1]["remaining"] == "ERR"
+        assert health_updates[candidates[0]["source_id"]] == "healthy"
+        assert candidates[1]["source_id"] not in health_updates
+
+    @pytest.mark.asyncio
+    async def test_collect_with_source_failover_retries_on_unusable_error_card(
+        self, manager, monkeypatch
+    ):
+        smart = MagicMock()
+        smart.reset = AsyncMock()
+        collector = MagicMock()
+        collector.PROVIDER_ID = "anthropic"
+        collector.account_id = "alice@example.com"
+        collector.credential_account_id = "alice@example.com"
+        collector.account_label = "Alice"
+        smart.collector = collector
+
+        attempts = 0
+
+        async def collect(_client):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return [{"service_name": "Claude", "remaining": "ERR"}]
+            return [{"service_name": "Claude", "remaining": "90%"}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["anthropic:alice@example.com"] = smart
+        candidates = [
+            {
+                "source_id": "sidecar:a:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 0,
+            },
+            {
+                "source_id": "sidecar:b:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 1,
+            },
+        ]
+
+        async def get_candidates(*_args):
+            return candidates
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+
+        health_updates = {}
+        result = await manager._collect_with_source_failover(
+            "anthropic:alice@example.com", MagicMock(), health_updates
+        )
+
+        assert attempts == 2
+        assert len(result) == 1
+        assert result[0]["remaining"] == "90%"
+        assert health_updates[candidates[0]["source_id"]] == "unavailable"
+        assert health_updates[candidates[1]["source_id"]] == "healthy"
+
+    @pytest.mark.asyncio
+    async def test_collect_with_source_failover_handles_invalid_api_key_card(
+        self, manager, monkeypatch
+    ):
+        smart = MagicMock()
+        smart.reset = AsyncMock()
+        collector = MagicMock()
+        collector.PROVIDER_ID = "xai"
+        collector.account_id = "alice@example.com"
+        collector.credential_account_id = "alice@example.com"
+        collector.account_label = "Alice"
+        smart.collector = collector
+
+        attempts = 0
+
+        async def collect(_client):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return [
+                    {
+                        "service_name": "xAI",
+                        "remaining": "ERR",
+                        "data_source": "error",
+                        "error_type": "invalid_api_key",
+                    }
+                ]
+            return [{"service_name": "xAI", "remaining": "50%"}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["xai:alice@example.com"] = smart
+        candidates = [
+            {
+                "source_id": "sidecar:a:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 0,
+            },
+            {
+                "source_id": "sidecar:b:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 1,
+            },
+        ]
+
+        async def get_candidates(*_args):
+            return candidates
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+
+        health_updates = {}
+        result = await manager._collect_with_source_failover(
+            "xai:alice@example.com", MagicMock(), health_updates
+        )
+
+        assert attempts == 2
+        assert len(result) == 1
+        assert result[0]["remaining"] == "50%"
+        assert health_updates[candidates[0]["source_id"]] == "auth_failed"
+        assert health_updates[candidates[1]["source_id"]] == "healthy"
+
+    @pytest.mark.asyncio
     async def test_default_xai_collector_does_not_borrow_durable_identity(self, manager):
         manager.smart_collectors = {}
         with (
