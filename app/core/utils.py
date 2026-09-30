@@ -259,6 +259,17 @@ def error_card(
     return LimitCardBuilder.error(service, icon, message, error_type, provider_id)
 
 
+def is_error_card_dict(card: dict[str, Any] | None) -> bool:
+    """Return True if the dictionary represents an error card."""
+    if not card:
+        return False
+    return (
+        bool(card.get("error_type"))
+        or card.get("data_source") == "error"
+        or card.get("remaining") == "ERR"
+    )
+
+
 def extract_token_regex(detail: str, prefix: str) -> str | None:
     """
     Robustly extract a token from a detail string using regex.

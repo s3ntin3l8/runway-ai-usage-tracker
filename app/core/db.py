@@ -127,11 +127,13 @@ def init_db() -> None:
 
     from app.services.accumulator import (
         backfill_latest_usage_contributions,
+        evict_orphan_error_rows,
         prune_orphan_latest_usage_contributions,
     )
 
     with Session(engine) as session:
         prune_orphan_latest_usage_contributions(session)
+        evict_orphan_error_rows(session)
         if session.exec(select(LatestUsageContribution.id)).first() is None:
             backfill_latest_usage_contributions(session)
         session.commit()
