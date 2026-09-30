@@ -35,7 +35,8 @@ const LEVEL_RANK: Record<RiskLevel, number> = { critical: 2, warning: 1, ok: 0 }
 function isZeroBalanceSpendCard(card: LimitCard): boolean {
   if (cardKind(card) !== 'spend' || card.error_type) return false;
   const digits = card.remaining?.match(/\d/g);
-  return digits !== undefined && digits.length > 0 && digits.every((digit) => digit === '0');
+  if (!digits || digits.length === 0) return false;
+  return digits.every((digit) => digit === '0');
 }
 
 // Compute the per-account forecasts keyed on (provider_id, account_id) so we
