@@ -2,11 +2,11 @@
 // with /usage/forecast (trajectory) and answers "am I about to hit a limit?"
 //
 // A provider lands in the at-risk rail when its most-restrictive gauge is
-// already hot (pct thresholds / error card) OR its forecast projects
-// exhaustion before the window resets.
+// already hot (quota thresholds / low balance / error card) OR its forecast
+// projects exhaustion before the window resets.
 
 import type { FleetEntry, ForecastEntry, ForecastStatus, LimitCard } from '@/api/types';
-import { cardPct, cardStatus, findForecast, type QuotaStatus } from '@/lib/quota';
+import { cardKind, cardPct, cardStatus, findForecast, type QuotaStatus } from '@/lib/quota';
 
 export type RiskLevel = 'critical' | 'warning' | 'ok';
 
@@ -29,6 +29,15 @@ const FORECAST_SEVERITY: Partial<Record<ForecastStatus, RiskLevel>> = {
 
 const LEVEL_RANK: Record<RiskLevel, number> = { critical: 2, warning: 1, ok: 0 };
 
+// A balance-only pay-as-you-go card has no quota percentage or configured
+// spending cap. A reported zero balance is still useful card information, but
+// it should not be treated as quota exhaustion in the home risk rail.
+function isZeroBalanceSpendCard(card: LimitCard): boolean {
+  if (cardKind(card) !== 'spend' || card.error_type) return false;
+  const digits = card.remaining?.match(/\d/g);
+  return digits !== undefined && digits.length > 0 && digits.every((digit) => digit === '0');
+}
+
 // Compute the per-account forecasts keyed on (provider_id, account_id) so we
 // can look them up without rescanning the full list per-card.
 function accountForecasts(
@@ -42,7 +51,9 @@ function accountForecasts(
 
 // Combined severity for a single window card + its matched forecast.
 function windowLevel(card: LimitCard, forecast: ForecastEntry | null): RiskLevel {
-  const gs = cardStatus(card);
+  // Keep error cards visible and let genuine forecast signals still qualify.
+  // Only suppress health-derived risk for an unbounded spend card at zero.
+  const gs = isZeroBalanceSpendCard(card) ? 'unknown' : cardStatus(card);
   let level: RiskLevel = 'ok';
   if (gs === 'critical') level = 'critical';
   else if (gs === 'warning') level = 'warning';
