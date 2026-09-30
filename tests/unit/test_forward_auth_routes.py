@@ -41,6 +41,7 @@ def _hmac_only_fleet_routes() -> set[str]:
 
 def test_forward_auth_documentation_lists_every_hmac_only_route():
     docs = (ROOT / "docs/forward-auth.md").read_text()
+    assert "Runway applies its own request checks" in docs
     expected = _hmac_only_fleet_routes()
     bypass_rules = []
     for router_name, rule in re.findall(r"traefik\.http\.routers\.([^.]+)\.rule=([^\n]+)", docs):
