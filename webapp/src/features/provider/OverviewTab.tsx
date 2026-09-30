@@ -62,7 +62,6 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
   const scopeLabel = scope.label;
   const cards = [entry.critical_gauge, ...entry.secondary_limits];
   const kind = cardKind(entry.critical_gauge);
-  const critical = entry.critical_gauge;
 
   // Trajectory for the window we treat as critical. Match on the full card
   // identity (window_type + variant + model_id) via findForecast, not window_type
