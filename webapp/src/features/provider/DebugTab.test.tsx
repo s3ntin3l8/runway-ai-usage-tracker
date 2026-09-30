@@ -216,15 +216,17 @@ describe('DebugTab', () => {
       is_configured: true,
       credentials: { token_found: true, token_source: 'config' },
       active_strategy: 'web',
-      active_strategy_card_count: 2,
+      active_strategy_card_count: 3,
       strategies: {
         web: {
           label: 'Web API (web)',
           kind: 'primary',
           status: 'success',
-          cards_returned: 2,
+          cards_returned: 3,
           cards_summary: [
             { service_name: 'Claude', remaining: '45%' },
+            { service_name: 'Kimi', detail: 'Credential rejected', error_type: 'auth_failed' },
+            { service_name: 'Empty card' },
           ],
           requests: [
             { method: 'GET', url: 'https://claude.ai/api/usage', timestamp: 1000 },
@@ -266,6 +268,7 @@ describe('DebugTab', () => {
     // Strategy sections rendered
     expect(screen.getByText('Web API (web)')).toBeInTheDocument();
     expect(screen.getByText('OAuth API (api)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Web API \(web\)/i }));
 
     // Kind badges
     expect(screen.getAllByText('primary')).toHaveLength(2);
@@ -276,6 +279,10 @@ describe('DebugTab', () => {
     // Status badges
     expect(screen.getByText('success')).toBeInTheDocument();
     expect(screen.getByText('HTTPStatusError')).toBeInTheDocument();
+    expect(screen.getByText('Credential rejected')).toBeInTheDocument();
+    expect(screen.getByText('(auth_failed)')).toBeInTheDocument();
+    expect(screen.getByText('Empty card:')).toBeInTheDocument();
+    expect(screen.getByText('returned')).toBeInTheDocument();
   });
 
   it('shows a failure state with retry on error', async () => {
