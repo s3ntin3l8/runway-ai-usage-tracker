@@ -14,7 +14,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import QuotaSnapshot, UsageEvent, UsagePeriodRollup
-from app.services.queries._shared import _sqlite_utc_timestamp
+from app.services.queries._shared import sqlite_utc_timestamp
 from app.services.queries.snapshots import query_chart
 
 
@@ -33,7 +33,7 @@ def db_session():
 
 def test_sqlite_utc_timestamp_matches_stored_boundary_comparisons(db_session):
     stored = "2026-05-08 12:00:00.000000"
-    boundary = _sqlite_utc_timestamp(datetime(2026, 5, 8, 12, tzinfo=UTC))
+    boundary = sqlite_utc_timestamp(datetime(2026, 5, 8, 12, tzinfo=UTC))
 
     assert boundary == stored
     comparisons = (

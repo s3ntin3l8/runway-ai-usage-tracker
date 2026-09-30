@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from app.core.date_utils import parse_iso8601_utc
 from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
-from app.services.queries._shared import _parse_period_key, _sqlite_utc_timestamp
+from app.services.queries._shared import _parse_period_key, sqlite_utc_timestamp
 from app.services.queries.windows import query_window_aggregation
 from app.services.window_closer import WINDOW_DURATION
 
@@ -867,12 +867,12 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
             for i in range(len(boundary_ranges))
         ]
         params: dict[str, Any] = {
-            f"boundary_since_{i}": _sqlite_utc_timestamp(start)
+            f"boundary_since_{i}": sqlite_utc_timestamp(start)
             for i, (start, _) in enumerate(boundary_ranges)
         }
         params.update(
             {
-                f"boundary_until_{i}": _sqlite_utc_timestamp(end)
+                f"boundary_until_{i}": sqlite_utc_timestamp(end)
                 for i, (_, end) in enumerate(boundary_ranges)
             }
         )
@@ -880,6 +880,8 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
         params["account_id"] = account_id
         provider_clause = "AND provider_id = :provider_id" if provider_id else ""
         account_clause = "AND account_id = :account_id" if account_id else ""
+        # These f-strings interpolate only server-built SQL clauses above;
+        # provider, account, and timestamp values remain bound parameters.
         sql = text(
             f"""
             SELECT provider_id, account_id, model_id,

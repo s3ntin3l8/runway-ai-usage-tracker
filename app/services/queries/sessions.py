@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.models._datetime import iso_utc
-from app.services.queries._shared import _parse_ts, _sqlite_utc_timestamp
+from app.services.queries._shared import _parse_ts, sqlite_utc_timestamp
 
 # ---------------------------------------------------------------------------
 # 7.4  query_sessions
@@ -180,8 +180,8 @@ def query_sessions(
         params={
             "provider_id": provider_id,
             "account_id": account_id,
-            "since": _sqlite_utc_timestamp(since),
-            **({"until": _sqlite_utc_timestamp(until)} if until is not None else {}),
+            "since": sqlite_utc_timestamp(since),
+            **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
             **({"project": project} if project is not None else {}),
             "limit": limit,
             "offset": offset,
@@ -217,8 +217,8 @@ def query_sessions(
                     "provider_id": provider_id,
                     "account_id": account_id,
                     "session_id": row.session_id,
-                    "since": _sqlite_utc_timestamp(since),
-                    **({"until": _sqlite_utc_timestamp(until)} if until is not None else {}),
+                    "since": sqlite_utc_timestamp(since),
+                    **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
                 },
             ).all()
             subagents = [
@@ -249,8 +249,8 @@ def query_sessions(
                     "provider_id": provider_id,
                     "account_id": account_id,
                     "session_id": row.session_id,
-                    "since": _sqlite_utc_timestamp(since),
-                    **({"until": _sqlite_utc_timestamp(until)} if until is not None else {}),
+                    "since": sqlite_utc_timestamp(since),
+                    **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
                 },
             ).all()
             by_model = [
@@ -339,8 +339,8 @@ def count_sessions(
         params={
             "provider_id": provider_id,
             "account_id": account_id,
-            "since": _sqlite_utc_timestamp(since),
-            **({"until": _sqlite_utc_timestamp(until)} if until is not None else {}),
+            "since": sqlite_utc_timestamp(since),
+            **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
             **({"project": project} if project is not None else {}),
         },
     ).first()

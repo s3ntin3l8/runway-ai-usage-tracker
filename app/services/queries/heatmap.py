@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.models.db import UsageEvent
-from app.services.queries._shared import _sqlite_utc_timestamp
+from app.services.queries._shared import sqlite_utc_timestamp
 
 # ---------------------------------------------------------------------------
 # 7.3  query_heatmap
@@ -90,11 +90,11 @@ def _heatmap_utc(
     if since is not None:
         # Closed range: bound by absolute instants (stored as naive UTC).
         lower_sql = "ts >= :since"
-        params["since"] = _sqlite_utc_timestamp(since)
+        params["since"] = sqlite_utc_timestamp(since)
         upper_sql = ""
         if until is not None:
             upper_sql = "AND ts < :until"
-            params["until"] = _sqlite_utc_timestamp(until)
+            params["until"] = sqlite_utc_timestamp(until)
         where_range = f"AND {lower_sql} {upper_sql}"
     else:
         # SQLite treats a bound 'now' string the same as the literal, so the

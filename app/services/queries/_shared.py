@@ -23,7 +23,7 @@ def _parse_ts(value: str | datetime | None) -> datetime | None:
         return None
 
 
-def _sqlite_utc_timestamp(value: datetime) -> str:
+def sqlite_utc_timestamp(value: datetime) -> str:
     """Format a UTC timestamp like SQLite's stored ``DateTime`` text values.
 
     Raw SQL comparisons are lexical in SQLite. Binding ``datetime.isoformat()``

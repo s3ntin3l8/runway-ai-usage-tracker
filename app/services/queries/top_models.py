@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.services.queries._shared import _sqlite_utc_timestamp
+from app.services.queries._shared import sqlite_utc_timestamp
 
 
 def query_top_models(
@@ -90,9 +90,9 @@ def query_top_models(
         """
     )
 
-    params: dict[str, Any] = {"since": _sqlite_utc_timestamp(since), "limit": limit}
+    params: dict[str, Any] = {"since": sqlite_utc_timestamp(since), "limit": limit}
     if until is not None:
-        params["until"] = _sqlite_utc_timestamp(until)
+        params["until"] = sqlite_utc_timestamp(until)
 
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
 
