@@ -13,7 +13,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models.db import QuotaSnapshot, UsagePeriodRollup
+from app.models.db import QuotaSnapshot, UsageEvent, UsagePeriodRollup
+from app.services.queries._shared import sqlite_utc_timestamp
 from app.services.queries.snapshots import query_chart
 
 
@@ -28,6 +29,23 @@ def db_session():
     os.close(fd)
     if os.path.exists(db_path):
         os.remove(db_path)
+
+
+def test_sqlite_utc_timestamp_matches_stored_boundary_comparisons(db_session):
+    stored = "2026-05-08 12:00:00.000000"
+    boundary = sqlite_utc_timestamp(datetime(2026, 5, 8, 12, tzinfo=UTC))
+
+    assert boundary == stored
+    comparisons = (
+        db_session.connection()
+        .exec_driver_sql(
+            "SELECT :stored >= :since, :stored < :until",
+            {"stored": stored, "since": boundary, "until": boundary},
+        )
+        .one()
+    )
+    assert comparisons[0]  # an event at `since` is included
+    assert not comparisons[1]  # an event at `until` is excluded
 
 
 _NOW = datetime.now(UTC).replace(microsecond=0)
@@ -259,6 +277,144 @@ def _add_rollup(
         )
     )
     session.commit()
+
+
+def _add_chart_event(
+    session: Session,
+    *,
+    event_id: str,
+    ts: datetime,
+    tokens_input: int,
+    cost_usd: float = 0.0,
+    cost_cache_read: float = 0.0,
+) -> None:
+    session.add(
+        UsageEvent(
+            provider_id="anthropic",
+            account_id="acc1",
+            sidecar_id="dev-01",
+            event_id=event_id,
+            ts=ts,
+            model_id="sonnet",
+            tokens_input=tokens_input,
+            cost_usd=cost_usd,
+            cost_cache_read=cost_cache_read,
+        )
+    )
+    session.commit()
+
+
+class TestChartPartialDayBoundaries:
+    def test_daily_chart_combines_exact_partial_days_with_full_day_rollups(self, db_session):
+        since = datetime(2026, 4, 1, 12, tzinfo=UTC)
+        until = datetime(2026, 4, 4, 18, tzinfo=UTC)
+        _add_chart_event(
+            db_session,
+            event_id="before-start",
+            ts=datetime(2026, 4, 1, 11, 59, tzinfo=UTC),
+            tokens_input=999,
+        )
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc1",
+            day="2026-04-01",
+            model_id="sonnet",
+            tokens_input=900,
+            cost_usd=90.0,
+        )
+        _add_chart_event(
+            db_session,
+            event_id="start-day",
+            ts=datetime(2026, 4, 1, 12, tzinfo=UTC),
+            tokens_input=10,
+            cost_usd=1.0,
+            cost_cache_read=0.25,
+        )
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc1",
+            day="2026-04-02",
+            model_id="sonnet",
+            tokens_input=20,
+            cost_usd=2.0,
+        )
+        _add_rollup(
+            db_session,
+            provider_id="anthropic",
+            account_id="acc1",
+            day="2026-04-03",
+            model_id="sonnet",
+            tokens_input=30,
+            cost_usd=3.0,
+        )
+        _add_chart_event(
+            db_session,
+            event_id="end-day",
+            ts=datetime(2026, 4, 4, 17, 59, tzinfo=UTC),
+            tokens_input=40,
+            cost_usd=4.0,
+            cost_cache_read=1.0,
+        )
+        _add_chart_event(
+            db_session,
+            event_id="at-end",
+            ts=until,
+            tokens_input=1000,
+        )
+
+        tokens = query_chart(
+            db_session,
+            metric="tokens",
+            since=since,
+            until=until,
+            provider_id="anthropic",
+            account_id="acc1",
+        )
+        assert [bar["date"] for bar in tokens["bars"]] == [
+            "2026-04-01",
+            "2026-04-02",
+            "2026-04-03",
+            "2026-04-04",
+        ]
+        # The 900-token daily rollup includes usage before `since`; partial
+        # boundary days must be rebuilt from in-range events, not added whole.
+        assert [bar["segments"][0]["value"] for bar in tokens["bars"]] == [10, 20, 30, 40]
+
+        costs = query_chart(
+            db_session,
+            metric="cost",
+            since=since,
+            until=until,
+            provider_id="anthropic",
+            account_id="acc1",
+        )
+        assert [bar["segments"][0]["value"] for bar in costs["bars"]] == [1.0, 2.0, 3.0, 4.0]
+        assert [bar["segments"][0]["value_cache"] for bar in costs["bars"]] == [0.25, 0, 0, 1.0]
+
+    def test_same_day_range_is_counted_once_and_excludes_until(self, db_session):
+        since = datetime(2026, 4, 5, 10, tzinfo=UTC)
+        until = datetime(2026, 4, 5, 18, tzinfo=UTC)
+        _add_chart_event(
+            db_session,
+            event_id="within",
+            ts=datetime(2026, 4, 5, 12, tzinfo=UTC),
+            tokens_input=12,
+        )
+        _add_chart_event(db_session, event_id="excluded", ts=until, tokens_input=100)
+
+        result = query_chart(
+            db_session,
+            metric="tokens",
+            since=since,
+            until=until,
+            provider_id="anthropic",
+            account_id="acc1",
+        )
+        assert len(result["bars"]) == 1
+        assert result["bars"][0]["date"] == "2026-04-05"
+        assert result["bars"][0]["segments"][0]["value"] == 12
 
 
 class TestGroupByProvider:

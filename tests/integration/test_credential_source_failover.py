@@ -370,7 +370,9 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
         )
 
     assert source.account_id == "s3ntin3l8@gmail.com"
-    assert source.last_seen == target_seen
+    # The concurrent heartbeat above may advance last_seen while the source is
+    # promoted; promotion must preserve at least the prior target timestamp.
+    assert source.last_seen is not None and source.last_seen >= target_seen
     assert tag is not None and tag.set_by == "identity_verification"
     assert pending is None
     assert await cache.get_source_candidates("antigravity", "default") == []

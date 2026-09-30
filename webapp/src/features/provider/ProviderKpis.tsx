@@ -1,8 +1,8 @@
 // At-a-glance KPI strip for the Overview tab: tiles adapt to card kind —
-// quota providers show pct + projected-at-reset; token providers show lifetime
-// token total + message count; spend providers show MTD + projected EOM.
-// Range-scoped tiles (recorded spend, tokens, cache-hit, input/output) follow
-// the shared time-range picker; window-anchored and lifetime tiles do not.
+// quota providers show pct + projected-at-reset; token providers show recorded
+// usage for the selected range; spend providers show MTD + projected EOM.
+// Recorded-usage tiles follow the shared time-range picker; quota windows,
+// forward projections, and explicitly lifetime values retain their own scope.
 // The forward-looking MTD/EOM/burn tiles only price in the live calendar
 // month — any other range falls back to recorded spend (CostTab's pattern).
 
@@ -11,7 +11,7 @@ import type { CumulativeBucket, FleetEntry } from '@/api/types';
 import { StatTile } from '@/components/ui/StatTile';
 import { sumTokens } from '@/lib/cumulative';
 import { formatCost, formatNumber, formatPct, formatTokens } from '@/lib/format';
-import { cardKind, cardPct, cardStatus, findForecast, tokenUsageTotal, windowLabel } from '@/lib/quota';
+import { cardKind, cardPct, cardStatus, findForecast, windowLabel } from '@/lib/quota';
 import type { TabScope } from './period';
 import {
   useProviderCostForecast,
@@ -168,14 +168,8 @@ export function ProviderKpis({
     );
   }
 
-  // --- Tokens: lifetime totals + optional spend (if there is cost), then scoped + cache ---
+  // --- Tokens: every recorded-usage tile follows the selected scope. ---
   if (kind === 'tokens') {
-    // Compute lifetime total from the fleet card's per-component fields so the
-    // exclude-cache toggle is respected consistently with the chart and month
-    // tiles; fall back to the cumulative lifetime bucket sum.
-    const lifetimeTokenTotal =
-      tokenUsageTotal(critical.token_usage, excludeCache) ?? sumTokens(lifetime, excludeCache) ?? null;
-    const lifetimeMsgs = critical.msgs ?? lifetime?.msgs ?? null;
     // Show spend tiles only when we actually have cost data in the selected
     // range (e.g. opencode API on free tier that also has cost); otherwise show
     // per-component token counts.
@@ -183,16 +177,15 @@ export function ProviderKpis({
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile
-          label="Tokens (total)"
-          value={formatTokens(lifetimeTokenTotal)}
-          hint="all time"
-          loading={lifetimeTokenTotal == null && lifetimeLoading}
+          label="Messages"
+          value={bucket?.msgs != null ? formatNumber(bucket.msgs) : '—'}
+          hint={scopeLabel}
+          loading={bucketLoading}
         />
         <StatTile
-          label="Messages"
-          value={lifetimeMsgs != null ? formatNumber(lifetimeMsgs) : '—'}
-          hint="all time"
-          loading={lifetimeMsgs == null && lifetimeLoading}
+          label={`Input · ${scopeLabel}`}
+          value={formatTokens(bucket?.tokens_input ?? null)}
+          loading={bucketLoading}
         />
         {hasCost ? (
           isLiveMonth ? (
@@ -207,8 +200,8 @@ export function ProviderKpis({
           )
         ) : (
           <StatTile
-            label={`Input · ${scopeLabel}`}
-            value={formatTokens(bucket?.tokens_input ?? null)}
+            label={`Output · ${scopeLabel}`}
+            value={formatTokens(bucket?.tokens_output ?? null)}
             loading={bucketLoading}
           />
         )}
@@ -227,8 +220,8 @@ export function ProviderKpis({
           )
         ) : (
           <StatTile
-            label={`Output · ${scopeLabel}`}
-            value={formatTokens(bucket?.tokens_output ?? null)}
+            label={`Cache tokens · ${scopeLabel}`}
+            value={formatTokens(cacheTokens)}
             loading={bucketLoading}
           />
         )}

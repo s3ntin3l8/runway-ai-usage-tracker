@@ -73,3 +73,18 @@ def test_limit_caps_rows(db_session):
     _add(db_session, event_id="e", tools_json='["A", "A", "A", "B", "B", "C"]')
     rows = query_top_tools(db_session, since=_SINCE, limit=2)
     assert [r["tool"] for r in rows] == ["A", "B"]
+
+
+def test_same_day_bounds_include_current_day_and_exclude_until(db_session):
+    since = datetime(2026, 5, 21, 11, tzinfo=UTC)
+    until = datetime(2026, 5, 21, 13, tzinfo=UTC)
+    _add(
+        db_session,
+        event_id="inside",
+        tools_json='["Read"]',
+        ts=datetime(2026, 5, 21, 12, tzinfo=UTC),
+    )
+    _add(db_session, event_id="at-until", tools_json='["Write"]', ts=until)
+
+    rows = query_top_tools(db_session, since=since, until=until)
+    assert rows == [{"tool": "Read", "calls": 1, "msgs": 1}]

@@ -128,6 +128,31 @@ def test_exclude_cache_changes_sort(db_session):
     assert excl[0]["model_id"] == "real"
 
 
+def test_same_day_bounds_include_current_day_and_exclude_until(db_session):
+    since = datetime(2026, 5, 21, 11, tzinfo=UTC)
+    until = datetime(2026, 5, 21, 13, tzinfo=UTC)
+    _add(
+        db_session,
+        event_id="inside",
+        provider_id="anthropic",
+        model_id="sonnet",
+        ts=datetime(2026, 5, 21, 12, tzinfo=UTC),
+        tokens_input=10,
+    )
+    _add(
+        db_session,
+        event_id="at-until",
+        provider_id="anthropic",
+        model_id="opus",
+        ts=until,
+        tokens_input=1000,
+    )
+
+    rows = query_top_models(db_session, since=since, until=until)
+    assert [row["model_id"] for row in rows] == ["sonnet"]
+    assert rows[0]["tokens_total"] == 10
+
+
 def test_excludes_errors_and_null_models_and_respects_range(db_session):
     _add(db_session, event_id="ok", provider_id="anthropic", model_id="opus", tokens_input=100)
     _add(
