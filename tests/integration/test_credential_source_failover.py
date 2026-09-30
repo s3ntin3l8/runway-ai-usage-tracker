@@ -39,6 +39,13 @@ class _CredentialProbeCollector:
         if value == "rejected":
             await self.cache.observe_response(SimpleNamespace(status_code=401))
             return [{"remaining": "ERR", "error_type": "auth_failed"}]
+        if value == "forbidden":
+            await self.cache.observe_response(SimpleNamespace(status_code=403))
+            return [{"remaining": "ERR", "error_type": "missing_config"}]
+        if value == "missing_config":
+            return [{"remaining": "ERR", "error_type": "missing_config"}]
+        if value == "empty":
+            return []
         if value == "partial":
             await self.cache.observe_response(SimpleNamespace(status_code=401))
             return [{"remaining": "healthy", "data_source": "api"}]
@@ -480,3 +487,79 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
         configured_source_id: (False, 3),
     }
     await cache.reset()
+
+
+@pytest.mark.asyncio
+async def test_collector_retries_next_enabled_source_after_403(monkeypatch):
+    cache = TokenCache()
+    for source_id, value, priority in (("first", "forbidden", 0), ("last", "working", 1)):
+        await cache.store(
+            "openrouter",
+            {"api_key": value},  # pragma: allowlist secret — fake values for failover test
+            account_id="alice@example.com",
+            source_id=source_id,
+            source_metadata={"enabled": True, "priority": priority},
+        )
+    collector = _CredentialProbeCollector(cache)
+    manager = CollectorManager()
+    health_writes: list[tuple[str, str, dict[str, str]]] = []
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr(
+        manager,
+        "_record_source_health",
+        lambda p, a, updates: health_writes.append((p, a, dict(updates))),
+    )
+    manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
+        collector, "OpenRouter", ttl=0
+    )
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert result[0]["remaining"] == "healthy"
+    assert collector.calls == ["forbidden", "working"]
+    assert health_writes == [
+        ("openrouter", "alice@example.com", {"first": "auth_failed", "last": "healthy"})
+    ]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_collector_retries_next_enabled_source_on_missing_config_or_empty(monkeypatch):
+    cache = TokenCache()
+    for source_id, value, priority in (
+        ("first", "missing_config", 0),
+        ("second", "empty", 1),
+        ("last", "working", 2),
+    ):
+        await cache.store(
+            "openrouter",
+            {"api_key": value},  # pragma: allowlist secret — fake values for failover test
+            account_id="alice@example.com",
+            source_id=source_id,
+            source_metadata={"enabled": True, "priority": priority},
+        )
+    collector = _CredentialProbeCollector(cache)
+    manager = CollectorManager()
+    health_writes: list[tuple[str, str, dict[str, str]]] = []
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr(
+        manager,
+        "_record_source_health",
+        lambda p, a, updates: health_writes.append((p, a, dict(updates))),
+    )
+    manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
+        collector, "OpenRouter", ttl=0
+    )
+    async with httpx.AsyncClient() as client:
+        result = await manager._collect_with_semaphore("openrouter:alice@example.com", client)
+
+    assert result[0]["remaining"] == "healthy"
+    assert collector.calls == ["missing_config", "empty", "working"]
+    assert health_writes == [
+        (
+            "openrouter",
+            "alice@example.com",
+            {"first": "unavailable", "second": "unavailable", "last": "healthy"},
+        )
+    ]
+    await manager.close()
