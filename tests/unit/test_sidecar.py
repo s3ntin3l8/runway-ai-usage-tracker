@@ -103,6 +103,16 @@ class TestClaudeOAuthCredentialRules:
             )
         )
         monkeypatch.setattr(sidecar.Path, "home", staticmethod(lambda: tmp_path))
+        original_expanduser = sidecar.os.path.expanduser
+        monkeypatch.setattr(
+            sidecar.os.path,
+            "expanduser",
+            lambda path: (
+                str(tmp_path / path[2:])
+                if isinstance(path, str) and path.startswith("~/")
+                else original_expanduser(path)
+            ),
+        )
         monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [credentials_path])
         config = {
             "name": "Claude",

@@ -365,6 +365,29 @@ class TestPerAccountAndInvalid:
         assert pending["removable"] is False
 
     @pytest.mark.asyncio
+    async def test_resolved_claude_sidecar_oauth_stays_on_canonical_health_row(self):
+        from app.services.token_cache import TokenCache
+
+        cache = TokenCache()
+        await cache.store(
+            "anthropic",
+            {"oauth_token": "claude-assigned-token"},
+            account_id="alice@example.com",
+            source_id="sidecar:host-a:path:/claude",
+            source_metadata={"sidecar_id": "host-a", "identity_pending": False},
+        )
+        await cache.store(
+            "anthropic",
+            {"api_key": "configured-key"},  # pragma: allowlist secret
+            account_id="alice@example.com",
+        )
+
+        rows = await self._health(cache)
+
+        assert list(rows) == ["alice@example.com"]
+        assert set(rows["alice@example.com"]["token_types"]) == {"oauth_token", "api_key"}
+
+    @pytest.mark.asyncio
     async def test_expired_account_not_hidden_by_other_accounts_healthy_token(self):
         cache = self._cache(
             [

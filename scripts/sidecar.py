@@ -1933,10 +1933,11 @@ def discover_anthropic_oauth_email(credentials_path: Path) -> str:
     ``oauthAccount`` in ``~/.claude.json``. Other credential files may belong
     to a different login, so only pair the standard file with that metadata.
     """
-    if credentials_path.resolve() != Path.home().joinpath(".claude", ".credentials.json").resolve():
+    standard_credentials_path = Path(os.path.expanduser("~/.claude/.credentials.json")).resolve()
+    if credentials_path.resolve() != standard_credentials_path:
         return ""
     try:
-        with Path.home().joinpath(".claude.json").open(encoding="utf-8") as file:
+        with Path(os.path.expanduser("~/.claude.json")).open(encoding="utf-8") as file:
             account = json.load(file).get("oauthAccount", {})
         email = account.get("emailAddress") or account.get("email")
         return email if isinstance(email, str) and "@" in email else ""

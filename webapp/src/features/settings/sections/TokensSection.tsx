@@ -7,6 +7,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { Link } from 'react-router';
 import { ArrowDown, ArrowUp, KeyRound, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteTokenHealth, postTokenRefresh } from '@/api/endpoints';
@@ -427,7 +428,7 @@ function TokenRow({ token }: { token: TokenHealthEntry }) {
       <TD className="text-fg-subtle">
         {credentialAccountName(token.account_id, token.account_label)}
         {token.assignment_pending ? (
-          <a href="/fleet" className="ml-2 text-accent underline underline-offset-2">Assign in Fleet</a>
+          <Link to="/fleet" className="ml-2 text-accent underline underline-offset-2">Assign in Fleet</Link>
         ) : null}
       </TD>
 
@@ -592,7 +593,7 @@ function TokenCard({ token }: { token: TokenHealthEntry }) {
       <p className="mt-1 text-[13px] text-fg-subtle">
         {credentialAccountName(token.account_id, token.account_label)}
         {token.assignment_pending ? (
-          <a href="/fleet" className="ml-2 text-accent underline underline-offset-2">Assign in Fleet</a>
+          <Link to="/fleet" className="ml-2 text-accent underline underline-offset-2">Assign in Fleet</Link>
         ) : null}
       </p>
 

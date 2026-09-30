@@ -245,7 +245,8 @@ def test_claude_oauth_email_requires_matching_account(session, configured):
     assert mock_tc.store.call_args.kwargs["source_metadata"]["identity_pending"] is not configured
 
 
-def test_claude_oauth_source_moves_to_matching_account(session):
+@pytest.mark.asyncio
+async def test_claude_oauth_source_moves_to_matching_account(session):
     from app.services.token_cache import TokenCache
 
     cache = TokenCache()
@@ -292,6 +293,9 @@ def test_claude_oauth_source_moves_to_matching_account(session):
     assert len(sources) == 1
     assert sources[0].id == old_source.id
     assert sources[0].account_id == "alice@example.com"
+    assert await cache.get("anthropic", "alice@example.com") == {
+        "oauth_token": "claude-access-token"
+    }
 
 
 def test_empty_completed_providers_heartbeat_skips_latest_usage_write_block(session):
