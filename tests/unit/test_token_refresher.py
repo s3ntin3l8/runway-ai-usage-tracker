@@ -370,9 +370,9 @@ class TestRefreshOAuthTokenXai:
         assert call_kwargs["headers"]["User-Agent"] == "opencode/1.0"
 
         assert result["xai_access"] == "fresh_xai_access"
-        assert result["oauth_token"] == "fresh_xai_access"
         assert result["xai_refresh"] == "fresh_xai_refresh"
-        assert result["refresh_token"] == "fresh_xai_refresh"
+        assert "oauth_token" not in result
+        assert "refresh_token" not in result
         assert "expiry_date" in result
         exp_ms = int(result["expiry_date"])
         assert exp_ms > int(time.time() * 1000)

@@ -22,7 +22,7 @@ _PROVIDER_CLIENT_IDS: dict[str, str] = {
     "anthropic": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     "gemini": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
     "chatgpt": "app_EMoamEEZ73f0CkXaXp7hrann",
-    "xai": "b1a00492-073a-47ea-816f-4c329264a828",
+    "xai": "b1a00492-073a-47ea-816f-4c329264a828",  # pragma: allowlist secret
 }
 
 # Gemini CLI's OAuth client is a Google "desktop app" client — Google requires
@@ -104,13 +104,15 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
 
     updated = dict(tokens)
     if "access_token" in data:
-        updated["oauth_token"] = data["access_token"]
         if provider == "xai":
             updated["xai_access"] = data["access_token"]
+        else:
+            updated["oauth_token"] = data["access_token"]
     if "refresh_token" in data:
-        updated["refresh_token"] = data["refresh_token"]
         if provider == "xai":
             updated["xai_refresh"] = data["refresh_token"]
+        else:
+            updated["refresh_token"] = data["refresh_token"]
     # Google returns a fresh id_token when the scope includes openid — we have
     # to capture it because token_health uses its `exp` claim to classify the
     # entry's status. Keeping the old one would leave the row stuck as expired.

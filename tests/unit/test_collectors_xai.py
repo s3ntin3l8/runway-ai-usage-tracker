@@ -280,8 +280,6 @@ class TestGetXaiApi:
                 return_value={
                     "xai_access": fresh_jwt,
                     "xai_refresh": "new_refresh",
-                    "oauth_token": fresh_jwt,
-                    "refresh_token": "new_refresh",
                 }
             )
             with (
@@ -301,6 +299,44 @@ class TestGetXaiApi:
             assert len(cards) == 1
             assert cards[0]["pct_used"] == 18.0
             assert request_mock.await_count == 2
+        finally:
+            await token_cache.remove_tokens("xai", account_id, {"xai_access", "xai_refresh"})
+
+    @pytest.mark.asyncio
+    async def test_expired_jwt_refresh_store_failure_sets_api_error(self):
+        from app.services.token_cache import token_cache
+
+        account_id = "xai-store-fail-test"
+        expired_jwt = _make_jwt(int(time.time()) - 3600)
+        fresh_jwt = _make_jwt(int(time.time()) + 21600)
+        await token_cache.store(
+            "xai",
+            {"xai_access": expired_jwt, "xai_refresh": "valid_refresh"},
+            account_id=account_id,
+            source="config",
+        )
+        try:
+            collector = XaiCollector(account_id=account_id)
+            mock_refresh = AsyncMock(
+                return_value={
+                    "xai_access": fresh_jwt,
+                    "xai_refresh": "new_refresh",
+                }
+            )
+            with (
+                patch("app.services.token_refresher.refresh_oauth_token", new=mock_refresh),
+                patch(
+                    "app.services.token_cache.token_cache.store",
+                    new_callable=AsyncMock,
+                    side_effect=RuntimeError("Disk write failed"),
+                ),
+            ):
+                cards = await collector.collect(MagicMock())
+
+            mock_refresh.assert_awaited_once()
+            assert collector._last_error_reason == "api_error"
+            assert len(cards) == 1
+            assert cards[0]["data_source"] == "error"
         finally:
             await token_cache.remove_tokens("xai", account_id, {"xai_access", "xai_refresh"})
 

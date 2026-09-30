@@ -424,6 +424,68 @@ class TestCollectorManagerInitialization:
         assert health_updates[candidates[1]["source_id"]] == "healthy"
 
     @pytest.mark.asyncio
+    async def test_collect_with_source_failover_handles_empty_result_with_invalid_api_key_reason(
+        self, manager, monkeypatch
+    ):
+        from app.services.collectors.xai import XaiCollector
+
+        collector = XaiCollector(account_id="alice@example.com")
+        smart = MagicMock()
+        smart.reset = AsyncMock()
+        smart.collector = collector
+
+        attempts = 0
+
+        async def collect(_client):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                collector._last_error_reason = "invalid_api_key"
+                return await collector._error_handler()
+            return [{"service_name": "xAI", "remaining": "80%"}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["xai:alice@example.com"] = smart
+        candidates = [
+            {
+                "source_id": "sidecar:a:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 0,
+            },
+            {
+                "source_id": "sidecar:b:origin",
+                "source_type": "sidecar",
+                "credential_origin": "origin",
+                "identity_pending": False,
+                "priority": 1,
+            },
+        ]
+
+        async def get_candidates(*_args):
+            return candidates
+
+        @asynccontextmanager
+        async def using_source(*_args):
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+
+        health_updates = {}
+        result = await manager._collect_with_source_failover(
+            "xai:alice@example.com", MagicMock(), health_updates
+        )
+
+        assert attempts == 2
+        assert result == [{"service_name": "xAI", "remaining": "80%"}]
+        assert health_updates[candidates[0]["source_id"]] == "auth_failed"
+        assert health_updates[candidates[1]["source_id"]] == "healthy"
+
+    @pytest.mark.asyncio
     async def test_collect_with_source_failover_preserves_partial_failure_from_usable_source(
         self, manager, monkeypatch
     ):

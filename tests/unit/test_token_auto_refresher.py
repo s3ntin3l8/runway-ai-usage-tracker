@@ -216,8 +216,6 @@ async def test_refresh_due_refreshes_xai_token_with_xai_refresh(cache, refresher
         return_value={
             "xai_access": new_access,
             "xai_refresh": "rt-xai-2",
-            "oauth_token": new_access,
-            "refresh_token": "rt-xai-2",
         }
     )
     with patch("app.services.token_auto_refresher.refresh_oauth_token", new=mock_refresh):

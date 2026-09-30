@@ -17,10 +17,11 @@ The ``oc_sk_…`` API key surface (https://api.x.ai/v1/…) is *not* the same
 auth — it serves the developer API, not the consumer/Grok subscription.
 Runway uses the OAuth access token that the opencode CLI stores in
 ``~/.local/share/opencode/auth.json["xai"]["access"]`` (auto-extracted
-by the sidecar). Tokens expire after ~7 days; refresh is handled by
-the CLI itself (``grok login``), not Runway — when the access JWT is
-expired the collector surfaces an ``auth_required`` card pointing the
-operator at the Grok or OpenCode CLI re-login flow.
+by the sidecar). Tokens expire after ~7 days; Runway automatically
+refreshes xAI OAuth tokens via ``https://auth.x.ai/oauth2/token`` when a
+refresh token (``xai_refresh``) is available. If no refresh token is
+present or refresh fails, the collector surfaces an ``auth_required`` card
+pointing the operator at the Grok or OpenCode CLI re-login flow.
 
 The CodexBar docs (https://github.com/steipete/CodexBar/blob/main/docs/grok.md)
 document a richer fallback chain (``grok agent stdio`` ACP JSON-RPC,
@@ -116,23 +117,35 @@ class XaiCollector(BaseCollector):
                 "xai", "xai_refresh", account_id=account_id
             ) or await token_cache.get_token("xai", "refresh_token", account_id=account_id)
             if refresh_tok:
-                try:
-                    from app.services.token_refresher import refresh_oauth_token
+                from app.services.token_refresher import refresh_oauth_token
 
+                try:
                     cached_tokens = (await token_cache.get(self.PROVIDER_ID, account_id)) or {}
                     new_tokens = await refresh_oauth_token(self.PROVIDER_ID, cached_tokens)
+                except Exception as exc:
+                    logger.warning("xAI token refresh failed: %s", scrub_log(str(exc)))
+                    self._last_error_reason = "invalid_api_key"
+                    return []
+
+                try:
                     source_val = cache_data[1].get("source") if cache_data else None
+                    cached_source_id = cache_data[1].get("source_id") if cache_data else None
                     await token_cache.store(
                         self.PROVIDER_ID,
                         new_tokens,
                         account_id=account_id,
                         account_label=cache_data[1].get("account_label") if cache_data else None,
                         source=source_val,
+                        source_id=cached_source_id,
                     )
-                    access = new_tokens.get("xai_access") or new_tokens.get("oauth_token")
+                    access = new_tokens.get("xai_access")
                 except Exception as exc:
-                    logger.warning("xAI token refresh failed: %s", scrub_log(str(exc)))
-                    self._last_error_reason = "invalid_api_key"
+                    logger.error(
+                        "xAI token store failed after refresh: %s",
+                        scrub_log(str(exc)),
+                        exc_info=True,
+                    )
+                    self._last_error_reason = "api_error"
                     return []
             else:
                 self._last_error_reason = "invalid_api_key"
