@@ -61,13 +61,55 @@ def _parse_key(group_key: str) -> tuple[str, str]:
     return provider_id, account_id
 
 
-def _has_evidence(session: Session, provider_id: str, account_id: str) -> bool:
+def _fetch_evidence_pairs(session: Session) -> set[tuple[str, str]]:
+    """Bulk fetch all (provider_id, account_id) pairs with evidence across all 5 supporting tables."""
+    events_pairs = {
+        (row[0], row[1])
+        for row in session.execute(select(UsageEvent.provider_id, UsageEvent.account_id).distinct())
+    }
+    sources_pairs = {
+        (row[0], row[1])
+        for row in session.execute(
+            select(CredentialSource.provider_id, CredentialSource.account_id).distinct()
+        )
+    }
+    tags_pairs = {
+        (row[0], row[1])
+        for row in session.execute(
+            select(CredentialTag.provider_id, CredentialTag.account_id).distinct()
+        )
+    }
+    config_pairs = {
+        (row[0], row[1])
+        for row in session.execute(
+            select(ProviderConfig.provider_id, ProviderConfig.account_id).distinct()
+        )
+    }
+    label_pairs = {
+        (row[0], row[1])
+        for row in session.execute(
+            select(ProviderAccountLabel.provider_id, ProviderAccountLabel.account_id).distinct()
+        )
+    }
+    return events_pairs | sources_pairs | tags_pairs | config_pairs | label_pairs
+
+
+def _has_evidence(
+    session: Session,
+    provider_id: str,
+    account_id: str,
+    *,
+    evidence_pairs: set[tuple[str, str]] | None = None,
+) -> bool:
     """Return True when at least one piece of supporting evidence exists for
     this (provider_id, account_id).  Any positive result means the account
     should NOT be treated as misidentified.
     """
     if not account_id or account_id == "default":
         return True
+
+    if evidence_pairs is not None:
+        return (provider_id, account_id) in evidence_pairs
 
     # usage_events — the event-sourced truth
     if (
@@ -214,45 +256,13 @@ class MisidentifiedGaugeSeriesCheck(Check):
         gauge_pairs = set(lu_counts.keys()) | set(snap_counts.keys())
 
         # Bulk fetch pairs with evidence across all 5 supporting tables.
-        events_pairs = {
-            (row[0], row[1])
-            for row in session.execute(
-                select(UsageEvent.provider_id, UsageEvent.account_id).distinct()
-            )
-        }
-        sources_pairs = {
-            (row[0], row[1])
-            for row in session.execute(
-                select(CredentialSource.provider_id, CredentialSource.account_id).distinct()
-            )
-        }
-        tags_pairs = {
-            (row[0], row[1])
-            for row in session.execute(
-                select(CredentialTag.provider_id, CredentialTag.account_id).distinct()
-            )
-        }
-        config_pairs = {
-            (row[0], row[1])
-            for row in session.execute(
-                select(ProviderConfig.provider_id, ProviderConfig.account_id).distinct()
-            )
-        }
-        label_pairs = {
-            (row[0], row[1])
-            for row in session.execute(
-                select(ProviderAccountLabel.provider_id, ProviderAccountLabel.account_id).distinct()
-            )
-        }
-        evidence_pairs = events_pairs | sources_pairs | tags_pairs | config_pairs | label_pairs
+        evidence_pairs = _fetch_evidence_pairs(session)
 
         groups: list[FindingGroup] = []
         for provider_id, account_id in sorted(gauge_pairs):
             # Universal invariant: "default" accounts represent server-configured
             # credentials (.env or file without DB rows) and are never misidentified.
-            if not account_id or account_id == "default":
-                continue
-            if (provider_id, account_id) in evidence_pairs:
+            if _has_evidence(session, provider_id, account_id, evidence_pairs=evidence_pairs):
                 continue
 
             lu_count = lu_counts.get((provider_id, account_id), 0)
@@ -289,6 +299,7 @@ class MisidentifiedGaugeSeriesCheck(Check):
             raise ValueError(
                 f"{provider_id}/{account_id} now has supporting evidence and is not misidentified"
             )
+        confirmation_text = f"I confirm {provider_id}/{account_id} has no real usage history."
         return FixPlan(
             check_id=self.id,
             group_key=group_key,
@@ -300,6 +311,7 @@ class MisidentifiedGaugeSeriesCheck(Check):
                     session, provider_id, account_id
                 ),
             },
+            confirmation_text=confirmation_text,
         )
 
     def apply(
@@ -309,6 +321,10 @@ class MisidentifiedGaugeSeriesCheck(Check):
         if _has_evidence(session, provider_id, account_id):
             raise ValueError(
                 f"{provider_id}/{account_id} now has supporting evidence and is not misidentified"
+            )
+        if params.get("same_account_confirmed") is not True:
+            raise ValueError(
+                f"Confirmation required to delete gauge data for {provider_id}/{account_id}"
             )
         result = delete_gauge_series(session, provider_id=provider_id, account_id=account_id)
         return (

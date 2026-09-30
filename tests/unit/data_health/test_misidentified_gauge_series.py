@@ -207,6 +207,10 @@ def test_plan_returns_correct_counts(session):
     assert fix_plan.counts["latest_usage"] == 1
     assert fix_plan.counts["quota_snapshots"] == 1
     assert "ghost@example.com" in fix_plan.summary
+    assert (
+        fix_plan.confirmation_text
+        == "I confirm github/ghost@example.com has no real usage history."
+    )
 
 
 def test_plan_raises_when_evidence_appears(session):
@@ -230,12 +234,25 @@ def test_plan_raises_when_evidence_appears(session):
 # ---------------------------------------------------------------------------
 
 
+def test_apply_raises_without_confirmation(session):
+    """apply() requires explicit same_account_confirmed=True parameter."""
+    make_latest_usage(session, provider_id="github", account_id="ghost@example.com")
+
+    with pytest.raises(ValueError, match="Confirmation required"):
+        _check().apply(session, "github::ghost@example.com", {})
+
+    with pytest.raises(ValueError, match="Confirmation required"):
+        _check().apply(session, "github::ghost@example.com", {"same_account_confirmed": False})
+
+
 def test_apply_deletes_gauge_rows(session):
     now = datetime.now(UTC)
     make_latest_usage(session, provider_id="github", account_id="ghost@example.com")
     make_snapshot(session, provider_id="github", account_id="ghost@example.com", ts=now)
 
-    result, hooks = _check().apply(session, "github::ghost@example.com", {})
+    result, hooks = _check().apply(
+        session, "github::ghost@example.com", {"same_account_confirmed": True}
+    )
 
     assert result.counts["latest_usage_deleted"] == 1
     assert result.counts["snapshots_deleted"] == 1
@@ -267,7 +284,7 @@ def test_apply_raises_when_evidence_appears(session):
     )
 
     with pytest.raises(ValueError, match="supporting evidence"):
-        _check().apply(session, "github::ghost@example.com", {})
+        _check().apply(session, "github::ghost@example.com", {"same_account_confirmed": True})
 
 
 def test_apply_does_not_touch_sibling_accounts(session):
@@ -283,7 +300,7 @@ def test_apply_does_not_touch_sibling_accounts(session):
         session, provider_id="github", account_id="real-user", ts=now - timedelta(seconds=1)
     )
 
-    _check().apply(session, "github::ghost@example.com", {})
+    _check().apply(session, "github::ghost@example.com", {"same_account_confirmed": True})
 
     # Sibling rows survive
     remaining_lu = session.exec(
@@ -316,7 +333,9 @@ def test_apply_deletes_contributions(session):
     session.add(contrib)
     session.commit()
 
-    result, _ = _check().apply(session, "github::ghost@example.com", {})
+    result, _ = _check().apply(
+        session, "github::ghost@example.com", {"same_account_confirmed": True}
+    )
 
     assert result.counts["contributions_deleted"] == 1
     assert (
@@ -347,4 +366,78 @@ def test_detect_query_count_is_constant_regardless_of_pair_count(session, query_
     assert report.total_count == 20
     assert len(report.groups) == 10
     # Exactly 7 queries total (2 counts group_by + 5 distinct evidence sets)
-    assert query_counter.count <= 10
+    assert query_counter.count <= 8
+
+
+# ---------------------------------------------------------------------------
+# _has_evidence() direct tests
+# ---------------------------------------------------------------------------
+
+
+def test_has_evidence_truth_table(session):
+    from app.models.db import CredentialSource, ProviderAccountLabel
+    from app.services.data_health.checks.misidentified_gauge_series import _has_evidence
+
+    # 1. Default account is always evidenced
+    assert _has_evidence(session, "github", "default") is True
+    assert _has_evidence(session, "github", "") is True
+
+    # 2. No evidence -> False
+    assert _has_evidence(session, "github", "target@example.com") is False
+
+    # 3. UsageEvent -> True
+    ev = make_event(
+        session, event_id="ev_t1", provider_id="github", account_id="target@example.com"
+    )
+    assert _has_evidence(session, "github", "target@example.com") is True
+    session.delete(ev)
+    session.commit()
+
+    # 4. CredentialSource -> True
+    cs = CredentialSource(
+        provider_id="github",
+        account_id="target@example.com",
+        source_id="src1",
+        source_type="file",
+        source_label="hosts.yml",
+        sidecar_id="dev-01",
+        enabled=True,
+        priority=0,
+    )
+    session.add(cs)
+    session.commit()
+    assert _has_evidence(session, "github", "target@example.com") is True
+    session.delete(cs)
+    session.commit()
+
+    # 5. CredentialTag -> True
+    tag = make_tag(
+        session,
+        provider_id="github",
+        credential_origin="orig1",
+        account_id="target@example.com",
+    )
+    assert _has_evidence(session, "github", "target@example.com") is True
+    session.delete(tag)
+    session.commit()
+
+    # 6. ProviderConfig -> True
+    cfg = make_config(session, provider_id="github", account_id="target@example.com")
+    assert _has_evidence(session, "github", "target@example.com") is True
+    session.delete(cfg)
+    session.commit()
+
+    # 7. ProviderAccountLabel -> True
+    pal = ProviderAccountLabel(
+        provider_id="github", account_id="target@example.com", account_label="Work"
+    )
+    session.add(pal)
+    session.commit()
+    assert _has_evidence(session, "github", "target@example.com") is True
+    session.delete(pal)
+    session.commit()
+
+    # 8. With precomputed evidence_pairs parameter
+    pairs = {("github", "cached@example.com")}
+    assert _has_evidence(session, "github", "cached@example.com", evidence_pairs=pairs) is True
+    assert _has_evidence(session, "github", "not_cached@example.com", evidence_pairs=pairs) is False

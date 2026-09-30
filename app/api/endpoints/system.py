@@ -1411,12 +1411,9 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         # Exclude rows that are already stale — staleness lives inside
         # card_json as {"stale": true}. json_extract returns 1 (SQLite's
         # true) for stale rows; NULL means the key is absent, which means
-        # not stale.  This prevents transient phantom accounts whose
-        # collector already stopped from surfacing as "discovered" in the UI.
-        .where(
-            func.json_extract(LatestUsage.card_json, "$.stale").is_(None)
-            | (func.json_extract(LatestUsage.card_json, "$.stale") == False)  # noqa: E712
-        )
+        # not stale. coalesce(..., 0) != 1 treats absent and false as
+        # non-stale without requiring an explicit boolean comparison.
+        .where(func.coalesce(func.json_extract(LatestUsage.card_json, "$.stale"), 0) != 1)
         .distinct()
     ).all()
     for provider_id, account_id in live_rows:
