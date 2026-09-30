@@ -219,7 +219,7 @@ def _row(
 
 
 class TokenHealthService:
-    async def get_health(self) -> list[dict[str, Any]]:
+    async def get_health(self) -> list[dict[str, Any]]:  # noqa: PLR0915 — composes health sources
         """Return a health record for each known credential."""
         stats = await token_cache.get_all_stats()
         result: list[dict[str, Any]] = []
@@ -338,12 +338,13 @@ class TokenHealthService:
             )
             result.append(row)
 
-        for source in durable_sources:
-            provider_id = source.provider_id
-            account_id = source.account_id
+        for durable_source in durable_sources:
+            provider_id = durable_source.provider_id
+            account_id = durable_source.account_id
             candidates = await token_cache.get_source_candidates(provider_id, account_id)
             live = next(
-                (item for item in candidates if item.get("source_id") == source.source_id), None
+                (item for item in candidates if item.get("source_id") == durable_source.source_id),
+                None,
             )
             if live and any(
                 row["provider"] == provider_id and row["account_id"] == account_id for row in result
@@ -359,23 +360,25 @@ class TokenHealthService:
                 exp = IdentityExtractor.exp_from_tokens(live_tokens)
             else:
                 try:
-                    token_types = json.loads(source.token_types_json or "[]")
+                    token_types = json.loads(durable_source.token_types_json or "[]")
                 except (TypeError, ValueError):
                     token_types = []
-                if isinstance(source.credential_expires_at, datetime):
-                    exp = source.credential_expires_at.timestamp()
+                if isinstance(durable_source.credential_expires_at, datetime):
+                    exp = durable_source.credential_expires_at.timestamp()
             row = _row(
                 provider_id,
                 account_id,
                 label="Pending identity" if account_id == "default" else None,
-                source=source.source_type,
-                source_name=sidecar_names.get(source.sidecar_id or "", source.sidecar_id),
+                source=durable_source.source_type,
+                source_name=sidecar_names.get(
+                    durable_source.sidecar_id or "", durable_source.sidecar_id
+                ),
                 token_types=token_types,
                 exp=exp,
                 can_refresh=False,
             )
             row["removable"] = False
-            row["sidecar_id"] = source.sidecar_id
+            row["sidecar_id"] = durable_source.sidecar_id
             row["identity_pending"] = account_id == "default"
             result.append(row)
 
