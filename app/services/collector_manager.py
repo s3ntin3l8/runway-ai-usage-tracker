@@ -688,6 +688,10 @@ class CollectorManager:
             if result_failed:
                 # Any failed attempt that did not trigger the auth_failed short-circuit
                 # (e.g. missing_config, api_error, or empty response) is functionally down.
+                # Note: Transient errors (rate_limited, timeout) trigger failover to try the
+                # next candidate; rate-limit backoff is managed upstream by SmartCollector._mark_429.
+                # The 'unavailable' status persists across polls until overwritten by the next
+                # successful collection pass.
                 health_updates[candidate["source_id"]] = "unavailable"
                 continue
             if not attempt["auth_failed"]:
