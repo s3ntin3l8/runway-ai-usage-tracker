@@ -156,26 +156,63 @@ async def test_move_source_keeps_newer_report_when_migrating_legacy_hash_bucket(
     source_id = "sidecar:host:oauth-json"
     await cache.store(
         "antigravity",
-        {"oauth_token": "old-token"},  # pragma: allowlist secret
+        {
+            "oauth_token": "old-token",  # pragma: allowlist secret
+            "refresh_token": "old-refresh",  # pragma: allowlist secret
+            "api_key": "legacy-api",  # pragma: allowlist secret
+        },
         account_id="legacy-hash",
+        account_label="Legacy",
         source_id=source_id,
         source_metadata={"sidecar_id": "host", "credential_origin": "path:/oauth.json"},
     )
     await cache.store(
         "antigravity",
-        {"oauth_token": "fresh-token"},  # pragma: allowlist secret
+        {
+            "oauth_token": "fresh-token",  # pragma: allowlist secret
+            "refresh_token": "target-refresh",  # pragma: allowlist secret
+        },
         account_id="alice@example.com",
         source_id=source_id,
         source_metadata={"sidecar_id": "host", "credential_origin": "path:/oauth.json"},
     )
+    cache._cache["antigravity"]["legacy-hash"][1]["source_id"] = source_id
 
     assert await cache.move_source("antigravity", "legacy-hash", "alice@example.com", source_id)
 
     candidates = await cache.get_source_candidates("antigravity", "alice@example.com")
     assert candidates[0]["tokens"]["oauth_token"] == "fresh-token"
+    assert candidates[0]["tokens"]["refresh_token"] == "old-refresh"
+    assert candidates[0]["tokens"]["api_key"] == "legacy-api"  # pragma: allowlist secret
     aggregate = await cache.get("antigravity", "alice@example.com")
     assert aggregate is not None and aggregate["oauth_token"] == "fresh-token"
+    assert aggregate["api_key"] == "legacy-api"  # pragma: allowlist secret
+    assert cache._cache["antigravity"]["alice@example.com"][1]["account_label"] == "Legacy"
     assert await cache.get_source_candidates("antigravity", "legacy-hash") == []
+
+
+@pytest.mark.asyncio
+async def test_move_source_migrates_legacy_aggregate_when_target_has_none(cache):
+    source_id = "sidecar:host:legacy-oauth"
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "pending-token"},  # pragma: allowlist secret
+        account_id="legacy-hash",
+        source_id=source_id,
+        source_metadata={"identity_pending": True},
+    )
+    cache._cache["antigravity"] = {
+        "legacy-hash": (
+            {"oauth_token": "pending-token"},  # pragma: allowlist secret
+            {"source_id": source_id},
+            time.time(),
+        )
+    }
+
+    assert await cache.move_source("antigravity", "legacy-hash", "alice@example.com", source_id)
+
+    assert await cache.get("antigravity", "alice@example.com") == {"oauth_token": "pending-token"}
+    assert await cache.get("antigravity", "legacy-hash") is None
 
 
 @pytest.mark.asyncio

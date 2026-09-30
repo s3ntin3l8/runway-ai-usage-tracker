@@ -703,8 +703,8 @@ def _account_tag_hints_for_providers(
 class CredentialHealthObservation(BaseModel):
     """Non-secret health metadata for one sidecar credential source."""
 
-    provider_id: str
-    credential_origin: str
+    provider_id: str = Field(min_length=1)
+    credential_origin: str = Field(min_length=1)
     token_types: list[str] = Field(default_factory=list)
     expires_at: float | None = None
 
@@ -765,8 +765,6 @@ async def post_credential_manifest(
     for observation in payload.observations:
         observation_provider = observation.provider_id
         observation_origin = observation.credential_origin
-        if not observation_provider or not observation_origin:
-            continue
         source_type, source_label = describe_origin(observation_origin)
         try:
             expires_at = (

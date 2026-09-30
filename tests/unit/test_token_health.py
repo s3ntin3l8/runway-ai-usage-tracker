@@ -222,6 +222,57 @@ class TestTokenHealthService:
         assert result[0]["token_types"] == ["oauth_token", "refresh_token"]
 
     @pytest.mark.asyncio
+    async def test_live_sidecar_source_uses_cached_token_expiry(self):
+        from app.models.db import CredentialSource, SidecarRegistry
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="antigravity",
+            account_id="alice@example.com",
+            source_id="sidecar:dev-01:oauth",
+            source_type="file",
+            source_label="oauth_creds.json",
+            credential_origin="path:/home/user/.config/agy/oauth_creds.json",
+            sidecar_id="dev-01",
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [[sidecar], [source], []]
+        live_token = _make_jwt(time.time() + 86400 * 7)
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(
+                    return_value=[
+                        {
+                            "source_id": source.source_id,
+                            "tokens": {"oauth_token": live_token},
+                        }
+                    ]
+                ),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch(
+                "app.services.token_health._collect_server_credentials",
+                return_value={},
+            ),
+        ):
+            result = await service.get_health()
+
+        assert len(result) == 1
+        assert result[0]["account_id"] == "alice@example.com"
+        assert result[0]["identity_pending"] is False
+        assert result[0]["status"] == "valid"
+        assert result[0]["token_types"] == ["oauth_token"]
+
+    @pytest.mark.asyncio
     async def test_expired_token_status(self):
         service = TokenHealthService()
         past_exp = time.time() - 3600
