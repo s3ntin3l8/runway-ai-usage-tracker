@@ -112,6 +112,33 @@ class XaiCollector(BaseCollector):
         # ``[]`` here so the dashboard isn't blank — the error message
         # carries the actionable fix.
         if self._is_expired(access):
+            refresh_tok = await token_cache.get_token(
+                "xai", "xai_refresh", account_id=account_id
+            ) or await token_cache.get_token("xai", "refresh_token", account_id=account_id)
+            if refresh_tok:
+                try:
+                    from app.services.token_refresher import refresh_oauth_token
+
+                    cached_tokens = (await token_cache.get(self.PROVIDER_ID, account_id)) or {}
+                    new_tokens = await refresh_oauth_token(self.PROVIDER_ID, cached_tokens)
+                    source_val = cache_data[1].get("source") if cache_data else None
+                    await token_cache.store(
+                        self.PROVIDER_ID,
+                        new_tokens,
+                        account_id=account_id,
+                        account_label=cache_data[1].get("account_label") if cache_data else None,
+                        source=source_val,
+                    )
+                    access = new_tokens.get("xai_access") or new_tokens.get("oauth_token")
+                except Exception as exc:
+                    logger.warning("xAI token refresh failed: %s", scrub_log(str(exc)))
+                    self._last_error_reason = "invalid_api_key"
+                    return []
+            else:
+                self._last_error_reason = "invalid_api_key"
+                return []
+
+        if not access or self._is_expired(access):
             self._last_error_reason = "invalid_api_key"
             return []
 
@@ -143,6 +170,7 @@ class XaiCollector(BaseCollector):
             return []
 
         if resp.status_code in (401, 403):
+            await token_cache.observe_response(resp)
             self._last_error_reason = "invalid_api_key"
             return []
         if resp.status_code != 200:

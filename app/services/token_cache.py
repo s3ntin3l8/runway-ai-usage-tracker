@@ -35,6 +35,8 @@ _OAUTH_CREDENTIAL_KEYS = {
     "id_token",
     "expiry_date",
     "client_id",
+    "xai_access",
+    "xai_refresh",
 }
 AUTH_VALUE_KEYS = frozenset(
     {
@@ -187,6 +189,8 @@ class TokenCache:
                             stored_tokens[key] = value
                     if tokens.get("refresh_token"):
                         stored_tokens["refresh_token"] = tokens["refresh_token"]
+                    if tokens.get("xai_refresh"):
+                        stored_tokens["xai_refresh"] = tokens["xai_refresh"]
                 else:
                     stored_tokens.update(tokens)
                 metadata = dict(previous[1]) if previous else {}
@@ -223,6 +227,8 @@ class TokenCache:
                             kept_tokens[key] = value
                 if tokens.get("refresh_token"):
                     kept_tokens["refresh_token"] = tokens["refresh_token"]
+                if tokens.get("xai_refresh"):
+                    kept_tokens["xai_refresh"] = tokens["xai_refresh"]
                 if account_label and not kept_meta.get("account_label"):
                     kept_meta["account_label"] = account_label
                 if source:
@@ -682,7 +688,7 @@ class TokenCache:
             for provider in list(self._cache.keys()):
                 for acc_id in list(self._cache[provider].keys()):
                     tokens, metadata, ts = self._cache[provider][acc_id]
-                    if "refresh_token" in tokens:
+                    if "refresh_token" in tokens or "xai_refresh" in tokens:
                         continue
                     exp = IdentityExtractor.exp_from_tokens(tokens)
                     if exp is None or exp >= now:

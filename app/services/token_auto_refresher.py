@@ -91,7 +91,7 @@ class TokenAutoRefresher:
             if not cached:
                 continue
             tokens, meta = cached
-            if "refresh_token" not in tokens:
+            if "refresh_token" not in tokens and "xai_refresh" not in tokens:
                 continue
 
             exp = IdentityExtractor.exp_from_tokens(tokens)

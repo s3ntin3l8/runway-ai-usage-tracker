@@ -672,10 +672,13 @@ class CollectorManager:
             result_failed = not result or any(
                 card.get("data_source") == "error"
                 or card.get("remaining") == "ERR"
-                or card.get("error_type") in {"api_error", "parse_error"}
+                or card.get("error_type") in {"api_error", "parse_error", "auth_failed"}
                 for card in result
             )
-            if attempt["auth_failed"] and result_failed:
+            is_auth_failure = attempt["auth_failed"] or any(
+                card.get("error_type") == "auth_failed" for card in result
+            )
+            if is_auth_failure and result_failed:
                 health_updates[candidate["source_id"]] = "auth_failed"
                 continue
             if attempt["auth_failed"]:
@@ -683,9 +686,7 @@ class CollectorManager:
                 # though the collector produced usable quota. Keep the data;
                 # preserve the partial failure for the source diagnostics.
                 health_updates[candidate["source_id"]] = "degraded"
-            if result_failed and any(
-                card.get("error_type") in {"api_error", "parse_error"} for card in result
-            ):
+            if result_failed:
                 health_updates[candidate["source_id"]] = "unavailable"
                 continue
             if not attempt["auth_failed"]:

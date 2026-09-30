@@ -198,3 +198,33 @@ async def test_start_stop_lifecycle(refresher):
     await refresher.stop()
     assert refresher._task is None
     assert refresher._running is False
+
+
+@pytest.mark.asyncio
+async def test_refresh_due_refreshes_xai_token_with_xai_refresh(cache, refresher):
+    """xAI token with xai_refresh expires in 5 min, threshold 10 min — must auto-refresh."""
+    exp = time.time() + 300
+    access = _jwt({"exp": exp, "sub": "xai-user-123"})
+    await cache.store(
+        "xai",
+        {"xai_access": access, "xai_refresh": "rt-xai-1"},
+        account_id="xai-account",
+    )
+
+    new_access = _jwt({"exp": time.time() + 21600, "sub": "xai-user-123"})
+    mock_refresh = AsyncMock(
+        return_value={
+            "xai_access": new_access,
+            "xai_refresh": "rt-xai-2",
+            "oauth_token": new_access,
+            "refresh_token": "rt-xai-2",
+        }
+    )
+    with patch("app.services.token_auto_refresher.refresh_oauth_token", new=mock_refresh):
+        count = await refresher.refresh_due()
+
+    assert count == 1
+    mock_refresh.assert_awaited_once()
+    stored = await cache.get("xai", "xai-account")
+    assert stored["xai_access"] == new_access
+    assert stored["xai_refresh"] == "rt-xai-2"

@@ -262,6 +262,49 @@ class TestGetXaiApi:
             await token_cache.remove_tokens("xai", account_id, {"xai_access"})
 
     @pytest.mark.asyncio
+    async def test_expired_jwt_with_refresh_token_triggers_proactive_refresh(self):
+        from app.services.token_cache import token_cache
+
+        account_id = "xai-proactive-refresh-test"
+        expired_jwt = _make_jwt(int(time.time()) - 3600)
+        fresh_jwt = _make_jwt(int(time.time()) + 21600)
+        await token_cache.store(
+            "xai",
+            {"xai_access": expired_jwt, "xai_refresh": "valid_refresh"},
+            account_id=account_id,
+            source="config",
+        )
+        try:
+            collector = XaiCollector(account_id=account_id)
+            mock_refresh = AsyncMock(
+                return_value={
+                    "xai_access": fresh_jwt,
+                    "xai_refresh": "new_refresh",
+                    "oauth_token": fresh_jwt,
+                    "refresh_token": "new_refresh",
+                }
+            )
+            with (
+                patch("app.services.token_refresher.refresh_oauth_token", new=mock_refresh),
+                patch(
+                    "app.services.collectors.xai.http_request_with_retry",
+                    new_callable=AsyncMock,
+                    side_effect=[
+                        _make_response(SETTINGS_SUPERGROK),
+                        _make_response(WEEKLY_BILLING),
+                    ],
+                ) as request_mock,
+            ):
+                cards = await collector.collect(MagicMock())
+
+            mock_refresh.assert_awaited_once()
+            assert len(cards) == 1
+            assert cards[0]["pct_used"] == 18.0
+            assert request_mock.await_count == 2
+        finally:
+            await token_cache.remove_tokens("xai", account_id, {"xai_access", "xai_refresh"})
+
+    @pytest.mark.asyncio
     async def test_settings_failure_does_not_block_quota(self):
         """Best-effort enrichment: settings 500 must not stop the quota card."""
         c = XaiCollector(account_id="acc_test")

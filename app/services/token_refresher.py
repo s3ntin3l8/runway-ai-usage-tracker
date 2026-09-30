@@ -15,12 +15,14 @@ _REFRESH_ENDPOINTS: dict[str, str] = {
     "anthropic": "https://platform.claude.com/v1/oauth/token",
     "gemini": "https://oauth2.googleapis.com/token",
     "chatgpt": "https://auth.openai.com/oauth/token",
+    "xai": "https://auth.x.ai/oauth2/token",
 }
 
 _PROVIDER_CLIENT_IDS: dict[str, str] = {
     "anthropic": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     "gemini": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
     "chatgpt": "app_EMoamEEZ73f0CkXaXp7hrann",
+    "xai": "b1a00492-073a-47ea-816f-4c329264a828",
 }
 
 # Gemini CLI's OAuth client is a Google "desktop app" client — Google requires
@@ -38,16 +40,20 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     refresh_token if the provider rotates it).
 
     Raises:
-        ValueError: provider has no known refresh endpoint.
+        ValueError: provider has no known refresh endpoint or no refresh token found.
         httpx.HTTPStatusError: upstream returned a non-2xx response.
     """
     endpoint = _REFRESH_ENDPOINTS.get(provider)
     if not endpoint:
         raise ValueError(f"No refresh endpoint known for provider: {provider}")
 
+    refresh_val = tokens.get("refresh_token") or tokens.get("xai_refresh")
+    if not refresh_val:
+        raise ValueError(f"No refresh_token found in tokens for provider: {provider}")
+
     payload: dict[str, str] = {
         "grant_type": "refresh_token",
-        "refresh_token": tokens["refresh_token"],
+        "refresh_token": refresh_val,
     }
 
     # Provider-specific extra params
@@ -74,6 +80,8 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     elif provider == "chatgpt":
         payload["client_id"] = _PROVIDER_CLIENT_IDS.get("chatgpt", "")
         payload["scope"] = "openid profile email"
+    elif provider == "xai":
+        payload["client_id"] = tokens.get("client_id") or _PROVIDER_CLIENT_IDS.get("xai", "")
 
     headers = {
         "Accept": "application/json",
@@ -82,6 +90,8 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     if provider == "anthropic":
         headers["User-Agent"] = "claude-code/2.1.69"
         headers["anthropic-beta"] = "oauth-2025-04-20"
+    elif provider == "xai":
+        headers["User-Agent"] = "opencode/1.0"
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(
@@ -95,8 +105,12 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     updated = dict(tokens)
     if "access_token" in data:
         updated["oauth_token"] = data["access_token"]
+        if provider == "xai" or "xai_access" in tokens:
+            updated["xai_access"] = data["access_token"]
     if "refresh_token" in data:
         updated["refresh_token"] = data["refresh_token"]
+        if provider == "xai" or "xai_refresh" in tokens:
+            updated["xai_refresh"] = data["refresh_token"]
     # Google returns a fresh id_token when the scope includes openid — we have
     # to capture it because token_health uses its `exp` claim to classify the
     # entry's status. Keeping the old one would leave the row stuck as expired.

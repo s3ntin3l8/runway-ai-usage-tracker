@@ -34,9 +34,9 @@ Tag a file- or CLI-sourced card against its keyed origin in **Fleet
 → Untagged Credentials** instead; that tag then survives every access
 refresh and is stranded only when the refresh token itself rotates.
 
-Runway does not refresh these tokens. For Grok CLI credentials, both the quota card and usage events use the selected scope entry's email as the account identity, then its user ID. If neither is available, the normal credential tagging flow lets the operator associate the credential with an account.
+Runway automatically refreshes xAI OAuth tokens via `https://auth.x.ai/oauth2/token` when a refresh token (`xai.refresh` / `xai_refresh`) is available, and proactively rolls tokens approaching expiration. For Grok CLI credentials, both the quota card and usage events use the selected scope entry's email as the account identity, then its user ID. If neither is available, the normal credential tagging flow lets the operator associate the credential with an account.
 
-The collector checks a readable JWT expiry before sending requests. An expired token or a rejected request produces an `auth_failed` card that points to the CLI re-login flow.
+The collector checks JWT expiry before sending requests, automatically refreshing when possible. An expired token without a refresh token or a rejected request produces an `auth_failed` card that points to the CLI re-login flow.
 
 ## Usage history
 

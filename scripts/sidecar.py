@@ -2933,6 +2933,24 @@ class GenericCollector:
                 opencode_env_label = os.getenv("OPENCODE_ACCOUNT_LABEL")
                 if opencode_env_label:
                     tokens["account_id"] = opencode_env_label
+            if (
+                provider_id == "xai"
+                and tokens
+                and tokens.get("xai_access")
+                and not tokens.get("expiry_date")
+            ):
+                try:
+                    import base64 as _base64
+
+                    parts = tokens["xai_access"].split(".")
+                    if len(parts) >= 2:
+                        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+                        jwt_payload = json.loads(_base64.urlsafe_b64decode(payload_b64))
+                        exp = jwt_payload.get("exp")
+                        if exp is not None:
+                            tokens["expiry_date"] = str(int(float(exp) * 1000))
+                except Exception:
+                    pass
             if tokens and tokens.get("account_id"):
                 from scripts.sidecar_pkg.identity import canonical_account_id
 

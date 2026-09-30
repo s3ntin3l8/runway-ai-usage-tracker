@@ -339,3 +339,40 @@ class TestRefreshOAuthTokenTokenRotation:
 
         assert result["refresh_token"] == "original_refresh"
         assert result["oauth_token"] == "new_access"
+
+
+class TestRefreshOAuthTokenXai:
+    async def test_xai_refresh_sends_correct_payload_and_updates_keys(self):
+        body = {
+            "access_token": "fresh_xai_access",
+            "token_type": "bearer",
+            "expires_in": 21600,
+            "refresh_token": "fresh_xai_refresh",
+            "scope": "openid grok-cli:access",
+        }
+        resp = _make_mock_response(200, body)
+        ctx = _make_async_client(resp)
+
+        tokens = {
+            "xai_access": "stale_xai_access",
+            "xai_refresh": "current_xai_refresh",
+        }
+
+        with patch("httpx.AsyncClient", return_value=ctx):
+            result = await refresh_oauth_token("xai", tokens)
+
+        post_mock = ctx.__aenter__.return_value.post
+        call_args, call_kwargs = post_mock.call_args
+        assert call_args[0] == "https://auth.x.ai/oauth2/token"
+        assert call_kwargs["data"]["grant_type"] == "refresh_token"
+        assert call_kwargs["data"]["refresh_token"] == "current_xai_refresh"
+        assert call_kwargs["data"]["client_id"] == "b1a00492-073a-47ea-816f-4c329264a828"
+        assert call_kwargs["headers"]["User-Agent"] == "opencode/1.0"
+
+        assert result["xai_access"] == "fresh_xai_access"
+        assert result["oauth_token"] == "fresh_xai_access"
+        assert result["xai_refresh"] == "fresh_xai_refresh"
+        assert result["refresh_token"] == "fresh_xai_refresh"
+        assert "expiry_date" in result
+        exp_ms = int(result["expiry_date"])
+        assert exp_ms > int(time.time() * 1000)
