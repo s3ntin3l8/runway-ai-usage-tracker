@@ -419,8 +419,10 @@ export const deleteTokenHealth = (provider: string, accountId: string) =>
 export const fetchAuditLog = (limit = 200) =>
   api<{ entries: AuditEntry[] }>(`/api/v1/system/audit-log${qs({ limit })}`);
 
-export const fetchDebugRaw = (providerId: string) =>
-  api<DebugRawResponse>(`/api/v1/system/debug/raw/${encodeURIComponent(providerId)}`);
+export const fetchDebugRaw = (providerId: string, accountId?: string) =>
+  api<DebugRawResponse>(
+    `/api/v1/system/debug/raw/${encodeURIComponent(providerId)}${qs({ account_id: accountId })}`,
+  );
 
 // --- Webhooks ----------------------------------------------------------------
 

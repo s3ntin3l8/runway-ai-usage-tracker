@@ -168,7 +168,12 @@ async def _debug_run_one_strategy(
         "status": "error" if errs else ("error" if is_err else "success"),
         "cards_returned": len(card_results),
         "cards_summary": [
-            {"service_name": c.get("service_name"), "remaining": c.get("remaining")}
+            {
+                "service_name": c.get("service_name"),
+                "remaining": c.get("remaining"),
+                "error_type": c.get("error_type"),
+                "detail": str(redact_secrets(c.get("detail", ""))),
+            }
             for c in card_results[:5]
         ],
         "requests": reqs,
@@ -458,6 +463,7 @@ async def get_token_health(
 async def get_raw_provider_data(
     request: Request,
     provider_id: str,
+    account_id: str | None = None,
     _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
     """
@@ -479,13 +485,26 @@ async def get_raw_provider_data(
     try:
         await manager._sync_collectors()
 
-        target_collectors = [
-            sc.collector
-            for key, sc in manager.smart_collectors.items()
-            if key.startswith(f"{provider_id}:") or key == provider_id
-        ]
+        if account_id is not None:
+            selected = manager.smart_collectors.get(f"{provider_id}:{account_id}")
+            if selected is None:
+                account_matches = [
+                    sc
+                    for key, sc in manager.smart_collectors.items()
+                    if (key.startswith(f"{provider_id}:") or key == provider_id)
+                    and getattr(sc.collector, "account_id", None) == account_id
+                ]
+                if len(account_matches) == 1:
+                    selected = account_matches[0]
+            target_collectors = [selected.collector] if selected else []
+        else:
+            target_collectors = [
+                sc.collector
+                for key, sc in manager.smart_collectors.items()
+                if key.startswith(f"{provider_id}:") or key == provider_id
+            ]
 
-        if not target_collectors:
+        if not target_collectors and account_id is None:
             collector = manager._create_collector(provider_id)
             if collector:
                 target_collectors = [collector]
@@ -498,7 +517,7 @@ async def get_raw_provider_data(
         collector = target_collectors[0]
         is_configured = await collector.is_configured()
 
-        creds = CredentialProvider.get_credentials(provider_id)
+        creds = CredentialProvider.get_credentials(provider_id, account_id=account_id)
         _cred_key = next((k for k, v in creds.items() if v), None)
         credential_debug: dict[str, Any] = {
             "token_found": bool(_cred_key) or is_configured,
@@ -540,7 +559,12 @@ async def get_raw_provider_data(
                 "status": "error" if collect_errors else "success",
                 "cards_returned": active_strategy_card_count,
                 "cards_summary": [
-                    {"service_name": c.get("service_name"), "remaining": c.get("remaining")}
+                    {
+                        "service_name": c.get("service_name"),
+                        "remaining": c.get("remaining"),
+                        "error_type": c.get("error_type"),
+                        "detail": str(redact_secrets(c.get("detail", ""))),
+                    }
                     for c in (result or [])[:5]
                 ],
                 "requests": raw_requests,
@@ -549,6 +573,7 @@ async def get_raw_provider_data(
             }
             return {
                 "provider_id": provider_id,
+                "account_id": account_id,
                 "is_configured": is_configured,
                 "credentials": credential_debug,
                 "active_strategy": None,
@@ -576,6 +601,7 @@ async def get_raw_provider_data(
 
         return {
             "provider_id": provider_id,
+            "account_id": account_id,
             "is_configured": is_configured,
             "credentials": credential_debug,
             "active_strategy": active_strategy,

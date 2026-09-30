@@ -159,6 +159,30 @@ describe('DebugTab', () => {
     expect(api.fetchDebugRaw).not.toHaveBeenCalled();
   });
 
+  it('allows capture for a local usage card when the provider has a server collector', () => {
+    const localKimiEntry = fleetEntry({
+      provider_id: 'kimi_coding',
+      server_collector_available: true,
+      critical_gauge: limitCard({
+        provider_id: 'kimi_coding',
+        data_source: 'local',
+        input_source: 'sidecar',
+        is_unlimited: true,
+        window_type: 'lifetime',
+      }),
+    });
+    renderWithProviders(
+      <DebugTab
+        providerId="kimi_coding"
+        accountId="me@example.com"
+        entry={localKimiEntry}
+        active
+      />,
+    );
+    expect(screen.getByText(/usage only · quota unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/capture raw collector output/i)).toBeInTheDocument();
+  });
+
   it('runs the capture and renders the strategy accordion', async () => {
     const mockData: DebugRawResponse = {
       provider_id: 'anthropic',
@@ -208,7 +232,9 @@ describe('DebugTab', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /run capture/i }));
     expect(await screen.findByText('Raw collector exchange')).toBeInTheDocument();
-    await waitFor(() => expect(api.fetchDebugRaw).toHaveBeenCalledWith('anthropic'));
+    await waitFor(() =>
+      expect(api.fetchDebugRaw).toHaveBeenCalledWith('anthropic', 'me@example.com'),
+    );
 
     // Strategy sections rendered
     expect(screen.getByText('Web API (web)')).toBeInTheDocument();

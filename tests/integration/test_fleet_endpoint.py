@@ -97,6 +97,7 @@ def test_fleet_returns_critical_gauge_per_account(session: Session):
     entry = fleet[0]
     assert entry["provider_id"] == "anthropic"
     assert entry["account_id"] == "acc1"
+    assert entry["server_collector_available"] is True
     assert entry["critical_gauge"]["pct_used"] == 85.0
     assert len(entry["secondary_limits"]) == 1
     assert entry["secondary_limits"][0]["pct_used"] == 30.0
@@ -245,6 +246,7 @@ def test_fleet_synthetic_card_carries_lifetime_token_totals(session: Session):
     entry = next(e for e in entries if e["provider_id"] == "opencode-free")
 
     cg = entry["critical_gauge"]
+    assert entry["server_collector_available"] is False
     assert cg["is_unlimited"] is True
     assert cg["window_type"] == "lifetime"
 

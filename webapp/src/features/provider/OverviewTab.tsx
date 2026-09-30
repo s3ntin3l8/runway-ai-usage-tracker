@@ -107,6 +107,11 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
       <ExcludeCacheToggle />
       <ProviderKpis entry={entry} scope={scope} excludeCache={excludeCache} />
       <ProviderAlerts providerId={entry.provider_id} accountId={entry.account_id} />
+      {entry.server_collector_available && entry.critical_gauge.data_source === 'local' ? (
+        <Card role="status" className="border-warning/30 bg-warning-muted px-4 py-2.5 text-[13px] text-fg">
+          Usage events are available, but quota data has not been collected. Check the provider credentials in Settings or use Debug to inspect collection.
+        </Card>
+      ) : null}
 
       {kind === 'quota' && (
         <div className="grid gap-4 lg:grid-cols-2">

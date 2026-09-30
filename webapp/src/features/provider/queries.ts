@@ -320,10 +320,10 @@ export const useProviderErrors = (providerId: string, accountId: string) =>
     refetchInterval: 120_000,
   });
 
-export const useDebugRaw = (providerId: string, enabled: boolean) =>
+export const useDebugRaw = (providerId: string, accountId: string, enabled: boolean) =>
   useQuery({
-    queryKey: ['system', 'debug-raw', providerId],
-    queryFn: () => fetchDebugRaw(providerId),
+    queryKey: ['system', 'debug-raw', providerId, accountId],
+    queryFn: () => fetchDebugRaw(providerId, accountId),
     enabled,
     // 10/min rate limit + live upstream calls: fetch once per explicit ask
     staleTime: Infinity,

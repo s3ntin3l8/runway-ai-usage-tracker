@@ -131,6 +131,24 @@ describe('OverviewTab', () => {
     expect(await screen.findAllByTestId('token-donut')).not.toHaveLength(0);
   });
 
+  it('warns when a quota provider is represented only by local usage events', async () => {
+    const entry = fleetEntry({
+      provider_id: 'kimi_coding',
+      server_collector_available: true,
+      critical_gauge: limitCard({
+        provider_id: 'kimi_coding',
+        data_source: 'local',
+        input_source: 'sidecar',
+        is_unlimited: true,
+        window_type: 'lifetime',
+      }),
+    });
+    renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
+    expect(
+      await screen.findByText(/usage events are available, but quota data has not been collected/i),
+    ).toBeInTheDocument();
+  });
+
   it('falls back to an empty token-mix message with no month bucket', async () => {
     vi.mocked(api.fetchCumulative).mockResolvedValue(emptyCumulative());
     renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);

@@ -359,6 +359,7 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
                 "provider_id": pid,
                 "account_id": aid,
                 "billing_type": billing_types.get((pid, aid), "unknown"),
+                "server_collector_available": pid in manager.collector_registry,
                 "critical_gauge": critical,
                 "secondary_limits": secondary,
                 "sidecar_contributions": contrib.get((pid, aid), {}),

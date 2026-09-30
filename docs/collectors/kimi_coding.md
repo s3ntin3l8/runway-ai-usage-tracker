@@ -20,8 +20,9 @@ balance — those are separate providers (see *Related Files*).
 - **Merge semantics**: strategies run in their resolved (user-reorderable)
   order; the **first success is the base** and each later success enriches it
   — adding missing windows, the plan-title tier badge, and upgrading
-  ratio-only cards to real counts. Reorder the strategies in Settings to flip
-  which source is authoritative.
+  ratio-only cards to real counts. A failed strategy does not block a later
+  enabled strategy from supplying quota. Reorder the strategies in Settings
+  to flip which source is authoritative.
 
 ## Authentication
 
