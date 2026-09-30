@@ -2,8 +2,9 @@
 // with /usage/forecast (trajectory) and answers "am I about to hit a limit?"
 //
 // A provider lands in the at-risk rail when its most-restrictive gauge is
-// already hot (quota thresholds / low balance / error card) OR its forecast
-// projects exhaustion before the window resets.
+// already hot (quota thresholds / low positive balance / error card); a
+// reported zero on a spend-only card is ignored. Forecasts can also project
+// exhaustion before the window resets.
 
 import type { FleetEntry, ForecastEntry, ForecastStatus, LimitCard } from '@/api/types';
 import { cardKind, cardPct, cardStatus, findForecast, type QuotaStatus } from '@/lib/quota';
