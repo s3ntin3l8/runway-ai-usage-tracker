@@ -145,6 +145,7 @@ def test_local_credential_ingest_registers_source_without_sidecar_id(session):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="alice@example.com")
+        mock_tc.remove_source = AsyncMock(return_value=False)
         _ingest(TestClient(app), payload)
 
     mock_touch.assert_called_once()
@@ -238,6 +239,7 @@ def test_claude_oauth_email_requires_matching_account(session, configured):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="alice@example.com" if configured else source_id)
+        mock_tc.remove_source = AsyncMock(return_value=False)
         _ingest(TestClient(app), payload)
 
     assert mock_tc.store.call_args.args[2] == ("alice@example.com" if configured else source_id)
@@ -296,6 +298,66 @@ async def test_claude_oauth_source_moves_to_matching_account(session):
     assert await cache.get("anthropic", "alice@example.com") == {
         "oauth_token": "claude-access-token"
     }
+
+
+@pytest.mark.asyncio
+async def test_claude_oauth_resolution_retires_pending_cache_without_source_row(session):
+    from app.services.credential_sources import sidecar_source_id
+    from app.services.token_cache import TokenCache
+
+    host = "test-host-no-source-row"
+    origin = "path:/home/user/.claude/.credentials.json"
+    source_id = sidecar_source_id(host, origin)
+    cache = TokenCache()
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "old-pending-token"},  # pragma: allowlist secret
+        account_id=source_id,
+        source_id=source_id,
+        source_metadata={"sidecar_id": host, "identity_pending": True},
+    )
+    session.add(
+        ProviderConfig(
+            provider_id="anthropic",
+            account_id="alice@example.com",
+            enabled=True,
+        )
+    )
+    session.commit()
+    payload = {
+        "provider": "anthropic-sidecar",
+        "sidecar_id": host,
+        "metrics": [
+            {
+                "provider_id": "anthropic",
+                "service_name": "Claude",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "oauth_token": "new-resolved-token",  # pragma: allowlist secret
+                    "credential_origin": origin,
+                },
+            }
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache", cache),
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        _ingest(TestClient(app), payload)
+
+    rows = await cache._get_source_credentials("anthropic")
+    assert [(row["account_id"], row["source_id"]) for row in rows] == [
+        ("alice@example.com", source_id)
+    ]
+    assert await cache.get("anthropic", source_id) is None
+    assert (await cache.get("anthropic", "alice@example.com"))["oauth_token"] == (
+        "new-resolved-token"
+    )
 
 
 def test_empty_completed_providers_heartbeat_skips_latest_usage_write_block(session):

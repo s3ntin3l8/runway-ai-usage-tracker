@@ -17,7 +17,7 @@ The Claude collector supports multiple authentication and data collection method
 
 1.  **OAuth Token (Preferred)**:
     *   **Method 1**: Set the `CLAUDE_CODE_OAUTH_TOKEN` environment variable.
-    *   **Method 2 (Auto-discovered)**: Log in via the `claude` CLI. Standard Claude Code stores the token in `~/.claude/.credentials.json` and account identity in `~/.claude.json`; other installations may use `~/.config/claude/oauth_creds.json` or macOS Keychain.
+    *   **Method 2 (Auto-discovered)**: Log in via the `claude` CLI. Standard Claude Code stores the token in `~/.claude/.credentials.json` and account identity in `~/.claude.json`. The sidecar pairs those files for identity discovery; custom credential files must contain their own `oauthAccount` identity or they remain available for assignment in Fleet. Other installations may use `~/.config/claude/oauth_creds.json` or macOS Keychain.
     *   **Method 3 (Auto-discovered, macOS only)**: OAuth token stored in macOS Keychain.
     *   **Details**: See [Primary: Hybrid (Statusline + OAuth API)](#primary-hybrid-statusline--oauth-api) and [Configuration section](#configuration).
 

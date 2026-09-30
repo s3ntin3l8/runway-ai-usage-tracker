@@ -297,6 +297,7 @@ class TestIngestEndpoint:
 
             with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
                 mock_cache.store = AsyncMock()
+                mock_cache.remove_source = AsyncMock(return_value=False)
                 response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
 
                 # Verify token was stored in cache

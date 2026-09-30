@@ -312,6 +312,11 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # token-derived placeholder identity; use a stable host+origin key while
         # identity is pending so token rotations do not create orphan entries.
         cache_account_id = source_id if p_id == "anthropic" and identity_pending else a_id
+        if p_id == "anthropic" and not identity_pending:
+            # A pending source is cache-keyed by its stable source_id. Retire
+            # that placeholder even if its durable CredentialSource row was
+            # lost; otherwise its OAuth bundle survives beside the resolved one.
+            await token_cache.remove_source(p_id, source_id, source_id, retire_matching_oauth=True)
         actual_acc_id = await token_cache.store(
             p_id,
             p_tokens,
