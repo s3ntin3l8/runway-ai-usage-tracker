@@ -75,7 +75,9 @@ def query_cumulative_live(
     When *identity_pairs* is provided, only events matching one of the
     ``(provider_id, account_id)`` tuples are included — an OR-clause filter
     that avoids scanning the full event log when only a small subset of
-    identities is needed (e.g. the archived-providers endpoint).
+    identities is needed (e.g. the archived-providers endpoint). Optional
+    *provider_id*, *account_id*, and *sidecar_id* filters are additionally
+    AND-ed with that identity set when supplied.
     """
     stmt = select(  # type: ignore[call-overload]
         UsageEvent.provider_id,

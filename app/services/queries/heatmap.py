@@ -48,6 +48,8 @@ def query_heatmap(
     window (UTC) and is ignored when `since` is given; None means the current
     time. Production never passes `now` — it exists so tests with fixed event
     timestamps don't age out of the window.
+    When ``exclude_cache`` is enabled, both token and cost values exclude
+    cache read/create usage.
     """
     zone: ZoneInfo | None = None
     if tz:
@@ -103,6 +105,11 @@ def _heatmap_utc(
         if exclude_cache
         else "SUM(tokens_input + tokens_output + tokens_cache_read + tokens_cache_create)"
     )
+    cost_sum = (
+        "SUM(MAX(0, cost_usd - COALESCE(cost_cache_read, 0) - COALESCE(cost_cache_create, 0)))"
+        if exclude_cache
+        else "SUM(cost_usd)"
+    )
     if since is not None:
         # Closed range: bound by absolute instants (stored as naive UTC).
         lower_sql = "ts >= :since"
@@ -125,7 +132,7 @@ def _heatmap_utc(
             CAST(strftime('%w', ts) AS INTEGER) AS dow,
             CAST(strftime('%H', ts) AS INTEGER) AS hour,
             {token_sum} AS tokens,
-            SUM(cost_usd) AS cost_usd
+            {cost_sum} AS cost_usd
         FROM usage_events
         WHERE provider_id = :provider_id
           AND account_id  = :account_id
@@ -169,6 +176,8 @@ def _heatmap_local(
         UsageEvent.tokens_cache_read,
         UsageEvent.tokens_cache_create,
         UsageEvent.cost_usd,
+        UsageEvent.cost_cache_read,
+        UsageEvent.cost_cache_create,
     ).where(
         UsageEvent.provider_id == provider_id,
         UsageEvent.account_id == account_id,
@@ -183,7 +192,7 @@ def _heatmap_local(
 
     tokens_heat: dict[tuple[int, int], int] = {}
     cost_heat: dict[tuple[int, int], float] = {}
-    for ts, ti, to, tcr, tcc, cost in rows:
+    for ts, ti, to, tcr, tcc, cost, cost_cache_read, cost_cache_create in rows:
         # SQLite stores naive UTC; coerce before tz conversion.
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=UTC)
@@ -194,7 +203,11 @@ def _heatmap_local(
         key = (dow, local.hour)
         cache = 0 if exclude_cache else int(tcr or 0) + int(tcc or 0)
         tokens_heat[key] = tokens_heat.get(key, 0) + int(ti or 0) + int(to or 0) + cache
-        cost_heat[key] = cost_heat.get(key, 0.0) + float(cost or 0.0)
+        cache_cost = float(cost_cache_read or 0.0) + float(cost_cache_create or 0.0)
+        cell_cost = (
+            max(0.0, float(cost or 0.0) - cache_cost) if exclude_cache else float(cost or 0.0)
+        )
+        cost_heat[key] = cost_heat.get(key, 0.0) + cell_cost
 
     return _pad_cells(tokens_heat, cost_heat)
 

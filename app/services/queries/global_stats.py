@@ -41,6 +41,10 @@ def query_global_stats(
           "busiest_hour": {hour: 0-23, tokens} | None,                 # local tz
           "generated_at": ISO-8601 UTC,
         }
+
+    ``exclude_cache`` changes session averages and peak token metrics. Lifetime
+    totals retain their cache component fields (the UI subtracts those for its
+    headline tile), and ``cache_hit_ratio`` always describes all tokens.
     """
     # --- Lifetime totals + distinct counts (rollup, all-sidecar grain) -------
     life_stmt = select(UsagePeriodRollup).where(

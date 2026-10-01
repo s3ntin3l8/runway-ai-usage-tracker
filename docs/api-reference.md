@@ -33,6 +33,14 @@ All API routes are under `/api/v1/`.
 | `POST` | `/api/v1/usage/reset/{provider}` | Clear terminal failure state for a provider |
 | `POST` | `/api/v1/usage/collect/{provider}` | Force immediate re-collection for one provider |
 
+For `/usage/cumulative`, `by_sidecar` normally contains per-source totals alongside
+the all-source total. When `sidecar_id` is supplied, the top-level bucket is
+scoped to that source and `by_sidecar` contains that source as a single-key map.
+Lifetime token totals and `cache_hit_ratio` in `/usage/global-stats` retain the
+cache-inclusive components; `exclude_cache` applies to session averages and peak
+token metrics, while the UI adjusts the lifetime token/cost tiles from their
+component fields. Cache-specific metrics remain cache-inclusive by definition.
+
 ## Fleet / Ingestion
 
 | Method | Route | Description |

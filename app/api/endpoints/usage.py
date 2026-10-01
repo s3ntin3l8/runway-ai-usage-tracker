@@ -106,6 +106,8 @@ _FLEET_CACHE_KEY = "fleet"
 _FLEET_CACHE_TTL = 30.0
 _GLOBAL_STATS_CACHE_KEY = "global-stats"
 _GLOBAL_STATS_CACHE_TTL = 300.0
+_USAGE_SOURCES_CACHE_KEY = "usage-sources"
+_USAGE_SOURCES_CACHE_TTL = 60.0
 _TOP_N_CACHE_TTL = 300.0
 _FORECAST_CACHE_TTL = 45.0
 
@@ -117,6 +119,9 @@ async def get_usage_sources(
     session: Session = Depends(get_session),
 ) -> dict[str, list[str]]:
     """Return distinct sources that have contributed billable usage events."""
+    cached = cache_get(_USAGE_SOURCES_CACHE_KEY)
+    if cached is not None:
+        return cached
     from app.models.db import UsageEvent
 
     ids = session.exec(
@@ -125,7 +130,9 @@ async def get_usage_sources(
         .distinct()
         .order_by(UsageEvent.sidecar_id)
     ).all()
-    return {"sidecar_ids": [str(sidecar_id) for sidecar_id in ids if sidecar_id]}
+    result = {"sidecar_ids": [str(sidecar_id) for sidecar_id in ids if sidecar_id]}
+    cache_set(_USAGE_SOURCES_CACHE_KEY, result, _USAGE_SOURCES_CACHE_TTL)
+    return result
 
 
 def _normalize_filter(value: str | None) -> str | None:
