@@ -11,6 +11,70 @@ from app.core.utils import IdentityExtractor, safe_write_json, scrub_log
 
 logger = logging.getLogger(__name__)
 
+# Providers whose token endpoint rotates the refresh token: a refresh invalidates the
+# previous one. Refreshing a credential that a machine's own CLI also holds therefore
+# logs that CLI out, and the new token is never sent back to it. Google does not rotate
+# Gemini's, so server-side refresh is safe there. xAI is treated as rotating without
+# having been verified: wrongly blocking only pauses data until the CLI next runs,
+# while wrongly allowing logs the user out.
+ROTATING_REFRESH_PROVIDERS = frozenset({"anthropic", "chatgpt", "xai"})
+
+_NON_MACHINE_SOURCES = (None, "server", "config", "manual_config")
+
+
+def _refresh_secret(tokens: dict[str, str]) -> str | None:
+    return tokens.get("refresh_token") or tokens.get("xai_refresh") or None
+
+
+def _is_machine_bundle(bundle: dict) -> bool:
+    """A source bundle pushed by a sidecar (same test as ``is_sidecar_source``)."""
+    return bool(bundle.get("sidecar_id") and bundle.get("credential_origin"))
+
+
+def machine_owns_credential(
+    provider: str,
+    tokens: dict[str, str],
+    bundles: "list[dict] | tuple[dict, ...]" = (),
+    *,
+    merged_source: str | None = None,
+) -> bool:
+    """True when a machine's CLI owns this OAuth credential, so the server must not refresh it.
+
+    Only rotating providers qualify. *tokens* is owned by a machine when it shares its
+    refresh secret with a sidecar source bundle (the same matching
+    ``TokenCache.apply_refresh_to_sources`` uses), or when the merged entry says a sidecar
+    last pushed it (``merged_source``). The shared-secret test is primary: the merged
+    entry's ``source`` is just whichever push came last.
+    """
+    if provider not in ROTATING_REFRESH_PROVIDERS:
+        return False
+    if merged_source not in _NON_MACHINE_SOURCES:
+        return True
+    secret = _refresh_secret(tokens)
+    if not secret:
+        return False
+    return any(
+        _is_machine_bundle(bundle) and _refresh_secret(bundle.get("tokens") or {}) == secret
+        for bundle in bundles
+    )
+
+
+async def server_may_refresh(
+    provider: str,
+    account_id: str,
+    tokens: dict[str, str],
+    *,
+    merged_source: str | None = None,
+) -> bool:
+    """Whether the server may exchange this credential's refresh token (see above)."""
+    if provider not in ROTATING_REFRESH_PROVIDERS:
+        return True
+    from app.services.token_cache import token_cache
+
+    bundles = await token_cache.get_source_candidates(provider, account_id)
+    return not machine_owns_credential(provider, tokens, bundles, merged_source=merged_source)
+
+
 _REFRESH_ENDPOINTS: dict[str, str] = {
     "anthropic": "https://platform.claude.com/v1/oauth/token",
     "gemini": "https://oauth2.googleapis.com/token",

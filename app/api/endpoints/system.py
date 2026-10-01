@@ -624,6 +624,12 @@ async def get_raw_provider_data(
         raise HTTPException(status_code=500, detail=safe_message)
 
 
+_RENEWED_BY_MACHINE = (
+    "This credential belongs to a machine's CLI, which renews it. Refreshing it here would "
+    "rotate the refresh token and sign that CLI out."
+)
+
+
 @router.post("/token-health/refresh/{provider}/{account_id}")
 @limiter.limit("5/minute")
 async def refresh_token(
@@ -642,7 +648,14 @@ async def refresh_token(
     if not has_refresh_credential(tokens):
         raise HTTPException(status_code=400, detail="No refresh token available")
 
-    from app.services.token_refresher import persist_to_local_file, refresh_oauth_token
+    from app.services.token_refresher import (
+        persist_to_local_file,
+        refresh_oauth_token,
+        server_may_refresh,
+    )
+
+    if not await server_may_refresh(provider, account_id, tokens, merged_source=meta.get("source")):
+        raise HTTPException(status_code=409, detail=_RENEWED_BY_MACHINE)
 
     try:
         new_tokens = await refresh_oauth_token(provider, tokens)
@@ -715,7 +728,10 @@ async def refresh_credential_source(
     if not has_refresh_credential(tokens):
         raise HTTPException(status_code=400, detail="No refresh token available")
 
-    from app.services.token_refresher import refresh_oauth_token
+    from app.services.token_refresher import machine_owns_credential, refresh_oauth_token
+
+    if machine_owns_credential(provider, tokens, [bundle]):
+        raise HTTPException(status_code=409, detail=_RENEWED_BY_MACHINE)
 
     try:
         new_tokens = await refresh_oauth_token(provider, tokens)

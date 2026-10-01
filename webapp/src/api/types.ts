@@ -898,6 +898,7 @@ export interface CredentialSourceView {
   token_types: string[];
   can_refresh: boolean;
   rollable: boolean;
+  refreshed_by: 'server' | 'machine' | null;
   removable: boolean;
   enabled: boolean;
   priority: number;

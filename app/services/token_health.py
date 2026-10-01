@@ -20,7 +20,11 @@ from app.services import auth_failures
 from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
 from app.services.token_cache import _OAUTH_CREDENTIAL_KEYS, TokenCache, token_cache
-from app.services.token_refresher import _REFRESH_ENDPOINTS
+from app.services.token_refresher import (
+    _REFRESH_ENDPOINTS,
+    ROTATING_REFRESH_PROVIDERS,
+    machine_owns_credential,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -412,7 +416,11 @@ class TokenHealthService:
                         # The manual Refresh button only works where an endpoint exists;
                         # classification still treats any refresh_token as rollable
                         # (a local agent re-pushes e.g. antigravity's short-lived token).
-                        can_refresh=has_refresh_token and provider in _REFRESH_ENDPOINTS,
+                        can_refresh=has_refresh_token
+                        and provider in _REFRESH_ENDPOINTS
+                        and not machine_owns_credential(
+                            provider, tokens, source_candidates, merged_source=source_val
+                        ),
                         ttl_remaining=info.get("ttl_remaining", 0),
                         rollable=has_refresh_token,
                     )
@@ -497,7 +505,9 @@ class TokenHealthService:
                 # A refresh token on a live bundle means the server rolls it before it
                 # lapses (and a manual refresh works); without these a 2h-valid Gemini
                 # credential read "expiring" — the auto-refresh allowance never applied.
-                can_refresh=durable_rollable and provider_id in _REFRESH_ENDPOINTS,
+                can_refresh=durable_rollable
+                and provider_id in _REFRESH_ENDPOINTS
+                and not (provider_id in ROTATING_REFRESH_PROVIDERS and durable_source.sidecar_id),
                 rollable=durable_rollable,
             )
             row["_rejected"] = is_durably_rejected(

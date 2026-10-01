@@ -521,12 +521,22 @@ class TokenCache:
         updated if the refresh token it holds is the one that was rotated. Not every key
         in ``refreshed`` lands on every bundle — only on those that matched.
         """
+        from app.services.token_refresher import ROTATING_REFRESH_PROVIDERS
+
         account_id = canonical_account_id(account_id)
         identity_keys = ("refresh_token", "xai_refresh", "oauth_token", "xai_access")
         updated = 0
         async with self._lock:
             sources = self._source_cache.get(provider, {}).get(account_id, {})
             for source_id, (tokens, metadata, _timestamp) in list(sources.items()):
+                if (
+                    provider in ROTATING_REFRESH_PROVIDERS
+                    and metadata.get("sidecar_id")
+                    and metadata.get("credential_origin")
+                ):
+                    # A machine's own login: the server never owns its refresh token, so
+                    # a refresh result must not be written into the bundle.
+                    continue
                 if not any(
                     previous.get(key) and tokens.get(key) == previous[key] for key in identity_keys
                 ):

@@ -49,7 +49,7 @@ from app.services.credential_sources import (
 )
 from app.services.token_cache import token_cache
 from app.services.token_health import credential_status, is_durably_rejected, is_flagged
-from app.services.token_refresher import _REFRESH_ENDPOINTS
+from app.services.token_refresher import _REFRESH_ENDPOINTS, ROTATING_REFRESH_PROVIDERS
 
 # Best → worst. An account is as healthy as its best enabled source: a working
 # credential beside a dead one means collection still works.
@@ -257,6 +257,16 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             exp = row.credential_expires_at.timestamp() if row.credential_expires_at else None
         rollable = has_refresh_credential(tokens)
         machine_sourced = row.sidecar_id is not None
+        # ``rollable`` = something renews it (status stays "valid" between rolls). Who: the
+        # server, or, for a rotating provider's machine-owned login, that machine's CLI. The
+        # server must not refresh the latter (rotation signs the CLI out), so no Refresh action.
+        machine_renewed = (
+            machine_sourced and rollable and row.provider_id in ROTATING_REFRESH_PROVIDERS
+        )
+        server_refreshable = (
+            rollable and row.provider_id in _REFRESH_ENDPOINTS and not machine_renewed
+        )
+        refreshed_by = "machine" if machine_renewed else "server" if server_refreshable else None
         # Only a machine-reported credential can be "waiting for an account": an env var or
         # pasted key on the ``default`` account is that deployment's real account.
         identity_pending = machine_sourced and row.account_id in ("default", row.source_id)
@@ -310,9 +320,8 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 ),
                 expires_in_seconds=int(exp - now) if exp is not None else None,
                 token_types=token_types,
-                can_refresh=rollable
-                and row.provider_id in _REFRESH_ENDPOINTS
-                and bundle is not None,
+                can_refresh=server_refreshable and bundle is not None,
+                refreshed_by=refreshed_by,
                 rollable=rollable,
                 removable=machine_sourced,
                 enabled=row.enabled,

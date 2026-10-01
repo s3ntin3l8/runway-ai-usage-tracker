@@ -98,7 +98,13 @@ export function SourceRow({ source, context }: SourceRowProps) {
               : relativeExpiry(source.expires_in_seconds)}
           </span>
           {source.last_success_at ? <span>collected {timeAgo(source.last_success_at)}</span> : null}
-          {source.rollable ? <span>auto-refreshed</span> : null}
+          {source.refreshed_by === 'machine' ? (
+            <span title="This login belongs to the machine's CLI, which renews it. Refreshing it from here would sign that CLI out.">
+              renewed by its machine
+            </span>
+          ) : source.rollable ? (
+            <span>auto-refreshed</span>
+          ) : null}
           {!source.enabled ? <span>disabled</span> : null}
         </div>
         {source.mapping === 'operator' &&

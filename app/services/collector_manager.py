@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from app.core.utils import scrub_log
+from app.core.utils import IdentityExtractor, has_refresh_credential, scrub_log
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
@@ -747,6 +747,18 @@ class CollectorManager:
                 collector.account_label = default_account_label
             if hasattr(collector, "credential_account_id"):
                 collector.credential_account_id = account_id
+            if self._awaiting_machine_renewal(provider_id, candidate):
+                # An idle CLI let its access token lapse. The machine renews it (the server
+                # must not: rotating its refresh token would sign that CLI out), so calling
+                # the API now could only 401 and flag a healthy login as revoked. No health
+                # update: the row keeps its last real outcome and reads "expired".
+                logger.info(
+                    "Skipping %s/%s source %s: expired, waiting for its machine to renew it",
+                    scrub_log(provider_id),
+                    scrub_log(account_id),
+                    scrub_log(candidate["source_id"]),
+                )
+                continue
             async with token_cache.using_source(
                 provider_id, account_id, candidate["source_id"]
             ) as attempt:
@@ -841,6 +853,19 @@ class CollectorManager:
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
         )
+
+    @staticmethod
+    def _awaiting_machine_renewal(provider_id: str, candidate: dict[str, Any]) -> bool:
+        """An expired machine-owned login of a rotating provider that holds a refresh token."""
+        from app.services.token_refresher import ROTATING_REFRESH_PROVIDERS
+
+        if provider_id not in ROTATING_REFRESH_PROVIDERS or not is_sidecar_source(candidate):
+            return False
+        tokens = candidate.get("tokens") or {}
+        if not has_refresh_credential(tokens):
+            return False  # nothing will renew it: let the real call report it dead
+        exp = IdentityExtractor.exp_from_tokens(tokens)
+        return exp is not None and exp <= time.time()
 
     async def _promote_source_identity(
         self, provider_id: str, old_account_id: str, source_id: str, account_id: str

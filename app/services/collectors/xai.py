@@ -117,10 +117,20 @@ class XaiCollector(BaseCollector):
                 "xai", "xai_refresh", account_id=account_id
             ) or await token_cache.get_token("xai", "refresh_token", account_id=account_id)
             if refresh_tok:
-                from app.services.token_refresher import refresh_oauth_token
+                from app.services.token_refresher import refresh_oauth_token, server_may_refresh
 
                 try:
                     cached_tokens = (await token_cache.get(self.PROVIDER_ID, account_id)) or {}
+                    if not await server_may_refresh(
+                        self.PROVIDER_ID,
+                        account_id,
+                        cached_tokens,
+                        merged_source=cache_data[1].get("source") if cache_data else None,
+                    ):
+                        # The CLI that owns this login renews it; refreshing here would
+                        # rotate its refresh token. Not an auth failure.
+                        self._last_error_reason = "renewal_pending"
+                        return []
                     new_tokens = await refresh_oauth_token(self.PROVIDER_ID, cached_tokens)
                 except Exception as exc:
                     logger.warning("xAI token refresh failed: %s", scrub_log(str(exc)))
@@ -424,6 +434,9 @@ class XaiCollector(BaseCollector):
         if reason == "invalid_api_key":
             message = "xAI session expired — re-login with the Grok or OpenCode CLI"
             error_type = "auth_failed"
+        elif reason == "renewal_pending":
+            message = "xAI token expired; it renews the next time the Grok CLI runs on its machine"
+            error_type = "unknown"
         elif reason == "parse_error":
             message = "xAI quota response could not be parsed."
             error_type = "parse_error"
