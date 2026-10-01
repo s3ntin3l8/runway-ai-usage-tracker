@@ -64,6 +64,13 @@ When `APP_HOST` is not `127.0.0.1` / `localhost`, the server refuses to start un
 
 These are fail-fast checks: a misconfigured deployment dies at import time with a clear `RuntimeError`, never silently exposing tokens over cleartext, serving with a broken CORS policy, or leaving every admin endpoint open to the network. Localhost binds are exempt by design — Runway's primary topology is "developer's laptop".
 
+**Other places a secret can rest** (all covered, none rely on the database):
+
+- **GitHub OAuth token** (`github_oauth.json` in the config dir): the `access_token` field is encrypted with `DB_ENCRYPTION_KEY` when one is set. A token saved before a key was configured is rewritten encrypted the first time it is read. Without a key it stays plaintext, like every other secret.
+- **Sidecar offline queue**: queued payloads hold usage only. Credential-carrying cards are dropped before queueing and the forwarded log tail is redacted, so the 0600 queue files never contain a token, key or cookie. A queue left by an older sidecar is cleaned the next time it is replayed.
+- **Sidecar logs** are redacted at write time (bearer values, JWTs, provider key shapes, `name=value` pairs for credential-looking names), and again when the log tail is forwarded; the server redacts the lines once more before storing them in `recent_logs`.
+- **Ingest 400 responses** report field paths and error types only. They never echo the submitted value, which on those routes can be a credential.
+
 Blank values are treated as unset: an empty or whitespace-only `ADMIN_API_KEY` or `DB_ENCRYPTION_KEY` normalizes to `None` (so `KEY=""` in `.env` doesn't masquerade as a configured secret). A **malformed** `DB_ENCRYPTION_KEY` (set but not a valid Fernet key) also fails fast at startup, rather than silently falling back to plaintext storage.
 
 The `["*"]` CORS fallback only takes effect when `APP_HOST` resolves to `127.0.0.1` / `localhost`; the gate above guarantees any non-localhost bind must ship an explicit allow-list, so wildcard CORS is never exposed off-host.

@@ -6,10 +6,26 @@ from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, select
 
+from app.core.log_redaction import redact_secrets
 from app.core.utils import scrub_log
 from app.models.db import CredentialSource, SidecarRegistry
 
 logger = logging.getLogger(__name__)
+
+
+_LOG_LINE_LIMIT = 2000
+
+
+def _recent_logs_json(lines: list[str]) -> str:
+    """The last 20 reported log lines as stored JSON, with credential-shaped text redacted.
+
+    The sidecar redacts before sending, but a sidecar is not a trust boundary: an
+    older version, or a compromised host, could forward a secret into a column
+    that the fleet API returns to every reader.
+    """
+    # Capped first: the redaction regexes must never see unbounded input.
+    return json.dumps([str(redact_secrets(str(line)[:_LOG_LINE_LIMIT])) for line in lines[-20:]])
+
 
 # Sidecars that haven't checked in for this long are considered stale
 _STALE_THRESHOLD_MINUTES = 60
@@ -136,7 +152,7 @@ class FleetRegistryService:
             if collection_errors > 0:
                 row.error_count += collection_errors
             if last_log_lines is not None:
-                row.recent_logs = json.dumps(last_log_lines[-20:])
+                row.recent_logs = _recent_logs_json(last_log_lines)
             if identity_sources is not None:
                 row.identity_sources = json.dumps(identity_sources)
             logger.debug(f"Updated sidecar '{sidecar_id}' (ingest #{row.ingest_count})")
@@ -149,7 +165,7 @@ class FleetRegistryService:
                 os_platform=os_platform,
                 self_update_capable=self_update_capable,
                 error_count=collection_errors,
-                recent_logs=json.dumps(last_log_lines[-20:]) if last_log_lines else None,
+                recent_logs=_recent_logs_json(last_log_lines) if last_log_lines else None,
                 identity_sources=json.dumps(identity_sources) if identity_sources else None,
             )
             session.add(row)

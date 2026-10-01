@@ -83,6 +83,15 @@
             }
           }
         }
+      ],
+      "drop_rules": [
+        {
+          "match": {
+            "type": "file",
+            "paths_contain": "github_oauth.json"
+          },
+          "reason": "Runway's own GitHub OAuth token file. The server encrypts it at rest and reads it itself, and a sidecar can't decrypt it, so it must not be shipped from here."
+        }
       ]
     },
     "kimi_k2": {
