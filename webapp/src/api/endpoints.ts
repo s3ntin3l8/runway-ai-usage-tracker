@@ -47,6 +47,7 @@ import type {
   UntaggedCredentialsList,
   CredentialTagList,
   UpdateCheckResult,
+  UsageSourcesResponse,
   Webhook,
   DebugRawResponse,
   WindowDetailResponse,
@@ -102,7 +103,10 @@ export const fetchHistoryChart = (params: Params) =>
 export const fetchTopModels = (params: Params = {}) =>
   api<TopModelsResponse>(`/api/v1/usage/top-models${qs(params)}`);
 
-export const fetchGlobalStats = () => api<GlobalStatsResponse>('/api/v1/usage/global-stats');
+export const fetchGlobalStats = (params: Params = {}) =>
+  api<GlobalStatsResponse>(`/api/v1/usage/global-stats${qs(params)}`);
+
+export const fetchUsageSources = () => api<UsageSourcesResponse>('/api/v1/usage/sources');
 
 export const fetchHistoryWindows = (params: Params = {}) =>
   api<{ windows: HistoryWindowRow[] }>(`/api/v1/usage/history/windows${qs(params)}`);

@@ -84,6 +84,7 @@ class LegacyProviderIdsCheck(Check):
                 "total": retag_plan.total,
                 "collisions": retag_plan.collisions,
                 "retagged": retag_plan.retagged,
+                "rollups_to_purge": retag_plan.rollups_to_purge,
             },
         )
 
@@ -101,6 +102,7 @@ class LegacyProviderIdsCheck(Check):
                     "collisions_resolved": result.collisions_resolved,
                     "latest_usage_dropped": result.latest_usage_dropped,
                     "quota_snapshots_dropped": result.quota_snapshots_dropped,
+                    "rollups_legacy_purged": result.rollups_legacy_purged,
                     "rollups_rebuilt_pairs": result.rollups_rebuilt_pairs,
                     "windows_rebuilt": result.windows_rebuilt,
                 },

@@ -440,6 +440,7 @@ def query_history_deltas(
     days: float = 1.0,
     since: str | None = None,
     until: str | None = None,
+    sidecar_id: str | None = None,
 ) -> dict[str, Any]:
     """Compute actual consumption deltas from usage_events within the time range.
 
@@ -469,6 +470,9 @@ def query_history_deltas(
     if account_id:
         filters.append("account_id = :account_id")
         params["account_id"] = account_id
+    if sidecar_id:
+        filters.append("sidecar_id = :sidecar_id")
+        params["sidecar_id"] = sidecar_id
     where = " AND ".join(filters)
 
     # Token + cost totals — cache-inclusive to match global-stats / top-models

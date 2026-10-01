@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { putDashboardLayout } from '@/api/endpoints';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
+import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Inbox } from 'lucide-react';
@@ -91,6 +92,7 @@ export function HomePage() {
         description={generatedAt ? `updated ${timeAgo(generatedAt)}` : undefined}
         actions={
           <>
+            <ExcludeCacheToggle compact />
             <Button
               size="sm"
               variant={showArchived ? 'primary' : 'ghost'}

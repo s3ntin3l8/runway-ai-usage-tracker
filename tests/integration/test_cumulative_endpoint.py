@@ -238,6 +238,47 @@ def test_per_sidecar_grain_lands_in_by_sidecar(session):
     assert lifetime["by_sidecar"]["dev-01"]["cost_usd"] == pytest.approx(1.20)
 
 
+def test_selected_sidecar_scopes_totals_and_exposes_single_source_breakdown(session):
+    _rollup(session, period_type="lifetime", period_key="all", msgs=20, tokens_input=800)
+    _rollup(
+        session,
+        period_type="lifetime",
+        period_key="all",
+        sidecar_id="dev-01",
+        msgs=12,
+        tokens_input=400,
+        cost_usd=1.20,
+    )
+    _rollup(
+        session,
+        period_type="lifetime",
+        period_key="all",
+        sidecar_id="dev-02",
+        msgs=8,
+        tokens_input=400,
+        cost_usd=0.80,
+    )
+
+    response = _client().get("/api/v1/usage/cumulative?period_type=lifetime&sidecar_id=dev-01")
+    assert response.status_code == 200
+    lifetime = response.json()["cumulative"][0]["lifetime"]
+
+    assert lifetime["tokens_input"] == 400
+    assert lifetime["msgs"] == 12
+    assert lifetime["by_sidecar"] == {
+        "dev-01": {
+            "tokens_input": 400,
+            "tokens_output": 0,
+            "tokens_cache_read": 0,
+            "tokens_cache_create": 0,
+            "tokens_reasoning": 0,
+            "cost_usd": 1.2,
+            "cost_cache": 0.0,
+            "msgs": 12,
+        }
+    }
+
+
 def test_full_breakdown_row_skipped(session):
     """Cross-product row (model_id != '' AND sidecar_id != '') does not appear in by_model or by_sidecar."""
     _rollup(session, period_type="lifetime", period_key="all", msgs=5, tokens_input=200)

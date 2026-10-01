@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent
+from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent, UsagePeriodRollup
 from app.services.maintenance._chunked_sql import chunked_delete, chunked_update
 from app.services.maintenance.legacy_providers import LEGACY_PROVIDER_MAP
 from app.services.maintenance.rollups import rebuild_rollups_for_providers
@@ -50,6 +50,9 @@ class RetagPlan:
     total: int = 0
     collisions: int = 0  # would be resolved via pick_winner and one side dropped
     retagged: int = 0  # moved to canonical with no collision
+    rollups_to_purge: int = (
+        0  # usage_period_rollup rows under the legacy id the apply step will delete
+    )
     samples: list[str] = field(default_factory=list)
 
 
@@ -60,6 +63,7 @@ class RetagResult:
     collisions_resolved: int = 0
     latest_usage_dropped: int = 0
     quota_snapshots_dropped: int = 0
+    rollups_legacy_purged: int = 0  # rollup rows under the legacy id the apply step deleted
     rollups_rebuilt_pairs: int = 0
     windows_rebuilt: int = 0
 
@@ -93,11 +97,15 @@ def plan_legacy_retag(
         select(UsageEvent).where(UsageEvent.provider_id == legacy_provider_id)
     ).all()
     collisions = _collision_event_ids(session, legacy_provider_id, canonical)
+    rollups_to_purge = session.execute(
+        select(func.count()).where(col(UsagePeriodRollup.provider_id) == legacy_provider_id)
+    ).one()[0]
     return RetagPlan(
         canonical_provider_id=canonical,
         total=len(total),
         collisions=len(collisions),
         retagged=len(total) - len(collisions),
+        rollups_to_purge=rollups_to_purge,
         samples=[ev.event_id for ev in total[:sample_size]],
     )
 
@@ -106,8 +114,10 @@ def apply_legacy_retag(session: Session, legacy_provider_id: str) -> RetagResult
     """Retag every event under `legacy_provider_id` onto its canonical
     provider, resolving any (post-retag) collision via `pick_winner`,
     preserving a source-reported cost that would otherwise only have been
-    recognized via the legacy id's provider-prefix check, and rebuilding
-    rollups/windows for both providers.
+    recognized via the legacy id's provider-prefix check, purging the legacy
+    id's own `usage_period_rollup` rows (so they don't linger as
+    `rollup_drift` orphans), and rebuilding rollups/windows for both
+    providers.
 
     Every write is chunked (`_chunked_sql`) and committed per batch — a
     legacy id like `opencode-openrouter` can carry tens of thousands of
@@ -175,6 +185,15 @@ def apply_legacy_retag(session: Session, legacy_provider_id: str) -> RetagResult
     )
     result.quota_snapshots_dropped = chunked_delete(
         session, QuotaSnapshot, [col(QuotaSnapshot.provider_id) == legacy_provider_id]
+    )
+
+    # rebuild_rollups_for_providers derives its pair list from usage_events,
+    # which no longer carries the legacy id after the update above — purge
+    # the legacy id's own rollup rows explicitly or they linger as
+    # rollup_drift orphans. Done before the rebuild so a hypothetical
+    # surviving legacy event still gets correct rows recreated by it.
+    result.rollups_legacy_purged = chunked_delete(
+        session, UsagePeriodRollup, [col(UsagePeriodRollup.provider_id) == legacy_provider_id]
     )
 
     touched = [legacy_provider_id, canonical]

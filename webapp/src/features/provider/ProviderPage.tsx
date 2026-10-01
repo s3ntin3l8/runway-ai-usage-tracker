@@ -16,8 +16,11 @@ import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
+import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
+import { SidecarFilter } from '@/components/ui/SidecarFilter';
 import { useFleet, useProviderConfigs } from '@/features/home/queries';
 import { useRangeParam } from '@/hooks/useRangeParam';
+import { cardKind } from '@/lib/quota';
 import { ActivityTab } from './ActivityTab';
 import { CostTab } from './CostTab';
 import { DebugTab } from './DebugTab';
@@ -31,6 +34,8 @@ import { labelOrMaskedId } from '@/lib/accountDisplay';
 
 // Tabs whose data is scoped by the shared time-range picker.
 const PERIOD_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events', 'cost']);
+const SOURCE_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events', 'cost']);
+const CACHE_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'forecast', 'cost']);
 
 export function ProviderPage() {
   const { providerId = '' } = useParams();
@@ -67,6 +72,9 @@ export function ProviderPage() {
   const [rangeValue, setRange] = useRangeParam('period');
   const scope = resolveScope(rangeValue);
   const eventRange = useProviderEventRange(providerId, accountId);
+  const showSourceFilter =
+    entry &&
+    (SOURCE_AWARE_TABS.has(tab) || (tab === 'forecast' && cardKind(entry.critical_gauge) === 'tokens'));
 
   const name =
     providerConfigs.data?.providers.find((p) => p.provider_id === providerId)?.name ?? providerId;
@@ -122,6 +130,8 @@ export function ProviderPage() {
                 earliest={eventRange.data?.earliest}
               />
             ) : null}
+            {showSourceFilter ? <SidecarFilter /> : null}
+            {entry && CACHE_AWARE_TABS.has(tab) ? <ExcludeCacheToggle compact /> : null}
             {entries.length > 1 ? (
               <Select
                 value={accountId}
@@ -136,7 +146,7 @@ export function ProviderPage() {
                 )
               }
               >
-                <SelectTrigger className="max-w-44">
+                <SelectTrigger className="max-w-44" aria-label="Provider account">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

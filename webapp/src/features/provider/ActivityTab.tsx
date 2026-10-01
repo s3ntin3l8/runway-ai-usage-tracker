@@ -9,7 +9,6 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenDonut } from '@/components/charts/TokenDonut';
 import { UsageHeatmap } from '@/components/charts/UsageHeatmap';
-import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { hasTokenData } from '@/lib/cumulative';
 import { getUserTz } from '@/lib/tz';
@@ -72,7 +71,6 @@ export function ActivityTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <ExcludeCacheToggle />
       <ProviderTrendCard
         providerId={providerId}
         accountId={accountId}

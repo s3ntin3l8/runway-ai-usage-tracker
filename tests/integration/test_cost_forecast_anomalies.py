@@ -43,6 +43,8 @@ def _rollup(
     model_id: str = "",
     sidecar_id: str = "",
     cost_usd: float = 0.0,
+    cost_cache_read: float = 0.0,
+    cost_cache_create: float = 0.0,
     tokens_input: int = 0,
     tokens_output: int = 0,
     tokens_cache_read: int = 0,
@@ -58,6 +60,8 @@ def _rollup(
         model_id=model_id,
         sidecar_id=sidecar_id,
         cost_usd=cost_usd,
+        cost_cache_read=cost_cache_read,
+        cost_cache_create=cost_cache_create,
         tokens_input=tokens_input,
         tokens_output=tokens_output,
         tokens_cache_read=tokens_cache_read,
@@ -111,6 +115,38 @@ class TestCostForecastEndpoint:
         days_remaining = data["days_remaining"]
         expected_projected = 70.0 + 10.0 * days_remaining
         assert abs(data["projected_eom"] - expected_projected) < 0.01
+
+    def test_cost_forecast_excludes_cache_cost_from_mtd_and_daily_burn(self, session):
+        now = _now()
+        month_key = now.strftime("%Y-%m")
+        day_key = now.strftime("%Y-%m-%d")
+        session.add(
+            _rollup(
+                period_type="month",
+                period_key=month_key,
+                cost_usd=12.0,
+                cost_cache_read=2.0,
+                cost_cache_create=1.0,
+            )
+        )
+        session.add(
+            _rollup(
+                period_key=day_key,
+                cost_usd=10.0,
+                cost_cache_read=2.0,
+                cost_cache_create=1.0,
+            )
+        )
+        session.commit()
+
+        response = _client().get("/api/v1/usage/cost-forecast?exclude_cache=true")
+        assert response.status_code == 200, response.text
+        data = response.json()
+
+        assert data["current_month_to_date"] == pytest.approx(9.0)
+        # One current-day row contributes $7; the forecast always divides by 7.
+        assert data["daily_burn_avg_7d"] == pytest.approx(1.0)
+        assert data["by_provider"][0]["current_month_to_date"] == pytest.approx(9.0)
 
     def test_cost_forecast_per_provider_breakdown(self, session):
         now = _now()

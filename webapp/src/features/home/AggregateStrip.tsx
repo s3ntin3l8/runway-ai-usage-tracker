@@ -5,7 +5,6 @@
 import type { CostForecastResponse, CumulativeBucket, CumulativeResponse } from '@/api/types';
 import { Card } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatTokens } from '@/lib/format';
 
@@ -78,7 +77,6 @@ export function AggregateStrip({
 
   return (
     <div className="flex flex-col gap-3">
-      <ExcludeCacheToggle />
       <section aria-label="Monthly aggregates" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {stats.map((stat) => (
           <Card key={stat.label} className="px-4 py-3">

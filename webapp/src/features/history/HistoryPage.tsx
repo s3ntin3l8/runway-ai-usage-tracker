@@ -81,7 +81,16 @@ export function HistoryPage() {
 
   return (
     <>
-      <PageHeader title="History" description="Usage over time" />
+      <PageHeader
+        title="History"
+        description="Usage over time"
+        actions={
+          <>
+            <TimeRangePicker value={range} onChange={setRange} />
+            <ExcludeCacheToggle compact />
+          </>
+        }
+      />
       <div className="flex flex-col gap-4 p-4 lg:p-8">
         <div className="flex flex-wrap items-center gap-2">
           <Select value={selected?.key ?? ''} onValueChange={setAccountKey}>
@@ -96,8 +105,6 @@ export function HistoryPage() {
               ))}
             </SelectContent>
           </Select>
-          <TimeRangePicker value={range} onChange={setRange} />
-          <ExcludeCacheToggle className="ml-auto" />
           <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
             <TabsList className="border-0" aria-label="Chart metric">
               <TabsTrigger value="percent" className="h-9 px-2.5">

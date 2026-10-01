@@ -3,6 +3,7 @@
 // History, nothing here keys off a single account.
 
 import { PageHeader } from '@/components/layout/PageHeader';
+import { SidecarFilter } from '@/components/ui/SidecarFilter';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { useRangeParam } from '@/hooks/useRangeParam';
@@ -19,12 +20,18 @@ export function InsightsPage() {
 
   return (
     <>
-      <PageHeader title="Insights" description="Cross-provider usage" />
+      <PageHeader
+        title="Insights"
+        description="Cross-provider usage"
+        actions={
+          <>
+            <SidecarFilter />
+            <TimeRangePicker value={range} onChange={setRange} />
+            <ExcludeCacheToggle compact />
+          </>
+        }
+      />
       <div className="flex flex-col gap-4 p-4 lg:p-8">
-        <div className="flex items-center justify-end">
-          <ExcludeCacheToggle />
-        </div>
-
         <div className="flex flex-col gap-3">
           <h2 className="text-[13px] font-semibold tracking-tight">Global insights · All time</h2>
           <GlobalInsights stats={globalStats.data} loading={globalStats.isPending} />
@@ -32,7 +39,6 @@ export function InsightsPage() {
 
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <h2 className="text-[13px] font-semibold tracking-tight">Over time</h2>
-          <TimeRangePicker value={range} onChange={setRange} className="ml-auto" />
         </div>
 
         <OverallChartCard range={range} />

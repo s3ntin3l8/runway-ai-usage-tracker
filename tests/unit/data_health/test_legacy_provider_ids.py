@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 
 from sqlmodel import select
 
-from app.models.db import UsageEvent
+from app.models.db import UsageEvent, UsagePeriodRollup
 from app.services.data_health.checks.legacy_provider_ids import LegacyProviderIdsCheck
-from tests.unit.data_health.conftest import make_event
+from tests.unit.data_health.conftest import make_event, make_rollup
 
 
 def _check() -> LegacyProviderIdsCheck:
@@ -49,6 +49,49 @@ def test_plan_is_read_only(session):
 
     ev = session.exec(select(UsageEvent)).one()
     assert ev.provider_id == "opencode-xai"
+
+
+def test_plan_surfaces_rollups_to_purge_count(session):
+    make_event(session, event_id="1", provider_id="opencode-xai", model_id="grok")
+    make_rollup(session, provider_id="opencode-xai", account_id="default", msgs=116)
+    make_rollup(
+        session,
+        provider_id="opencode-xai",
+        account_id="default",
+        period_type="day",
+        period_key="2026-09-26",
+        msgs=10,
+    )
+
+    plan = _check().plan(session, "opencode-xai", {})
+
+    assert plan.counts["rollups_to_purge"] == 2
+
+
+def test_apply_purges_legacy_rollup_rows_and_reports_the_count(session):
+    """#441: apply must delete every `usage_period_rollup` row under the
+    legacy id, not just rewrite events — otherwise rollup_drift flags the
+    leftover row as orphan even though the events already moved."""
+    make_event(session, event_id="1", provider_id="opencode-xai", model_id="grok")
+    make_rollup(session, provider_id="opencode-xai", account_id="default", msgs=116)
+    make_rollup(
+        session,
+        provider_id="opencode-xai",
+        account_id="default",
+        period_type="day",
+        period_key="2026-09-26",
+        msgs=10,
+    )
+
+    result, _hooks = _check().apply(session, "opencode-xai", {})
+
+    assert result.counts["rollups_legacy_purged"] == 2
+    leftover = list(
+        session.exec(
+            select(UsagePeriodRollup).where(UsagePeriodRollup.provider_id == "opencode-xai")
+        )
+    )
+    assert leftover == []
 
 
 def test_apply_retags_onto_the_canonical_provider_and_clears_the_finding(session):
