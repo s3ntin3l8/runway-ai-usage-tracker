@@ -13,6 +13,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
+from app.core.utils import IdentityExtractor
 
 # Mixins
 from app.services.collectors.anthropic_oauth import AnthropicOAuthMixin
@@ -115,8 +116,18 @@ class AnthropicCollector(
                 return token
         return None
 
+    def _pinned_bundle_expiry(self) -> float | None:
+        """Expiry (epoch seconds) of the pinned source bundle, ``None`` if unpinned/unknown."""
+        if not token_cache.is_source_selected("anthropic", self.account_id):
+            return None
+        tokens = token_cache.current_source_tokens("anthropic", self.account_id or "default")
+        return IdentityExtractor.exp_from_tokens(tokens) if tokens else None
+
     async def _is_token_expired(self) -> bool:
         """Check if Claude token is expired."""
+        pinned = self._pinned_bundle_expiry()
+        if pinned is not None:
+            return datetime.now(UTC).timestamp() > pinned
         try:
             # Fallback to credentials file
             creds = await self._get_credentials()
@@ -138,8 +149,11 @@ class AnthropicCollector(
 
     async def _is_token_expiring_soon(self) -> bool:
         """Check if Claude token expires within the proactive refresh threshold."""
+        threshold = self.TOKEN_REFRESH_THRESHOLD_SECONDS
+        pinned = self._pinned_bundle_expiry()
+        if pinned is not None:
+            return pinned - datetime.now(UTC).timestamp() < threshold
         try:
-            threshold = self.TOKEN_REFRESH_THRESHOLD_SECONDS
             creds = await self._get_credentials()
             if creds:
                 expires_at = creds.get("claudeAiOauth", {}).get("expiresAt")

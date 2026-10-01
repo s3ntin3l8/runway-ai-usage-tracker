@@ -981,6 +981,84 @@ class TestCollectorManagerInitialization:
             row = session.exec(select(CredentialSource)).one()
             assert row.health == "healthy"
 
+    def test_record_source_health_stamps_provenance(self, manager, monkeypatch):
+        """Each attempted source gets attempt/success/error provenance — the data behind
+        "which source is the data coming from"."""
+        from sqlalchemy.pool import StaticPool
+        from sqlmodel import SQLModel, create_engine
+        from sqlmodel.orm.session import Session
+
+        from app.models.db import CredentialSource
+
+        monkeypatch.setattr("sqlmodel.Session", Session)
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(engine)
+        monkeypatch.setattr("app.core.db.engine", engine)
+        with Session(engine) as session:
+            for source_id in ("sidecar:a", "sidecar:b"):
+                session.add(
+                    CredentialSource(
+                        provider_id="gemini",
+                        account_id="alice@example.com",
+                        source_id=source_id,
+                        source_type="file",
+                        source_label=source_id,
+                    )
+                )
+            session.commit()
+
+        manager._record_source_health(
+            "gemini",
+            "alice@example.com",
+            {"sidecar:a": "auth_failed", "sidecar:b": "healthy"},
+        )
+
+        with Session(engine) as session:
+            rows = {r.source_id: r for r in session.exec(select(CredentialSource)).all()}
+        assert rows["sidecar:a"].last_attempt_at is not None
+        assert rows["sidecar:a"].last_success_at is None
+        assert rows["sidecar:a"].last_error == "Authentication failed"
+        assert rows["sidecar:b"].last_success_at is not None
+        assert rows["sidecar:b"].last_error is None
+
+    def test_record_server_sources_registers_the_env_credential_that_fed_collection(
+        self, manager, monkeypatch
+    ):
+        from sqlalchemy.pool import StaticPool
+        from sqlmodel import SQLModel, create_engine
+        from sqlmodel.orm.session import Session
+
+        from app.models.db import CredentialSource
+
+        monkeypatch.setattr("sqlmodel.Session", Session)
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(engine)
+        monkeypatch.setattr("app.core.db.engine", engine)
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")  # pragma: allowlist secret
+        # Hermetic: ignore whatever gh / config files exist on the machine running the tests.
+        monkeypatch.setattr("app.services.credential_provider._expand_rule_paths", lambda _p: [])
+
+        manager._record_server_sources("github", "s3ntin3l8", "healthy")
+
+        with Session(engine) as session:
+            (row,) = session.exec(select(CredentialSource)).all()
+        assert (row.provider_id, row.account_id) == ("github", "s3ntin3l8")
+        assert row.source_type == "env" and row.source_label == "GITHUB_TOKEN"
+        assert row.source_id == "server:github:env:GITHUB_TOKEN"
+        assert row.last_success_at is not None
+
+    def test_result_health_collapses_collector_output(self, manager):
+        usable = [{"data_source": "api", "remaining": 5}]
+        assert manager._result_health(usable) == "healthy"
+        assert manager._result_health([{"error_type": "auth_failed"}]) == "auth_failed"
+        assert manager._result_health([{"error_type": "invalid_api_key"}]) == "auth_failed"
+        assert manager._result_health([{"error_type": "api_error"}]) == "unavailable"
+        assert manager._result_health([]) == "unavailable"
+
     @pytest.mark.asyncio
     async def test_disabled_only_account_pops_dynamic_collector(self, manager):
         """Disabling the sole (non-default) account must remove its collector."""

@@ -446,3 +446,79 @@ class DataHealthJobStatusResponse(BaseModel):
     error: str | None = None
     started_at: str
     finished_at: str | None = None
+
+
+# --- Credential inventory (`GET /system/credentials`) ---------------------------------
+# One row per credential *source* (a secret found in one place), grouped
+# provider → account. Never carries secret values — only types, origin and health.
+
+
+class CredentialSourceView(BaseModel):
+    source_id: str
+    provider_id: str
+    account_id: str  # the storage key; may be a placeholder while identity is pending
+    # "machine" = a sidecar found it, "config" = pasted in Settings → Providers,
+    # "server" = env var / file on the server host.
+    origin_kind: str
+    origin_type: str  # file | env | cookie | sidecar | config ...
+    label: str  # file name, env var, "Browser cookie", "Manual configuration"
+    machine_id: str | None = None
+    machine_name: str | None = None
+    # Why this credential belongs to its account: local (identity read on the machine),
+    # verified (server resolved it), claim (sidecar claimed it), operator (tag),
+    # config, server, or pending.
+    mapping: str
+    mapping_scope: str | None = None  # "machine" | "all_machines" for tags
+    fingerprinted: bool = False  # origin carries a credential fingerprint
+    identity_pending: bool = False
+    # valid | expiring | expired | invalid | stale | unknown
+    status: str
+    expires_at: str | None = None
+    expires_in_seconds: int | None = None
+    token_types: list[str] = Field(default_factory=list)
+    can_refresh: bool = False
+    rollable: bool = False  # carries a refresh token the server rolls automatically
+    removable: bool = False
+    enabled: bool = True
+    priority: int = 0
+    live: bool = False  # a secret bundle is currently held in the server cache
+    is_active: bool = False  # produced this account's most recent successful collection
+    health: str = "healthy"
+    last_seen: str | None = None
+    last_attempt_at: str | None = None
+    last_success_at: str | None = None
+    last_error: str | None = None
+
+
+class CredentialAccountView(BaseModel):
+    provider_id: str
+    account_id: str
+    account_label: str | None = None
+    status: str  # the best status among enabled sources
+    identity_pending: bool = False
+    active_source_id: str | None = None
+    data_source: str | None = None  # from the account's latest quota card
+    input_source: str | None = None
+    sources: list[CredentialSourceView] = Field(default_factory=list)
+
+
+class CredentialProviderView(BaseModel):
+    provider_id: str
+    name: str
+    accounts: list[CredentialAccountView] = Field(default_factory=list)
+
+
+class CredentialMachineView(BaseModel):
+    machine_id: str
+    name: str
+    last_seen: str | None = None
+    credential_count: int = 0
+    unmapped_count: int = 0
+
+
+class CredentialInventory(BaseModel):
+    providers: list[CredentialProviderView] = Field(default_factory=list)
+    machines: list[CredentialMachineView] = Field(default_factory=list)
+    unmapped_count: int = 0  # credentials awaiting an account (Fleet "untagged")
+    rule_count: int = 0  # operator mapping rules
+    pending_usage_events: int = 0  # collected events with no account yet

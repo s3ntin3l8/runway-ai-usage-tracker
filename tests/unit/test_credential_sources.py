@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models.db import CredentialSource
 from app.services.credential_sources import (
     account_sources,
     describe_origin,
-    record_source_health,
+    record_source_result,
+    register_server_source,
     resolve_source_account,
     sidecar_source_id,
     touch_source,
@@ -112,46 +113,6 @@ def test_config_source_is_inserted_first_and_shifts_existing_priority():
         ]
 
 
-def test_record_source_health_updates_only_matching_source():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        session.add(
-            CredentialSource(
-                provider_id="openrouter",
-                account_id="alice@example.com",
-                source_id="host-a",
-                source_type="file",
-                source_label="auth.json",
-                sidecar_id="host-a",
-                credential_origin="path:/auth.json",
-                last_seen=datetime.now(UTC),
-            )
-        )
-        session.commit()
-        record_source_health(session, "openrouter", "ALICE@example.com", "host-a", "auth_failed")
-        session.commit()
-        row = session.get(CredentialSource, 1)
-        assert row is not None
-        assert row.health == "auth_failed"
-        assert row.health_detail == "Authentication failed"
-        record_source_health(session, "openrouter", "alice@example.com", "host-a", "unavailable")
-        session.commit()
-        session.refresh(row)
-        assert row.health == "unavailable"
-        assert row.health_detail == "Collection failed"
-        record_source_health(session, "openrouter", "alice@example.com", "host-a", "degraded")
-        session.commit()
-        session.refresh(row)
-        assert row.health == "degraded"
-        assert row.health_detail == "Some requests were rejected; quota was collected"
-        record_source_health(session, "openrouter", "alice@example.com", "unknown", "healthy")
-
-
 def _mem_session() -> Session:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -219,3 +180,101 @@ def test_resolve_source_account_prefers_real_identity_over_default():
             resolve_source_account(session, "chatgpt", "sidecar:host-a:auth") == "alice@example.com"
         )
         assert resolve_source_account(session, "gemini", "sidecar:host-a:auth") is None
+
+
+def _source_row(**overrides) -> CredentialSource:
+    return CredentialSource(
+        **{
+            "provider_id": "openrouter",
+            "account_id": "alice@example.com",
+            "source_id": "host-a",
+            "source_type": "file",
+            "source_label": "auth.json",
+            **overrides,
+        }
+    )
+
+
+def test_record_source_result_stamps_provenance_for_each_outcome():
+    row = _source_row()
+
+    record_source_result(row, "healthy")
+    assert (row.health, row.health_detail, row.last_error) == ("healthy", None, None)
+    assert row.last_attempt_at is not None and row.last_success_at is not None
+    first_success = row.last_success_at
+
+    # A failure records the attempt and error but keeps the last success.
+    record_source_result(row, "auth_failed")
+    assert row.health == "auth_failed"
+    assert row.last_error == "Authentication failed"
+    assert row.last_success_at == first_success
+
+    record_source_result(row, "unavailable")
+    assert (row.health_detail, row.last_error) == ("Collection failed", "Collection failed")
+
+    # Degraded still produced quota data: it counts as a success, with a note.
+    record_source_result(row, "degraded")
+    assert row.last_success_at is not None and row.last_success_at >= first_success
+    assert row.last_error == "Some requests were rejected; quota was collected"
+
+
+def test_register_server_source_is_idempotent_and_has_no_origin():
+    with _mem_session() as session:
+        first = register_server_source(
+            session,
+            provider_id="github",
+            account_id="default",
+            source_type="env",
+            label="GITHUB_TOKEN",
+        )
+        again = register_server_source(
+            session,
+            provider_id="github",
+            account_id="default",
+            source_type="env",
+            label="GITHUB_TOKEN",
+        )
+        assert first.id == again.id
+        assert first.source_id == "server:github:env:GITHUB_TOKEN"
+        # Origins are what operator tags and sidecar moves match on; a server env
+        # var is not a sidecar origin.
+        assert first.credential_origin is None and first.sidecar_id is None
+
+
+def test_register_server_source_follows_identity_resolved_later():
+    """First seen before its identity resolved (``default``), then under the real
+    account: the source must move, not duplicate."""
+    with _mem_session() as session:
+        for account in ("default", "s3ntin3l8"):
+            register_server_source(
+                session,
+                provider_id="github",
+                account_id=account,
+                source_type="env",
+                label="GITHUB_TOKEN",
+            )
+        rows = session.exec(select(CredentialSource)).all()
+        assert [r.account_id for r in rows] == ["s3ntin3l8"]
+
+
+def test_register_server_source_drops_placeholder_when_real_row_exists():
+    with _mem_session() as session:
+        register_server_source(
+            session, provider_id="github", account_id="s3ntin3l8", source_type="env", label="T"
+        )
+        # Legacy placeholder left behind for the same source.
+        session.add(
+            _source_row(
+                provider_id="github",
+                account_id="default",
+                source_id="server:github:env:T",
+                source_type="env",
+                source_label="T",
+            )
+        )
+        session.commit()
+        register_server_source(
+            session, provider_id="github", account_id="s3ntin3l8", source_type="env", label="T"
+        )
+        rows = session.exec(select(CredentialSource)).all()
+        assert [r.account_id for r in rows] == ["s3ntin3l8"]

@@ -35,7 +35,7 @@ from app.models.db import (
     WebhookConfig,
     WebhookCredentialAlert,
 )
-from app.models.schemas import LimitCard, SidecarDownloadsResponse
+from app.models.schemas import CredentialInventory, LimitCard, SidecarDownloadsResponse
 from app.services import audit_log, auth_failures
 from app.services.account_identity import (
     EMAIL_RE,
@@ -44,7 +44,9 @@ from app.services.account_identity import (
     canonical_account_id,
 )
 from app.services.collector_manager import manager
+from app.services.credential_inventory import build_inventory as build_credential_inventory
 from app.services.credential_provider import CredentialProvider
+from app.services.credential_sources import is_server_source_id
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.token_cache import OAUTH_TOKEN_VALUE_KEYS, token_cache
@@ -679,6 +681,101 @@ async def delete_token_health_entry(
         )
     if not ok:
         raise HTTPException(status_code=404, detail="Token not found in cache or database")
+    return {"ok": True}
+
+
+@router.get("/credentials", response_model=CredentialInventory)
+@limiter.limit("30/minute")
+async def get_credential_inventory(
+    request: Request,
+    _auth: None = Depends(require_admin_key),
+) -> CredentialInventory:
+    """Every discovered credential — provider → account → source — with the machine it
+    came from, why it maps to its account, its status, and which source is currently
+    feeding the data. Never returns secret values."""
+    return await build_credential_inventory()
+
+
+@router.post("/credentials/{provider}/{account_id}/{source_id}/refresh")
+@limiter.limit("5/minute")
+async def refresh_credential_source(
+    request: Request,
+    provider: str,
+    account_id: str,
+    source_id: str,
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Refresh one credential source's OAuth token, writing the result back into that
+    source's bundle (the one collectors read) and the merged account entry."""
+    candidates = await token_cache.get_source_candidates(provider, account_id)
+    bundle = next((c for c in candidates if c["source_id"] == source_id), None)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="No live credential for this source")
+    tokens = bundle["tokens"]
+    if "refresh_token" not in tokens and "xai_refresh" not in tokens:
+        raise HTTPException(status_code=400, detail="No refresh token available")
+
+    from app.services.token_refresher import refresh_oauth_token
+
+    try:
+        new_tokens = await refresh_oauth_token(provider, tokens)
+        await token_cache.apply_refresh_to_sources(provider, account_id, tokens, new_tokens)
+        if not bundle.get("identity_pending"):
+            await token_cache.store(
+                provider,
+                new_tokens,
+                account_id,
+                account_label=bundle.get("account_label"),
+                source=bundle.get("sidecar_id") or bundle.get("source"),
+            )
+        return {"status": "refreshed"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(
+            f"Source refresh failed for {scrub_log(provider)}/{scrub_log(account_id)}: {e}"
+        )
+        raise HTTPException(status_code=502, detail="Upstream token refresh failed")
+
+
+@router.delete("/credentials/{provider}/{account_id}/{source_id}")
+@limiter.limit("20/minute")
+async def delete_credential_source(
+    request: Request,
+    provider: str,
+    account_id: str,
+    source_id: str,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Forget one machine-reported credential: drops its live bundle and durable row.
+
+    It comes back on the machine's next report if the credential is still there. Config
+    (Settings → Providers) and server (env/file) credentials are managed elsewhere → 409.
+    """
+    row = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == provider,
+            CredentialSource.account_id == canonical_account_id(account_id),
+            CredentialSource.source_id == source_id,
+        )
+    ).first()
+    if row is not None and row.sidecar_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This credential is managed outside the cache (Settings → Providers "
+                "or the server environment); change it there."
+            ),
+        )
+    removed = await token_cache.remove_source(
+        provider, account_id, source_id, retire_matching_oauth=True
+    )
+    if row is None and not removed:
+        raise HTTPException(status_code=404, detail="Credential source not found")
+    if row is not None:
+        session.delete(row)
+        session.commit()
     return {"ok": True}
 
 
@@ -1359,7 +1456,13 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
     async def _source_summaries(provider_id: str, account_id: str) -> list[dict[str, Any]]:
         candidates = await token_cache.get_source_candidates(provider_id, account_id)
         live_by_id = {item["source_id"]: item for item in candidates}
-        rows = credential_sources_by_account.get((provider_id, account_id), [])
+        # Server env/file sources are shown by the credentials inventory; they aren't
+        # failover candidates, so they must not appear in the reorder/enable editor.
+        rows = [
+            row
+            for row in credential_sources_by_account.get((provider_id, account_id), [])
+            if not is_server_source_id(row.source_id)
+        ]
         summaries = [
             {
                 "source_id": row.source_id,
@@ -2174,6 +2277,17 @@ async def _store_manual_config_source(
     )
 
 
+async def _drop_pasted_key_from_cache(provider_id: str, account_id: str) -> None:
+    """Forget a dashboard-pasted key without disturbing sidecar-discovered credentials.
+
+    ``token_cache.remove`` would drop the whole account — every sidecar source bundle
+    included, which then sit missing until each machine's next push. Only the pasted
+    key's own ``config:`` source and the merged key fields go.
+    """
+    await token_cache.remove_tokens(provider_id, account_id, {"api_key", "oauth_token"})
+    await token_cache.remove_source(provider_id, account_id, f"config:{provider_id}:{account_id}")
+
+
 async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-field validation + persistence, refactor tracked separately
     session: Session,
     provider_id: str,
@@ -2255,13 +2369,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # blob and invalidate the token-cache entry so stale creds don't linger
         # in collectors that hot-path from cache (PR #287).
         row.api_key = None
-        if provider_id in ("opencode", "ollama"):
-            await token_cache.remove_tokens(provider_id, account_id, {"api_key", "oauth_token"})
-        else:
-            await token_cache.remove(provider_id, account_id)
-        await token_cache.remove_source(
-            provider_id, account_id, f"config:{provider_id}:{account_id}"
-        )
+        await _drop_pasted_key_from_cache(provider_id, account_id)
     if body.api_key is not None and body.clear_api_key is not True:
         # Empty string = clear the stored key; non-empty = encrypt and store
         val = body.api_key
@@ -2290,10 +2398,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
             # sends clear_api_key) must invalidate the cache mirror too, or
             # collectors keep using the removed key until its TTL expires.
             # Same shape as the clear_api_key branch above (PR #287).
-            if provider_id in ("opencode", "ollama"):
-                await token_cache.remove_tokens(provider_id, account_id, {"api_key", "oauth_token"})
-            else:
-                await token_cache.remove(provider_id, account_id)
+            await _drop_pasted_key_from_cache(provider_id, account_id)
 
         # Propagate to token_cache if this is also mapped as an OAuth token.
         # Stamp under the resolved account_id (no longer hard-coded "default")

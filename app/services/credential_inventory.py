@@ -1,0 +1,315 @@
+"""Credential inventory: every discovered credential, who it maps to, and which one
+is actually feeding the data.
+
+Built on ``credential_sources`` (sidecar, pasted-config and server env/file sources
+all have a row there) and enriched with the live token cache, operator tags, account
+labels and the latest quota card. Replaces the need to cross-read Token health, Fleet's
+assignment rules / identities and Settings → Providers' source list.
+
+Never returns secret values — only token *types*, origin labels and health.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlmodel import Session, select
+
+from app.core.db import engine
+from app.core.registry import registry
+from app.core.utils import IdentityExtractor
+from app.models.db import (
+    CredentialSource,
+    CredentialTag,
+    LatestUsage,
+    PendingCredentialTag,
+    PendingUsageEvent,
+    ProviderAccountLabel,
+    ProviderConfig,
+    SidecarRegistry,
+)
+from app.models.schemas import (
+    CredentialAccountView,
+    CredentialInventory,
+    CredentialMachineView,
+    CredentialProviderView,
+    CredentialSourceView,
+)
+from app.services import auth_failures
+from app.services.credential_sources import describe_origin, is_server_source_id
+from app.services.token_cache import token_cache
+from app.services.token_health import SOURCE_STALE_SECS, _classify_status
+from app.services.token_refresher import _REFRESH_ENDPOINTS
+
+# Best → worst. An account is as healthy as its best enabled source: a working
+# credential beside a dead one means collection still works.
+_STATUS_RANK = {"valid": 0, "expiring": 1, "unknown": 2, "stale": 3, "expired": 4, "invalid": 5}
+
+_TAG_MAPPING = {
+    "operator": "operator",
+    "identity_claim": "claim",
+    "identity_verification": "verified",
+}
+
+
+def credential_status(
+    *,
+    exp: float | None,
+    token_types: list[str],
+    rollable: bool,
+    health: str,
+    live: bool,
+    machine_sourced: bool,
+    last_seen: datetime | None,
+    now: float | None = None,
+) -> str:
+    """One status for one credential: expiry, last auth result and staleness combined.
+
+    - ``stale``: a machine-sourced credential that isn't live in the cache and hasn't
+      been re-reported recently. Its stored expiry is history, so say nothing about it.
+    - ``invalid``: the provider rejected it at the last collection, and it otherwise
+      looks fine (an expired token is already as bad as it gets).
+    - otherwise the expiry-based classification.
+    """
+    now = now if now is not None else time.time()
+    if machine_sourced and not live and last_seen is not None:
+        seen = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
+        if now - seen.timestamp() > SOURCE_STALE_SECS:
+            return "stale"
+    base = _classify_status(
+        exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable
+    )
+    if health == "auth_failed" and base in ("valid", "expiring", "unknown"):
+        return "invalid"
+    return base
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
+
+
+def _load_token_types(row: CredentialSource) -> list[str]:
+    try:
+        parsed = json.loads(row.token_types_json or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [t for t in parsed if isinstance(t, str)]
+
+
+def _resolve_tag(
+    tags: dict[tuple[str, str], list[CredentialTag]], row: CredentialSource
+) -> CredentialTag | None:
+    """Machine-scoped tag first, then the deployment-wide one (same as the read path)."""
+    candidates = tags.get((row.provider_id, row.credential_origin or ""), [])
+    for tag in candidates:
+        if tag.sidecar_id and tag.sidecar_id == row.sidecar_id:
+            return tag
+    return next((tag for tag in candidates if tag.sidecar_id is None), None)
+
+
+def _mapping(
+    row: CredentialSource, tag: CredentialTag | None, identity_pending: bool
+) -> tuple[str, str | None]:
+    if tag is not None:
+        return _TAG_MAPPING.get(tag.set_by, "operator"), (
+            "machine" if tag.sidecar_id else "all_machines"
+        )
+    if is_server_source_id(row.source_id):
+        return "server", None
+    if row.source_type == "config" and row.sidecar_id is None:
+        return "config", None
+    if identity_pending:
+        return "pending", None
+    return "local", None
+
+
+def _data_path(session: Session) -> dict[tuple[str, str], tuple[str | None, str | None]]:
+    """``(provider, account) → (data_source, input_source)`` from the freshest quota card."""
+    freshest: dict[tuple[str, str], Any] = {}
+    for usage in session.exec(select(LatestUsage)).all():
+        key = (usage.provider_id, usage.account_id)
+        current = freshest.get(key)
+        if current is None or (usage.updated_at or datetime.min.replace(tzinfo=UTC)) > (
+            current.updated_at or datetime.min.replace(tzinfo=UTC)
+        ):
+            freshest[key] = usage
+    out: dict[tuple[str, str], tuple[str | None, str | None]] = {}
+    for key, usage in freshest.items():
+        try:
+            card = json.loads(usage.card_json or "{}")
+        except (TypeError, ValueError):
+            card = {}
+        out[key] = (card.get("data_source"), card.get("input_source"))
+    return out
+
+
+async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one join, kept linear
+    now = time.time()
+    with Session(engine) as session:
+        sources = list(session.exec(select(CredentialSource)).all())
+        tags: dict[tuple[str, str], list[CredentialTag]] = {}
+        for tag in session.exec(select(CredentialTag)).all():
+            tags.setdefault((tag.provider_id, tag.credential_origin), []).append(tag)
+        machines = {sc.sidecar_id: sc for sc in session.exec(select(SidecarRegistry)).all()}
+        labels: dict[tuple[str, str], str] = {}
+        for lab in session.exec(select(ProviderAccountLabel)).all():
+            if lab.account_label:
+                labels[(lab.provider_id, lab.account_id)] = lab.account_label
+        for cfg in session.exec(select(ProviderConfig)).all():
+            if cfg.account_label:
+                labels[(cfg.provider_id, cfg.account_id)] = cfg.account_label
+        pending_by_sidecar: dict[str, int] = {}
+        pending_rows = session.exec(select(PendingCredentialTag)).all()
+        for pending in pending_rows:
+            pending_by_sidecar[pending.sidecar_id] = (
+                pending_by_sidecar.get(pending.sidecar_id, 0) + 1
+            )
+        rule_count = len(session.exec(select(CredentialTag)).all())
+        pending_usage = len(session.exec(select(PendingUsageEvent)).all())
+        data_path = _data_path(session)
+
+    def machine_name(sidecar_id: str | None) -> str | None:
+        if not sidecar_id:
+            return None
+        sc = machines.get(sidecar_id)
+        return (sc.custom_name or sc.hostname or sidecar_id) if sc else sidecar_id
+
+    # Live bundles, per (provider, account), keyed by source id.
+    live: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    for provider_id, account_id in {(s.provider_id, s.account_id) for s in sources}:
+        candidates = await token_cache.get_source_candidates(provider_id, account_id)
+        live[(provider_id, account_id)] = {c["source_id"]: c for c in candidates}
+
+    accounts: dict[tuple[str, str], list[CredentialSourceView]] = {}
+    for row in sources:
+        bundle = live.get((row.provider_id, row.account_id), {}).get(row.source_id)
+        tokens = (bundle or {}).get("tokens") or {}
+        if bundle is not None:
+            token_types = list(tokens)
+            exp = IdentityExtractor.exp_from_tokens(tokens)
+        else:
+            token_types = _load_token_types(row)
+            if not token_types and row.source_id.startswith("config:"):
+                token_types = ["api_key"]
+            exp = row.credential_expires_at.timestamp() if row.credential_expires_at else None
+        rollable = bool(tokens.get("refresh_token") or tokens.get("xai_refresh"))
+        machine_sourced = row.sidecar_id is not None
+        identity_pending = row.account_id in ("default", row.source_id)
+        mapping, scope = _mapping(row, _resolve_tag(tags, row), identity_pending)
+        origin_type, label = describe_origin(row.credential_origin)
+        if not machine_sourced:
+            origin_type, label = row.source_type, row.source_label
+        status = credential_status(
+            exp=exp,
+            token_types=token_types,
+            rollable=rollable,
+            health=row.health,
+            live=bundle is not None,
+            machine_sourced=machine_sourced,
+            last_seen=row.last_seen,
+        )
+        # The in-memory rejection flag covers a rejection the durable row hasn't caught up with.
+        if status in ("valid", "unknown") and row.account_id in auth_failures.flagged_accounts(
+            row.provider_id
+        ):
+            status = "invalid"
+        accounts.setdefault((row.provider_id, row.account_id), []).append(
+            CredentialSourceView(
+                source_id=row.source_id,
+                provider_id=row.provider_id,
+                account_id=row.account_id,
+                origin_kind=(
+                    "machine"
+                    if machine_sourced
+                    else "server"
+                    if is_server_source_id(row.source_id)
+                    else "config"
+                ),
+                origin_type=origin_type,
+                label=label,
+                machine_id=row.sidecar_id,
+                machine_name=machine_name(row.sidecar_id),
+                mapping=mapping,
+                mapping_scope=scope,
+                fingerprinted="#" in (row.credential_origin or ""),
+                identity_pending=identity_pending,
+                status=status,
+                expires_at=(
+                    datetime.fromtimestamp(exp, tz=UTC).isoformat() if exp is not None else None
+                ),
+                expires_in_seconds=int(exp - now) if exp is not None else None,
+                token_types=token_types,
+                can_refresh=rollable
+                and row.provider_id in _REFRESH_ENDPOINTS
+                and bundle is not None,
+                rollable=rollable,
+                removable=machine_sourced,
+                enabled=row.enabled,
+                priority=row.priority,
+                live=bundle is not None,
+                health=row.health,
+                last_seen=_iso(row.last_seen),
+                last_attempt_at=_iso(row.last_attempt_at),
+                last_success_at=_iso(row.last_success_at),
+                last_error=row.last_error,
+            )
+        )
+
+    by_provider: dict[str, list[CredentialAccountView]] = {}
+    for (provider_id, account_id), views in accounts.items():
+        views.sort(key=lambda v: (v.priority, v.source_id))
+        succeeded = [v for v in views if v.last_success_at]
+        active = max(succeeded, key=lambda v: v.last_success_at or "") if succeeded else None
+        if active is not None:
+            active.is_active = True
+        enabled = [v for v in views if v.enabled] or views
+        best = min(enabled, key=lambda v: _STATUS_RANK.get(v.status, 2)).status
+        data_source, input_source = data_path.get((provider_id, account_id), (None, None))
+        by_provider.setdefault(provider_id, []).append(
+            CredentialAccountView(
+                provider_id=provider_id,
+                account_id=account_id,
+                account_label=labels.get((provider_id, account_id)),
+                status=best,
+                identity_pending=all(v.identity_pending for v in views),
+                active_source_id=active.source_id if active else None,
+                data_source=data_source,
+                input_source=input_source,
+                sources=views,
+            )
+        )
+
+    providers = [
+        CredentialProviderView(
+            provider_id=provider_id,
+            name=str(registry.get_provider(provider_id).get("name") or provider_id),
+            accounts=sorted(account_views, key=lambda a: (a.identity_pending, a.account_id)),
+        )
+        for provider_id, account_views in sorted(by_provider.items())
+    ]
+    counts: dict[str, int] = {}
+    for row in sources:
+        if row.sidecar_id:
+            counts[row.sidecar_id] = counts.get(row.sidecar_id, 0) + 1
+    machine_views = [
+        CredentialMachineView(
+            machine_id=sidecar_id,
+            name=machine_name(sidecar_id) or sidecar_id,
+            last_seen=_iso(machines[sidecar_id].last_seen) if sidecar_id in machines else None,
+            credential_count=counts.get(sidecar_id, 0),
+            unmapped_count=pending_by_sidecar.get(sidecar_id, 0),
+        )
+        for sidecar_id in sorted(set(machines) | set(counts) | set(pending_by_sidecar))
+    ]
+    return CredentialInventory(
+        providers=providers,
+        machines=machine_views,
+        unmapped_count=len(pending_rows),
+        rule_count=rule_count,
+        pending_usage_events=pending_usage,
+    )
