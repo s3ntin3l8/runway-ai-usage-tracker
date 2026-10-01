@@ -31,7 +31,7 @@
         },
         {
           "type": "keychain",
-          "service": "Claude Code-credentials",
+          "service_name": "Claude Code-credentials",
           "format": "json",
           "mapping": {
             "claudeAiOauth.accessToken": "oauth_token",
@@ -141,7 +141,8 @@
           "type": "file",
           "paths": [
             "~/.config/gh/hosts.yml",
-            "{{CONFIG_DIR:gh}}/hosts.yml"
+            "{{CONFIG_DIR:gh}}/hosts.yml",
+            "{{CONFIG_DIR:GitHub CLI}}/hosts.yml"
           ],
           "format": "yaml",
           "mapping": {
@@ -271,7 +272,7 @@
           "type": "cookie",
           "domains": ["kimi.moonshot.cn", "kimi.com"],
           "name": "kimi-auth",
-          "mapping": { "value": "cookie_kimi-auth" }
+          "mapping": { "value": "session_cookie" }
         }
       ]
     },

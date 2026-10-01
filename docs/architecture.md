@@ -149,6 +149,24 @@ collectors only do `api` and `web`.
 | **quota** | api, web | server | Percentages, currency limits, tier |
 | **enrichment** | local (cli / statusline / logs) | sidecar | Token breakdown, session counts, per-message events |
 
+### Credential discovery rules (`registry.json`)
+
+Where each provider's credentials live (env vars, files, keychain entries,
+browser cookies) is declared once in `app/core/registry.json`. The server
+evaluates the `env` and `file` rules itself; the sidecar, a single file with no
+access to the server's registry, runs all of them from a **generated copy** of
+that data between the `INJECTED REGISTRY` markers in `scripts/sidecar.py`.
+
+- Edit `app/core/registry.json`, then run `make sidecar-registry`. Never edit
+  the baked block by hand; `tests/unit/test_sidecar_registry_generated.py`
+  fails on any difference.
+- Differences that are intentional (a rule only the sidecar should run, a field
+  the sidecar must not send) live in `scripts/sidecar_registry_overlay.json`,
+  each with a reason. The server scans every `env`/`file` rule in
+  `registry.json`, so a sidecar-only rule must go in the overlay, not there.
+- Use `service_name` for keychain rules. Single-cookie providers (kimi_coding,
+  ollama) map their cookie to `session_cookie`.
+
 ### Standard definitions
 
 **`data_source` (origin of payload):**
