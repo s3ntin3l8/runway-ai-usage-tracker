@@ -585,11 +585,15 @@ class CollectorManager:
             if not health_updates and key.endswith(":default"):
                 # No cache-backed source was tried, so the default collector used
                 # credentials the server host found itself (env var / local file).
+                # A cache hit or skipped collection never exercised the credential, so it
+                # must not be stamped as a fresh success (or an attempt): register the row,
+                # but only record an outcome when the credential was actually used.
+                used = self.smart_collectors[key].last_collection_state not in ("cached", "skipped")
                 await asyncio.to_thread(
                     self._record_server_sources,
                     provider_id,
                     getattr(collector, "account_id", None) or "default",
-                    self._result_health(result),
+                    self._result_health(result) if used else None,
                 )
         return result
 
@@ -608,8 +612,11 @@ class CollectorManager:
         return "unavailable"
 
     @staticmethod
-    def _record_server_sources(provider_id: str, account_id: str, health: str) -> None:
+    def _record_server_sources(provider_id: str, account_id: str, health: str | None) -> None:
         """Register (and stamp) the env/file credentials that actually fed this collection.
+
+        ``health=None`` registers/prunes the rows without recording an outcome (the result
+        came from cache or the collection was skipped, so nothing was verified).
 
         Server-discovered credentials never enter the token cache, so without a row they
         are invisible to the credential views and leave no evidence for data-health
@@ -644,7 +651,8 @@ class CollectorManager:
                         label=origin["label"],
                         token_types=origin["keys"],
                     )
-                    record_source_result(row, health)
+                    if health is not None:
+                        record_source_result(row, health)
                     session.add(row)
                 prune_server_sources(
                     session,
@@ -653,7 +661,10 @@ class CollectorManager:
                 )
                 session.commit()
         except Exception:
-            logger.debug(
+            # Never break a collection over provenance, but don't hide a persistent failure
+            # (locked DB, registry problem) either: without this, server-source provenance
+            # would silently never appear.
+            logger.warning(
                 "Could not record server credential sources for %s",
                 scrub_log(provider_id),
                 exc_info=True,

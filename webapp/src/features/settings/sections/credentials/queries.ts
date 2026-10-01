@@ -9,5 +9,8 @@ export function useCredentialInventory() {
     queryKey: credentialInventoryKey,
     queryFn: fetchCredentialInventory,
     refetchInterval: 60_000,
+    // Admin-gated: a non-admin session gets a 403 every time, so don't retry it (the
+    // Providers badges that read this are best-effort and simply stay neutral).
+    retry: false,
   });
 }
