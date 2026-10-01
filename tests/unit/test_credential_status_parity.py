@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.services import auth_failures, credential_inventory
+from app.services import token_health as th
 from app.services.token_health import (
     TokenHealthService,
     apply_rejection,
@@ -23,7 +24,6 @@ from tests.unit.token_health_world import ALICE, BOB, build_world
 
 async def _both_views(monkeypatch):
     await build_world(monkeypatch)
-    import app.services.token_health as th
 
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
@@ -71,7 +71,6 @@ async def test_a_durable_auth_failure_marks_the_credential_invalid_in_both_views
     # call-time ``from sqlmodel import Session`` would hand back a mock and silently write nothing.
     from sqlmodel.orm.session import Session
 
-    import app.services.token_health as th
     from app.models.db import CredentialSource
 
     auth_failures.reset()  # no in-memory flag: only the durable row says it failed
@@ -231,7 +230,6 @@ async def test_failed_over_source_does_not_stay_invalid_while_a_sibling_works(mo
     A's own attempt rewrites it) but the account collects fine — banners and alerts must not
     report a rejected credential forever."""
     await build_world(monkeypatch)
-    import app.services.token_health as th
 
     auth_failures.reset()
     now = datetime.now(UTC)
@@ -249,7 +247,6 @@ async def test_failed_over_source_does_not_stay_invalid_while_a_sibling_works(mo
 @pytest.mark.asyncio
 async def test_disabled_source_with_a_stored_auth_failure_is_not_invalid(monkeypatch):
     await build_world(monkeypatch)
-    import app.services.token_health as th
 
     auth_failures.reset()
     await _set_health(th, "sidecar:g1", health="auth_failed", enabled=False)
@@ -259,7 +256,6 @@ async def test_disabled_source_with_a_stored_auth_failure_is_not_invalid(monkeyp
 @pytest.mark.asyncio
 async def test_stale_source_with_a_stored_auth_failure_stays_stale(monkeypatch):
     await build_world(monkeypatch)
-    import app.services.token_health as th
 
     auth_failures.reset()
     await _set_health(th, "sidecar:g3", health="auth_failed")
@@ -270,7 +266,6 @@ async def test_stale_source_with_a_stored_auth_failure_stays_stale(monkeypatch):
 async def test_no_internal_keys_leak_into_the_rows(monkeypatch):
     """``_rejected`` / ``_assumed`` / ``_rollable`` are scaffolding for the status passes."""
     await build_world(monkeypatch)
-    import app.services.token_health as th
 
     await _set_health(th, "sidecar:g1", health="auth_failed")
     rows = await TokenHealthService().get_health()
@@ -282,7 +277,6 @@ async def test_no_internal_keys_leak_into_the_rows(monkeypatch):
 async def test_inventory_applies_the_same_supersession_rule(monkeypatch):
     """Both views must treat a failed-over source identically (the original divergence)."""
     await build_world(monkeypatch)
-    import app.services.token_health as th
 
     auth_failures.reset()
     now = datetime.now(UTC)
@@ -299,3 +293,80 @@ async def test_inventory_applies_the_same_supersession_rule(monkeypatch):
         s.source_id: s.status for p in inv.providers for a in p.accounts for s in a.sources
     }
     assert inventory["sidecar:g1"] == (await _statuses())["sidecar:g1"] == "valid"
+
+
+# --- is_flagged's "sole account" rule fed from two different row sets ------------------
+#
+# A flagged ``default`` (a pasted/env key was rejected) matches the default/config/server
+# rows, and a non-default account only when it is the provider's sole account. Token Health
+# builds "the provider's accounts" from the rows it emits; the inventory from durable
+# ``credential_sources``. These pin that the two sets give the same answer end to end.
+
+
+async def _openrouter_views(monkeypatch, *, with_config: bool):
+    """Both views' statuses for openrouter's machine key (BOB) and its pasted config key."""
+    from sqlmodel import select
+    from sqlmodel.orm.session import Session
+
+    from app.models.db import CredentialSource, ProviderConfig
+
+    await build_world(monkeypatch)
+    auth_failures.reset()
+    auth_failures.mark("openrouter", "default")  # the pasted/env key was rejected
+    with Session(th.engine) as s:
+        if with_config:
+            # Mirrors what saving a key does: a durable config source beside the ProviderConfig.
+            s.add(
+                CredentialSource(
+                    provider_id="openrouter",
+                    account_id="default",
+                    source_id="config:openrouter:default",
+                    source_type="config",
+                    source_label="Manual configuration",
+                )
+            )
+        else:
+            for cfg in s.exec(
+                select(ProviderConfig).where(ProviderConfig.provider_id == "openrouter")
+            ):
+                s.delete(cfg)
+        s.commit()
+    monkeypatch.setattr(credential_inventory, "engine", th.engine)
+    monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+
+    health = {
+        (r["account_id"], r.get("source_id")): r["status"]
+        for r in await TokenHealthService().get_health()
+        if r["provider"] == "openrouter"
+    }
+    inv = await credential_inventory.build_inventory()
+    inventory = {
+        (a.account_id, s.source_id): s.status
+        for p in inv.providers
+        if p.provider_id == "openrouter"
+        for a in p.accounts
+        for s in a.sources
+    }
+    return health, inventory
+
+
+@pytest.mark.asyncio
+async def test_flagged_default_beside_a_config_key_does_not_flag_the_machine_account(monkeypatch):
+    health, inventory = await _openrouter_views(monkeypatch, with_config=True)
+
+    # Token Health names the pasted key "config:default"; the inventory files it under the
+    # real account id with its config source id.
+    assert health[("config:default", None)] == "invalid"
+    assert inventory[("default", "config:openrouter:default")] == "invalid"
+    # The provider has two accounts, so bob is not "the sole account" in either view.
+    assert health[(BOB, "sidecar:o1")] == inventory[(BOB, "sidecar:o1")] == "valid"
+
+
+@pytest.mark.asyncio
+async def test_flagged_default_flags_a_providers_sole_machine_account(monkeypatch):
+    """With no config key, bob is openrouter's only account, so a rejected ``default`` (the
+    unscoped credential a lone opaque key was pushed under) applies to it — in both views."""
+    health, inventory = await _openrouter_views(monkeypatch, with_config=False)
+
+    assert health[(BOB, "sidecar:o1")] == inventory[(BOB, "sidecar:o1")] == "invalid"

@@ -73,20 +73,19 @@ class CredentialNotRemovableError(Exception):
     """The credential is managed outside the cache (Settings → Providers / env)."""
 
 
-def _is_stale_source(last_seen: datetime | None, now: float | None = None) -> bool:
-    """True when a durable source hasn't been re-reported within ``SOURCE_STALE_SECS``."""
-    if last_seen is None:
-        return False
-    if last_seen.tzinfo is None:
-        last_seen = last_seen.replace(tzinfo=UTC)
-    return (now if now is not None else time.time()) - last_seen.timestamp() > SOURCE_STALE_SECS
-
-
 def _utc(value: datetime | None) -> datetime | None:
     """SQLite hands datetimes back naive; treat them as UTC so they compare with aware ones."""
     if value is None:
         return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _is_stale_source(last_seen: datetime | None, now: float | None = None) -> bool:
+    """True when a durable source hasn't been re-reported within ``SOURCE_STALE_SECS``."""
+    seen = _utc(last_seen)
+    if seen is None:
+        return False
+    return (now if now is not None else time.time()) - seen.timestamp() > SOURCE_STALE_SECS
 
 
 def is_durably_rejected(source: CredentialSource, siblings: Iterable[CredentialSource]) -> bool:
