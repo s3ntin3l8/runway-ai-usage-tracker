@@ -117,7 +117,8 @@ class XaiCollector(BaseCollector):
                 "xai", "xai_refresh", account_id=account_id
             ) or await token_cache.get_token("xai", "refresh_token", account_id=account_id)
             if refresh_tok:
-                from app.services.token_refresher import refresh_oauth_token, server_may_refresh
+                from app.services.token_cache import server_may_refresh
+                from app.services.token_refresher import refresh_oauth_token
 
                 try:
                     cached_tokens = (await token_cache.get(self.PROVIDER_ID, account_id)) or {}

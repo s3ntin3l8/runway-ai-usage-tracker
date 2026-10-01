@@ -24,6 +24,11 @@ from app.core.utils import (
     scrub_log,
 )
 from app.services.account_identity import canonical_account_id
+from app.services.refresh_policy import (
+    ROTATING_REFRESH_PROVIDERS,
+    is_machine_bundle,
+    machine_owns_credential,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -521,15 +526,13 @@ class TokenCache:
         updated if the refresh token it holds is the one that was rotated. Not every key
         in ``refreshed`` lands on every bundle — only on those that matched.
         """
-        from app.services.token_refresher import ROTATING_REFRESH_PROVIDERS
-
         account_id = canonical_account_id(account_id)
         identity_keys = ("refresh_token", "xai_refresh", "oauth_token", "xai_access")
         updated = 0
         async with self._lock:
             sources = self._source_cache.get(provider, {}).get(account_id, {})
             for source_id, (tokens, metadata, _timestamp) in list(sources.items()):
-                if provider in ROTATING_REFRESH_PROVIDERS and metadata.get("sidecar_id"):
+                if provider in ROTATING_REFRESH_PROVIDERS and is_machine_bundle(metadata):
                     # A machine's own login: the server never owns its refresh token, so
                     # a refresh result must not be written into the bundle.
                     continue
@@ -1043,3 +1046,21 @@ def borrowable_entries(
         "the unpinned collector" if not wanted_account_id else "this account",
     )
     return []
+
+
+async def server_may_refresh(
+    provider: str,
+    account_id: str,
+    tokens: dict[str, str],
+    *,
+    merged_source: str | None = None,
+) -> bool:
+    """Whether the server may exchange this credential's refresh token.
+
+    False for a rotating provider's login that a machine's CLI owns (see
+    ``refresh_policy.machine_owns_credential``): refreshing it signs that CLI out.
+    """
+    if provider not in ROTATING_REFRESH_PROVIDERS:
+        return True
+    bundles = await token_cache.get_source_candidates(provider, account_id)
+    return not machine_owns_credential(provider, tokens, bundles, merged_source=merged_source)

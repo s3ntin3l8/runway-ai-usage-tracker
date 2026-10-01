@@ -648,11 +648,8 @@ async def refresh_token(
     if not has_refresh_credential(tokens):
         raise HTTPException(status_code=400, detail="No refresh token available")
 
-    from app.services.token_refresher import (
-        persist_to_local_file,
-        refresh_oauth_token,
-        server_may_refresh,
-    )
+    from app.services.token_cache import server_may_refresh
+    from app.services.token_refresher import persist_to_local_file, refresh_oauth_token
 
     if not await server_may_refresh(provider, account_id, tokens, merged_source=meta.get("source")):
         raise HTTPException(status_code=409, detail=_RENEWED_BY_MACHINE)
@@ -730,7 +727,9 @@ async def refresh_credential_source(
 
     from app.services.token_refresher import machine_owns_credential, refresh_oauth_token
 
-    if machine_owns_credential(provider, tokens, [bundle]):
+    # Every candidate, not just this bundle: a pasted ``config:`` bundle can hold the same
+    # refresh secret as a machine's, and refreshing it would rotate that CLI's token too.
+    if machine_owns_credential(provider, tokens, candidates):
         raise HTTPException(status_code=409, detail=_RENEWED_BY_MACHINE)
 
     try:

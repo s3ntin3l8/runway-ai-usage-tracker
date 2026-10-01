@@ -30,6 +30,7 @@ from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.xai import XaiCollector
 from app.services.collectors.zai import ZaiCollector
 from app.services.credential_sources import is_sidecar_source
+from app.services.refresh_policy import machine_owns_credential
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import token_cache
 
@@ -708,6 +709,9 @@ class CollectorManager:
                 return []
             return await asyncio.wait_for(smart.collect(client), timeout=25.0)
 
+        # Ownership is judged against every source of the account (a pasted config bundle
+        # can hold a machine's refresh secret), including ones filtered out below.
+        all_candidates = list(candidates)
         preferences = self._credential_source_preferences.get((provider_id, account_id), {})
         candidates = [
             candidate
@@ -748,7 +752,7 @@ class CollectorManager:
                 collector.account_label = default_account_label
             if hasattr(collector, "credential_account_id"):
                 collector.credential_account_id = account_id
-            if self._awaiting_machine_renewal(provider_id, candidate):
+            if self._awaiting_machine_renewal(provider_id, candidate, all_candidates):
                 # An idle CLI let its access token lapse. The machine renews it (the server
                 # must not: rotating its refresh token would sign that CLI out), so calling
                 # the API now could only 401 and flag a healthy login as revoked. No health
@@ -862,15 +866,17 @@ class CollectorManager:
         )
 
     @staticmethod
-    def _awaiting_machine_renewal(provider_id: str, candidate: dict[str, Any]) -> bool:
-        """An expired machine-owned login of a rotating provider that holds a refresh token."""
-        from app.services.token_refresher import ROTATING_REFRESH_PROVIDERS
-
-        if provider_id not in ROTATING_REFRESH_PROVIDERS or not candidate.get("sidecar_id"):
-            return False
+    def _awaiting_machine_renewal(
+        provider_id: str, candidate: dict[str, Any], all_candidates: list[dict[str, Any]]
+    ) -> bool:
+        """An expired rotating-provider login that a machine's CLI owns and will renew."""
         tokens = candidate.get("tokens") or {}
         if not has_refresh_credential(tokens):
             return False  # nothing will renew it: let the real call report it dead
+        if not machine_owns_credential(
+            provider_id, tokens, all_candidates, merged_source=candidate.get("sidecar_id")
+        ):
+            return False
         exp = IdentityExtractor.exp_from_tokens(tokens)
         return exp is not None and exp <= time.time()
 

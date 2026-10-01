@@ -15,12 +15,11 @@ import logging
 import time
 
 from app.core.utils import IdentityExtractor, has_refresh_credential
-from app.services.token_cache import token_cache
+from app.services.token_cache import server_may_refresh, token_cache
 from app.services.token_refresher import (
     _REFRESH_ENDPOINTS,
     persist_to_local_file,
     refresh_oauth_token,
-    server_may_refresh,
 )
 
 logger = logging.getLogger(__name__)

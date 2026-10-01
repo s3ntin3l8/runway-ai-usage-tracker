@@ -48,7 +48,7 @@ class ChatGPTWebOAuthMixin:
                 try:
                     lr_dt = parse_iso8601_utc(last_refresh)
                     if (datetime.now(UTC) - lr_dt).days >= 8:
-                        from app.services.token_refresher import server_may_refresh
+                        from app.services.token_cache import server_may_refresh
 
                         # ChatGPT rotates refresh tokens: never rotate one a machine's
                         # Codex CLI also holds.

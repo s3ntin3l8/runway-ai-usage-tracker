@@ -20,11 +20,10 @@ from app.main import app
 from app.services import auth_failures
 from app.services.collector_manager import CollectorManager
 from app.services.token_auto_refresher import TokenAutoRefresher
-from app.services.token_cache import TokenCache
+from app.services.token_cache import TokenCache, server_may_refresh
 from app.services.token_refresher import (
     ROTATING_REFRESH_PROVIDERS,
     machine_owns_credential,
-    server_may_refresh,
 )
 
 ALICE = "alice@example.com"
@@ -523,3 +522,49 @@ def test_the_grace_period_only_applies_to_machine_renewed_logins():
 
     row = _alert_row(timedelta(days=4), machine_renewed=False)
     assert not _is_alert_bad(row, {"anthropic": {ALICE}})
+
+
+# --- a pasted config bundle can hold a machine's refresh secret ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_config_bundle_sharing_a_machines_secret_is_refused_too(monkeypatch):
+    """Refreshing it would rotate the machine CLI's token just the same."""
+    cache = TokenCache()
+    await _store_sidecar(cache, "anthropic", {"oauth_token": "a", "refresh_token": "shared-rt"})
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "a", "refresh_token": "shared-rt"},
+        account_id=ALICE,
+        source_id="config:anthropic:alice",
+        source="config",
+        source_metadata={},
+    )
+    client = _client_with(monkeypatch, cache)
+    refresh = AsyncMock()
+    monkeypatch.setattr("app.services.token_refresher.refresh_oauth_token", refresh)
+
+    resp = client.post(
+        f"/api/v1/system/credentials/anthropic/{ALICE}/config:anthropic:alice/refresh"
+    )
+
+    assert resp.status_code == 409
+    refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failover_skips_an_expired_config_bundle_that_shares_a_machines_secret(
+    manager, monkeypatch
+):
+    auth_failures.reset()
+    machine = _expired_bundle("sidecar:a")
+    pasted = _expired_bundle("config:anthropic:x", sidecar_id=None, credential_origin=None)
+
+    async def collect(_client):
+        raise AssertionError("an expired shared-secret token must not reach the API")
+
+    smart, result, health = await _run_failover(manager, monkeypatch, [machine, pasted], collect)
+
+    smart.collect.assert_not_awaited()
+    assert result == [] and health == {}
+    assert not auth_failures.flagged_accounts("anthropic")
