@@ -51,6 +51,16 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 
+def _label_matches_account_id(label: str, account_id: str) -> bool:
+    """Return True if *label* normalises to the same id as *account_id*.
+
+    Centralises the ``normalize_account_id`` call so both the email-shortcut
+    check and the leaked-label guard stay in lockstep if normalisation rules
+    ever change (e.g. additional case-folding or whitespace stripping).
+    """
+    return normalize_account_id(label) == account_id
+
+
 class GitHubCollector(BaseCollector):
     PROVIDER_ID = "github"
     COMPLETE_SNAPSHOT = True
@@ -201,7 +211,7 @@ class GitHubCollector(BaseCollector):
                 and "@" in self.account_label
                 and self.account_id
                 and self.account_id not in ("default", "")
-                and normalize_account_id(self.account_label) == self.account_id
+                and _label_matches_account_id(self.account_label, self.account_id)
             ):
                 identity = self.account_label
 
@@ -301,7 +311,9 @@ class GitHubCollector(BaseCollector):
                     is_default_collector
                     and self.account_label
                     and "@" in self.account_label
-                    and normalize_account_id(self.account_label) != normalize_account_id(identity)
+                    and not _label_matches_account_id(
+                        self.account_label, normalize_account_id(identity)
+                    )
                 )
                 if (
                     not self.account_label

@@ -295,7 +295,8 @@ class MisidentifiedGaugeSeriesCheck(Check):
 
     def plan(self, session: Session, group_key: str, params: dict[str, Any]) -> FixPlan:
         provider_id, account_id = _parse_key(group_key)
-        if _has_evidence(session, provider_id, account_id):
+        evidence_pairs = _fetch_evidence_pairs(session)
+        if _has_evidence(session, provider_id, account_id, evidence_pairs=evidence_pairs):
             raise ValueError(
                 f"{provider_id}/{account_id} now has supporting evidence and is not misidentified"
             )
@@ -318,7 +319,8 @@ class MisidentifiedGaugeSeriesCheck(Check):
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
         provider_id, account_id = _parse_key(group_key)
-        if _has_evidence(session, provider_id, account_id):
+        evidence_pairs = _fetch_evidence_pairs(session)
+        if _has_evidence(session, provider_id, account_id, evidence_pairs=evidence_pairs):
             raise ValueError(
                 f"{provider_id}/{account_id} now has supporting evidence and is not misidentified"
             )
