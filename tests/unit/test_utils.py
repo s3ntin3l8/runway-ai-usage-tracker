@@ -428,3 +428,14 @@ class TestReconcileResidualHealth:
         card = {"health": "good", "pct_used": 10.0}
         assert HealthCalculator.reconcile_residual_health(card) is False
         assert card["health"] == "good"
+
+
+def test_has_refresh_credential_accepts_mapping_and_type_lists():
+    from app.core.utils import has_refresh_credential
+
+    assert has_refresh_credential({"access_token": "a", "refresh_token": "r"})
+    assert has_refresh_credential({"xai_access": "a", "xai_refresh": "r"})
+    assert has_refresh_credential(["access_token", "xai_refresh"])
+    assert not has_refresh_credential({"access_token": "a", "refresh_token": ""})
+    assert not has_refresh_credential(["access_token", "api_key"])
+    assert not has_refresh_credential(None)

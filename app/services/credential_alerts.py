@@ -17,6 +17,7 @@ import httpx
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from app.core.utils import has_refresh_credential
 from app.models.db import ProviderConfig, SystemConfig, WebhookConfig, WebhookCredentialAlert
 from app.services.account_identity import resolve_account_id
 from app.services.token_health import (
@@ -121,7 +122,7 @@ def _is_alert_bad(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]
         return True
     if row["status"] != "expired" or row.get("redundant"):
         return False
-    rollable = "refresh_token" in row.get("token_types", [])
+    rollable = has_refresh_credential(row.get("token_types", []))
     if not rollable:
         return True
     return is_flagged(row, accounts_by_provider)

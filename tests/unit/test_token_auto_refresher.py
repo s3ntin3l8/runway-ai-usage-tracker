@@ -250,3 +250,61 @@ async def test_refresh_due_refreshes_xai_token_with_xai_refresh(cache, refresher
     stored = await cache.get("xai", "xai-account")
     assert stored["xai_access"] == new_access
     assert stored["xai_refresh"] == "rt-xai-2"
+
+
+@pytest.mark.asyncio
+async def test_refresh_due_skips_blank_refresh_token(cache, refresher):
+    """A blank refresh_token placeholder can't be rolled — don't call the provider."""
+    exp = time.time() + 300
+    id_token = _jwt({"exp": exp, "email": "u@example.com"})
+    await cache.store("gemini", {"oauth_token": "v1", "refresh_token": "", "id_token": id_token})
+
+    mock_refresh = AsyncMock()
+    with patch("app.services.token_auto_refresher.refresh_oauth_token", new=mock_refresh):
+        count = await refresher.refresh_due()
+
+    assert count == 0
+    mock_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_keeps_xai_refresh_bundle(cache):
+    """An expired xAI bundle that holds ``xai_refresh`` is still rollable: its OAuth
+    fields survive the purge even when an independent credential sits beside them."""
+    await cache.store(
+        "xai",
+        {
+            "xai_access": _jwt({"exp": time.time() - 60}),
+            "xai_refresh": "rt",
+            "api_key": "k",
+        },
+        account_id="alice@example.com",
+    )
+
+    removed = await cache.purge_expired_unrefreshable()
+
+    assert removed == 0
+    tokens = await cache.get("xai", "alice@example.com")
+    assert tokens is not None and tokens["xai_refresh"] == "rt"
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_strips_oauth_fields_with_blank_refresh_token(cache):
+    """A blank ``refresh_token`` placeholder is not a refresh credential, so the
+    expired OAuth fields go (the independent api_key beside them stays)."""
+    await cache.store(
+        "gemini",
+        {
+            "oauth_token": "v1",
+            "refresh_token": "",
+            "id_token": _jwt({"exp": time.time() - 60, "email": "u@example.com"}),
+            "api_key": "k",
+        },
+        account_id="u@example.com",
+    )
+
+    removed = await cache.purge_expired_unrefreshable()
+
+    assert removed == 1
+    tokens = await cache.get("gemini", "u@example.com")
+    assert tokens is not None and "oauth_token" not in tokens and tokens["api_key"] == "k"

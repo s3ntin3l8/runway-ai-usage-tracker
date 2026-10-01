@@ -22,7 +22,7 @@ from sqlmodel import Session, col, select
 
 from app.core.db import engine
 from app.core.registry import registry
-from app.core.utils import IdentityExtractor
+from app.core.utils import IdentityExtractor, has_refresh_credential
 from app.models.db import (
     CredentialSource,
     CredentialTag,
@@ -255,7 +255,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             if not token_types and row.source_id.startswith("config:"):
                 token_types = ["api_key"]
             exp = row.credential_expires_at.timestamp() if row.credential_expires_at else None
-        rollable = bool(tokens.get("refresh_token") or tokens.get("xai_refresh"))
+        rollable = has_refresh_credential(tokens)
         machine_sourced = row.sidecar_id is not None
         # Only a machine-reported credential can be "waiting for an account": an env var or
         # pasted key on the ``default`` account is that deployment's real account.

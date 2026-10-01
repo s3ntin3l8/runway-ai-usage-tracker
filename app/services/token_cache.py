@@ -17,7 +17,12 @@ from contextvars import ContextVar
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from app.core.utils import CREDENTIAL_VALUE_KEYS, IdentityExtractor, scrub_log
+from app.core.utils import (
+    CREDENTIAL_VALUE_KEYS,
+    IdentityExtractor,
+    has_refresh_credential,
+    scrub_log,
+)
 from app.services.account_identity import canonical_account_id
 
 logger = logging.getLogger(__name__)
@@ -828,7 +833,7 @@ class TokenCache:
             for provider in list(self._cache.keys()):
                 for acc_id in list(self._cache[provider].keys()):
                     tokens, metadata, ts = self._cache[provider][acc_id]
-                    if "refresh_token" in tokens or "xai_refresh" in tokens:
+                    if has_refresh_credential(tokens):
                         continue
                     exp = IdentityExtractor.exp_from_tokens(tokens)
                     if exp is None or exp >= now:
