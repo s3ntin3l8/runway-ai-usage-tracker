@@ -13,6 +13,9 @@ from app.models.db import CredentialSource, SidecarRegistry
 logger = logging.getLogger(__name__)
 
 
+_LOG_LINE_LIMIT = 2000
+
+
 def _recent_logs_json(lines: list[str]) -> str:
     """The last 20 reported log lines as stored JSON, with credential-shaped text redacted.
 
@@ -20,7 +23,8 @@ def _recent_logs_json(lines: list[str]) -> str:
     older version, or a compromised host, could forward a secret into a column
     that the fleet API returns to every reader.
     """
-    return json.dumps([str(redact_secrets(str(line))) for line in lines[-20:]])
+    # Capped first: the redaction regexes must never see unbounded input.
+    return json.dumps([str(redact_secrets(str(line)[:_LOG_LINE_LIMIT])) for line in lines[-20:]])
 
 
 # Sidecars that haven't checked in for this long are considered stale

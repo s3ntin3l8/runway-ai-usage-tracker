@@ -183,6 +183,9 @@ def load_token() -> dict[str, Any]:
         creds: dict[str, Any] = json.load(f)
     token = creds.get("access_token")
     if isinstance(token, str) and token:
+        if token.startswith(_FERNET_PREFIX) and not encryption_service.is_enabled:
+            # Encrypted, but the key has been removed: never use ciphertext as a token.
+            raise ValueError("GitHub token is encrypted but DB_ENCRYPTION_KEY is not set")
         creds["access_token"] = encryption_service.decrypt_string(token)
     return creds
 

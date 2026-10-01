@@ -58,9 +58,16 @@ _SECRET_STRING_PATTERNS: tuple[re.Pattern[str], ...] = (
     # `name=value` where the name says it is a credential. Pure numbers are left
     # alone so counters such as ``max_tokens=1000`` keep their values.
     re.compile(
-        r"(?i)\b([\w-]*(?:token|secret|passwd|password|api[_-]?key|cookie)[\w-]*)="
+        r"(?i)\b([\w-]{0,40}(?:token|secret|passwd|password|api[_-]?key|cookie)[\w-]{0,40})="
         r"(?!\d+\b)[^;\s\"'&,]+"
     ),
+    # Python-repr / JSON style: 'access_token': 'value'
+    re.compile(
+        r"(?i)(['\"][\w-]{0,40}(?:token|secret|passwd|password|api[_-]?key|cookie)[\w-]{0,40}['\"]"
+        r"\s*:\s*)['\"][^'\"]*['\"]"
+    ),
+    # CLI flags: --api-key abc, --token=abc
+    re.compile(r"(?i)(--[\w-]{0,20}(?:key|token|secret|password)[\w-]{0,20}[ =])\S+"),
 )
 
 # Dict keys whose *string* values are secrets. Numeric fields such as

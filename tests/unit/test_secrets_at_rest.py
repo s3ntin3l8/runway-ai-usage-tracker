@@ -174,6 +174,37 @@ def test_redact_log_text_leaves_ordinary_lines_alone(line):
     assert sidecar.redact_log_text(line) == line
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "token=abc123",
+        '{"api_key":"short"}',
+        "{'access_token': 'abcdef0123456789'}",
+        "cookie_session=short; x=1",
+        "running with --api-key abc123def456",
+        "--token=abc123",
+    ],
+)
+def test_redact_log_text_scrubs_short_secrets_by_name(line):
+    """Short values are only caught by name; the length/prefix patterns miss them."""
+    out = sidecar.redact_log_text(line)
+    assert "abc123" not in out and "short" not in out and "abcdef0123456789" not in out
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["a" * 20000, "x" * 20000 + " token ", "a-" * 10000, "token" * 5000],
+)
+def test_redaction_is_fast_on_hostile_lines(line):
+    """The patterns run on every log record; they must not backtrack quadratically."""
+    from app.core.log_redaction import redact_secrets
+
+    start = time.perf_counter()
+    sidecar.redact_log_text(line)
+    redact_secrets(line[:2000])
+    assert time.perf_counter() - start < 1.0
+
+
 def test_logging_filter_redacts_formatted_messages():
     record = logging.LogRecord(
         "t", logging.ERROR, __file__, 1, "send failed: %s", (f"token={OAUTH}",), None
@@ -388,6 +419,29 @@ def test_an_undecryptable_github_token_is_skipped_not_returned_as_ciphertext(
     creds = CredentialProvider.get_credentials("github")
 
     assert not creds.get("api_key")
+
+
+def test_ciphertext_is_never_used_as_a_token_once_the_key_is_gone(
+    github_file, encryption, monkeypatch
+):
+    from app.api.endpoints import github_oauth
+    from app.services.credential_provider import CredentialProvider
+
+    asyncio.run(github_oauth.save_token({"access_token": "gho_scan_me_token"}))
+    keyless = EncryptionService(key=None)
+    monkeypatch.setattr("app.api.endpoints.github_oauth.encryption_service", keyless)
+    monkeypatch.setattr("app.services.credential_provider.encryption_service", keyless)
+    monkeypatch.setattr(
+        "app.services.credential_provider.get_platform_config_dir", lambda _name: github_file.parent
+    )
+    monkeypatch.setattr(
+        "app.services.credential_provider._expand_rule_paths", lambda paths: [str(github_file)]
+    )
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="encrypted"):
+        github_oauth.load_token()
+    assert not CredentialProvider.get_credentials("github").get("api_key")
 
 
 def test_the_sidecar_does_not_ship_runways_own_github_token_file():

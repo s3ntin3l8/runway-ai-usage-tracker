@@ -864,16 +864,22 @@ def get_log_path() -> Path:
     return get_sidecar_dir() / "sidecar.log"
 
 
+_LOG_LINE_LIMIT = 4000
 _LOG_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [redacted]"),
     # key=value / "key": "value" for credential-looking names, incl. pydantic's
     # `input_value='...'`, which echoes the offending field's contents.
     (
         re.compile(
-            r"(?i)(\"?\w*(?:api[_-]?key|token|secret|password|passwd|cookie|session|"
-            r"authorization|input_value)\w*\"?\s*[:=]\s*)"
+            r"(?i)(['\"]?\b[\w-]{0,40}(?:api[_-]?key|token|secret|password|passwd|cookie|"
+            r"session|authorization|input_value)[\w-]{0,40}['\"]?\s*[:=]\s*)"
             r"(?!\d+\b)(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]]+)"
         ),
+        r"\1[redacted]",
+    ),
+    # CLI flags: --api-key abc, --token=abc
+    (
+        re.compile(r"(?i)(--[\w-]{0,20}(?:key|token|secret|password)[\w-]{0,20}[ =])\S+"),
         r"\1[redacted]",
     ),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*"), "[redacted-jwt]"),
@@ -892,6 +898,9 @@ def redact_log_text(text: str) -> str:
     Defence in depth: nothing should log a secret, but the sidecar forwards its
     log tail to the server and writes it to disk, so a stray one must not travel.
     """
+    # Bounded input keeps the regexes cheap: this runs on every log record.
+    if len(text) > _LOG_LINE_LIMIT:
+        text = text[:_LOG_LINE_LIMIT] + "...[truncated]"
     for pattern, replacement in _LOG_SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return text

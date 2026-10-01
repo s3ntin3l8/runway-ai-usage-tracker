@@ -7,7 +7,7 @@ from typing import Any
 from sqlmodel import Session
 from sqlmodel import select as sqlselect
 
-from app.core.config import get_platform_config_dir
+from app.core.config import get_platform_config_dir, settings
 from app.core.db import engine
 from app.core.encryption import encryption_service
 from app.core.registry import registry
@@ -334,9 +334,10 @@ class CredentialProvider:
                                 val = CredentialProvider._resolve_mapping_value(data, key_path_str)
                                 # If the file is in our own internal config dir, it's UI-managed -> config.
                                 # Otherwise it's discovered in the wild -> server.
-                                is_internal = runway_config_dir and str(path).startswith(
-                                    str(runway_config_dir)
-                                )
+                                is_internal = (
+                                    runway_config_dir
+                                    and str(path).startswith(str(runway_config_dir))
+                                ) or str(path) == settings.GITHUB_OAUTH_PATH
                                 if val and is_internal:
                                     # Runway's own files (the GitHub OAuth token) are
                                     # encrypted at rest when a key is configured.
@@ -414,6 +415,11 @@ class CredentialProvider:
         """Decrypt a value from one of Runway's own files; ``None`` if it can't be opened."""
         if not isinstance(value, str):
             return value
+        if value.startswith("gAAAAA") and not encryption_service.is_enabled:
+            # Ciphertext but no key (DB_ENCRYPTION_KEY was removed): decrypt_string would
+            # hand it back unchanged, and it would be used as the credential.
+            logger.warning("A stored credential is encrypted but no encryption key is configured")
+            return None
         try:
             return encryption_service.decrypt_string(value)
         except Exception:
