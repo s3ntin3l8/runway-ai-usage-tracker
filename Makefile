@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks dev dev-all run run-all sidecar sidecar-app sidecar-dmg sidecar-installer test test-cov lint format web web-dev web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-cov lint format web web-dev web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -40,6 +40,9 @@ run: ## Run production server (serves the built SPA from webapp/dist at :8765)
 
 run-all: web ## Build the SPA, then run the production server + sidecar (no hot reload)
 	$(MAKE) -j2 run sidecar
+
+sidecar-registry: ## Regenerate the sidecar's baked credential registry from app/core/registry.json
+	$(PYTHON) scripts/gen_sidecar_registry.py
 
 sidecar: ## Run the sidecar agent (config → ./data to match `make dev`; override with RUNWAY_CONFIG_DIR)
 	$(LOAD_ENV); \

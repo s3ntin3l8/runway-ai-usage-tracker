@@ -74,6 +74,8 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
 - `make web-test` / `make web` — frontend vitest; production SPA build into
   `webapp/dist`.
 - `make sidecar` — run the sidecar agent against the dev config dir.
+- `make sidecar-registry` — regenerate the sidecar's baked credential rules after
+  editing `app/core/registry.json` (the baked block is generated, never hand-edited).
 - `make secrets` / `make secrets-baseline` — detect-secrets gate / regenerate
   the baseline after vetting a new detection.
 
