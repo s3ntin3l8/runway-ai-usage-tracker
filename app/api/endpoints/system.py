@@ -19,7 +19,7 @@ from app.core.encryption import encryption_service
 from app.core.log_redaction import redact_secrets, redact_url
 from app.core.rate_limit import limiter
 from app.core.security import SESSION_COOKIE, require_admin_key, resolve_auth
-from app.core.utils import scrub_log
+from app.core.utils import has_refresh_credential, scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
     AuditLog,
@@ -639,7 +639,7 @@ async def refresh_token(
     if not cached:
         raise HTTPException(status_code=404, detail="No cached token for this account")
     tokens, meta = cached
-    if "refresh_token" not in tokens:
+    if not has_refresh_credential(tokens):
         raise HTTPException(status_code=400, detail="No refresh token available")
 
     from app.services.token_refresher import persist_to_local_file, refresh_oauth_token
@@ -712,7 +712,7 @@ async def refresh_credential_source(
     if bundle is None:
         raise HTTPException(status_code=404, detail="No live credential for this source")
     tokens = bundle["tokens"]
-    if "refresh_token" not in tokens and "xai_refresh" not in tokens:
+    if not has_refresh_credential(tokens):
         raise HTTPException(status_code=400, detail="No refresh token available")
 
     from app.services.token_refresher import refresh_oauth_token

@@ -46,7 +46,8 @@ def has_refresh_credential(tokens_or_types: "Mapping[str, Any] | Iterable[str] |
     """True when a token bundle (or a list of its token types) holds a refresh credential.
 
     A mapping counts only if the value is non-empty, so a blank ``refresh_token``
-    placeholder doesn't make a credential look rollable.
+    placeholder doesn't make a credential look rollable. A list of types carries
+    no values, so there only key presence can be checked.
     """
     if not tokens_or_types:
         return False
