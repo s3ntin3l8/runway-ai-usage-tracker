@@ -154,3 +154,148 @@ async def test_a_rejection_flag_upgrades_usable_credentials_but_not_expired_or_s
     assert rows[("gemini", ALICE, "sidecar:g2")] == "invalid"  # was valid
     assert rows[("gemini", ALICE, "sidecar:g3")] == "stale"  # unreported: unchanged
     assert rows[("chatgpt", ALICE, None)] == "expired"  # already expired: unchanged
+
+
+# --- a durable auth failure only counts while it is still the account's story -----------
+
+
+def _src(source_id="a", **kw):
+    from app.models.db import CredentialSource
+
+    return CredentialSource(
+        provider_id="gemini",
+        account_id=ALICE,
+        source_id=source_id,
+        source_type="file",
+        source_label="creds.json",
+        **kw,
+    )
+
+
+def test_is_durably_rejected_truth_table():
+    from app.services.token_health import is_durably_rejected
+
+    now = datetime.now(UTC)
+    failed = _src("a", health="auth_failed", last_attempt_at=now - timedelta(minutes=5))
+
+    assert is_durably_rejected(failed, []) is True  # nothing else to fall back on
+    assert is_durably_rejected(_src("a", health="healthy"), []) is False
+    # A disabled source is never tried again, so its last failure must not stand forever.
+    assert is_durably_rejected(_src("a", health="auth_failed", enabled=False), []) is False
+
+    working_later = _src("b", last_success_at=now)
+    working_earlier = _src("b", last_success_at=now - timedelta(hours=1))
+    disabled_sibling = _src("b", last_success_at=now, enabled=False)
+    # Failover moved on to a sibling that has succeeded since: collection works.
+    assert is_durably_rejected(failed, [working_later]) is False
+    # ...but a success from *before* the failure doesn't vouch for the account now.
+    assert is_durably_rejected(failed, [working_earlier]) is True
+    # A disabled sibling isn't being collected, so its old success proves nothing.
+    assert is_durably_rejected(failed, [disabled_sibling]) is True
+    # The source itself (same id) is never its own sibling.
+    assert is_durably_rejected(failed, [failed]) is True
+    # A row from before provenance existed has no attempt time: any success supersedes it.
+    legacy = _src("a", health="auth_failed")
+    assert is_durably_rejected(legacy, [working_earlier]) is False
+    assert is_durably_rejected(legacy, [_src("b")]) is True  # sibling never succeeded
+    # Naive datetimes (what SQLite hands back) compare fine against aware ones.
+    naive = _src("b", last_success_at=now.replace(tzinfo=None))
+    assert is_durably_rejected(failed, [naive]) is False
+
+
+async def _set_health(th, source_id, **fields):
+    from sqlmodel import select
+    from sqlmodel.orm.session import Session
+
+    from app.models.db import CredentialSource
+
+    with Session(th.engine) as s:
+        row = s.exec(select(CredentialSource).where(CredentialSource.source_id == source_id)).one()
+        for key, value in fields.items():
+            setattr(row, key, value)
+        s.add(row)
+        s.commit()
+
+
+async def _statuses():
+    return {
+        r.get("source_id"): r["status"]
+        for r in await TokenHealthService().get_health()
+        if r["provider"] == "gemini"
+    }
+
+
+@pytest.mark.asyncio
+async def test_failed_over_source_does_not_stay_invalid_while_a_sibling_works(monkeypatch):
+    """Source A is rejected, failover moves to B which succeeds. A keeps ``auth_failed`` (only
+    A's own attempt rewrites it) but the account collects fine — banners and alerts must not
+    report a rejected credential forever."""
+    await build_world(monkeypatch)
+    import app.services.token_health as th
+
+    auth_failures.reset()
+    now = datetime.now(UTC)
+    await _set_health(
+        th, "sidecar:g1", health="auth_failed", last_attempt_at=now - timedelta(minutes=2)
+    )
+    assert (await _statuses())["sidecar:g1"] == "invalid"  # nothing else has worked yet
+
+    await _set_health(th, "sidecar:g2", last_success_at=now)
+    statuses = await _statuses()
+    assert statuses["sidecar:g1"] == "valid"  # superseded by g2's later success
+    assert statuses["sidecar:g2"] == "valid"
+
+
+@pytest.mark.asyncio
+async def test_disabled_source_with_a_stored_auth_failure_is_not_invalid(monkeypatch):
+    await build_world(monkeypatch)
+    import app.services.token_health as th
+
+    auth_failures.reset()
+    await _set_health(th, "sidecar:g1", health="auth_failed", enabled=False)
+    assert (await _statuses())["sidecar:g1"] == "valid"
+
+
+@pytest.mark.asyncio
+async def test_stale_source_with_a_stored_auth_failure_stays_stale(monkeypatch):
+    await build_world(monkeypatch)
+    import app.services.token_health as th
+
+    auth_failures.reset()
+    await _set_health(th, "sidecar:g3", health="auth_failed")
+    assert (await _statuses())["sidecar:g3"] == "stale"
+
+
+@pytest.mark.asyncio
+async def test_no_internal_keys_leak_into_the_rows(monkeypatch):
+    """``_rejected`` / ``_assumed`` / ``_rollable`` are scaffolding for the status passes."""
+    await build_world(monkeypatch)
+    import app.services.token_health as th
+
+    await _set_health(th, "sidecar:g1", health="auth_failed")
+    rows = await TokenHealthService().get_health()
+    assert rows
+    assert [k for r in rows for k in r if k.startswith("_")] == []
+
+
+@pytest.mark.asyncio
+async def test_inventory_applies_the_same_supersession_rule(monkeypatch):
+    """Both views must treat a failed-over source identically (the original divergence)."""
+    await build_world(monkeypatch)
+    import app.services.token_health as th
+
+    auth_failures.reset()
+    now = datetime.now(UTC)
+    await _set_health(
+        th, "sidecar:g1", health="auth_failed", last_attempt_at=now - timedelta(minutes=2)
+    )
+    await _set_health(th, "sidecar:g2", last_success_at=now)
+    monkeypatch.setattr(credential_inventory, "engine", th.engine)
+    monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+
+    inv = await credential_inventory.build_inventory()
+    inventory = {
+        s.source_id: s.status for p in inv.providers for a in p.accounts for s in a.sources
+    }
+    assert inventory["sidecar:g1"] == (await _statuses())["sidecar:g1"] == "valid"

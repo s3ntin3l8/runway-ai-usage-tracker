@@ -48,7 +48,7 @@ from app.services.credential_sources import (
     server_source_id,
 )
 from app.services.token_cache import token_cache
-from app.services.token_health import credential_status, is_flagged
+from app.services.token_health import credential_status, is_durably_rejected, is_flagged
 from app.services.token_refresher import _REFRESH_ENDPOINTS
 
 # Best → worst. An account is as healthy as its best enabled source: a working
@@ -239,6 +239,10 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             canonical_account_id(row.account_id)
         )
 
+    siblings_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
+    for row in sources:
+        siblings_by_account.setdefault((row.provider_id, row.account_id), []).append(row)
+
     accounts: dict[tuple[str, str], list[CredentialSourceView]] = {}
     for row in sources:
         bundle = live.get((row.provider_id, row.account_id), {}).get(row.source_id)
@@ -263,7 +267,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         # Rejected = this source's last collection failed auth, or an in-memory rejection flag
         # matches its identity under Token Health's rules (a flagged ``default`` matches the
         # default account and a provider's sole account).
-        rejected = row.health == "auth_failed" or (
+        rejected = is_durably_rejected(
+            row, siblings_by_account[(row.provider_id, row.account_id)]
+        ) or (
             not identity_pending
             and is_flagged(
                 {"provider": row.provider_id, "account_id": row.account_id}, accounts_by_provider

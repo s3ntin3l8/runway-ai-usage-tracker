@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -79,6 +80,39 @@ def _is_stale_source(last_seen: datetime | None, now: float | None = None) -> bo
     if last_seen.tzinfo is None:
         last_seen = last_seen.replace(tzinfo=UTC)
     return (now if now is not None else time.time()) - last_seen.timestamp() > SOURCE_STALE_SECS
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """SQLite hands datetimes back naive; treat them as UTC so they compare with aware ones."""
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def is_durably_rejected(source: CredentialSource, siblings: Iterable[CredentialSource]) -> bool:
+    """Did this source's last collection fail auth *and* does that still matter?
+
+    ``credential_sources.health`` is written per attempted source and only changes when that
+    source is tried again, so on its own it over-reports:
+
+    - a **disabled** source is never tried, so its last failure would stand forever;
+    - when failover moves past a rejected source to a working sibling, the rejected one keeps
+      ``auth_failed`` while the account collects fine. The in-memory flag that used to carry
+      this is account-level and clears on any success — "a healthy sibling means collection
+      still works" is also how alerts reason — so a rejection only counts here if no enabled
+      sibling has succeeded since this source last failed.
+    """
+    if source.health != "auth_failed" or not source.enabled:
+        return False
+    attempted = _utc(source.last_attempt_at)
+    for other in siblings:
+        if other.source_id == source.source_id or not other.enabled:
+            continue
+        succeeded = _utc(other.last_success_at)
+        # No attempt time (a row from before provenance existed): any success supersedes.
+        if succeeded is not None and (attempted is None or succeeded >= attempted):
+            return False
+    return True
 
 
 def apply_rejection(status: str, rejected: bool) -> str:
@@ -312,6 +346,10 @@ class TokenHealthService:
         except Exception as e:
             logger.warning(f"Could not load sidecar names for token health: {e}")
 
+        durable_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
+        for item in durable_sources:
+            durable_by_account.setdefault((item.provider_id, item.account_id), []).append(item)
+
         candidate_accounts = sorted(
             {
                 (provider, account_id)
@@ -465,7 +503,9 @@ class TokenHealthService:
                 can_refresh=durable_rollable and provider_id in _REFRESH_ENDPOINTS,
                 rollable=durable_rollable,
             )
-            row["_rejected"] = durable_source.health == "auth_failed"
+            row["_rejected"] = is_durably_rejected(
+                durable_source, durable_by_account.get((provider_id, account_id), [])
+            )
             if live is None and _is_stale_source(durable_source.last_seen):
                 # Not in the live cache and not re-reported recently: the stored
                 # token types/expiry are history, not evidence. Without this a
