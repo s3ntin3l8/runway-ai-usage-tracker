@@ -165,10 +165,9 @@ async def test_an_unresolvable_pending_gemini_credential_stays_pending(cache, mo
     assert collector.account_id == "default"
 
 
-@pytest.mark.parametrize("pending", [False])
 @pytest.mark.asyncio
-async def test_an_identified_gemini_credential_is_never_looked_up(cache, monkeypatch, pending):
-    await _store(cache, pending=pending)
+async def test_an_identified_gemini_credential_is_never_looked_up(cache, monkeypatch):
+    await _store(cache, pending=False)
     userinfo = AsyncMock(return_value="someone-else@example.com")
     monkeypatch.setattr("app.services.collectors.gemini_api.google_userinfo_email", userinfo)
     collector = _collector(BOB)
@@ -244,7 +243,9 @@ def test_a_codex_login_with_no_id_token_email_is_identified_from_its_access_toke
 def test_a_gemini_login_with_no_email_is_sent_pending_so_the_server_can_verify_it(tmp_path):
     creds = tmp_path / "oauth_creds.json"
     creds.write_text(
-        json.dumps({"access_token": GOOGLE_TOKEN, "refresh_token": "rt", "expiry_date": 1})
+        json.dumps(
+            {"access_token": GOOGLE_TOKEN, "refresh_token": "rt", "expiry_date": 4102444800000}
+        )
     )
 
     cards, blocked = _collect("gemini", creds)
