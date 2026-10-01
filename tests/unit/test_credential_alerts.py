@@ -151,6 +151,16 @@ async def test_rollable_expired_does_not_fire(session):
 
 
 @pytest.mark.asyncio
+async def test_xai_refresh_expired_does_not_fire(session):
+    """xAI keeps its refresh token as ``xai_refresh``; the server can roll it like any other."""
+    _config(session)
+    client = await _run(
+        session, [_row(status="expired", token_types=["xai_access", "xai_refresh"])]
+    )
+    assert not client.post.called
+
+
+@pytest.mark.asyncio
 async def test_flagged_rollable_expired_row_still_fires(session):
     """A revoked refresh_token: TokenAutoRefresher only logs the failure (never
     flags auth_failures), and Token Health's own _apply_invalid skips rows

@@ -14,7 +14,7 @@ from sqlmodel import select as sqlselect
 from app.core.config import settings
 from app.core.db import engine
 from app.core.registry import registry
-from app.core.utils import IdentityExtractor, scrub_log
+from app.core.utils import IdentityExtractor, has_refresh_credential, scrub_log
 from app.models.db import CredentialSource, ProviderConfig, SidecarRegistry
 from app.services import auth_failures
 from app.services.account_identity import canonical_account_id
@@ -384,7 +384,7 @@ class TokenHealthService:
                         seen_token_values.add(f"{provider}:{val}")
 
                 source_val = info.get("source")
-                has_refresh_token = "refresh_token" in tokens or "xai_refresh" in tokens
+                has_refresh_token = has_refresh_credential(tokens)
                 source_candidates = candidates_by_account.get((provider, acc_id), [])
                 durable_source_ids = {
                     item.source_id
@@ -443,7 +443,7 @@ class TokenHealthService:
                 exp=IdentityExtractor.exp_from_tokens(tokens),
                 can_refresh=False,
                 ttl_remaining=source["ttl_remaining"],
-                rollable="refresh_token" in tokens,
+                rollable=has_refresh_credential(tokens),
             )
             row.update(
                 source_id=source["source_id"],
@@ -476,9 +476,7 @@ class TokenHealthService:
                 live_tokens = live.get("tokens") or {}
                 token_types = list(live_tokens)
                 exp = IdentityExtractor.exp_from_tokens(live_tokens)
-                durable_rollable = bool(
-                    live_tokens.get("refresh_token") or live_tokens.get("xai_refresh")
-                )
+                durable_rollable = has_refresh_credential(live_tokens)
             else:
                 try:
                     token_types = json.loads(durable_source.token_types_json or "[]")
@@ -582,7 +580,7 @@ class TokenHealthService:
                             token_types=list(family.keys()),
                             exp=IdentityExtractor.exp_from_tokens(family),
                             can_refresh=False,
-                            rollable="refresh_token" in family,
+                            rollable=has_refresh_credential(family),
                         )
                     )
         except Exception as e:

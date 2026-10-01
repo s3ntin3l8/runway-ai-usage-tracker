@@ -14,7 +14,7 @@ import asyncio
 import logging
 import time
 
-from app.core.utils import IdentityExtractor
+from app.core.utils import IdentityExtractor, has_refresh_credential
 from app.services.token_cache import token_cache
 from app.services.token_refresher import (
     _REFRESH_ENDPOINTS,
@@ -91,7 +91,7 @@ class TokenAutoRefresher:
             if not cached:
                 continue
             tokens, meta = cached
-            if "refresh_token" not in tokens and "xai_refresh" not in tokens:
+            if not has_refresh_credential(tokens):
                 continue
 
             exp = IdentityExtractor.exp_from_tokens(tokens)

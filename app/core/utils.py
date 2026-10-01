@@ -6,6 +6,7 @@ import os
 import random
 import re
 import tempfile
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -34,6 +35,24 @@ CREDENTIAL_VALUE_KEYS = frozenset(
         "cookie",
     }
 )
+
+
+# Keys that carry a credential the server can exchange for a fresh access token.
+# xAI stores its refresh token as ``xai_refresh``; everyone else uses ``refresh_token``.
+REFRESH_CREDENTIAL_KEYS = frozenset({"refresh_token", "xai_refresh"})
+
+
+def has_refresh_credential(tokens_or_types: "Mapping[str, Any] | Iterable[str] | None") -> bool:
+    """True when a token bundle (or a list of its token types) holds a refresh credential.
+
+    A mapping counts only if the value is non-empty, so a blank ``refresh_token``
+    placeholder doesn't make a credential look rollable.
+    """
+    if not tokens_or_types:
+        return False
+    if isinstance(tokens_or_types, Mapping):
+        return any(tokens_or_types.get(key) for key in REFRESH_CREDENTIAL_KEYS)
+    return any(key in REFRESH_CREDENTIAL_KEYS for key in tokens_or_types)
 
 
 _USER_TZ_CACHE_KEY = "user_tz"
