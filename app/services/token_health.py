@@ -24,6 +24,10 @@ from app.services.token_refresher import _REFRESH_ENDPOINTS
 logger = logging.getLogger(__name__)
 
 EXPIRY_WARNING_SECS = 86400  # 24 hours — for tokens that require manual re-auth
+# A sidecar-reported credential nobody has re-reported for this long (and that has no
+# live cache bundle) is ``stale``: the machine went away, so its stored expiry / token
+# types describe a credential we can no longer vouch for. Matches 2× the token-cache TTL.
+SOURCE_STALE_SECS = 3600
 
 
 def _classify_status(
@@ -64,6 +68,15 @@ _OAUTH_FAMILY_KEYS = _OAUTH_CREDENTIAL_KEYS | {"access_token"}
 
 class CredentialNotRemovableError(Exception):
     """The credential is managed outside the cache (Settings → Providers / env)."""
+
+
+def _is_stale_source(last_seen: datetime | None, now: float | None = None) -> bool:
+    """True when a durable source hasn't been re-reported within ``SOURCE_STALE_SECS``."""
+    if last_seen is None:
+        return False
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=UTC)
+    return (now if now is not None else time.time()) - last_seen.timestamp() > SOURCE_STALE_SECS
 
 
 def _underlying_account(account_id: str) -> str:
@@ -404,6 +417,12 @@ class TokenHealthService:
                 exp=exp,
                 can_refresh=False,
             )
+            if live is None and _is_stale_source(durable_source.last_seen):
+                # Not in the live cache and not re-reported recently: the stored
+                # token types/expiry are history, not evidence. Without this a
+                # removed machine's row reads "valid" forever (or "expired" forever,
+                # re-firing alerts); ``stale`` is neither healthy nor alert-worthy.
+                row["status"] = "stale"
             row["removable"] = False
             row["source_id"] = durable_source.source_id
             row["sidecar_id"] = durable_source.sidecar_id

@@ -45,6 +45,32 @@ def is_sidecar_source(source: Mapping[str, Any]) -> bool:
     return bool(source.get("sidecar_id") and source.get("credential_origin"))
 
 
+# Sentinel: "the caller has no opinion" — distinct from an explicit ``None``
+# (a credential that genuinely has no expiry).
+UNSET: Any = object()
+
+
+def resolve_source_account(session: Session, provider_id: str, source_id: str) -> str | None:
+    """The account an already-registered source belongs to, or ``None`` if unknown.
+
+    A ``source_id`` (sidecar + origin) names exactly one credential, so it maps to one
+    account. Prefer a real identity over the ``default`` placeholder, and the most
+    recently seen row when several exist.
+    """
+    rows = session.exec(
+        select(CredentialSource)
+        .where(
+            CredentialSource.provider_id == provider_id,
+            CredentialSource.source_id == source_id,
+        )
+        .order_by(col(CredentialSource.last_seen).desc())
+    ).all()
+    for row in rows:
+        if row.account_id != "default":
+            return row.account_id
+    return rows[0].account_id if rows else None
+
+
 def touch_source(
     session: Session,
     *,
@@ -55,14 +81,19 @@ def touch_source(
     source_label: str,
     credential_origin: str | None = None,
     sidecar_id: str | None = None,
-    credential_expires_at: datetime | None = None,
-    token_types: list[str] | None = None,
+    credential_expires_at: datetime | None = UNSET,
+    token_types: list[str] | None = UNSET,
 ) -> CredentialSource:
     """Create or refresh a source without replacing operator preferences.
 
     Initial priority is assigned only when creating a row. Later refreshes
     preserve the operator's enabled state and priority. Refreshing metadata does
     not reset health; only a collection result confirms credential health.
+
+    ``credential_expires_at`` / ``token_types`` are overwritten only when the caller
+    passes them (``None`` is a real value: "no expiry"). A caller that doesn't know
+    them — ``/fleet/ingest`` sees the secrets but the manifest reports the health
+    metadata — must not wipe what the other recorded.
     """
     aid = canonical_account_id(account_id)
     row = session.exec(
@@ -95,8 +126,8 @@ def touch_source(
             source_label=source_label,
             credential_origin=credential_origin,
             sidecar_id=sidecar_id,
-            credential_expires_at=credential_expires_at,
-            token_types_json=json.dumps(token_types or []),
+            credential_expires_at=None if credential_expires_at is UNSET else credential_expires_at,
+            token_types_json=json.dumps([] if token_types is UNSET else token_types or []),
             priority=priority,
         )
         session.add(row)
@@ -105,8 +136,10 @@ def touch_source(
         row.source_label = source_label
         row.credential_origin = credential_origin
         row.sidecar_id = sidecar_id
-        row.credential_expires_at = credential_expires_at
-        row.token_types_json = json.dumps(token_types or [])
+        if credential_expires_at is not UNSET:
+            row.credential_expires_at = credential_expires_at
+        if token_types is not UNSET:
+            row.token_types_json = json.dumps(token_types or [])
         row.last_seen = datetime.now(UTC)
     session.flush()
     return row

@@ -4,10 +4,10 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.utils import scrub_log
-from app.models.db import SidecarRegistry
+from app.models.db import CredentialSource, SidecarRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +189,12 @@ class FleetRegistryService:
 
         CredentialTagRepo.delete_for_sidecar(session, sidecar_id=sidecar_id)
         PendingCredentialTagRepo.delete_for_sidecar(session, sidecar_id=sidecar_id)
+        # Its discovered credentials go too: a durable ``credential_sources`` row
+        # outlives the machine otherwise and keeps reporting a stale health forever.
+        for source in session.exec(
+            select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
+        ).all():
+            session.delete(source)
         session.delete(row)
         session.commit()
         logger.info(f"Deleted sidecar from registry: '{scrub_log(sidecar_id)}'")

@@ -821,8 +821,16 @@ export interface Webhook {
 }
 
 /** `invalid` = the provider rejected the credential (401/403) — opaque keys and
- * cookies carry no expiry, so this is the only way they ever go bad. */
-export type TokenHealthStatus = 'valid' | 'expiring' | 'expired' | 'invalid' | 'unknown' | string;
+ * cookies carry no expiry, so this is the only way they ever go bad. `stale` = a
+ * sidecar-reported credential that hasn't been re-reported recently (machine gone). */
+export type TokenHealthStatus =
+  | 'valid'
+  | 'expiring'
+  | 'expired'
+  | 'invalid'
+  | 'stale'
+  | 'unknown'
+  | string;
 
 export interface TokenHealthEntry {
   provider: string;

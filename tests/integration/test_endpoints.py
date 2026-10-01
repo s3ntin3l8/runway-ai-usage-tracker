@@ -464,3 +464,27 @@ class TestTokenHealthDelete:
             resp = client.delete(f"/api/v1/system/token-health/zai/{account_id}")
             assert resp.status_code == 409
             assert "Settings" in resp.json()["detail"]
+
+
+class TestTokenHealthRefresh:
+    @pytest.mark.asyncio
+    async def test_refresh_unknown_account_does_not_copy_default_credential(self, monkeypatch):
+        """An account that isn't in the cache must 404 — not silently refresh the
+        ``default`` account's credential and store the result under the unknown id."""
+        from fastapi.testclient import TestClient
+
+        from app.services.token_cache import TokenCache
+
+        fresh = TokenCache()
+        await fresh.store(
+            "gemini",
+            {"oauth_token": "default-tok", "refresh_token": "default-rt"},
+            account_id="default",
+        )
+        monkeypatch.setattr("app.api.endpoints.system.token_cache", fresh)
+
+        resp = TestClient(app).post("/api/v1/system/token-health/refresh/gemini/nobody@example.com")
+
+        assert resp.status_code == 404
+        accounts = {a["account_id"] for a in await fresh.get_accounts("gemini")}
+        assert "nobody@example.com" not in accounts

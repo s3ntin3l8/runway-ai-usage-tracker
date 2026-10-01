@@ -155,6 +155,118 @@ def test_local_credential_ingest_registers_source_without_sidecar_id(session):
     assert mock_touch.call_args.kwargs["sidecar_id"] is None
 
 
+def test_ingest_keeps_bundled_cookie_credentials(session):
+    """kimi's ``session_cookie`` and opencode's ``console_session`` must reach the
+    token cache — the ingest whitelist used to drop both, silently disabling the
+    collectors that read them from sidecar-discovered browser cookies."""
+    payload = {
+        "provider": "sidecar-host",
+        "sidecar_id": "host-a",
+        "metrics": [
+            {
+                "provider_id": "kimi_coding",
+                "service_name": "Kimi",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "cookie",
+                "metadata": {
+                    "session_cookie": "kimi-cookie-value",  # pragma: allowlist secret
+                    "credential_origin": "cookie:kimi_coding/session",
+                },
+            },
+            {
+                "provider_id": "opencode",
+                "service_name": "OpenCode",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "cookie",
+                "metadata": {
+                    "cookie_session": "auth=abc",  # pragma: allowlist secret
+                    "console_session": "console-value",  # pragma: allowlist secret
+                    "credential_origin": "cookie:opencode/session",
+                },
+            },
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock(return_value="alice@example.com")
+        mock_tc.remove_source = AsyncMock(return_value=False)
+        _ingest(TestClient(app), payload)
+
+    stored = {call.args[0]: call.args[1] for call in mock_tc.store.await_args_list}
+    assert stored["kimi_coding"] == {"session_cookie": "kimi-cookie-value"}
+    assert stored["opencode"] == {
+        "cookie_session": "auth=abc",
+        "console_session": "console-value",
+    }
+
+
+def test_ingest_retires_default_placeholder_source_once_identity_resolves(session):
+    """The manifest can register a source under ``default`` before ingest resolves the
+    real identity. Ingest must fold that placeholder into the real account's row
+    (keeping its health metadata) instead of leaving a duplicate behind — for every
+    provider, not just Anthropic."""
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    origin = "path:/home/user/.codex/auth.json"
+    source_id = sidecar_source_id("host-a", origin)
+    touch_source(
+        session,
+        provider_id="chatgpt",
+        account_id="default",
+        source_id=source_id,
+        source_type="file",
+        source_label="auth.json",
+        credential_origin=origin,
+        sidecar_id="host-a",
+        credential_expires_at=datetime(2030, 1, 1, tzinfo=UTC),
+        token_types=["oauth_token", "refresh_token"],
+    )
+    session.commit()
+
+    payload = {
+        "provider": "sidecar-host",
+        "sidecar_id": "host-a",
+        "metrics": [
+            {
+                "provider_id": "chatgpt",
+                "service_name": "ChatGPT",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "oauth_token": "tok",  # pragma: allowlist secret
+                    "credential_origin": origin,
+                },
+            }
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock(return_value="alice@example.com")
+        mock_tc.remove_source = AsyncMock(return_value=False)
+        _ingest(TestClient(app), payload)
+
+    rows = session.exec(
+        select(CredentialSource).where(CredentialSource.provider_id == "chatgpt")
+    ).all()
+    assert [r.account_id for r in rows] == ["alice@example.com"]
+    # The placeholder's health metadata carried over; ingest did not blank it.
+    assert rows[0].token_types_json == '["oauth_token", "refresh_token"]'
+    assert rows[0].credential_expires_at is not None
+
+
 def test_ingest_applies_existing_verified_tag_to_stale_pending_heartbeat(session):
     session.add(
         CredentialTag(

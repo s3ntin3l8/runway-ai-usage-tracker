@@ -1,6 +1,6 @@
 """Integration tests for fleet sidecar CRUD endpoints (Phase 4B)."""
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -129,6 +129,39 @@ def test_delete_sidecar(client, session):
     # Confirm it's gone
     response = client.get("/api/v1/fleet/sidecars/del-host")
     assert response.status_code == 404
+
+
+def test_delete_sidecar_removes_its_credential_sources(client, session):
+    from sqlmodel import select
+
+    from app.models.db import CredentialSource
+
+    for sid in ("gone-host", "kept-host"):
+        session.add(
+            SidecarRegistry(
+                sidecar_id=sid,
+                hostname=sid,
+                last_seen=datetime.now(UTC),
+                first_seen=datetime.now(UTC),
+            )
+        )
+        session.add(
+            CredentialSource(
+                provider_id="gemini",
+                account_id="alice@example.com",
+                source_id=f"sidecar:{sid}:oauth",
+                source_type="file",
+                source_label="oauth_creds.json",
+                credential_origin="path:/x/oauth_creds.json",
+                sidecar_id=sid,
+            )
+        )
+    session.commit()
+
+    assert client.delete("/api/v1/fleet/sidecars/gone-host").status_code == 200
+
+    remaining = {row.sidecar_id for row in session.exec(select(CredentialSource)).all()}
+    assert remaining == {"kept-host"}
 
 
 def test_delete_sidecar_not_found(client):

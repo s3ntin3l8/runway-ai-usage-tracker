@@ -67,7 +67,7 @@ The grouped pending-events response reports `total_events` across the full queue
 | `GET` | `/api/v1/system/status` | Collector cache states and error counts |
 | `GET` | `/api/v1/system/settings` | Non-sensitive runtime configuration |
 | `GET` | `/api/v1/system/audit-log` | Append-only admin-mutation trail |
-| `GET` | `/api/v1/system/token-health` | Health of every credential (cache, dashboard-saved, server env/file): `status` is `valid`/`expiring`/`expired`/`invalid` (provider rejected it)/`unknown`; `removable` is false for config/server-managed rows. Values are never returned — only types and origin |
+| `GET` | `/api/v1/system/token-health` | Health of every credential (cache, dashboard-saved, server env/file): `status` is `valid`/`expiring`/`expired`/`invalid` (provider rejected it)/`stale` (sidecar stopped re-reporting it)/`unknown`; `removable` is false for config/server-managed rows. Values are never returned — only types and origin |
 | `POST` | `/api/v1/system/token-health/refresh/{provider}/{account_id}` | Trigger OAuth token refresh (admin) |
 | `DELETE` | `/api/v1/system/token-health/{provider}/{account_id}` | Evict token from cache (admin); `409` for dashboard-saved / server-env credentials — change those in Settings → Providers or the environment |
 | `POST` | `/api/v1/system/force-collect` | Trigger immediate collection cycle, fan out to sidecars |
