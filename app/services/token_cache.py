@@ -510,6 +510,11 @@ class TokenCache:
         token) with the ``previous`` tokens that were actually refreshed, so a
         different credential for the same account (another machine's login) is
         never overwritten. Returns the number of bundles updated.
+
+        Race: a bundle that re-pushed a fresh access token between the caller reading
+        ``previous`` and this call no longer matches on the access token, so it is only
+        updated if the refresh token it holds is the one that was rotated. Not every key
+        in ``refreshed`` lands on every bundle — only on those that matched.
         """
         account_id = canonical_account_id(account_id)
         identity_keys = ("refresh_token", "xai_refresh", "oauth_token", "xai_access")

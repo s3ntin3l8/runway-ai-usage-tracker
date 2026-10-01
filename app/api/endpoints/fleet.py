@@ -85,6 +85,22 @@ _INGEST_CREDENTIAL_KEYS = frozenset(
 _COOKIE_BUNDLE_KEYS = frozenset({"session_cookie", "console_session"})
 
 
+def _can_reconcile_row(provider_id: str, row_account_id: str, target_account_id: str) -> bool:
+    """May ingest move/delete a source row filed under ``row_account_id`` now that the
+    source resolves to ``target_account_id``?
+
+    A source belongs to exactly one account, so a row elsewhere is stale — but how much
+    ingest may touch differs by provider. Anthropic reconciles every other account (its
+    sources used to be filed under token-derived placeholder identities). Everyone else
+    only retires the ``default`` placeholder the manifest may have created before the
+    real identity was known; a row an operator moved to another account is not ours to
+    touch here.
+    """
+    if row_account_id == target_account_id:
+        return False
+    return provider_id == "anthropic" or row_account_id == "default"
+
+
 def _is_cookie_key(key: str) -> bool:
     return key.startswith("cookie_") or key in _COOKIE_BUNDLE_KEYS
 
@@ -371,10 +387,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # resolved the real identity — a source belongs to exactly one account, but
         # an operator-moved row elsewhere is not ours to touch here.
         replaceable = [
-            row
-            for row in prior_sources
-            if row.account_id != actual_acc_id
-            and (p_id == "anthropic" or row.account_id == "default")
+            row for row in prior_sources if _can_reconcile_row(p_id, row.account_id, actual_acc_id)
         ]
         old_accounts = {row.account_id for row in replaceable}
         target_exists = any(row.account_id == actual_acc_id for row in prior_sources)

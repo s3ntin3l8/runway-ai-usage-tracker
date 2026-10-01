@@ -19,17 +19,33 @@ _NOT_CREDENTIALS = {
     "account_label",
     "http_referer",  # OpenRouter attribution headers — not secrets, no collector reads them
     "x_title",
+    "_raw_expiry",  # consumed and popped inside the sidecar (antigravity expiry check), never sent
 }
 
 
 def _sidecar_mapping_targets() -> set[str]:
+    """Every value of every ``"mapping": {...}`` block in the sidecar's embedded registry.
+
+    Blocks hold several ``"source.path": "target"`` pairs and the source paths contain dots
+    (``claudeAiOauth.accessToken``), so match whole blocks and take *all* their values.
+    """
     text = SIDECAR.read_text()
-    return set(re.findall(r'"mapping":\s*\{\s*"[A-Za-z_]+":\s*"([A-Za-z_\-\.]+)"', text))
+    targets: set[str] = set()
+    for body in re.findall(r'"mapping":\s*\{(.*?)\}', text, re.DOTALL):
+        targets.update(re.findall(r'"[^"]+":\s*"([^"]+)"', body))
+    return targets
+
+
+def test_sidecar_mapping_parser_sees_every_target() -> None:
+    """Guard the guard: a parser that silently skips blocks makes the lockstep test vacuous."""
+    targets = _sidecar_mapping_targets()
+    # Targets that only appear in blocks whose first key contains a dot.
+    assert {"refresh_token", "id_token", "expiry_date", "client_id", "xai_refresh"} <= targets
+    assert {"session_cookie", "console_session", "api_key", "oauth_token"} <= targets
 
 
 def test_sidecar_mapping_targets_survive_ingest() -> None:
     targets = _sidecar_mapping_targets()
-    assert targets, "failed to parse the sidecar registry mappings"
     dropped = {
         t
         for t in targets - _NOT_CREDENTIALS

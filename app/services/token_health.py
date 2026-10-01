@@ -18,7 +18,7 @@ from app.models.db import CredentialSource, ProviderConfig, SidecarRegistry
 from app.services import auth_failures
 from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
-from app.services.token_cache import _OAUTH_CREDENTIAL_KEYS, token_cache
+from app.services.token_cache import _OAUTH_CREDENTIAL_KEYS, TokenCache, token_cache
 from app.services.token_refresher import _REFRESH_ENDPOINTS
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,10 @@ logger = logging.getLogger(__name__)
 EXPIRY_WARNING_SECS = 86400  # 24 hours — for tokens that require manual re-auth
 # A sidecar-reported credential nobody has re-reported for this long (and that has no
 # live cache bundle) is ``stale``: the machine went away, so its stored expiry / token
-# types describe a credential we can no longer vouch for. Matches 2× the token-cache TTL.
-SOURCE_STALE_SECS = 3600
+# types describe a credential we can no longer vouch for. Derived from the token-cache
+# TTL (a live bundle expires after one TTL without a re-push) so a TTL change can't
+# desync this and start marking healthy sources stale.
+SOURCE_STALE_SECS = 2 * TokenCache.DEFAULT_TTL
 
 
 def _classify_status(

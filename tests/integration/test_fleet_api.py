@@ -158,7 +158,8 @@ def test_delete_sidecar_removes_its_credential_sources(client, session):
         )
     session.commit()
 
-    assert client.delete("/api/v1/fleet/sidecars/gone-host").status_code == 200
+    response = client.delete("/api/v1/fleet/sidecars/gone-host")
+    assert response.status_code == 200
 
     remaining = {row.sidecar_id for row in session.exec(select(CredentialSource)).all()}
     assert remaining == {"kept-host"}
