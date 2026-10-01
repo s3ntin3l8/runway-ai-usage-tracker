@@ -107,12 +107,26 @@ def test_plan_reports_the_canonical_target_and_counts():
     session = _session()
     _event(session, event_id="1")
     _event(session, event_id="2", provider_id="xai")  # collides with event_id 1? no, distinct id
+    session.add(
+        UsagePeriodRollup(
+            provider_id="opencode-xai",
+            account_id="default",
+            period_type="lifetime",
+            period_key="all",
+            model_id="",
+            sidecar_id="",
+            msgs=116,
+            cost_usd=8.1566,
+        )
+    )
+    session.commit()
 
     plan = plan_legacy_retag(session, "opencode-xai")
 
     assert plan.canonical_provider_id == "xai"
     assert plan.total == 1  # only the opencode-xai row
     assert plan.collisions == 0
+    assert plan.rollups_to_purge == 1
 
 
 def test_plan_is_read_only():
@@ -217,9 +231,27 @@ def test_apply_drops_the_legacy_providers_gauge_series():
 def test_apply_rebuilds_rollups_for_the_canonical_provider():
     session = _session()
     _event(session, event_id="1", account_id="s3ntin3l8@gmail.com")
+    # Seed a stale rollup row under the legacy id — without the purge this
+    # would survive apply (rebuild_rollups_for_providers derives its pair
+    # list from usage_events, which no longer carries the legacy id post-
+    # retag) and the assertion below would be vacuously true.
+    session.add(
+        UsagePeriodRollup(
+            provider_id="opencode-xai",
+            account_id="s3ntin3l8@gmail.com",
+            period_type="lifetime",
+            period_key="all",
+            model_id="",
+            sidecar_id="",
+            msgs=116,
+            cost_usd=8.1566,
+        )
+    )
+    session.commit()
 
-    apply_legacy_retag(session, "opencode-xai")
+    result = apply_legacy_retag(session, "opencode-xai")
 
+    assert result.rollups_legacy_purged == 1
     lifetime = session.exec(
         select(UsagePeriodRollup).where(
             UsagePeriodRollup.provider_id == "xai",
@@ -236,6 +268,56 @@ def test_apply_rebuilds_rollups_for_the_canonical_provider():
         select(UsagePeriodRollup).where(UsagePeriodRollup.provider_id == "opencode-xai")
     ).first()
     assert stale is None
+
+
+def test_apply_purges_stale_legacy_rollup_rows_across_all_grains():
+    """Mirrors the production shape (#441): every period/grain of stale
+    `usage_period_rollup` rows under the legacy id (lifetime, day, model grain,
+    sidecar grain, model+sidecar grain) is purged by apply."""
+    session = _session()
+    _event(session, event_id="1", account_id="s3ntin3l8@gmail.com")
+    grains = [
+        ("lifetime", "all", "", ""),
+        ("day", "2026-09-26", "", ""),
+        ("day", "2026-09-26", "grok-4.7", ""),
+        ("day", "2026-09-26", "", "dev-01"),
+        ("day", "2026-09-26", "grok-4.7", "dev-01"),
+    ]
+    for period_type, period_key, model_id, sidecar_id in grains:
+        session.add(
+            UsagePeriodRollup(
+                provider_id="opencode-xai",
+                account_id="s3ntin3l8@gmail.com",
+                period_type=period_type,
+                period_key=period_key,
+                model_id=model_id,
+                sidecar_id=sidecar_id,
+                msgs=10,
+                cost_usd=0.0,
+            )
+        )
+    session.commit()
+
+    result = apply_legacy_retag(session, "opencode-xai")
+
+    assert result.rollups_legacy_purged == len(grains)
+    leftover = list(
+        session.exec(
+            select(UsagePeriodRollup).where(UsagePeriodRollup.provider_id == "opencode-xai")
+        )
+    )
+    assert leftover == []
+    # Canonical-side rebuild still produced the expected lifetime row.
+    lifetime = session.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.provider_id == "xai",
+            UsagePeriodRollup.account_id == "s3ntin3l8@gmail.com",
+            UsagePeriodRollup.period_type == "lifetime",
+            UsagePeriodRollup.model_id == "",
+            UsagePeriodRollup.sidecar_id == "",
+        )
+    ).first()
+    assert lifetime is not None and lifetime.msgs == 1
 
 
 def test_apply_handles_multiple_events_with_mixed_collisions():
