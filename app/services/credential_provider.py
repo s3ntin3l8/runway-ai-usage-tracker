@@ -9,6 +9,7 @@ from sqlmodel import select as sqlselect
 
 from app.core.config import get_platform_config_dir
 from app.core.db import engine
+from app.core.encryption import encryption_service
 from app.core.registry import registry
 from app.models.db import ProviderConfig
 
@@ -331,14 +332,18 @@ class CredentialProvider:
                                 # We handle keys that might contain dots (like "github.com")
                                 # by checking if the prefix is a valid key.
                                 val = CredentialProvider._resolve_mapping_value(data, key_path_str)
+                                # If the file is in our own internal config dir, it's UI-managed -> config.
+                                # Otherwise it's discovered in the wild -> server.
+                                is_internal = runway_config_dir and str(path).startswith(
+                                    str(runway_config_dir)
+                                )
+                                if val and is_internal:
+                                    # Runway's own files (the GitHub OAuth token) are
+                                    # encrypted at rest when a key is configured.
+                                    val = CredentialProvider._decrypt_internal(val)
                                 if val:
                                     discovered[target] = val
                                     if target not in sources:
-                                        # If the file is in our own internal config dir, it's UI-managed -> config.
-                                        # Otherwise it's discovered in the wild -> server.
-                                        is_internal = runway_config_dir and str(path).startswith(
-                                            str(runway_config_dir)
-                                        )
                                         sources[target] = "config" if is_internal else "server"
                     except Exception as e:
                         logger.debug(f"Error reading file {path}: {e}")
@@ -403,6 +408,17 @@ class CredentialProvider:
                             }
                         )
         return origins
+
+    @staticmethod
+    def _decrypt_internal(value: Any) -> Any:
+        """Decrypt a value from one of Runway's own files; ``None`` if it can't be opened."""
+        if not isinstance(value, str):
+            return value
+        try:
+            return encryption_service.decrypt_string(value)
+        except Exception:
+            logger.warning("Could not decrypt a stored credential (key changed or data corrupt)")
+            return None
 
     @staticmethod
     def _resolve_mapping_value(data: Any, key_path_str: str) -> Any:

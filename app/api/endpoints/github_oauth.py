@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
 from app.core.utils import IdentityExtractor, safe_write_json
@@ -16,6 +17,8 @@ from app.services.collector_manager import manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_FERNET_PREFIX = "gAAAAA"
 
 
 class DeviceFlowInitResponse(BaseModel):
@@ -170,13 +173,43 @@ async def poll_device_flow(
             raise HTTPException(status_code=500, detail="Error communicating with GitHub")
 
 
+def load_token() -> dict[str, Any]:
+    """Read the stored GitHub token file with ``access_token`` decrypted.
+
+    Accepts the legacy plaintext form too, so an upgrade needs no migration step.
+    Raises ``DecryptionError`` when the value is ciphertext this key can't open.
+    """
+    with open(settings.GITHUB_OAUTH_PATH) as f:
+        creds: dict[str, Any] = json.load(f)
+    token = creds.get("access_token")
+    if isinstance(token, str) and token:
+        creds["access_token"] = encryption_service.decrypt_string(token)
+    return creds
+
+
+def _token_stored_in_plaintext() -> bool:
+    """True when encryption is on but the file still holds a plaintext token."""
+    if not encryption_service.is_enabled:
+        return False
+    try:
+        with open(settings.GITHUB_OAUTH_PATH) as f:
+            token = json.load(f).get("access_token")
+    except Exception:
+        return False
+    return isinstance(token, str) and bool(token) and not token.startswith(_FERNET_PREFIX)
+
+
 @router.get("/status", response_model=DeviceFlowStatusResponse)
 async def get_status() -> DeviceFlowStatusResponse:
     """Check if GitHub is authenticated."""
     if os.path.exists(settings.GITHUB_OAUTH_PATH):
         try:
-            with open(settings.GITHUB_OAUTH_PATH) as f:
-                creds = json.load(f)
+            legacy_plaintext = _token_stored_in_plaintext()
+            creds = load_token()
+            if legacy_plaintext:
+                # Upgrade path: a token saved before encryption was configured is
+                # rewritten encrypted the first time it is read.
+                await save_token(creds)
 
             async with httpx.AsyncClient() as client:
                 token = creds.get("access_token")
@@ -260,7 +293,7 @@ async def save_token(data: dict) -> None:
         os.makedirs(config_dir, exist_ok=True)
 
     token_data = {
-        "access_token": data["access_token"],
+        "access_token": encryption_service.encrypt_string(data["access_token"]),
         "token_type": data.get("token_type", "bearer"),
         "scope": data.get("scope", ""),
         "login": data.get("login"),

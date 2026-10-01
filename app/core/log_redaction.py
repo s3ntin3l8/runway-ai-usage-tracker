@@ -48,11 +48,19 @@ _SECRET_STRING_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
     # OpenCode Go API tokens
     re.compile(r"\boc_sk_[A-Za-z0-9_-]{8,}"),
-    # GitHub personal access tokens (classic + fine-grained)
-    re.compile(r"\bghp_[A-Za-z0-9]{20,}"),
+    # GitHub tokens: personal (classic + fine-grained) and OAuth/app/refresh (gho_, ghu_, ...)
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
+    # Google OAuth access tokens
+    re.compile(r"\bya29\.[\w.-]{16,}"),
     # Cookie-style session pairs
     re.compile(r"(?i)\b(sessionKey|session_id|sessionid|sid)=[^;\s\"'&]+"),
+    # `name=value` where the name says it is a credential. Pure numbers are left
+    # alone so counters such as ``max_tokens=1000`` keep their values.
+    re.compile(
+        r"(?i)\b([\w-]*(?:token|secret|passwd|password|api[_-]?key|cookie)[\w-]*)="
+        r"(?!\d+\b)[^;\s\"'&,]+"
+    ),
 )
 
 # Dict keys whose *string* values are secrets. Numeric fields such as

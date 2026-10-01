@@ -337,16 +337,6 @@ __REGISTRY__: dict[str, Any] = {
                 {
                     "type": "file",
                     "paths": [
-                        "{{CONFIG_DIR:runway}}/github_oauth.json",
-                    ],
-                    "format": "json",
-                    "mapping": {
-                        "access_token": "api_key",
-                    },
-                },
-                {
-                    "type": "file",
-                    "paths": [
                         "~/.config/gh/hosts.yml",
                         "{{CONFIG_DIR:gh}}/hosts.yml",
                         "{{CONFIG_DIR:GitHub CLI}}/hosts.yml",
@@ -874,13 +864,62 @@ def get_log_path() -> Path:
     return get_sidecar_dir() / "sidecar.log"
 
 
+_LOG_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [redacted]"),
+    # key=value / "key": "value" for credential-looking names, incl. pydantic's
+    # `input_value='...'`, which echoes the offending field's contents.
+    (
+        re.compile(
+            r"(?i)(\"?\w*(?:api[_-]?key|token|secret|password|passwd|cookie|session|"
+            r"authorization|input_value)\w*\"?\s*[:=]\s*)"
+            r"(?!\d+\b)(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]]+)"
+        ),
+        r"\1[redacted]",
+    ),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*"), "[redacted-jwt]"),
+    (
+        re.compile(r"\b(?:sk|gh[opusr]|github_pat|xai|pk)[-_][A-Za-z0-9_-]{16,}"),
+        "[redacted-key]",
+    ),
+    # Anything else that looks like an opaque token (long, no separators).
+    (re.compile(r"\b[A-Za-z0-9_-]{40,}\b"), "[redacted]"),
+)
+
+
+def redact_log_text(text: str) -> str:
+    """Scrub credential-shaped content from a log line before it is stored or sent.
+
+    Defence in depth: nothing should log a secret, but the sidecar forwards its
+    log tail to the server and writes it to disk, so a stray one must not travel.
+    """
+    for pattern, replacement in _LOG_SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+class _RedactingFilter(logging.Filter):
+    """Redacts a record's formatted message in place, for every handler it's on."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            record.msg = redact_log_text(record.getMessage())
+            record.args = None
+        except Exception:
+            pass
+        return True
+
+
 def _tail_log(n: int = 20) -> list[str]:
-    """Return the last *n* lines of the sidecar log file (best-effort)."""
+    """Return the last *n* lines of the sidecar log file (best-effort, redacted).
+
+    Lines are redacted again here because the file can hold lines written by an
+    older sidecar version that did not redact at write time.
+    """
     try:
         path = get_log_path()
         with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
-        return [line.rstrip() for line in lines[-n:]]
+        return [redact_log_text(line.rstrip()) for line in lines[-n:]]
     except Exception:
         return []
 
@@ -1027,6 +1066,9 @@ def setup_logging(log_level: str, file_enabled: bool) -> None:
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
         handlers.append(file_handler)
+
+    for handler in handlers:
+        handler.addFilter(_RedactingFilter())
 
     logging.basicConfig(
         level=getattr(logging, log_level.upper(), logging.INFO),
@@ -1239,13 +1281,54 @@ def _queue_limit_mb(value: Any) -> float | None:
     return limit if math.isfinite(limit) and limit > 0 else None
 
 
+# Cards that exist only to carry a credential to the server (never displayed).
+# Mirrors `is_token_only` in app/api/endpoints/fleet.py.
+_TOKEN_ONLY_UNITS = frozenset({"oauth", "api_key", "cookie"})
+
+
+def strip_credentials(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return *payload* without credential-carrying cards or raw log lines.
+
+    The offline queue is plaintext on disk, so it must hold usage only. Credentials
+    are re-sent on the next live cycle; replaying a stale one adds nothing.
+    """
+    stripped = dict(payload)
+    if "metrics" in payload:
+        stripped["metrics"] = [
+            card
+            for card in payload["metrics"] or []
+            if not (
+                isinstance(card, dict)
+                and card.get("remaining") == "Token"
+                and card.get("unit") in _TOKEN_ONLY_UNITS
+            )
+        ]
+    if payload.get("last_log_lines"):
+        stripped["last_log_lines"] = [redact_log_text(str(x)) for x in payload["last_log_lines"]]
+    return stripped
+
+
+def _sanitize_queue_line(line: str) -> str:
+    """A queue line with its credentials removed (entries from older sidecars held them)."""
+    try:
+        entry = json.loads(line)
+        entry["payload"] = strip_credentials(entry.get("payload") or {})
+        return json.dumps(entry, separators=(",", ":"))
+    except Exception:
+        return line
+
+
 def queue_push(payload: dict[str, Any], max_size_mb: float | None = None) -> bool:
     """Add payload to the bounded offline queue; return False when full.
 
     ``max_size_mb`` is the sidecar config's ``queue_max_size_mb`` key
     (default 10); an unset, non-positive or otherwise invalid value falls
     back to 10 so a bad config value can't silently disable the cap.
+
+    Credentials are never queued (see ``strip_credentials``).
     """
+    payload = strip_credentials(payload)
+
     if os.name == "nt":
         ensure_dirs()
 
@@ -1416,7 +1499,15 @@ def queue_flush(
 
                 try:
                     entry = json.loads(line)
-                    payload = entry.get("payload", {})
+                    queued = entry.get("payload", {})
+                    payload = strip_credentials(queued)
+                    if (
+                        payload != queued
+                        and not payload.get("metrics")
+                        and not payload.get("events")
+                    ):
+                        # Only credentials were queued (an older sidecar); nothing to replay.
+                        continue
 
                     success, result, _ = http_post_signed_with_retry(
                         target_url, payload, api_key, stop_event=stop_event, config=config
@@ -1455,12 +1546,12 @@ def queue_flush(
                 if os.name == "nt":
                     with open(queue_file, "w") as f:
                         for line in failed_lines:
-                            f.write(line + "\n")
+                            f.write(_sanitize_queue_line(line) + "\n")
                 else:
                     fd = _open_queue_file(dir_fd, queue_file, os.O_WRONLY | os.O_TRUNC)
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
                         for line in failed_lines:
-                            f.write(line + "\n")
+                            f.write(_sanitize_queue_line(line) + "\n")
                 logging.warning(
                     f"Queue file has {len(failed_lines)} failed entries: {getattr(queue_file, 'name', queue_file)}"
                 )
@@ -4448,8 +4539,9 @@ class DaemonRunner:
 
             # Only queue metrics payloads; heartbeats don't need to be queued
             queue_saved = True
-            if metrics or events:
-                queue_saved = queue_push(payload, self._config.get("queue_max_size_mb"))
+            queueable = strip_credentials(payload)
+            if queueable.get("metrics") or events:
+                queue_saved = queue_push(queueable, self._config.get("queue_max_size_mb"))
 
             with self._lock:
                 self.last_error = str(result)

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import or_
 from sqlmodel import Session, col, func, select
 
@@ -57,6 +57,23 @@ from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _validation_summary(exc: Exception) -> str:
+    """Field paths and error types only, never the offending values.
+
+    A Pydantic error's default text echoes the rejected input, and on the ingest
+    routes that input can be a credential. The text goes into both the 400
+    response and the log, and the sidecar logs the response body it gets back.
+    """
+    if isinstance(exc, ValidationError):
+        problems = [
+            f"{'.'.join(str(part) for part in err['loc']) or '<body>'}: {err['type']}"
+            for err in exc.errors(include_input=False, include_url=False, include_context=False)
+        ]
+        return "; ".join(problems[:10]) or "validation failed"
+    return type(exc).__name__
+
 
 # Credential fields a sidecar token card may carry into the server's token cache.
 # Anything else in ``metadata`` is dropped, so every key the sidecar's embedded
@@ -154,8 +171,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     try:
         payload = IngestRequest.model_validate_json(body_bytes)
     except Exception as e:
-        logger.error(f"Failed to parse ingest payload: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid payload: {str(e)}")
+        detail = _validation_summary(e)
+        logger.error("Failed to parse ingest payload: %s", detail)
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {detail}") from None
 
     # Normalize the originating sidecar id once, here at the chokepoint, so the
     # registry upsert, the per-card propagation, and every ingested event all key
@@ -786,8 +804,9 @@ async def post_credential_manifest(
     try:
         payload = CredentialManifestRequest.model_validate_json(body_bytes)
     except Exception as exc:
-        logger.debug(f"manifest: invalid body: {exc}")
-        raise HTTPException(status_code=400, detail=f"Invalid manifest: {exc}") from exc
+        detail = _validation_summary(exc)
+        logger.debug("manifest: invalid body: %s", detail)
+        raise HTTPException(status_code=400, detail=f"Invalid manifest: {detail}") from None
 
     if not payload.sidecar_id:
         raise HTTPException(status_code=400, detail="sidecar_id is required")
