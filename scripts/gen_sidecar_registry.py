@@ -22,6 +22,7 @@ import copy
 import json
 import re
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -38,8 +39,19 @@ END_MARKER = "# --- END INJECTED REGISTRY ---"
 _SIDECAR_PROVIDER_KEYS = ("name", "icon", "rules")
 
 
+_TOP_LEVEL_KEYS = {"_comment", "providers", "add_providers", "notes"}
+_PROVIDER_CHANGE_KEYS = {"set", "set_reason", "drop_rules", "drop_mapping_keys", "add_rules"}
+
+
 def _matches(rule: dict[str, Any], match: dict[str, Any]) -> bool:
-    return all(rule.get(key) == value for key, value in match.items())
+    """Subset match on a rule; ``paths_contain`` is a substring of any of its paths."""
+    for key, value in match.items():
+        if key == "paths_contain":
+            if not any(value in path for path in rule.get("paths", [])):
+                return False
+        elif rule.get(key) != value:
+            return False
+    return True
 
 
 def build_registry(
@@ -55,6 +67,10 @@ def build_registry(
     if overlay is None:
         overlay = json.loads(OVERLAY_PATH.read_text(encoding="utf-8"))
 
+    unknown = set(overlay) - _TOP_LEVEL_KEYS
+    if unknown:
+        raise ValueError(f"overlay has unknown keys {sorted(unknown)}")
+
     providers: dict[str, Any] = {}
     for pid, spec in registry["providers"].items():
         providers[pid] = copy.deepcopy({k: spec[k] for k in _SIDECAR_PROVIDER_KEYS if k in spec})
@@ -62,6 +78,9 @@ def build_registry(
     for pid, changes in overlay.get("providers", {}).items():
         if pid not in providers:
             raise ValueError(f"overlay references unknown provider {pid!r}")
+        unknown = set(changes) - _PROVIDER_CHANGE_KEYS
+        if unknown:
+            raise ValueError(f"{pid}: overlay has unknown keys {sorted(unknown)}")
         provider = providers[pid]
         for key, value in changes.get("set", {}).items():
             if provider.get(key) == value:
@@ -94,7 +113,42 @@ def build_registry(
     return {"providers": providers}
 
 
-def _literal(value: Any, indent: int = 0) -> str:
+def rule_notes(
+    registry: dict[str, Any], overlay: dict[str, Any] | None = None
+) -> dict[tuple[str, int], str]:
+    """Overlay notes keyed by ``(provider, rule index)`` in the built registry.
+
+    Each note must match exactly one rule, so a rule that moves or disappears
+    can't leave a comment attached to the wrong thing.
+    """
+    if overlay is None:
+        overlay = json.loads(OVERLAY_PATH.read_text(encoding="utf-8"))
+    notes: dict[tuple[str, int], str] = {}
+    for entry in overlay.get("notes", []):
+        pid = entry["provider"]
+        hits = [
+            i
+            for i, rule in enumerate(registry["providers"][pid]["rules"])
+            if _matches(rule, entry["match"])
+        ]
+        if len(hits) != 1:
+            raise ValueError(f"{pid}: note {entry['match']} matched {len(hits)} rules, need 1")
+        key = (pid, hits[0])
+        notes[key] = f"{notes[key]} {entry['note']}" if key in notes else entry["note"]
+    return notes
+
+
+def _comment(text: str, indent: int) -> list[str]:
+    pad = "    " * indent + "# "
+    return [pad + line for line in textwrap.wrap(text, width=88 - len(pad))]
+
+
+def _literal(
+    value: Any,
+    indent: int = 0,
+    path: tuple[str, ...] = (),
+    notes: dict[tuple[str, int], str] | None = None,
+) -> str:
     """Render *value* as a Python literal (not JSON: True/False/None, trailing commas).
 
     Every container is written one item per line with a trailing comma, which
@@ -105,12 +159,22 @@ def _literal(value: Any, indent: int = 0) -> str:
     if isinstance(value, dict):
         if not value:
             return "{}"
-        items = [f"{inner}{_literal(k)}: {_literal(v, indent + 1)}," for k, v in value.items()]
+        items = [
+            f"{inner}{_literal(k)}: {_literal(v, indent + 1, (*path, str(k)), notes)},"
+            for k, v in value.items()
+        ]
         return "{\n" + "\n".join(items) + f"\n{pad}}}"
     if isinstance(value, list):
         if not value:
             return "[]"
-        items = [f"{inner}{_literal(v, indent + 1)}," for v in value]
+        items = []
+        for index, item in enumerate(value):
+            note = None
+            if notes and len(path) == 3 and path[0] == "providers" and path[2] == "rules":
+                note = notes.get((path[1], index))
+            lines = _comment(note, indent + 1) if note else []
+            lines.append(f"{inner}{_literal(item, indent + 1, path, notes)},")
+            items.append("\n".join(lines))
         return "[\n" + "\n".join(items) + f"\n{pad}]"
     if isinstance(value, str):
         # ensure_ascii=False keeps real characters (an emoji icon), where the old
@@ -122,11 +186,12 @@ def _literal(value: Any, indent: int = 0) -> str:
 def render_block(registry: dict[str, Any] | None = None) -> str:
     """The full text between (and including) the markers."""
     data = build_registry() if registry is None else registry
+    notes = rule_notes(data)
     return (
         f"{BEGIN_MARKER}\n"
         "# Generated by scripts/gen_sidecar_registry.py from app/core/registry.json and\n"
         "# scripts/sidecar_registry_overlay.json -- edit those, then `make sidecar-registry`.\n"
-        f"__REGISTRY__: dict[str, Any] = {_literal(data)}\n"
+        f"__REGISTRY__: dict[str, Any] = {_literal(data, notes=notes)}\n"
         f"{END_MARKER}"
     )
 

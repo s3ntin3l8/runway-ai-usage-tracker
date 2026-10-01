@@ -71,10 +71,44 @@ def test_a_stale_overlay_entry_is_an_error_not_a_silent_noop():
     with pytest.raises(ValueError, match="matched nothing"):
         gen.build_registry(REGISTRY, partly)
 
+    typo = copy.deepcopy(OVERLAY)
+    typo["providers"]["github"]["drop_rule"] = []
+    with pytest.raises(ValueError, match="unknown keys"):
+        gen.build_registry(REGISTRY, typo)
+
+    typo_top = copy.deepcopy(OVERLAY)
+    typo_top["add_provider"] = {}
+    with pytest.raises(ValueError, match="unknown keys"):
+        gen.build_registry(REGISTRY, typo_top)
+
     unknown = copy.deepcopy(OVERLAY)
     unknown["providers"]["nope"] = {"set": {}}
     with pytest.raises(ValueError, match="unknown provider"):
         gen.build_registry(REGISTRY, unknown)
+
+
+def test_overlay_notes_become_comments_above_their_rule():
+    """The hand-written "why" comments survive regeneration as overlay notes."""
+    source = (ROOT / "scripts" / "sidecar.py").read_text(encoding="utf-8")
+    block = source[source.index(gen.BEGIN_MARKER) : source.index(gen.END_MARKER)]
+    assert OVERLAY["notes"]
+    for entry in OVERLAY["notes"]:
+        first_words = " ".join(entry["note"].split()[:4])
+        assert first_words in " ".join(
+            line.strip("# ").strip() for line in block.splitlines() if line.strip().startswith("#")
+        ), entry["match"]
+
+
+def test_a_note_must_match_exactly_one_rule():
+    registry = gen.build_registry(REGISTRY, OVERLAY)
+    ambiguous = copy.deepcopy(OVERLAY)
+    ambiguous["notes"] = [{"provider": "ollama", "match": {"type": "cookie"}, "note": "x"}]
+    with pytest.raises(ValueError, match="need 1"):
+        gen.rule_notes(registry, ambiguous)
+    gone = copy.deepcopy(OVERLAY)
+    gone["notes"] = [{"provider": "ollama", "match": {"type": "nope"}, "note": "x"}]
+    with pytest.raises(ValueError, match="need 1"):
+        gen.rule_notes(registry, gone)
 
 
 def test_every_baked_rule_type_is_one_the_sidecar_can_run():

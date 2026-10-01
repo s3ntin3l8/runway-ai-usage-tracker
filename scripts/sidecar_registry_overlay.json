@@ -1,10 +1,13 @@
 {
-  "_comment": "Intentional differences between the sidecar's baked registry and app/core/registry.json. The generator (scripts/gen_sidecar_registry.py) merges this over registry.json; every entry needs a reason. The server evaluates every env/file rule in registry.json (credential scan, Token Health, inventory, provider list), so anything the sidecar alone should do lives here, not there.",
+  "_comment": "Intentional differences between the sidecar's baked registry and app/core/registry.json. The generator (scripts/gen_sidecar_registry.py) merges this over registry.json; every entry needs a reason. The server evaluates every env/file rule in registry.json (credential scan, Token Health, inventory, provider list), so anything the sidecar alone should do lives here, not there. `notes` are comments carried into the generated block (JSON can't hold them), matched to a rule by `match`; `paths_contain` is a substring of one of its paths.",
   "providers": {
     "anthropic": {
       "drop_rules": [
         {
-          "match": { "type": "env", "variable": "CLAUDE_SESSION_TOKEN" },
+          "match": {
+            "type": "env",
+            "variable": "CLAUDE_SESSION_TOKEN"
+          },
           "reason": "Server-env session token. The sidecar reads the browser's sessionKey cookie instead and does not read this variable."
         }
       ]
@@ -12,7 +15,10 @@
     "chatgpt": {
       "drop_rules": [
         {
-          "match": { "type": "env", "variable": "CHATGPT_SESSION_TOKEN" },
+          "match": {
+            "type": "env",
+            "variable": "CHATGPT_SESSION_TOKEN"
+          },
           "reason": "Server-env session token. The sidecar reads the browser session cookies instead and does not read this variable."
         }
       ]
@@ -20,7 +26,9 @@
     "antigravity": {
       "drop_rules": [
         {
-          "match": { "type": "file_json_data" },
+          "match": {
+            "type": "file_json_data"
+          },
           "reason": "A rule type the sidecar does not implement (it would silently skip it); the server reads it from the quota snapshot instead."
         }
       ],
@@ -29,7 +37,9 @@
           "reason": "The sidecar reads the CLI's OAuth token file. Not in registry.json because the server would then scan it on its own host and register a server credential for it.",
           "rule": {
             "type": "file",
-            "paths": ["~/.gemini/antigravity-cli/antigravity-oauth-token"],
+            "paths": [
+              "~/.gemini/antigravity-cli/antigravity-oauth-token"
+            ],
             "format": "json",
             "mapping": {
               "token.access_token": "oauth_token",
@@ -47,8 +57,13 @@
       "set_reason": "The sidecar's name is the service_name on its cards, which the server keys series on; registry.json says 'GitHub API' for the provider list.",
       "drop_mapping_keys": [
         {
-          "match": { "type": "file", "format": "yaml" },
-          "keys": ["github.com.user"],
+          "match": {
+            "type": "file",
+            "format": "yaml"
+          },
+          "keys": [
+            "github.com.user"
+          ],
           "reason": "gh's `user` is a login, not the account's canonical id. Mapping it to account_id recreated the dual-account split fixed in #440, so the sidecar sends the token only and lets the server identify it."
         }
       ],
@@ -57,8 +72,15 @@
           "reason": "git's user.email names the machine's committer; sidecar-only, not a credential.",
           "rule": {
             "type": "exec",
-            "command": ["git", "config", "--global", "user.email"],
-            "mapping": { "value": "name" }
+            "command": [
+              "git",
+              "config",
+              "--global",
+              "user.email"
+            ],
+            "mapping": {
+              "value": "name"
+            }
           }
         }
       ]
@@ -69,9 +91,15 @@
           "reason": "Legacy kimi-cli token files the server has no reason to scan.",
           "rule": {
             "type": "file",
-            "paths": ["~/.kimi/config.json", "~/.k2/tokens.json"],
+            "paths": [
+              "~/.kimi/config.json",
+              "~/.k2/tokens.json"
+            ],
             "format": "json",
-            "mapping": { "api_key": "api_key", "token": "api_key" }
+            "mapping": {
+              "api_key": "api_key",
+              "token": "api_key"
+            }
           }
         }
       ]
@@ -80,14 +108,22 @@
       "add_rules": [
         {
           "reason": "Attribution headers read from the sidecar's environment; not credentials the server needs.",
-          "rule": { "type": "env", "variable": "OPENROUTER_X_TITLE", "mapping": { "value": "x_title" } }
+          "rule": {
+            "type": "env",
+            "variable": "OPENROUTER_X_TITLE",
+            "mapping": {
+              "value": "x_title"
+            }
+          }
         },
         {
           "reason": "Attribution headers read from the sidecar's environment; not credentials the server needs.",
           "rule": {
             "type": "env",
             "variable": "OPENROUTER_HTTP_REFERER",
-            "mapping": { "value": "http_referer" }
+            "mapping": {
+              "value": "http_referer"
+            }
           }
         }
       ]
@@ -99,8 +135,98 @@
       "provider": {
         "name": "Hermes Agent",
         "icon": "☤",
-        "rules": [{ "type": "file", "paths": ["~/.hermes/state.db", "~/.hermes/config.yaml"] }]
+        "rules": [
+          {
+            "type": "file",
+            "paths": [
+              "~/.hermes/state.db",
+              "~/.hermes/config.yaml"
+            ]
+          }
+        ]
       }
     }
-  }
+  },
+  "notes": [
+    {
+      "provider": "openrouter",
+      "match": {
+        "type": "file",
+        "paths_contain": "opencode/auth.json"
+      },
+      "note": "The opencode CLI stores a per-provider key in ~/.local/share/opencode/auth.json under the `openrouter.key` field. Pulling from there means a host with the opencode CLI installed lights up automatically, with no env-var setup."
+    },
+    {
+      "provider": "deepseek",
+      "match": {
+        "type": "file",
+        "paths_contain": "opencode/auth.json"
+      },
+      "note": "The opencode CLI stores the BYOK DeepSeek key in ~/.local/share/opencode/auth.json under `deepseek.key`. The origin is fingerprinted like the other siblings, and the card still needs an account hint (Untagged Credentials) before it attaches to a labeled account."
+    },
+    {
+      "provider": "minimax",
+      "match": {
+        "type": "file",
+        "paths_contain": "opencode/auth.json"
+      },
+      "note": "The opencode CLI keeps its kimi-style plan keys under provider-specific names; the opencode \"coding plan\" variant is exposed as `minimax-coding-plan.key`."
+    },
+    {
+      "provider": "gemini",
+      "match": {
+        "type": "file",
+        "paths_contain": "oauth_creds.json"
+      },
+      "note": "id_token: the Google account email lives inside this JWT, not as a top-level field. Ship it so the server can derive the canonical (email) account_id instead of falling back to \"default\". expiry_date (ms epoch): opaque ya29.* tokens carry no JWT exp, so this is the freshness signal that stops a stale local token from clobbering a server-refreshed one."
+    },
+    {
+      "provider": "chatgpt",
+      "match": {
+        "type": "cookie",
+        "name": "__Secure-next-auth.session-token.0"
+      },
+      "note": "NextAuth.js splits the session token into .0 / .1 chunks when it exceeds the 4 KB cookie size limit. Collect both so the server can reassemble them before the /api/auth/session exchange."
+    },
+    {
+      "provider": "chatgpt",
+      "match": {
+        "type": "cookie",
+        "name": "oai-sc"
+      },
+      "note": "OpenAI service-credential cookie, required by the /api/auth/session token-exchange endpoint alongside the session token."
+    },
+    {
+      "provider": "kimi_coding",
+      "match": {
+        "type": "file",
+        "paths_contain": "opencode/auth.json"
+      },
+      "note": "The opencode CLI also stores a Kimi Coding API key in auth.json under `kimi-code-plan-global.key`. Pick it up alongside the env-var rule so hosts with the opencode CLI don't need extra setup."
+    },
+    {
+      "provider": "kimi_coding",
+      "match": {
+        "type": "file",
+        "paths_contain": ".kimi-code/credentials"
+      },
+      "note": "Kimi Code CLI OAuth credential: the access token is read-only (never the refresh token) and the server checks expires_at freshness. kimi-cli writes a per-install env file (kimi-code-env-<hash>.json), so the rule globs the credentials dir; the freshest match wins."
+    },
+    {
+      "provider": "antigravity",
+      "match": {
+        "type": "file",
+        "paths_contain": "antigravity-oauth-token"
+      },
+      "note": "Ship the OAuth token so multi-host servers can call the Code Assist cloud API without accessing the local file. token.expiry is a raw ISO8601 string, converted to expiry_date (ms epoch) at collection time so the server's token_cache can compare freshness."
+    },
+    {
+      "provider": "ollama",
+      "match": {
+        "type": "file",
+        "paths_contain": "opencode/auth.json"
+      },
+      "note": "Primary: the opencode CLI stores the ollama-cloud API key in ~/.local/share/opencode/auth.json[\"ollama-cloud\"].key. The collector uses it as `Authorization: Bearer ...` against https://ollama.com/api/usage for monthly quota."
+    }
+  ]
 }

@@ -239,6 +239,10 @@ __REGISTRY__: dict[str, Any] = {
                         "value": "api_key",
                     },
                 },
+                # The opencode CLI stores a per-provider key in
+                # ~/.local/share/opencode/auth.json under the `openrouter.key` field.
+                # Pulling from there means a host with the opencode CLI installed lights
+                # up automatically, with no env-var setup.
                 {
                     "type": "file",
                     "paths": [
@@ -276,6 +280,11 @@ __REGISTRY__: dict[str, Any] = {
                         "value": "api_key",
                     },
                 },
+                # The opencode CLI stores the BYOK DeepSeek key in
+                # ~/.local/share/opencode/auth.json under `deepseek.key`. The origin is
+                # fingerprinted like the other siblings, and the card still needs an
+                # account hint (Untagged Credentials) before it attaches to a labeled
+                # account.
                 {
                     "type": "file",
                     "paths": [
@@ -299,6 +308,9 @@ __REGISTRY__: dict[str, Any] = {
                         "value": "api_key",
                     },
                 },
+                # The opencode CLI keeps its kimi-style plan keys under provider-
+                # specific names; the opencode "coding plan" variant is exposed as
+                # `minimax-coding-plan.key`.
                 {
                     "type": "file",
                     "paths": [
@@ -369,6 +381,12 @@ __REGISTRY__: dict[str, Any] = {
             "name": "Gemini API",
             "icon": "🔵",
             "rules": [
+                # id_token: the Google account email lives inside this JWT, not as a
+                # top-level field. Ship it so the server can derive the canonical
+                # (email) account_id instead of falling back to "default". expiry_date
+                # (ms epoch): opaque ya29.* tokens carry no JWT exp, so this is the
+                # freshness signal that stops a stale local token from clobbering a
+                # server-refreshed one.
                 {
                     "type": "file",
                     "paths": [
@@ -423,6 +441,9 @@ __REGISTRY__: dict[str, Any] = {
                         "value": "cookie___Secure-next-auth.session-token",
                     },
                 },
+                # NextAuth.js splits the session token into .0 / .1 chunks when it
+                # exceeds the 4 KB cookie size limit. Collect both so the server can
+                # reassemble them before the /api/auth/session exchange.
                 {
                     "type": "cookie",
                     "domains": [
@@ -443,6 +464,8 @@ __REGISTRY__: dict[str, Any] = {
                         "value": "cookie___Secure-next-auth.session-token.1",
                     },
                 },
+                # OpenAI service-credential cookie, required by the /api/auth/session
+                # token-exchange endpoint alongside the session token.
                 {
                     "type": "cookie",
                     "domains": [
@@ -466,6 +489,9 @@ __REGISTRY__: dict[str, Any] = {
                         "value": "api_key",
                     },
                 },
+                # The opencode CLI also stores a Kimi Coding API key in auth.json under
+                # `kimi-code-plan-global.key`. Pick it up alongside the env-var rule so
+                # hosts with the opencode CLI don't need extra setup.
                 {
                     "type": "file",
                     "paths": [
@@ -483,6 +509,10 @@ __REGISTRY__: dict[str, Any] = {
                         "value": "session_cookie",
                     },
                 },
+                # Kimi Code CLI OAuth credential: the access token is read-only (never
+                # the refresh token) and the server checks expires_at freshness. kimi-
+                # cli writes a per-install env file (kimi-code-env-<hash>.json), so the
+                # rule globs the credentials dir; the freshest match wins.
                 {
                     "type": "file",
                     "paths": [
@@ -607,6 +637,10 @@ __REGISTRY__: dict[str, Any] = {
             "name": "Antigravity",
             "icon": "🛸",
             "rules": [
+                # Ship the OAuth token so multi-host servers can call the Code Assist
+                # cloud API without accessing the local file. token.expiry is a raw
+                # ISO8601 string, converted to expiry_date (ms epoch) at collection time
+                # so the server's token_cache can compare freshness.
                 {
                     "type": "file",
                     "paths": [
@@ -625,6 +659,10 @@ __REGISTRY__: dict[str, Any] = {
             "name": "Ollama Cloud",
             "icon": "🦙",
             "rules": [
+                # Primary: the opencode CLI stores the ollama-cloud API key in
+                # ~/.local/share/opencode/auth.json["ollama-cloud"].key. The collector
+                # uses it as `Authorization: Bearer ...` against
+                # https://ollama.com/api/usage for monthly quota.
                 {
                     "type": "file",
                     "paths": [
