@@ -293,7 +293,8 @@ class CollectorManager:
                         # collecting after the user disabled the only account.
                         self.smart_collectors.pop(f"{p_id}:default", None)
                         continue
-                    db_cfg = provider_acc_configs.get(acc_id) or provider_acc_configs.get("default")
+                    own_cfg = provider_acc_configs.get(acc_id)
+                    db_cfg = own_cfg or provider_acc_configs.get("default")
 
                     if db_cfg is not None and not db_cfg.enabled:
                         # Remove existing dynamic collector and its stale cards
@@ -305,8 +306,11 @@ class CollectorManager:
                         else global_poll_interval or ttl
                     )
 
-                    # Prioritize DB override label, then acc_name from cache
-                    db_label = db_cfg.account_label if db_cfg else None
+                    # Prioritize the account's *own* DB label, then acc_name from cache.
+                    # The provider-wide ``default`` row may supply enabled/poll/strategy
+                    # fallbacks, but its label names a different account — borrowing it
+                    # stamps this account's cards with someone else's email.
+                    db_label = own_cfg.account_label if own_cfg else None
                     final_label = db_label or acc_name
 
                     key = f"{p_id}:{acc_id}"
@@ -990,13 +994,30 @@ class CollectorManager:
         from app.models.db import CredentialSource
 
         with Session(engine) as session:
-            rows = session.exec(
-                sqlselect(CredentialSource).where(
-                    CredentialSource.provider_id == provider_id,
-                    CredentialSource.account_id == account_id,
-                    col(CredentialSource.source_id).in_(updates),
+            rows = list(
+                session.exec(
+                    sqlselect(CredentialSource).where(
+                        CredentialSource.provider_id == provider_id,
+                        CredentialSource.account_id == account_id,
+                        col(CredentialSource.source_id).in_(updates),
+                    )
+                ).all()
+            )
+            # ``account_id`` is what the collector was keyed on *before* it ran. A
+            # successful identity-pending verification promotes its source to the
+            # resolved account mid-attempt (``_promote_source_identity``), so the row
+            # no longer lives under the pre-run id. A source_id names one credential,
+            # so fall back to wherever it is now rather than dropping the update.
+            missing = set(updates) - {row.source_id for row in rows}
+            if missing:
+                rows.extend(
+                    session.exec(
+                        sqlselect(CredentialSource).where(
+                            CredentialSource.provider_id == provider_id,
+                            col(CredentialSource.source_id).in_(missing),
+                        )
+                    ).all()
                 )
-            ).all()
             for row in rows:
                 health = updates[row.source_id]
                 row.health = health

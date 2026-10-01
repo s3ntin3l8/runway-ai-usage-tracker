@@ -392,10 +392,16 @@ class TokenCache:
             return newest_acc[1][0]
 
     async def get_with_metadata(
-        self, provider: str, account_id: str | None = None
+        self, provider: str, account_id: str | None = None, *, exact: bool = False
     ) -> tuple[dict[str, str], dict[str, Any]] | None:
         """
         Get tokens and metadata for a specific account.
+
+        ``exact=True`` disables the ``default`` fallback: it returns the named
+        account's entry or ``None``. Collectors want the fallback (config creds live
+        under ``default``); anything that *writes the result back under the requested
+        account id* — token refresh — must not, or it would copy ``default``'s
+        credential onto an account that doesn't exist.
         """
         account_id = canonical_account_id(account_id) if account_id else None
         async with self._lock:
@@ -422,7 +428,7 @@ class TokenCache:
                 if account_id not in provider_accounts:
                     # Same "default" fallback as get() — config creds live under
                     # "default" regardless of the collector's resolved identity.
-                    if "default" in provider_accounts:
+                    if not exact and "default" in provider_accounts:
                         tokens, metadata, _ = provider_accounts["default"]
                         return tokens, metadata
                     return None
@@ -487,6 +493,42 @@ class TokenCache:
         query = parse_qs(urlsplit(str(getattr(request, "url", ""))).query)
         request_values.extend(value for values in query.values() for value in values)
         return any(secret in value for secret in credential_values for value in request_values)
+
+    async def apply_refresh_to_sources(
+        self,
+        provider: str,
+        account_id: str,
+        previous: dict[str, str],
+        refreshed: dict[str, str],
+    ) -> int:
+        """Write a refreshed OAuth family back into every source bundle that held it.
+
+        Refreshers act on the merged account entry, but collectors read the
+        source-pinned bundles. Without this write-back a bundle keeps the pre-refresh
+        tokens, and for providers that rotate refresh tokens it is left holding a
+        revoked one. A bundle matches when it shares a secret (access or refresh
+        token) with the ``previous`` tokens that were actually refreshed, so a
+        different credential for the same account (another machine's login) is
+        never overwritten. Returns the number of bundles updated.
+
+        Race: a bundle that re-pushed a fresh access token between the caller reading
+        ``previous`` and this call no longer matches on the access token, so it is only
+        updated if the refresh token it holds is the one that was rotated. Not every key
+        in ``refreshed`` lands on every bundle — only on those that matched.
+        """
+        account_id = canonical_account_id(account_id)
+        identity_keys = ("refresh_token", "xai_refresh", "oauth_token", "xai_access")
+        updated = 0
+        async with self._lock:
+            sources = self._source_cache.get(provider, {}).get(account_id, {})
+            for source_id, (tokens, metadata, _timestamp) in list(sources.items()):
+                if not any(
+                    previous.get(key) and tokens.get(key) == previous[key] for key in identity_keys
+                ):
+                    continue
+                sources[source_id] = ({**tokens, **refreshed}, metadata, time.time())
+                updated += 1
+        return updated
 
     async def get_source_candidates(self, provider: str, account_id: str) -> list[dict[str, Any]]:
         """Return live source bundles in configured priority order."""

@@ -424,6 +424,53 @@ def test_manifest_persists_safe_health_metadata_without_token_values(
     assert "oauth_creds" not in response.text
 
 
+def test_manifest_observation_reuses_locally_identified_source_row(
+    client: TestClient, session: Session
+):
+    """A credential whose identity the sidecar resolved locally (no operator tag) is
+    already registered under the real account by ingest. The manifest must update that
+    row, not file a second one under ``default`` (a phantom "Pending identity")."""
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    origin = "path:/home/user/.codex/auth.json"
+    source_id = sidecar_source_id("health-host", origin)
+    touch_source(
+        session,
+        provider_id="chatgpt",
+        account_id="alice@example.com",
+        source_id=source_id,
+        source_type="file",
+        source_label="auth.json",
+        credential_origin=origin,
+        sidecar_id="health-host",
+    )
+    session.commit()
+
+    response = _post_manifest(
+        client,
+        {
+            "sidecar_id": "health-host",
+            "entries": [],
+            "observations": [
+                {
+                    "provider_id": "chatgpt",
+                    "credential_origin": origin,
+                    "token_types": ["oauth_token", "refresh_token"],
+                    "expires_at": 1_900_000_000,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    rows = session.exec(
+        select(CredentialSource).where(CredentialSource.provider_id == "chatgpt")
+    ).all()
+    assert [r.account_id for r in rows] == ["alice@example.com"]
+    assert rows[0].token_types_json == '["oauth_token", "refresh_token"]'
+    assert rows[0].credential_expires_at is not None
+
+
 def test_manifest_limits_health_observation_count():
     observations = [
         {"provider_id": "antigravity", "credential_origin": f"path:/{index}.json"}

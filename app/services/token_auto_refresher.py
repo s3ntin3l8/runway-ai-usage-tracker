@@ -110,6 +110,7 @@ class TokenAutoRefresher:
                     account_label=meta.get("account_label"),
                     source=meta.get("source"),
                 )
+                await token_cache.apply_refresh_to_sources(provider, account_id, tokens, new_tokens)
                 persist_to_local_file(provider, new_tokens, meta.get("source"))
                 refreshed += 1
                 logger.info(

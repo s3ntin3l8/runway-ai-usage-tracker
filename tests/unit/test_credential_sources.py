@@ -10,6 +10,7 @@ from app.services.credential_sources import (
     account_sources,
     describe_origin,
     record_source_health,
+    resolve_source_account,
     sidecar_source_id,
     touch_source,
 )
@@ -149,3 +150,72 @@ def test_record_source_health_updates_only_matching_source():
         assert row.health == "degraded"
         assert row.health_detail == "Some requests were rejected; quota was collected"
         record_source_health(session, "openrouter", "alice@example.com", "unknown", "healthy")
+
+
+def _mem_session() -> Session:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    return Session(engine)
+
+
+def test_touch_source_without_metadata_preserves_expiry_and_token_types():
+    """Ingest knows the secrets but not the health metadata the manifest reported;
+    its refresh must not wipe the expiry/token types the manifest recorded."""
+    expires = datetime(2030, 1, 1, tzinfo=UTC)
+    common = {
+        "provider_id": "gemini",
+        "account_id": "alice@example.com",
+        "source_id": "sidecar:host-a:oauth",
+        "source_type": "file",
+        "source_label": "oauth_creds.json",
+        "sidecar_id": "host-a",
+    }
+    with _mem_session() as session:
+        touch_source(session, **common, credential_expires_at=expires, token_types=["oauth_token"])
+        row = touch_source(session, **common)  # ingest-style: no metadata
+        assert row.token_types_json == '["oauth_token"]'
+        assert row.credential_expires_at is not None
+        assert row.credential_expires_at.replace(tzinfo=UTC) == expires
+
+
+def test_touch_source_explicit_none_clears_expiry():
+    """``None`` is a real value ("this credential has no expiry"), unlike omission."""
+    common = {
+        "provider_id": "gemini",
+        "account_id": "alice@example.com",
+        "source_id": "sidecar:host-a:oauth",
+        "source_type": "file",
+        "source_label": "oauth_creds.json",
+        "sidecar_id": "host-a",
+    }
+    with _mem_session() as session:
+        touch_source(
+            session,
+            **common,
+            credential_expires_at=datetime(2030, 1, 1, tzinfo=UTC),
+            token_types=["oauth_token"],
+        )
+        row = touch_source(session, **common, credential_expires_at=None, token_types=[])
+        assert row.credential_expires_at is None
+        assert row.token_types_json == "[]"
+
+
+def test_resolve_source_account_prefers_real_identity_over_default():
+    common = {
+        "provider_id": "chatgpt",
+        "source_id": "sidecar:host-a:auth",
+        "source_type": "file",
+        "source_label": "auth.json",
+        "sidecar_id": "host-a",
+    }
+    with _mem_session() as session:
+        assert resolve_source_account(session, "chatgpt", "sidecar:host-a:auth") is None
+        touch_source(session, **common, account_id="default")
+        assert resolve_source_account(session, "chatgpt", "sidecar:host-a:auth") == "default"
+        touch_source(session, **common, account_id="alice@example.com")
+        assert (
+            resolve_source_account(session, "chatgpt", "sidecar:host-a:auth") == "alice@example.com"
+        )
+        assert resolve_source_account(session, "gemini", "sidecar:host-a:auth") is None

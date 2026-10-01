@@ -631,7 +631,9 @@ async def refresh_token(
     _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
     """Attempt proactive OAuth token refresh for supported providers."""
-    cached = await token_cache.get_with_metadata(provider, account_id)
+    # ``exact``: the refreshed tokens are stored back under ``account_id``, so an unknown
+    # account must 404 rather than silently refresh (and copy) ``default``'s credential.
+    cached = await token_cache.get_with_metadata(provider, account_id, exact=True)
     if not cached:
         raise HTTPException(status_code=404, detail="No cached token for this account")
     tokens, meta = cached
@@ -649,6 +651,7 @@ async def refresh_token(
             account_label=meta.get("account_label"),
             source=meta.get("source"),
         )
+        await token_cache.apply_refresh_to_sources(provider, account_id, tokens, new_tokens)
         persist_to_local_file(provider, new_tokens, meta.get("source"))
         return {"status": "refreshed"}
     except ValueError as e:

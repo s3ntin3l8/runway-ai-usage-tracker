@@ -58,6 +58,53 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Credential fields a sidecar token card may carry into the server's token cache.
+# Anything else in ``metadata`` is dropped, so every key the sidecar's embedded
+# registry can map a secret to must be listed here — a missing key silently
+# disables the collector that reads it (e.g. kimi's ``session_cookie`` or
+# opencode's ``console_session``). ``tests/unit/test_ingest_credential_keys.py``
+# keeps this in lockstep with ``scripts/sidecar.py``.
+_INGEST_CREDENTIAL_KEYS = frozenset(
+    {
+        "oauth_token",
+        "refresh_token",
+        "api_key",
+        "id_token",
+        "expiry_date",
+        "client_id",
+        "xai_access",
+        "xai_refresh",
+        "cli_access_token",
+        "cli_expires_at",
+        "session_cookie",
+        "console_session",
+    }
+)
+# Cookie-family keys that carry browser-session secrets (``cookie_<name>`` for
+# named cookies, plus the two bundled-cookie fields above).
+_COOKIE_BUNDLE_KEYS = frozenset({"session_cookie", "console_session"})
+
+
+def _can_reconcile_row(provider_id: str, row_account_id: str, target_account_id: str) -> bool:
+    """May ingest move/delete a source row filed under ``row_account_id`` now that the
+    source resolves to ``target_account_id``?
+
+    A source belongs to exactly one account, so a row elsewhere is stale — but how much
+    ingest may touch differs by provider. Anthropic reconciles every other account (its
+    sources used to be filed under token-derived placeholder identities). Everyone else
+    only retires the ``default`` placeholder the manifest may have created before the
+    real identity was known; a row an operator moved to another account is not ours to
+    touch here.
+    """
+    if row_account_id == target_account_id:
+        return False
+    return provider_id == "anthropic" or row_account_id == "default"
+
+
+def _is_cookie_key(key: str) -> bool:
+    return key.startswith("cookie_") or key in _COOKIE_BUNDLE_KEYS
+
+
 # HMAC-only sidecar routes: POST /ingest, POST /credentials/manifest, and
 # GET /config. Keep docs/forward-auth.md's exact bypass route list in sync;
 # other fleet routes remain protected by Authentik.
@@ -208,21 +255,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                             "account_id",
                             "account_label",
                             "credential_origin",
-                        ) and (
-                            key
-                            in (
-                                "oauth_token",
-                                "refresh_token",
-                                "api_key",
-                                "id_token",
-                                "expiry_date",
-                                "xai_access",
-                                "xai_refresh",
-                                "cli_access_token",
-                                "cli_expires_at",
-                            )
-                            or key.startswith("cookie_")
-                        ):
+                        ) and (key in _INGEST_CREDENTIAL_KEYS or _is_cookie_key(key)):
                             provider_tokens[key] = val
 
                 # Older sidecars combined browser cookies and CLI OAuth in
@@ -230,14 +263,14 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 # That identity does not prove the cookie owner. Keep the
                 # independently identified CLI family and discard the cookie
                 # fields from this legacy mixed payload.
-                if any(key.startswith("cookie_") for key in provider_tokens) and any(
+                if any(_is_cookie_key(key) for key in provider_tokens) and any(
                     key in provider_tokens
                     for key in ("oauth_token", "refresh_token", "id_token", "api_key")
                 ):
                     provider_tokens = {
                         key: value
                         for key, value in provider_tokens.items()
-                        if not key.startswith("cookie_")
+                        if not _is_cookie_key(key)
                     }
 
                 if provider_tokens:
@@ -311,17 +344,15 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
         source_type, source_label = describe_origin(origin)
         source_id = sidecar_source_id(sidecar_id, origin)
-        prior_sources = (
-            list(
-                session.exec(
-                    select(CredentialSource).where(
-                        CredentialSource.provider_id == p_id,
-                        CredentialSource.source_id == source_id,
-                    )
-                ).all()
-            )
-            if p_id == "anthropic"
-            else []
+        # Every account this source is currently filed under (needed to know whether
+        # the resolved account already has its row).
+        prior_sources = list(
+            session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == p_id,
+                    CredentialSource.source_id == source_id,
+                )
+            ).all()
         )
         # Claude OAuth sources from older sidecars may still be keyed by the
         # token-derived placeholder identity; use a stable host+origin key while
@@ -350,22 +381,26 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         )
         if not isinstance(actual_acc_id, str):
             actual_acc_id = a_id or "default"
-        old_accounts = {row.account_id for row in prior_sources if row.account_id != actual_acc_id}
+        # Anthropic reconciles every other account this source was filed under
+        # (token-derived placeholder identities). Other providers only retire the
+        # ``default`` placeholder the manifest may have created before ingest
+        # resolved the real identity — a source belongs to exactly one account, but
+        # an operator-moved row elsewhere is not ours to touch here.
+        replaceable = [
+            row for row in prior_sources if _can_reconcile_row(p_id, row.account_id, actual_acc_id)
+        ]
+        old_accounts = {row.account_id for row in replaceable}
         target_exists = any(row.account_id == actual_acc_id for row in prior_sources)
         transferable = (
-            max(
-                (row for row in prior_sources if row.account_id != actual_acc_id),
-                key=lambda row: row.last_seen,
-                default=None,
-            )
+            max(replaceable, key=lambda row: row.last_seen, default=None)
             if not target_exists
             else None
         )
-        for row in prior_sources:
+        for row in replaceable:
             if row is transferable:
                 row.account_id = actual_acc_id
                 session.add(row)
-            elif row.account_id != actual_acc_id:
+            else:
                 session.delete(row)
         session.flush()
         touch_source(
@@ -765,7 +800,12 @@ async def post_credential_manifest(
     # curl) might not (PR #290 round-2 review, Hermes suggestion #7).
     payload.sidecar_id = normalize_sidecar_id(payload.sidecar_id)
 
-    from app.services.credential_sources import describe_origin, sidecar_source_id, touch_source
+    from app.services.credential_sources import (
+        describe_origin,
+        resolve_source_account,
+        sidecar_source_id,
+        touch_source,
+    )
 
     # Each manifest is authoritative: the latest observed token names and
     # expiry replace the prior health metadata for that source.
@@ -788,11 +828,23 @@ async def post_credential_manifest(
             credential_origin=observation_origin,
             sidecar_id=payload.sidecar_id,
         )
+        observed_source_id = sidecar_source_id(payload.sidecar_id, observation_origin)
+        # No operator tag does not mean "unidentified": the sidecar may have resolved
+        # the identity locally (id_token email, gh login), in which case ingest already
+        # registered this source under the real account. Reuse that row rather than
+        # filing a second one under the ``default`` placeholder, which would show as a
+        # phantom "Pending identity" credential next to the real one.
+        observed_account = (
+            tag.account_id
+            if tag
+            else resolve_source_account(session, observation_provider, observed_source_id)
+            or "default"
+        )
         touch_source(
             session,
             provider_id=observation_provider,
-            account_id=tag.account_id if tag else "default",
-            source_id=sidecar_source_id(payload.sidecar_id, observation_origin),
+            account_id=observed_account,
+            source_id=observed_source_id,
             source_type=source_type,
             source_label=source_label,
             credential_origin=observation_origin,

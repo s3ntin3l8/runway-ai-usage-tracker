@@ -80,6 +80,30 @@ async def test_refresh_due_refreshes_token_inside_threshold(cache, refresher):
 
 
 @pytest.mark.asyncio
+async def test_refresh_due_writes_rotated_tokens_back_to_source_bundle(cache, refresher):
+    """Collectors read the source-pinned bundle; refreshing only the merged cache left it
+    holding a revoked refresh token for providers that rotate them."""
+    exp = time.time() + 300
+    id_token = _jwt({"exp": exp, "email": "u@example.com"})
+    await cache.store(
+        "gemini",
+        {"oauth_token": "v1", "refresh_token": "rt1", "id_token": id_token},
+        account_id="u@example.com",
+        source_id="sidecar:host-a:oauth",
+    )
+    new_id_token = _jwt({"exp": time.time() + 3600, "email": "u@example.com"})
+    mock_refresh = AsyncMock(
+        return_value={"oauth_token": "v2", "refresh_token": "rt2", "id_token": new_id_token}
+    )
+    with patch("app.services.token_auto_refresher.refresh_oauth_token", new=mock_refresh):
+        assert await refresher.refresh_due() == 1
+
+    (bundle,) = await cache.get_source_candidates("gemini", "u@example.com")
+    assert bundle["tokens"]["oauth_token"] == "v2"
+    assert bundle["tokens"]["refresh_token"] == "rt2"
+
+
+@pytest.mark.asyncio
 async def test_refresh_due_skips_when_no_refresh_token(cache, refresher):
     """Tokens without a refresh_token can't be refreshed — skip silently."""
     exp = time.time() + 60

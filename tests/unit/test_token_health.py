@@ -3,6 +3,7 @@
 import base64
 import json
 import time
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -220,6 +221,54 @@ class TestTokenHealthService:
         assert result[0]["identity_pending"] is True
         assert result[0]["status"] == "expired"
         assert result[0]["token_types"] == ["oauth_token", "refresh_token"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "expires_delta",
+        [None, timedelta(days=-1), timedelta(days=30)],
+        ids=["no-expiry", "past-expiry", "future-expiry"],
+    )
+    async def test_unreported_sidecar_source_is_stale_not_valid_or_expired(self, expires_delta):
+        """A source nobody re-reported (machine gone) must not read ``valid`` forever,
+        nor ``expired`` forever (which would re-fire alerts for a removed machine)."""
+        from app.models.db import CredentialSource, SidecarRegistry
+        from app.services.token_health import SOURCE_STALE_SECS
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="gemini",
+            account_id="alice@example.com",
+            source_id="sidecar:gone:oauth",
+            source_type="file",
+            source_label="oauth_creds.json",
+            credential_origin="path:/home/user/.gemini/oauth_creds.json",
+            sidecar_id="gone",
+            credential_expires_at=(datetime.now(UTC) + expires_delta if expires_delta else None),
+            token_types_json='["oauth_token", "refresh_token"]',
+            last_seen=datetime.now(UTC) - timedelta(seconds=SOURCE_STALE_SECS + 60),
+        )
+        sidecar = SidecarRegistry(sidecar_id="gone", hostname="gone")
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [[sidecar], [source], []]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch("app.services.token_health._collect_server_credentials", return_value={}),
+        ):
+            result = await service.get_health()
+
+        assert [r["status"] for r in result] == ["stale"]
+        assert result[0]["redundant"] is False
 
     @pytest.mark.asyncio
     async def test_pending_claude_source_is_not_duplicated_by_durable_row(self):

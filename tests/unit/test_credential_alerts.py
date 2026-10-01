@@ -194,6 +194,28 @@ async def test_healthy_sibling_suppresses_alert(session):
 
 
 @pytest.mark.asyncio
+async def test_stale_sibling_does_not_suppress_a_real_alert(session):
+    """A ``stale`` row (a machine that stopped reporting) is no evidence the account
+    still works, so it must not hold off the alert for a genuinely expired credential
+    — which a stored-as-``valid`` row for a removed machine used to do forever."""
+    _config(session)
+    rows = [
+        _row(account_id="alice@example.com", status="expired"),
+        _row(account_id="alice@example.com", status="stale", source_name="gone-host"),
+    ]
+    client = await _run(session, rows)
+    assert client.post.called
+
+
+@pytest.mark.asyncio
+async def test_stale_row_alone_never_alerts(session):
+    """...and a stale row is not itself alert-worthy (no repeat pages for a removed machine)."""
+    _config(session)
+    client = await _run(session, [_row(status="stale", source_name="gone-host")])
+    assert not client.post.called
+
+
+@pytest.mark.asyncio
 async def test_no_refire_on_next_run_including_escalation(session):
     _config(session)
     client1 = await _run(session, [_row(status="expired")])
