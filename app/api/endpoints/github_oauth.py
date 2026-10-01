@@ -177,7 +177,8 @@ def load_token() -> dict[str, Any]:
     """Read the stored GitHub token file with ``access_token`` decrypted.
 
     Accepts the legacy plaintext form too, so an upgrade needs no migration step.
-    Raises ``DecryptionError`` when the value is ciphertext this key can't open.
+    Raises ``DecryptionError`` when the value is ciphertext this key can't open, and
+    ``ValueError`` when it is ciphertext but no key is configured at all.
     """
     with open(settings.GITHUB_OAUTH_PATH) as f:
         creds: dict[str, Any] = json.load(f)

@@ -1340,6 +1340,8 @@ def _sanitize_queue_line(line: str) -> str:
         entry["payload"] = strip_credentials(entry.get("payload") or {})
         return json.dumps(entry, separators=(",", ":"))
     except Exception:
+        # Can't edit what can't be parsed; keep it, but make the retry visible.
+        logging.warning("Queue line is not valid JSON; kept as is (it may hold credentials)")
         return line
 
 
