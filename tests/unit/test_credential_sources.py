@@ -320,3 +320,34 @@ def test_prune_server_sources_removes_only_vanished_server_rows():
         ("openrouter", "server:openrouter:env:GONE"),
         ("github", "sidecar:x"),
     }
+
+
+def test_default_keyed_registration_adopts_the_resolved_row_and_keeps_its_provenance():
+    """An unresolved collection (identity not obtained this cycle) must not displace the
+    row a resolved one registered — that lost last_success_at and flipped the row between
+    accounts while identity resolution flapped."""
+    with _mem_session() as session:
+        resolved = register_server_source(
+            session, provider_id="github", account_id="s3ntin3l8", source_type="env", label="T"
+        )
+        record_source_result(resolved, "healthy")
+        session.commit()
+        success = resolved.last_success_at
+        assert success is not None
+
+        again = register_server_source(
+            session, provider_id="github", account_id="default", source_type="env", label="T"
+        )
+        session.commit()
+
+        rows = session.exec(select(CredentialSource)).all()
+        assert [(r.account_id, r.id) for r in rows] == [("s3ntin3l8", resolved.id)]
+        assert again.id == resolved.id and again.last_success_at == success
+
+
+def test_default_keyed_registration_stays_default_when_nothing_is_resolved_yet():
+    with _mem_session() as session:
+        row = register_server_source(
+            session, provider_id="github", account_id="default", source_type="env", label="T"
+        )
+        assert row.account_id == "default"

@@ -721,6 +721,8 @@ async def refresh_credential_source(
         new_tokens = await refresh_oauth_token(provider, tokens)
         await token_cache.apply_refresh_to_sources(provider, account_id, tokens, new_tokens)
         if not bundle.get("identity_pending"):
+            # ``store`` without a ``source_id`` updates only the merged account entry; the
+            # source bundle itself was already written by ``apply_refresh_to_sources`` above.
             await token_cache.store(
                 provider,
                 new_tokens,

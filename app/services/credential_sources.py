@@ -181,10 +181,18 @@ def register_server_source(
     ``credential_origin`` stays ``None`` on purpose: origins are what operator tags and
     sidecar moves match on, and a server env var is not a sidecar origin. If the same
     source was previously filed under the ``default`` placeholder (identity unresolved
-    then), it follows the resolved account instead of duplicating.
+    then), it follows the resolved account instead of duplicating. The reverse never
+    happens: a ``default``-keyed registration adopts an existing resolved row.
     """
     source_id = server_source_id(provider_id, source_type, label)
     aid = canonical_account_id(account_id)
+    if aid == "default":
+        # An unresolved collection (identity not obtained this cycle) must not displace the
+        # row a resolved one registered: reuse it, so its health and last_success_at survive
+        # and the row doesn't flip between accounts while identity resolution flaps.
+        known = resolve_source_account(session, provider_id, source_id)
+        if known is not None and known != "default":
+            aid = known
     if aid != "default":
         stale = session.exec(
             select(CredentialSource).where(

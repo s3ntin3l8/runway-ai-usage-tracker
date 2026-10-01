@@ -416,3 +416,44 @@ async def test_garbage_token_types_never_break_the_inventory(engine, cache, raw)
         _source(s, token_types_json=raw)
     _, by_id = _sources(await build_inventory())
     assert by_id["sidecar:a"].token_types == []
+
+
+@pytest.mark.asyncio
+async def test_data_path_uses_each_accounts_freshest_card(engine, cache):
+    """latest_usage has one row per window/variant/model; the data path must come from the
+    freshest, chosen in the database (no naive-vs-aware datetime comparison in Python)."""
+    now = datetime.now(UTC)
+    with Session(engine) as s:
+        _source(s)
+        _source(s, account_id="bob@example.com", source_id="sidecar:b", sidecar_id="host-b")
+        for account, window, minutes_ago, data_source in [
+            (ALICE, "session", 90, "local"),  # older, different path
+            (ALICE, "weekly", 5, "api"),  # freshest for alice
+            (ALICE, "monthly", 30, "web"),
+            ("bob@example.com", "session", 10, "web"),
+        ]:
+            s.add(
+                LatestUsage(
+                    provider_id="gemini",
+                    account_id=account,
+                    window_type=window,
+                    card_json=f'{{"data_source": "{data_source}", "input_source": "sidecar"}}',
+                    updated_at=now - timedelta(minutes=minutes_ago),
+                )
+            )
+        s.commit()
+    inv = await build_inventory()
+
+    assert _sources(inv)[0].data_source == "api"
+    assert _sources(inv, account="bob@example.com")[0].data_source == "web"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("card", ["not json", "[1, 2]", "null", ""])
+async def test_data_path_tolerates_garbage_card_json(engine, cache, card):
+    with Session(engine) as s:
+        _source(s)
+        s.add(LatestUsage(provider_id="gemini", account_id=ALICE, card_json=card))
+        s.commit()
+    acct, _ = _sources(await build_inventory())
+    assert (acct.data_source, acct.input_source) == (None, None)

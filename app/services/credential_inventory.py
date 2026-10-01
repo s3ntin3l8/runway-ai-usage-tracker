@@ -16,7 +16,8 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlalchemy import and_, func
+from sqlmodel import Session, col, select
 
 from app.core.db import engine
 from app.core.registry import registry
@@ -130,20 +131,42 @@ def _mapping(
 
 
 def _data_path(session: Session) -> dict[tuple[str, str], tuple[str | None, str | None]]:
-    """``(provider, account) → (data_source, input_source)`` from the freshest quota card."""
-    freshest: dict[tuple[str, str], Any] = {}
-    for usage in session.exec(select(LatestUsage)).all():
-        key = (usage.provider_id, usage.account_id)
-        current = freshest.get(key)
-        if current is None or (usage.updated_at or datetime.min.replace(tzinfo=UTC)) > (
-            current.updated_at or datetime.min.replace(tzinfo=UTC)
-        ):
-            freshest[key] = usage
+    """``(provider, account) → (data_source, input_source)`` from the freshest quota card.
+
+    ``latest_usage`` has one row per (provider, account, window, variant, model), so the
+    freshest row per account is picked in the database — comparing timestamps in Python
+    would also mix naive (SQLite-hydrated) and aware datetimes — and only those rows'
+    card JSON is parsed.
+    """
+    newest = (
+        select(
+            LatestUsage.provider_id,
+            LatestUsage.account_id,
+            func.max(LatestUsage.updated_at).label("newest"),
+        )
+        .group_by(col(LatestUsage.provider_id), col(LatestUsage.account_id))
+        .subquery()
+    )
+    rows = session.exec(
+        select(LatestUsage).join(
+            newest,
+            and_(
+                col(LatestUsage.provider_id) == newest.c.provider_id,
+                col(LatestUsage.account_id) == newest.c.account_id,
+                col(LatestUsage.updated_at) == newest.c.newest,
+            ),
+        )
+    ).all()
     out: dict[tuple[str, str], tuple[str | None, str | None]] = {}
-    for key, usage in freshest.items():
+    for usage in rows:
+        key = (usage.provider_id, usage.account_id)
+        if key in out:  # a tie on updated_at: the first row wins
+            continue
         try:
             card = json.loads(usage.card_json or "{}")
         except (TypeError, ValueError):
+            card = {}
+        if not isinstance(card, dict):
             card = {}
         out[key] = (card.get("data_source"), card.get("input_source"))
     return out
