@@ -328,20 +328,16 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
         source_type, source_label = describe_origin(origin)
         source_id = sidecar_source_id(sidecar_id, origin)
-        # Anthropic reconciles every account this source was previously filed under
-        # (token-derived placeholder identities). Other providers only retire the
-        # ``default`` placeholder the manifest may have created before ingest
-        # resolved the real identity — a source belongs to exactly one account.
-        prior_sources = [
-            row
-            for row in session.exec(
+        # Every account this source is currently filed under (needed to know whether
+        # the resolved account already has its row).
+        prior_sources = list(
+            session.exec(
                 select(CredentialSource).where(
                     CredentialSource.provider_id == p_id,
                     CredentialSource.source_id == source_id,
                 )
             ).all()
-            if p_id == "anthropic" or row.account_id == "default"
-        ]
+        )
         # Claude OAuth sources from older sidecars may still be keyed by the
         # token-derived placeholder identity; use a stable host+origin key while
         # identity is pending so token rotations do not create orphan entries.
@@ -369,22 +365,29 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         )
         if not isinstance(actual_acc_id, str):
             actual_acc_id = a_id or "default"
-        old_accounts = {row.account_id for row in prior_sources if row.account_id != actual_acc_id}
+        # Anthropic reconciles every other account this source was filed under
+        # (token-derived placeholder identities). Other providers only retire the
+        # ``default`` placeholder the manifest may have created before ingest
+        # resolved the real identity — a source belongs to exactly one account, but
+        # an operator-moved row elsewhere is not ours to touch here.
+        replaceable = [
+            row
+            for row in prior_sources
+            if row.account_id != actual_acc_id
+            and (p_id == "anthropic" or row.account_id == "default")
+        ]
+        old_accounts = {row.account_id for row in replaceable}
         target_exists = any(row.account_id == actual_acc_id for row in prior_sources)
         transferable = (
-            max(
-                (row for row in prior_sources if row.account_id != actual_acc_id),
-                key=lambda row: row.last_seen,
-                default=None,
-            )
+            max(replaceable, key=lambda row: row.last_seen, default=None)
             if not target_exists
             else None
         )
-        for row in prior_sources:
+        for row in replaceable:
             if row is transferable:
                 row.account_id = actual_acc_id
                 session.add(row)
-            elif row.account_id != actual_acc_id:
+            else:
                 session.delete(row)
         session.flush()
         touch_source(

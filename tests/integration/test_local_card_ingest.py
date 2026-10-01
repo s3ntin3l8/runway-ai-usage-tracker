@@ -267,6 +267,60 @@ def test_ingest_retires_default_placeholder_source_once_identity_resolves(sessio
     assert rows[0].credential_expires_at is not None
 
 
+def test_ingest_drops_default_placeholder_when_real_account_row_already_exists(session):
+    """If the real account's row is already registered, the leftover ``default``
+    placeholder for the same source is deleted outright (not moved onto it)."""
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    origin = "path:/home/user/.codex/auth.json"
+    source_id = sidecar_source_id("host-a", origin)
+    for account in ("default", "alice@example.com"):
+        touch_source(
+            session,
+            provider_id="chatgpt",
+            account_id=account,
+            source_id=source_id,
+            source_type="file",
+            source_label="auth.json",
+            credential_origin=origin,
+            sidecar_id="host-a",
+        )
+    session.commit()
+
+    payload = {
+        "provider": "sidecar-host",
+        "sidecar_id": "host-a",
+        "metrics": [
+            {
+                "provider_id": "chatgpt",
+                "service_name": "ChatGPT",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "oauth_token": "tok",  # pragma: allowlist secret
+                    "credential_origin": origin,
+                },
+            }
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock(return_value="alice@example.com")
+        mock_tc.remove_source = AsyncMock(return_value=False)
+        _ingest(TestClient(app), payload)
+
+    rows = session.exec(
+        select(CredentialSource).where(CredentialSource.provider_id == "chatgpt")
+    ).all()
+    assert [r.account_id for r in rows] == ["alice@example.com"]
+
+
 def test_ingest_applies_existing_verified_tag_to_stale_pending_heartbeat(session):
     session.add(
         CredentialTag(
