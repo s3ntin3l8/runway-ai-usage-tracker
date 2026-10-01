@@ -9,8 +9,8 @@ import { SettingsPage } from './SettingsPage';
 vi.mock('./sections/ProvidersSection', () => ({
   ProvidersSection: () => <div>Providers content</div>,
 }));
-vi.mock('./sections/TokensSection', () => ({
-  TokensSection: () => <div>Tokens content</div>,
+vi.mock('./sections/credentials/CredentialsSection', () => ({
+  CredentialsSection: () => <div>Credentials content</div>,
 }));
 vi.mock('./sections/WebhooksSection', () => ({
   WebhooksSection: () => <div>Webhooks content</div>,
@@ -66,8 +66,13 @@ describe('SettingsPage', () => {
   it('navigates to a section when a nav link is clicked', async () => {
     // On mobile the nav is the index list; clicking a link routes to the section.
     renderAt('/settings');
-    await userEvent.click(screen.getByRole('link', { name: /token health/i }));
-    expect(await screen.findByText('Tokens content')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('link', { name: /credentials/i }));
+    expect(await screen.findByText('Credentials content')).toBeInTheDocument();
+  });
+
+  it('keeps old Token health deep links working by redirecting to Credentials', () => {
+    renderAt('/settings/tokens');
+    expect(screen.getByText('Credentials content')).toBeInTheDocument();
   });
 
   it('redirects unknown sub-paths back to the settings index', () => {

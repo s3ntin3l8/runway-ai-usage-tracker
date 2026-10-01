@@ -3,10 +3,10 @@
 // silent-listener "Untagged credentials" banner + per-card badge (PR #288).
 
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle,
-  ChevronDown,
   Pause,
   Plus,
   Pencil,
@@ -29,7 +29,6 @@ import {
 import type { Sidecar, UntaggedCredential } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
-import { maskAccountId } from '@/lib/accountDisplay';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -39,8 +38,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
 import { AddSidecarCard } from './AddSidecarCard';
-import { CredentialMappingsCard } from './CredentialMappingsCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
+import { buildSidecarNameMap } from './queries';
 import { PendingUsageEventsCard } from './PendingUsageEventsCard';
 
 // Liveness is computed server-side (fleet_registry.to_dict's `stale` field,
@@ -81,10 +80,8 @@ export function FleetPage() {
   const [tagDialogEntry, setTagDialogEntry] = useState<UntaggedCredential | null | undefined>(
     undefined,
   );
-  const [tagDialogProvider, setTagDialogProvider] = useState<{
-    sidecarId: string;
-    providerId: string;
-  } | null>(null);
+  // Set when the resolver should list every untagged credential of one sidecar.
+  const [tagDialogSidecar, setTagDialogSidecar] = useState<string | null>(null);
 
   const updatable = (sidecars.data?.sidecars ?? []).filter((s) => s.update_available);
 
@@ -186,24 +183,23 @@ export function FleetPage() {
               description="Install the Runway sidecar on a machine you work from; it will register here on its first check-in."
             />
             <AddSidecarCard className="mx-auto max-w-2xl" />
-            {/* "All machines" mappings outlive the last sidecar and apply to
-                the next one — keep them visible and removable here too. */}
-            <CredentialMappingsCard className="mx-auto mt-4 max-w-2xl" />
+            {/* "All machines" rules outlive the last sidecar and apply to the next
+                one; they live under Settings → Credentials → Rules. */}
           </>
         ) : (
           <>
             {showAdd ? <AddSidecarCard className="mb-4" /> : null}
             <UntaggedBanner
               counts={untagged.data?.counts_by_sidecar ?? {}}
-              items={untagged.data?.items ?? []}
+              names={buildSidecarNameMap(sidecars.data?.sidecars ?? [])}
               loading={untagged.isPending}
               onResolveAll={() => {
-                setTagDialogProvider(null);
+                setTagDialogSidecar(null);
                 setTagDialogEntry(null);
               }}
-              onResolveOne={(entry) => {
-                setTagDialogProvider(null);
-                setTagDialogEntry(entry);
+              onResolveSidecar={(sidecarId) => {
+                setTagDialogEntry(undefined);
+                setTagDialogSidecar(sidecarId);
               }}
             />
             <div className="grid gap-3 lg:grid-cols-2">
@@ -212,26 +208,16 @@ export function FleetPage() {
                   key={s.sidecar_id}
                   sidecar={s}
                   untaggedCount={untagged.data?.counts_by_sidecar[s.sidecar_id] ?? 0}
-                  untaggedEntries={
-                    (untagged.data?.items ?? []).filter((e) => e.sidecar_id === s.sidecar_id)
-                  }
-                  untaggedLoading={untagged.isPending}
-                  untaggedError={untagged.isError}
                   onEdit={() => setEditing(s)}
                   onDelete={() => setDeleting(s)}
                   onUpdate={() => setUpdating(s)}
-                  onResolveUntagged={(entry) => {
-                    setTagDialogProvider(null);
-                    setTagDialogEntry(entry);
-                  }}
-                  onMapIdentity={(providerId) => {
+                  onResolveUntagged={() => {
                     setTagDialogEntry(undefined);
-                    setTagDialogProvider({ sidecarId: s.sidecar_id, providerId });
+                    setTagDialogSidecar(s.sidecar_id);
                   }}
                 />
               ))}
             </div>
-            <CredentialMappingsCard className="mt-4" />
           </>
         )}
       </div>
@@ -239,12 +225,11 @@ export function FleetPage() {
       <DeleteSidecarDialog sidecar={deleting} onClose={() => setDeleting(null)} />
       <UpdateSidecarDialog sidecar={updating} onClose={() => setUpdating(null)} />
       <UntaggedCredentialsDialog
-        open={tagDialogEntry !== undefined || tagDialogProvider !== null}
+        open={tagDialogEntry !== undefined || tagDialogSidecar !== null}
         singleEntry={tagDialogEntry ?? undefined}
-        sidecarId={tagDialogProvider?.sidecarId}
-        providerId={tagDialogProvider?.providerId}
+        sidecarId={tagDialogSidecar ?? undefined}
         onClose={() => {
-          setTagDialogProvider(null);
+          setTagDialogSidecar(null);
           setTagDialogEntry(undefined);
         }}
       />
@@ -280,25 +265,18 @@ export function FleetPage() {
 function SidecarCard({
   sidecar,
   untaggedCount,
-  untaggedEntries,
-  untaggedLoading,
-  untaggedError,
   onEdit,
   onDelete,
   onUpdate,
   onResolveUntagged,
-  onMapIdentity,
 }: {
   sidecar: Sidecar;
   untaggedCount: number;
-  untaggedEntries: UntaggedCredential[];
-  untaggedLoading: boolean;
-  untaggedError: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onUpdate: () => void;
-  onResolveUntagged: (entry: UntaggedCredential) => void;
-  onMapIdentity: (providerId: string) => void;
+  /** Open the resolver for *all* of this sidecar's untagged credentials. */
+  onResolveUntagged: () => void;
 }) {
   const queryClient = useQueryClient();
   const online = isOnline(sidecar);
@@ -372,7 +350,7 @@ function SidecarCard({
               {untaggedCount > 0 ? (
                 <button
                   type="button"
-                  onClick={() => onResolveUntagged(untaggedEntries[0])}
+                  onClick={onResolveUntagged}
                   className="rounded-md border border-warning/40 bg-warning-muted px-2 py-0.5 text-[11px] font-medium text-warning hover:border-warning"
                   aria-label={`${untaggedCount} untagged credential${
                     untaggedCount === 1 ? '' : 's'
@@ -425,13 +403,15 @@ function SidecarCard({
             </div>
           </dl>
 
-          <IdentitySources
-            sources={sidecar.identity_sources}
-            untaggedEntries={untaggedEntries}
-            untaggedLoading={untaggedLoading}
-            untaggedError={untaggedError}
-            onMapCredential={onMapIdentity}
-          />
+          <div className="mt-3 flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-fg-subtle">Credentials & account identities</span>
+            <Link
+              to={`/settings/credentials?view=machine#machine-${encodeURIComponent(sidecar.sidecar_id)}`}
+              className="font-medium text-accent hover:underline"
+            >
+              View
+            </Link>
+          </div>
 
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={onEdit}>
@@ -464,121 +444,6 @@ function SidecarCard({
         </pre>
       </ResponsiveDialog>
     </Card>
-  );
-}
-
-const IDENTITY_SOURCE_LABEL: Record<string, string> = {
-  local: 'found on this machine',
-  tag: 'mapped by operator',
-  default: 'unidentified',
-};
-
-// Which account each event provider's data is stamped with on this sidecar,
-// and why — so a card landing on the wrong (or a "default") account is
-// visible here instead of as a silent split on the dashboard.
-function IdentitySources({
-  sources,
-  untaggedEntries,
-  untaggedLoading,
-  untaggedError,
-  onMapCredential,
-}: {
-  sources?: Sidecar['identity_sources'];
-  untaggedEntries: UntaggedCredential[];
-  untaggedLoading: boolean;
-  untaggedError: boolean;
-  onMapCredential: (providerId: string) => void;
-}) {
-  if (sources === undefined) {
-    return (
-      <IdentitySourcesEmptyState
-        label="Report not available"
-      />
-    );
-  }
-  const entries = Object.entries(sources).sort(([a], [b]) => a.localeCompare(b));
-  if (entries.length === 0) {
-    return (
-      <IdentitySourcesEmptyState
-        label="No identities reported"
-      />
-    );
-  }
-  const unidentifiedCount = entries.filter(
-    ([, info]) => info.source === 'default' || info.account_id === 'default',
-  ).length;
-  const identifiedCount = entries.length - unidentifiedCount;
-  const pendingCredentialCounts = new Map<string, number>();
-  for (const entry of untaggedEntries) {
-    pendingCredentialCounts.set(
-      entry.provider_id,
-      (pendingCredentialCounts.get(entry.provider_id) ?? 0) + 1,
-    );
-  }
-  return (
-    <details className="mt-3 group">
-      <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-fg-subtle marker:hidden">
-        <ChevronDown className="size-3.5 shrink-0" aria-hidden />
-        <span className="font-medium text-fg">Current account identities</span>
-        <span className="ml-1">
-          · {identifiedCount} identified · {unidentifiedCount} unidentified
-        </span>
-      </summary>
-      <p className="mt-1 text-[11px] text-fg-subtle">
-        "Mapped by operator" below means a credential rule assigned this account.
-      </p>
-      <ul className="mt-2 space-y-1 text-[12px]" aria-label="Current account identities">
-        {entries.map(([providerId, info]) => {
-          const unidentified = info.source === 'default' || info.account_id === 'default';
-          const matchingCredentialCount = pendingCredentialCounts.get(providerId) ?? 0;
-          return (
-            <li
-              key={providerId}
-              className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1"
-            >
-              <span className="font-medium">{providerId}</span>
-              <span className="min-w-0 truncate text-right">
-                <span className={`font-mono ${unidentified ? 'text-warning' : ''}`}>
-                  {maskAccountId(info.account_id)}
-                </span>{' '}
-                <span className="text-fg-subtle">
-                  · {IDENTITY_SOURCE_LABEL[info.source] ?? info.source}
-                </span>
-              </span>
-              {unidentified ? (
-                matchingCredentialCount > 0 ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="ml-auto h-7 px-2 text-[11px]"
-                    onClick={() => onMapCredential(providerId)}
-                  >
-                    Map credential ({matchingCredentialCount})
-                  </Button>
-                ) : (
-                  <span className="ml-auto text-[11px] text-fg-subtle">
-                    {untaggedLoading
-                      ? 'Checking for a credential to map…'
-                      : untaggedError
-                        ? 'Credential mapping data unavailable'
-                        : 'No credential origin reported for mapping'}
-                  </span>
-                )
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-    </details>
-  );
-}
-
-function IdentitySourcesEmptyState({ label }: { label: string }) {
-  return (
-    <div className="mt-3 flex items-center gap-1 text-[11px] text-fg-subtle">
-      <span className="font-medium text-fg">Current account identities</span>
-      <span className="ml-1">· {label}</span>
-    </div>
   );
 }
 
@@ -751,16 +616,18 @@ function UpdateSidecarDialog({
 
 function UntaggedBanner({
   counts,
-  items,
+  names,
   loading,
   onResolveAll,
-  onResolveOne,
+  onResolveSidecar,
 }: {
   counts: Record<string, number>;
-  items: UntaggedCredential[];
+  /** sidecar_id → display name */
+  names: Map<string, string>;
   loading: boolean;
   onResolveAll: () => void;
-  onResolveOne: (entry: UntaggedCredential) => void;
+  /** Open the resolver for all of one sidecar's untagged credentials. */
+  onResolveSidecar: (sidecarId: string) => void;
 }) {
   // Banner is hidden when nothing pending — same render path either way
   // so the parent doesn't have to conditionalize.
@@ -788,19 +655,18 @@ function UntaggedBanner({
           {Object.keys(counts).length > 0 ? (
             <ul className="mt-2 flex flex-wrap gap-1">
               {Object.entries(counts).map(([sidecarId, count]) => {
-                const sidecarItems = items.filter((e) => e.sidecar_id === sidecarId);
                 return (
                   <li key={sidecarId}>
                     <button
                       type="button"
-                      onClick={() => sidecarItems[0] && onResolveOne(sidecarItems[0])}
+                      onClick={() => onResolveSidecar(sidecarId)}
                       className="rounded-md border border-warning/40 bg-surface-1 px-2 py-0.5 text-[11px] font-medium text-fg hover:border-warning"
                       aria-label={`${count} untagged credential${
                         count === 1 ? '' : 's'
                       } on sidecar ${sidecarId} — click to resolve`}
-                      title={`${sidecarId}: ${count} pending`}
+                      title={`${names.get(sidecarId) ?? sidecarId}: ${count} pending`}
                     >
-                      <span className="font-mono">{sidecarId}</span> · {count}
+                      <span className="font-mono">{names.get(sidecarId) ?? sidecarId}</span> · {count}
                     </button>
                   </li>
                 );

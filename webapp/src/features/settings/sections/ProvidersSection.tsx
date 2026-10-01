@@ -39,10 +39,12 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { useProviderConfigs } from '@/features/home/queries';
+import { useCredentialInventory } from './credentials/queries';
 import { useDashboardLayout } from '@/features/home/queries';
 import { ProviderDetailDialog } from './ProviderDetailDialog';
 import { AddProviderWizard } from './AddProviderWizard';
 import { UntaggedCredentialsDialog } from '@/features/fleet/UntaggedCredentialsDialog';
+import { labelOrMaskedId } from '@/lib/accountDisplay';
 
 export function reorderItems<T>(
   items: T[],
@@ -124,6 +126,14 @@ function ProvidersSectionV2({
     queryKey: ['fleet', 'untagged_credentials', 'all'],
     queryFn: () => fetchUntaggedCredentials(),
   });
+  // Drives the key/cookie badges so a rejected or expired credential doesn't read as
+  // green. Admin-gated and best-effort: without it the badges simply stay neutral-ok.
+  const credentialInventory = useCredentialInventory();
+  const credentialProblems = new Map<string, string>();
+  for (const p of credentialInventory.data?.providers ?? []) {
+    const bad = p.accounts.find((a) => a.status === 'invalid' || a.status === 'expired');
+    if (bad) credentialProblems.set(p.provider_id, bad.status);
+  }
 
   // Build a Map<provider_id, Set<account_id>> for the wizard's
   // defense-in-depth 409 detection (the API does the same check; this lets
@@ -287,6 +297,7 @@ function ProvidersSectionV2({
                   <SortableProviderCard
                     key={p.provider_id}
                     provider={p}
+                    credentialProblem={credentialProblems.get(p.provider_id)}
                     onOpen={() => setDetailProviderId(p.provider_id)}
                   />
                 ))}
@@ -304,7 +315,7 @@ function ProvidersSectionV2({
                 <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-medium">{provider.name}</p>
-                  <p className="truncate text-[11px] text-fg-subtle">{account.account_label || account.account_id}</p>
+                  <p className="truncate text-[11px] text-fg-subtle">{labelOrMaskedId(account)}</p>
                 </div>
                 <Badge variant="neutral">Archived</Badge>
                 <Button
@@ -416,9 +427,12 @@ function ProvidersSectionV2({
 
 function SortableProviderCard({
   provider,
+  credentialProblem,
   onOpen,
 }: {
   provider: ProviderConfig;
+  /** `invalid` / `expired` when an account's credentials are rejected or dead. */
+  credentialProblem?: string;
   onOpen: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -484,8 +498,22 @@ function SortableProviderCard({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {hasKey ? <Badge variant="ok">key</Badge> : null}
-          {hasCookie ? <Badge variant="ok">cookie</Badge> : null}
+          {hasKey ? (
+            <Badge
+              variant={credentialProblem ? 'critical' : 'ok'}
+              title={credentialProblem ? `A credential is ${credentialProblem} — see Credentials` : undefined}
+            >
+              key
+            </Badge>
+          ) : null}
+          {hasCookie ? (
+            <Badge
+              variant={credentialProblem ? 'critical' : 'ok'}
+              title={credentialProblem ? `A credential is ${credentialProblem} — see Credentials` : undefined}
+            >
+              cookie
+            </Badge>
+          ) : null}
           {onlyDiscovered ? (
             <Badge variant="ok">auto</Badge>
           ) : (

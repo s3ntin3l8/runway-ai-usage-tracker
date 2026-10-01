@@ -22,6 +22,7 @@ import { useTokenHealth } from '@/features/home/queries';
 import { timeAgo, timeUntil } from '@/lib/format';
 import type { QuotaStatus } from '@/lib/quota';
 import { useDebugRaw } from './queries';
+import { labelOrMaskedId } from '@/lib/accountDisplay';
 
 export function DebugTab({
   providerId,
@@ -67,7 +68,7 @@ function SourcePane({ entry, captureSupported }: { entry: FleetEntry; captureSup
         ? 'error'
         : 'quota';
   const rows: [string, string][] = [
-    ['Account', g.account_label || entry.account_id],
+    ['Account', labelOrMaskedId({ account_id: entry.account_id, account_label: g.account_label })],
     ['Plan', g.tier || '—'],
     ['Window', g.window_type || '—'],
     ['Kind', kind],

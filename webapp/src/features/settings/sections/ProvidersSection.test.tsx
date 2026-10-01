@@ -212,6 +212,49 @@ describe('ProvidersSection', () => {
     expect(screen.getByText((_, node) => node?.textContent?.startsWith('3 accounts · ') ?? false)).toBeInTheDocument();
   });
 
+  it('shows the key badge as critical when its credential is rejected, ok otherwise', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({ provider_id: 'claude', name: 'Claude' }),
+        provider({ provider_id: 'openrouter', name: 'OpenRouter' }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'claude',
+          name: 'Claude',
+          accounts: [
+            { provider_id: 'claude', account_id: 'default', status: 'invalid', identity_pending: false, sources: [] },
+          ],
+        },
+        {
+          provider_id: 'openrouter',
+          name: 'OpenRouter',
+          accounts: [
+            { provider_id: 'openrouter', account_id: 'default', status: 'valid', identity_pending: false, sources: [] },
+          ],
+        },
+      ],
+      machines: [],
+      unmapped_count: 0,
+      rule_count: 0,
+      pending_usage_events: 0,
+    } as never);
+    renderV2(<ProvidersSection />);
+
+    await screen.findByText('Claude');
+    const keyBadges = await screen.findAllByText('key');
+    await waitFor(() => {
+      const variants = screen.getAllByText('key').map((el) => el.className);
+      expect(variants.filter((c) => c.includes('text-critical'))).toHaveLength(1);
+      expect(variants.filter((c) => c.includes('text-ok'))).toHaveLength(1);
+    });
+    expect(keyBadges).toHaveLength(2);
+    expect(screen.getByTitle('A credential is invalid — see Credentials')).toBeInTheDocument();
+  });
+
   it('shows archived accounts separately and restores the existing row', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
       providers: [provider({

@@ -64,3 +64,13 @@ export function credentialAccountName(accountId: string, label?: string | null):
   if (m) return m[1] === 'default' ? 'Default account' : maskAccountId(m[1]);
   return maskAccountId(accountId);
 }
+
+/**
+ * The account's label if it has one, otherwise its id — masked when it is an opaque
+ * 64-hex credential hash. Unlike :func:`displayAccountName` this leaves the ``default``
+ * sentinel as-is, for places that show the raw identity next to other raw identities.
+ */
+export function labelOrMaskedId(account: AccountLike): string {
+  const label = (account.account_label ?? '').trim();
+  return label !== '' ? label : maskAccountId(account.account_id);
+}

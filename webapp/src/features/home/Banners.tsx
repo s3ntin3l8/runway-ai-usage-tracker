@@ -69,8 +69,8 @@ export function Banners({ tokens, anomalies, fleet, dataHealth }: BannersProps) 
                     : `is ${unhealthy[0].status}`
                 }.`
               : `${unhealthy.length} credentials need attention (expiring, expired or rejected).`}{' '}
-            <Link to="/settings/tokens" className="font-medium underline underline-offset-2">
-              Review tokens
+            <Link to="/settings/credentials" className="font-medium underline underline-offset-2">
+              Review credentials
             </Link>
           </span>
         </Banner>

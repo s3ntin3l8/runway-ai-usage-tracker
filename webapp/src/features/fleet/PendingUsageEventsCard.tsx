@@ -20,6 +20,8 @@ import type {
 } from '@/api/types';
 import { accountConfigProviderIdForUsage } from '@/lib/providerAccountAliases';
 import { AddProviderWizard } from '@/features/settings/sections/AddProviderWizard';
+import { buildSidecarNameMap, useSidecars } from './queries';
+import { labelOrMaskedId } from '@/lib/accountDisplay';
 
 function sessionKey(group: PendingUsageSession) {
   const sessionIdentity = group.session_id ? `session:${group.session_id}` : `event:${group.event_ids[0]}`;
@@ -32,6 +34,7 @@ function groupLabel(group: PendingUsageSession) {
 
 export function PendingUsageEventsCard() {
   const queryClient = useQueryClient();
+  const machineNames = buildSidecarNameMap(useSidecars().data?.sidecars ?? []);
   const [offset, setOffset] = useState(0);
   const [host, setHost] = useState('');
   const [provider, setProvider] = useState('');
@@ -223,7 +226,7 @@ export function PendingUsageEventsCard() {
           </p>
           {hasDefaultKeyedOption && (
             <p className="mt-1 max-w-4xl text-xs text-fg-muted">
-              An account labeled “(default)” remains under the shared default identity. Re-key its config in Fleet
+              An account labeled “(default)” remains under the shared default identity. Re-key it under Settings → Data health
               first to assign usage to its own account.
             </p>
           )}
@@ -253,7 +256,7 @@ export function PendingUsageEventsCard() {
             onChange={(event) => updateFilter(setHost)(event.target.value)}
           >
             <option value="">All hosts</option>
-            {pending.data.sidecars.map((sidecar) => <option key={sidecar} value={sidecar}>{sidecar}</option>)}
+            {pending.data.sidecars.map((sidecar) => <option key={sidecar} value={sidecar}>{machineNames.get(sidecar) ?? sidecar}</option>)}
           </select>
         </label>
         <label className="text-xs font-medium text-fg-muted">
@@ -329,7 +332,7 @@ export function PendingUsageEventsCard() {
                     />
                   </TD>
                   <TD className="font-medium">{group.provider_id}</TD>
-                  <TD className="max-w-36 truncate" title={group.sidecar_id}>{group.sidecar_id}</TD>
+                  <TD className="max-w-36 truncate" title={group.sidecar_id}>{machineNames.get(group.sidecar_id) ?? group.sidecar_id}</TD>
                   <TD className="max-w-64">
                     <details className="group">
                       <summary className="cursor-pointer truncate font-medium" title={groupLabel(group)}>
@@ -367,7 +370,7 @@ export function PendingUsageEventsCard() {
                       >
                         <option value="">Choose account…</option>
                         {options.map((account) => {
-                          const label = account.account_label || account.account_id;
+                          const label = labelOrMaskedId(account);
                           return (
                             <option key={account.account_id} value={account.account_id}>
                               {account.account_id === 'default' ? `${label} (default)` : label}
@@ -468,7 +471,7 @@ export function PendingUsageEventsCard() {
                   >
                     <option value="">Choose account…</option>
                     {options.map((account) => {
-                      const label = account.account_label || account.account_id;
+                      const label = labelOrMaskedId(account);
                       return (
                         <option key={account.account_id} value={account.account_id}>
                           {account.account_id === 'default' ? `${label} (default)` : label}

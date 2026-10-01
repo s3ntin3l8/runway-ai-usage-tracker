@@ -183,6 +183,26 @@ describe('UntaggedCredentialsDialog', () => {
     await user.click(link); // exercise the link without error
   });
 
+  it('names the machine and links to Provider Settings without a full page reload', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'laptop', hostname: 'laptop', custom_name: 'My Laptop' }] as never,
+    });
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={vi.fn()} />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('My Laptop')).toBeInTheDocument();
+    // A client-side route: the old `<a href="/settings/providers#id">` reloaded the SPA
+    // and the hash was never read.
+    expect(
+      within(dialog).getByRole('link', { name: /add one in provider settings/i }),
+    ).toHaveAttribute('href', '/settings/providers');
+  });
+
   it('sends tagCredential with the operator-selected account_id', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [entry],
@@ -217,9 +237,55 @@ describe('UntaggedCredentialsDialog', () => {
         scope: 'sidecar',
       }),
     );
-    // Successful save closes the dialog and toasts success.
-    expect(onClose).toHaveBeenCalled();
+    // Several credentials may be waiting, so a successful save toasts and stays open
+    // on the next one rather than forcing the operator to reopen the dialog each time.
     expect(toast.success).toHaveBeenCalledWith('Credential tagged');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('closes after tagging when resolving a single entry', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
+    vi.mocked(api.tagCredential).mockResolvedValue({ status: 'ok' });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const onClose = vi.fn();
+    renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={onClose} singleEntry={entry} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    await user.click(within(dialog).getByRole('combobox'));
+    await user.click(await screen.findByText('Alice · alice@example.com'));
+    await user.click(within(dialog).getByRole('button', { name: /^tag$/i }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('refreshes the provider configs under the shared query key after tagging', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
+    vi.mocked(api.tagCredential).mockResolvedValue({ status: 'ok' });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={vi.fn()} />);
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    // Previously fetched under ['system','provider_configs'] — a different key from
+    // Providers/Webhooks, so tagging never refreshed them and the dialog double-fetched.
+    await waitFor(() => expect(api.fetchProviderConfigs).toHaveBeenCalledTimes(1));
+    await user.click(within(dialog).getByRole('combobox'));
+    await user.click(await screen.findByText('Alice · alice@example.com'));
+    await user.click(within(dialog).getByRole('button', { name: /^tag$/i }));
+
+    // Invalidating ['system','provider-configs'] refetches the (active) dialog query.
+    await waitFor(() => expect(api.fetchProviderConfigs).toHaveBeenCalledTimes(2));
   });
 
   it('sends scope=deployment when "All machines" is selected (#319)', async () => {

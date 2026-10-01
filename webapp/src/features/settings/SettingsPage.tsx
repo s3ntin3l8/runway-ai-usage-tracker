@@ -21,11 +21,11 @@ import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/cn';
 import { AboutSection } from './sections/AboutSection';
 import { AuditSection } from './sections/AuditSection';
+import { CredentialsSection } from './sections/credentials/CredentialsSection';
 import { DataHealthSection } from './sections/DataHealthSection';
 import { DisplaySection } from './sections/DisplaySection';
 import { ProvidersSection } from './sections/ProvidersSection';
 import { SystemSection } from './sections/SystemSection';
-import { TokensSection } from './sections/TokensSection';
 import { WebhooksSection } from './sections/WebhooksSection';
 
 interface Section {
@@ -45,11 +45,11 @@ const SECTIONS: Section[] = [
     element: <ProvidersSection />,
   },
   {
-    slug: 'tokens',
-    label: 'Token health',
-    description: 'Cached credentials and expiry',
+    slug: 'credentials',
+    label: 'Credentials',
+    description: 'Where each account\'s credentials and data come from',
     icon: KeyRound,
-    element: <TokensSection />,
+    element: <CredentialsSection />,
   },
   {
     slug: 'webhooks',
@@ -164,6 +164,8 @@ export function SettingsPage() {
               index
               element={isDesktop ? <Navigate to="/settings/providers" replace /> : <span />}
             />
+            {/* Token health became the Credentials section; keep old deep links alive. */}
+            <Route path="tokens" element={<Navigate to="/settings/credentials" replace />} />
             {SECTIONS.map((s) => (
               <Route
                 key={s.slug}

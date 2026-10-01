@@ -9,6 +9,7 @@ import type {
   AppConfig,
   AuditEntry,
   CollectorStatus,
+  CredentialInventory,
   CostForecastResponse,
   CredentialTagRequest,
   CumulativeResponse,
@@ -415,6 +416,26 @@ export const deleteTokenHealth = (provider: string, accountId: string) =>
     `/api/v1/system/token-health/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`,
     { method: 'DELETE' },
   );
+
+export const fetchCredentialInventory = () =>
+  api<CredentialInventory>('/api/v1/system/credentials');
+
+const credentialSourcePath = (provider: string, accountId: string, sourceId: string) =>
+  `/api/v1/system/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}/${encodeURIComponent(sourceId)}`;
+
+export const postCredentialSourceRefresh = (
+  provider: string,
+  accountId: string,
+  sourceId: string,
+) =>
+  api<{ status: string }>(`${credentialSourcePath(provider, accountId, sourceId)}/refresh`, {
+    method: 'POST',
+  });
+
+export const deleteCredentialSource = (provider: string, accountId: string, sourceId: string) =>
+  api<{ ok: boolean }>(credentialSourcePath(provider, accountId, sourceId), {
+    method: 'DELETE',
+  });
 
 export const fetchAuditLog = (limit = 200) =>
   api<{ entries: AuditEntry[] }>(`/api/v1/system/audit-log${qs({ limit })}`);

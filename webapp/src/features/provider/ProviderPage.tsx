@@ -27,6 +27,7 @@ import { OverviewTab } from './OverviewTab';
 import { SessionsBrowser } from './SessionsBrowser';
 import { resolveScope } from './period';
 import { useProviderEventRange } from './queries';
+import { labelOrMaskedId } from '@/lib/accountDisplay';
 
 // Tabs whose data is scoped by the shared time-range picker.
 const PERIOD_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events', 'cost']);
@@ -110,7 +111,7 @@ export function ProviderPage() {
     <>
       <PageHeader
         title={name}
-        description={entry?.critical_gauge.account_label || accountId}
+        description={labelOrMaskedId({ account_id: accountId ?? '', account_label: entry?.critical_gauge.account_label })}
         leading={<ProviderGlyph providerId={providerId} name={name} className="size-9 text-sm" />}
         actions={
           <>
@@ -141,7 +142,7 @@ export function ProviderPage() {
                 <SelectContent>
                   {entries.map((e) => (
                     <SelectItem key={e.account_id} value={e.account_id}>
-                      {e.critical_gauge.account_label || e.account_id}
+                      {labelOrMaskedId({ account_id: e.account_id, account_label: e.critical_gauge.account_label })}
                     </SelectItem>
                   ))}
                 </SelectContent>

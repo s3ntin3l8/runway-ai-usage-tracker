@@ -52,107 +52,45 @@ describe('FleetPage', () => {
     expect(screen.getByText('Add a sidecar')).toBeInTheDocument();
   });
 
-  it('keeps all-machines credential mappings visible with no sidecars', async () => {
-    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
-    vi.mocked(api.fetchCredentialTags).mockResolvedValue({
-      items: [
-        {
-          provider_id: 'anthropic',
-          credential_origin: 'provider:anthropic',
-          account_id: 'team@example.com',
-          sidecar_id: null,
-          set_by: 'operator',
-          set_at: null,
-        },
-      ],
+  it('links each sidecar to its credentials in Settings', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar(), sidecar({ sidecar_id: 'desktop', hostname: 'desktop' })],
     });
     renderWithProviders(<FleetPage />);
-    expect(await screen.findByText('Credential assignment rules')).toBeInTheDocument();
+    await screen.findByText('laptop');
+
+    // Credentials, identities and rules live in one place; Fleet just points at them.
+    const links = screen.getAllByRole('link', { name: 'View' });
+    expect(links.map((a) => a.getAttribute('href'))).toEqual([
+      '/settings/credentials?view=machine#machine-laptop',
+      '/settings/credentials?view=machine#machine-desktop',
+    ]);
   });
 
-  it('shows which account each provider is stamped with, and why', async () => {
-    vi.mocked(api.fetchSidecars).mockResolvedValue({
-      sidecars: [
-        sidecar({
-          identity_sources: {
-            anthropic: { account_id: 'alice@example.com', source: 'local' },
-            antigravity: { account_id: 'default', source: 'default' },
-          },
-        }),
-      ],
-    });
-    renderWithProviders(<FleetPage />);
-    const summary = await screen.findByText(/1 identified · 1 unidentified/i);
-    // The expanded section keeps provider details out of the card until requested.
-    expect(summary.closest('details')).not.toHaveAttribute('open');
-    await userEvent.click(summary);
-    const list = await screen.findByRole('list', { name: 'Current account identities' });
-    expect(list).toHaveTextContent('anthropic');
-    expect(list).toHaveTextContent('found on this machine');
-    // The summary and rows distinguish a real default identity from missing data.
-    expect(list).toHaveTextContent('antigravity');
-    expect(list).toHaveTextContent('default');
-    expect(list).toHaveTextContent('unidentified');
-    expect(list).toHaveTextContent('No credential origin reported for mapping');
-    expect(
-      screen.getByText('"Mapped by operator" below means a credential rule assigned this account.'),
-    ).toBeInTheDocument();
-  });
-
-  it('distinguishes a missing identity report from an empty report', async () => {
-    vi.mocked(api.fetchSidecars).mockResolvedValue({
-      sidecars: [
-        sidecar(),
-        sidecar({ sidecar_id: 'desktop', hostname: 'desktop', identity_sources: {} }),
-      ],
-    });
-    renderWithProviders(<FleetPage />);
-    expect(await screen.findByText('· Report not available')).toBeInTheDocument();
-    expect(screen.getByText('· No identities reported')).toBeInTheDocument();
-  });
-
-  it('opens provider-scoped credential mapping from an unidentified identity row', async () => {
-    vi.mocked(api.fetchSidecars).mockResolvedValue({
-      sidecars: [
-        sidecar({
-          identity_sources: {
-            antigravity: { account_id: 'default', source: 'default' },
-          },
-        }),
-      ],
-    });
+  it.each([
+    ['the banner chip', /untagged credentials? on sidecar laptop/i],
+    ['the card pill', /^\d+ untagged credentials? — click to resolve/i],
+  ])('opens the resolver for every untagged credential of the sidecar from %s', async (_label, name) => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [
-        {
-          sidecar_id: 'laptop',
-          provider_id: 'antigravity',
-          credential_origin: 'provider:antigravity',
-        },
-        {
-          sidecar_id: 'laptop',
-          provider_id: 'antigravity',
-          credential_origin: 'env:ANTIGRAVITY_TOKEN',
-        },
-        {
-          sidecar_id: 'laptop',
-          provider_id: 'xai',
-          credential_origin: 'provider:xai',
-        },
+        { sidecar_id: 'laptop', provider_id: 'antigravity', credential_origin: 'provider:antigravity' },
+        { sidecar_id: 'laptop', provider_id: 'antigravity', credential_origin: 'env:ANTIGRAVITY_TOKEN' },
+        { sidecar_id: 'laptop', provider_id: 'xai', credential_origin: 'provider:xai' },
       ],
       counts_by_sidecar: { laptop: 3 },
     });
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
     renderWithProviders(<FleetPage />);
 
-    await userEvent.click(await screen.findByText(/0 identified · 1 unidentified/i));
-    await userEvent.click(screen.getByRole('button', { name: 'Map credential (2)' }));
+    await userEvent.click(await screen.findByRole('button', { name }));
 
     const dialog = await screen.findByRole('dialog');
     expect(api.fetchUntaggedCredentials).toHaveBeenCalledWith('laptop');
-    expect(within(dialog).getByText('antigravity · credentials reported by laptop')).toBeInTheDocument();
+    // All three are listed — the pill used to open only the first entry.
     expect(within(dialog).getByText('provider:antigravity')).toBeInTheDocument();
     expect(within(dialog).getByText('env:ANTIGRAVITY_TOKEN')).toBeInTheDocument();
-    expect(within(dialog).queryByText('provider:xai')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('provider:xai')).toBeInTheDocument();
   });
 
   it('flags an offline sidecar that is behind as outdated', async () => {

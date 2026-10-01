@@ -215,6 +215,52 @@ describe('PendingUsageEventsCard', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('shows machine names, and points the default-keyed hint at Data health (not Fleet)', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'laptop', hostname: 'laptop', custom_name: 'My Laptop' }] as never,
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'xai',
+          name: 'xAI',
+          accounts: [
+            { account_id: 'default', account_label: '(default)', source: 'config', enabled: true },
+          ],
+        },
+      ],
+    } as never);
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'xai',
+          sidecar_id: 'laptop',
+          session_id: 's1',
+          event_ids: [1],
+          event_count: 1,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:00:00Z',
+          model_ids: [],
+        },
+      ],
+      total_events: 1,
+      matching_events: 1,
+      total_groups: 1,
+      sidecars: ['laptop'],
+      providers: ['xai'],
+      offset: 0,
+      limit: 100,
+    });
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    expect(await screen.findByText(/Re-key it under Settings → Data health/)).toBeInTheDocument();
+    expect(screen.queryByText(/Re-key its config in Fleet/)).not.toBeInTheDocument();
+    // Filter option and table cell show the machine's name; the filter value stays the id.
+    const option = await screen.findByRole('option', { name: 'My Laptop' });
+    expect(option).toHaveValue('laptop');
+    expect(screen.getAllByText('My Laptop').length).toBeGreaterThan(1);
+  });
+
   it('keeps events without a session separate and assigns one event', async () => {
     const user = userEvent.setup();
     vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({

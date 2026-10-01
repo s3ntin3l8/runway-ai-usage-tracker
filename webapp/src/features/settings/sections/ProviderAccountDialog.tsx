@@ -3,7 +3,8 @@
 // opened from `ProviderDetailDialog` for the selected account.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import {
   DndContext,
   KeyboardSensor,
@@ -34,6 +35,8 @@ import { Button } from '@/components/ui/Button';
 import { HelperText, Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Switch } from '@/components/ui/Switch';
+import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
+import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { displayAccountName, accountSubtitle, maskAccountId } from '@/lib/accountDisplay';
 
@@ -117,7 +120,6 @@ function ProviderAccountForm({
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const queryClient = useQueryClient();
   const [enabled, setEnabled] = useState(account.enabled);
   const [apiKey, setApiKey] = useState('');
   const [cookie, setCookie] = useState('');
@@ -140,10 +142,20 @@ function ProviderAccountForm({
     [...(account.credential_sources ?? [])].sort((a, b) => a.priority - b.priority),
   );
   const [allMachines, setAllMachines] = useState(false);
+  // Saving an unrelated field (label, poll interval, ...) must not rewrite the source
+  // order — that PATCH is audited and can fan out to every machine.
+  const sourceFingerprint = (list: CredentialSourceSummary[]) =>
+    JSON.stringify(list.map((source, priority) => [source.source_id, source.enabled, priority]));
+  const sourcesChanged =
+    sourceFingerprint(credentialSources) !==
+    sourceFingerprint(
+      [...(account.credential_sources ?? [])].sort((a, b) => a.priority - b.priority),
+    );
+  const invalidateCredentialViews = useInvalidateCredentialViews();
 
   const save = useMutation({
     mutationFn: async () => {
-      if (credentialSources.length > 0) {
+      if (credentialSources.length > 0 && (sourcesChanged || allMachines)) {
         await patchCredentialSources(
           provider.provider_id,
           account.account_id,
@@ -176,8 +188,9 @@ function ProviderAccountForm({
     },
     onSuccess: () => {
       toast.success(`${provider.name} · ${displayAccountName(account)} saved`);
-      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
-      queryClient.invalidateQueries({ queryKey: ['usage'] });
+      // A save can change which credentials feed which account (source order, a pasted
+      // key), so refresh every credential view, not just the provider list.
+      invalidateCredentialViews();
       onSaved();
     },
     onError: (err) => toast.error(err.message),
@@ -453,6 +466,7 @@ function CredentialSourcesEditor({
   allMachines: boolean;
   onAllMachinesChange: (value: boolean) => void;
 }) {
+  const machineNames = buildSidecarNameMap(useSidecars().data?.sidecars ?? []);
   const sourceSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
@@ -471,7 +485,10 @@ function CredentialSourcesEditor({
     <fieldset className="flex flex-col gap-2 rounded-sm border border-edge p-3">
       <legend className="px-1 text-xs font-medium text-fg-muted">Credential sources</legend>
       <p className="text-[11px] text-fg-subtle">
-        Enabled sources are tried in order. Secrets are never shown here.
+        Enabled sources are tried in order. Secrets are never shown here.{' '}
+        <Link to="/settings/credentials" className="text-accent hover:underline">
+          See every credential
+        </Link>
       </p>
       {sources.some((source) => source.sidecar_id) ? (
         <label className="flex items-center gap-2 text-[11px] text-fg-muted">
@@ -505,6 +522,7 @@ function CredentialSourcesEditor({
                 <SortableCredentialSourceRow
                   key={source.source_id}
                   source={source}
+                  machineName={source.sidecar_id ? machineNames.get(source.sidecar_id) : undefined}
                   onToggle={(enabled) =>
                     onChange(
                       sources.map((item) =>
@@ -524,9 +542,12 @@ function CredentialSourcesEditor({
 
 function SortableCredentialSourceRow({
   source,
+  machineName,
   onToggle,
 }: {
   source: CredentialSourceSummary;
+  /** Display name of the reporting machine; falls back to the raw sidecar id. */
+  machineName?: string;
   onToggle: (enabled: boolean) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -551,7 +572,9 @@ function SortableCredentialSourceRow({
         <p className="truncate text-[12px] font-medium">
           {source.source_label || source.source_type}
           {source.sidecar_id ? (
-            <span className="ml-1 font-normal text-fg-subtle">· {source.sidecar_id}</span>
+            <span className="ml-1 font-normal text-fg-subtle">
+              · {machineName ?? source.sidecar_id}
+            </span>
           ) : null}
         </p>
         <p className="text-[11px] text-fg-subtle">

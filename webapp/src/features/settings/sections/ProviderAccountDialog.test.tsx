@@ -183,6 +183,77 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
     ));
   });
 
+  it('does not rewrite the source order when only an unrelated field changes', async () => {
+    // That PATCH is audited and can fan out to every machine; saving a label must not
+    // trigger it.
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    const provider: ProviderConfig = {
+      ...anthropic,
+      accounts: [
+        {
+          ...anthropic.accounts[0]!,
+          credential_sources: [
+            {
+              source_id: 'sidecar:cli',
+              source_type: 'sidecar',
+              source_label: 'CLI credentials',
+              sidecar_id: 'laptop',
+              enabled: true,
+              priority: 0,
+              last_seen: null,
+              health: 'healthy',
+              available: true,
+            },
+          ],
+        },
+      ],
+    };
+    renderWithProviders(
+      <ProviderAccountDialog provider={provider} accountId="alice@example.com" onClose={() => {}} />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
+    expect(api.patchCredentialSources).not.toHaveBeenCalled();
+  });
+
+  it('shows the machine name instead of the raw sidecar id, and links to all credentials', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'laptop', hostname: 'laptop', custom_name: 'My Laptop' }] as never,
+    });
+    const provider: ProviderConfig = {
+      ...anthropic,
+      accounts: [
+        {
+          ...anthropic.accounts[0]!,
+          credential_sources: [
+            {
+              source_id: 'sidecar:cli',
+              source_type: 'sidecar',
+              source_label: 'CLI credentials',
+              sidecar_id: 'laptop',
+              enabled: true,
+              priority: 0,
+              last_seen: null,
+              health: 'healthy',
+              available: true,
+            },
+          ],
+        },
+      ],
+    };
+    renderWithProviders(
+      <ProviderAccountDialog provider={provider} accountId="alice@example.com" onClose={() => {}} />,
+    );
+
+    expect(await screen.findByText(/· My Laptop/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /see every credential/i })).toHaveAttribute(
+      'href',
+      '/settings/credentials',
+    );
+  });
+
   it('reorders sources through the accessible drag handlers', async () => {
     vi.mocked(api.patchCredentialSources).mockResolvedValue({ status: 'saved' });
     vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
