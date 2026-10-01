@@ -276,14 +276,15 @@ def _chunked_retag_snapshots(
 class DeleteResult:
     latest_usage_deleted: int = 0
     snapshots_deleted: int = 0
+    contributions_deleted: int = 0
 
 
 def delete_gauge_series(session: Session, *, provider_id: str, account_id: str) -> DeleteResult:
-    """Drop every latest_usage/quota_snapshots row for (provider_id,
-    account_id) outright — the Data Health `orphan_gauge_series` fixer's
-    "delete" action, for a series with no plausible merge target. Chunked
-    (`_chunked_sql`) — a stray account's quota_snapshots history can run
-    into the tens of thousands of rows.
+    """Drop every latest_usage/quota_snapshots/latest_usage_contributions row for
+    (provider_id, account_id) outright — the Data Health `orphan_gauge_series` and
+    `misidentified_gauge_series` fixer's "delete" action, for a series with no
+    plausible merge target. Chunked (`_chunked_sql`) — a stray account's
+    quota_snapshots history can run into the tens of thousands of rows.
     """
     latest_deleted = chunked_delete(
         session,
@@ -298,7 +299,16 @@ def delete_gauge_series(session: Session, *, provider_id: str, account_id: str) 
             col(QuotaSnapshot.account_id) == account_id,
         ],
     )
+    contributions_deleted = chunked_delete(
+        session,
+        LatestUsageContribution,
+        [
+            col(LatestUsageContribution.provider_id) == provider_id,
+            col(LatestUsageContribution.account_id) == account_id,
+        ],
+    )
     return DeleteResult(
         latest_usage_deleted=latest_deleted,
         snapshots_deleted=snapshots_deleted,
+        contributions_deleted=contributions_deleted,
     )

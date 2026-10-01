@@ -253,15 +253,32 @@ def test_delete_gauge_series_removes_both_tables():
     _snapshot(session, "default", datetime(2026, 9, 1, tzinfo=UTC))
     _snapshot(session, "default", datetime(2026, 9, 2, tzinfo=UTC))
     _card(session, "alice@example.com")  # untouched — different account
+    session.add(
+        LatestUsageContribution(
+            provider_id="gemini",
+            account_id="default",
+            source_id="local:default",
+            source_type="api",
+            source_label="Gemini",
+            window_type="daily",
+            variant="",
+            model_id="pro",
+            card_json="{}",
+            updated_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+    )
+    session.commit()
 
     result = delete_gauge_series(session, provider_id="gemini", account_id="default")
 
     assert result.latest_usage_deleted == 1
     assert result.snapshots_deleted == 2
+    assert result.contributions_deleted == 1
     remaining = list(session.exec(select(LatestUsage)))
     assert len(remaining) == 1
     assert remaining[0].account_id == "alice@example.com"
     assert list(session.exec(select(QuotaSnapshot))) == []
+    assert list(session.exec(select(LatestUsageContribution))) == []
 
 
 def test_delete_gauge_series_no_op_when_nothing_matches():

@@ -2056,3 +2056,45 @@ def test_only_a_credential_change_clears_the_auth_failure_flag(client: TestClien
     )  # pragma: allowlist secret
     assert r.status_code == 200, r.text
     assert auth_failures.flagged_accounts("openrouter") == set()
+
+
+def test_stale_latest_usage_row_is_excluded_from_discovered_accounts(
+    client: TestClient, session: Session
+):
+    """A stale latest_usage row must not surface as an auto-discovered account.
+
+    When a transient or misidentified account collector fails or stops, the
+    resulting stale card in latest_usage must be ignored by GET /provider-configs
+    so phantom cards do not appear in the dashboard.
+    """
+    from datetime import UTC, datetime
+
+    from app.models.db import LatestUsage
+
+    stale_row = LatestUsage(
+        provider_id="github",
+        account_id="stale_ghost@example.com",
+        window_type="weekly",
+        variant="default",
+        model_id="copilot",
+        card_json='{"stale": true, "collection_failing": true}',
+        updated_at=datetime.now(UTC),
+    )
+    active_row = LatestUsage(
+        provider_id="github",
+        account_id="active_user",
+        window_type="weekly",
+        variant="default",
+        model_id="copilot",
+        card_json='{"stale": false}',
+        updated_at=datetime.now(UTC),
+    )
+    session.add(stale_row)
+    session.add(active_row)
+    session.commit()
+
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    github = next(p for p in listing if p["provider_id"] == "github")
+    discovered_ids = [a["account_id"] for a in github["accounts"]]
+    assert "active_user" in discovered_ids
+    assert "stale_ghost@example.com" not in discovered_ids

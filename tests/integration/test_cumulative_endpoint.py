@@ -346,7 +346,10 @@ def test_current_month_live_when_period_type_month_has_no_key(session):
     local-tz month, live from usage_events — skipping the rollup fetch (and
     the default call's year scan) entirely. This is the path the Home page's
     Tokens card uses instead of the full default call."""
-    now = datetime.now(UTC)
+    from app.core.utils import resolve_user_tz
+
+    tz = resolve_user_tz(session)
+    now = datetime.now(tz)
     month_key = now.strftime("%Y-%m")
     # Stale/wrong rollup row for the current month — must be ignored; this
     # path never touches usage_period_rollup.
@@ -370,7 +373,10 @@ def test_current_month_live_respects_provider_and_account_filters(session):
     """?period_type=month&provider_id=...&account_id=... scopes the live
     current-month aggregation to that identity, same as the other live paths
     (is_month_live / is_range_live) already do."""
-    now = datetime.now(UTC)
+    from app.core.utils import resolve_user_tz
+
+    tz = resolve_user_tz(session)
+    now = datetime.now(tz)
     month_key = now.strftime("%Y-%m")
     _event(session, "mine", now, provider_id="anthropic", account_id="u@x.com", tokens_input=10)
     _event(session, "other", now, provider_id="chatgpt", account_id="other@x.com", tokens_input=99)

@@ -8,7 +8,7 @@ from typing import Any, Literal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, delete, or_
+from sqlalchemy import and_, delete, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
@@ -1410,7 +1410,14 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
 
     live_keys: set[tuple[str, str]] = set()
     live_rows = session.exec(
-        select(LatestUsage.provider_id, LatestUsage.account_id).distinct()
+        select(LatestUsage.provider_id, LatestUsage.account_id)
+        # Exclude rows that are already stale — staleness lives inside
+        # card_json as {"stale": true}. json_extract returns 1 (SQLite's
+        # true) for stale rows; NULL means the key is absent, which means
+        # not stale. coalesce(..., 0) != 1 treats absent and false as
+        # non-stale without requiring an explicit boolean comparison.
+        .where(func.coalesce(func.json_extract(LatestUsage.card_json, "$.stale"), 0) != 1)
+        .distinct()
     ).all()
     for provider_id, account_id in live_rows:
         if account_id:
