@@ -204,6 +204,10 @@ export interface HeatmapResponse {
   tz: string;
 }
 
+export interface UsageSourcesResponse {
+  sidecar_ids: string[];
+}
+
 export interface SessionModelSplit extends CumulativeModelBucket {
   model_id: string;
   tokens_total?: number;

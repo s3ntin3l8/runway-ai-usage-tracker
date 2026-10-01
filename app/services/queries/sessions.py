@@ -30,7 +30,7 @@ _SORT_COLUMNS = {
 }
 
 
-def query_sessions(
+def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter signature
     session: Session,
     *,
     provider_id: str,
@@ -42,6 +42,7 @@ def query_sessions(
     sort_by: str = "tokens",
     sort_dir: str = "desc",
     project: str | None = None,
+    sidecar_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return top-N sessions by total tokens, newest first within the window.
 
@@ -69,6 +70,7 @@ def query_sessions(
     # default (open-ended) window is byte-identical to the original query.
     until_clause = "AND ts < :until" if until is not None else ""
     project_clause = "AND project = :project" if project is not None else ""
+    sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
 
     # These SQL f-strings interpolate only server-built clauses from fixed
     # conditions above; all request values stay in bound parameters below.
@@ -107,6 +109,7 @@ def query_sessions(
           AND ts >= :since
           {until_clause}
           {project_clause}
+          {sidecar_clause}
         GROUP BY session_id
         ORDER BY {order_clause}
         LIMIT :limit OFFSET :offset
@@ -139,6 +142,7 @@ def query_sessions(
           AND subagent_type IS NOT NULL
           AND ts >= :since
           {until_clause}
+          {sidecar_clause}
         GROUP BY subagent_type
         ORDER BY turns DESC
         """
@@ -170,6 +174,7 @@ def query_sessions(
           AND model_id IS NOT NULL
           AND ts >= :since
           {until_clause}
+          {sidecar_clause}
         GROUP BY model_id
         ORDER BY tokens_total DESC
         """
@@ -183,6 +188,7 @@ def query_sessions(
             "since": sqlite_utc_timestamp(since),
             **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
             **({"project": project} if project is not None else {}),
+            **({"sidecar_id": sidecar_id} if sidecar_id else {}),
             "limit": limit,
             "offset": offset,
         },
@@ -219,6 +225,7 @@ def query_sessions(
                     "session_id": row.session_id,
                     "since": sqlite_utc_timestamp(since),
                     **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
+                    **({"sidecar_id": sidecar_id} if sidecar_id else {}),
                 },
             ).all()
             subagents = [
@@ -251,6 +258,7 @@ def query_sessions(
                     "session_id": row.session_id,
                     "since": sqlite_utc_timestamp(since),
                     **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
+                    **({"sidecar_id": sidecar_id} if sidecar_id else {}),
                 },
             ).all()
             by_model = [
@@ -316,12 +324,14 @@ def count_sessions(
     since: datetime | None = None,
     until: datetime | None = None,
     project: str | None = None,
+    sidecar_id: str | None = None,
 ) -> int:
     """COUNT(DISTINCT session_id) for the same window/filters as query_sessions."""
     if since is None:
         since = datetime.now(UTC) - timedelta(days=7)
     until_clause = "AND ts < :until" if until is not None else ""
     project_clause = "AND project = :project" if project is not None else ""
+    sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
     sql = text(
         f"""
         SELECT COUNT(DISTINCT session_id) AS n
@@ -332,6 +342,7 @@ def count_sessions(
           AND ts >= :since
           {until_clause}
           {project_clause}
+          {sidecar_clause}
         """
     )
     row = session.exec(  # type: ignore[call-overload]
@@ -342,12 +353,13 @@ def count_sessions(
             "since": sqlite_utc_timestamp(since),
             **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
             **({"project": project} if project is not None else {}),
+            **({"sidecar_id": sidecar_id} if sidecar_id else {}),
         },
     ).first()
     return int(row.n or 0) if row else 0
 
 
-def query_sessions_paginated(
+def query_sessions_paginated(  # noqa: PLR0913 — sidecar_id extends the existing filter signature
     session: Session,
     *,
     provider_id: str,
@@ -359,6 +371,7 @@ def query_sessions_paginated(
     sort_by: str = "recent",
     sort_dir: str = "desc",
     project: str | None = None,
+    sidecar_id: str | None = None,
 ) -> dict[str, Any]:
     """One page of sessions + the total count, for the Sessions browser tab."""
     total = count_sessions(
@@ -368,6 +381,7 @@ def query_sessions_paginated(
         since=since,
         until=until,
         project=project,
+        sidecar_id=sidecar_id,
     )
     sessions = query_sessions(
         session,
@@ -380,5 +394,6 @@ def query_sessions_paginated(
         sort_by=sort_by,
         sort_dir=sort_dir,
         project=project,
+        sidecar_id=sidecar_id,
     )
     return {"sessions": sessions, "total": total, "limit": page_size, "offset": page * page_size}

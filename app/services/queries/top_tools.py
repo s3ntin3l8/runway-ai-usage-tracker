@@ -22,6 +22,7 @@ def query_top_tools(
     since: datetime,
     until: datetime | None = None,
     provider_id: str | None = None,
+    sidecar_id: str | None = None,
     limit: int = 15,
 ) -> list[dict[str, Any]]:
     """Rank tool names by invocation count in ``[since, until)``.
@@ -31,6 +32,7 @@ def query_top_tools(
     """
     until_clause = "AND e.ts < :until" if until is not None else ""
     provider_clause = "AND e.provider_id = :provider_id" if provider_id else ""
+    sidecar_clause = "AND e.sidecar_id = :sidecar_id" if sidecar_id else ""
 
     sql = text(
         f"""
@@ -45,6 +47,7 @@ def query_top_tools(
           AND e.ts >= :since
           {until_clause}
           {provider_clause}
+          {sidecar_clause}
         GROUP BY j.value
         ORDER BY calls DESC
         LIMIT :limit
@@ -56,6 +59,8 @@ def query_top_tools(
         params["until"] = sqlite_utc_timestamp(until)
     if provider_id:
         params["provider_id"] = provider_id
+    if sidecar_id:
+        params["sidecar_id"] = sidecar_id
 
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
     return [

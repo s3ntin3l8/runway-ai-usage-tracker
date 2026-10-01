@@ -25,6 +25,7 @@ def query_top_projects(
     metric: str = "tokens",
     exclude_cache: bool = False,
     provider_id: str | None = None,
+    sidecar_id: str | None = None,
     limit: int = 15,
 ) -> list[dict[str, Any]]:
     """Rank ``project`` in ``[since, until)`` by tokens, cost, or session count.
@@ -37,6 +38,7 @@ def query_top_projects(
     """
     until_clause = "AND ts < :until" if until is not None else ""
     provider_clause = "AND provider_id = :provider_id" if provider_id else ""
+    sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
 
     if metric == "cost":
         order_expr = (
@@ -81,6 +83,7 @@ def query_top_projects(
           AND ts >= :since
           {until_clause}
           {provider_clause}
+          {sidecar_clause}
         GROUP BY project
         ORDER BY {order_expr} DESC
         LIMIT :limit
@@ -92,6 +95,8 @@ def query_top_projects(
         params["until"] = sqlite_utc_timestamp(until)
     if provider_id:
         params["provider_id"] = provider_id
+    if sidecar_id:
+        params["sidecar_id"] = sidecar_id
 
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
 
@@ -127,6 +132,7 @@ def query_projects(
     provider_id: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
+    sidecar_id: str | None = None,
 ) -> list[str]:
     """Distinct non-NULL project labels (for the sessions filter dropdown)."""
     clauses = ["project IS NOT NULL"]
@@ -134,6 +140,9 @@ def query_projects(
     if provider_id:
         clauses.append("provider_id = :provider_id")
         params["provider_id"] = provider_id
+    if sidecar_id:
+        clauses.append("sidecar_id = :sidecar_id")
+        params["sidecar_id"] = sidecar_id
     if since is not None:
         clauses.append("ts >= :since")
         params["since"] = sqlite_utc_timestamp(since)

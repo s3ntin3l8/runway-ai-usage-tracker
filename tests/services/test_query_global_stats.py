@@ -38,6 +38,7 @@ def _add(
     tokens_cache_read: int = 0,
     cost_usd: float = 0.0,
     cost_cache_read: float = 0.0,
+    sidecar_id: str = "local",
 ) -> None:
     ev = UsageEvent(
         provider_id=provider_id,
@@ -51,7 +52,7 @@ def _add(
         tokens_cache_read=tokens_cache_read,
         cost_usd=cost_usd,
         cost_cache_read=cost_cache_read,
-        sidecar_id="local",
+        sidecar_id=sidecar_id,
         kind="message",
     )
     session.add(ev)
@@ -186,3 +187,40 @@ def test_empty_db_returns_safe_zeros(db_session):
     assert stats["cache_hit_ratio"] == 0.0
     assert stats["busiest_day"] is None
     assert stats["busiest_hour"] is None
+
+
+def test_sidecar_filter_and_exclude_cache_apply_to_insights_metrics(db_session):
+    _add(
+        db_session,
+        event_id="laptop",
+        ts=datetime(2026, 5, 1, 10, tzinfo=UTC),
+        tokens_input=100,
+        tokens_output=100,
+        tokens_cache_read=800,
+        cost_usd=1.0,
+        cost_cache_read=0.5,
+        sidecar_id="laptop",
+    )
+    _add(
+        db_session,
+        event_id="desktop",
+        ts=datetime(2026, 5, 2, 18, tzinfo=UTC),
+        tokens_input=9000,
+        cost_usd=10.0,
+        sidecar_id="desktop",
+    )
+
+    stats = query_global_stats(db_session, sidecar_id="laptop", exclude_cache=True)
+
+    # Headline totals retain their component fields; UI subtracts cache there.
+    assert stats["lifetime"]["tokens_total"] == 1000
+    assert stats["lifetime"]["cost_usd"] == pytest.approx(1.0)
+    assert stats["sessions"]["count"] == 1
+    assert stats["sessions"]["avg_tokens"] == pytest.approx(200)
+    assert stats["sessions"]["avg_cost"] == pytest.approx(0.5)
+    assert stats["cache_hit_ratio"] == pytest.approx(0.8)
+    assert stats["distinct_providers"] == 1
+    assert stats["busiest_day"]["period_key"] == "2026-05-01"
+    assert stats["busiest_day"]["tokens"] == 200
+    assert stats["busiest_hour"]["hour"] == 10
+    assert stats["busiest_hour"]["tokens"] == 200

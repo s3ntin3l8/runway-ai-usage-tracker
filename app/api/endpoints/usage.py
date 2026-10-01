@@ -110,6 +110,24 @@ _TOP_N_CACHE_TTL = 300.0
 _FORECAST_CACHE_TTL = 45.0
 
 
+@router.get("/sources")
+@limiter.limit("30/minute")
+async def get_usage_sources(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> dict[str, list[str]]:
+    """Return distinct sources that have contributed billable usage events."""
+    from app.models.db import UsageEvent
+
+    ids = session.exec(
+        select(UsageEvent.sidecar_id)
+        .where(UsageEvent.kind == "message")
+        .distinct()
+        .order_by(UsageEvent.sidecar_id)
+    ).all()
+    return {"sidecar_ids": [str(sidecar_id) for sidecar_id in ids if sidecar_id]}
+
+
 def _normalize_filter(value: str | None) -> str | None:
     """Canonicalize an optional string filter used both as a cache key
     component and a query predicate, so equivalent requests that differ only
@@ -522,6 +540,7 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
     period_key: str | None = None,
     since: str | None = None,
     until: str | None = None,
+    sidecar_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Authoritative cumulative usage rolled up across sidecars from usage_period_rollup.
@@ -571,6 +590,7 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
         period_key=period_key,
         since=since,
         until=until,
+        sidecar_id=sidecar_id,
     )
 
 
@@ -583,6 +603,7 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
     period_key: str | None,
     since: str | None,
     until: str | None,
+    sidecar_id: str | None = None,
 ) -> dict[str, Any]:
     from app.models.db import UsagePeriodRollup
 
@@ -610,6 +631,8 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
         stmt = stmt.where(UsagePeriodRollup.provider_id == provider_id)
     if account_id:
         stmt = stmt.where(UsagePeriodRollup.account_id == account_id)
+    if sidecar_id:
+        stmt = stmt.where(UsagePeriodRollup.sidecar_id == sidecar_id)
     if period_type:
         stmt = stmt.where(UsagePeriodRollup.period_type == period_type)
     if period_key:
@@ -644,9 +667,14 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
             since=anchors["month_start_utc"],
             provider_id=provider_id,
             account_id=account_id,
+            sidecar_id=sidecar_id,
         )
         live_year = query_cumulative_live(
-            session, since=anchors["year_start_utc"], provider_id=provider_id, account_id=account_id
+            session,
+            since=anchors["year_start_utc"],
+            provider_id=provider_id,
+            account_id=account_id,
+            sidecar_id=sidecar_id,
         )
     elif is_range_live:
         # Arbitrary [since, until) window — aggregate live, surfaced under a
@@ -657,6 +685,7 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
             until=parse_iso8601_utc(until) if until else None,
             provider_id=provider_id,
             account_id=account_id,
+            sidecar_id=sidecar_id,
         )
         current_year = "range"
         current_month = "range"
@@ -670,6 +699,7 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
             until=until_utc,
             provider_id=provider_id,
             account_id=account_id,
+            sidecar_id=sidecar_id,
         )
         current_year = (period_key or "")[:4]
         current_month = period_key or ""
@@ -684,6 +714,7 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
             since=anchors["month_start_utc"],
             provider_id=provider_id,
             account_id=account_id,
+            sidecar_id=sidecar_id,
         )
         current_year = anchors["current_year"]
         current_month = anchors["current_month"]
@@ -720,8 +751,8 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
         )
         # Cache portion of cost (cache_read + cache_create), for exclude-cache views.
         cost_cache = r.cost_cache_read + r.cost_cache_create
-        if r.model_id == "" and r.sidecar_id == "":
-            # Top-level totals row
+        if r.sidecar_id == (sidecar_id or "") and r.model_id == "":
+            # Top-level totals row for all sources or the selected source.
             bucket["tokens_input"] = r.tokens_input
             bucket["tokens_output"] = r.tokens_output
             bucket["tokens_cache_read"] = r.tokens_cache_read
@@ -730,8 +761,19 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
             bucket["cost_usd"] = r.cost_usd
             bucket["cost_cache"] = cost_cache
             bucket["msgs"] = r.msgs
-        elif r.model_id != "" and r.sidecar_id == "":
-            # Per-model grain (all sidecars combined)
+            if sidecar_id:
+                bucket["by_sidecar"][r.sidecar_id] = {
+                    "tokens_input": r.tokens_input,
+                    "tokens_output": r.tokens_output,
+                    "tokens_cache_read": r.tokens_cache_read,
+                    "tokens_cache_create": r.tokens_cache_create,
+                    "tokens_reasoning": r.tokens_reasoning,
+                    "cost_usd": r.cost_usd,
+                    "cost_cache": cost_cache,
+                    "msgs": r.msgs,
+                }
+        elif r.model_id != "" and r.sidecar_id == (sidecar_id or ""):
+            # Per-model grain for all sources or the selected source.
             bucket["by_model"][r.model_id] = {
                 "tokens_input": r.tokens_input,
                 "tokens_output": r.tokens_output,
@@ -742,8 +784,8 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
                 "cost_cache": cost_cache,
                 "msgs": r.msgs,
             }
-        elif r.model_id == "" and r.sidecar_id != "":
-            # Per-sidecar grain (all models combined)
+        elif not sidecar_id and r.model_id == "" and r.sidecar_id != "":
+            # Per-sidecar grain (all models combined) when unfiltered.
             bucket["by_sidecar"][r.sidecar_id] = {
                 "tokens_input": r.tokens_input,
                 "tokens_output": r.tokens_output,
@@ -982,6 +1024,7 @@ async def get_history_chart(
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
     group: str | None = Query(default=None, pattern="^(provider)$"),
+    sidecar_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Chart data: percent → fill curves; tokens/cost → daily bars.
@@ -1000,6 +1043,7 @@ async def get_history_chart(
         since=parse_iso8601_utc(since) if since else None,
         until=parse_iso8601_utc(until) if until else None,
         group=group,
+        sidecar_id=sidecar_id,
     )
 
 
@@ -1012,6 +1056,7 @@ async def get_top_models(
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
     exclude_cache: bool = Query(default=False),
+    sidecar_id: str | None = None,
     limit: int = Query(default=15, ge=1, le=50),
     session: Session = Depends(get_session),
 ) -> TopModelsResponse:
@@ -1026,7 +1071,7 @@ async def get_top_models(
     `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
     Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
     """
-    cache_key = f"top-models:{metric}:{days}:{since}:{until}:{exclude_cache}:{limit}"
+    cache_key = f"top-models:{metric}:{days}:{since}:{until}:{exclude_cache}:{sidecar_id}:{limit}"
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
@@ -1039,6 +1084,7 @@ async def get_top_models(
             until=parse_iso8601_utc(until) if until else None,
             metric=metric,
             exclude_cache=exclude_cache,
+            sidecar_id=sidecar_id,
             limit=limit,
         )
         return TopModelsResponse.model_validate(
@@ -1054,6 +1100,8 @@ async def get_top_models(
 @limiter.limit("30/minute")
 async def get_global_stats(
     request: Request,
+    sidecar_id: str | None = None,
+    exclude_cache: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> GlobalStatsResponse:
     """Global cross-provider snapshot: lifetime totals, session economics,
@@ -1063,13 +1111,21 @@ async def get_global_stats(
     `fetch_fleet_view` for why) — includes a full `usage_events` session-economics
     scan (no index on session_id). Response is cached for `_GLOBAL_STATS_CACHE_TTL`.
     """
-    cached = cache_get(_GLOBAL_STATS_CACHE_KEY)
+    cache_key = f"{_GLOBAL_STATS_CACHE_KEY}:{sidecar_id}:{exclude_cache}"
+    cached = cache_get(cache_key)
     if cached is not None:
         return cached
     result = await asyncio.to_thread(
-        lambda: GlobalStatsResponse(**query_global_stats(session, tz=resolve_user_tz(session)))
+        lambda: GlobalStatsResponse(
+            **query_global_stats(
+                session,
+                tz=resolve_user_tz(session),
+                sidecar_id=sidecar_id,
+                exclude_cache=exclude_cache,
+            )
+        )
     )
-    cache_set(_GLOBAL_STATS_CACHE_KEY, result, _GLOBAL_STATS_CACHE_TTL)
+    cache_set(cache_key, result, _GLOBAL_STATS_CACHE_TTL)
     return result
 
 
@@ -1113,6 +1169,7 @@ async def get_usage_history_deltas(
     days: float = Query(default=1.0, ge=0.01, le=90.0),
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
+    sidecar_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Compute actual consumption deltas from usage_events.
@@ -1135,6 +1192,7 @@ async def get_usage_history_deltas(
         days=days,
         since=since,
         until=until,
+        sidecar_id=sidecar_id,
     )
 
 
@@ -1211,6 +1269,7 @@ async def get_usage_events_range(
     request: Request,
     provider_id: str = Query(...),
     account_id: str = Query(...),
+    sidecar_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, str | None]:
     """Earliest/latest event timestamps for a (provider_id, account_id) pair.
@@ -1218,7 +1277,9 @@ async def get_usage_events_range(
     Bounds the month selector — there's no point paging back before the first
     recorded event. Both fields are null when the pair has no events yet.
     """
-    earliest, latest = event_time_range(session, provider_id=provider_id, account_id=account_id)
+    earliest, latest = event_time_range(
+        session, provider_id=provider_id, account_id=account_id, sidecar_id=sidecar_id
+    )
     return {"earliest": iso_utc(earliest), "latest": iso_utc(latest)}
 
 
@@ -1257,6 +1318,8 @@ async def get_usage_heatmap(
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
     tz: str | None = Query(default=None, description="IANA timezone (e.g. Europe/Berlin)"),
+    sidecar_id: str | None = None,
+    exclude_cache: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """7×24 hour-of-day token activity grid.
@@ -1280,6 +1343,8 @@ async def get_usage_heatmap(
         since=since_dt,
         until=until_dt,
         tz=tz,
+        sidecar_id=sidecar_id,
+        exclude_cache=exclude_cache,
     )
     return {"cells": cells, "tz": tz or "UTC"}
 
@@ -1294,6 +1359,7 @@ async def get_usage_sessions(
     until: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     sort_by: Literal["tokens", "recent"] = Query(default="tokens"),
+    sidecar_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Top-N sessions within the requested time window.
@@ -1318,6 +1384,7 @@ async def get_usage_sessions(
         until=until_dt,
         limit=limit,
         sort_by=sort_by,
+        sidecar_id=sidecar_id,
     )
     return {"sessions": sessions}
 
@@ -1335,6 +1402,7 @@ async def get_usage_sessions_paginated(  # noqa: PLR0913, PLR0917 — known-debt
     limit: int = Query(default=25, ge=1, le=50),
     sort_by: Literal["recent", "tokens", "duration", "messages", "cost"] = Query(default="recent"),
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
+    sidecar_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """One page of sessions (default 25) plus the total count, for the Sessions
@@ -1352,6 +1420,7 @@ async def get_usage_sessions_paginated(  # noqa: PLR0913, PLR0917 — known-debt
         sort_by=sort_by,
         sort_dir=sort_dir,
         project=project,
+        sidecar_id=sidecar_id,
     )
 
 
@@ -1365,6 +1434,7 @@ async def get_top_projects(
     until: str | None = Query(default=None),
     exclude_cache: bool = Query(default=False),
     provider_id: str | None = Query(default=None),
+    sidecar_id: str | None = None,
     limit: int = Query(default=15, ge=1, le=50),
     session: Session = Depends(get_session),
 ) -> TopProjectsResponse:
@@ -1376,9 +1446,7 @@ async def get_top_projects(
     Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
     """
     provider_id = _normalize_filter(provider_id)
-    cache_key = (
-        f"top-projects:{metric}:{days}:{since}:{until}:{exclude_cache}:{provider_id}:{limit}"
-    )
+    cache_key = f"top-projects:{metric}:{days}:{since}:{until}:{exclude_cache}:{provider_id}:{sidecar_id}:{limit}"
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
@@ -1391,6 +1459,7 @@ async def get_top_projects(
             metric=metric,
             exclude_cache=exclude_cache,
             provider_id=provider_id,
+            sidecar_id=sidecar_id,
             limit=limit,
         )
         return TopProjectsResponse.model_validate(
@@ -1410,6 +1479,7 @@ async def get_top_tools(
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
     provider_id: str | None = Query(default=None),
+    sidecar_id: str | None = None,
     limit: int = Query(default=15, ge=1, le=50),
     session: Session = Depends(get_session),
 ) -> TopToolsResponse:
@@ -1421,7 +1491,7 @@ async def get_top_tools(
     query param) for `_TOP_N_CACHE_TTL`.
     """
     provider_id = _normalize_filter(provider_id)
-    cache_key = f"top-tools:{days}:{since}:{until}:{provider_id}:{limit}"
+    cache_key = f"top-tools:{days}:{since}:{until}:{provider_id}:{sidecar_id}:{limit}"
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
@@ -1432,6 +1502,7 @@ async def get_top_tools(
             since=_resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
             provider_id=provider_id,
+            sidecar_id=sidecar_id,
             limit=limit,
         )
         return TopToolsResponse.model_validate(
@@ -1450,6 +1521,7 @@ async def get_projects(
     provider_id: str | None = Query(default=None),
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
+    sidecar_id: str | None = None,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Distinct project labels (for the sessions filter dropdown)."""
@@ -1459,6 +1531,7 @@ async def get_projects(
             provider_id=provider_id,
             since=parse_iso8601_utc(since) if since else None,
             until=parse_iso8601_utc(until) if until else None,
+            sidecar_id=sidecar_id,
         )
     }
 
@@ -1508,6 +1581,7 @@ async def get_cost_forecast(
     request: Request,
     provider_id: str | None = None,
     account_id: str | None = None,
+    exclude_cache: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Month-to-date cost + 7-day burn extrapolation to end of month.
@@ -1520,6 +1594,7 @@ async def get_cost_forecast(
         session,
         provider_id=provider_id,
         account_id=account_id,
+        exclude_cache=exclude_cache,
     )
 
 

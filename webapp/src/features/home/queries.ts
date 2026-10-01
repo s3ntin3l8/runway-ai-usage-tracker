@@ -2,6 +2,7 @@
 // gauges fastest, slow-moving aggregates and diagnostics on long ticks.
 
 import { useQuery } from '@tanstack/react-query';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 import {
   fetchAnomalies,
   fetchCostForecast,
@@ -27,12 +28,14 @@ export const useForecast = () =>
     refetchInterval: 60_000,
   });
 
-export const useCostForecast = () =>
-  useQuery({
-    queryKey: ['usage', 'cost-forecast'],
-    queryFn: () => fetchCostForecast(),
+export const useCostForecast = () => {
+  const { excludeCache } = useExcludeCache();
+  return useQuery({
+    queryKey: ['usage', 'cost-forecast', excludeCache],
+    queryFn: () => fetchCostForecast({ exclude_cache: excludeCache }),
     refetchInterval: 120_000,
   });
+};
 
 export const useCumulative = () =>
   useQuery({

@@ -25,6 +25,7 @@ def query_top_models(
     until: datetime | None = None,
     metric: str = "tokens",
     exclude_cache: bool = False,
+    sidecar_id: str | None = None,
     limit: int = 15,
 ) -> list[dict[str, Any]]:
     """Rank ``model_id`` across all providers/accounts in ``[since, until)``.
@@ -40,6 +41,7 @@ def query_top_models(
     ``limit`` rows.
     """
     until_clause = "AND ts < :until" if until is not None else ""
+    sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
 
     # Sort expression mirrors the displayed metric so bar order and bar length
     # agree, and honours exclude-cache the same way the frontend does. These
@@ -84,6 +86,7 @@ def query_top_models(
           AND model_id IS NOT NULL
           AND ts >= :since
           {until_clause}
+          {sidecar_clause}
         GROUP BY model_id
         ORDER BY {order_expr} DESC
         LIMIT :limit
@@ -93,6 +96,8 @@ def query_top_models(
     params: dict[str, Any] = {"since": sqlite_utc_timestamp(since), "limit": limit}
     if until is not None:
         params["until"] = sqlite_utc_timestamp(until)
+    if sidecar_id:
+        params["sidecar_id"] = sidecar_id
 
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
 

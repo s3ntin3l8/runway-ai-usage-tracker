@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
-import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { cn } from '@/lib/cn';
 import { formatCost, formatTokens } from '@/lib/format';
@@ -82,6 +81,17 @@ export function CostTab({
     return row?.lifetime ?? null;
   }, [liveCumulative.data, providerId, accountId]);
 
+  const recordedCost = (bucket: CumulativeBucket | null): number | null =>
+    bucket?.cost_usd == null
+      ? null
+      : Math.max(
+          0,
+          bucket.cost_usd -
+            (excludeCache
+              ? bucket.cost_cache ?? (bucket.cost_cache_read ?? 0) + (bucket.cost_cache_create ?? 0)
+              : 0),
+        );
+
   const stats = isLiveMonth
     ? [
         {
@@ -97,10 +107,10 @@ export function CostTab({
           label: `${moneyLabel} per day (7d)`,
           value: formatCost(cost.data?.daily_burn_avg_7d ?? null),
         },
-        { label: `${moneyLabel} (lifetime)`, value: formatCost(lifetime?.cost_usd ?? null) },
+          { label: `${moneyLabel} (lifetime)`, value: formatCost(recordedCost(lifetime)) },
       ]
     : [
-        { label: `${moneyLabel} · ${scopeLabel}`, value: formatCost(monthBucket?.cost_usd ?? null) },
+        { label: `${moneyLabel} · ${scopeLabel}`, value: formatCost(recordedCost(monthBucket)) },
         {
           label: billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
           value: '—',
@@ -111,7 +121,7 @@ export function CostTab({
           value: '—',
           hint: 'current month only',
         },
-        { label: `${moneyLabel} (lifetime)`, value: formatCost(lifetime?.cost_usd ?? null) },
+        { label: `${moneyLabel} (lifetime)`, value: formatCost(recordedCost(lifetime)) },
       ];
   const statsLoading = isLiveMonth
     ? cost.isPending || cumulative.isPending
@@ -119,7 +129,6 @@ export function CostTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <ExcludeCacheToggle />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {stats.map((stat) => (
           <StatTile

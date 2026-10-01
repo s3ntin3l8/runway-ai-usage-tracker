@@ -100,6 +100,7 @@ def event_time_range(
     *,
     provider_id: str,
     account_id: str,
+    sidecar_id: str | None = None,
 ) -> tuple[datetime | None, datetime | None]:
     """Earliest and latest event timestamps for a (provider, account) pair.
 
@@ -107,11 +108,12 @@ def event_time_range(
     page back past the first recorded event. Returns ``(None, None)`` when the
     pair has no events yet.
     """
-    row = session.exec(
-        select(func.min(UsageEvent.ts), func.max(UsageEvent.ts)).where(
-            UsageEvent.provider_id == provider_id,
-            UsageEvent.account_id == account_id,
-        )
-    ).one()
+    stmt = select(func.min(UsageEvent.ts), func.max(UsageEvent.ts)).where(
+        UsageEvent.provider_id == provider_id,
+        UsageEvent.account_id == account_id,
+    )
+    if sidecar_id:
+        stmt = stmt.where(UsageEvent.sidecar_id == sidecar_id)
+    row = session.exec(stmt).one()
     # SQLite returns aggregate datetimes as strings; normalize to datetime.
     return _parse_ts(row[0]), _parse_ts(row[1])
