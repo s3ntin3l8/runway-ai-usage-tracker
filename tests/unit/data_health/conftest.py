@@ -21,6 +21,7 @@ from app.models.db import (
     ProviderPricing,
     QuotaSnapshot,
     UsageEvent,
+    UsagePeriodRollup,
 )
 
 
@@ -167,6 +168,26 @@ def make_price(
     }
     base.update(overrides)
     row = ProviderPricing(**base)
+    session.add(row)
+    session.commit()
+    return row
+
+
+def make_rollup(
+    session: Session, *, provider_id: str, account_id: str, msgs: int = 1, **overrides
+) -> UsagePeriodRollup:
+    base: dict = {
+        "provider_id": provider_id,
+        "account_id": account_id,
+        "period_type": "lifetime",
+        "period_key": "all",
+        "model_id": "",
+        "sidecar_id": "",
+        "msgs": msgs,
+        "cost_usd": 0.0,
+    }
+    base.update(overrides)
+    row = UsagePeriodRollup(**base)
     session.add(row)
     session.commit()
     return row
