@@ -57,6 +57,48 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         )
         self._last_api_fetch = None
 
+    async def _get_credentials(self) -> dict | None:
+        """The *server host's* own Claude credentials file — unless pinned to a source.
+
+        A collector pinned to a source bundle (a sidecar machine's login, or a pasted
+        config credential) must read only that bundle. The server's file belongs to
+        whichever account is logged in on the server host; mixing it in refreshed the
+        wrong refresh token into another account's bundle and borrowed its email as
+        the card label.
+        """
+        if token_cache.is_source_selected("anthropic", self.account_id):
+            return None
+        return await super()._get_credentials()
+
+    def _persist_credentials(self, creds: dict) -> None:
+        """Write refreshed credentials back to the server host's own file.
+
+        Never when pinned to a source bundle: those tokens belong to another login
+        (a sidecar machine's), and the file is the server host's.
+        """
+        if token_cache.is_source_selected("anthropic", self.account_id):
+            return
+        super()._persist_credentials(creds)
+
+    async def _store_sidecar_token(
+        self,
+        provider: str,
+        access_token: str,
+        refresh_token: str | None = None,
+        expiry_date: str | int | None = None,
+    ):
+        """Cache refreshed tokens — and write them into the pinned bundle collectors read."""
+        selected = token_cache.selected_source(provider)
+        if selected is not None:
+            previous = token_cache.current_source_tokens(provider, selected[0]) or {}
+            refreshed = {"oauth_token": access_token}
+            if refresh_token:
+                refreshed["refresh_token"] = refresh_token
+            if expiry_date is not None:
+                refreshed["expiry_date"] = str(expiry_date)
+            await token_cache.apply_refresh_to_sources(provider, selected[0], previous, refreshed)
+        await super()._store_sidecar_token(provider, access_token, refresh_token, expiry_date)
+
     async def _execute_refresh(self, client: httpx.AsyncClient) -> dict | None:
         """Execute the HTTP request to refresh the Claude OAuth token."""
         creds = await self._get_credentials()

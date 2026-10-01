@@ -722,7 +722,7 @@ export interface CredentialSourceSummary {
   enabled: boolean;
   priority: number;
   last_seen?: string | null;
-  health: 'healthy' | 'auth_failed' | 'unavailable' | string;
+  health: 'healthy' | 'auth_failed' | 'unavailable' | 'degraded' | string;
   available: boolean;
 }
 
@@ -861,6 +861,89 @@ export interface TokenHealthEntry {
   /** Sidecar host that reported this source; the source is informational. */
   sidecar_id?: string | null;
   identity_pending?: boolean;
+}
+
+// ── Credential inventory (`GET /api/v1/system/credentials`) ─────────────────
+// One row per credential *source* (a secret found in one place), grouped
+// provider → account. Never carries secret values.
+
+/** Why a credential belongs to its account. */
+export type CredentialMapping =
+  | 'local' // identity read on the machine
+  | 'verified' // the server resolved it
+  | 'claim' // the sidecar claimed it
+  | 'operator' // an assignment rule
+  | 'config' // pasted in Settings → Providers
+  | 'server' // env var / file on the server host
+  | 'pending'; // not mapped yet
+
+export interface CredentialSourceView {
+  source_id: string;
+  provider_id: string;
+  /** Storage key; may be a placeholder while identity is pending. */
+  account_id: string;
+  /** `machine` = a sidecar found it, `config` = pasted key, `server` = env/file on the server. */
+  origin_kind: 'machine' | 'config' | 'server';
+  origin_type: string;
+  label: string;
+  machine_id?: string | null;
+  machine_name?: string | null;
+  mapping: CredentialMapping;
+  mapping_scope?: 'machine' | 'all_machines' | null;
+  fingerprinted: boolean;
+  identity_pending: boolean;
+  status: TokenHealthStatus;
+  expires_at?: string | null;
+  expires_in_seconds?: number | null;
+  token_types: string[];
+  can_refresh: boolean;
+  rollable: boolean;
+  removable: boolean;
+  enabled: boolean;
+  priority: number;
+  live: boolean;
+  /** Produced this account's most recent successful collection. */
+  is_active: boolean;
+  health: string;
+  last_seen?: string | null;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface CredentialAccountView {
+  provider_id: string;
+  account_id: string;
+  account_label?: string | null;
+  /** The best status among the account's enabled sources. */
+  status: TokenHealthStatus;
+  identity_pending: boolean;
+  active_source_id?: string | null;
+  data_source?: string | null;
+  input_source?: string | null;
+  sources: CredentialSourceView[];
+}
+
+export interface CredentialProviderView {
+  provider_id: string;
+  name: string;
+  accounts: CredentialAccountView[];
+}
+
+export interface CredentialMachineView {
+  machine_id: string;
+  name: string;
+  last_seen?: string | null;
+  credential_count: number;
+  unmapped_count: number;
+}
+
+export interface CredentialInventory {
+  providers: CredentialProviderView[];
+  machines: CredentialMachineView[];
+  unmapped_count: number;
+  rule_count: number;
+  pending_usage_events: number;
 }
 
 export interface AuditEntry {

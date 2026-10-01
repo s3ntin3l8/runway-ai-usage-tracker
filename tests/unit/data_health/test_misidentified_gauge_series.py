@@ -118,6 +118,27 @@ def test_detect_ignores_account_with_credential_source(session):
     assert report.total_count == 0
 
 
+def test_detect_ignores_account_collected_only_via_a_server_env_credential(session):
+    """An account fed only by a server env var / file (e.g. ``GITHUB_TOKEN``) has no
+    events, tag, config or sidecar source. It used to look evidence-free and be offered for
+    deletion; registering the server credential as a source row gives it real evidence."""
+    from app.services.credential_sources import register_server_source
+
+    make_latest_usage(session, provider_id="github", account_id="s3ntin3l8")
+    assert _check().detect(session).total_count == 1  # evidence-free before registration
+
+    register_server_source(
+        session,
+        provider_id="github",
+        account_id="s3ntin3l8",
+        source_type="env",
+        label="GITHUB_TOKEN",
+    )
+    session.commit()
+
+    assert _check().detect(session).total_count == 0
+
+
 def test_detect_ignores_default_account(session):
     """The generic 'default' account represents server-configured credentials
     (e.g. from .env without DB rows) and is never flagged as misidentified."""

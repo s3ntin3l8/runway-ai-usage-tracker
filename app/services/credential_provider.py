@@ -350,6 +350,61 @@ class CredentialProvider:
         return CredentialMap(discovered, sources=sources)
 
     @staticmethod
+    def server_credential_origins(provider_id: str) -> list[dict[str, Any]]:
+        """Where the *server host itself* finds credentials for ``provider_id``.
+
+        One entry per env var / file rule that currently yields a value:
+        ``{"source_type": "env"|"file", "label": <VAR|basename>, "keys": [targets],
+        "managed": <file inside Runway's own config dir>}``. Values are never
+        returned. Blocking file reads; call through ``asyncio.to_thread`` from async code.
+        """
+        runway_config_dir = get_platform_config_dir("runway")
+        origins: list[dict[str, Any]] = []
+        for rule in registry.get_provider(provider_id).get("rules", []):
+            rule_type = rule.get("type")
+            mapping = rule.get("mapping", {})
+            if rule_type == "env":
+                variable = rule.get("variable")
+                if variable and os.getenv(variable):
+                    origins.append(
+                        {
+                            "source_type": "env",
+                            "label": variable,
+                            "keys": [mapping.get("value", "token")],
+                            "managed": False,
+                        }
+                    )
+            elif rule_type == "file":
+                for path in _expand_rule_paths(rule.get("paths", [])):
+                    try:
+                        with open(path) as f:
+                            data = (
+                                yaml.safe_load(f)
+                                if rule.get("format", "json") == "yaml" and yaml
+                                else json.load(f)
+                            )
+                    except Exception:
+                        continue
+                    keys = [
+                        target
+                        for key_path, target in mapping.items()
+                        if CredentialProvider._resolve_mapping_value(data, key_path)
+                    ]
+                    if keys:
+                        origins.append(
+                            {
+                                "source_type": "file",
+                                "label": os.path.basename(str(path)),
+                                "keys": keys,
+                                "managed": bool(
+                                    runway_config_dir
+                                    and str(path).startswith(str(runway_config_dir))
+                                ),
+                            }
+                        )
+        return origins
+
+    @staticmethod
     def _resolve_mapping_value(data: Any, key_path_str: str) -> Any:
         """Resolve dotted paths, including ``|``-separated fallback paths."""
         if not data or not isinstance(data, dict):

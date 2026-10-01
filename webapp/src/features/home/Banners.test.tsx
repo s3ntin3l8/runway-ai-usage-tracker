@@ -181,7 +181,7 @@ describe('Banners credential health', () => {
     expect(
       screen.getByText(/credential for zai \(server environment\) was rejected by the provider/i),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /review tokens/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /review credentials/i })).toBeInTheDocument();
   });
 
   it('keeps the expired copy for a timed-out token', () => {

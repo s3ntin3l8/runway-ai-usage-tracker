@@ -727,6 +727,45 @@ def test_empty_string_api_key_clear_preserves_other_cache_slots(client: TestClie
     assert tokens.get("session_cookie") == "sidecar-cookie"  # pragma: allowlist secret
 
 
+def test_clearing_pasted_key_keeps_sidecar_source_bundles(client: TestClient):
+    """Clearing a dashboard-pasted key used to ``token_cache.remove`` the whole
+    account, dropping every sidecar source bundle until each machine re-pushed."""
+    import asyncio
+
+    from app.services.token_cache import token_cache
+
+    r = client.put(
+        "/api/v1/system/provider-config/minimax/default",
+        json={"api_key": "sk-minimax-123"},  # pragma: allowlist secret
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    asyncio.run(
+        token_cache.store(
+            "minimax",
+            {"api_key": "sidecar-key"},  # pragma: allowlist secret
+            account_id="default",
+            source="sidecar-a",
+            source_id="sidecar:host-a:auth",
+        )
+    )
+
+    r = client.put(
+        "/api/v1/system/provider-config/minimax/default",
+        json={"clear_api_key": True},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    sources = {
+        c["source_id"]: c["tokens"]
+        for c in asyncio.run(token_cache.get_source_candidates("minimax", "default"))
+    }
+    sidecar_bundle = {"api_key": "sidecar-key"}  # pragma: allowlist secret
+    assert sources == {"sidecar:host-a:auth": sidecar_bundle}
+    assert "config:minimax:default" not in sources
+
+
 def test_kimi_cache_mirror_resolves_through_real_collector(client: TestClient):
     """End-to-end (issue #343): PUT mirror → real ``_resolve_code_bearer``.
 

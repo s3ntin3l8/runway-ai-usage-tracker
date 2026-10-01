@@ -64,6 +64,8 @@ docker-compose.override.yml
 *.pem
 secrets/
 credentials/
+# ...but the webapp's Settings → Credentials UI is source code, not secrets.
+!webapp/src/**/credentials/
 gha-creds-*.json
 # .secrets.baseline is intentionally tracked — CI needs it for detect-secrets
 

@@ -582,7 +582,93 @@ class CollectorManager:
         # Release the shared semaphore before doing synchronous DB I/O.
         if isinstance(provider_id, str) and isinstance(account_id, str):
             self._record_source_health(provider_id, account_id, health_updates)
+            if not health_updates and key.endswith(":default"):
+                # No cache-backed source was tried, so the default collector used
+                # credentials the server host found itself (env var / local file).
+                # A cache hit or skipped collection never exercised the credential, so it
+                # must not be stamped as a fresh success (or an attempt): register the row,
+                # but only record an outcome when the credential was actually used.
+                used = self.smart_collectors[key].last_collection_state not in ("cached", "skipped")
+                await asyncio.to_thread(
+                    self._record_server_sources,
+                    provider_id,
+                    getattr(collector, "account_id", None) or "default",
+                    self._result_health(result) if used else None,
+                )
         return result
+
+    @staticmethod
+    def _result_health(result: list[dict[str, Any]]) -> str:
+        """Collapse a collector result into the per-source health vocabulary."""
+        if any(
+            card.get("data_source") != "error"
+            and card.get("remaining") != "ERR"
+            and not card.get("error_type")
+            for card in result
+        ):
+            return "healthy"
+        if any(card.get("error_type") in {"auth_failed", "invalid_api_key"} for card in result):
+            return "auth_failed"
+        return "unavailable"
+
+    @staticmethod
+    def _record_server_sources(provider_id: str, account_id: str, health: str | None) -> None:
+        """Register (and stamp) the env/file credentials that actually fed this collection.
+
+        ``health=None`` registers/prunes the rows without recording an outcome (the result
+        came from cache or the collection was skipped, so nothing was verified).
+
+        Server-discovered credentials never enter the token cache, so without a row they
+        are invisible to the credential views and leave no evidence for data-health
+        checks. Best-effort: provenance must never break a collection.
+        """
+        try:
+            from sqlmodel import Session
+
+            from app.core.db import engine
+            from app.services.credential_provider import CredentialProvider
+            from app.services.credential_sources import (
+                prune_server_sources,
+                record_source_result,
+                register_server_source,
+                server_source_id,
+            )
+
+            effective = CredentialProvider.get_credentials(provider_id).sources
+            origins = [
+                origin
+                for origin in CredentialProvider.server_credential_origins(provider_id)
+                if not origin["managed"]
+                and any(effective.get(k) == "server" for k in origin["keys"])
+            ]
+            with Session(engine) as session:
+                for origin in origins:
+                    row = register_server_source(
+                        session,
+                        provider_id=provider_id,
+                        account_id=account_id,
+                        source_type=origin["source_type"],
+                        label=origin["label"],
+                        token_types=origin["keys"],
+                    )
+                    if health is not None:
+                        record_source_result(row, health)
+                    session.add(row)
+                prune_server_sources(
+                    session,
+                    provider_id,
+                    {server_source_id(provider_id, o["source_type"], o["label"]) for o in origins},
+                )
+                session.commit()
+        except Exception:
+            # Never break a collection over provenance, but don't hide a persistent failure
+            # (locked DB, registry problem) either: without this, server-source provenance
+            # would silently never appear.
+            logger.warning(
+                "Could not record server credential sources for %s",
+                scrub_log(provider_id),
+                exc_info=True,
+            )
 
     async def _collect_with_source_failover(
         self,
@@ -992,6 +1078,7 @@ class CollectorManager:
 
         from app.core.db import engine
         from app.models.db import CredentialSource
+        from app.services.credential_sources import record_source_result
 
         with Session(engine) as session:
             rows = list(
@@ -1019,13 +1106,7 @@ class CollectorManager:
                     ).all()
                 )
             for row in rows:
-                health = updates[row.source_id]
-                row.health = health
-                row.health_detail = {
-                    "auth_failed": "Authentication failed",
-                    "unavailable": "Collection failed",
-                    "degraded": "Some requests were rejected; quota was collected",
-                }.get(health)
+                record_source_result(row, updates[row.source_id])
                 session.add(row)
             session.commit()
 

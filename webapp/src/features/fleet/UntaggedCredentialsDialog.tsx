@@ -25,7 +25,8 @@
 // provider-config form so an account can be established before tagging.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { AlertTriangle } from 'lucide-react';
 
@@ -43,6 +44,8 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
+import { buildSidecarNameMap, useSidecars } from './queries';
+import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { maskAccountId } from '@/lib/accountDisplay';
 import {
   Select,
@@ -85,7 +88,6 @@ export function UntaggedCredentialsDialog({
   open,
   onClose,
 }: UntaggedCredentialsDialogProps) {
-  const queryClient = useQueryClient();
   const [state, setState] = useState<DialogState>(INITIAL);
   // #319 scope: false = "This machine" (scope: 'sidecar', the server
   // default); true = "All machines" (scope: 'deployment').
@@ -98,7 +100,7 @@ export function UntaggedCredentialsDialog({
   });
 
   const providerConfigs = useQuery({
-    queryKey: ['system', 'provider_configs'],
+    queryKey: ['system', 'provider-configs'],
     queryFn: fetchProviderConfigs,
     enabled: open,
   });
@@ -155,17 +157,22 @@ export function UntaggedCredentialsDialog({
     return by_provider;
   }, [providerConfigs.data]);
 
+  const machineNames = buildSidecarNameMap(useSidecars().data?.sidecars ?? []);
+  const invalidateCredentialViews = useInvalidateCredentialViews();
   const save = useMutation({
     mutationFn: (body: CredentialTagRequest) => tagCredential(body),
     onSuccess: () => {
       toast.success('Credential tagged');
-      // Invalidate both the untagged list (the entry disappears) and
-      // the fleet list (counts may change in any card).
-      queryClient.invalidateQueries({ queryKey: ['fleet', 'untagged_credentials'] });
-      queryClient.invalidateQueries({ queryKey: ['fleet', 'credential_tags'] });
-      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
-      queryClient.invalidateQueries({ queryKey: ['system', 'provider_configs'] });
-      onClose();
+      // Tagging changes the untagged list, the rules, the sidecars' identities,
+      // token health and the provider cards — refresh them together.
+      invalidateCredentialViews();
+      if (singleEntry) {
+        onClose();
+      } else {
+        // Several credentials may be waiting: stay open on the next one instead of
+        // forcing the operator to reopen the dialog for each.
+        setState(INITIAL);
+      }
     },
     onError: (err: Error) => {
       toast.error(err.message);
@@ -193,7 +200,7 @@ export function UntaggedCredentialsDialog({
         singleEntry
           ? `${singleEntry.provider_id} · ${singleEntry.credential_origin}`
           : providerId
-            ? `${providerId} · credentials reported by ${sidecarId}`
+            ? `${providerId} · credentials reported by ${machineNames.get(sidecarId ?? '') ?? sidecarId}`
             : "Choose an account for each credential the sidecar couldn't identify."
       }
     >
@@ -253,6 +260,7 @@ export function UntaggedCredentialsDialog({
             <UntaggedRow
               key={`${entry.sidecar_id}/${entry.provider_id}/${entry.credential_origin}`}
               entry={entry}
+              machineName={machineNames.get(entry.sidecar_id)}
               accounts={accountsByProvider[entry.provider_id] ?? []}
               currentSelection={state}
               scopeLabel={scopeLabel}
@@ -307,6 +315,8 @@ export function stageToBody(
 
 interface UntaggedRowProps {
   entry: UntaggedCredential;
+  /** Display name of the reporting machine; falls back to the raw sidecar id. */
+  machineName?: string;
   accounts: ProviderAccount[];
   currentSelection: DialogState;
   scopeLabel: string;
@@ -317,6 +327,7 @@ interface UntaggedRowProps {
 
 function UntaggedRow({
   entry,
+  machineName,
   accounts,
   currentSelection,
   scopeLabel,
@@ -350,7 +361,7 @@ function UntaggedRow({
             <span className="font-mono text-[11px] text-fg-muted">{entry.credential_origin}</span>
           </p>
           <p className="truncate text-[11px] text-fg-subtle">
-            from <span className="font-mono">{entry.sidecar_id}</span>
+            from <span className="font-mono">{machineName ?? entry.sidecar_id}</span>
             {scopeLabel === 'All machines' && (
               <span className="text-accent"> · applies to all machines</span>
             )}
@@ -402,12 +413,9 @@ function UntaggedRow({
           {accounts.length === 0 ? (
             <>
               No <span className="font-mono">{entry.provider_id}</span> row configured.{' '}
-              <a
-                href={`/settings/providers#${entry.provider_id}`}
-                className="text-accent underline underline-offset-2"
-              >
+              <Link to="/settings/providers" className="text-accent underline underline-offset-2">
                 Add one in Provider Settings
-              </a>
+              </Link>
               .
             </>
           ) : (
@@ -416,12 +424,9 @@ function UntaggedRow({
               <span className="font-mono">{entry.provider_id}</span> row
               {accounts.length === 1 ? '' : 's'} configured{' '}
               {disabledCount > 0 ? 'are' : 'is'} disabled.{' '}
-              <a
-                href={`/settings/providers#${entry.provider_id}`}
-                className="text-accent underline underline-offset-2"
-              >
+              <Link to="/settings/providers" className="text-accent underline underline-offset-2">
                 Enable in Provider Settings
-              </a>
+              </Link>
               .
             </>
           )}

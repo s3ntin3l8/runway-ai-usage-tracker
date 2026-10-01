@@ -573,6 +573,13 @@ class TokenCache:
             entry = self._source_cache.get(provider, {}).get("default", {}).get(selection[2])
         return dict(entry[0]) if entry else None
 
+    def selected_source(self, provider: str) -> tuple[str, str] | None:
+        """``(account_id, source_id)`` this context is pinned to for ``provider``, if any."""
+        selection = _active_source.get()
+        if selection is None or selection[0] != provider:
+            return None
+        return selection[1], selection[2]
+
     def is_source_selected(self, provider: str, account_id: str | None = None) -> bool:
         """Whether this context is pinned to a source for the requested account."""
         selection = _active_source.get()

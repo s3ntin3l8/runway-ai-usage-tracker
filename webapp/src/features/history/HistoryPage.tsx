@@ -27,6 +27,7 @@ import {
   useHistoryWindows,
   type Metric,
 } from './queries';
+import { labelOrMaskedId } from '@/lib/accountDisplay';
 
 export function HistoryPage() {
   const { excludeCache } = useExcludeCache();
@@ -47,7 +48,7 @@ export function HistoryPage() {
       providerId: e.provider_id,
       accountId: e.account_id,
       label: `${names.get(e.provider_id) ?? e.provider_id} — ${
-        e.critical_gauge.account_label || e.account_id
+        labelOrMaskedId({ account_id: e.account_id, account_label: e.critical_gauge.account_label })
       }`,
     }));
   }, [fleet.data, providerConfigs.data]);

@@ -79,6 +79,9 @@ The grouped pending-events response reports `total_events` across the full queue
 | `GET` | `/api/v1/system/token-health` | Health of every credential (cache, dashboard-saved, server env/file): `status` is `valid`/`expiring`/`expired`/`invalid` (provider rejected it)/`stale` (sidecar stopped re-reporting it)/`unknown`; `removable` is false for config/server-managed rows. Values are never returned — only types and origin |
 | `POST` | `/api/v1/system/token-health/refresh/{provider}/{account_id}` | Trigger OAuth token refresh (admin) |
 | `DELETE` | `/api/v1/system/token-health/{provider}/{account_id}` | Evict token from cache (admin); `409` for dashboard-saved / server-env credentials — change those in Settings → Providers or the environment |
+| `GET` | `/api/v1/system/credentials` | Credential inventory (admin): provider → account → source. Each source carries its machine, origin (`machine`/`config`/`server`), why it maps to its account (`local`/`verified`/`claim`/`operator`/`config`/`server`/`pending`), `status` (`valid`/`expiring`/`expired`/`invalid`/`stale`/`unknown`), expiry, token types, `can_refresh`, and collection provenance; `is_active` marks the source behind the account's latest successful collection. Never returns secret values |
+| `POST` | `/api/v1/system/credentials/{provider}/{account_id}/{source_id}/refresh` | Refresh one source's OAuth token and write it back into that source's bundle (admin) |
+| `DELETE` | `/api/v1/system/credentials/{provider}/{account_id}/{source_id}` | Forget one machine-reported credential (admin); it returns on the machine's next report if still present. `409` for config / server-env credentials |
 | `POST` | `/api/v1/system/force-collect` | Trigger immediate collection cycle, fan out to sidecars |
 | `POST` | `/api/v1/system/cleanup` | Prune stale records and inactive sidecars (admin) |
 | `POST` | `/api/v1/system/wake` | Reset dormancy, restore normal polling |

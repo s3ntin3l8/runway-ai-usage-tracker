@@ -234,6 +234,11 @@ class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
     last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     health: str = Field(default="healthy")  # healthy | auth_failed | unavailable
     health_detail: str | None = None
+    # Collection provenance, stamped by the failover loop: which source actually
+    # produced data, and when. "Active source" for an account = latest last_success_at.
+    last_attempt_at: UTCDateTime | None = None
+    last_success_at: UTCDateTime | None = None
+    last_error: str | None = None
 
 
 class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]

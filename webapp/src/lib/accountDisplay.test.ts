@@ -2,6 +2,7 @@ import {
   accountSubtitle,
   credentialAccountName,
   displayAccountName,
+  labelOrMaskedId,
   maskAccountId,
 } from './accountDisplay';
 
@@ -137,5 +138,23 @@ describe('credentialAccountName', () => {
   it('masks hash-like ids, including inside a config: prefix', () => {
     expect(credentialAccountName(hash)).toBe(`${hash.slice(0, 8)}…${hash.slice(-4)}`);
     expect(credentialAccountName(`config:${hash}`)).toBe(`${hash.slice(0, 8)}…${hash.slice(-4)}`);
+  });
+});
+
+describe('labelOrMaskedId', () => {
+  const hash = '72ca8b0011223344556677889900aabbccddeeff00112233445566778899a9f5'; // pragma: allowlist secret
+
+  it('prefers a label', () => {
+    expect(labelOrMaskedId({ account_id: hash, account_label: ' Work ' })).toBe('Work');
+  });
+
+  it('masks an opaque hash id when there is no label', () => {
+    expect(labelOrMaskedId({ account_id: hash })).toBe('72ca8b00…a9f5');
+    expect(labelOrMaskedId({ account_id: hash, account_label: '   ' })).toBe('72ca8b00…a9f5');
+  });
+
+  it('leaves emails and the default sentinel alone', () => {
+    expect(labelOrMaskedId({ account_id: 'alice@example.com' })).toBe('alice@example.com');
+    expect(labelOrMaskedId({ account_id: 'default' })).toBe('default');
   });
 });
