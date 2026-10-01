@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { formatCost, formatTokens } from '@/lib/format';
 import { formatLocalDateTime } from '@/lib/tz';
+import { useUsageSource } from '@/hooks/useUsageSource';
 import type { TabScope } from './period';
 import { useProviderEventsPage } from './queries';
 
@@ -28,9 +29,10 @@ export function EventsTab({
   active: boolean;
 }) {
   const [page, setPage] = useState(0);
+  const [sidecarId] = useUsageSource();
   // Reset to the first page whenever the selected scope changes — the old
   // offset is meaningless against a different window's total.
-  useEffect(() => setPage(0), [scope.key]);
+  useEffect(() => setPage(0), [scope.key, sidecarId]);
   const q = useProviderEventsPage(providerId, accountId, {
     page,
     pageSize: PAGE_SIZE,

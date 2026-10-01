@@ -2,6 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { CostTab } from './CostTab';
+import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import * as api from '@/api/endpoints';
 import {
   costForecast,
@@ -24,6 +25,14 @@ vi.mock('@/components/charts/CostDonut', async (importActual) => ({
 }));
 
 describe('CostTab', () => {
+  const renderCostTabWithHeaderToggle = () =>
+    renderWithProviders(
+      <>
+        <ExcludeCacheToggle />
+        <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />
+      </>,
+    );
+
   beforeEach(() => {
     vi.clearAllMocks();
     // The exclude-cache pref persists to localStorage; reset it between tests.
@@ -34,9 +43,7 @@ describe('CostTab', () => {
   it('renders the stat tiles with formatted cost', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
-    renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
-    );
+    renderCostTabWithHeaderToggle();
 
     expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Projected EOM')).toBeInTheDocument();
@@ -56,9 +63,7 @@ describe('CostTab', () => {
   it('renders the per-model split table with a row', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
-    renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
-    );
+    renderCostTabWithHeaderToggle();
 
     expect(await screen.findByText(/^Cost by model ·/)).toBeInTheDocument();
     expect(await screen.findByText('claude-opus')).toBeInTheDocument();
@@ -76,9 +81,7 @@ describe('CostTab', () => {
   it('hides the cache columns when "Exclude cache" is toggled on', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
-    renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
-    );
+    renderCostTabWithHeaderToggle();
 
     expect((await screen.findAllByText('Cache read')).length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
@@ -91,9 +94,7 @@ describe('CostTab', () => {
   it('drops the cache portion from the Cost column when "Exclude cache" is on', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
-    renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
-    );
+    renderCostTabWithHeaderToggle();
 
     // Full cost up front (model $10, sidecar $12.50).
     expect(await screen.findByText('$10.00')).toBeInTheDocument();
@@ -123,9 +124,7 @@ describe('CostTab', () => {
   it('hides cache cost cells in the expanded breakdown when "Exclude cache" is on', async () => {
     vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
     vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
-    renderWithProviders(
-      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
-    );
+    renderCostTabWithHeaderToggle();
 
     await userEvent.click(screen.getByRole('switch', { name: /exclude cache/i }));
     await userEvent.click((await screen.findByText('claude-opus')).closest('tr')!);

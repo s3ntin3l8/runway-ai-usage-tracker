@@ -18,7 +18,13 @@ from sqlmodel import Session, select
 from app.models.db import UsagePeriodRollup
 
 
-def query_global_stats(session: Session, *, tz: ZoneInfo | None = None) -> dict[str, Any]:
+def query_global_stats(
+    session: Session,
+    *,
+    tz: ZoneInfo | None = None,
+    sidecar_id: str | None = None,
+    exclude_cache: bool = False,
+) -> dict[str, Any]:
     """Return a single global snapshot across all providers/accounts.
 
     Shape::
@@ -35,16 +41,17 @@ def query_global_stats(session: Session, *, tz: ZoneInfo | None = None) -> dict[
           "busiest_hour": {hour: 0-23, tokens} | None,                 # local tz
           "generated_at": ISO-8601 UTC,
         }
+
+    ``exclude_cache`` changes session averages and peak token metrics. Lifetime
+    totals retain their cache component fields (the UI subtracts those for its
+    headline tile), and ``cache_hit_ratio`` always describes all tokens.
     """
     # --- Lifetime totals + distinct counts (rollup, all-sidecar grain) -------
-    life_rows = list(
-        session.exec(
-            select(UsagePeriodRollup).where(
-                UsagePeriodRollup.period_type == "lifetime",
-                UsagePeriodRollup.sidecar_id == "",
-            )
-        ).all()
+    life_stmt = select(UsagePeriodRollup).where(
+        UsagePeriodRollup.period_type == "lifetime",
+        UsagePeriodRollup.sidecar_id == (sidecar_id or ""),
     )
+    life_rows = list(session.exec(life_stmt).all())
 
     lifetime = {
         "tokens_input": 0,
@@ -87,25 +94,35 @@ def query_global_stats(session: Session, *, tz: ZoneInfo | None = None) -> dict[
 
     # --- Session economics (events; per-session subquery so session-less API
     #     events never skew the averages) -------------------------------------
+    source_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
+    token_sum = (
+        "SUM(tokens_input + tokens_output + tokens_reasoning)"
+        if exclude_cache
+        else "SUM(tokens_input + tokens_output + tokens_cache_read + tokens_cache_create + tokens_reasoning)"
+    )
+    cost_sum = (
+        "SUM(cost_usd - cost_cache_read - cost_cache_create)" if exclude_cache else "SUM(cost_usd)"
+    )
     sess_row = session.exec(  # type: ignore[call-overload]
         text(
-            """
+            f"""
             SELECT
                 COUNT(*)        AS session_count,
                 AVG(s_tokens)   AS avg_tokens,
                 AVG(s_cost)     AS avg_cost
             FROM (
                 SELECT
-                    SUM(tokens_input + tokens_output + tokens_cache_read
-                        + tokens_cache_create + tokens_reasoning) AS s_tokens,
-                    SUM(cost_usd)                                 AS s_cost
+                    {token_sum} AS s_tokens,
+                    {cost_sum}                                   AS s_cost
                 FROM usage_events
                 WHERE kind = 'message'
                   AND session_id IS NOT NULL
-                GROUP BY provider_id, account_id, session_id
+                  {source_clause}
+                  GROUP BY provider_id, account_id, session_id
             )
             """
-        )
+        ),
+        params={"sidecar_id": sidecar_id} if sidecar_id else {},
     ).first()
     sessions = {
         "count": int(sess_row.session_count or 0) if sess_row else 0,
@@ -114,19 +131,24 @@ def query_global_stats(session: Session, *, tz: ZoneInfo | None = None) -> dict[
     }
 
     # --- Busiest day (rollup day grain, all-up; UTC calendar date) -----------
+    day_tokens = (
+        "SUM(tokens_input + tokens_output + tokens_reasoning)"
+        if exclude_cache
+        else "SUM(tokens_input + tokens_output + tokens_cache_read + tokens_cache_create + tokens_reasoning)"
+    )
     day_row = session.exec(  # type: ignore[call-overload]
         text(
-            """
+            f"""
             SELECT period_key,
-                   SUM(tokens_input + tokens_output + tokens_cache_read
-                       + tokens_cache_create + tokens_reasoning) AS tokens
+                   {day_tokens} AS tokens
             FROM usage_period_rollup
-            WHERE period_type = 'day' AND model_id = '' AND sidecar_id = ''
+            WHERE period_type = 'day' AND model_id = '' AND sidecar_id = :rollup_sidecar_id
             GROUP BY period_key
             ORDER BY tokens DESC
             LIMIT 1
             """
-        )
+        ),
+        params={"rollup_sidecar_id": sidecar_id or ""},
     ).first()
     busiest_day = (
         {"period_key": day_row.period_key, "tokens": int(day_row.tokens or 0)}
@@ -136,7 +158,7 @@ def query_global_stats(session: Session, *, tz: ZoneInfo | None = None) -> dict[
 
     # --- Busiest hour (rollup hour grain; UTC hour-start re-bucketed to local
     #     tz so "peak hour" matches the user's wall clock) -------------------
-    busiest_hour = _busiest_hour_local(session, tz)
+    busiest_hour = _busiest_hour_local(session, tz, sidecar_id, exclude_cache)
 
     return {
         "lifetime": lifetime,
@@ -150,7 +172,12 @@ def query_global_stats(session: Session, *, tz: ZoneInfo | None = None) -> dict[
     }
 
 
-def _busiest_hour_local(session: Session, tz: ZoneInfo | None) -> dict[str, int] | None:
+def _busiest_hour_local(
+    session: Session,
+    tz: ZoneInfo | None,
+    sidecar_id: str | None = None,
+    exclude_cache: bool = False,
+) -> dict[str, int] | None:
     """Sum hour-grain rollups into 24 local-tz buckets, return the peak.
 
     Each rollup hour row is keyed by its UTC hour start (``YYYY-MM-DDTHH``);
@@ -158,17 +185,22 @@ def _busiest_hour_local(session: Session, tz: ZoneInfo | None) -> dict[str, int]
     falls in. Approximate for sub-hour-offset zones, but cheap (no event scan)
     and correct to the hour for the common whole-hour offsets.
     """
+    hour_tokens = (
+        "SUM(tokens_input + tokens_output + tokens_reasoning)"
+        if exclude_cache
+        else "SUM(tokens_input + tokens_output + tokens_cache_read + tokens_cache_create + tokens_reasoning)"
+    )
     rows = session.exec(  # type: ignore[call-overload]
         text(
-            """
+            f"""
             SELECT period_key,
-                   SUM(tokens_input + tokens_output + tokens_cache_read
-                       + tokens_cache_create + tokens_reasoning) AS tokens
+                   {hour_tokens} AS tokens
             FROM usage_period_rollup
-            WHERE period_type = 'hour' AND model_id = '' AND sidecar_id = ''
+            WHERE period_type = 'hour' AND model_id = '' AND sidecar_id = :rollup_sidecar_id
             GROUP BY period_key
             """
-        )
+        ),
+        params={"rollup_sidecar_id": sidecar_id or ""},
     ).all()
 
     buckets: dict[int, int] = {}

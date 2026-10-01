@@ -17,6 +17,8 @@ import {
   fetchWindowHistory,
 } from '@/api/endpoints';
 import type { Metric } from '@/features/history/queries';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { useUsageSource } from '@/hooks/useUsageSource';
 
 // A closed [since, until) instant range (ISO strings) used to scope a tab to a
 // selected past month. `undefined` means "use the endpoint's rolling default".
@@ -33,12 +35,14 @@ export const useProviderForecast = (providerId: string, accountId: string) =>
     refetchInterval: 60_000,
   });
 
-export const useProviderCumulative = (providerId: string, accountId: string) =>
-  useQuery({
-    queryKey: ['usage', 'cumulative', providerId, accountId],
-    queryFn: () => fetchCumulative({ provider_id: providerId, account_id: accountId }),
+export const useProviderCumulative = (providerId: string, accountId: string) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'cumulative', providerId, accountId, sidecarId],
+    queryFn: () => fetchCumulative({ provider_id: providerId, account_id: accountId, sidecar_id: sidecarId }),
     refetchInterval: 120_000,
   });
+};
 
 // tz-correct cumulative totals for a specific past month ('YYYY-MM'). The
 // server aggregates this bucket live from usage_events on the user's local
@@ -49,19 +53,22 @@ export const useProviderCumulativeMonth = (
   accountId: string,
   periodKey: string,
   enabled = true,
-) =>
-  useQuery({
-    queryKey: ['usage', 'cumulative', providerId, accountId, 'month', periodKey],
+) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'cumulative', providerId, accountId, 'month', periodKey, sidecarId],
     queryFn: () =>
       fetchCumulative({
         provider_id: providerId,
         account_id: accountId,
         period_type: 'month',
         period_key: periodKey,
+        sidecar_id: sidecarId,
       }),
     enabled,
     refetchInterval: 120_000,
   });
+};
 
 // Cumulative totals aggregated live over an arbitrary [since, until) window —
 // the rolling-range counterpart to the month bucket above. The server runs
@@ -72,70 +79,82 @@ export const useProviderCumulativeRange = (
   accountId: string,
   range: DateRange,
   enabled = true,
-) =>
-  useQuery({
-    queryKey: ['usage', 'cumulative', providerId, accountId, 'range', range.since, range.until],
+) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'cumulative', providerId, accountId, 'range', range.since, range.until, sidecarId],
     queryFn: () =>
       fetchCumulative({
         provider_id: providerId,
         account_id: accountId,
         since: range.since,
         until: range.until,
+        sidecar_id: sidecarId,
       }),
     enabled,
     refetchInterval: 120_000,
   });
+};
 
 // Earliest/latest event timestamps — bounds the month selector's reach.
-export const useProviderEventRange = (providerId: string, accountId: string) =>
-  useQuery({
-    queryKey: ['usage', 'events', 'range', providerId, accountId],
-    queryFn: () => fetchEventRange({ provider_id: providerId, account_id: accountId }),
+export const useProviderEventRange = (providerId: string, accountId: string) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'events', 'range', providerId, accountId, sidecarId],
+    queryFn: () => fetchEventRange({ provider_id: providerId, account_id: accountId, sidecar_id: sidecarId }),
     staleTime: 300_000,
   });
+};
 
 export const useProviderHeatmap = (
   providerId: string,
   accountId: string,
   tz: string,
   range?: DateRange,
-) =>
-  useQuery({
-    queryKey: ['usage', 'heatmap', providerId, accountId, tz, range?.since, range?.until],
+) => {
+  const [sidecarId] = useUsageSource();
+  const { excludeCache } = useExcludeCache();
+  return useQuery({
+    queryKey: ['usage', 'heatmap', providerId, accountId, tz, range?.since, range?.until, sidecarId, excludeCache],
     queryFn: () =>
       fetchHeatmap(
         range
-          ? { provider_id: providerId, account_id: accountId, since: range.since, until: range.until, tz }
-          : { provider_id: providerId, account_id: accountId, days: 14, tz },
+          ? { provider_id: providerId, account_id: accountId, since: range.since, until: range.until, tz, sidecar_id: sidecarId, exclude_cache: excludeCache }
+          : { provider_id: providerId, account_id: accountId, days: 14, tz, sidecar_id: sidecarId, exclude_cache: excludeCache },
       ),
     refetchInterval: 300_000,
   });
+};
 
 export const useProviderSessions = (
   providerId: string,
   accountId: string,
   range?: DateRange,
-) =>
-  useQuery({
-    queryKey: ['usage', 'sessions', providerId, accountId, range?.since, range?.until],
+) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'sessions', providerId, accountId, range?.since, range?.until, sidecarId],
     queryFn: () =>
       fetchSessions({
         provider_id: providerId,
         account_id: accountId,
         limit: 10,
         sort_by: 'tokens',
+        sidecar_id: sidecarId,
         ...(range ? { since: range.since, until: range.until } : {}),
       }),
     refetchInterval: 120_000,
   });
+};
 
 // The 3 most recent sessions (by ts_end) — drives the Overview activity pulse.
 export const useProviderRecentSessions = (
   providerId: string,
   accountId: string,
   range?: DateRange,
-) =>
-  useQuery({
+) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
     queryKey: [
       'usage',
       'sessions',
@@ -144,6 +163,7 @@ export const useProviderRecentSessions = (
       accountId,
       range?.since ?? null,
       range?.until ?? null,
+      sidecarId ?? null,
     ],
     queryFn: () =>
       fetchSessions({
@@ -151,10 +171,12 @@ export const useProviderRecentSessions = (
         account_id: accountId,
         limit: 3,
         sort_by: 'recent',
+        sidecar_id: sidecarId,
         ...(range ? { since: range.since, until: range.until } : {}),
       }),
     refetchInterval: 120_000,
   });
+};
 
 // Paginated event tail for the Events tab. `since` scopes the window (e.g. the
 // start of the current month); offset/limit page through it. keepPreviousData
@@ -169,15 +191,17 @@ export const useProviderEventsPage = (
     until,
     enabled,
   }: { page: number; pageSize: number; since: string; until?: string; enabled: boolean },
-) =>
-  useQuery({
-    queryKey: ['usage', 'events', providerId, accountId, since, until, page, pageSize],
+) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'events', providerId, accountId, since, until, sidecarId, page, pageSize],
     queryFn: () =>
       fetchEvents({
         provider_id: providerId,
         account_id: accountId,
         since,
         ...(until ? { until } : {}),
+        sidecar_id: sidecarId,
         limit: pageSize,
         offset: page * pageSize,
       }),
@@ -185,6 +209,7 @@ export const useProviderEventsPage = (
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
   });
+};
 
 // One page of sessions for the Sessions browser tab, scoped to the selected
 // month and (optionally) one project. keepPreviousData avoids paging flicker.
@@ -210,8 +235,9 @@ export const useSessionsPaginated = (
     sortDir?: string;
     enabled: boolean;
   },
-) =>
-  useQuery({
+) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
     queryKey: [
       'usage',
       'sessions-page',
@@ -224,6 +250,7 @@ export const useSessionsPaginated = (
       sortDir,
       page,
       pageSize,
+      sidecarId,
     ],
     queryFn: () =>
       fetchSessionsPaginated({
@@ -236,24 +263,29 @@ export const useSessionsPaginated = (
         limit: pageSize,
         sort_by: sortBy,
         sort_dir: sortDir,
+        sidecar_id: sidecarId,
       }),
     enabled,
     placeholderData: keepPreviousData,
     refetchInterval: 120_000,
   });
+};
 
 // Distinct project labels for this provider in the selected window — feeds the
 // Sessions tab filter dropdown.
-export const useProjects = (providerId: string, range?: DateRange) =>
-  useQuery({
-    queryKey: ['usage', 'projects', providerId, range?.since, range?.until],
+export const useProjects = (providerId: string, range?: DateRange) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'projects', providerId, range?.since, range?.until, sidecarId],
     queryFn: () =>
       fetchProjects({
         provider_id: providerId,
+        sidecar_id: sidecarId,
         ...(range ? { since: range.since, until: range.until } : {}),
       }),
     staleTime: 120_000,
   });
+};
 
 export const useWindowHistory = (providerId: string, accountId: string, windowType: string) =>
   useQuery({
@@ -277,19 +309,22 @@ export const useProviderHistoryChart = (
   days: number,
   metric: Metric,
   range?: DateRange,
-) =>
-  useQuery({
-    queryKey: ['usage', 'history-chart', providerId, accountId, days, metric, range?.since, range?.until],
+) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'history-chart', providerId, accountId, days, metric, range?.since, range?.until, sidecarId],
     queryFn: () =>
       fetchHistoryChart({
         provider_id: providerId,
         account_id: accountId,
         days,
         metric,
+        sidecar_id: sidecarId,
         ...(range ? { since: range.since, until: range.until } : {}),
       }),
     refetchInterval: 120_000,
   });
+};
 
 export const useProviderAnomalies = (providerId: string, accountId: string) =>
   useQuery({
@@ -298,12 +333,14 @@ export const useProviderAnomalies = (providerId: string, accountId: string) =>
     refetchInterval: 300_000,
   });
 
-export const useProviderCostForecast = (providerId: string, accountId: string) =>
-  useQuery({
-    queryKey: ['usage', 'cost-forecast', providerId, accountId],
-    queryFn: () => fetchCostForecast({ provider_id: providerId, account_id: accountId }),
+export const useProviderCostForecast = (providerId: string, accountId: string) => {
+  const { excludeCache } = useExcludeCache();
+  return useQuery({
+    queryKey: ['usage', 'cost-forecast', providerId, accountId, excludeCache],
+    queryFn: () => fetchCostForecast({ provider_id: providerId, account_id: accountId, exclude_cache: excludeCache }),
     refetchInterval: 120_000,
   });
+};
 
 // Error events (kind="error") in the last 24h — feeds the alert banner.
 export const useProviderErrors = (providerId: string, accountId: string) =>

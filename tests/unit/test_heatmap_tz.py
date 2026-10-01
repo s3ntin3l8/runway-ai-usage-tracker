@@ -42,6 +42,8 @@ def _add_event(
     ts: datetime,
     tokens: int = 100,
     cost_usd: float = 0.0,
+    cost_cache_read: float = 0.0,
+    cost_cache_create: float = 0.0,
 ):
     ev = UsageEvent(
         provider_id="anthropic",
@@ -53,6 +55,8 @@ def _add_event(
         model_id="sonnet",
         tokens_input=tokens,
         cost_usd=cost_usd,
+        cost_cache_read=cost_cache_read,
+        cost_cache_create=cost_cache_create,
     )
     session.add(ev)
     session.commit()
@@ -77,6 +81,32 @@ def test_utc_bucketing_when_tz_missing():
 
     assert _cell(cells, dow=4, hour=14) == 500
     assert sum(c["tokens"] for c in cells) == 500
+
+
+def test_exclude_cache_subtracts_token_and_cost_components():
+    s = _session()
+    _add_event(
+        s,
+        "cached",
+        datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC),
+        tokens=500,
+        cost_usd=2.0,
+        cost_cache_read=0.5,
+        cost_cache_create=0.25,
+    )
+
+    cells = query_heatmap(
+        s,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        days=30,
+        now=_NOW,
+        exclude_cache=True,
+    )
+    target = next(c for c in cells if c["dow"] == 4 and c["hour"] == 14)
+
+    assert target["tokens"] == 500
+    assert target["cost_usd"] == 1.25
 
 
 def test_local_bucketing_shifts_with_tz():

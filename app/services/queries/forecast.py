@@ -98,6 +98,7 @@ def query_cost_forecast(
     *,
     provider_id: str | None = None,
     account_id: str | None = None,
+    exclude_cache: bool = False,
 ) -> dict[str, Any]:
     """Return a cost forecast combining current MTD with 7-day burn average.
 
@@ -106,6 +107,7 @@ def query_cost_forecast(
     - 7d avg: sum cost_usd from period_type=day, model_id='', sidecar_id='' for past 7 days
               divided by 7 (always divides by 7, zero-filling missing days).
     - projected_eom = MTD + (daily_avg × days_remaining).
+    - With ``exclude_cache``, cache-read/create cost is removed from MTD and daily sums.
     """
     now = datetime.now(UTC)
     days_in_month = calendar.monthrange(now.year, now.month)[1]
@@ -144,12 +146,22 @@ def query_cost_forecast(
     mtd_by_account: dict[tuple[str, str], float] = {}
     for r in mtd_rows:
         key: tuple[str, str] = (r.provider_id, r.account_id)
-        mtd_by_account[key] = mtd_by_account.get(key, 0.0) + r.cost_usd
+        cost = (
+            max(0.0, r.cost_usd - r.cost_cache_read - r.cost_cache_create)
+            if exclude_cache
+            else r.cost_usd
+        )
+        mtd_by_account[key] = mtd_by_account.get(key, 0.0) + cost
 
     daily_sum_by_account: dict[tuple[str, str], float] = {}
     for r in daily_rows:
         key = (r.provider_id, r.account_id)
-        daily_sum_by_account[key] = daily_sum_by_account.get(key, 0.0) + r.cost_usd
+        cost = (
+            max(0.0, r.cost_usd - r.cost_cache_read - r.cost_cache_create)
+            if exclude_cache
+            else r.cost_usd
+        )
+        daily_sum_by_account[key] = daily_sum_by_account.get(key, 0.0) + cost
 
     # Build per-account breakdown
     all_keys: set[tuple[str, str]] = set(mtd_by_account.keys()) | set(daily_sum_by_account.keys())

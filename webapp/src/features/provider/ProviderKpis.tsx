@@ -103,7 +103,11 @@ export function ProviderKpis({
   const rangeSpend = (
     <StatTile
       label={`${moneyLabel} · ${scopeLabel}`}
-      value={formatCost(bucket?.cost_usd ?? null)}
+      value={formatCost(
+        bucket?.cost_usd == null
+          ? null
+          : Math.max(0, bucket.cost_usd - (excludeCache ? (bucket.cost_cache ?? (bucket.cost_cache_read ?? 0) + (bucket.cost_cache_create ?? 0)) : 0)),
+      )}
       loading={bucketLoading}
     />
   );

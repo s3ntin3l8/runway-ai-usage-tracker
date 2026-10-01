@@ -96,7 +96,7 @@ describe('ProviderPage', () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([a, b]));
     renderPage();
     await screen.findByTestId('overview-tab');
-    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Provider account' })).toBeInTheDocument();
   });
 
   it('selects the account named in the ?account param', async () => {
@@ -170,7 +170,7 @@ describe('ProviderPage', () => {
     // Default falls to the first entry.
     expect(await screen.findByTestId('overview-tab')).toHaveTextContent('a@x.com');
 
-    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Provider account' }));
     await userEvent.click(await screen.findByRole('option', { name: 'Acct B' }));
 
     expect(await screen.findByTestId('overview-tab')).toHaveTextContent('b@x.com');

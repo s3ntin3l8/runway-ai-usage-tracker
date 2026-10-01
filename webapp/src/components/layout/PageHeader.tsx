@@ -27,7 +27,11 @@ export function PageHeader({ title, description, leading, actions, className }: 
           ) : null}
         </div>
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      {actions ? (
+        <div className="min-w-0 max-w-[72vw] shrink-0 overflow-x-auto lg:max-w-none">
+          <div className="flex w-max items-center gap-2">{actions}</div>
+        </div>
+      ) : null}
     </header>
   );
 }

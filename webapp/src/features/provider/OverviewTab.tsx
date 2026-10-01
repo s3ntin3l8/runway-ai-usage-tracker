@@ -7,7 +7,6 @@ import { useMemo } from 'react';
 import type { CumulativeBucket, FleetEntry } from '@/api/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenBar } from '@/components/charts/TokenBar';
@@ -103,7 +102,6 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
 
   return (
     <div className="flex flex-col gap-4">
-      <ExcludeCacheToggle />
       <ProviderKpis entry={entry} scope={scope} excludeCache={excludeCache} />
       <ProviderAlerts providerId={entry.provider_id} accountId={entry.account_id} />
       {entry.server_collector_available && entry.critical_gauge.data_source === 'local' ? (
@@ -176,6 +174,7 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
                 tokens_reasoning: scopeBucket?.tokens_reasoning,
               }}
               showLegend
+              excludeCache={excludeCache}
               className="mt-3"
             />
             {scopeBucket?.msgs != null ? (

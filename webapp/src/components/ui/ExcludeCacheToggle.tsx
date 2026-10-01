@@ -4,14 +4,14 @@
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { Switch } from '@/components/ui/Switch';
 
-export function ExcludeCacheToggle({ className }: { className?: string }) {
+export function ExcludeCacheToggle({ className, compact = false }: { className?: string; compact?: boolean }) {
   const { excludeCache, setExcludeCache } = useExcludeCache();
   return (
     <div className={className ?? 'flex items-center justify-end gap-2'}>
-      <label htmlFor="exclude-cache" className="text-[12px] text-fg-muted">
+      <label htmlFor="exclude-cache" className={`text-[12px] text-fg-muted${compact ? ' hidden md:inline' : ''}`}>
         Exclude cache
       </label>
-      <Switch id="exclude-cache" checked={excludeCache} onCheckedChange={setExcludeCache} />
+      <Switch id="exclude-cache" aria-label="Exclude cache" checked={excludeCache} onCheckedChange={setExcludeCache} />
     </div>
   );
 }

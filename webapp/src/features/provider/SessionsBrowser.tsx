@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
-import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
+import { useUsageSource } from '@/hooks/useUsageSource';
 import { SessionsTable, type SessionSortKey, type SortDir } from './SessionsTable';
 import type { TabScope } from './period';
 import { useProjects, useSessionsPaginated } from './queries';
@@ -30,6 +30,7 @@ export function SessionsBrowser({
   active: boolean;
 }) {
   const { excludeCache } = useExcludeCache();
+  const [sidecarId] = useUsageSource();
   const [page, setPage] = useState(0);
   const [project, setProject] = useState<string>(ALL);
   // Default sort mirrors the server default ('recent' desc) — no header is
@@ -38,6 +39,10 @@ export function SessionsBrowser({
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Reset to the first page whenever the scope, project, or sort changes — the
   // old offset is meaningless against a reordered or differently-sized result.
+  useEffect(() => {
+    setPage(0);
+    setProject(ALL);
+  }, [sidecarId]);
   useEffect(() => setPage(0), [scope.key, project, sortBy, sortDir]);
 
   // Toggle direction when re-clicking the active column; otherwise switch
@@ -91,7 +96,6 @@ export function SessionsBrowser({
               </SelectContent>
             </Select>
           ) : null}
-          <ExcludeCacheToggle />
         </div>
       </CardHeader>
 

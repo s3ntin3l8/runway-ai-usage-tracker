@@ -702,6 +702,7 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
     since: datetime | None = None,
     until: datetime | None = None,
     group: str | None = None,
+    sidecar_id: str | None = None,
 ) -> dict:
     """Return chart data.
 
@@ -816,7 +817,7 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
     )
     bar_stmt = select(UsagePeriodRollup).where(
         UsagePeriodRollup.period_type == period_type,
-        UsagePeriodRollup.sidecar_id == "",
+        UsagePeriodRollup.sidecar_id == (sidecar_id or ""),
     )
     boundary_ranges: list[tuple[datetime, datetime]] = []
     bar_until: datetime | None = until
@@ -878,8 +879,11 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
         )
         params["provider_id"] = provider_id
         params["account_id"] = account_id
+        if sidecar_id:
+            params["sidecar_id"] = sidecar_id
         provider_clause = "AND provider_id = :provider_id" if provider_id else ""
         account_clause = "AND account_id = :account_id" if account_id else ""
+        sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
         # These f-strings interpolate only server-built SQL clauses above;
         # provider, account, and timestamp values remain bound parameters.
         # Like the rollup's empty sidecar_id, this event query covers all sidecars.
@@ -900,6 +904,7 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
             WHERE kind = 'message'
               {provider_clause}
               {account_clause}
+              {sidecar_clause}
               AND ({" OR ".join(event_ranges)})
             GROUP BY provider_id, account_id, model_id, period_key
             """
