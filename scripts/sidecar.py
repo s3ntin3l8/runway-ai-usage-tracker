@@ -913,8 +913,22 @@ class _RedactingFilter(logging.Filter):
         try:
             record.msg = redact_log_text(record.getMessage())
             record.args = None
+            if record.exc_info:
+                # A traceback's message can carry a secret too (a validation error
+                # echoing its input). Format it here, redact it, and clear exc_info
+                # so the handler's formatter doesn't append the raw one.
+                record.exc_text = redact_log_text(
+                    logging.Formatter().formatException(record.exc_info)
+                )
+                record.exc_info = None
+            elif record.exc_text:
+                record.exc_text = redact_log_text(record.exc_text)
         except Exception:
-            pass
+            # Never let a formatting problem drop the record or leak its raw text.
+            record.msg = "[log record could not be redacted]"
+            record.args = None
+            record.exc_info = None
+            record.exc_text = None
         return True
 
 
@@ -1302,6 +1316,8 @@ def strip_credentials(payload: dict[str, Any]) -> dict[str, Any]:
     are re-sent on the next live cycle; replaying a stale one adds nothing.
     """
     stripped = dict(payload)
+    # The predicate is the server's own token-only rule, which is also what feeds the
+    # token cache, so a credential the server would act on is always removed here.
     if "metrics" in payload:
         stripped["metrics"] = [
             card

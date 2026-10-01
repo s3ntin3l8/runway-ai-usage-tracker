@@ -199,10 +199,20 @@ def test_redaction_is_fast_on_hostile_lines(line):
     """The patterns run on every log record; they must not backtrack quadratically."""
     from app.core.log_redaction import redact_secrets
 
+    benign = "ab " * (len(line) // 3)  # same length, nothing to match
+    start = time.perf_counter()
+    sidecar.redact_log_text(benign)
+    redact_secrets(benign[:2000])
+    baseline = time.perf_counter() - start
+
     start = time.perf_counter()
     sidecar.redact_log_text(line)
     redact_secrets(line[:2000])
-    assert time.perf_counter() - start < 1.0
+    hostile = time.perf_counter() - start
+
+    # Relative, so a slow CI runner doesn't flake it; the quadratic version was
+    # thousands of times slower than the benign line, not a small multiple.
+    assert hostile < max(0.5, baseline * 50)
 
 
 def test_logging_filter_redacts_formatted_messages():
@@ -213,6 +223,28 @@ def test_logging_filter_redacts_formatted_messages():
     assert sidecar._RedactingFilter().filter(record) is True
 
     assert OAUTH not in record.getMessage()
+
+
+def test_logging_filter_redacts_tracebacks_too(tmp_path):
+    """exc_info=True call sites must not write a secret-bearing traceback to the log."""
+    log = tmp_path / "x.log"
+    handler = logging.FileHandler(log)
+    handler.addFilter(sidecar._RedactingFilter())
+    logger = logging.getLogger("secrets-at-rest-traceback-test")
+    logger.addHandler(handler)
+    logger.propagate = False
+    try:
+        try:
+            raise ValueError(f"ingest rejected: input_value='{OAUTH}'")
+        except ValueError:
+            logger.error("send failed", exc_info=True)
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+
+    text = log.read_text()
+    assert OAUTH not in text
+    assert "ValueError" in text and "send failed" in text
 
 
 def test_log_tail_is_redacted_even_for_lines_written_by_older_versions(tmp_path, monkeypatch):
