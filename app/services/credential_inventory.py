@@ -98,7 +98,8 @@ def _load_token_types(row: CredentialSource) -> list[str]:
         parsed = json.loads(row.token_types_json or "[]")
     except (TypeError, ValueError):
         return []
-    return [t for t in parsed if isinstance(t, str)]
+    # Legacy/garbage values ("null", "5", an object) must not 500 the whole inventory.
+    return [t for t in parsed if isinstance(t, str)] if isinstance(parsed, list) else []
 
 
 def _resolve_tag(
@@ -199,7 +200,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             exp = row.credential_expires_at.timestamp() if row.credential_expires_at else None
         rollable = bool(tokens.get("refresh_token") or tokens.get("xai_refresh"))
         machine_sourced = row.sidecar_id is not None
-        identity_pending = row.account_id in ("default", row.source_id)
+        # Only a machine-reported credential can be "waiting for an account": an env var or
+        # pasted key on the ``default`` account is that deployment's real account.
+        identity_pending = machine_sourced and row.account_id in ("default", row.source_id)
         mapping, scope = _mapping(row, _resolve_tag(tags, row), identity_pending)
         origin_type, label = describe_origin(row.credential_origin)
         if not machine_sourced:

@@ -760,7 +760,8 @@ async def delete_credential_source(
             CredentialSource.source_id == source_id,
         )
     ).first()
-    if row is not None and row.sidecar_id is None:
+    managed_elsewhere = is_server_source_id(source_id) or source_id.startswith("config:")
+    if managed_elsewhere or (row is not None and row.sidecar_id is None):
         raise HTTPException(
             status_code=409,
             detail=(

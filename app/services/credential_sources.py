@@ -206,7 +206,7 @@ def register_server_source(
         elif stale is not None:
             session.delete(stale)
         session.flush()
-    return touch_source(
+    row = touch_source(
         session,
         provider_id=provider_id,
         account_id=aid,
@@ -215,6 +215,33 @@ def register_server_source(
         source_label=label,
         token_types=token_types if token_types is not None else UNSET,
     )
+    # One env var / file is one credential: if the account it resolves to changed (a
+    # rotated token for a different login), drop the row left under the old account.
+    for other in session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == provider_id,
+            CredentialSource.source_id == source_id,
+            CredentialSource.account_id != aid,
+        )
+    ).all():
+        session.delete(other)
+    return row
+
+
+def prune_server_sources(session: Session, provider_id: str, keep_source_ids: set[str]) -> int:
+    """Delete a provider's ``server:`` rows whose env var / file is no longer present.
+
+    Server rows have no machine to go stale, so without this a removed env var keeps a
+    ghost row (still "valid", still holding its old last success) forever.
+    """
+    removed = 0
+    for row in session.exec(
+        select(CredentialSource).where(CredentialSource.provider_id == provider_id)
+    ).all():
+        if is_server_source_id(row.source_id) and row.source_id not in keep_source_ids:
+            session.delete(row)
+            removed += 1
+    return removed
 
 
 HEALTH_DETAILS = {

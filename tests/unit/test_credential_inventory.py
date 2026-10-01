@@ -375,3 +375,44 @@ async def test_inventory_never_contains_secret_values(engine, cache):
 async def test_empty_inventory(engine, cache):
     inv = await build_inventory()
     assert inv.providers == [] and inv.machines == []
+
+
+@pytest.mark.asyncio
+async def test_env_and_config_credentials_on_default_are_a_real_account_not_pending(engine, cache):
+    """An env-var-only install files everything under ``default``; that is the account,
+    not "waiting for an account" (which is only true of a machine-reported credential)."""
+    with Session(engine) as s:
+        _source(
+            s,
+            provider_id="openrouter",
+            account_id="default",
+            source_id="server:openrouter:env:OPENROUTER_API_KEY",
+            source_type="env",
+            source_label="OPENROUTER_API_KEY",
+            sidecar_id=None,
+            credential_origin=None,
+        )
+        _source(
+            s,
+            provider_id="minimax",
+            account_id="default",
+            source_id="config:minimax:default",
+            source_type="config",
+            source_label="Manual configuration",
+            sidecar_id=None,
+            credential_origin=None,
+        )
+    inv = await build_inventory()
+    for provider in ("openrouter", "minimax"):
+        acct, by_id = _sources(inv, provider=provider, account="default")
+        assert acct.identity_pending is False
+        assert all(not v.identity_pending for v in by_id.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ["null", "5", '{"a": 1}', "not json", ""])
+async def test_garbage_token_types_never_break_the_inventory(engine, cache, raw):
+    with Session(engine) as s:
+        _source(s, token_types_json=raw)
+    _, by_id = _sources(await build_inventory())
+    assert by_id["sidecar:a"].token_types == []

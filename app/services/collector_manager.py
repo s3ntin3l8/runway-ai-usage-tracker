@@ -621,8 +621,10 @@ class CollectorManager:
             from app.core.db import engine
             from app.services.credential_provider import CredentialProvider
             from app.services.credential_sources import (
+                prune_server_sources,
                 record_source_result,
                 register_server_source,
+                server_source_id,
             )
 
             effective = CredentialProvider.get_credentials(provider_id).sources
@@ -632,8 +634,6 @@ class CollectorManager:
                 if not origin["managed"]
                 and any(effective.get(k) == "server" for k in origin["keys"])
             ]
-            if not origins:
-                return
             with Session(engine) as session:
                 for origin in origins:
                     row = register_server_source(
@@ -646,6 +646,11 @@ class CollectorManager:
                     )
                     record_source_result(row, health)
                     session.add(row)
+                prune_server_sources(
+                    session,
+                    provider_id,
+                    {server_source_id(provider_id, o["source_type"], o["label"]) for o in origins},
+                )
                 session.commit()
         except Exception:
             logger.debug(

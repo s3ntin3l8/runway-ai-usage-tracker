@@ -1051,6 +1051,31 @@ class TestCollectorManagerInitialization:
         assert row.source_id == "server:github:env:GITHUB_TOKEN"
         assert row.last_success_at is not None
 
+    def test_record_server_sources_prunes_a_removed_env_credential(self, manager, monkeypatch):
+        from sqlalchemy.pool import StaticPool
+        from sqlmodel import SQLModel, create_engine
+        from sqlmodel.orm.session import Session
+
+        from app.models.db import CredentialSource
+
+        monkeypatch.setattr("sqlmodel.Session", Session)
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(engine)
+        monkeypatch.setattr("app.core.db.engine", engine)
+        monkeypatch.setattr("app.services.credential_provider._expand_rule_paths", lambda _p: [])
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")  # pragma: allowlist secret
+        manager._record_server_sources("github", "s3ntin3l8", "healthy")
+
+        # The env var is removed: the next collection must forget its row (even though no
+        # server credential is left to register).
+        monkeypatch.delenv("GITHUB_TOKEN")
+        manager._record_server_sources("github", "default", "unavailable")
+
+        with Session(engine) as session:
+            assert session.exec(select(CredentialSource)).all() == []
+
     def test_result_health_collapses_collector_output(self, manager):
         usable = [{"data_source": "api", "remaining": 5}]
         assert manager._result_health(usable) == "healthy"

@@ -9,6 +9,7 @@ from app.models.db import CredentialSource
 from app.services.credential_sources import (
     account_sources,
     describe_origin,
+    prune_server_sources,
     record_source_result,
     register_server_source,
     resolve_source_account,
@@ -278,3 +279,44 @@ def test_register_server_source_drops_placeholder_when_real_row_exists():
         )
         rows = session.exec(select(CredentialSource)).all()
         assert [r.account_id for r in rows] == ["s3ntin3l8"]
+
+
+def test_register_server_source_drops_the_row_left_under_a_previous_account():
+    """A rotated token resolving to a different login must not leave a duplicate."""
+    with _mem_session() as session:
+        for account in ("alice", "bob"):
+            register_server_source(
+                session, provider_id="github", account_id=account, source_type="env", label="T"
+            )
+        rows = session.exec(select(CredentialSource)).all()
+        assert [r.account_id for r in rows] == ["bob"]
+
+
+def test_prune_server_sources_removes_only_vanished_server_rows():
+    with _mem_session() as session:
+        for label in ("KEEP", "GONE"):
+            register_server_source(
+                session, provider_id="github", account_id="a", source_type="env", label=label
+            )
+        register_server_source(
+            session, provider_id="openrouter", account_id="a", source_type="env", label="GONE"
+        )
+        touch_source(
+            session,
+            provider_id="github",
+            account_id="a",
+            source_id="sidecar:x",
+            source_type="file",
+            source_label="auth.json",
+            sidecar_id="host-a",
+        )
+        removed = prune_server_sources(session, "github", {"server:github:env:KEEP"})
+        left = {(r.provider_id, r.source_id) for r in session.exec(select(CredentialSource)).all()}
+
+    assert removed == 1
+    # Other providers' server rows and machine-reported rows are never touched.
+    assert left == {
+        ("github", "server:github:env:KEEP"),
+        ("openrouter", "server:openrouter:env:GONE"),
+        ("github", "sidecar:x"),
+    }

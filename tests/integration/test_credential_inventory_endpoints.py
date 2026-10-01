@@ -147,3 +147,18 @@ def test_delete_unknown_source_is_404(client):
         f"/api/v1/system/credentials/gemini/{ALICE}/sidecar:nope", headers=_headers()
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_refuses_a_live_config_bundle_even_without_a_durable_row(client, cache):
+    await cache.store(
+        "gemini",
+        {"api_key": "pasted"},  # pragma: allowlist secret
+        account_id=ALICE,
+        source_id="config:gemini:alice",
+    )
+    resp = client.delete(
+        f"/api/v1/system/credentials/gemini/{ALICE}/config:gemini:alice", headers=_headers()
+    )
+    assert resp.status_code == 409
+    assert len(await cache.get_source_candidates("gemini", ALICE)) == 1
