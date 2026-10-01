@@ -42,7 +42,7 @@ CREDENTIAL_VALUE_KEYS = frozenset(
 REFRESH_CREDENTIAL_KEYS = frozenset({"refresh_token", "xai_refresh"})
 
 
-def has_refresh_credential(tokens_or_types: "Mapping[str, Any] | Iterable[str] | None") -> bool:
+def has_refresh_credential(tokens_or_types: Mapping[str, Any] | Iterable[str] | None) -> bool:
     """True when a token bundle (or a list of its token types) holds a refresh credential.
 
     A mapping counts only if the value is non-empty, so a blank ``refresh_token``

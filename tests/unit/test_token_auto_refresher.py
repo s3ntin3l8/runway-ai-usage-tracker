@@ -286,3 +286,25 @@ async def test_purge_expired_keeps_xai_refresh_bundle(cache):
     assert removed == 0
     tokens = await cache.get("xai", "alice@example.com")
     assert tokens is not None and tokens["xai_refresh"] == "rt"
+
+
+@pytest.mark.asyncio
+async def test_purge_expired_strips_oauth_fields_with_blank_refresh_token(cache):
+    """A blank ``refresh_token`` placeholder is not a refresh credential, so the
+    expired OAuth fields go (the independent api_key beside them stays)."""
+    await cache.store(
+        "gemini",
+        {
+            "oauth_token": "v1",
+            "refresh_token": "",
+            "id_token": _jwt({"exp": time.time() - 60, "email": "u@example.com"}),
+            "api_key": "k",
+        },
+        account_id="u@example.com",
+    )
+
+    removed = await cache.purge_expired_unrefreshable()
+
+    assert removed == 1
+    tokens = await cache.get("gemini", "u@example.com")
+    assert tokens is not None and "oauth_token" not in tokens and tokens["api_key"] == "k"
