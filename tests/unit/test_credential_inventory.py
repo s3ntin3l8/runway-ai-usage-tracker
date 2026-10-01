@@ -32,6 +32,8 @@ def engine(monkeypatch):
     )
     SQLModel.metadata.create_all(eng)
     monkeypatch.setattr(credential_inventory, "engine", eng)
+    # Hermetic: never read this machine's real env vars / files. Tests that care patch it.
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
     return eng
 
 
@@ -457,3 +459,159 @@ async def test_data_path_tolerates_garbage_card_json(engine, cache, card):
         s.commit()
     acct, _ = _sources(await build_inventory())
     assert (acct.data_source, acct.input_source) == (None, None)
+
+
+def _scan(monkeypatch, found, scanned=None):
+    monkeypatch.setattr(
+        credential_inventory,
+        "_scan_server_credentials",
+        lambda: (found, set(found) if scanned is None else scanned),
+    )
+
+
+def _env_origin(label="GITHUB_TOKEN", keys=("api_key",), shadowed=False):
+    return {
+        "source_type": "env",
+        "label": label,
+        "keys": list(keys),
+        "managed": False,
+        "shadowed": shadowed,
+    }
+
+
+def _cfg(session, provider, account, *, enabled=True, archived=False):
+    session.add(
+        ProviderConfig(provider_id=provider, account_id=account, enabled=enabled, archived=archived)
+    )
+    session.commit()
+
+
+@pytest.mark.asyncio
+async def test_unregistered_server_credential_is_listed_as_in_use(engine, cache, monkeypatch):
+    """A credential nothing has collected with yet still shows up (no registration needed)."""
+    _scan(monkeypatch, {"github": [_env_origin()]})
+    acct, by_id = _sources(await build_inventory(), provider="github", account="default")
+
+    (view,) = by_id.values()
+    assert view.source_id == "server:github:env:GITHUB_TOKEN"
+    assert (view.origin_kind, view.mapping, view.label) == ("server", "server", "GITHUB_TOKEN")
+    assert view.token_types == ["api_key"]
+    assert view.unused_reason is None
+    assert acct.identity_pending is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configs", "shadowed", "reason"),
+    [
+        ([], False, None),
+        ([("default", True, False)], False, None),
+        # Config rows exist but none is the default sentinel → the default collector is
+        # never spawned and the env var is silently unused (the "B8" case).
+        ([("alice@example.com", True, False)], False, "account_keyed_config"),
+        ([("default", False, False)], False, "provider_disabled"),
+        ([("alice@example.com", False, False)], False, "provider_disabled"),
+        ([("alice@example.com", True, True)], False, "provider_disabled"),
+        (
+            [("default", False, False), ("alice@example.com", True, False)],
+            False,
+            "default_disabled",
+        ),
+        # Present and enabled, but a pasted Settings key is what collectors read.
+        ([], True, "shadowed_by_config_key"),
+        ([("default", True, False)], True, "shadowed_by_config_key"),
+    ],
+)
+async def test_unused_reason_mirrors_when_the_default_collector_runs(
+    engine, cache, monkeypatch, configs, shadowed, reason
+):
+    _scan(monkeypatch, {"github": [_env_origin(shadowed=shadowed)]})
+    with Session(engine) as s:
+        for account, enabled, archived in configs:
+            _cfg(s, "github", account, enabled=enabled, archived=archived)
+    inv = await build_inventory()
+
+    views = [
+        v
+        for p in inv.providers
+        if p.provider_id == "github"
+        for a in p.accounts
+        for v in a.sources
+        if v.origin_kind == "server"
+    ]
+    assert [v.unused_reason for v in views] == [reason]
+
+
+@pytest.mark.asyncio
+async def test_registered_server_row_gets_the_reason_too(engine, cache, monkeypatch):
+    _scan(monkeypatch, {"github": [_env_origin()]})
+    with Session(engine) as s:
+        _source(
+            s,
+            provider_id="github",
+            account_id="s3ntin3l8",
+            source_id="server:github:env:GITHUB_TOKEN",
+            source_type="env",
+            source_label="GITHUB_TOKEN",
+            sidecar_id=None,
+            credential_origin=None,
+        )
+        _cfg(s, "github", "someone-else")
+    _, by_id = _sources(await build_inventory(), provider="github", account="s3ntin3l8")
+    assert by_id["server:github:env:GITHUB_TOKEN"].unused_reason == "account_keyed_config"
+
+
+@pytest.mark.asyncio
+async def test_registered_server_row_whose_env_var_is_gone_is_hidden(engine, cache, monkeypatch):
+    """The read-time scan is authoritative: a ghost row must not read "valid" forever just
+    because no collection ran to prune it."""
+    _scan(monkeypatch, {}, scanned={"github"})
+    with Session(engine) as s:
+        _source(
+            s,
+            provider_id="github",
+            account_id="s3ntin3l8",
+            source_id="server:github:env:GITHUB_TOKEN",
+            source_type="env",
+            source_label="GITHUB_TOKEN",
+            sidecar_id=None,
+            credential_origin=None,
+        )
+    inv = await build_inventory()
+    assert [p.provider_id for p in inv.providers] == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_scan_never_hides_registered_server_rows(engine, cache, monkeypatch):
+    """If a provider's rules couldn't be read we don't know the credential is gone."""
+    _scan(monkeypatch, {}, scanned=set())  # github not scanned successfully
+    with Session(engine) as s:
+        _source(
+            s,
+            provider_id="github",
+            account_id="s3ntin3l8",
+            source_id="server:github:env:GITHUB_TOKEN",
+            source_type="env",
+            source_label="GITHUB_TOKEN",
+            sidecar_id=None,
+            credential_origin=None,
+        )
+    _, by_id = _sources(await build_inventory(), provider="github", account="s3ntin3l8")
+    assert "server:github:env:GITHUB_TOKEN" in by_id
+
+
+@pytest.mark.asyncio
+async def test_scan_server_credentials_reads_env_and_flags_shadowing(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")  # pragma: allowlist secret
+    monkeypatch.setattr("app.services.credential_provider._expand_rule_paths", lambda _p: [])
+
+    found, scanned = credential_inventory._scan_server_credentials()
+
+    (origin,) = found["github"]
+    assert (origin["source_type"], origin["label"], origin["keys"]) == (
+        "env",
+        "GITHUB_TOKEN",
+        ["api_key"],
+    )
+    assert origin["shadowed"] is False
+    assert "github" in scanned

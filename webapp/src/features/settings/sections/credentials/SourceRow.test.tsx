@@ -91,6 +91,32 @@ describe('SourceRow', () => {
     expect(screen.queryByRole('button', { name: /refresh/i })).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['provider_disabled', /Collection for this provider is turned off/],
+    ['default_disabled', /default account is disabled/],
+    ['account_keyed_config', /Add a "default" account to use it/],
+    ['shadowed_by_config_key', /Settings → Providers takes precedence/],
+  ] as const)('explains why a present server credential is unused (%s)', (reason, text) => {
+    renderRow({
+      source: source({
+        origin_kind: 'server',
+        label: 'GITHUB_TOKEN',
+        machine_id: null,
+        machine_name: null,
+        mapping: 'server',
+        removable: false,
+        unused_reason: reason,
+      }),
+    });
+    expect(screen.getByText('Not used')).toBeInTheDocument();
+    expect(screen.getByText(text)).toBeInTheDocument();
+  });
+
+  it('does not flag a credential that is in use', () => {
+    renderRow({ source: source({ unused_reason: null }) });
+    expect(screen.queryByText('Not used')).not.toBeInTheDocument();
+  });
+
   it('refreshes this specific source', async () => {
     vi.mocked(api.postCredentialSourceRefresh).mockResolvedValue({ status: 'refreshed' });
     renderRow({ source: source({ can_refresh: true, rollable: true }) });

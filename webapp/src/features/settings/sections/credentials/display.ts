@@ -4,7 +4,7 @@
 //   mapping    = why the credential belongs to that account
 
 import type { BadgeProps } from '@/components/ui/Badge';
-import type { CredentialMapping, CredentialSourceView } from '@/api/types';
+import type { CredentialMapping, CredentialSourceView, CredentialUnusedReason } from '@/api/types';
 
 export const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   valid: 'ok',
@@ -72,3 +72,12 @@ export function relativeExpiry(seconds: number | null | undefined): string {
         : `${Math.max(1, Math.floor(abs / 60))}m`;
   return seconds < 0 ? `expired ${unit} ago` : `in ${unit}`;
 }
+
+export const UNUSED_HINT: Record<CredentialUnusedReason, string> = {
+  provider_disabled: 'Collection for this provider is turned off, so this credential is not used.',
+  default_disabled: 'The default account is disabled, so this credential is not used.',
+  account_keyed_config:
+    'Every account for this provider is configured by name, so the server never reads this environment credential. Add a "default" account to use it.',
+  shadowed_by_config_key:
+    'A key saved in Settings → Providers takes precedence, so this one is not read.',
+};

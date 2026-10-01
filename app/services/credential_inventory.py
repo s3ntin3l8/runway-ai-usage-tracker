@@ -11,6 +11,7 @@ Never returns secret values — only token *types*, origin labels and health.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import UTC, datetime
@@ -40,7 +41,12 @@ from app.models.schemas import (
     CredentialSourceView,
 )
 from app.services import auth_failures
-from app.services.credential_sources import describe_origin, is_server_source_id
+from app.services.credential_provider import CredentialProvider
+from app.services.credential_sources import (
+    describe_origin,
+    is_server_source_id,
+    server_source_id,
+)
 from app.services.token_cache import token_cache
 from app.services.token_health import SOURCE_STALE_SECS, _classify_status
 from app.services.token_refresher import _REFRESH_ENDPOINTS
@@ -172,6 +178,51 @@ def _data_path(session: Session) -> dict[tuple[str, str], tuple[str | None, str 
     return out
 
 
+def _scan_server_credentials() -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
+    """Env/file credentials the server host finds right now, per provider.
+
+    Returns ``(found, scanned)``: ``scanned`` is every provider whose rules were read
+    without error, so "absent from ``found``" only means "gone" for those.
+
+    Each origin carries ``shadowed``: ``get_credentials`` (what a collector reads) prefers a
+    pasted Settings key, so an env var whose every key is served from elsewhere is unused.
+    Blocking file/DB reads; call through ``asyncio.to_thread``.
+    """
+    found: dict[str, list[dict[str, Any]]] = {}
+    scanned: set[str] = set()
+    for provider_id in registry.get_all_providers():
+        try:
+            origins = [
+                o
+                for o in CredentialProvider.server_credential_origins(provider_id)
+                if not o["managed"]
+            ]
+            effective = CredentialProvider.get_credentials(provider_id).sources if origins else {}
+        except Exception:  # a broken rule must not take the whole inventory down
+            continue
+        scanned.add(provider_id)
+        if origins:
+            found[provider_id] = [
+                {**o, "shadowed": not any(effective.get(k) == "server" for k in o["keys"])}
+                for o in origins
+            ]
+    return found, scanned
+
+
+def _unused_reason(configs: list[ProviderConfig], origin: dict[str, Any]) -> str | None:
+    """Why the server would not use ``origin`` — mirrors when the default collector runs
+    (``CollectorManager._sync_collectors``) and what ``get_credentials`` prefers."""
+    if configs:
+        if not any(c.enabled and not c.archived for c in configs):
+            return "provider_disabled"
+        default = next((c for c in configs if c.account_id == "default"), None)
+        if default is None:
+            return "account_keyed_config"
+        if not default.enabled:
+            return "default_disabled"
+    return "shadowed_by_config_key" if origin["shadowed"] else None
+
+
 async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one join, kept linear
     now = time.time()
     with Session(engine) as session:
@@ -184,7 +235,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         for lab in session.exec(select(ProviderAccountLabel)).all():
             if lab.account_label:
                 labels[(lab.provider_id, lab.account_id)] = lab.account_label
+        configs_by_provider: dict[str, list[ProviderConfig]] = {}
         for cfg in session.exec(select(ProviderConfig)).all():
+            configs_by_provider.setdefault(cfg.provider_id, []).append(cfg)
             if cfg.account_label:
                 labels[(cfg.provider_id, cfg.account_id)] = cfg.account_label
         pending_by_sidecar: dict[str, int] = {}
@@ -285,6 +338,56 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 last_error=row.last_error,
             )
         )
+
+    # Server env/file credentials: the read-time scan is authoritative. It adds credentials
+    # that are present but never registered (no collection has used them), says why one
+    # isn't being used, and hides a registered row whose env var / file has gone away.
+    server_found, server_scanned = await asyncio.to_thread(_scan_server_credentials)
+    present = {
+        (provider_id, server_source_id(provider_id, o["source_type"], o["label"])): o
+        for provider_id, origins in server_found.items()
+        for o in origins
+    }
+    seen: set[tuple[str, str]] = set()
+    for key, views in list(accounts.items()):
+        kept = []
+        for view in views:
+            if view.origin_kind == "server" and view.provider_id in server_scanned:
+                origin = present.get((view.provider_id, view.source_id))
+                if origin is None:
+                    continue  # the env var / file is gone: a ghost row
+                view.unused_reason = _unused_reason(
+                    configs_by_provider.get(view.provider_id, []), origin
+                )
+                seen.add((view.provider_id, view.source_id))
+            kept.append(view)
+        accounts[key] = kept
+    for (provider_id, source_id), origin in present.items():
+        if (provider_id, source_id) in seen:
+            continue
+        accounts.setdefault((provider_id, "default"), []).append(
+            CredentialSourceView(
+                source_id=source_id,
+                provider_id=provider_id,
+                account_id="default",
+                origin_kind="server",
+                origin_type=origin["source_type"],
+                label=origin["label"],
+                mapping="server",
+                status=credential_status(
+                    exp=None,
+                    token_types=origin["keys"],
+                    rollable=False,
+                    health="healthy",
+                    live=False,
+                    machine_sourced=False,
+                    last_seen=None,
+                ),
+                token_types=origin["keys"],
+                unused_reason=_unused_reason(configs_by_provider.get(provider_id, []), origin),
+            )
+        )
+    accounts = {key: views for key, views in accounts.items() if views}
 
     by_provider: dict[str, list[CredentialAccountView]] = {}
     for (provider_id, account_id), views in accounts.items():
