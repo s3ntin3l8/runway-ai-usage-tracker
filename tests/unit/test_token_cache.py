@@ -1049,3 +1049,57 @@ async def test_source_lookups_return_snapshots(cache):
     candidates = await cache.get_source_candidates("openrouter", "alice@example.com")
     assert candidates[0]["tokens"]["api_key"] == "original"  # pragma: allowlist secret
     assert candidates[0]["source_type"] == "file"
+
+
+@pytest.mark.asyncio
+async def test_get_with_metadata_exact_does_not_fall_back_to_default(cache):
+    await cache.store("gemini", {"oauth_token": "default-tok"}, account_id="default")
+
+    # Collectors rely on the fallback (config creds live under "default")...
+    fallback = await cache.get_with_metadata("gemini", "nobody@example.com")
+    assert fallback is not None and fallback[0]["oauth_token"] == "default-tok"
+    # ...but a caller that writes the result back under the requested id must not.
+    assert await cache.get_with_metadata("gemini", "nobody@example.com", exact=True) is None
+    exact_default = await cache.get_with_metadata("gemini", "default", exact=True)
+    assert exact_default is not None and exact_default[0]["oauth_token"] == "default-tok"
+
+
+@pytest.mark.asyncio
+async def test_apply_refresh_to_sources_updates_only_the_refreshed_credential(cache):
+    """A refresh must reach the source bundle collectors read — and only the bundle that
+    held the refreshed credential, not another machine's login for the same account."""
+    acct = "alice@example.com"
+    await cache.store(
+        "xai",
+        {"oauth_token": "old-a", "refresh_token": "rt-a"},
+        account_id=acct,
+        source_id="sidecar:host-a:auth",
+    )
+    await cache.store(
+        "xai",
+        {"oauth_token": "other", "refresh_token": "rt-other"},
+        account_id=acct,
+        source_id="sidecar:host-b:auth",
+    )
+
+    updated = await cache.apply_refresh_to_sources(
+        "xai",
+        acct,
+        previous={"oauth_token": "old-a", "refresh_token": "rt-a"},
+        refreshed={"oauth_token": "new-a", "refresh_token": "rt-a2"},
+    )
+
+    assert updated == 1
+    by_id = {c["source_id"]: c["tokens"] for c in await cache.get_source_candidates("xai", acct)}
+    assert by_id["sidecar:host-a:auth"] == {"oauth_token": "new-a", "refresh_token": "rt-a2"}
+    assert by_id["sidecar:host-b:auth"] == {"oauth_token": "other", "refresh_token": "rt-other"}
+
+
+@pytest.mark.asyncio
+async def test_apply_refresh_to_sources_without_sources_is_a_noop(cache):
+    assert (
+        await cache.apply_refresh_to_sources(
+            "xai", "alice@example.com", {"refresh_token": "x"}, {"oauth_token": "y"}
+        )
+        == 0
+    )

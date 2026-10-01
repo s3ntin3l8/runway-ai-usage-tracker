@@ -41,6 +41,8 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   expired: 'critical',
   invalid: 'critical',
   unknown: 'neutral',
+  // The reporting machine went away; the stored expiry is history, not evidence.
+  stale: 'neutral',
 };
 
 // Lower = more severe; used for ascending-severity sort.
@@ -49,6 +51,7 @@ const STATUS_SEVERITY: Record<string, number> = {
   expired: 0,
   expiring: 1,
   unknown: 2,
+  stale: 2,
   valid: 3,
 };
 

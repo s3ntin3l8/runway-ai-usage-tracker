@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlmodel import select
 
 from app.services.collector_manager import CollectorManager
 from app.services.collectors.base import BaseCollector
@@ -887,6 +888,98 @@ class TestCollectorManagerInitialization:
         assert "anthropic:default" not in manager.smart_collectors
         # Other providers (no config rows) still get their defaults.
         assert "gemini:default" in manager.smart_collectors
+
+    @pytest.mark.asyncio
+    async def test_dynamic_account_does_not_borrow_default_row_label(self, manager):
+        """An account with no config row of its own may inherit the ``default``
+        row's enabled/poll/strategy settings, but never its ``account_label`` —
+        that label names a different account and would stamp this one's cards
+        with someone else's email."""
+        manager.smart_collectors = {}
+
+        class _DefaultCfg:
+            provider_id = "github"
+            account_id = "default"
+            enabled = True
+            archived = False
+            poll_interval_seconds = 123
+            account_label = "alice@example.com"
+            strategies = None
+            api_key = None
+            session_cookie = None
+
+        class _OwnCfg(_DefaultCfg):
+            account_id = "carol"
+            account_label = "carol@example.com"
+
+        with (
+            patch(
+                "app.services.collector_manager.token_cache.get_all_active_accounts",
+                new_callable=AsyncMock,
+            ) as mock_accounts,
+            patch("sqlmodel.Session") as mock_session_cls,
+        ):
+            mock_accounts.return_value = [
+                ("github", "bob", None),
+                ("github", "carol", None),
+            ]
+            inner = MagicMock()
+            inner.exec.return_value.all.side_effect = [
+                [_DefaultCfg(), _OwnCfg()],  # ProviderConfig rows
+                [],  # LatestUsage identities
+            ]
+            inner.exec.return_value.first.return_value = None
+            mock_session_cls.return_value.__enter__.return_value = inner
+
+            manager._last_sync_time = 0
+            await manager._sync_collectors(force=True)
+
+        bob = manager.smart_collectors["github:bob"]
+        carol = manager.smart_collectors["github:carol"]
+        assert bob.collector.account_label != "alice@example.com"
+        assert bob.ttl == 123  # non-label fallbacks still come from ``default``
+        assert carol.collector.account_label == "carol@example.com"
+
+    def test_record_source_health_follows_source_promoted_to_another_account(
+        self, manager, monkeypatch
+    ):
+        """An identity-pending verifier is keyed ``default`` when collection starts; a
+        successful run promotes its source to the resolved account mid-attempt. The
+        health update must reach the source's new row, not vanish against ``default``."""
+        from sqlalchemy.pool import StaticPool
+        from sqlmodel import SQLModel, create_engine
+        from sqlmodel.orm.session import Session
+
+        from app.models.db import CredentialSource
+
+        # The suite-wide autouse ``mock_db_session`` fixture replaces ``sqlmodel.Session``
+        # (which ``_record_source_health`` imports at call time) with a mock; this test
+        # needs a real in-memory DB, so put the real class back for its duration.
+        monkeypatch.setattr("sqlmodel.Session", Session)
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(engine)
+        monkeypatch.setattr("app.core.db.engine", engine)
+        with Session(engine) as session:
+            session.add(
+                CredentialSource(
+                    provider_id="antigravity",
+                    account_id="alice@example.com",  # promoted from "default"
+                    source_id="sidecar:host-a:oauth",
+                    source_type="file",
+                    source_label="oauth.json",
+                    sidecar_id="host-a",
+                    health="unavailable",
+                )
+            )
+            session.commit()
+
+        manager._record_source_health("antigravity", "default", {"sidecar:host-a:oauth": "healthy"})
+
+        with Session(engine) as session:
+            row = session.exec(select(CredentialSource)).one()
+            assert row.health == "healthy"
 
     @pytest.mark.asyncio
     async def test_disabled_only_account_pops_dynamic_collector(self, manager):
