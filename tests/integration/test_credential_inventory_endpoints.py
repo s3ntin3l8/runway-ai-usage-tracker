@@ -39,6 +39,7 @@ def cache_fixture(monkeypatch) -> TokenCache:
 @pytest.fixture(name="client")
 def client_fixture(session: Session, cache, monkeypatch):
     monkeypatch.setattr(credential_inventory, "engine", session.get_bind())
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
     app.dependency_overrides[get_session] = lambda: session
     yield TestClient(app)
     app.dependency_overrides.clear()

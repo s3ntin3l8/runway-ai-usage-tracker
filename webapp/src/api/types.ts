@@ -909,7 +909,15 @@ export interface CredentialSourceView {
   last_attempt_at?: string | null;
   last_success_at?: string | null;
   last_error?: string | null;
+  /** Why a server env/file credential that is present isn't feeding any collection. */
+  unused_reason?: CredentialUnusedReason | null;
 }
+
+export type CredentialUnusedReason =
+  | 'provider_disabled'
+  | 'default_disabled'
+  | 'account_keyed_config'
+  | 'shadowed_by_config_key';
 
 export interface CredentialAccountView {
   provider_id: string;

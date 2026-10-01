@@ -12,7 +12,15 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { timeAgo } from '@/lib/format';
-import { MAPPING_HINT, MAPPING_LABEL, STATUS_HINT, STATUS_LABEL, STATUS_VARIANT, relativeExpiry } from './display';
+import {
+  MAPPING_HINT,
+  MAPPING_LABEL,
+  STATUS_HINT,
+  STATUS_LABEL,
+  STATUS_VARIANT,
+  UNUSED_HINT,
+  relativeExpiry,
+} from './display';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 
 interface SourceRowProps {
@@ -62,6 +70,11 @@ export function SourceRow({ source, context }: SourceRowProps) {
               {STATUS_LABEL[source.status] ?? source.status}
             </Badge>
           </Tooltip>
+          {source.unused_reason ? (
+            <Tooltip content={UNUSED_HINT[source.unused_reason]}>
+              <Badge variant="warning">Not used</Badge>
+            </Tooltip>
+          ) : null}
           {source.is_active ? (
             <Tooltip content="This credential produced the account's most recent successful collection.">
               <Badge variant="accent">Active</Badge>
@@ -95,6 +108,9 @@ export function SourceRow({ source, context }: SourceRowProps) {
             This rule applies on every machine and isn't tied to the credential itself — if the
             account behind it changes, data keeps landing on the old one.
           </p>
+        ) : null}
+        {source.unused_reason ? (
+          <p className="text-[11px] text-warning">{UNUSED_HINT[source.unused_reason]}</p>
         ) : null}
         {source.last_error ? (
           <p className="text-[11px] text-critical">Last attempt: {source.last_error}</p>

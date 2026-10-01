@@ -488,6 +488,9 @@ class CredentialSourceView(BaseModel):
     last_attempt_at: str | None = None
     last_success_at: str | None = None
     last_error: str | None = None
+    # Why a server env/file credential that is *present* is not feeding any collection:
+    # provider_disabled | default_disabled | account_keyed_config | shadowed_by_config_key.
+    unused_reason: str | None = None
 
 
 class CredentialAccountView(BaseModel):
