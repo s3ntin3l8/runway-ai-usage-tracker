@@ -10,6 +10,7 @@ import base64
 import json
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -85,6 +86,13 @@ def test_server_and_config_credentials_are_the_servers_to_refresh(source):
         {"refresh_token": "r"},
         [_bundle(None, refresh_token="r")],
         merged_source=source,
+    )
+
+
+def test_a_legacy_sidecar_push_without_an_origin_is_still_a_machines():
+    tokens = {"refresh_token": "rt"}
+    assert machine_owns_credential(
+        "anthropic", tokens, [_bundle("old-sidecar", **tokens) | {"credential_origin": None}]
     )
 
 
@@ -332,6 +340,10 @@ async def test_an_expired_machine_login_is_skipped_without_calling_the_api(manag
     smart.collect.assert_not_awaited()
     assert result == []
     assert health == {}, "no failure recorded: the row keeps its last real outcome"
+    # Nothing ran, so the collector's previous state must not be reported as this poll's:
+    # "complete" would reconcile the account's last good cards away.
+    smart._set_collection_state.assert_called_once()
+    assert smart._set_collection_state.call_args.args[0] == "skipped"
     assert not auth_failures.flagged_accounts("anthropic")
 
 
@@ -477,3 +489,37 @@ async def test_the_anthropic_collector_still_refreshes_a_server_owned_login(
 
     assert refreshed is not None and refreshed["access_token"] == "new"
     post.assert_awaited_once()
+
+
+# --- alerts: an idle CLI is quiet for a while, not forever ----------------------------------
+
+
+def _alert_row(expired_for: timedelta, **extra) -> dict:
+    return {
+        "provider": "anthropic",
+        "account_id": ALICE,
+        "status": "expired",
+        "token_types": ["oauth_token", "refresh_token"],
+        "machine_renewed": True,
+        "expires_at": (datetime.now(UTC) - expired_for).isoformat(),
+        **extra,
+    }
+
+
+def test_a_recently_lapsed_machine_login_does_not_alert():
+    from app.services.credential_alerts import _is_alert_bad
+
+    assert not _is_alert_bad(_alert_row(timedelta(hours=10)), {"anthropic": {ALICE}})
+
+
+def test_a_machine_login_expired_for_days_alerts():
+    from app.services.credential_alerts import _is_alert_bad
+
+    assert _is_alert_bad(_alert_row(timedelta(days=4)), {"anthropic": {ALICE}})
+
+
+def test_the_grace_period_only_applies_to_machine_renewed_logins():
+    from app.services.credential_alerts import _is_alert_bad
+
+    row = _alert_row(timedelta(days=4), machine_renewed=False)
+    assert not _is_alert_bad(row, {"anthropic": {ALICE}})

@@ -162,6 +162,10 @@ Google does not rotate Gemini's.
   `refreshed_by: "machine"`, there is no Refresh action, and the endpoints answer 409.
 - **Server-owned** (pasted key, the server host's own login) and **Gemini** everywhere:
   the server refreshes it (`TokenAutoRefresher`, collectors, the Refresh action).
+- The server host's own CLI login counts as machine-owned only when a co-located
+  sidecar pushes it; otherwise the server is its only holder and refreshes it.
+- A machine-renewed login that stays expired for more than 3 days raises the usual
+  credential alert (an idle CLI is normal for a day or two, not for a week).
 - While a machine's access token is expired and its CLI is idle, collection skips that
   source (no API call, so no false "revoked") and fails over to another source. The row
   reads `expired`, not `invalid`.

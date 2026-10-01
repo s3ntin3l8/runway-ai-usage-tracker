@@ -529,11 +529,7 @@ class TokenCache:
         async with self._lock:
             sources = self._source_cache.get(provider, {}).get(account_id, {})
             for source_id, (tokens, metadata, _timestamp) in list(sources.items()):
-                if (
-                    provider in ROTATING_REFRESH_PROVIDERS
-                    and metadata.get("sidecar_id")
-                    and metadata.get("credential_origin")
-                ):
+                if provider in ROTATING_REFRESH_PROVIDERS and metadata.get("sidecar_id"):
                     # A machine's own login: the server never owns its refresh token, so
                     # a refresh result must not be written into the bundle.
                     continue

@@ -731,6 +731,7 @@ class CollectorManager:
 
         successful_result: list[dict[str, Any]] | None = None
         last_kept_failure_result: list[dict[str, Any]] | None = None
+        skipped_for_renewal = False
         deadline = asyncio.get_running_loop().time() + 25.0
         await smart.reset()
         for index, candidate in enumerate(candidates):
@@ -758,6 +759,7 @@ class CollectorManager:
                     scrub_log(account_id),
                     scrub_log(candidate["source_id"]),
                 )
+                skipped_for_renewal = True
                 continue
             async with token_cache.using_source(
                 provider_id, account_id, candidate["source_id"]
@@ -850,6 +852,11 @@ class CollectorManager:
                 break
             successful_result = result
             break
+        if successful_result is None and last_kept_failure_result is None and skipped_for_renewal:
+            # Nothing ran, so the collector still holds the previous poll's state (often
+            # "complete"). Say "skipped" so the poller keeps the last good cards instead of
+            # reconciling them away, and the server-credential stamping leaves rows alone.
+            smart._set_collection_state("skipped", "waiting for a machine to renew its login")
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
         )
@@ -859,7 +866,7 @@ class CollectorManager:
         """An expired machine-owned login of a rotating provider that holds a refresh token."""
         from app.services.token_refresher import ROTATING_REFRESH_PROVIDERS
 
-        if provider_id not in ROTATING_REFRESH_PROVIDERS or not is_sidecar_source(candidate):
+        if provider_id not in ROTATING_REFRESH_PROVIDERS or not candidate.get("sidecar_id"):
             return False
         tokens = candidate.get("tokens") or {}
         if not has_refresh_credential(tokens):

@@ -125,7 +125,25 @@ def _is_alert_bad(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]
     rollable = has_refresh_credential(row.get("token_types", []))
     if not rollable:
         return True
-    return is_flagged(row, accounts_by_provider)
+    if is_flagged(row, accounts_by_provider):
+        return True
+    return _machine_renewal_overdue(row)
+
+
+# An idle CLI lets its access token lapse and renews it on next use, which is normal for a
+# day or two. A login its machine hasn't renewed for this long is effectively abandoned.
+MACHINE_RENEWAL_GRACE = timedelta(days=3)
+
+
+def _machine_renewal_overdue(row: dict[str, Any]) -> bool:
+    """A machine-renewed login (the server must not refresh it) expired for too long."""
+    if not row.get("machine_renewed") or not row.get("expires_at"):
+        return False
+    try:
+        expired_at = datetime.fromisoformat(row["expires_at"])
+    except (TypeError, ValueError):
+        return False
+    return datetime.now(UTC) - expired_at > MACHINE_RENEWAL_GRACE
 
 
 async def check_credential_alerts(session: Session) -> None:

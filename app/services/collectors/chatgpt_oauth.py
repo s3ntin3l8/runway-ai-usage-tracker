@@ -48,10 +48,19 @@ class ChatGPTWebOAuthMixin:
                 try:
                     lr_dt = parse_iso8601_utc(last_refresh)
                     if (datetime.now(UTC) - lr_dt).days >= 8:
-                        logger.info("ChatGPT OAuth token is stale (8+ days), refreshing...")
-                        new_tokens = await self._refresh_oauth_token(client, refresh_token)
-                        if new_tokens:
-                            token = new_tokens["access_token"]
+                        from app.services.token_refresher import server_may_refresh
+
+                        # ChatGPT rotates refresh tokens: never rotate one a machine's
+                        # Codex CLI also holds.
+                        if await server_may_refresh(
+                            "chatgpt",
+                            self.account_id or "default",
+                            {"refresh_token": refresh_token},
+                        ):
+                            logger.info("ChatGPT OAuth token is stale (8+ days), refreshing...")
+                            new_tokens = await self._refresh_oauth_token(client, refresh_token)
+                            if new_tokens:
+                                token = new_tokens["access_token"]
                 except Exception as e:
                     logger.debug(f"Failed to check/refresh stale ChatGPT token: {e}")
 
