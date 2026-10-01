@@ -62,13 +62,14 @@ async def test_world_rows(monkeypatch):
                 ("oauth_token", "refresh_token", "expiry_date"),
             ),
             # Same account on two machines: one row each. Both carry a refresh token and
-            # expire in 2h, yet read "expiring": durable rows aren't marked rollable, so the
-            # auto-refresh allowance in the classification never applies. (Known gap.)
+            # expire in 2h, so the server rolls them before they lapse: "valid". (They used
+            # to read "expiring" — durable rows weren't marked rollable, so the auto-refresh
+            # allowance in the classification never applied.)
             (
                 "gemini",
                 "alice@example.com",
                 "sidecar:g1",
-                "expiring",
+                "valid",
                 False,
                 False,
                 False,
@@ -79,7 +80,7 @@ async def test_world_rows(monkeypatch):
                 "gemini",
                 "alice@example.com",
                 "sidecar:g2",
-                "expiring",
+                "valid",
                 False,
                 False,
                 False,

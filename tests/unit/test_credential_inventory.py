@@ -19,8 +19,9 @@ from app.models.db import (
     SidecarRegistry,
 )
 from app.services import credential_inventory
-from app.services.credential_inventory import build_inventory, credential_status
+from app.services.credential_inventory import build_inventory
 from app.services.token_cache import TokenCache
+from app.services.token_health import credential_status
 
 ALICE = "alice@example.com"
 
@@ -189,20 +190,20 @@ def test_credential_status_precedence():
     }
     future = datetime.now(UTC).timestamp() + 90 * 86400
     past = datetime.now(UTC).timestamp() - 60
-    assert credential_status(exp=future, health="healthy", live=True, **kw) == "valid"
-    assert credential_status(exp=past, health="healthy", live=True, **kw) == "expired"
+    assert credential_status(exp=future, rejected=False, live=True, **kw) == "valid"
+    assert credential_status(exp=past, rejected=False, live=True, **kw) == "expired"
     # Rejected but otherwise fine → invalid; already expired stays expired.
-    assert credential_status(exp=future, health="auth_failed", live=True, **kw) == "invalid"
-    assert credential_status(exp=past, health="auth_failed", live=True, **kw) == "expired"
+    assert credential_status(exp=future, rejected=True, live=True, **kw) == "invalid"
+    assert credential_status(exp=past, rejected=True, live=True, **kw) == "expired"
     # Not live and long unreported → stale, whatever the stored expiry says.
     old = {**kw, "last_seen": datetime.now(UTC) - timedelta(days=2)}
-    assert credential_status(exp=future, health="healthy", live=False, **old) == "stale"
-    assert credential_status(exp=past, health="healthy", live=False, **old) == "stale"
+    assert credential_status(exp=future, rejected=False, live=False, **old) == "stale"
+    assert credential_status(exp=past, rejected=False, live=False, **old) == "stale"
     # A live bundle is never stale, and non-machine sources never are.
-    assert credential_status(exp=future, health="healthy", live=True, **old) == "valid"
+    assert credential_status(exp=future, rejected=False, live=True, **old) == "valid"
     assert (
         credential_status(
-            exp=future, health="healthy", live=False, **{**old, "machine_sourced": False}
+            exp=future, rejected=False, live=False, **{**old, "machine_sourced": False}
         )
         == "valid"
     )

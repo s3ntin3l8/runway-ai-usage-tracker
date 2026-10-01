@@ -40,7 +40,7 @@ from app.models.schemas import (
     CredentialProviderView,
     CredentialSourceView,
 )
-from app.services import auth_failures
+from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
 from app.services.credential_sources import (
     describe_origin,
@@ -48,7 +48,7 @@ from app.services.credential_sources import (
     server_source_id,
 )
 from app.services.token_cache import token_cache
-from app.services.token_health import SOURCE_STALE_SECS, _classify_status
+from app.services.token_health import credential_status, is_flagged
 from app.services.token_refresher import _REFRESH_ENDPOINTS
 
 # Best → worst. An account is as healthy as its best enabled source: a working
@@ -60,38 +60,6 @@ _TAG_MAPPING = {
     "identity_claim": "claim",
     "identity_verification": "verified",
 }
-
-
-def credential_status(
-    *,
-    exp: float | None,
-    token_types: list[str],
-    rollable: bool,
-    health: str,
-    live: bool,
-    machine_sourced: bool,
-    last_seen: datetime | None,
-    now: float | None = None,
-) -> str:
-    """One status for one credential: expiry, last auth result and staleness combined.
-
-    - ``stale``: a machine-sourced credential that isn't live in the cache and hasn't
-      been re-reported recently. Its stored expiry is history, so say nothing about it.
-    - ``invalid``: the provider rejected it at the last collection, and it otherwise
-      looks fine (an expired token is already as bad as it gets).
-    - otherwise the expiry-based classification.
-    """
-    now = now if now is not None else time.time()
-    if machine_sourced and not live and last_seen is not None:
-        seen = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
-        if now - seen.timestamp() > SOURCE_STALE_SECS:
-            return "stale"
-    base = _classify_status(
-        exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable
-    )
-    if health == "auth_failed" and base in ("valid", "expiring", "unknown"):
-        return "invalid"
-    return base
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -262,6 +230,15 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         candidates = await token_cache.get_source_candidates(provider_id, account_id)
         live[(provider_id, account_id)] = {c["source_id"]: c for c in candidates}
 
+    # provider → the identified accounts it has, for ``is_flagged``'s "sole account" rule.
+    accounts_by_provider: dict[str, set[str]] = {}
+    for row in sources:
+        if row.sidecar_id is not None and row.account_id in ("default", row.source_id):
+            continue  # a machine credential still waiting for an identity
+        accounts_by_provider.setdefault(row.provider_id, set()).add(
+            canonical_account_id(row.account_id)
+        )
+
     accounts: dict[tuple[str, str], list[CredentialSourceView]] = {}
     for row in sources:
         bundle = live.get((row.provider_id, row.account_id), {}).get(row.source_id)
@@ -283,20 +260,24 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         origin_type, label = describe_origin(row.credential_origin)
         if not machine_sourced:
             origin_type, label = row.source_type, row.source_label
+        # Rejected = this source's last collection failed auth, or an in-memory rejection flag
+        # matches its identity under Token Health's rules (a flagged ``default`` matches the
+        # default account and a provider's sole account).
+        rejected = row.health == "auth_failed" or (
+            not identity_pending
+            and is_flagged(
+                {"provider": row.provider_id, "account_id": row.account_id}, accounts_by_provider
+            )
+        )
         status = credential_status(
             exp=exp,
             token_types=token_types,
             rollable=rollable,
-            health=row.health,
+            rejected=rejected,
             live=bundle is not None,
             machine_sourced=machine_sourced,
             last_seen=row.last_seen,
         )
-        # The in-memory rejection flag covers a rejection the durable row hasn't caught up with.
-        if status in ("valid", "unknown") and row.account_id in auth_failures.flagged_accounts(
-            row.provider_id
-        ):
-            status = "invalid"
         accounts.setdefault((row.provider_id, row.account_id), []).append(
             CredentialSourceView(
                 source_id=row.source_id,
@@ -378,7 +359,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                     exp=None,
                     token_types=origin["keys"],
                     rollable=False,
-                    health="healthy",
+                    rejected=False,
                     live=False,
                     machine_sourced=False,
                     last_seen=None,

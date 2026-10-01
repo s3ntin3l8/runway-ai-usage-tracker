@@ -81,6 +81,46 @@ def _is_stale_source(last_seen: datetime | None, now: float | None = None) -> bo
     return (now if now is not None else time.time()) - last_seen.timestamp() > SOURCE_STALE_SECS
 
 
+def apply_rejection(status: str, rejected: bool) -> str:
+    """The single rule for "the provider rejected this credential".
+
+    A rejection upgrades a credential that otherwise looks usable (``valid``,
+    ``expiring`` or ``unknown``) to ``invalid``. ``expired`` stays ``expired`` — it is
+    already as bad as it gets (alerts detect a rejected-and-expired row separately via
+    ``is_flagged``) — and ``stale`` stays ``stale`` (we can't vouch for it either way).
+    """
+    return "invalid" if rejected and status in ("valid", "expiring", "unknown") else status
+
+
+def credential_status(
+    *,
+    exp: float | None,
+    token_types: list[str],
+    rollable: bool,
+    rejected: bool,
+    live: bool,
+    machine_sourced: bool,
+    last_seen: datetime | None,
+    now: float | None = None,
+) -> str:
+    """One status for one credential: expiry, rejection and staleness combined.
+
+    Composes the same three rules Token Health applies row by row
+    (:func:`_classify_status`, :func:`_is_stale_source`, :func:`apply_rejection`), so the
+    credential inventory and Token Health cannot drift apart.
+
+    - ``stale``: a machine-sourced credential that isn't live in the cache and hasn't been
+      re-reported recently. Its stored expiry is history, so say nothing about it.
+    - otherwise the expiry-based classification, upgraded to ``invalid`` on a rejection.
+    """
+    if machine_sourced and not live and _is_stale_source(last_seen, now):
+        return "stale"
+    base = _classify_status(
+        exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable
+    )
+    return apply_rejection(base, rejected)
+
+
 def _underlying_account(account_id: str) -> str:
     """Map a synthetic Token Health row id back to the account it stands for."""
     if account_id == "server":
@@ -136,21 +176,19 @@ def is_flagged(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]) -
 
 
 def _apply_invalid(rows: list[dict[str, Any]]) -> None:
-    """Flip healthy-looking rows to ``invalid`` when a collector's credential was rejected.
+    """Flip healthy-looking rows to ``invalid`` when their credential was rejected.
 
-    Runs after every row exists so statuses are final before redundancy is
-    computed. Only ``valid``/``unknown`` rows are promoted — an already
-    ``expired`` row keeps that status here (see `credential_alerts.py` for
-    why a rejection still needs to be detectable on those too).
+    Runs after every row exists so statuses are final before redundancy is computed.
+    A row is rejected when its own durable source recorded an auth failure at the last
+    collection (``_rejected``) or an in-memory rejection flag matches its identity
+    (:func:`is_flagged`). See :func:`apply_rejection` for what a rejection can change.
     """
     accounts_by_provider = _build_accounts_by_provider(rows)
     for r in rows:
+        rejected = bool(r.pop("_rejected", False))
         if r.get("assignment_pending") or r.get("identity_pending"):
             continue
-        if r["status"] not in ("valid", "unknown"):
-            continue
-        if is_flagged(r, accounts_by_provider):
-            r["status"] = "invalid"
+        r["status"] = apply_rejection(r["status"], rejected or is_flagged(r, accounts_by_provider))
 
 
 def _redundancy_sibling(healthy: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -396,10 +434,14 @@ class TokenHealthService:
                 continue
             token_types: list[str] = []
             exp: float | None = None
+            durable_rollable = False
             if live:
                 live_tokens = live.get("tokens") or {}
                 token_types = list(live_tokens)
                 exp = IdentityExtractor.exp_from_tokens(live_tokens)
+                durable_rollable = bool(
+                    live_tokens.get("refresh_token") or live_tokens.get("xai_refresh")
+                )
             else:
                 try:
                     token_types = json.loads(durable_source.token_types_json or "[]")
@@ -417,8 +459,13 @@ class TokenHealthService:
                 ),
                 token_types=token_types,
                 exp=exp,
-                can_refresh=False,
+                # A refresh token on a live bundle means the server rolls it before it
+                # lapses (and a manual refresh works); without these a 2h-valid Gemini
+                # credential read "expiring" — the auto-refresh allowance never applied.
+                can_refresh=durable_rollable and provider_id in _REFRESH_ENDPOINTS,
+                rollable=durable_rollable,
             )
+            row["_rejected"] = durable_source.health == "auth_failed"
             if live is None and _is_stale_source(durable_source.last_seen):
                 # Not in the live cache and not re-reported recently: the stored
                 # token types/expiry are history, not evidence. Without this a
