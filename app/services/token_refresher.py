@@ -8,8 +8,17 @@ import httpx
 
 from app.core.config import settings
 from app.core.utils import IdentityExtractor, safe_write_json, scrub_log
+from app.services.refresh_policy import ROTATING_REFRESH_PROVIDERS, machine_owns_credential
+
+__all__ = [
+    "ROTATING_REFRESH_PROVIDERS",
+    "machine_owns_credential",
+    "persist_to_local_file",
+    "refresh_oauth_token",
+]
 
 logger = logging.getLogger(__name__)
+
 
 _REFRESH_ENDPOINTS: dict[str, str] = {
     "anthropic": "https://platform.claude.com/v1/oauth/token",

@@ -112,6 +112,20 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         if not refresh_token:
             return None
 
+        from app.services.token_refresher import machine_owns_credential
+
+        selected = token_cache.selected_source("anthropic")
+        owner_account = selected[0] if selected else (self.account_id or "default")
+        if machine_owns_credential(
+            "anthropic",
+            {"refresh_token": refresh_token},
+            await token_cache.get_source_candidates("anthropic", owner_account),
+        ):
+            # A machine's Claude Code owns this login. Exchanging its refresh token here
+            # rotates it and signs that CLI out; the sidecar re-pushes the renewed token.
+            logger.info("Not refreshing a Claude login that a machine's CLI owns")
+            return None
+
         # Auto-discover client_id from credentials JSON or id_token
         client_id = settings.CLAUDE_OAUTH_CLIENT_ID
         if creds:

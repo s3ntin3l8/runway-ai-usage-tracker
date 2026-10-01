@@ -117,6 +117,16 @@ describe('SourceRow', () => {
     expect(screen.queryByText('Not used')).not.toBeInTheDocument();
   });
 
+  it("says a machine's rotating login is renewed by its machine and offers no refresh", () => {
+    renderRow({
+      source: source({ can_refresh: false, rollable: true, refreshed_by: 'machine' }),
+    });
+
+    expect(screen.getByText('renewed by its machine')).toBeInTheDocument();
+    expect(screen.queryByText('auto-refreshed')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /refresh/i })).not.toBeInTheDocument();
+  });
+
   it('refreshes this specific source', async () => {
     vi.mocked(api.postCredentialSourceRefresh).mockResolvedValue({ status: 'refreshed' });
     renderRow({ source: source({ can_refresh: true, rollable: true }) });

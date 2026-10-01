@@ -20,7 +20,11 @@ from app.services import auth_failures
 from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
 from app.services.token_cache import _OAUTH_CREDENTIAL_KEYS, TokenCache, token_cache
-from app.services.token_refresher import _REFRESH_ENDPOINTS
+from app.services.token_refresher import (
+    _REFRESH_ENDPOINTS,
+    ROTATING_REFRESH_PROVIDERS,
+    machine_owns_credential,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +271,7 @@ def _scan_server_credentials() -> dict[str, dict[str, Any]]:
     return found
 
 
-def _row(
+def _row(  # noqa: PLR0913 - one flat record builder; every field is a distinct row column
     provider: str,
     account_id: str,
     *,
@@ -279,6 +283,7 @@ def _row(
     can_refresh: bool,
     ttl_remaining: int = 0,
     rollable: bool = False,
+    machine_renewed: bool = False,
 ) -> dict[str, Any]:
     """Assemble one health record (internal ``_``-prefixed keys are stripped later)."""
     status = _classify_status(
@@ -297,6 +302,8 @@ def _row(
         ),
         "ttl_remaining_seconds": ttl_remaining,
         "can_refresh": can_refresh,
+        # A rotating provider's login that a machine's CLI renews (the server must not).
+        "machine_renewed": machine_renewed,
         "removable": source not in _NON_REMOVABLE_SOURCES,
         # Synthetic rows (config / env) with no expiry are only *assumed* valid.
         "_assumed": source in _NON_REMOVABLE_SOURCES and exp is None,
@@ -386,6 +393,9 @@ class TokenHealthService:
                 source_val = info.get("source")
                 has_refresh_token = has_refresh_credential(tokens)
                 source_candidates = candidates_by_account.get((provider, acc_id), [])
+                machine_renewed = machine_owns_credential(
+                    provider, tokens, source_candidates, merged_source=source_val
+                )
                 durable_source_ids = {
                     item.source_id
                     for item in durable_sources
@@ -412,9 +422,12 @@ class TokenHealthService:
                         # The manual Refresh button only works where an endpoint exists;
                         # classification still treats any refresh_token as rollable
                         # (a local agent re-pushes e.g. antigravity's short-lived token).
-                        can_refresh=has_refresh_token and provider in _REFRESH_ENDPOINTS,
+                        can_refresh=has_refresh_token
+                        and provider in _REFRESH_ENDPOINTS
+                        and not machine_renewed,
                         ttl_remaining=info.get("ttl_remaining", 0),
                         rollable=has_refresh_token,
+                        machine_renewed=machine_renewed and has_refresh_token,
                     )
                 )
 
@@ -444,6 +457,7 @@ class TokenHealthService:
                 can_refresh=False,
                 ttl_remaining=source["ttl_remaining"],
                 rollable=has_refresh_credential(tokens),
+                machine_renewed=has_refresh_credential(tokens),
             )
             row.update(
                 source_id=source["source_id"],
@@ -497,8 +511,13 @@ class TokenHealthService:
                 # A refresh token on a live bundle means the server rolls it before it
                 # lapses (and a manual refresh works); without these a 2h-valid Gemini
                 # credential read "expiring" — the auto-refresh allowance never applied.
-                can_refresh=durable_rollable and provider_id in _REFRESH_ENDPOINTS,
+                can_refresh=durable_rollable
+                and provider_id in _REFRESH_ENDPOINTS
+                and not (provider_id in ROTATING_REFRESH_PROVIDERS and durable_source.sidecar_id),
                 rollable=durable_rollable,
+                machine_renewed=durable_rollable
+                and provider_id in ROTATING_REFRESH_PROVIDERS
+                and bool(durable_source.sidecar_id),
             )
             row["_rejected"] = is_durably_rejected(
                 durable_source, durable_by_account.get((provider_id, account_id), [])

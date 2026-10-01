@@ -149,6 +149,27 @@ collectors only do `api` and `web`.
 | **quota** | api, web | server | Percentages, currency limits, tier |
 | **enrichment** | local (cli / statusline / logs) | sidecar | Token breakdown, session counts, per-message events |
 
+### Who refreshes an OAuth login
+
+A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT and xAI
+**rotate** it, so a refresh invalidates the copy still sitting in the CLI's own
+credentials file and signs that CLI out (the new token never goes back to it).
+Google does not rotate Gemini's.
+
+- **Machine-owned** (a sidecar discovered it, or any sidecar bundle holds the same
+  refresh secret) and the provider rotates: the server **never** refreshes it. The
+  machine's CLI renews it and the sidecar re-pushes. The inventory shows
+  `refreshed_by: "machine"`, there is no Refresh action, and the endpoints answer 409.
+- **Server-owned** (pasted key, the server host's own login) and **Gemini** everywhere:
+  the server refreshes it (`TokenAutoRefresher`, collectors, the Refresh action).
+- The server host's own CLI login counts as machine-owned only when a co-located
+  sidecar pushes it; otherwise the server is its only holder and refreshes it.
+- A machine-renewed login that stays expired for more than 3 days raises the usual
+  credential alert (an idle CLI is normal for a day or two, not for a week).
+- While a machine's access token is expired and its CLI is idle, collection skips that
+  source (no API call, so no false "revoked") and fails over to another source. The row
+  reads `expired`, not `invalid`.
+
 ### Credential discovery rules (`registry.json`)
 
 Where each provider's credentials live (env vars, files, keychain entries,

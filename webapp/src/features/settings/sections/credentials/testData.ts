@@ -25,6 +25,7 @@ export function source(o: Partial<CredentialSourceView> = {}): CredentialSourceV
     token_types: ['oauth_token', 'refresh_token'],
     can_refresh: false,
     rollable: false,
+    refreshed_by: null,
     removable: true,
     enabled: true,
     priority: 0,

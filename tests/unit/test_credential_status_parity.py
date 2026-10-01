@@ -370,3 +370,70 @@ async def test_flagged_default_flags_a_providers_sole_machine_account(monkeypatc
     health, inventory = await _openrouter_views(monkeypatch, with_config=False)
 
     assert health[(BOB, "sidecar:o1")] == inventory[(BOB, "sidecar:o1")] == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_both_views_agree_a_machines_rotating_login_has_no_server_refresh(monkeypatch):
+    """A machine-owned Claude login is renewed by that machine's CLI: neither view offers a
+    server Refresh, both still call it "valid" between rolls (an 8h access token must not
+    sit at "expiring"), and the inventory says who renews it."""
+    import time
+
+    from sqlmodel.orm.session import Session
+
+    from app.models.db import CredentialSource
+
+    await build_world(monkeypatch)
+    with Session(th.engine) as s:
+        s.add(
+            CredentialSource(
+                provider_id="anthropic",
+                account_id=ALICE,
+                source_id="sidecar:c1",
+                source_type="file",
+                source_label=".credentials.json",
+                credential_origin="path:/c1",
+                sidecar_id="dev-01",
+            )
+        )
+        s.commit()
+    await th.token_cache.store(
+        "anthropic",
+        {
+            "oauth_token": "claude-access",
+            "refresh_token": "claude-rt",
+            "expiry_date": str(int((time.time() + 8 * 3600) * 1000)),
+        },
+        account_id=ALICE,
+        source_id="sidecar:c1",
+        source="dev-01",
+        source_metadata={"sidecar_id": "dev-01", "credential_origin": "path:/c1"},
+    )
+    monkeypatch.setattr(credential_inventory, "engine", th.engine)
+    monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+
+    health = {
+        (r["provider"], r["account_id"], r.get("source_id")): r
+        for r in await TokenHealthService().get_health()
+    }
+    inv = await credential_inventory.build_inventory()
+    inventory = {
+        (p.provider_id, a.account_id, s.source_id): s
+        for p in inv.providers
+        for a in p.accounts
+        for s in a.sources
+    }
+
+    claude = ("anthropic", ALICE, "sidecar:c1")
+    assert health[claude]["can_refresh"] is False
+    assert inventory[claude].can_refresh is False
+    assert inventory[claude].refreshed_by == "machine"
+    assert inventory[claude].rollable is True
+    assert health[claude]["status"] == inventory[claude].status == "valid"
+
+    # Gemini does not rotate: the server still refreshes it, in both views.
+    gemini = ("gemini", ALICE, "sidecar:g1")
+    assert health[gemini]["can_refresh"] is True
+    assert inventory[gemini].can_refresh is True
+    assert inventory[gemini].refreshed_by == "server"

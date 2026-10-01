@@ -15,7 +15,7 @@ import logging
 import time
 
 from app.core.utils import IdentityExtractor, has_refresh_credential
-from app.services.token_cache import token_cache
+from app.services.token_cache import server_may_refresh, token_cache
 from app.services.token_refresher import (
     _REFRESH_ENDPOINTS,
     persist_to_local_file,
@@ -99,6 +99,13 @@ class TokenAutoRefresher:
                 continue  # Opaque token — can't tell when it expires.
             seconds_left = exp - now
             if seconds_left > self._threshold:
+                continue
+            if not await server_may_refresh(
+                provider, account_id, tokens, merged_source=meta.get("source")
+            ):
+                # A machine's CLI owns this credential; rotating its refresh token here
+                # would sign that CLI out. The machine renews it and the sidecar re-pushes.
+                logger.debug(f"Not refreshing {provider}/{account_id}: renewed by its machine")
                 continue
 
             try:

@@ -476,8 +476,11 @@ class CredentialSourceView(BaseModel):
     expires_at: str | None = None
     expires_in_seconds: int | None = None
     token_types: list[str] = Field(default_factory=list)
-    can_refresh: bool = False
-    rollable: bool = False  # carries a refresh token the server rolls automatically
+    can_refresh: bool = False  # the server can refresh it on demand (the Refresh action)
+    rollable: bool = False  # carries a refresh token that something renews before it lapses
+    # Who renews it: "server", or "machine" (a rotating provider's login owned by a
+    # machine's CLI, which the server must not refresh); None when nothing does.
+    refreshed_by: str | None = None
     removable: bool = False
     enabled: bool = True
     priority: int = 0

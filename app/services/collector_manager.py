@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from app.core.utils import scrub_log
+from app.core.utils import IdentityExtractor, has_refresh_credential, scrub_log
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
@@ -30,6 +30,7 @@ from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.xai import XaiCollector
 from app.services.collectors.zai import ZaiCollector
 from app.services.credential_sources import is_sidecar_source
+from app.services.refresh_policy import machine_owns_credential
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import token_cache
 
@@ -708,6 +709,9 @@ class CollectorManager:
                 return []
             return await asyncio.wait_for(smart.collect(client), timeout=25.0)
 
+        # Ownership is judged against every source of the account (a pasted config bundle
+        # can hold a machine's refresh secret), including ones filtered out below.
+        all_candidates = list(candidates)
         preferences = self._credential_source_preferences.get((provider_id, account_id), {})
         candidates = [
             candidate
@@ -731,6 +735,7 @@ class CollectorManager:
 
         successful_result: list[dict[str, Any]] | None = None
         last_kept_failure_result: list[dict[str, Any]] | None = None
+        skipped_for_renewal = False
         deadline = asyncio.get_running_loop().time() + 25.0
         await smart.reset()
         for index, candidate in enumerate(candidates):
@@ -747,6 +752,19 @@ class CollectorManager:
                 collector.account_label = default_account_label
             if hasattr(collector, "credential_account_id"):
                 collector.credential_account_id = account_id
+            if self._awaiting_machine_renewal(provider_id, candidate, all_candidates):
+                # An idle CLI let its access token lapse. The machine renews it (the server
+                # must not: rotating its refresh token would sign that CLI out), so calling
+                # the API now could only 401 and flag a healthy login as revoked. No health
+                # update: the row keeps its last real outcome and reads "expired".
+                logger.info(
+                    "Skipping %s/%s source %s: expired, waiting for its machine to renew it",
+                    scrub_log(provider_id),
+                    scrub_log(account_id),
+                    scrub_log(candidate["source_id"]),
+                )
+                skipped_for_renewal = True
+                continue
             async with token_cache.using_source(
                 provider_id, account_id, candidate["source_id"]
             ) as attempt:
@@ -838,9 +856,29 @@ class CollectorManager:
                 break
             successful_result = result
             break
+        if successful_result is None and last_kept_failure_result is None and skipped_for_renewal:
+            # Nothing ran, so the collector still holds the previous poll's state (often
+            # "complete"). Say "skipped" so the poller keeps the last good cards instead of
+            # reconciling them away, and the server-credential stamping leaves rows alone.
+            smart._set_collection_state("skipped", "waiting for a machine to renew its login")
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
         )
+
+    @staticmethod
+    def _awaiting_machine_renewal(
+        provider_id: str, candidate: dict[str, Any], all_candidates: list[dict[str, Any]]
+    ) -> bool:
+        """An expired rotating-provider login that a machine's CLI owns and will renew."""
+        tokens = candidate.get("tokens") or {}
+        if not has_refresh_credential(tokens):
+            return False  # nothing will renew it: let the real call report it dead
+        if not machine_owns_credential(
+            provider_id, tokens, all_candidates, merged_source=candidate.get("sidecar_id")
+        ):
+            return False
+        exp = IdentityExtractor.exp_from_tokens(tokens)
+        return exp is not None and exp <= time.time()
 
     async def _promote_source_identity(
         self, provider_id: str, old_account_id: str, source_id: str, account_id: str
