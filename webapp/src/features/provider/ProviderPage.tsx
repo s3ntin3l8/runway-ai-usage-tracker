@@ -5,10 +5,10 @@
 import { useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Archive, ArchiveRestore, RefreshCw, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Archive, ArchiveRestore, Ellipsis, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { collectProvider, putProviderConfigForAccount, resetProvider } from '@/api/endpoints';
-import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { SidecarFilter } from '@/components/ui/SidecarFilter';
+import { Popover } from '@/components/ui/Popover';
 import { useFleet, useProviderConfigs } from '@/features/home/queries';
 import { useRangeParam } from '@/hooks/useRangeParam';
 import { cardKind } from '@/lib/quota';
@@ -31,6 +32,8 @@ import { SessionsBrowser } from './SessionsBrowser';
 import { resolveScope } from './period';
 import { useProviderEventRange } from './queries';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
+import { useUsageSource } from '@/hooks/useUsageSource';
+import { useExcludeCache } from '@/hooks/useExcludeCache';
 
 // Tabs whose data is scoped by the shared time-range picker.
 const PERIOD_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events', 'cost']);
@@ -117,12 +120,15 @@ export function ProviderPage() {
 
   return (
     <>
-      <PageHeader
-        title={name}
-        description={labelOrMaskedId({ account_id: accountId ?? '', account_label: entry?.critical_gauge.account_label })}
-        leading={<ProviderGlyph providerId={providerId} name={name} className="size-9 text-sm" />}
-        actions={
-          <>
+      <header className="sticky top-0 z-20 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 border-b border-edge bg-surface-1/95 px-4 py-2 backdrop-blur md:flex md:h-14 md:gap-3 md:py-0 lg:px-8">
+        <div className="order-1 flex min-w-0 items-center gap-2 md:order-1 md:flex-1">
+          <ProviderGlyph providerId={providerId} name={name} className="size-9 shrink-0 text-sm" />
+          <div className="min-w-0">
+            <h1 className="truncate text-[14px] font-medium">{name}</h1>
+            <div className="truncate text-[11px] text-fg-muted">{labelOrMaskedId({ account_id: accountId ?? '', account_label: entry?.critical_gauge.account_label })}</div>
+          </div>
+        </div>
+        <div className="order-3 col-span-2 flex min-w-0 flex-wrap items-center gap-2 md:order-2 md:col-auto md:flex-nowrap md:flex-1">
             {entry && PERIOD_AWARE_TABS.has(tab) ? (
               <TimeRangePicker
                 value={rangeValue}
@@ -130,21 +136,17 @@ export function ProviderPage() {
                 earliest={eventRange.data?.earliest}
               />
             ) : null}
-            {showSourceFilter ? <SidecarFilter /> : null}
-            {entry && CACHE_AWARE_TABS.has(tab) ? <ExcludeCacheToggle compact /> : null}
+            {(showSourceFilter || (entry && CACHE_AWARE_TABS.has(tab))) ? (
+              <ProviderFilters showSource={Boolean(showSourceFilter)} showCache={Boolean(entry && CACHE_AWARE_TABS.has(tab))} />
+            ) : null}
             {entries.length > 1 ? (
               <Select
                 value={accountId}
-                onValueChange={(v) =>
-                setSearchParams(
-                  (prev) => {
-                    const p = new URLSearchParams(prev);
-                    p.set('account', v);
-                    return p;
-                  },
-                  { replace: true },
-                )
-              }
+                onValueChange={(v) => setSearchParams((prev) => {
+                  const p = new URLSearchParams(prev);
+                  p.set('account', v);
+                  return p;
+                }, { replace: true })}
               >
                 <SelectTrigger className="max-w-44" aria-label="Provider account">
                   <SelectValue />
@@ -158,16 +160,8 @@ export function ProviderPage() {
                 </SelectContent>
               </Select>
             ) : null}
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Clear failure state"
-              title="Clear failure state"
-              onClick={() => reset.mutate()}
-              loading={reset.isPending}
-            >
-              <RotateCcw className="size-3.5" aria-hidden />
-            </Button>
+        </div>
+        <div className="order-2 flex items-center justify-end gap-1 md:order-3">
             <Button
               size="sm"
               onClick={() => collect.mutate()}
@@ -175,26 +169,26 @@ export function ProviderPage() {
               aria-label="Collect now"
             >
               <RefreshCw className="size-3.5" aria-hidden />
-              <span className="hidden sm:inline">Collect</span>
+              <span className="hidden md:inline">Collect</span>
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => archive.mutate()}
-              loading={archive.isPending}
-              aria-label={isArchived ? 'Restore provider' : 'Archive provider'}
-              title={isArchived ? 'Restore to dashboard' : 'Archive (hide from dashboard)'}
-            >
-              {isArchived ? (
-                <ArchiveRestore className="size-3.5" aria-hidden />
-              ) : (
-                <Archive className="size-3.5" aria-hidden />
-              )}
-              <span className="hidden sm:inline">{isArchived ? 'Restore' : 'Archive'}</span>
-            </Button>
-          </>
-        }
-      />
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <Button size="icon-sm" variant="ghost" aria-label="More provider actions"><Ellipsis className="size-4" aria-hidden /></Button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content align="end" sideOffset={6} className="z-50 min-w-48 rounded-lg border border-edge bg-overlay p-1 shadow-md">
+                  <DropdownMenu.Item onSelect={() => reset.mutate()} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none hover:bg-surface-2">
+                    <RotateCcw className="size-3.5" aria-hidden /> Clear failure state
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => archive.mutate()} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none hover:bg-surface-2">
+                    {isArchived ? <ArchiveRestore className="size-3.5" aria-hidden /> : <Archive className="size-3.5" aria-hidden />}
+                    {isArchived ? 'Restore provider' : 'Archive provider'}
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+        </div>
+      </header>
       <div className="px-4 pt-3 pb-4 lg:px-8 lg:pt-4 lg:pb-8">
         <Button
           variant="ghost"
@@ -281,5 +275,25 @@ export function ProviderPage() {
         )}
       </div>
     </>
+  );
+}
+
+function ProviderFilters({ showSource, showCache }: { showSource: boolean; showCache: boolean }) {
+  const [sidecarId] = useUsageSource();
+  const { excludeCache } = useExcludeCache();
+  const activeCount = Number(showSource && Boolean(sidecarId)) + Number(showCache && excludeCache);
+  return (
+    <Popover
+      align="start"
+      className="w-72 space-y-4"
+      trigger={<Button variant="secondary" size="sm" className="shrink-0"><SlidersHorizontal className="size-3.5" aria-hidden /> Filters{activeCount ? <span className="ml-1 rounded-full bg-accent/15 px-1.5 text-[10px] text-accent">{activeCount}</span> : null}</Button>}
+    >
+      <div className="space-y-1">
+        <h3 className="text-[12px] font-medium">Provider filters</h3>
+        <p className="text-[11px] text-fg-muted">Filters apply to the current tab where supported.</p>
+      </div>
+      {showSource ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Source</div><SidecarFilter /></div> : null}
+      {showCache ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Cached tokens</div><ExcludeCacheToggle /></div> : null}
+    </Popover>
   );
 }

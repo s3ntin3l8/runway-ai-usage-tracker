@@ -4,25 +4,25 @@
 
 import { useState } from 'react';
 import { Bug, ChevronDown, ChevronRight } from 'lucide-react';
+import { Link } from 'react-router';
 import type {
+  CredentialAccountView,
+  CredentialSourceView,
   DebugRawResponse,
   FleetEntry,
   StrategyCapture,
   StrategyCaptureResponse,
-  TokenHealthEntry,
-  TokenHealthStatus,
 } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { StatusDot } from '@/components/ui/StatusDot';
-import { useTokenHealth } from '@/features/home/queries';
+import { useCredentialInventory } from '@/features/settings/sections/credentials/queries';
 import { timeAgo, timeUntil } from '@/lib/format';
-import type { QuotaStatus } from '@/lib/quota';
 import { useDebugRaw } from './queries';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
+import { STATUS_LABEL, STATUS_VARIANT, originSummary } from '@/features/settings/sections/credentials/display';
 
 export function DebugTab({
   providerId,
@@ -43,8 +43,7 @@ export function DebugTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <SourcePane entry={entry} captureSupported={captureSupported} />
-      <TokenHealthPane providerId={providerId} accountId={accountId} />
+      <CollectionContextPane providerId={providerId} accountId={accountId} entry={entry} />
       <RawCapturePane
         providerId={providerId}
         accountId={accountId}
@@ -55,47 +54,97 @@ export function DebugTab({
   );
 }
 
-// "Authoritative source": where this provider's primary card came from, and
-// the poll cadence behind it — read straight off the critical_gauge.
-function SourcePane({ entry, captureSupported }: { entry: FleetEntry; captureSupported: boolean }) {
+function CollectionContextPane({
+  providerId,
+  accountId,
+  entry,
+}: {
+  providerId: string;
+  accountId: string;
+  entry: FleetEntry;
+}) {
+  const inventory = useCredentialInventory();
   const g = entry.critical_gauge;
-  const source = [g.data_source, g.input_source].filter(Boolean).join(' · ') || '—';
-  const kind = captureSupported && g.data_source === 'local'
-    ? 'usage only · quota unavailable'
-    : g.is_unlimited
-      ? 'unlimited'
-      : g.error_type
-        ? 'error'
-        : 'quota';
-  const rows: [string, string][] = [
-    ['Account', labelOrMaskedId({ account_id: entry.account_id, account_label: g.account_label })],
-    ['Plan', g.tier || '—'],
-    ['Window', g.window_type || '—'],
-    ['Kind', kind],
-    ['Source', source],
-    ['Cache TTL', g.cache_ttl_seconds != null ? `${g.cache_ttl_seconds}s` : '—'],
-    ['Last poll', g.fetched_at ? timeAgo(g.fetched_at) : '—'],
-    ['Next poll', nextPollLabel(g.next_poll_at)],
-  ];
+  const matchingAccounts = (inventory.data?.providers ?? [])
+    .filter((provider) => provider.provider_id === providerId)
+    .flatMap((provider) => provider.accounts)
+    .filter((account) => matchesAccount(account.account_id, accountId));
+  const activeSources = matchingAccounts.flatMap((account) => {
+    const source = account.sources.find((item) => item.source_id === account.active_source_id);
+    return source ? [{ account, source }] : [];
+  });
+  const cardPath = [g.data_source, g.input_source].filter(Boolean).join(' · ') || '—';
+  const cardKind = g.is_unlimited ? 'unlimited' : g.error_type ? 'error' : 'quota';
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Authoritative source</CardTitle>
+        <CardTitle>Collection context</CardTitle>
       </CardHeader>
-      <CardContent>
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
-          {rows.map(([label, value]) => (
-            <div key={label} className="min-w-0">
-              <dt className="text-[11px] text-fg-subtle">{label}</dt>
-              <dd className="mt-0.5 truncate text-[13px]" title={value}>
-                {value}
-              </dd>
-            </div>
-          ))}
-        </dl>
+      <CardContent className="grid gap-4 sm:grid-cols-3">
+        <section>
+          <h3 className="text-[11px] font-medium text-fg-subtle">Most recently successful credential</h3>
+          {inventory.isPending ? (
+            <p className="mt-1 text-[13px] text-fg-muted">Loading credential details…</p>
+          ) : inventory.isError ? (
+            <p className="mt-1 text-[13px] text-fg-muted">Credential details unavailable.</p>
+          ) : activeSources.length === 0 ? (
+            <p className="mt-1 text-[13px] text-fg-muted">No successful credential source recorded.</p>
+          ) : (
+            activeSources.map(({ account, source }) => (
+              <CredentialSourceSummary
+                key={`${account.account_id}/${source.source_id}`}
+                account={account}
+                source={source}
+              />
+            ))
+          )}
+          <Link to="/settings/credentials" className="mt-2 inline-block text-[11px] text-accent hover:underline">
+            Full credential inventory
+          </Link>
+        </section>
+        <section>
+          <h3 className="text-[11px] font-medium text-fg-subtle">Most restrictive quota card</h3>
+          <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[12px]">
+            <dt className="text-fg-subtle">Plan</dt><dd className="truncate">{g.tier || '—'}</dd>
+            <dt className="text-fg-subtle">Window</dt><dd className="truncate">{g.window_type || '—'}</dd>
+            <dt className="text-fg-subtle">Kind</dt><dd className="truncate">{cardKind}</dd>
+            <dt className="text-fg-subtle">Card path</dt><dd className="truncate" title={cardPath}>{cardPath}</dd>
+          </dl>
+        </section>
+        <section>
+          <h3 className="text-[11px] font-medium text-fg-subtle">Collector schedule · account</h3>
+          <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[12px]">
+            <dt className="text-fg-subtle">Cache TTL</dt><dd>{g.cache_ttl_seconds != null ? `${g.cache_ttl_seconds}s` : '—'}</dd>
+            <dt className="text-fg-subtle">Last poll</dt><dd>{g.fetched_at ? timeAgo(g.fetched_at) : '—'}</dd>
+            <dt className="text-fg-subtle">Next poll</dt><dd>{nextPollLabel(g.next_poll_at)}</dd>
+          </dl>
+        </section>
       </CardContent>
     </Card>
+  );
+}
+
+function CredentialSourceSummary({
+  account,
+  source,
+}: {
+  account: CredentialAccountView;
+  source: CredentialSourceView;
+}) {
+  return (
+    <div className="mt-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[13px]">{originSummary(source)}</span>
+        <Badge variant={STATUS_VARIANT[source.status] ?? 'neutral'}>
+          {STATUS_LABEL[source.status] ?? source.status}
+        </Badge>
+      </div>
+      <p className="text-[11px] text-fg-subtle">
+        {labelOrMaskedId({ account_id: account.account_id, account_label: account.account_label })}
+        {source.last_success_at ? ` · collected ${timeAgo(source.last_success_at)}` : ''}
+      </p>
+    </div>
   );
 }
 
@@ -116,73 +165,6 @@ const matchesAccount = (id: string, accountId: string) => {
   const m = /^config(?:-cookie)?:(.+)$/.exec(id);
   return m !== null && (m[1] === accountId || m[1] === 'default');
 };
-
-// "Token health": OAuth / API-key expiry for this account. Admin-gated — the
-// query is retry:false and may 403 on a locked-down remote, in which case we
-// render nothing rather than an error.
-function TokenHealthPane({ providerId, accountId }: { providerId: string; accountId: string }) {
-  const health = useTokenHealth();
-  const entries = (health.data?.tokens ?? []).filter(
-    (t) =>
-      t.provider === providerId &&
-      matchesAccount(t.account_id, accountId),
-  );
-
-  if (health.isError || entries.length === 0) return null;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Token health</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {entries.map((t, i) => (
-          <TokenHealthRow key={`${t.account_id}-${i}`} token={t} />
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function TokenHealthRow({ token }: { token: TokenHealthEntry }) {
-  const expiry =
-    token.status === 'expired'
-      ? 'expired'
-      : token.status === 'invalid'
-        ? 'rejected by provider'
-        : token.expires_at
-        ? `expires in ${timeUntil(token.expires_at) ?? '—'}`
-        : 'no expiry';
-
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="flex min-w-0 items-center gap-2">
-        <StatusDot status={tokenStatus(token.status)} label={token.status} />
-        <div className="min-w-0">
-          <p className="text-[13px]">
-            {(token.token_types ?? []).join(', ') || 'token'}
-            {token.can_refresh ? (
-              <Badge variant="neutral" className="ml-2">
-                auto-rotate
-              </Badge>
-            ) : null}
-          </p>
-          {token.source ? (
-            <p className="truncate text-[11px] text-fg-subtle">{token.source}</p>
-          ) : null}
-        </div>
-      </div>
-      <span className="shrink-0 text-[12px] text-fg-muted">{expiry}</span>
-    </div>
-  );
-}
-
-function tokenStatus(status: TokenHealthStatus): QuotaStatus {
-  if (status === 'valid') return 'ok';
-  if (status === 'expiring') return 'warning';
-  if (status === 'expired' || status === 'invalid') return 'critical';
-  return 'unknown';
-}
 
 function RawCapturePane({
   providerId,

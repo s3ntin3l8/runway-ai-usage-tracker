@@ -381,6 +381,8 @@ export interface HistoryWindow {
   window_type?: string;
   window_start?: string;
   window_end?: string;
+  series_model_id?: string;
+  series_variant?: string;
   totals?: CumulativeModelBucket;
   by_model?: SessionModelSplit[];
   by_sidecar?: Record<string, CumulativeModelBucket>;

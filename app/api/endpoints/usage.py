@@ -1297,6 +1297,8 @@ async def get_window_history(
     provider_id: str = Query(...),
     account_id: str = Query(...),
     window_type: str = Query(...),
+    series_model_id: str | None = Query(default=None),
+    series_variant: str | None = Query(default=None),
     limit: int = Query(default=12, ge=1, le=100),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1304,6 +1306,8 @@ async def get_window_history(
 
     Returns up to N most recent closed windows for the given
     (provider_id, account_id, window_type) triple, ordered newest-first.
+    Optional series identity scopes the result to one quota model/pool and
+    includes legacy rows whose series identity was not recorded.
     """
     windows = query_window_history(
         session,
@@ -1311,6 +1315,8 @@ async def get_window_history(
         account_id=account_id,
         window_type=window_type,
         limit=limit,
+        series_model_id=series_model_id,
+        series_variant=series_variant,
     )
     return {"windows": windows}
 
@@ -1611,6 +1617,7 @@ async def get_anomalies(
     request: Request,
     provider_id: str | None = None,
     account_id: str | None = None,
+    sidecar_id: str | None = None,
     lookback_days: int = Query(default=30, ge=7, le=90),
     z_threshold: float = Query(default=2.0, ge=0.5),
     session: Session = Depends(get_session),
@@ -1624,6 +1631,7 @@ async def get_anomalies(
         session,
         provider_id=provider_id,
         account_id=account_id,
+        sidecar_id=sidecar_id,
         lookback_days=lookback_days,
         z_threshold=z_threshold,
     )

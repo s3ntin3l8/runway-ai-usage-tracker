@@ -233,7 +233,7 @@ describe('OverviewTab', () => {
       },
     });
     renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
-    expect(await screen.findByText('Active window by model')).toBeInTheDocument();
+    expect(await screen.findByText('Current window by model')).toBeInTheDocument();
   });
 
   it('switches to the per-source split with more than one sidecar', async () => {
@@ -250,7 +250,7 @@ describe('OverviewTab', () => {
       },
     });
     renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
-    expect(await screen.findByText('Active window by source')).toBeInTheDocument();
+    expect(await screen.findByText('Current window by source')).toBeInTheDocument();
   });
 
   it('renders recent sessions when present', async () => {

@@ -87,6 +87,8 @@ def _window(
     window_type: str = "weekly",
     window_start: datetime | None = None,
     window_end: datetime | None = None,
+    series_model_id: str = "",
+    series_variant: str = "",
     model_id: str = "",
     sidecar_id: str = "",
     msgs: int = 100,
@@ -109,6 +111,8 @@ def _window(
         window_type=window_type,
         window_start=window_start,
         window_end=window_end,
+        series_model_id=series_model_id,
+        series_variant=series_variant,
         model_id=model_id,
         sidecar_id=sidecar_id,
         msgs=msgs,
@@ -501,6 +505,49 @@ class TestWindowHistoryEndpoint:
         )
         assert r.status_code == 200
         assert r.json()["windows"] == []
+
+    def test_window_history_scopes_to_selected_quota_series_and_keeps_legacy(self, session):
+        start = datetime(2026, 4, 28, 18, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 5, 5, 18, 0, 0, tzinfo=UTC)
+        session.add_all(
+            [
+                _window(
+                    window_start=start,
+                    window_end=end,
+                    series_model_id="sonnet",
+                    series_variant="default",
+                    msgs=12,
+                ),
+                _window(
+                    window_start=start,
+                    window_end=end,
+                    series_model_id="opus",
+                    series_variant="default",
+                    msgs=90,
+                ),
+                _window(window_start=start, window_end=end, msgs=7),
+            ]
+        )
+        session.commit()
+
+        response = _client().get(
+            "/api/v1/usage/window-history",
+            params={
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "window_type": "weekly",
+                "series_model_id": "sonnet",
+                "series_variant": "default",
+            },
+        )
+        assert response.status_code == 200, response.text
+        windows = response.json()["windows"]
+        assert {
+            (w["series_model_id"], w["series_variant"], w["totals"]["msgs"]) for w in windows
+        } == {
+            ("sonnet", "default", 12),
+            ("", "", 7),
+        }
 
 
 # ===========================================================================

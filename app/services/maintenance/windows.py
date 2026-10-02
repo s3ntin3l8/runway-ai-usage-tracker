@@ -26,7 +26,7 @@ from app.services.window_closer import close_window
 # is O(n^2) in identity-map bookkeeping).
 _WINDOW_BATCH = 200
 
-_WindowKey = tuple[str, str, str, datetime, datetime]
+_WindowKey = tuple[str, str, str, datetime, datetime, str, str]
 _WindowMeta = tuple[float | None, float | None]
 
 
@@ -35,7 +35,15 @@ def _index_by_identity(rows: list[UsageWindow]) -> dict[_WindowKey, _WindowMeta]
     (model_id='', sidecar_id='') row for the limit/pct metadata to restore."""
     index: dict[_WindowKey, _WindowMeta] = {}
     for w in rows:
-        key = (w.provider_id, w.account_id, w.window_type, w.window_start, w.window_end)
+        key = (
+            w.provider_id,
+            w.account_id,
+            w.window_type,
+            w.window_start,
+            w.window_end,
+            w.series_model_id,
+            w.series_variant,
+        )
         if w.model_id == "" and w.sidecar_id == "":
             index[key] = (w.limit_value, w.pct_used)
         else:
@@ -44,7 +52,9 @@ def _index_by_identity(rows: list[UsageWindow]) -> dict[_WindowKey, _WindowMeta]
 
 
 def _replay(session: Session, index: dict[_WindowKey, _WindowMeta]) -> None:
-    for i, ((pid, aid, wtype, start, end), (lv, pu)) in enumerate(index.items(), 1):
+    for i, ((pid, aid, wtype, start, end, series_model_id, series_variant), (lv, pu)) in enumerate(
+        index.items(), 1
+    ):
         close_window(
             session,
             provider_id=pid,
@@ -52,6 +62,8 @@ def _replay(session: Session, index: dict[_WindowKey, _WindowMeta]) -> None:
             window_type=wtype,
             window_start=start,
             window_end=end,
+            series_model_id=series_model_id,
+            series_variant=series_variant,
             limit_value=lv,
             pct_used=pu,
         )

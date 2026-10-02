@@ -16,6 +16,7 @@ def query_anomalies(
     *,
     provider_id: str | None = None,
     account_id: str | None = None,
+    sidecar_id: str | None = None,
     lookback_days: int = 30,
     z_threshold: float = 2.0,
 ) -> dict[str, Any]:
@@ -34,7 +35,7 @@ def query_anomalies(
 
     stmt = select(UsagePeriodRollup).where(
         UsagePeriodRollup.period_type == "day",
-        UsagePeriodRollup.sidecar_id == "",  # all-sidecars grain
+        UsagePeriodRollup.sidecar_id == (sidecar_id or ""),
         UsagePeriodRollup.period_key >= oldest_key,
         UsagePeriodRollup.period_key <= today_key,
     )

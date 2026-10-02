@@ -4,6 +4,7 @@ import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { ProviderKpis } from './ProviderKpis';
 import { ProviderAlerts } from './ProviderAlerts';
+import { ProviderAnomalies } from './ProviderAnomalies';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { QuotaWindowRow } from './QuotaWindowRow';
 import { RecentSessions } from './RecentSessions';
@@ -208,7 +209,15 @@ describe('ProviderAlerts', () => {
     expect(screen.getByText(/overloaded/i)).toBeInTheDocument();
   });
 
-  it('surfaces a usage-spike banner', async () => {
+});
+
+describe('ProviderAnomalies', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.fetchAnomalies).mockResolvedValue(anomaliesResponse());
+  });
+
+  it('shows the today-versus-history comparison in its own card', async () => {
     vi.mocked(api.fetchAnomalies).mockResolvedValue(
       anomaliesResponse({
         anomalies: [
@@ -226,8 +235,10 @@ describe('ProviderAlerts', () => {
         ],
       }),
     );
-    renderWithProviders(<ProviderAlerts providerId="anthropic" accountId="me@example.com" />);
-    expect(await screen.findByText(/usage spike on/i)).toBeInTheDocument();
+    renderWithProviders(<ProviderAnomalies providerId="anthropic" accountId="me@example.com" />);
+    expect(await screen.findByText('Usage anomalies')).toBeInTheDocument();
+    expect(await screen.findByText(/today vs prior 30 days/i)).toBeInTheDocument();
+    expect(await screen.findByText('claude-opus')).toBeInTheDocument();
   });
 });
 

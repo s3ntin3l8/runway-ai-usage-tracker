@@ -142,6 +142,7 @@ def init_db() -> None:
     with engine.connect() as conn:
         _add_columns_if_missing(conn)
         _add_indexes_if_missing(conn)
+        _rebuild_usage_window_table_for_series_identity(conn)
         _rebuild_quota_snapshot_table_for_variant(conn)
         _rebuild_quota_snapshot_indexes(conn)
         _backfill_quota_snapshot_variant(conn)
@@ -211,6 +212,8 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("usage_period_rollup", "cost_cache_read", "FLOAT NOT NULL DEFAULT 0"),
     ("usage_period_rollup", "cost_cache_create", "FLOAT NOT NULL DEFAULT 0"),
     ("quota_snapshots", "variant", "TEXT NOT NULL DEFAULT ''"),
+    ("usage_windows", "series_model_id", "TEXT NOT NULL DEFAULT ''"),
+    ("usage_windows", "series_variant", "TEXT NOT NULL DEFAULT ''"),
     # oai-sc: OpenAI service-credential cookie required by chatgpt.com/api/auth/session
     ("provider_configs", "oai_sc_cookie_encrypted", "VARCHAR"),
     ("provider_configs", "opencode_workspace_id", "VARCHAR"),
@@ -350,6 +353,60 @@ def _rebuild_quota_snapshot_table_for_variant(conn: Any) -> None:
         conn.execute(text(index_sql))
     conn.commit()
     logger.info("Migrated: rebuilt quota_snapshots so uq_quota_snapshots_identity covers variant")
+
+
+def _rebuild_usage_window_table_for_series_identity(conn: Any) -> None:
+    """Rebuild usage_windows so uniqueness includes the quota-series identity.
+
+    Older databases have a table-level unique constraint that SQLite cannot
+    alter in place. The new columns distinguish quota-card model/pool identity
+    from the existing event model/sidecar breakdown. Legacy rows copy with
+    empty series identity and remain explicitly unscoped.
+    """
+    from sqlalchemy import MetaData, Table, insert, literal_column, select, text
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    from app.models.db import UsageWindow
+
+    required = (
+        "provider_id",
+        "account_id",
+        "window_type",
+        "window_end",
+        "series_model_id",
+        "series_variant",
+        "model_id",
+        "sidecar_id",
+    )
+    for row in conn.execute(text("PRAGMA index_list(usage_windows)")):
+        if not row[2]:
+            continue
+        index_name = row[1].replace("'", "''")
+        index_cols = tuple(
+            info[2] for info in conn.execute(text(f"PRAGMA index_info('{index_name}')"))
+        )
+        if index_cols == required:
+            return  # fresh DB or already migrated
+
+    dialect = conn.engine.dialect
+    create_sql = str(CreateTable(UsageWindow.__table__).compile(dialect=dialect)).strip()  # type: ignore[attr-defined]
+    create_sql = create_sql.replace(
+        "CREATE TABLE usage_windows", "CREATE TABLE usage_windows_new", 1
+    )
+    conn.execute(text(create_sql))
+    columns = [column.name for column in UsageWindow.__table__.columns]  # type: ignore[attr-defined]
+    source = Table("usage_windows", MetaData(), autoload_with=conn)
+    target = Table("usage_windows_new", MetaData(), autoload_with=conn)
+    select_columns = [
+        source.c[name] if name in source.c else literal_column("''").label(name) for name in columns
+    ]
+    conn.execute(insert(target).from_select(columns, select(*select_columns)))
+    conn.execute(text("DROP TABLE usage_windows"))
+    conn.execute(text("ALTER TABLE usage_windows_new RENAME TO usage_windows"))
+    for index in UsageWindow.__table__.indexes:  # type: ignore[attr-defined]
+        conn.execute(text(str(CreateIndex(index).compile(dialect=dialect)).strip()))
+    conn.commit()
+    logger.info("Migrated: rebuilt usage_windows so uniqueness covers quota-series identity")
 
 
 def _rebuild_quota_snapshot_indexes(conn: Any) -> None:
