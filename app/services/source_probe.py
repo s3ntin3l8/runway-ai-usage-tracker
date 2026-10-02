@@ -7,9 +7,10 @@ revocation, no verification backoff, and no token refresh. Each source runs on i
 collector instance (never the poller's, which a probe would otherwise race), pinned to that
 one source with ``token_cache.using_source``.
 
-What a probe cannot undo: it is a real request, so the provider sees it, and a collector's own
-error handling may log a provider error event. The account's in-memory "rejected" flag is
-restored afterwards so a probe never turns a status page red by itself.
+Everything a collector would normally remember is switched off for the duration (see
+``probe_mode``): token-cache stores (mirrored login files, exchanged bearers, refreshed tokens),
+the account's "rejected" flag and provider error events. What a probe cannot undo is that it is a
+real request: the provider sees it.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import httpx
 
 from app.core.log_redaction import redact_secrets
 from app.core.utils import scrub_log
-from app.services import auth_failures
+from app.services.probe_mode import probing
 from app.services.token_cache import token_cache
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PROBE_TIMEOUT_SECONDS = 20.0
+PROBE_CONCURRENCY = 4
 _AUTH_ERROR_TYPES = {"auth_failed", "invalid_api_key"}
 
 
@@ -111,6 +113,13 @@ async def _probe_one(
     collector.REFRESHABLE = False
     manager._reset_attempt_identity(collector, slot, getattr(template, "account_label", None))
 
+    with probing():
+        return await _run_probe(collector, provider_id, slot, candidate)
+
+
+async def _run_probe(
+    collector: Any, provider_id: str, slot: str, candidate: dict[str, Any]
+) -> dict[str, Any]:
     last_status: int | None = None
 
     async def note_response(response: httpx.Response) -> None:
@@ -142,7 +151,11 @@ async def _probe_one(
         rejected = bool(attempt["auth_failed"])
 
     empty_allowed = bool(getattr(collector, "successful_empty_result", False))
-    outcome = "unavailable" if error else source_outcome(result, rejected, empty_allowed)
+    if error:
+        # A 401/403 that escaped as an exception is still the provider rejecting the credential.
+        outcome = "auth_failed" if rejected else "unavailable"
+    else:
+        outcome = source_outcome(result, rejected, empty_allowed)
     card_error = next((c.get("error_type") for c in result if c.get("error_type")), None)
     return {
         "source_id": candidate["source_id"],
@@ -177,14 +190,15 @@ async def probe_sources(
     ordered_ids = {c["source_id"] for c in ordered}
     disabled = [c for c in live if c["source_id"] not in ordered_ids]
 
-    flagged_before = slot in auth_failures.flagged_accounts(provider_id)
-    results: list[dict[str, Any]] = []
-    try:
-        for candidate in ordered:
-            results.append(await _probe_one(manager, template, provider_id, slot, candidate, live))
-    finally:
-        if not flagged_before:
-            auth_failures.clear(provider_id, slot)
+    # A few at a time: sequential probes of many sources could outlast a reverse proxy's
+    # timeout, and each runs in its own task with its own probe-mode and source scope.
+    gate = asyncio.Semaphore(PROBE_CONCURRENCY)
+
+    async def one(candidate: dict[str, Any]) -> dict[str, Any]:
+        async with gate:
+            return await _probe_one(manager, template, provider_id, slot, candidate, live)
+
+    results: list[dict[str, Any]] = list(await asyncio.gather(*(one(c) for c in ordered)))
     results.extend(_skipped(c, "disabled") for c in disabled)
     results.extend(_skipped(c, "pending") for c in pending)
     return results

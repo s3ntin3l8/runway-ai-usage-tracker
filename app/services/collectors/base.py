@@ -658,6 +658,10 @@ class BaseCollector(ABC):
         Best-effort: swallows all errors so it never disrupts the collector flow.
         Only fires for actionable provider-side errors (rate_limit, auth_failed, timeout).
         """
+        from app.services.probe_mode import is_probing
+
+        if is_probing():
+            return  # an on-demand probe is not a collection: it leaves no error event behind
         try:
             reason: str | None = None
             if isinstance(exc, httpx.HTTPStatusError):

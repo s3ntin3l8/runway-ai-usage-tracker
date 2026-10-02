@@ -47,7 +47,11 @@ export function DebugTab({
   return (
     <div className="flex flex-col gap-4">
       <CollectionContextPane providerId={providerId} accountId={accountId} entry={entry} />
-      <CredentialSourcesPane providerId={providerId} accountId={accountId} />
+      <CredentialSourcesPane
+        key={`${providerId}:${accountId}`}
+        providerId={providerId}
+        accountId={accountId}
+      />
       <RawCapturePane
         providerId={providerId}
         accountId={accountId}
@@ -190,6 +194,10 @@ function CredentialSourcesPane({
   const results = new Map<string, SourceProbeResult>(
     (probe.data?.sources ?? []).map((result) => [result.source_id, result]),
   );
+  // The default account's probe also reaches sources filed under identities of their own;
+  // they have no row above, so list them rather than drop them.
+  const listed = new Set(sources.map((source) => source.source_id));
+  const extraResults = (probe.data?.sources ?? []).filter((result) => !listed.has(result.source_id));
 
   return (
     <Card>
@@ -232,6 +240,11 @@ function CredentialSourcesPane({
                         : ''}
                     {source.last_seen ? ` · seen ${timeAgo(source.last_seen)}` : ''}
                   </p>
+                  {probe.data && !result ? (
+                    <p className="mt-0.5 text-[11px] text-fg-subtle">
+                      Not probed — it belongs to a different account than the one probed here.
+                    </p>
+                  ) : null}
                   {result ? (
                     <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px]">
                       <Badge variant={PROBE_VARIANT[result.outcome] ?? 'neutral'}>
@@ -256,6 +269,21 @@ function CredentialSourcesPane({
             })}
           </ul>
         )}
+        {extraResults.length > 0 ? (
+          <ul className="mt-2 space-y-1" aria-label="Other probed sources">
+            {extraResults.map((result) => (
+              <li key={result.source_id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="font-mono text-fg-muted">{result.source_id}</span>
+                <Badge variant={PROBE_VARIANT[result.outcome] ?? 'neutral'}>
+                  {PROBE_LABEL[result.outcome] ?? result.outcome}
+                </Badge>
+                {result.http_status ? (
+                  <span className="text-fg-subtle">HTTP {result.http_status}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {probe.isError ? (
           <p className="mt-2 text-[12px] text-critical" role="alert">
             Probe failed: {probe.error.message}

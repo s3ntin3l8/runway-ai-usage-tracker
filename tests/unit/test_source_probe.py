@@ -204,16 +204,16 @@ async def test_a_crashing_collector_is_reported_with_the_message_redacted(manage
 
 
 @pytest.mark.asyncio
-async def test_the_accounts_rejected_flag_is_restored_after_a_probe(manager):
+async def test_a_probe_never_flags_the_account_as_rejected(manager):
     _Stub.behaviours = {"src:rejected": "401"}
     _serve(manager, [_candidate("src:rejected")])
-    auth_failures.mark("deepseek", "default")  # already flagged before: stays flagged
-    await probe_sources(manager, "deepseek", "default")
-    assert auth_failures.flagged_accounts("deepseek") == {"default"}
-
-    auth_failures.reset()
     await probe_sources(manager, "deepseek", "default")
     assert auth_failures.flagged_accounts("deepseek") == set()
+
+    # ...and it never clears a flag a real collection set (the poller's own verdict).
+    auth_failures.mark("deepseek", "default")
+    await probe_sources(manager, "deepseek", "default")
+    assert auth_failures.flagged_accounts("deepseek") == {"default"}
 
 
 def test_isolated_collector_copies_configuration_but_shares_no_state():
@@ -236,3 +236,97 @@ async def test_unknown_account_without_a_collector_returns_nothing(manager, monk
     manager.smart_collectors = {}
     monkeypatch.setattr(manager, "_create_collector", Mock(return_value=None))
     assert await probe_sources(manager, "deepseek", "ghost") == []
+
+
+@pytest.mark.asyncio
+async def test_collectors_run_in_probe_mode_so_nothing_they_learn_is_remembered(manager):
+    from app.services.probe_mode import is_probing
+
+    modes: list[bool] = []
+    original = _Stub.collect
+
+    async def spying(self, client):
+        modes.append(is_probing())
+        return await original(self, client)
+
+    _Stub.collect = spying
+    try:
+        _serve(manager, [_candidate("src:a"), _candidate("src:b", 1)])
+        await probe_sources(manager, "deepseek", "default")
+    finally:
+        _Stub.collect = original
+    assert modes == [True, True]
+    assert is_probing() is False  # the switch never leaks out of the probe
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_that_escapes_as_an_exception_still_reads_as_rejected(manager):
+    class RejectedError(Exception):
+        pass
+
+    async def collect(self, client):
+        for hook in client.event_hooks["response"]:
+            await hook(SimpleNamespace(status_code=403, request=None))
+        raise RejectedError("403 Forbidden")
+
+    original = _Stub.collect
+    _Stub.collect = collect
+    try:
+        _serve(manager, [_candidate("src:a")])
+        (result,) = await probe_sources(manager, "deepseek", "default")
+    finally:
+        _Stub.collect = original
+    assert result["outcome"] == "auth_failed" and result["http_status"] == 403
+
+
+@pytest.mark.asyncio
+async def test_many_sources_are_all_probed_and_reported_in_failover_order(manager):
+    candidates = [_candidate(f"src:{n}", n) for n in range(9)]
+    _serve(manager, candidates)
+    results = await probe_sources(manager, "deepseek", "default")
+    assert [r["source_id"] for r in results] == [f"src:{n}" for n in range(9)]
+    assert all(r["outcome"] == "healthy" for r in results)
+
+
+@pytest.mark.asyncio
+async def test_token_cache_writes_and_error_flags_are_suppressed_only_while_probing():
+    from app.services.probe_mode import probing
+
+    cache = TokenCache()
+    with probing():
+        await cache.store(
+            "deepseek", {"api_key": "k"}, account_id="alice@example.com"
+        )  # pragma: allowlist secret
+        auth_failures.mark("deepseek", "alice@example.com")
+    assert await cache.get_token("deepseek", "api_key", account_id="alice@example.com") is None
+    assert auth_failures.flagged_accounts("deepseek") == set()
+
+    await cache.store(
+        "deepseek", {"api_key": "k"}, account_id="alice@example.com"
+    )  # pragma: allowlist secret
+    auth_failures.mark("deepseek", "alice@example.com")
+    assert await cache.get_token("deepseek", "api_key", account_id="alice@example.com") == "k"
+    assert auth_failures.flagged_accounts("deepseek") == {"alice@example.com"}
+
+
+def test_provider_error_events_are_not_logged_by_a_probe(monkeypatch):
+    import httpx
+
+    from app.services.collectors.deepseek import DeepSeekCollector
+    from app.services.probe_mode import probing
+
+    recorded = Mock()
+    monkeypatch.setattr("app.services.error_events.record_provider_error", recorded)
+    monkeypatch.setattr("app.core.db.engine", Mock())
+    collector = DeepSeekCollector()
+    failure = httpx.HTTPStatusError(
+        "boom", request=httpx.Request("GET", "https://x"), response=httpx.Response(429)
+    )
+
+    with probing():
+        collector._record_strategy_error(failure)
+    recorded.assert_not_called()
+
+    # Outside a probe the same failure is still recorded (the guard is the only difference).
+    collector._record_strategy_error(failure)
+    recorded.assert_called_once()

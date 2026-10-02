@@ -367,6 +367,36 @@ class TestGetXaiApi:
             await token_cache.remove_tokens("xai", account_id, {"xai_access", "xai_refresh"})
 
     @pytest.mark.asyncio
+    async def test_a_probe_never_refreshes_an_expired_login(self):
+        """The on-demand source probe only looks: refreshing would rotate the refresh token."""
+        from app.services.probe_mode import probing
+        from app.services.token_cache import token_cache
+
+        account_id = "xai-probe-no-refresh-test"
+        await token_cache.store(
+            "xai",
+            {"xai_access": _make_jwt(int(time.time()) - 3600), "xai_refresh": "valid_refresh"},
+            account_id=account_id,
+            source="config",
+        )
+        try:
+            collector = XaiCollector(account_id=account_id)
+            mock_refresh = AsyncMock()
+            with (
+                patch("app.services.token_refresher.refresh_oauth_token", new=mock_refresh),
+                patch(
+                    "app.services.collectors.xai.http_request_with_retry", new_callable=AsyncMock
+                ) as request,
+                probing(),
+            ):
+                await collector.collect(MagicMock())
+
+            mock_refresh.assert_not_awaited()
+            request.assert_not_awaited()
+        finally:
+            await token_cache.remove_tokens("xai", account_id, {"xai_access", "xai_refresh"})
+
+    @pytest.mark.asyncio
     async def test_expired_jwt_refresh_store_failure_sets_api_error(self):
         from app.services.token_cache import token_cache
 

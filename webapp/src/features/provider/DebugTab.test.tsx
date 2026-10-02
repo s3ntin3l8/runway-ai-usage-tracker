@@ -117,6 +117,35 @@ describe('DebugTab', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('Probe failed: 429 Too Many Requests');
     });
 
+    it('marks a listed source the probe did not reach and lists swept ones it found elsewhere', async () => {
+      vi.mocked(api.probeCredentialSources).mockResolvedValue(
+        probeResponse([
+          { source_id: 'sidecar:elsewhere', outcome: 'healthy', probed: true, http_status: 200 },
+        ]),
+      );
+      renderTab();
+      await userEvent.click(await screen.findByRole('button', { name: 'Probe sources' }));
+
+      expect(await screen.findByText(/not probed — it belongs to a different account/i)).toBeInTheDocument();
+      const other = screen.getByRole('list', { name: 'Other probed sources' });
+      expect(within(other).getByText('sidecar:elsewhere')).toBeInTheDocument();
+      expect(within(other).getByText('Working')).toBeInTheDocument();
+    });
+
+    it('forgets the previous account\'s probe when the account changes', async () => {
+      vi.mocked(api.probeCredentialSources).mockResolvedValue(
+        probeResponse([{ source_id: 'config:me@example.com', outcome: 'healthy', probed: true }]),
+      );
+      const { rerender } = renderTab();
+      await userEvent.click(await screen.findByRole('button', { name: 'Probe sources' }));
+      expect(await screen.findByText(/changes nothing/i)).toBeInTheDocument();
+
+      rerender(
+        <DebugTab providerId="anthropic" accountId="other@example.com" entry={entry} active />,
+      );
+      expect(screen.queryByText(/changes nothing/i)).not.toBeInTheDocument();
+    });
+
     it('has nothing to probe when no source is reported', async () => {
       vi.mocked(api.fetchCredentialInventory).mockResolvedValue(inventory({ providers: [] }));
       renderTab();

@@ -118,6 +118,13 @@ class XaiCollector(BaseCollector):
                 "xai", "xai_refresh", account_id=account_id
             ) or await token_cache.get_token("xai", "refresh_token", account_id=account_id)
             if refresh_tok:
+                from app.services.probe_mode import is_probing
+
+                if is_probing():
+                    # A probe never refreshes (it would rotate the refresh token): the login
+                    # is expired and that is the answer.
+                    self._last_error_reason = "renewal_pending"
+                    return []
                 from app.services.token_cache import server_may_refresh
                 from app.services.token_refresher import refresh_oauth_token
 
