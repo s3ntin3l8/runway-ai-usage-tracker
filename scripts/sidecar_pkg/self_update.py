@@ -622,11 +622,7 @@ def _windows_swap_script(
         if display_version
         else ""
     )
-    restart_log = (
-        'echo [%date% %time%] Relaunch requested.>>"%LOG%"\r\n'
-        if restart
-        else 'echo [%date% %time%] Relaunch disabled.>>"%LOG%"\r\n'
-    )
+    restart_log = "" if restart else 'echo [%date% %time%] Relaunch disabled.>>"%LOG%"\r\n'
     return (
         "@echo off\r\n"
         'set "LOG=%~dp0runway-self-update.log"\r\n'
@@ -649,11 +645,9 @@ def _windows_swap_script(
         "exit /b 0\r\n"
         ":restore_previous\r\n"
         'echo [%date% %time%] New executable move failed; restoring previous sidecar.>>"%LOG%"\r\n'
-        f'if exist "{install}" del /F /Q "{install}" >>"%LOG%" 2>&1\r\n'
-        f'if exist "{backup}" (\r\n'
-        f'  move /Y "{backup}" "{install}" >>"%LOG%" 2>&1\r\n'
-        "  if errorlevel 1 goto restore_failed\r\n"
-        ") else goto restore_failed\r\n"
+        f'if not exist "{backup}" goto restore_failed\r\n'
+        f'move /Y "{backup}" "{install}" >>"%LOG%" 2>&1\r\n'
+        "if errorlevel 1 goto restore_failed\r\n"
         "goto swap_failed\r\n"
         ":restore_failed\r\n"
         'echo [%date% %time%] Failed to restore previous sidecar from backup.>>"%LOG%"\r\n'
@@ -703,6 +697,12 @@ def _apply_windows(
         )
     except OSError:
         logger.exception("Could not start Windows self-update helper %s", helper)
+        try:
+            helper.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Could not remove failed Windows self-update helper %s", helper, exc_info=True
+            )
         return False
     logger.info("Self-update staged; helper will swap %s after exit", install)
     if restart:

@@ -704,10 +704,8 @@ class TestWindowsSwapScript:
     def test_failed_replace_restores_backup(self):
         script = self._script(restart=True, display_version="2.13.0")
         recovery = script[script.index(":restore_previous") : script.index(":restore_failed")]
-        assert (
-            'del /F /Q "C:\\Users\\u\\AppData\\Local\\Programs\\Runway Sidecar\\RunwaySidecar.exe"'
-            in recovery
-        )
+        assert "del " not in recovery
+        assert "if not exist" in recovery
         assert (
             'move /Y "C:\\Users\\u\\AppData\\Local\\Programs\\Runway Sidecar\\RunwaySidecar.exe.previous"'
             in recovery
@@ -727,9 +725,10 @@ class TestWindowsSwapScript:
         assert "if errorlevel 1 goto restore_failed" in script
         assert "Failed to restore previous sidecar from backup" in script
         assert "Installed updated sidecar" in script
-        assert "Relaunch requested" in script
+        assert "Relaunch requested" not in script
+        assert script.index('set "LOG=%~dp0runway-self-update.log"') < script.index("echo [")
 
-    def test_windows_helper_spawn_failure_is_reported(self, tmp_path, monkeypatch):
+    def test_windows_helper_spawn_failure_is_reported(self, tmp_path, monkeypatch, caplog):
         helper = tmp_path / "runway-self-update.bat"
 
         def fail_spawn(*_args, **_kwargs):
@@ -744,4 +743,6 @@ class TestWindowsSwapScript:
             )
             is False
         )
-        assert helper.exists()
+        assert not helper.exists()
+        assert "Could not start Windows self-update helper" in caplog.text
+        assert "cmd.exe unavailable" in caplog.text
