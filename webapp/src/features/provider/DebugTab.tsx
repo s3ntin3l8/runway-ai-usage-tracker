@@ -3,13 +3,16 @@
 // live HTTP calls — never auto-fetches).
 
 import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { Bug, ChevronDown, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router';
+import { probeCredentialSources } from '@/api/endpoints';
 import type {
   CredentialAccountView,
   CredentialSourceView,
   DebugRawResponse,
   FleetEntry,
+  SourceProbeResult,
   StrategyCapture,
   StrategyCaptureResponse,
 } from '@/api/types';
@@ -44,6 +47,7 @@ export function DebugTab({
   return (
     <div className="flex flex-col gap-4">
       <CollectionContextPane providerId={providerId} accountId={accountId} entry={entry} />
+      <CredentialSourcesPane providerId={providerId} accountId={accountId} />
       <RawCapturePane
         providerId={providerId}
         accountId={accountId}
@@ -145,6 +149,126 @@ function CredentialSourceSummary({
         {source.last_success_at ? ` · collected ${timeAgo(source.last_success_at)}` : ''}
       </p>
     </div>
+  );
+}
+
+const PROBE_LABEL: Record<string, string> = {
+  healthy: 'Working',
+  degraded: 'Working, some requests rejected',
+  auth_failed: 'Rejected by the provider',
+  unavailable: 'Collection failed',
+  waiting_on_machine: "Expired — waiting for its machine's CLI to renew it",
+  disabled: 'Disabled — not tried',
+  pending: 'Waiting for an account — not tried',
+};
+const PROBE_VARIANT: Record<string, 'ok' | 'warning' | 'critical' | 'neutral'> = {
+  healthy: 'ok',
+  degraded: 'warning',
+  auth_failed: 'critical',
+  unavailable: 'critical',
+};
+
+// Every credential source that could feed this account, side by side, with an on-demand
+// live test of each (admin-gated, rate-limited; never auto-runs). The list itself comes
+// from the credential inventory; the probe changes nothing on the server.
+function CredentialSourcesPane({
+  providerId,
+  accountId,
+}: {
+  providerId: string;
+  accountId: string;
+}) {
+  const inventory = useCredentialInventory();
+  const probe = useMutation({
+    mutationFn: () => probeCredentialSources(providerId, accountId),
+  });
+  const accounts = (inventory.data?.providers ?? [])
+    .filter((provider) => provider.provider_id === providerId)
+    .flatMap((provider) => provider.accounts)
+    .filter((account) => matchesAccount(account.account_id, accountId));
+  const sources = accounts.flatMap((account) => account.sources);
+  const results = new Map<string, SourceProbeResult>(
+    (probe.data?.sources ?? []).map((result) => [result.source_id, result]),
+  );
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between">
+        <CardTitle>Credential sources</CardTitle>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => probe.mutate()}
+          disabled={probe.isPending || sources.length === 0}
+        >
+          {probe.isPending ? 'Probing…' : 'Probe sources'}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {inventory.isPending ? (
+          <Skeleton className="h-12 w-full" />
+        ) : sources.length === 0 ? (
+          <p className="text-[13px] text-fg-muted">No credential source reported for this account.</p>
+        ) : (
+          <ul className="divide-y divide-edge" aria-label="Credential sources">
+            {sources.map((source) => {
+              const result = results.get(source.source_id);
+              return (
+                <li key={`${source.account_id}/${source.source_id}`} className="py-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[13px]">{originSummary(source)}</span>
+                    <Badge variant={STATUS_VARIANT[source.status] ?? 'neutral'}>
+                      {STATUS_LABEL[source.status] ?? source.status}
+                    </Badge>
+                    {source.is_active ? <Badge variant="accent">Feeding data</Badge> : null}
+                    {!source.enabled ? <Badge variant="neutral">Disabled</Badge> : null}
+                  </div>
+                  <p className="text-[11px] text-fg-subtle">
+                    priority {source.priority}
+                    {source.last_success_at
+                      ? ` · collected ${timeAgo(source.last_success_at)}`
+                      : source.health === 'untried'
+                        ? ' · not yet tried'
+                        : ''}
+                    {source.last_seen ? ` · seen ${timeAgo(source.last_seen)}` : ''}
+                  </p>
+                  {result ? (
+                    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <Badge variant={PROBE_VARIANT[result.outcome] ?? 'neutral'}>
+                        {PROBE_LABEL[result.outcome] ?? result.outcome}
+                      </Badge>
+                      {result.http_status ? (
+                        <span className="text-fg-subtle">HTTP {result.http_status}</span>
+                      ) : null}
+                      {result.error_type ? (
+                        <span className="text-fg-subtle">{result.error_type}</span>
+                      ) : null}
+                      {result.probed && result.duration_ms != null ? (
+                        <span className="text-fg-subtle">{result.duration_ms} ms</span>
+                      ) : null}
+                      {result.message ? (
+                        <span className="text-critical">{result.message}</span>
+                      ) : null}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {probe.isError ? (
+          <p className="mt-2 text-[12px] text-critical" role="alert">
+            Probe failed: {probe.error.message}
+          </p>
+        ) : null}
+        {probe.data ? (
+          <p className="mt-2 text-[11px] text-fg-subtle">
+            Probed {timeAgo(probe.data.probed_at)}. A probe makes one real request per source and
+            changes nothing: no refresh, no health update.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 

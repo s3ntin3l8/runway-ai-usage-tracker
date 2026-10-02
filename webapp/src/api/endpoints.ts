@@ -49,6 +49,7 @@ import type {
   UsageSourcesResponse,
   Webhook,
   DebugRawResponse,
+  SourceProbeResponse,
   WindowDetailResponse,
 } from './types';
 
@@ -428,6 +429,12 @@ export const deleteCredentialSource = (provider: string, accountId: string, sour
 
 export const fetchAuditLog = (limit = 200) =>
   api<{ entries: AuditEntry[] }>(`/api/v1/system/audit-log${qs({ limit })}`);
+
+export const probeCredentialSources = (providerId: string, accountId: string) =>
+  api<SourceProbeResponse>(
+    `/api/v1/system/debug/sources/${encodeURIComponent(providerId)}${qs({ account_id: accountId })}`,
+    { method: 'POST' },
+  );
 
 export const fetchDebugRaw = (providerId: string, accountId?: string) =>
   api<DebugRawResponse>(

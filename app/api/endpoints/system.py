@@ -49,6 +49,7 @@ from app.services.credential_provider import CredentialProvider
 from app.services.credential_sources import effective_health, is_server_source_id
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
+from app.services.source_probe import isolated_collector, probe_sources
 from app.services.token_cache import OAUTH_TOKEN_VALUE_KEYS, token_cache
 from app.services.token_health import token_health_service
 
@@ -465,6 +466,33 @@ async def get_token_health(
     return {"tokens": tokens}
 
 
+@router.post("/debug/sources/{provider_id}")
+@limiter.limit("5/minute")
+async def probe_provider_sources(
+    request: Request,
+    provider_id: str,
+    account_id: str = "default",
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Try each credential source of one account once, live, and report how each fares.
+
+    Admin-gated and rate-limited: it makes a real upstream request per source. Writes nothing
+    (no health, no promotion, no backoff) and never refreshes a token. Secrets are redacted;
+    only status codes, error types and counts are returned.
+    """
+    if provider_id not in manager.collector_registry:
+        raise HTTPException(
+            status_code=404, detail=f"No collector found for provider: {provider_id}"
+        )
+    sources = await probe_sources(manager, provider_id, account_id)
+    return {
+        "provider_id": provider_id,
+        "account_id": account_id,
+        "probed_at": datetime.now(UTC).isoformat(),
+        "sources": sources,
+    }
+
+
 @router.get("/debug/raw/{provider_id}")
 @limiter.limit("10/minute")
 async def get_raw_provider_data(
@@ -521,7 +549,9 @@ async def get_raw_provider_data(
                 status_code=404, detail=f"No collector found for provider: {provider_id}"
             )
 
-        collector = target_collectors[0]
+        # Run on a copy: the poller's own collector holds state mid-collection (and this
+        # capture resets it), so a capture must never share an instance with a poll.
+        collector = isolated_collector(target_collectors[0])
         is_configured = await collector.is_configured()
 
         creds = CredentialProvider.get_credentials(provider_id, account_id=account_id)

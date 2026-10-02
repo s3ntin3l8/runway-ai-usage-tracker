@@ -1072,6 +1072,35 @@ export interface StrategyCapture {
   errors: StrategyCaptureError[];
 }
 
+/** One credential source's result from `POST /system/debug/sources/{provider}`. A source that
+ * was not called (`probed: false`) says why in `outcome`. Never carries a secret. */
+export type SourceProbeOutcome =
+  | 'healthy'
+  | 'degraded'
+  | 'auth_failed'
+  | 'unavailable'
+  | 'waiting_on_machine'
+  | 'disabled'
+  | 'pending';
+
+export interface SourceProbeResult {
+  source_id: string;
+  outcome: SourceProbeOutcome | string;
+  probed: boolean;
+  http_status?: number | null;
+  error_type?: string | null;
+  message?: string | null;
+  cards?: number;
+  duration_ms?: number;
+}
+
+export interface SourceProbeResponse {
+  provider_id: string;
+  account_id: string;
+  probed_at: string;
+  sources: SourceProbeResult[];
+}
+
 export interface DebugRawResponse {
   provider_id: string;
   account_id?: string | null;
