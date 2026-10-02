@@ -1557,14 +1557,16 @@ class TestDefaultCollectorSourceSweep:
         async def no_slot_sources(*_args):
             return []
 
+        swept_seen: list[dict] = []
+
         async def only_pending(*_args):
-            return [
-                {
-                    "source_id": "sidecar:host:path:/x",
-                    "identity_pending": True,
-                    "account_slot": "someone@example.com",
-                }
-            ]
+            row = {
+                "source_id": "sidecar:host:path:/x",
+                "identity_pending": True,
+                "account_slot": "someone@example.com",
+            }
+            swept_seen.append(row)
+            return [row]
 
         def _no_pin(*_args, **_kwargs):
             raise AssertionError(
@@ -1589,6 +1591,10 @@ class TestDefaultCollectorSourceSweep:
         smart.collect.assert_awaited_once()
         assert health == {}
         assert collector.credential_account_id == "default"
+        # The regression only bites when the sweep yields nothing but pending
+        # rows: exactly one row, and it is identity-pending.
+        assert len(swept_seen) == 1
+        assert swept_seen[0]["identity_pending"] is True
 
     async def test_sweep_dedupes_source_ids_already_in_the_slot(self, monkeypatch):
         shared = {"source_id": "src:dup", "account_slot": "default"}

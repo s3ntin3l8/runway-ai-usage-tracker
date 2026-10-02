@@ -134,10 +134,11 @@ def run_refresh(command: list[str]) -> bool:
 class KeepAliveThread(threading.Thread):
     """Background thread that keeps the agy access token fresh.
 
-    ``command`` defaults to ``[agy, "models"]`` resolved lazily so an agy
-    installed after the sidecar started is still picked up. The thread never
-    raises out of ``run()``: a keep-alive failure must not take the sidecar
-    down with it.
+    ``command`` defaults to ``[agy, "models"]``: the path is resolved lazily
+    on the first due tick and retried on every tick while agy is not yet
+    installed, so an agy installed after the sidecar started is still picked
+    up. Once found, the command is cached. The thread never raises out of
+    ``run()``: a keep-alive failure must not take the sidecar down with it.
     """
 
     def __init__(

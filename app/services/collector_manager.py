@@ -716,6 +716,10 @@ class CollectorManager:
         # incident, where a dead merged token was served while a live source
         # bundle sat unused under its identity slot. Identity-pending rows from
         # the sweep are dropped by the pending filter in the caller.
+        # Two separate cache reads with no shared lock between them: a push
+        # that lands in between appears in exactly one of the two sets (never
+        # a duplicate pin), and the dedupe below only covers ids present in
+        # both snapshots.
         swept = await token_cache.get_account_source_candidates(provider_id)
         # Defensive: the two lookups are slot-scoped today, but if some future
         # path files the same source_id under both the default slot and an
