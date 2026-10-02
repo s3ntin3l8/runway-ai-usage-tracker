@@ -320,15 +320,38 @@ HEALTH_DETAILS = {
 }
 
 
+def merge_source_provenance(target: CredentialSource, source: CredentialSource) -> None:
+    """Fold *source*'s health and attempt history into *target* when two rows become one.
+
+    Health travels with the attempt that produced it, or ``healthy`` could outlive (or
+    predate) the evidence for it: the more recent attempt wins, and rows from before
+    attempts were recorded (both NULL) fall back to carrying the legacy health over.
+    """
+    if source.last_attempt_at and (
+        target.last_attempt_at is None or source.last_attempt_at > target.last_attempt_at
+    ):
+        target.health = source.health
+        target.health_detail = source.health_detail
+        target.last_attempt_at = source.last_attempt_at
+        target.last_success_at = source.last_success_at or target.last_success_at
+        target.last_error = source.last_error
+    elif source.last_attempt_at is None and target.last_attempt_at is None:
+        target.health = source.health
+        target.health_detail = source.health_detail
+        target.last_error = source.last_error
+        target.last_success_at = source.last_success_at or target.last_success_at
+
+
 def effective_health(row: CredentialSource) -> str:
     """The health a reader should show for *row*.
 
     ``health`` defaults to ``"healthy"`` and ``touch_source`` creates rows without any
     collection attempt, so a credential that was only ever registered would read as
     working. Only a recorded attempt can make it healthy; a legacy row that holds a
-    non-default health (``auth_failed``...) keeps it.
+    non-default health (``auth_failed``...) keeps it, and a row from before attempts were
+    recorded that does carry a success is evidence enough.
     """
-    if row.health == "healthy" and row.last_attempt_at is None:
+    if row.health == "healthy" and row.last_attempt_at is None and row.last_success_at is None:
         return "untried"
     return row.health
 

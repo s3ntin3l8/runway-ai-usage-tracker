@@ -232,7 +232,9 @@ class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
     enabled: bool = Field(default=True)
     priority: int = Field(default=0)
     last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
-    health: str = Field(default="healthy")  # healthy | auth_failed | unavailable
+    # healthy | auth_failed | unavailable | degraded. "untried" is derived at read time by
+    # ``credential_sources.effective_health`` and never stored.
+    health: str = Field(default="healthy")
     health_detail: str | None = None
     # Collection provenance, stamped by the failover loop: which source actually
     # produced data, and when. "Active source" for an account = latest last_success_at.
