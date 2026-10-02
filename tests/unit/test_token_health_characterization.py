@@ -155,3 +155,66 @@ async def test_world_row_origins(monkeypatch):
     assert rows[("github", "server", None)]["source_name"] == "server"
     assert rows[("openrouter", "config:default", None)]["source_name"] == "config"
     assert rows[("chatgpt", "alice@example.com", None)]["source_name"] == "MacBook"
+
+
+@pytest.mark.asyncio
+async def test_world_row_fields_beyond_status(monkeypatch):
+    """The fields consumers read besides status: label, source, who may refresh, expiry.
+
+    Alerts and the banners read these, so a change to how rows are built (e.g. serving
+    Token Health from the credential inventory) has to leave them as they are, or say why.
+    Each tuple: (provider, account_id, source_id, account_label, source, source_name,
+    can_refresh, machine_renewed, has_expiry).
+    """
+    await build_world(monkeypatch)
+    rows = await TokenHealthService().get_health()
+
+    assert sorted(
+        (
+            r["provider"],
+            r["account_id"],
+            r.get("source_id") or "",
+            r["account_label"] or "",
+            r["source"],
+            r["source_name"],
+            r["can_refresh"],
+            r["machine_renewed"],
+            r["expires_at"] is not None,
+        )
+        for r in rows
+    ) == sorted(
+        [
+            # Legacy synthetic ids (`unassigned:`, `config:`, `config-cookie:`, `server`) are
+            # what alerts' `_underlying_account` and the webhook scope fallback key on.
+            (
+                "anthropic",
+                "unassigned:sidecar:pending",
+                "sidecar:pending",
+                "Unassigned",
+                "dev-01",
+                "DEV-01",
+                False,
+                True,
+                False,
+            ),
+            # A machine's (rotating) ChatGPT login: renewed by that machine, never by the server.
+            ("chatgpt", "alice@example.com", "", "", "macbook", "MacBook", False, True, True),
+            ("gemini", "alice@example.com", "sidecar:g1", "", "file", "DEV-01", True, False, True),
+            ("gemini", "alice@example.com", "sidecar:g2", "", "file", "MacBook", True, False, True),
+            ("gemini", "alice@example.com", "sidecar:g3", "", "file", "Gone", False, False, True),
+            ("github", "server", "", "", "server", "server", False, False, False),
+            ("ollama", "config-cookie:default", "", "", "config", "config", False, False, False),
+            (
+                "openrouter",
+                "bob@example.com",
+                "sidecar:o1",
+                "",
+                "file",
+                "DEV-01",
+                False,
+                False,
+                False,
+            ),
+            ("openrouter", "config:default", "", "", "config", "config", False, False, False),
+        ]
+    )

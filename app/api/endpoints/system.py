@@ -50,7 +50,7 @@ from app.services.credential_sources import is_server_source_id
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.token_cache import OAUTH_TOKEN_VALUE_KEYS, token_cache
-from app.services.token_health import CredentialNotRemovableError, token_health_service
+from app.services.token_health import token_health_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -628,70 +628,6 @@ _RENEWED_BY_MACHINE = (
     "This credential belongs to a machine's CLI, which renews it. Refreshing it here would "
     "rotate the refresh token and sign that CLI out."
 )
-
-
-@router.post("/token-health/refresh/{provider}/{account_id}")
-@limiter.limit("5/minute")
-async def refresh_token(
-    request: Request,
-    provider: str,
-    account_id: str,
-    _auth: None = Depends(require_admin_key),
-) -> dict[str, Any]:
-    """Attempt proactive OAuth token refresh for supported providers."""
-    # ``exact``: the refreshed tokens are stored back under ``account_id``, so an unknown
-    # account must 404 rather than silently refresh (and copy) ``default``'s credential.
-    cached = await token_cache.get_with_metadata(provider, account_id, exact=True)
-    if not cached:
-        raise HTTPException(status_code=404, detail="No cached token for this account")
-    tokens, meta = cached
-    if not has_refresh_credential(tokens):
-        raise HTTPException(status_code=400, detail="No refresh token available")
-
-    from app.services.token_cache import server_may_refresh
-    from app.services.token_refresher import persist_to_local_file, refresh_oauth_token
-
-    if not await server_may_refresh(provider, account_id, tokens, merged_source=meta.get("source")):
-        raise HTTPException(status_code=409, detail=_RENEWED_BY_MACHINE)
-
-    try:
-        new_tokens = await refresh_oauth_token(provider, tokens)
-        await token_cache.store(
-            provider,
-            new_tokens,
-            account_id,
-            account_label=meta.get("account_label"),
-            source=meta.get("source"),
-        )
-        await token_cache.apply_refresh_to_sources(provider, account_id, tokens, new_tokens)
-        persist_to_local_file(provider, new_tokens, meta.get("source"))
-        return {"status": "refreshed"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Token refresh failed for {scrub_log(provider)}/{scrub_log(account_id)}: {e}")
-        raise HTTPException(status_code=502, detail="Upstream token refresh failed")
-
-
-@router.delete("/token-health/{provider}/{account_id}")
-@limiter.limit("20/minute")
-async def delete_token_health_entry(
-    request: Request, provider: str, account_id: str, _: None = Depends(require_admin_key)
-) -> dict[str, Any]:
-    """Manually remove a token from the cache."""
-    try:
-        ok = await token_health_service.delete_credential(provider, account_id)
-    except CredentialNotRemovableError:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "This credential is managed outside the cache (Settings → Providers "
-                "or the server environment); change it there."
-            ),
-        )
-    if not ok:
-        raise HTTPException(status_code=404, detail="Token not found in cache or database")
-    return {"ok": True}
 
 
 @router.get("/credentials", response_model=CredentialInventory)

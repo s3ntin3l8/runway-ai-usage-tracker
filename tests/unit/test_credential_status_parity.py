@@ -437,3 +437,70 @@ async def test_both_views_agree_a_machines_rotating_login_has_no_server_refresh(
     assert health[gemini]["can_refresh"] is True
     assert inventory[gemini].can_refresh is True
     assert inventory[gemini].refreshed_by == "server"
+
+
+@pytest.mark.asyncio
+async def test_both_views_agree_on_the_servers_own_credentials(monkeypatch):
+    """The host's env/file credentials: a dead OAuth JWT reads expired, a key the provider
+    rejected reads invalid, a plain key is valid — in Token Health's ``server`` rows and in
+    the inventory's server sources alike (the inventory used to say "valid" for all three)."""
+    import base64
+    import json
+    import time
+
+    def jwt(payload: dict) -> str:
+        def b64(d: dict) -> str:
+            return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+        return f"{b64({'alg': 'none'})}.{b64(payload)}.sig"
+
+    await build_world(monkeypatch)
+    expired_exp = time.time() - 600
+    monkeypatch.setattr(
+        th,
+        "_collect_server_credentials",
+        lambda: {
+            "github": {"api_key": "ghp_env"},  # pragma: allowlist secret
+            "gemini": {"oauth_token": jwt({"exp": expired_exp})},
+            "zai": {"api_key": "zk-env"},  # pragma: allowlist secret
+        },
+    )
+
+    def origin(label, key, source_type="env", exp=None):
+        return {
+            "source_type": source_type,
+            "label": label,
+            "keys": [key],
+            "managed": False,
+            "shadowed": False,
+            "exp": exp,
+            "rollable": False,
+        }
+
+    found = {
+        "github": [origin("GITHUB_TOKEN", "api_key")],
+        "gemini": [origin("oauth_creds.json", "oauth_token", "file", expired_exp)],
+        "zai": [origin("ZAI_API_KEY", "api_key")],
+    }
+    monkeypatch.setattr(credential_inventory, "engine", th.engine)
+    monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
+    monkeypatch.setattr(
+        credential_inventory, "_scan_server_credentials", lambda: (found, set(found))
+    )
+    auth_failures.mark("zai", "default")  # the provider rejected the unscoped key
+
+    health = {
+        r["provider"]: r["status"]
+        for r in await TokenHealthService().get_health()
+        if r["account_id"] == "server"
+    }
+    inv = await credential_inventory.build_inventory()
+    inventory = {
+        p.provider_id: s.status
+        for p in inv.providers
+        for a in p.accounts
+        for s in a.sources
+        if s.origin_kind == "server"
+    }
+
+    assert health == inventory == {"github": "valid", "gemini": "expired", "zai": "invalid"}

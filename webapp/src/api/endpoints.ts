@@ -409,18 +409,6 @@ export const postCleanup = (body: CleanupRequest) =>
 export const fetchTokenHealth = () =>
   api<{ tokens: TokenHealthEntry[] }>('/api/v1/system/token-health');
 
-export const postTokenRefresh = (provider: string, accountId: string) =>
-  api<{ status: string }>(
-    `/api/v1/system/token-health/refresh/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`,
-    { method: 'POST' },
-  );
-
-export const deleteTokenHealth = (provider: string, accountId: string) =>
-  api<{ ok: boolean }>(
-    `/api/v1/system/token-health/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}`,
-    { method: 'DELETE' },
-  );
-
 export const fetchCredentialInventory = () =>
   api<CredentialInventory>('/api/v1/system/credentials');
 

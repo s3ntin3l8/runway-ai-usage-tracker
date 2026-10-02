@@ -251,12 +251,11 @@ async def test_refreshing_a_machines_login_is_refused_not_performed(monkeypatch)
     refresh = AsyncMock()
     monkeypatch.setattr("app.services.token_refresher.refresh_oauth_token", refresh)
 
-    by_account = client.post(f"/api/v1/system/token-health/refresh/anthropic/{ALICE}")
     by_source = client.post(
         f"/api/v1/system/credentials/anthropic/{ALICE}/sidecar:dev-01:anthropic/refresh"
     )
 
-    assert by_account.status_code == 409 and "sign that CLI out" in by_account.text
+    assert "sign that CLI out" in by_source.text
     assert by_source.status_code == 409
     refresh.assert_not_awaited()
     assert (await cache.get("anthropic", ALICE))["refresh_token"] == "rt"

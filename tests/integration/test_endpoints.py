@@ -455,18 +455,10 @@ class TestErrorHandling:
         pass
 
 
-class TestTokenHealthDelete:
-    def test_delete_managed_credential_is_refused(self):
-        from fastapi.testclient import TestClient
+class TestSourceRefresh:
+    """Per-source refresh (``POST /system/credentials/{provider}/{account}/{source}/refresh``)
+    replaced the per-account ``/token-health/refresh`` shim."""
 
-        client = TestClient(app)
-        for account_id in ("server", "config:default"):
-            resp = client.delete(f"/api/v1/system/token-health/zai/{account_id}")
-            assert resp.status_code == 409
-            assert "Settings" in resp.json()["detail"]
-
-
-class TestTokenHealthRefresh:
     @pytest.mark.asyncio
     async def test_refresh_accepts_xai_refresh_token(self, monkeypatch):
         """xAI keeps its refresh token as ``xai_refresh`` — the endpoint must not 400 it."""
@@ -481,21 +473,25 @@ class TestTokenHealthRefresh:
             "xai",
             {"xai_access": "old", "xai_refresh": "rt"},
             account_id="alice@example.com",
+            source_id="config:xai:alice",
+            source="config",
         )
         monkeypatch.setattr("app.api.endpoints.system.token_cache", fresh)
-        monkeypatch.setattr(
-            "app.services.token_refresher.refresh_oauth_token",
-            AsyncMock(return_value={"xai_access": "new", "xai_refresh": "rt2"}),
+        monkeypatch.setattr("app.services.token_cache.token_cache", fresh)
+        refresh = AsyncMock(return_value={"xai_access": "new", "xai_refresh": "rt2"})
+        monkeypatch.setattr("app.services.token_refresher.refresh_oauth_token", refresh)
+
+        resp = TestClient(app).post(
+            "/api/v1/system/credentials/xai/alice@example.com/config:xai:alice/refresh"
         )
 
-        resp = TestClient(app).post("/api/v1/system/token-health/refresh/xai/alice@example.com")
-
-        assert resp.status_code != 400, resp.text
+        assert resp.status_code == 200, resp.text
+        refresh.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_refresh_unknown_account_does_not_copy_default_credential(self, monkeypatch):
-        """An account that isn't in the cache must 404 — not silently refresh the
-        ``default`` account's credential and store the result under the unknown id."""
+    async def test_refresh_unknown_source_does_not_copy_default_credential(self, monkeypatch):
+        """A source that isn't in the cache must 404 — not silently refresh the ``default``
+        account's credential and store the result under the unknown id."""
         from fastapi.testclient import TestClient
 
         from app.services.token_cache import TokenCache
@@ -505,10 +501,14 @@ class TestTokenHealthRefresh:
             "gemini",
             {"oauth_token": "default-tok", "refresh_token": "default-rt"},
             account_id="default",
+            source_id="config:gemini:default",
+            source="config",
         )
         monkeypatch.setattr("app.api.endpoints.system.token_cache", fresh)
 
-        resp = TestClient(app).post("/api/v1/system/token-health/refresh/gemini/nobody@example.com")
+        resp = TestClient(app).post(
+            "/api/v1/system/credentials/gemini/nobody@example.com/config:gemini:nobody/refresh"
+        )
 
         assert resp.status_code == 404
         accounts = {a["account_id"] for a in await fresh.get_accounts("gemini")}
