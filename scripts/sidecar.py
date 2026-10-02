@@ -2265,6 +2265,8 @@ def _decode_id_token_email(id_token: str) -> str | None:
         email = payload.get("email")
         if not (isinstance(email, str) and "@" in email):
             # OpenAI access tokens carry the email in a custom profile claim instead.
+            # Known from the token format, not from a captured token in this repo: if it is
+            # absent the result is None, i.e. the credential stays pending as before.
             profile = payload.get("https://api.openai.com/profile")
             email = profile.get("email") if isinstance(profile, dict) else None
         return email if isinstance(email, str) and "@" in email else None
