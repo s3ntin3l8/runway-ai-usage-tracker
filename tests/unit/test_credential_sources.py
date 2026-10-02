@@ -34,7 +34,8 @@ def test_describe_origin_returns_safe_type_and_label():
         "file",
         "auth.json",
     )
-    assert describe_origin("cookie:browser") == ("sidecar", "Browser cookie")
+    assert describe_origin("cookie:browser") == ("cookie", "Browser cookie")
+    assert describe_origin("keychain:Claude Code-credentials") == ("keychain", "Keychain entry")
     assert describe_origin(None) == ("sidecar", "Sidecar credential")
 
 

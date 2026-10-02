@@ -571,6 +571,10 @@ class CollectorManager:
                     {
                         "provider_id": provider_id,
                         "account_id": account_id,
+                        # The *contribution* source ("the server collected this card"), which
+                        # LatestUsageContribution/accumulator key on. Not a credential id: which
+                        # credential answered is stamped on its CredentialSource row
+                        # (last_success_at / is_active), see ``_record_source_health``.
                         "source_id": f"server:{provider_id}",
                         "state": state,
                     }

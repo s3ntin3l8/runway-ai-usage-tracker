@@ -718,7 +718,7 @@ export interface CollectionStrategy {
 
 export interface CredentialSourceSummary {
   source_id: string;
-  source_type: 'config' | 'sidecar' | 'env' | 'file' | 'server' | string;
+  source_type: 'config' | 'sidecar' | 'env' | 'file' | 'cookie' | 'keychain' | 'server' | string;
   source_label: string;
   sidecar_id?: string | null;
   enabled: boolean;
@@ -859,6 +859,7 @@ export interface CredentialSourceView {
   account_id: string;
   /** `machine` = a sidecar found it, `config` = pasted key, `server` = env/file on the server. */
   origin_kind: 'machine' | 'config' | 'server';
+  /** What the credential is: `file`, `env`, `cookie`, `keychain`, or `sidecar` for an unrecognised origin. */
   origin_type: string;
   label: string;
   machine_id?: string | null;

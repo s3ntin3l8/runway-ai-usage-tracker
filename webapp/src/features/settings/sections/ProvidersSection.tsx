@@ -28,7 +28,7 @@ import {
   putDashboardLayout,
   putProviderConfig,
 } from '@/api/endpoints';
-import type { DashboardLayout, ProviderConfig } from '@/api/types';
+import type { CredentialProviderView, DashboardLayout, ProviderConfig } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -90,6 +90,19 @@ function useProviders(): UseProvidersResult {
     },
   });
   return { configs, layout, saveOrder };
+}
+
+/** `{account_id: status}` for a provider's accounts whose credential is expired or rejected. */
+function accountCredentialProblems(
+  provider: CredentialProviderView | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const account of provider?.accounts ?? []) {
+    if (account.status === 'invalid' || account.status === 'expired') {
+      out[account.account_id] = account.status;
+    }
+  }
+  return out;
 }
 
 export function ProvidersSection() {
@@ -403,6 +416,9 @@ function ProvidersSectionV2({
           }
         }}
         onAddAccount={(p) => setWizardScope(p)}
+        credentialProblems={accountCredentialProblems(
+          credentialInventory.data?.providers.find((p) => p.provider_id === detailProviderId),
+        )}
       />
 
       <UntaggedCredentialsDialog

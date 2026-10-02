@@ -32,7 +32,9 @@ def describe_origin(origin: str | None) -> tuple[str, str]:
             value.split(":", 1)[1].split("#", 1)[0]
         ) or "Credential file"
     if value.startswith("cookie:"):
-        return "sidecar", "Browser cookie"
+        return "cookie", "Browser cookie"
+    if value.startswith("keychain:"):
+        return "keychain", "Keychain entry"
     return "sidecar", "Sidecar credential"
 
 

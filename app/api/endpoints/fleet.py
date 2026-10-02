@@ -689,9 +689,6 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "identities": _get_active_identities(
             session
         ),  # For sidecar identity propagation (legacy single-value)
-        "account_identities": _get_active_identity_lists(
-            session
-        ),  # Per-provider list of real account_ids (multi-account)
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
         # Update channel the sidecar should track for its "update available"
         # check ("stable" | "beta" | "edge"). The dashboard owns this setting.
@@ -700,14 +697,6 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "sidecar_auto_update": (sys_cfg.sidecar_auto_update if sys_cfg else None) or False,
         # One-shot: self-update immediately on this heartbeat (admin pushed it).
         "update_now": update_now,
-        # Tag hints the sidecar consumes on its next collection cycle to
-        # stamp cards it couldn't resolve via local discovery alone (silent
-        # listener model — see PR #288). Scoped to the ingesting sidecar (#319).
-        "account_tag_hints": _account_tag_hints_for_providers(
-            session, list(poll_providers), sidecar_id=payload.sidecar_id or None
-        )
-        if poll_providers
-        else {},
     }
 
 
@@ -1801,41 +1790,6 @@ async def assign_pending_usage_events_batch(
 def _get_active_identities(_session: Session) -> dict[str, str]:
     """Deprecated compatibility field: never infer a host identity from usage."""
     return {}
-
-
-def _get_active_identity_lists(session: Session) -> dict[str, list[str]]:
-    """Map provider_id to every distinct 'real' account_id seen in LatestUsage.
-
-    New shape that ships alongside the legacy single-value ``identities`` so
-    future per-account sidecars (Issue 1) can pick the right one. Empty list
-    for a provider means "no real-account rows exist yet".
-    """
-    rows = _active_identity_rows(session)
-    out: dict[str, list[str]] = {}
-    for pid, aid in rows:
-        # Preserve recency order (rows are already ordered by LatestUsage.updated_at desc).
-        if aid not in out.setdefault(pid, []):
-            out[pid].append(aid)
-    return out
-
-
-def _active_identity_rows(session: Session) -> list[tuple[str, str]]:
-    """Distinct ``(provider_id, account_id)`` pairs from LatestUsage, real accounts only.
-
-    Ordered by LatestUsage.updated_at descending so the most recently active
-    identity surfaces first. Used by both the legacy single-value
-    ``identities`` map and the new per-provider list.
-    """
-    from app.models.db import LatestUsage
-
-    return list(
-        session.exec(
-            select(LatestUsage.provider_id, LatestUsage.account_id)
-            .where(LatestUsage.account_id != "default")
-            .where(col(LatestUsage.account_id).is_not(None))
-            .order_by(col(LatestUsage.updated_at).desc())
-        ).all()
-    )
 
 
 def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:

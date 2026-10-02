@@ -20,6 +20,10 @@ import { Switch } from '@/components/ui/Switch';
 import { displayAccountName, accountSubtitle, maskAccountId } from '@/lib/accountDisplay';
 import { ProviderAccountDialog } from './ProviderAccountDialog';
 
+function credentialProblemTitle(status: string | undefined): string | undefined {
+  return status ? `A credential is ${status} — see Credentials` : undefined;
+}
+
 interface ProviderDetailDialogProps {
   provider: ProviderConfig | null;
   onClose: () => void;
@@ -28,6 +32,9 @@ interface ProviderDetailDialogProps {
   // surface the click to the parent so it can open the wizard
   // pre-scoped to this provider.
   onAddAccount?: (provider: ProviderConfig) => void;
+  // `{account_id: status}` for accounts whose credential is expired or rejected, so the
+  // key/cookie badges stop reading as green. Best-effort: absent means "no known problem".
+  credentialProblems?: Record<string, string>;
 }
 
 export function ProviderDetailDialog({
@@ -35,6 +42,7 @@ export function ProviderDetailDialog({
   onClose,
   onAccountDeleted,
   onAddAccount,
+  credentialProblems,
 }: ProviderDetailDialogProps) {
   const [editingAccount, setEditingAccount] = useState<ProviderAccount | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ProviderAccount | null>(null);
@@ -218,9 +226,21 @@ export function ProviderDetailDialog({
                         ) : null}
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
-                        {account.api_key_set ? <Badge variant="ok">key</Badge> : null}
+                        {account.api_key_set ? (
+                          <Badge
+                            variant={credentialProblems?.[account.account_id] ? 'critical' : 'ok'}
+                            title={credentialProblemTitle(credentialProblems?.[account.account_id])}
+                          >
+                            key
+                          </Badge>
+                        ) : null}
                         {account.session_cookie_set ? (
-                          <Badge variant="ok">cookie</Badge>
+                          <Badge
+                            variant={credentialProblems?.[account.account_id] ? 'critical' : 'ok'}
+                            title={credentialProblemTitle(credentialProblems?.[account.account_id])}
+                          >
+                            cookie
+                          </Badge>
                         ) : null}
                         {account.source === 'discovered' ? (
                           <Badge variant="ok">auto</Badge>

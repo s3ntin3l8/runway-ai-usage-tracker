@@ -685,3 +685,46 @@ async def test_a_hidden_config_ghost_does_not_count_as_an_account(engine, cache)
         assert by_id["config:gemini:alice"].status == "invalid"
     finally:
         auth_failures.clear("gemini")
+
+
+@pytest.mark.asyncio
+async def test_a_machine_cookie_or_keychain_entry_is_not_just_a_sidecar_credential(engine, cache):
+    """#432: a sidecar-reported cookie or keychain item reads as such, apart from a file/env
+    one, whatever type an older ingest stored on the row."""
+    with Session(engine) as s:
+        _source(
+            s,
+            source_id="sidecar:file",
+            source_type="file",
+            credential_origin="path:/home/u/.gemini/oauth_creds.json",
+        )
+        _source(
+            s,
+            source_id="sidecar:cookie",
+            source_type="sidecar",  # what ingest stored before cookies had their own type
+            source_label="Browser cookie",
+            credential_origin="cookie:gemini/session",
+        )
+        _source(
+            s,
+            source_id="sidecar:keychain",
+            source_type="sidecar",
+            source_label="Sidecar credential",
+            credential_origin="keychain:Gemini CLI",
+        )
+        _source(
+            s,
+            source_id="sidecar:env",
+            source_type="env",
+            source_label="GEMINI_API_KEY",
+            credential_origin="env:GEMINI_API_KEY",
+        )
+    inv = await build_inventory()
+
+    _, by_id = _sources(inv)
+    assert {sid: (v.origin_type, v.label) for sid, v in by_id.items()} == {
+        "sidecar:file": ("file", "oauth_creds.json"),
+        "sidecar:cookie": ("cookie", "Browser cookie"),
+        "sidecar:keychain": ("keychain", "Keychain entry"),
+        "sidecar:env": ("env", "GEMINI_API_KEY"),
+    }
