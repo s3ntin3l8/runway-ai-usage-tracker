@@ -241,6 +241,11 @@ class CredentialTagRepo:
         Identity-claim rows count as evidence (they are a binding someone
         allowed), so a stale claim that disagrees with an operator tag makes
         this refuse rather than guess.
+
+        Provenance is one-shot: the row written here reads ``set_by=rotation``
+        only until the operator re-saves it in the tag dialog, which replaces
+        it with their own actor — after that it is indistinguishable from a
+        mapping they made by hand (only ``set_at`` is history).
         """
         from app.services.account_identity import canonical_account_id, split_keyed_origin
 

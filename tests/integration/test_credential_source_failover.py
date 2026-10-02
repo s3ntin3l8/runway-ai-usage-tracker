@@ -520,6 +520,147 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_promotion_corrects_a_carried_rotation_binding(monkeypatch):
+    """A binding carried across a rotation is inferred, so a proved identity outranks it.
+
+    The converse (an operator's own mapping wins) is pinned by
+    ``test_promotion_respects_the_operators_own_mapping`` below — together they
+    fix where ``set_by="rotation"`` sits in #474's ranking.
+    """
+    from sqlmodel import SQLModel
+
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    source_id = "sidecar:host-a:path:/home/user/auth.json"
+    origin = "path:/home/user/auth.json#0123456789ab"
+    with Session(engine) as session:
+        session.add(
+            CredentialSource(
+                provider_id="antigravity",
+                account_id="default",
+                source_id=source_id,
+                source_type="file",
+                source_label="host-a",
+                credential_origin=origin,
+                sidecar_id="host-a",
+                last_seen=datetime(2026, 9, 29, tzinfo=UTC),
+            )
+        )
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id="antigravity",
+            credential_origin=origin,
+            account_id="alice@example.com",
+            sidecar_id="host-a",
+            set_by="rotation",
+        )
+        session.add(
+            PendingCredentialTag(
+                sidecar_id="host-a", provider_id="antigravity", credential_origin=origin
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.core.db.engine", engine)
+    monkeypatch.setattr("sqlmodel.Session", Session)
+    monkeypatch.setattr("app.services.collector_manager.token_cache", TokenCache())
+    manager = CollectorManager()
+
+    await manager._promote_source_identity("antigravity", "default", source_id, "bob@example.com")
+
+    with Session(engine) as session:
+        source = session.exec(
+            select(CredentialSource).where(CredentialSource.source_id == source_id)
+        ).one()
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id="antigravity",
+            credential_origin=origin,
+            sidecar_id="host-a",
+        )
+        pending = PendingCredentialTagRepo.get(
+            session,
+            sidecar_id="host-a",
+            provider_id="antigravity",
+            credential_origin=origin,
+        )
+
+    assert source.account_id == "bob@example.com"
+    assert tag is not None
+    assert tag.account_id == "bob@example.com"
+    assert tag.set_by == "identity_verification"
+    assert pending is None
+
+
+@pytest.mark.asyncio
+async def test_promotion_respects_the_operators_own_mapping(monkeypatch):
+    """A mapping the operator made for this exact origin is never overwritten."""
+    from sqlmodel import SQLModel
+
+    from app.services.credential_tags import CredentialTagRepo
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    source_id = "sidecar:host-a:path:/home/user/auth.json"
+    origin = "path:/home/user/auth.json#0123456789ab"
+    with Session(engine) as session:
+        session.add(
+            CredentialSource(
+                provider_id="antigravity",
+                account_id="default",
+                source_id=source_id,
+                source_type="file",
+                source_label="host-a",
+                credential_origin=origin,
+                sidecar_id="host-a",
+                last_seen=datetime(2026, 9, 29, tzinfo=UTC),
+            )
+        )
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id="antigravity",
+            credential_origin=origin,
+            account_id="alice@example.com",
+            sidecar_id="host-a",
+            set_by="operator",
+        )
+        session.commit()
+
+    monkeypatch.setattr("app.core.db.engine", engine)
+    monkeypatch.setattr("sqlmodel.Session", Session)
+    monkeypatch.setattr("app.services.collector_manager.token_cache", TokenCache())
+    manager = CollectorManager()
+
+    await manager._promote_source_identity("antigravity", "default", source_id, "bob@example.com")
+
+    with Session(engine) as session:
+        source = session.exec(
+            select(CredentialSource).where(CredentialSource.source_id == source_id)
+        ).one()
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id="antigravity",
+            credential_origin=origin,
+            sidecar_id="host-a",
+        )
+
+    assert source.account_id == "default"
+    assert tag is not None
+    assert tag.account_id == "alice@example.com"
+    assert tag.set_by == "operator"
+
+
+@pytest.mark.asyncio
 async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monkeypatch):
     from sqlmodel import SQLModel
 

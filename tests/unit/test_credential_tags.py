@@ -1555,3 +1555,41 @@ def test_rotation_does_not_match_look_alike_paths(session: Session):
         )
         is None
     )
+
+
+def test_rotation_carries_again_on_a_second_relogin(session: Session):
+    """The carry is not one-shot: each re-login at this location inherits again."""
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin=f"{_ROTATION_BASE}#{_OLD_FP}",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+    )
+    assert (
+        CredentialTagRepo.inherited_account_for_rotation(
+            session,
+            provider_id="opencode",
+            credential_origin=f"{_ROTATION_BASE}#{_NEW_FP}",
+            sidecar_id="alpha",
+        )
+        == "alice@example.com"
+    )
+    # The carried row is itself evidence for the next rotation.
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin=f"{_ROTATION_BASE}#{_NEW_FP}",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+        set_by="rotation",
+    )
+    assert (
+        CredentialTagRepo.inherited_account_for_rotation(
+            session,
+            provider_id="opencode",
+            credential_origin=f"{_ROTATION_BASE}#000000000000",
+            sidecar_id="alpha",
+        )
+        == "alice@example.com"
+    )
