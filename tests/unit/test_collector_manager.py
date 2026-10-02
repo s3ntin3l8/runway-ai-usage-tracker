@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import json
 import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -1454,3 +1456,138 @@ class TestCollectorManagerCollection:
 
             assert len(results) == 1
             assert results[0]["service_name"] == "OK"
+
+
+def _jwt(payload: dict) -> str:
+    """Unsigned JWT whose ``exp`` the shared extractor can still read."""
+
+    def b64(d: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+    return f"{b64({'alg': 'none'})}.{b64(payload)}.sig"
+
+
+class TestFailoverPrefersLiveAccessTokens:
+    """Attempt order must let a live credential answer before a dead one (#474).
+
+    Priority orders *usable* credentials. A bundle whose access token expired
+    days ago used to take the first attempt anyway (priority 0) and burn it on
+    a refresh rejection before the machine with the live token (priority 2)
+    was ever reached.
+    """
+
+    @staticmethod
+    def _bundle(source_id: str, priority: int, tokens: dict[str, str]) -> dict:
+        return {
+            "source_id": source_id,
+            "source_type": "sidecar",
+            "credential_origin": f"path:/{source_id.rsplit(':', 1)[-1]}.json",
+            "sidecar_id": "host",
+            "priority": priority,
+            "tokens": tokens,
+        }
+
+    def _smart(self, manager, collect_results):
+        collector = SimpleNamespace(
+            PROVIDER_ID="xai",
+            account_id="alice@example.com",
+            account_label="Alice",
+            credential_account_id="alice@example.com",
+        )
+        smart = MagicMock(collector=collector, last_collection_state="fresh")
+        smart.reset = AsyncMock()
+        results = iter(collect_results)
+
+        async def collect(_client):
+            return next(results)
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["xai:alice@example.com"] = smart
+        return smart
+
+    @staticmethod
+    def _attempt_recorder(monkeypatch, attempted):
+        async def get_candidates(*_args):
+            return list(attempted["candidates"])
+
+        @asynccontextmanager
+        async def using_source(_provider, _slot, source_id, *_args):
+            attempted["order"].append(source_id)
+            yield {"auth_failed": False}
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
+
+    @pytest.mark.asyncio
+    async def test_expired_priority_zero_bundle_yields_to_a_live_bundle(self, manager, monkeypatch):
+        live_id = "sidecar:host:live"
+        stale_id = "sidecar:host:stale"
+        good = [{"service_name": "xAI", "remaining": "80%"}]
+        smart = self._smart(manager, [good])
+        state = {
+            "candidates": [
+                self._bundle(stale_id, 0, {"oauth_token": _jwt({"exp": time.time() - 86_400})}),
+                self._bundle(live_id, 2, {"oauth_token": _jwt({"exp": time.time() + 3_600})}),
+            ],
+            "order": [],
+        }
+        self._attempt_recorder(monkeypatch, state)
+
+        health: dict[str, str] = {}
+        result = await manager._collect_with_source_failover(
+            "xai:alice@example.com", MagicMock(), health
+        )
+
+        assert state["order"] == [live_id]
+        assert smart.collect.await_count == 1
+        assert result == good
+        assert health == {live_id: "healthy"}
+
+    @pytest.mark.asyncio
+    async def test_all_expired_bundles_keep_configured_priority_order(self, manager, monkeypatch):
+        first_id = "sidecar:host:first"
+        second_id = "sidecar:host:second"
+        dead = {"error_type": "auth_failed", "data_source": "error", "detail": "invalid_grant"}
+        good = [{"service_name": "xAI", "remaining": "80%"}]
+        self._smart(manager, [[dead], good])
+        state = {
+            "candidates": [
+                self._bundle(first_id, 0, {"oauth_token": _jwt({"exp": time.time() - 86_400})}),
+                self._bundle(second_id, 2, {"oauth_token": _jwt({"exp": time.time() - 3_600})}),
+            ],
+            "order": [],
+        }
+        self._attempt_recorder(monkeypatch, state)
+
+        health: dict[str, str] = {}
+        result = await manager._collect_with_source_failover(
+            "xai:alice@example.com", MagicMock(), health
+        )
+
+        assert state["order"] == [first_id, second_id]
+        assert result == good
+        assert health == {first_id: "auth_failed", second_id: "healthy"}
+
+    @pytest.mark.asyncio
+    async def test_undatable_bundle_is_never_demoted(self, manager, monkeypatch):
+        stale_id = "sidecar:host:stale"
+        opaque_id = "sidecar:host:opaque"
+        good = [{"service_name": "xAI", "remaining": "80%"}]
+        smart = self._smart(manager, [good])
+        state = {
+            "candidates": [
+                self._bundle(stale_id, 0, {"oauth_token": _jwt({"exp": time.time() - 86_400})}),
+                self._bundle(opaque_id, 9, {"oauth_token": "opaque-not-a-jwt"}),
+            ],
+            "order": [],
+        }
+        self._attempt_recorder(monkeypatch, state)
+
+        health: dict[str, str] = {}
+        await manager._collect_with_source_failover("xai:alice@example.com", MagicMock(), health)
+
+        assert state["order"] == [opaque_id]
+        assert smart.collect.await_count == 1
+        assert health == {opaque_id: "healthy"}

@@ -748,6 +748,15 @@ class CollectorManager:
         ]
         candidates.sort(
             key=lambda candidate: (
+                # A bundle whose access token is already dead cannot answer this
+                # poll, so it goes behind every live (or undatable) bundle even
+                # when the operator ranked it first: priority orders usable
+                # credentials, it must not hand the first attempt to a
+                # credential that is known dead and can only reject the call
+                # (#474). Freshness only splits candidates into
+                # live-then-expired; within each group the configured
+                # (priority, source_id) order still decides.
+                self._access_token_expired(candidate),
                 preferences[candidate["source_id"]][1]
                 if candidate["source_id"] in preferences
                 else candidate.get("priority", 0),
@@ -1029,6 +1038,20 @@ class CollectorManager:
         ):
             return False
         exp = IdentityExtractor.exp_from_tokens(tokens)
+        return exp is not None and exp <= time.time()
+
+    @staticmethod
+    def _access_token_expired(candidate: dict[str, Any]) -> bool:
+        """Whether this bundle's access token is already past its expiry.
+
+        Dates the bearer the collector is about to send, via the shared
+        ``exp_from_tokens`` resolver (access JWT ``exp`` first, then a stored
+        ``expiry_date``) — the same clock ``_awaiting_machine_renewal`` trusts.
+        A bundle with nothing parseable counts as live: an opaque token may be
+        perfectly good, and demoting it on a guess would reorder credentials on
+        no evidence.
+        """
+        exp = IdentityExtractor.exp_from_tokens(candidate.get("tokens") or {})
         return exp is not None and exp <= time.time()
 
     async def _promote_source_identity(
