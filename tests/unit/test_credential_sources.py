@@ -14,9 +14,12 @@ from app.models.db import (
     UsageEvent,
 )
 from app.services.credential_sources import (
+    HEALTH_DETAILS,
     account_sources,
     configured_account_ids,
     describe_origin,
+    effective_health,
+    merge_source_provenance,
     phantom_accounts,
     prune_server_sources,
     real_account_ids,
@@ -503,3 +506,79 @@ def test_a_tag_or_label_keeps_a_configless_account_off_the_phantom_list():
         session.commit()
 
         assert phantom_accounts(session, "deepseek") == {"bd6d58cf"}
+
+
+def test_effective_health_only_trusts_a_recorded_attempt():
+    row = _source_row()
+    assert row.health == "healthy" and row.last_attempt_at is None
+    assert effective_health(row) == "untried"  # registered, never collected
+
+    record_source_result(row, "healthy")
+    assert effective_health(row) == "healthy"
+
+    # A legacy row with a real non-default health keeps it even without an attempt time.
+    legacy = _source_row(health="auth_failed")
+    assert legacy.last_attempt_at is None
+    assert effective_health(legacy) == "auth_failed"
+
+
+def test_effective_health_counts_a_legacy_success_as_an_attempt():
+    row = _source_row(last_success_at=datetime(2026, 9, 1, tzinfo=UTC))
+    assert row.last_attempt_at is None
+    assert effective_health(row) == "healthy"
+
+
+def _attempted(when, health, **extra):
+    return _source_row(
+        health=health,
+        health_detail=HEALTH_DETAILS.get(health),
+        last_attempt_at=when,
+        last_error=HEALTH_DETAILS.get(health),
+        **extra,
+    )
+
+
+def test_merge_source_provenance_takes_the_more_recent_attempt():
+    early, late = datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 10, 1, tzinfo=UTC)
+
+    target = _attempted(early, "auth_failed")
+    merge_source_provenance(target, _attempted(late, "healthy", last_success_at=late))
+    assert (target.health, target.last_attempt_at, target.last_success_at) == (
+        "healthy",
+        late,
+        late,
+    )
+
+    # A newer target keeps its own history; an older source never overwrites it.
+    target = _attempted(late, "auth_failed")
+    merge_source_provenance(target, _attempted(early, "healthy", last_success_at=early))
+    assert (target.health, target.last_attempt_at, target.last_success_at) == (
+        "auth_failed",
+        late,
+        None,
+    )
+
+    # Equal timestamps: the target stays.
+    target = _attempted(late, "auth_failed")
+    merge_source_provenance(target, _attempted(late, "healthy"))
+    assert target.health == "auth_failed"
+
+    # A source that was never attempted adds nothing to an attempted target.
+    target = _attempted(late, "healthy", last_success_at=late)
+    merge_source_provenance(target, _source_row(health="auth_failed"))
+    assert (target.health, target.last_attempt_at) == ("healthy", late)
+
+
+def test_merge_source_provenance_carries_a_legacy_row_whole():
+    target = _source_row()
+    legacy = _source_row(
+        health="auth_failed",
+        health_detail="Authentication failed",
+        last_error="Authentication failed",
+    )
+    merge_source_provenance(target, legacy)
+    assert (target.health, target.health_detail, target.last_error) == (
+        "auth_failed",
+        "Authentication failed",
+        "Authentication failed",
+    )

@@ -1188,7 +1188,7 @@ async def post_credential_tag(
     origin; a sidecar scope clears only that sidecar's.
     """
     from app.services.account_identity import canonical_account_id
-    from app.services.credential_sources import is_machine_bound_origin
+    from app.services.credential_sources import is_machine_bound_origin, merge_source_provenance
 
     if body.scope == "deployment" and is_machine_bound_origin(body.credential_origin):
         raise HTTPException(
@@ -1284,7 +1284,7 @@ async def post_credential_tag(
             target_source.credential_origin = source_row.credential_origin
             target_source.sidecar_id = source_row.sidecar_id
             target_source.last_seen = source_row.last_seen
-            target_source.health = source_row.health
+            merge_source_provenance(target_source, source_row)
             session.add(target_source)
             session.delete(source_row)
             preference_row = target_source

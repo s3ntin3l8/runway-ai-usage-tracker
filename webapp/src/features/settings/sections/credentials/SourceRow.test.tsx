@@ -36,6 +36,12 @@ describe('SourceRow', () => {
     expect(screen.getByText('in 3d')).toBeInTheDocument();
   });
 
+  it('says a never-attempted credential has not been tried instead of implying it works', () => {
+    renderRow({ source: source({ health: 'untried', last_success_at: null }) });
+    expect(screen.getByText('not yet tried')).toBeInTheDocument();
+    expect(screen.queryByText(/collected/)).not.toBeInTheDocument();
+  });
+
   it('marks the source behind the account data as active', () => {
     renderRow({ source: source({ is_active: true, last_success_at: new Date().toISOString() }) });
     expect(screen.getByText('Active')).toBeInTheDocument();

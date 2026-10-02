@@ -1178,6 +1178,7 @@ def test_opencode_auth_json_discovery_is_shown_for_each_provider(
     assert source["source_label"] == "auth.json"
     assert source["sidecar_id"] == "dev-01"
     assert source["available"] is True
+    assert source["health"] == "untried"  # registered by the manifest, never collected
     assert not any(secret in str(account) for secret in tokens.values())
 
 

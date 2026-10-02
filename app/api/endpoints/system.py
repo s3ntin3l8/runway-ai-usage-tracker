@@ -46,7 +46,7 @@ from app.services.account_identity import (
 from app.services.collector_manager import manager
 from app.services.credential_inventory import build_inventory as build_credential_inventory
 from app.services.credential_provider import CredentialProvider
-from app.services.credential_sources import is_server_source_id
+from app.services.credential_sources import effective_health, is_server_source_id
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.token_cache import OAUTH_TOKEN_VALUE_KEYS, token_cache
@@ -1435,7 +1435,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "enabled": row.enabled,
                 "priority": row.priority,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
-                "health": row.health if row.source_id in live_by_id else "unavailable",
+                "health": effective_health(row) if row.source_id in live_by_id else "unavailable",
                 "available": row.source_id in live_by_id,
             }
             for row in sorted(rows, key=lambda item: (item.priority, item.id or 0))
@@ -1460,7 +1460,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "enabled": item.get("enabled", True),
                     "priority": item.get("priority", 0),
                     "last_seen": None,
-                    "health": "healthy",
+                    "health": "untried",
                     "available": True,
                 }
             )

@@ -154,6 +154,17 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
               health: 'unavailable',
               available: false,
             },
+            {
+              source_id: 'sidecar:fresh',
+              source_type: 'sidecar',
+              source_label: 'fresh.json',
+              sidecar_id: null,
+              enabled: true,
+              priority: 4,
+              last_seen: null,
+              health: 'untried',
+              available: true,
+            },
           ],
         },
       ],
@@ -164,6 +175,7 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
 
     expect(screen.getByText('Browser cookie')).toBeInTheDocument();
     expect(screen.getByText('Available')).toBeInTheDocument();
+    expect(screen.getByText('Not yet tried')).toBeInTheDocument();
     expect(screen.getByText('Quota collected; some requests were rejected')).toBeInTheDocument();
     expect(screen.getByText('Sidecar unavailable or credential expired')).toBeInTheDocument();
     expect(screen.getByText('Manual configuration is not currently available')).toBeInTheDocument();
@@ -178,6 +190,7 @@ describe('ProviderAccountDialog — form fields and save (#286)', () => {
         { source_id: 'sidecar:partial', enabled: true, priority: 1 },
         { source_id: 'sidecar:cli', enabled: true, priority: 2 },
         { source_id: 'config:anthropic:alice@example.com', enabled: true, priority: 3 },
+        { source_id: 'sidecar:fresh', enabled: true, priority: 4 },
       ],
       false,
     ));

@@ -97,7 +97,13 @@ export function SourceRow({ source, context }: SourceRowProps) {
               ? `last reported ${timeAgo(source.last_seen)}`
               : relativeExpiry(source.expires_in_seconds)}
           </span>
-          {source.last_success_at ? <span>collected {timeAgo(source.last_success_at)}</span> : null}
+          {source.last_success_at ? (
+            <span>collected {timeAgo(source.last_success_at)}</span>
+          ) : source.health === 'untried' ? (
+            <span title="This credential is registered but has never been used for a collection.">
+              not yet tried
+            </span>
+          ) : null}
           {source.refreshed_by === 'machine' ? (
             <span title="This login belongs to the machine's CLI, which renews it. Refreshing it from here would sign that CLI out.">
               renewed by its machine

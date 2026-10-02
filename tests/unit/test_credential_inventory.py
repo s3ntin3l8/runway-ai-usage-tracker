@@ -728,3 +728,23 @@ async def test_a_machine_cookie_or_keychain_entry_is_not_just_a_sidecar_credenti
         "sidecar:keychain": ("keychain", "Keychain entry"),
         "sidecar:env": ("env", "GEMINI_API_KEY"),
     }
+
+
+@pytest.mark.asyncio
+async def test_never_attempted_source_reads_untried_not_healthy(engine, cache):
+    with Session(engine) as s:
+        _source(s, source_id="sidecar:never")
+        _source(
+            s,
+            source_id="sidecar:ran",
+            sidecar_id="host-b",
+            last_attempt_at=datetime.now(UTC),
+            last_success_at=datetime.now(UTC),
+        )
+        _source(s, source_id="sidecar:legacy", sidecar_id="host-c", health="auth_failed")
+    acct, by_id = _sources(await build_inventory())
+    assert by_id["sidecar:never"].health == "untried"
+    assert by_id["sidecar:ran"].health == "healthy"
+    assert by_id["sidecar:legacy"].health == "auth_failed"
+    # An unattempted row never outranks a working one as the active source.
+    assert acct.active_source_id == "sidecar:ran"

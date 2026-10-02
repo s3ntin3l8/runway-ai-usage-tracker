@@ -3138,3 +3138,47 @@ def test_manifest_rotation_yields_to_a_contradicting_reported_identity(
     pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
     assert [row.credential_origin for row in pending] == [new]
     assert pending[0].claimed_account_id == "bob@example.com"
+
+
+def test_retagging_onto_an_existing_source_row_carries_its_attempt_history(
+    client: TestClient, session: Session
+):
+    """Moving a source onto a row already at the target must bring the attempt that
+    produced its health, or the merged row reads healthy with no evidence (#485)."""
+    from datetime import UTC, datetime
+
+    from app.models.db import CredentialSource
+    from app.services.credential_sources import sidecar_source_id
+
+    origin = "path:/home/u/.gemini/oauth_creds.json"
+    source_id = sidecar_source_id("laptop", origin)
+    for account in ("hash:old", "alice@example.com"):
+        _file_source(
+            session, provider_id="gemini", account_id=account, source_id=source_id, origin=origin
+        )
+    _add_provider_config(session, provider_id="gemini", account_id="alice@example.com")
+    when = datetime(2026, 10, 1, tzinfo=UTC)
+    old = session.exec(
+        select(CredentialSource).where(CredentialSource.account_id == "hash:old")
+    ).one()
+    old.health = "auth_failed"
+    old.last_attempt_at = when
+    old.last_error = "Authentication failed"
+    session.add(old)
+    session.commit()
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "laptop",
+            "provider_id": "gemini",
+            "credential_origin": origin,
+            "account_id": "alice@example.com",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    merged = session.exec(select(CredentialSource)).one()
+    assert merged.account_id == "alice@example.com"
+    assert (merged.health, merged.last_error) == ("auth_failed", "Authentication failed")
+    assert merged.last_attempt_at is not None
