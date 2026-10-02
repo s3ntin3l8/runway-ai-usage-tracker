@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -406,6 +406,7 @@ def test_claude_oauth_email_requires_matching_account(session, configured):
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="alice@example.com" if configured else source_id)
         mock_tc.remove_source = AsyncMock(return_value=False)
+        mock_tc.get_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     assert mock_tc.store.call_args.args[2] == ("alice@example.com" if configured else source_id)
@@ -1185,3 +1186,64 @@ def test_hmac_mismatch_log_is_crlf_clean(session, caplog):
     assert "abc FAKE" in rendered, (
         f"sanitized signature prefix should appear (CR/LF collapsed to space): {rendered!r}"
     )
+
+
+async def test_ingest_resets_verification_backoff_only_when_the_secret_changes(session):
+    from app.models.db import PendingCredentialTag
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    origin = "env:CLAUDE_CODE_OAUTH_TOKEN"
+
+    def payload(token: str) -> dict:
+        return {
+            "provider": "anthropic-sidecar",
+            "sidecar_id": "test-host-01",
+            "metrics": [
+                {
+                    "provider_id": "anthropic",
+                    "service_name": "Claude",
+                    "remaining": "Token",
+                    "unit": "oauth",
+                    "metadata": {"oauth_token": token, "credential_origin": origin},
+                }
+            ],
+            "events": [],
+        }
+
+    def pending() -> PendingCredentialTag:
+        session.expire_all()
+        return session.exec(select(PendingCredentialTag)).one()
+
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache", cache),
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        client = TestClient(app)
+        # The manifest endpoint, not ingest, creates the pending row.
+        session.add(
+            PendingCredentialTag(
+                sidecar_id="test-host-01",
+                provider_id="anthropic",
+                credential_origin=origin,
+                verify_attempts=3,
+                next_verify_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        session.commit()
+        _ingest(client, payload("claude-token-one"))  # first sighting of this secret
+        assert pending().verify_attempts == 0
+        row = pending()
+        row.verify_attempts = 3
+        row.next_verify_at = datetime.now(UTC) + timedelta(hours=1)
+        session.add(row)
+        session.commit()
+
+        _ingest(client, payload("claude-token-one"))  # a heartbeat: same secret
+        assert pending().verify_attempts == 3
+
+        _ingest(client, payload("claude-token-two"))  # a re-login
+        row = pending()
+        assert row.verify_attempts == 0 and row.next_verify_at is None

@@ -529,6 +529,10 @@ class CredentialTagRepo:
         return out
 
 
+VERIFY_BACKOFF_BASE = timedelta(minutes=15)
+VERIFY_BACKOFF_MAX = timedelta(hours=6)
+
+
 class PendingCredentialTagRepo:
     """Read/write operations on the ``pending_credential_tags`` table.
 
@@ -676,6 +680,84 @@ class PendingCredentialTagRepo:
             row.last_seen = now
         session.flush()
         return row
+
+    @staticmethod
+    def verification_backoff(attempts: int) -> timedelta:
+        """Delay before the next verification try: 15 min doubling, capped at 6 h."""
+        return min(
+            VERIFY_BACKOFF_BASE * 2 ** min(max(attempts - 1, 0), 10),
+            VERIFY_BACKOFF_MAX,
+        )
+
+    @staticmethod
+    def get_verify_schedule(
+        session: Session, *, provider_id: str
+    ) -> dict[tuple[str, str], datetime | None]:
+        """``{(sidecar_id, origin): next_verify_at}`` for a provider's pending rows."""
+        rows = session.exec(
+            select(PendingCredentialTag).where(PendingCredentialTag.provider_id == provider_id)
+        ).all()
+        out: dict[tuple[str, str], datetime | None] = {}
+        for row in rows:
+            at = row.next_verify_at
+            if at is not None and at.tzinfo is None:
+                at = at.replace(tzinfo=UTC)
+            out[(row.sidecar_id, row.credential_origin)] = at
+        return out
+
+    @staticmethod
+    def record_verify_attempt(
+        session: Session,
+        *,
+        sidecar_id: str,
+        provider_id: str,
+        credential_origin: str,
+        now: datetime | None = None,
+    ) -> None:
+        """Count an unsuccessful verification try and schedule the next one."""
+        if (
+            CredentialTagRepo.get_account_id(
+                session,
+                provider_id=provider_id,
+                credential_origin=credential_origin,
+                sidecar_id=sidecar_id,
+            )
+            is not None
+        ):
+            return  # identified (or operator-tagged) meanwhile: nothing left to verify
+        # Upsert: a pending source the manifest hasn't (or no longer) listed must still earn
+        # a backoff, or it would sit first in line every cycle and starve the others.
+        row = PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id=sidecar_id,
+            provider_id=provider_id,
+            credential_origin=credential_origin,
+        )
+        row.verify_attempts = (row.verify_attempts or 0) + 1
+        row.next_verify_at = (now or datetime.now(UTC)) + (
+            PendingCredentialTagRepo.verification_backoff(row.verify_attempts)
+        )
+        session.add(row)
+        session.flush()
+
+    @staticmethod
+    def reset_verification(
+        session: Session, *, sidecar_id: str, provider_id: str, credential_origin: str
+    ) -> None:
+        """Retry on the next cycle: the source holds a different secret now."""
+        row = session.exec(
+            select(PendingCredentialTag).where(
+                PendingCredentialTag.sidecar_id == sidecar_id,
+                PendingCredentialTag.provider_id == provider_id,
+                PendingCredentialTag.credential_origin == credential_origin,
+            )
+        ).first()
+        if row is None or (not row.verify_attempts and row.next_verify_at is None):
+            return
+        row.verify_attempts = 0
+        row.next_verify_at = None
+        session.add(row)
+        session.flush()
 
     @staticmethod
     def delete_stale(

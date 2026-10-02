@@ -406,6 +406,11 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             # that placeholder even if its durable CredentialSource row was
             # lost; otherwise its OAuth bundle survives beside the resolved one.
             await token_cache.remove_source(p_id, source_id, source_id, retire_matching_oauth=True)
+        secret_changed = bool(
+            identity_pending
+            and origin
+            and not await _bundle_holds(p_id, cache_account_id or "default", source_id, p_tokens)
+        )
         actual_acc_id = await token_cache.store(
             p_id,
             p_tokens,
@@ -424,6 +429,15 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         )
         if not isinstance(actual_acc_id, str):
             actual_acc_id = a_id or "default"
+        if secret_changed and origin:
+            # A re-login (or first sighting): the identity verifier retries it next cycle
+            # instead of waiting out the backoff earned by the previous secret.
+            PendingCredentialTagRepo.reset_verification(
+                session,
+                sidecar_id=sidecar_id,
+                provider_id=p_id,
+                credential_origin=origin,
+            )
         # Anthropic reconciles every other account this source was filed under
         # (token-derived placeholder identities). Other providers only retire the
         # ``default`` placeholder the manifest may have created before ingest
@@ -757,6 +771,31 @@ def _fingerprinted_credential_hints(
     if not out:
         return {}
     return out
+
+
+_VOLATILE_TOKEN_KEYS = {"expiry_date", "expires_at", "expires_in", "access_token"}
+
+
+async def _bundle_holds(
+    provider_id: str, cache_account_id: str, source_id: str, tokens: dict[str, str]
+) -> bool:
+    """True when the cached bundle already holds the secret being pushed.
+
+    A re-login changes the secret; a heartbeat repeats it, and an access token that rotates
+    under a constant refresh token (or a new expiry) is the same login, so only the stable
+    part is compared: the refresh token when there is one, otherwise every pushed value
+    except expiries.
+    """
+    stable = (
+        {"refresh_token": tokens["refresh_token"]}
+        if tokens.get("refresh_token")
+        else {k: v for k, v in tokens.items() if k not in _VOLATILE_TOKEN_KEYS}
+    )
+    for candidate in await token_cache.get_source_candidates(provider_id, cache_account_id):
+        if candidate["source_id"] == source_id:
+            held = candidate["tokens"]
+            return all(held.get(key) == value for key, value in stable.items())
+    return False
 
 
 def _account_tag_hints_for_providers(
