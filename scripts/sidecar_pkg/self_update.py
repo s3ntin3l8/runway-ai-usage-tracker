@@ -613,7 +613,8 @@ def _windows_swap_script(
 ) -> str:
     """Batch helper: wait for *pid* to exit, move *install* → *backup* and
     *incoming* → *install* (restoring on failure), refresh the installer's
-    DisplayVersion, relaunch, and delete itself."""
+    DisplayVersion, relaunch, and delete itself. Its log is kept beside the
+    helper because the parent process exits before the swap finishes."""
     relaunch = f'start "" "{install}"' if restart else "rem no relaunch"
     reg = (
         f'reg query "{_WIN_UNINSTALL_KEY}" >NUL 2>&1 && '
@@ -621,27 +622,43 @@ def _windows_swap_script(
         if display_version
         else ""
     )
+    restart_log = (
+        'echo [%date% %time%] Relaunch requested.>>"%LOG%"\r\n'
+        if restart
+        else 'echo [%date% %time%] Relaunch disabled.>>"%LOG%"\r\n'
+    )
     return (
         "@echo off\r\n"
+        'set "LOG=%~dp0runway-self-update.log"\r\n'
+        f'echo [%date% %time%] Waiting for sidecar PID {pid} to exit.>>"%LOG%"\r\n'
         ":waitloop\r\n"
         f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\r\n'
         "if not errorlevel 1 (\r\n"
         "  timeout /t 1 /nobreak >NUL\r\n"
         "  goto waitloop\r\n"
         ")\r\n"
-        f'move /Y "{install}" "{backup}" >NUL\r\n'
-        f'move /Y "{incoming}" "{install}" >NUL\r\n'
-        "if errorlevel 1 (\r\n"
-        # Replacement failed — put the old exe back and relaunch it so the
-        # user isn't stranded.
-        f'  if not exist "{install}" move /Y "{backup}" "{install}" >NUL\r\n'
-        f"  {relaunch}\r\n"
-        '  del "%~f0"\r\n'
-        "  exit /b 1\r\n"
-        ")\r\n"
+        f'move /Y "{install}" "{backup}" >>"%LOG%" 2>&1\r\n'
+        "if errorlevel 1 goto swap_failed\r\n"
+        f'move /Y "{incoming}" "{install}" >>"%LOG%" 2>&1\r\n'
+        "if errorlevel 1 goto restore_previous\r\n"
+        'echo [%date% %time%] Installed updated sidecar.>>"%LOG%"\r\n'
         f"{reg}"
         f"{relaunch}\r\n"
+        f"{restart_log}"
         'del "%~f0"\r\n'
+        "exit /b 0\r\n"
+        ":restore_previous\r\n"
+        'echo [%date% %time%] New executable move failed; restoring previous sidecar.>>"%LOG%"\r\n'
+        f'if exist "{install}" del /F /Q "{install}" >>"%LOG%" 2>&1\r\n'
+        f'if exist "{backup}" move /Y "{backup}" "{install}" >>"%LOG%" 2>&1\r\n'
+        "goto swap_failed\r\n"
+        ":swap_failed\r\n"
+        'echo [%date% %time%] Sidecar swap failed.>>"%LOG%"\r\n'
+        # The first move may have failed before the original was renamed;
+        # relaunch it when it is still present.
+        f'if exist "{install}" {relaunch}\r\n'
+        '  del "%~f0"\r\n'
+        "  exit /b 1\r\n"
     )
 
 
@@ -672,11 +689,15 @@ def _apply_windows(
 
     DETACHED_PROCESS = 0x00000008
     CREATE_NEW_PROCESS_GROUP = 0x00000200
-    subprocess.Popen(  # noqa: S603
-        ["cmd.exe", "/c", str(helper)],
-        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-        close_fds=True,
-    )
+    try:
+        subprocess.Popen(  # noqa: S603
+            ["cmd.exe", "/c", str(helper)],
+            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+    except OSError:
+        logger.exception("Could not start Windows self-update helper %s", helper)
+        return False
     logger.info("Self-update staged; helper will swap %s after exit", install)
     if restart:
         # The helper relaunches once we exit; leave the loop / process to wind down.

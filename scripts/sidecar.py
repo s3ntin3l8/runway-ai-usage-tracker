@@ -2195,7 +2195,16 @@ def get_windows_credential(target: str) -> str | None:
             "-Command",
             f"(New-Object System.Net.NetworkCredential('', (Get-StoredCredential -Target '{target}').Password)).Password",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        # The packaged Windows sidecar is a windowed application. Console
+        # programs such as PowerShell still flash a console unless explicitly
+        # started with CREATE_NO_WINDOW, even when stdout/stderr are captured.
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
         if result.returncode == 0:
             password = result.stdout.strip()
             if password:
