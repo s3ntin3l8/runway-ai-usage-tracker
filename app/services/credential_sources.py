@@ -336,6 +336,8 @@ def merge_source_provenance(target: CredentialSource, source: CredentialSource) 
         target.last_attempt_at = source.last_attempt_at
         target.last_success_at = source.last_success_at or target.last_success_at
         target.last_error = source.last_error
+        target.consecutive_failures = source.consecutive_failures
+        target.next_retry_at = source.next_retry_at
     elif source.last_attempt_at is None and target.last_attempt_at is None:
         target.health = source.health
         target.health_detail = source.health_detail

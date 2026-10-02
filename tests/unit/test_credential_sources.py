@@ -542,13 +542,15 @@ def _attempted(when, health, **extra):
 def test_merge_source_provenance_takes_the_more_recent_attempt():
     early, late = datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 10, 1, tzinfo=UTC)
 
-    target = _attempted(early, "auth_failed")
+    target = _attempted(early, "auth_failed", consecutive_failures=4, next_retry_at=late)
     merge_source_provenance(target, _attempted(late, "healthy", last_success_at=late))
     assert (target.health, target.last_attempt_at, target.last_success_at) == (
         "healthy",
         late,
         late,
     )
+    # The rest period belongs to the failure it was earned by, not to the merged row.
+    assert (target.consecutive_failures, target.next_retry_at) == (0, None)
 
     # A newer target keeps its own history; an older source never overwrites it.
     target = _attempted(late, "auth_failed")
