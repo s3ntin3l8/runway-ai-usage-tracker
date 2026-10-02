@@ -439,10 +439,38 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         if origin:
             # A key-scoped origin supersedes the plain one the same credential used to
             # be reported under; drop that stale row (and its cached bundle).
-            for retired in retire_unkeyed_origin(
+            retired_rows = retire_unkeyed_origin(
                 session, provider_id=p_id, sidecar_id=sidecar_id, origin=origin
-            ):
-                await token_cache.remove_source(p_id, retired.account_id, retired.source_id)
+            )
+            if retired_rows:
+                from app.services.collector_manager import manager
+
+                if not prior_sources:
+                    # The keyed row is new this cycle: it inherits the operator's choices
+                    # (enabled, failover priority) from the row it replaces instead of
+                    # silently re-enabling a source they turned off.
+                    inherited = retired_rows[0]
+                    successor = session.exec(
+                        select(CredentialSource).where(
+                            CredentialSource.provider_id == p_id,
+                            CredentialSource.source_id == source_id,
+                            CredentialSource.account_id == actual_acc_id,
+                        )
+                    ).first()
+                    if successor is not None:
+                        successor.enabled = inherited.enabled
+                        successor.priority = inherited.priority
+                        session.add(successor)
+                        manager._credential_source_preferences.setdefault(
+                            (p_id, actual_acc_id), {}
+                        )[source_id] = (inherited.enabled, inherited.priority)
+                for retired in retired_rows:
+                    await token_cache.remove_source(p_id, retired.account_id, retired.source_id)
+                    old_prefs = manager._credential_source_preferences.get(
+                        (p_id, retired.account_id)
+                    )
+                    if old_prefs is not None:
+                        old_prefs.pop(retired.source_id, None)
         tokens_received_count += len(p_tokens)
         logger.info(
             f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {payload.provider}"

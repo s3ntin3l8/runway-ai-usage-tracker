@@ -2839,3 +2839,45 @@ def test_an_all_machines_tag_is_still_allowed_for_a_shared_path_origin(
     )
 
     assert resp.status_code == 200, resp.text
+
+
+def test_the_keyed_row_inherits_enabled_and_priority_from_the_row_it_replaces(
+    client: TestClient, session: Session
+):
+    """An operator who disabled (or ordered) the plain source must not have that undone
+    just because its origin became key-scoped."""
+    from app.services.account_identity import credential_fingerprint, keyed_credential_origin
+    from app.services.collector_manager import manager
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    plain = "env:ZAI_API_KEY"
+    old = touch_source(
+        session,
+        provider_id="zai",
+        account_id="alice@example.com",
+        source_id=sidecar_source_id("laptop", plain),
+        source_type="env",
+        source_label="ZAI_API_KEY",
+        credential_origin=plain,
+        sidecar_id="laptop",
+    )
+    old.enabled = False
+    old.priority = 7
+    session.add(old)
+    session.commit()
+    key = "zai-inherit-key-value"  # pragma: allowlist secret
+    keyed = keyed_credential_origin(plain, credential_fingerprint(key) or "")
+
+    resp = _ingest(client, "laptop", [_token_card("zai", keyed, key, "alice@example.com")])
+
+    assert resp.status_code == 200, resp.text
+    session.expire_all()
+    new = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.source_id == sidecar_source_id("laptop", keyed)
+        )
+    ).one()
+    assert (new.enabled, new.priority) == (False, 7)
+    prefs = manager._credential_source_preferences[("zai", "alice@example.com")]
+    assert prefs[new.source_id] == (False, 7)
+    assert old.source_id not in prefs

@@ -191,6 +191,11 @@ export function UntaggedCredentialsDialog({
   // would follow an account switch on a host it was never made for (the server refuses it).
   const machineBound = visibleEntries.some((e) => isMachineBoundOrigin(e.credential_origin));
   const allMachines = applyToAllMachines && !machineBound;
+  // Don't let a stale "All machines" choice silently come back once the machine-bound
+  // entry that disabled it has been tagged and left the list.
+  useEffect(() => {
+    if (machineBound && applyToAllMachines) setApplyToAllMachines(false);
+  }, [machineBound, applyToAllMachines]);
   const scopeLabel = allMachines ? 'All machines' : 'This machine';
 
   return (
