@@ -17,12 +17,13 @@ import { hasTokenData, sumTokens } from '@/lib/cumulative';
 import { formatNumber, formatPct, formatTokens } from '@/lib/format';
 import { cardKind, findForecast } from '@/lib/quota';
 import { CostOutlookCard } from './CostOutlookCard';
-import { ProviderAlerts } from './ProviderAlerts';
+import { ProviderErrorBanner } from './ProviderErrorBanner';
 import { ProviderAnomalies } from './ProviderAnomalies';
 import { ProviderKpis } from './ProviderKpis';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { QuotaWindowRow } from './QuotaWindowRow';
 import { RecentSessions } from './RecentSessions';
+import { getSourceSplitConfig } from './sourceSplitConfig';
 import type { TabScope } from './period';
 import {
   useProviderCumulative,
@@ -92,23 +93,18 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
   // per-model split so single-host setups still get a useful breakdown.
   // For token/spend providers there is no active quota window, so window_aggregations
   // is empty — fall back to the cumulative month bucket's by_model instead.
-  const agg = entry.window_aggregations?.longest;
-  const bySidecar = agg?.by_sidecar ?? {};
-  const sourceIsSidecar = Boolean(sidecarId) || Object.keys(bySidecar).length > 1;
-  const windowSplit = sidecarId
-    ? (bySidecar[sidecarId] ? { [sidecarId]: bySidecar[sidecarId] } : {})
-    : sourceIsSidecar ? bySidecar : (agg?.by_model ?? {});
-  const useWindowSplit = kind === 'quota';
-  const sourceSplit = useWindowSplit ? windowSplit : (scopeBucket?.by_model ?? {});
-  const sourceTitle = useWindowSplit
-    ? (sourceIsSidecar ? 'Current window by source' : 'Current window by model')
-    : `Tokens by model · ${scopeLabel}`;
-  const hasSourceSplit = Object.keys(sourceSplit).length > 0;
+  const sourceSplit = getSourceSplitConfig({
+    kind,
+    sidecarId,
+    aggregation: entry.window_aggregations?.longest,
+    scopeBucket,
+    scopeLabel,
+  });
 
   return (
     <div className="flex flex-col gap-4">
       <ProviderKpis entry={entry} scope={scope} excludeCache={excludeCache} />
-      <ProviderAlerts providerId={entry.provider_id} accountId={entry.account_id} />
+      <ProviderErrorBanner providerId={entry.provider_id} accountId={entry.account_id} />
       <ProviderAnomalies providerId={entry.provider_id} accountId={entry.account_id} />
       {entry.server_collector_available && entry.critical_gauge.data_source === 'local' ? (
         <Card role="status" className="border-warning/30 bg-warning-muted px-4 py-2.5 text-[13px] text-fg">
@@ -163,12 +159,12 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
 
       {kind === 'quota' ? (
         <SourceSplitCard
-          title={sourceTitle}
-          split={sourceSplit}
+          title={sourceSplit.title}
+          split={sourceSplit.split}
           isLoading={cumulative.isPending}
-          useWindowSplit={useWindowSplit}
-          windowType={agg?.window_type}
-          hasSourceSplit={hasSourceSplit}
+          useWindowSplit={sourceSplit.useWindowSplit}
+          windowType={sourceSplit.windowType}
+          hasSourceSplit={sourceSplit.hasSourceSplit}
           scopeLabel={scopeLabel}
           excludeCache={excludeCache}
         />
@@ -246,12 +242,12 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
 
         {kind !== 'quota' ? (
           <SourceSplitCard
-            title={sourceTitle}
-            split={sourceSplit}
+            title={sourceSplit.title}
+            split={sourceSplit.split}
             isLoading={cumulative.isPending}
-            useWindowSplit={useWindowSplit}
-            windowType={agg?.window_type}
-            hasSourceSplit={hasSourceSplit}
+            useWindowSplit={sourceSplit.useWindowSplit}
+            windowType={sourceSplit.windowType}
+            hasSourceSplit={sourceSplit.hasSourceSplit}
             scopeLabel={scopeLabel}
             excludeCache={excludeCache}
           />

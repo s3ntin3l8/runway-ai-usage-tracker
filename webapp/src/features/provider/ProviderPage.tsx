@@ -120,15 +120,15 @@ export function ProviderPage() {
 
   return (
     <>
-      <header className="sticky top-0 z-20 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 border-b border-edge bg-surface-1/95 px-4 py-2 backdrop-blur md:flex md:h-14 md:gap-3 md:py-0 lg:px-8">
-        <div className="order-1 flex min-w-0 items-center gap-2 md:order-1 md:flex-1">
+      <header className="sticky top-0 z-20 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-surface-1/95 px-4 py-2 backdrop-blur md:h-14 md:flex-nowrap md:gap-3 md:py-0 lg:px-8">
+        <div className="order-1 flex min-w-0 flex-1 items-center gap-2">
           <ProviderGlyph providerId={providerId} name={name} className="size-9 shrink-0 text-sm" />
           <div className="min-w-0">
             <h1 className="truncate text-[14px] font-medium">{name}</h1>
             <div className="truncate text-[11px] text-fg-muted">{labelOrMaskedId({ account_id: accountId ?? '', account_label: entry?.critical_gauge.account_label })}</div>
           </div>
         </div>
-        <div className="order-3 col-span-2 flex min-w-0 flex-wrap items-center gap-2 md:order-2 md:col-auto md:flex-nowrap md:flex-1">
+        <div className="order-3 flex min-w-0 w-full flex-wrap items-center gap-2 md:order-2 md:w-auto md:flex-1 md:flex-nowrap">
             {entry && PERIOD_AWARE_TABS.has(tab) ? (
               <TimeRangePicker
                 value={rangeValue}
@@ -161,7 +161,7 @@ export function ProviderPage() {
               </Select>
             ) : null}
         </div>
-        <div className="order-2 flex items-center justify-end gap-1 md:order-3">
+        <div className="order-2 ml-auto flex items-center justify-end gap-1 md:order-3">
             <Button
               size="sm"
               onClick={() => collect.mutate()}

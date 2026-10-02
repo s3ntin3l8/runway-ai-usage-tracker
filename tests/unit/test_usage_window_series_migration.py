@@ -59,6 +59,12 @@ def test_rebuild_adds_series_identity_and_preserves_legacy_rows():
             )
         ).one()
         assert row == ("", "", 3, 1.25)
+        assert conn.execute(
+            text(
+                "SELECT 1 FROM runway_schema_migrations "
+                "WHERE migration_id='usage_windows_series_identity_v1'"
+            )
+        ).first()
 
         columns = {r[1] for r in conn.execute(text("PRAGMA table_info(usage_windows)"))}
         assert {"series_model_id", "series_variant"} <= columns
@@ -88,7 +94,14 @@ def test_fresh_usage_window_schema_skips_rebuild():
             text("SELECT sql FROM sqlite_master WHERE type='table' AND name='usage_windows'")
         ).scalar_one()
         _rebuild_usage_window_table_for_series_identity(conn)
+        _rebuild_usage_window_table_for_series_identity(conn)
         after = conn.execute(
             text("SELECT sql FROM sqlite_master WHERE type='table' AND name='usage_windows'")
         ).scalar_one()
         assert before == after
+        assert conn.execute(
+            text(
+                "SELECT 1 FROM runway_schema_migrations "
+                "WHERE migration_id='usage_windows_series_identity_v1'"
+            )
+        ).first()

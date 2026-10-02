@@ -2,6 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { formatTokens } from '@/lib/format';
+import { useUsageSource } from '@/hooks/useUsageSource';
+import { useSidecars } from '@/features/fleet/queries';
 import { useProviderAnomalies } from './queries';
 
 export function ProviderAnomalies({
@@ -11,8 +13,15 @@ export function ProviderAnomalies({
   providerId: string;
   accountId: string;
 }) {
+  const [sidecarId] = useUsageSource();
+  const sidecars = useSidecars();
   const anomalies = useProviderAnomalies(providerId, accountId);
   const spikes = anomalies.data?.anomalies ?? [];
+  const selectedSourceWasRemoved =
+    Boolean(sidecarId) &&
+    sidecarId !== 'local' &&
+    sidecars.isSuccess &&
+    !sidecars.data.sidecars.some((sidecar) => sidecar.sidecar_id === sidecarId);
 
   return (
     <Card>
@@ -30,8 +39,10 @@ export function ProviderAnomalies({
         </CardContent>
       ) : spikes.length === 0 ? (
         <CardContent>
-          <p className="py-6 text-center text-xs text-fg-subtle">
-            No usage anomalies detected.
+          <p className="py-6 text-center text-xs text-fg-subtle" role="status">
+            {selectedSourceWasRemoved
+              ? 'The selected source is no longer registered. Choose All sources to view current anomalies.'
+              : 'No usage anomalies detected.'}
           </p>
         </CardContent>
       ) : (

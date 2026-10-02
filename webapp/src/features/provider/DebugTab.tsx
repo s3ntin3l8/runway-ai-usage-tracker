@@ -154,9 +154,9 @@ function nextPollLabel(iso: string | null | undefined): string {
   return until === 'now' ? 'now' : `in ${until}`;
 }
 
-// Generic account_id values used by server-discovered (`server`) and legacy
-// credentials. These will never equal a user's real account_id, so we always
-// include them when the provider matches — they are this provider's credentials too.
+// Match credential inventory accounts to this provider detail account.
+// Provider-wide generic IDs never equal a user's real account_id, so include
+// them whenever the provider matches — they are this provider's credentials too.
 const GENERIC_ACCOUNT_IDS = new Set(['server', 'config', 'config-cookie', 'local-file']);
 // `config:<account>` / `config-cookie:<account>` are per-account: only show the
 // one belonging to this pane's account (or the unscoped `default` config row).

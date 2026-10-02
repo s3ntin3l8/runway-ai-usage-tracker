@@ -368,6 +368,18 @@ def _rebuild_usage_window_table_for_series_identity(conn: Any) -> None:
 
     from app.models.db import UsageWindow
 
+    migration_id = "usage_windows_series_identity_v1"
+    conn.execute(
+        text("CREATE TABLE IF NOT EXISTS runway_schema_migrations (migration_id TEXT PRIMARY KEY)")
+    )
+    applied = conn.execute(
+        text("SELECT 1 FROM runway_schema_migrations WHERE migration_id = :migration_id"),
+        {"migration_id": migration_id},
+    ).first()
+    if applied:
+        conn.commit()
+        return
+
     required = (
         "provider_id",
         "account_id",
@@ -386,7 +398,14 @@ def _rebuild_usage_window_table_for_series_identity(conn: Any) -> None:
             info[2] for info in conn.execute(text(f"PRAGMA index_info('{index_name}')"))
         )
         if index_cols == required:
-            return  # fresh DB or already migrated
+            # Fresh databases already have the current model constraint. Record
+            # this migration so future schema edits cannot trigger a rebuild.
+            conn.execute(
+                text("INSERT INTO runway_schema_migrations (migration_id) VALUES (:migration_id)"),
+                {"migration_id": migration_id},
+            )
+            conn.commit()
+            return
 
     dialect = conn.engine.dialect
     create_sql = str(CreateTable(UsageWindow.__table__).compile(dialect=dialect)).strip()  # type: ignore[attr-defined]
@@ -405,6 +424,10 @@ def _rebuild_usage_window_table_for_series_identity(conn: Any) -> None:
     conn.execute(text("ALTER TABLE usage_windows_new RENAME TO usage_windows"))
     for index in UsageWindow.__table__.indexes:  # type: ignore[attr-defined]
         conn.execute(text(str(CreateIndex(index).compile(dialect=dialect)).strip()))
+    conn.execute(
+        text("INSERT INTO runway_schema_migrations (migration_id) VALUES (:migration_id)"),
+        {"migration_id": migration_id},
+    )
     conn.commit()
     logger.info("Migrated: rebuilt usage_windows so uniqueness covers quota-series identity")
 

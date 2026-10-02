@@ -1307,7 +1307,9 @@ async def get_window_history(
     Returns up to N most recent closed windows for the given
     (provider_id, account_id, window_type) triple, ordered newest-first.
     Optional series identity scopes the result to one quota model/pool and
-    includes legacy rows whose series identity was not recorded.
+    includes legacy rows whose series identity was not recorded. An omitted or
+    empty series_variant on a scoped request is normalized to "default", the
+    variant used by newly closed windows for cards without an explicit variant.
     """
     windows = query_window_history(
         session,
@@ -1625,7 +1627,9 @@ async def get_anomalies(
     """Anomaly detection: per-(provider, account, model) token spikes vs historical mean.
 
     Uses z-score comparison of today's token usage against the last lookback_days
-    of daily rollup history. Returns anomalies where z > z_threshold.
+    of daily rollup history. Returns anomalies where z > z_threshold. An omitted
+    or empty sidecar_id selects the all-source rollup; a non-empty ID selects
+    that sidecar's rollup.
     """
     return query_anomalies(
         session,

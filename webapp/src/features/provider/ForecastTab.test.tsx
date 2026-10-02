@@ -59,6 +59,20 @@ describe('ForecastTab', () => {
     })));
   });
 
+  it('normalizes an empty forecast variant to the default series identity', async () => {
+    vi.mocked(api.fetchForecast).mockResolvedValue(
+      forecastResponse([forecastEntry({ model_id: '', variant: '' })]),
+    );
+    renderWithProviders(
+      <ForecastTab providerId="anthropic" accountId="me@example.com" entry={fleetEntry()} />,
+    );
+    await screen.findByText('Trajectory');
+    await waitFor(() => expect(api.fetchWindowHistory).toHaveBeenCalledWith(expect.objectContaining({
+      series_model_id: '',
+      series_variant: 'default',
+    })));
+  });
+
   it('offers a window selector when multiple forecasts exist', async () => {
     vi.mocked(api.fetchForecast).mockResolvedValue(
       forecastResponse([

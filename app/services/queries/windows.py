@@ -45,11 +45,14 @@ def query_window_history(
         .order_by(UsageWindow.window_end.desc())  # type: ignore[attr-defined]
     )
     if series_model_id is not None or series_variant is not None:
+        # Missing variants are written as "default" on new rows. Also retain
+        # empty-identity rows from before series identity was introduced.
+        requested_variant = series_variant or "default"
         stmt = stmt.where(
             or_(
                 and_(
                     col(UsageWindow.series_model_id) == (series_model_id or ""),
-                    col(UsageWindow.series_variant) == (series_variant or ""),
+                    col(UsageWindow.series_variant) == requested_variant,
                 ),
                 # Keep pre-migration history, whose series identity defaults to ('', '').
                 and_(

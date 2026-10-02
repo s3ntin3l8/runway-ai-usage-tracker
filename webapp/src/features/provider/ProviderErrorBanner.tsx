@@ -1,10 +1,10 @@
-// Surfaces recent provider errors at the top of Overview.
+// Surfaces provider-wide recent errors at the top of Overview.
 
 import { CircleAlert } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { useProviderErrors } from './queries';
 
-export function ProviderAlerts({
+export function ProviderErrorBanner({
   providerId,
   accountId,
 }: {

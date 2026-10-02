@@ -549,6 +549,27 @@ class TestWindowHistoryEndpoint:
             ("", "", 7),
         }
 
+        # Empty variants on scoped API calls normalize to the "default" series
+        # used by newly closed windows, while preserving legacy history.
+        response = _client().get(
+            "/api/v1/usage/window-history",
+            params={
+                "provider_id": "anthropic",
+                "account_id": "user@example.com",
+                "window_type": "weekly",
+                "series_model_id": "sonnet",
+                "series_variant": "",
+            },
+        )
+        assert response.status_code == 200, response.text
+        windows = response.json()["windows"]
+        assert {
+            (w["series_model_id"], w["series_variant"], w["totals"]["msgs"]) for w in windows
+        } == {
+            ("sonnet", "default", 12),
+            ("", "", 7),
+        }
+
 
 # ===========================================================================
 # Task 7.3 — /heatmap
