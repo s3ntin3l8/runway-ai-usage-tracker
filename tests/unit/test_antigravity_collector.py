@@ -251,6 +251,8 @@ class TestAntigravityNoServerSideRefresh:
             )
             collector = AntigravityCollector(account_id="user@example.com")
             assert collector.REFRESHABLE is False
+            refresh_attempted = AsyncMock(return_value=None)
+            collector._execute_refresh = refresh_attempted
 
             with caplog.at_level(logging.DEBUG):
                 token = await collector._get_valid_token(MagicMock(), force_refresh=True)
@@ -259,7 +261,9 @@ class TestAntigravityNoServerSideRefresh:
             assert token == "ya29.current"
             messages = [record.getMessage() for record in caplog.records]
             assert not any(message.startswith("Refreshing ") for message in messages)
-            assert any("cannot refresh server-side" in message for message in messages)
+            assert any("refresh skipped" in message for message in messages)
+            # The contract: no client_id → the base never even attempts a refresh.
+            refresh_attempted.assert_not_awaited()
         finally:
             await token_cache.reset()
 

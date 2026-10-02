@@ -72,7 +72,9 @@ def refresh_due(token_path: Path, *, now: float | None = None, lead: int = LEAD_
     The file must exist (a machine that never logged into agy must not be
     prodded into starting a login flow) and its access token must be within
     ``lead`` seconds of expiry. An unreadable expiry counts as due — let the
-    CLI itself decide whether anything is needed.
+    CLI itself decide whether anything is needed. While the file stays
+    unparseable the calling loop backs off to its retry interval (see
+    ``KeepAliveThread.cycle_once``), so the CLI is not invoked every tick.
     """
     if not token_path.is_file():
         return False
@@ -179,7 +181,9 @@ class KeepAliveThread(threading.Thread):
         """One tick; returns how long to wait before the next one.
 
         Not due → normal tick. Due → run the refresh, backing off after a
-        failure (or when agy isn't installed) so a broken login isn't hammered.
+        failure (or when agy isn't installed) so a broken login isn't hammered —
+        and also when the CLI exited 0 but the token file's expiry is still
+        unreadable, so a corrupt file can't be re-prodded every tick.
         """
         if not refresh_due(self._token_path, lead=self._lead_seconds):
             return self._tick_seconds
@@ -187,6 +191,8 @@ class KeepAliveThread(threading.Thread):
         if command is None:
             return self._retry_tick_seconds
         if run_refresh(command):
+            if expiry_epoch(self._token_path) is None:
+                return self._retry_tick_seconds
             return self._tick_seconds
         return self._retry_tick_seconds
 

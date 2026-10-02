@@ -29,7 +29,8 @@ class OAuthBaseCollector(BaseCollector):
     # Providers whose refresh credentials the server may rotate itself. Set
     # False when only the user's own CLI can renew the login (no client_id on
     # this side) — such collectors still re-read the cache on a 401, but they
-    # must not log or imply that a server-side refresh happened.
+    # must not log or imply that a server-side refresh happened; the token
+    # path honors this by skipping ``_execute_refresh`` altogether.
     REFRESHABLE: bool = True
 
     def __init__(
@@ -131,9 +132,10 @@ class OAuthBaseCollector(BaseCollector):
                 # Pre-emptive refresh: if the token is expiring soon, refresh
                 # proactively to avoid an expiry race during the next API call.
                 if await self._is_token_expiring_soon():
-                    logger.info(
-                        f"{self.provider_name} token expiring soon, refreshing proactively..."
-                    )
+                    if self.REFRESHABLE:
+                        logger.info(
+                            f"{self.provider_name} token expiring soon, refreshing proactively..."
+                        )
                     force_refresh = True
                 else:
                     return token
@@ -142,20 +144,24 @@ class OAuthBaseCollector(BaseCollector):
                 return token
 
             # 3. Attempt refresh
+            new_creds: dict | None = None
             if self.REFRESHABLE:
                 logger.info(
                     f"Refreshing {self.provider_name} access token for account {self.account_id or 'default'}..."
                 )
+                new_creds = await self._execute_refresh(client)
             else:
                 # No refresh capability on this side (e.g. the CLI owns the
-                # renewal). The re-read below can still pick up a token another
-                # host pushed — but a 401 path must not claim a refresh happened.
+                # renewal): skip the attempt entirely — no client_id means no
+                # server-side refresh. Step 2 already re-read the cache (a 401
+                # path can pick up a token another host pushed); the fallback
+                # below returns it when it is still valid.
                 logger.debug(
-                    "%s cannot refresh server-side; reusing the cached token for account %s",
+                    "%s refresh skipped (not refreshable server-side); "
+                    "using the cached token for account %s",
                     self.provider_name,
                     self.account_id or "default",
                 )
-            new_creds = await self._execute_refresh(client)
             if new_creds:
                 self._persist_credentials(new_creds)
                 access = new_creds.get("access_token")

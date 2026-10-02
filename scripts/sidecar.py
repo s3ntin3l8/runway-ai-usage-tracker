@@ -3343,7 +3343,8 @@ class GenericCollector:
                         if not is_enabled() and seconds_left <= _AG_PRE_EXPIRY_WARNING_SECONDS:
                             logging.warning(
                                 f"  [{provider_id}] local token expires at {raw_expiry} "
-                                "(within 10 min) — run `agy models` to renew, or start "
+                                f"(within {_AG_PRE_EXPIRY_WARNING_SECONDS // 60} min) — "
+                                "run `agy models` to renew, or start "
                                 "the sidecar with --keep-alive"
                             )
                         tokens["expiry_date"] = str(int(expiry_dt.timestamp() * 1000))

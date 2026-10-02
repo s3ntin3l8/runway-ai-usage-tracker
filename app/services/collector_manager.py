@@ -731,16 +731,24 @@ class CollectorManager:
         live-then-expired; within each group the configured (priority,
         source_id) order still decides.
 
-        Preferences are keyed by each candidate's own ``account_slot``: a
-        swept candidate lives under the resolved identity its bundle was
-        filed under, not under the requesting collector's ``account_id``.
+        Preferences are keyed by each candidate's own ``account_slot`` — where
+        the bundle was filed (the resolved identity) — falling back to the
+        requesting collector's ``account_id`` when that slot has no row for
+        the source, so a preference set from e.g. the default account view
+        still applies to candidates the sweep brought in.
         """
 
         def candidate_preference(candidate: dict[str, Any]) -> tuple[bool, int] | None:
+            source_id = candidate["source_id"]
             slot = candidate.get("account_slot") or account_id
-            return self._credential_source_preferences.get((provider_id, slot), {}).get(
-                candidate["source_id"]
-            )
+            keys = [(provider_id, slot)]
+            if slot != account_id:
+                keys.append((provider_id, account_id))
+            for key in keys:
+                row = self._credential_source_preferences.get(key, {})
+                if source_id in row:
+                    return row[source_id]
+            return None
 
         def candidate_enabled(candidate: dict[str, Any]) -> bool:
             preference = candidate_preference(candidate)

@@ -92,6 +92,20 @@ class TestCycleOnce:
 
         assert thread.cycle_once() == 99
 
+    def test_backs_off_when_refresh_succeeds_but_the_file_stays_unreadable(
+        self, tmp_path, monkeypatch
+    ):
+        # A corrupt file reads as "due" on every tick; even a CLI that exits 0
+        # without repairing the expiry must not be invoked at the normal cadence.
+        tok = tmp_path / "t"
+        tok.write_text("{not json")
+        monkeypatch.setattr(keep_alive, "run_refresh", lambda cmd: True)
+        thread = keep_alive.KeepAliveThread(
+            token_path=tok, command=["agy", "models"], tick_seconds=42, retry_tick_seconds=99
+        )
+
+        assert thread.cycle_once() == 99
+
 
 class TestKeepAliveThread:
     def test_stop_joins_promptly_and_survives_failures(self, tmp_path, monkeypatch):

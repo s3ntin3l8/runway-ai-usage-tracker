@@ -1479,6 +1479,59 @@ class TestDefaultCollectorSourceSweep:
         assert pinned == [None]
         assert health == {}
 
+    def test_default_slot_preference_applies_to_swept_candidate(self, manager):
+        """A preference stored against the requesting account must apply to
+        swept candidates.
+
+        Ingest files bundles under the resolved identity, but an operator may
+        configure sources from the default account view: that row must not be
+        silently ignored just because every Antigravity candidate carries an
+        ``account_slot``. The slot's own row wins when both exist (it is the
+        more specific one). Priorities sort ascending — lower is tried first.
+        """
+        manager.set_credential_source_preferences(
+            "antigravity",
+            "default",
+            {
+                "src:disabled": (False, 0),
+                "src:default-view": (True, 3),
+                "src:pinned": (True, 50),
+            },
+        )
+        manager.set_credential_source_preferences(
+            "antigravity", "user@example.com", {"src:pinned": (True, 0)}
+        )
+        swept = [
+            {
+                "source_id": "src:disabled",
+                "account_slot": "user@example.com",
+                "enabled": True,
+                "priority": 1,
+            },
+            {
+                "source_id": "src:default-view",
+                "account_slot": "user@example.com",
+                "enabled": True,
+                "priority": 1,
+            },
+            {
+                "source_id": "src:pinned",
+                "account_slot": "user@example.com",
+                "enabled": True,
+                "priority": 99,
+            },
+        ]
+
+        ordered = manager._ordered_candidates("antigravity", "default", swept)
+
+        # src:disabled dropped by the default-view row (that row applies to a
+        # swept candidate at all); src:pinned is ordered by its slot row (0),
+        # which also outranks the default row's 50 and its own 99.
+        assert [candidate["source_id"] for candidate in ordered] == [
+            "src:pinned",
+            "src:default-view",
+        ]
+
 
 class TestCollectorManagerWarmup:
     @pytest.mark.skip(reason="keychain warmup removed; keychain access moved to sidecar")
