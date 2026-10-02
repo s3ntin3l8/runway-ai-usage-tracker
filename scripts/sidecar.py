@@ -2203,7 +2203,7 @@ def get_windows_credential(target: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode == 0:
             password = result.stdout.strip()

@@ -650,7 +650,13 @@ def _windows_swap_script(
         ":restore_previous\r\n"
         'echo [%date% %time%] New executable move failed; restoring previous sidecar.>>"%LOG%"\r\n'
         f'if exist "{install}" del /F /Q "{install}" >>"%LOG%" 2>&1\r\n'
-        f'if exist "{backup}" move /Y "{backup}" "{install}" >>"%LOG%" 2>&1\r\n'
+        f'if exist "{backup}" (\r\n'
+        f'  move /Y "{backup}" "{install}" >>"%LOG%" 2>&1\r\n'
+        "  if errorlevel 1 goto restore_failed\r\n"
+        ") else goto restore_failed\r\n"
+        "goto swap_failed\r\n"
+        ":restore_failed\r\n"
+        'echo [%date% %time%] Failed to restore previous sidecar from backup.>>"%LOG%"\r\n'
         "goto swap_failed\r\n"
         ":swap_failed\r\n"
         'echo [%date% %time%] Sidecar swap failed.>>"%LOG%"\r\n'

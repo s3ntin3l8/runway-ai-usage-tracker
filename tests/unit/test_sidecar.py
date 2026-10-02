@@ -1027,7 +1027,6 @@ class TestWindowsCredCache:
 
     def test_credential_manager_lookup_hides_powershell_window(self, monkeypatch):
         monkeypatch.setattr(sidecar.platform, "system", lambda: "Windows")
-        monkeypatch.setattr(sidecar.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
         target = "runway-test-no-console"
         sidecar._windows_cred_cache.pop(target, None)
         result = MagicMock(returncode=0, stdout="secret\n")
@@ -1035,7 +1034,9 @@ class TestWindowsCredCache:
         with patch.object(sidecar.subprocess, "run", return_value=result) as run:
             assert sidecar.get_windows_credential(target) == "secret"
 
-        assert run.call_args.kwargs["creationflags"] == 0x08000000
+        assert run.call_args.kwargs["creationflags"] == getattr(
+            sidecar.subprocess, "CREATE_NO_WINDOW", 0
+        )
         sidecar._windows_cred_cache.pop(target, None)
 
 

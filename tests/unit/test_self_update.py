@@ -703,7 +703,7 @@ class TestWindowsSwapScript:
 
     def test_failed_replace_restores_backup(self):
         script = self._script(restart=True, display_version="2.13.0")
-        recovery = script[script.index(":restore_previous") : script.index(":swap_failed")]
+        recovery = script[script.index(":restore_previous") : script.index(":restore_failed")]
         assert (
             'del /F /Q "C:\\Users\\u\\AppData\\Local\\Programs\\Runway Sidecar\\RunwaySidecar.exe"'
             in recovery
@@ -712,6 +712,9 @@ class TestWindowsSwapScript:
             'move /Y "C:\\Users\\u\\AppData\\Local\\Programs\\Runway Sidecar\\RunwaySidecar.exe.previous"'
             in recovery
         )
+        assert "if errorlevel 1 goto restore_failed" in recovery
+        restore_failure = script[script.index(":restore_failed") : script.index(":swap_failed")]
+        assert "Failed to restore previous sidecar from backup" in restore_failure
         failure_branch = script[script.index(":swap_failed") :]
         assert "if exist" in failure_branch and 'start "" "' in failure_branch
         assert "exit /b 1" in failure_branch
@@ -721,11 +724,12 @@ class TestWindowsSwapScript:
         assert 'set "LOG=%~dp0runway-self-update.log"' in script
         assert "if errorlevel 1 goto swap_failed" in script
         assert "if errorlevel 1 goto restore_previous" in script
+        assert "if errorlevel 1 goto restore_failed" in script
+        assert "Failed to restore previous sidecar from backup" in script
         assert "Installed updated sidecar" in script
         assert "Relaunch requested" in script
 
     def test_windows_helper_spawn_failure_is_reported(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(sys, "platform", "win32")
         helper = tmp_path / "runway-self-update.bat"
 
         def fail_spawn(*_args, **_kwargs):
