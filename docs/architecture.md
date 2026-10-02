@@ -149,6 +149,19 @@ collectors only do `api` and `web`.
 | **quota** | api, web | server | Percentages, currency limits, tier |
 | **enrichment** | local (cli / statusline / logs) | sidecar | Token breakdown, session counts, per-message events |
 
+### Unidentified credentials
+
+A sidecar that can't tell whose credential it found (no email in the id_token, no
+configured identity) reports it as `identity_pending` and sends the secret only for
+providers the server can verify: antigravity, anthropic, gemini, github and opencode. The
+server then runs a dedicated `<provider>:default:identity-pending` collector pinned to that
+one source; when its API call reveals the account (Gemini and Antigravity ask Google's
+userinfo endpoint), `CollectorManager` binds that identity to the exact source and moves it
+to the account. Anything else stays "Needs mapping" for the operator, and the secret never
+leaves the machine. ChatGPT is deliberately not on the list: its tokens carry the email in
+a JWT claim (`id_token`, or the `https://api.openai.com/profile` claim of the access token)
+that the sidecar decodes locally, and there is no reliable upstream endpoint to ask.
+
 ### Who refreshes an OAuth login
 
 A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT and xAI

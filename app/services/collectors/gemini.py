@@ -84,10 +84,12 @@ class GeminiCollector(
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """API strategy."""
+        await self._resolve_pending_identity(client)
         return await self._collect_via_api(client)
 
     async def _strategy_api_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Dispatch wrapper: API (OAuth) strategy."""
+        await self._resolve_pending_identity(client)
         return await self._collect_via_api(client)
 
     async def _error_handler(self) -> list[dict[str, Any]]:

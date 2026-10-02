@@ -6,6 +6,7 @@ import httpx
 
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import HealthCalculator, PaceCalculator, error_card, http_request_with_retry
+from app.services.identity_lookup import google_userinfo_email
 
 logger = logging.getLogger(__name__)
 
@@ -69,17 +70,7 @@ class AntigravityApiMixin:
         ask Google directly. Result is cached on the instance — no repeated
         calls within the same server run.
         """
-        try:
-            resp = await client.get(
-                "https://www.googleapis.com/oauth2/v2/userinfo",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=5,
-            )
-            if resp.status_code == 200:
-                return resp.json().get("email")
-        except Exception:
-            logger.debug("Could not resolve Antigravity account email from userinfo", exc_info=True)
-        return None
+        return await google_userinfo_email(client, token)
 
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Antigravity quota from the Code Assist cloud API.

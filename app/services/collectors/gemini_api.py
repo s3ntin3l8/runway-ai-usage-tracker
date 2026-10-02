@@ -11,6 +11,8 @@ from app.core.utils import (
     error_card,
     http_request_with_retry,
 )
+from app.services.identity_lookup import google_userinfo_email
+from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,25 @@ class GeminiApiMixin:
                     timeout=10,
                 )
         return resp
+
+    async def _resolve_pending_identity(self, client: httpx.AsyncClient) -> None:
+        """Learn the Google account of a credential a sidecar couldn't identify.
+
+        Only for the identity-verification run, i.e. when pinned to a source bundle the
+        sidecar marked ``identity_pending`` (its id_token carried no email). The email
+        becomes this collector's ``account_id``; ``CollectorManager`` then binds it to
+        that exact source. Any other Gemini collector keeps the identity it was given.
+        """
+        if self.account_id and self.account_id.lower() != "default":
+            return
+        meta = token_cache.current_source_metadata("gemini", self.account_id or "default")
+        if not meta or meta.get("identity_pending") is not True:
+            return
+        token = await self._get_current_token()
+        email = await google_userinfo_email(client, token) if token else None
+        if email:
+            self.account_id = email
+            self.account_label = email
 
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Gemini quota from Google Cloud Code API."""
