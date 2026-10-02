@@ -229,6 +229,8 @@ async def test_a_pending_claude_oauth_token_is_identified_by_its_own_profile(wor
     account, tag = _outcome(engine, "anthropic", source_id)
     assert account == BOB
     assert tag is not None and tag.set_by == "identity_verification"
+    # The admin the organization lists is neither adopted nor even asked for.
+    assert not [r for r in seen if r.url.path == "/v1/organizations/me"]
     profile = [r for r in seen if r.url.path == "/api/oauth/profile"]
     assert [r.headers["authorization"] for r in profile] == [f"Bearer {CLAUDE_OAUTH}"]
     assert await cache.get_pending_sources("anthropic") == []
@@ -565,3 +567,33 @@ def test_a_chatgpt_env_access_token_is_identified_from_its_profile_claim(monkeyp
 
     assert cards and cards[0]["account_id"] == BOB
     assert cards[0]["metadata"].get("identity_pending") is not True
+
+
+@pytest.mark.asyncio
+async def test_a_resolved_claude_holder_is_labelled_with_their_email_and_never_reads_the_servers_config(
+    world, monkeypatch
+):
+    """Resolving the holder must not unpin the call: the server host's own ``~/.claude.json``
+    describes another login, and the card is labelled with the holder, not an org admin."""
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    _, cache = world
+    source_id = await _seed(
+        world, "anthropic", "env:CLAUDE_CODE_OAUTH_TOKEN", {"oauth_token": CLAUDE_OAUTH}
+    )
+    reads: list[int] = []
+    monkeypatch.setattr(
+        AnthropicCollector,
+        "_get_local_config_hints",
+        lambda self: reads.append(1) or {"tier": "Server Owner Max"},
+    )
+    collector = AnthropicCollector(account_id="default")
+    seen: list[httpx.Request] = []
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_claude_oauth(seen))) as client:
+        async with cache.using_source("anthropic", source_id, source_id):
+            cards = await collector._get_claude_oauth(client, CLAUDE_OAUTH)
+
+    assert collector.account_id == BOB and collector.account_label == BOB
+    assert reads == []
+    assert not any("Server Owner" in str(card) for card in cards)
