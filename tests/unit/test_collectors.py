@@ -1973,7 +1973,19 @@ class TestChatGPTCollector:
 
         assert isinstance(result, list)
         assert len(result) == 1
-        assert result[0].get("variant") == "Codex", (result[0], caplog.text[-3000:])
+        from app.services import token_cache as _tc
+
+        diag = {
+            "card": {k: v for k, v in result[0].items() if k in ("detail", "error_type", "pace")},
+            "active_source": _tc._active_source.get(),
+            "refreshed_for": getattr(collector, "_refreshed_for", "n/a"),
+            "log": [
+                ln[:200]
+                for ln in caplog.text.splitlines()
+                if "chatgpt" in ln.lower() or "ChatGPT" in ln
+            ][-12:],
+        }
+        assert result[0].get("variant") == "Codex", diag
         assert "PLUS" in str(result[0].get("detail", ""))
         assert "%" in str(result[0].get("remaining", ""))
 
