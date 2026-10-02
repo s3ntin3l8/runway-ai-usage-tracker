@@ -100,6 +100,18 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
     scopeBucket,
     scopeLabel,
   });
+  const sourceSplitCard = (
+    <SourceSplitCard
+      title={sourceSplit.title}
+      split={sourceSplit.split}
+      isLoading={cumulative.isPending}
+      useWindowSplit={sourceSplit.useWindowSplit}
+      windowType={sourceSplit.windowType}
+      hasSourceSplit={sourceSplit.hasSourceSplit}
+      scopeLabel={scopeLabel}
+      excludeCache={excludeCache}
+    />
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -157,18 +169,7 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
         </>
       )}
 
-      {kind === 'quota' ? (
-        <SourceSplitCard
-          title={sourceSplit.title}
-          split={sourceSplit.split}
-          isLoading={cumulative.isPending}
-          useWindowSplit={sourceSplit.useWindowSplit}
-          windowType={sourceSplit.windowType}
-          hasSourceSplit={sourceSplit.hasSourceSplit}
-          scopeLabel={scopeLabel}
-          excludeCache={excludeCache}
-        />
-      ) : null}
+      {kind === 'quota' ? sourceSplitCard : null}
 
       <h2 className="-mb-2 text-sm font-semibold text-fg">Usage in {scopeLabel}</h2>
       {kind === 'tokens' && (
@@ -240,18 +241,7 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
           </CardContent>
         </Card>
 
-        {kind !== 'quota' ? (
-          <SourceSplitCard
-            title={sourceSplit.title}
-            split={sourceSplit.split}
-            isLoading={cumulative.isPending}
-            useWindowSplit={sourceSplit.useWindowSplit}
-            windowType={sourceSplit.windowType}
-            hasSourceSplit={sourceSplit.hasSourceSplit}
-            scopeLabel={scopeLabel}
-            excludeCache={excludeCache}
-          />
-        ) : null}
+        {kind !== 'quota' ? sourceSplitCard : null}
       </div>
 
       <RecentSessions

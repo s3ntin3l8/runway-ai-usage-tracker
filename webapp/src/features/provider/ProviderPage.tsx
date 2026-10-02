@@ -11,6 +11,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { collectProvider, putProviderConfigForAccount, resetProvider } from '@/api/endpoints';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -120,7 +121,11 @@ export function ProviderPage() {
 
   return (
     <>
-      <header className="sticky top-0 z-20 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-surface-1/95 px-4 py-2 backdrop-blur md:h-14 md:flex-nowrap md:gap-3 md:py-0 lg:px-8">
+      <PageHeader
+        title={name}
+        sticky
+        className="h-auto flex-wrap items-center justify-start gap-x-3 gap-y-2 bg-surface-1/95 pb-2 md:h-14 md:flex-nowrap md:gap-3 md:pb-0 md:pt-0"
+      >
         <div className="order-1 flex min-w-0 flex-1 items-center gap-2">
           <ProviderGlyph providerId={providerId} name={name} className="size-9 shrink-0 text-sm" />
           <div className="min-w-0">
@@ -188,7 +193,7 @@ export function ProviderPage() {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
         </div>
-      </header>
+      </PageHeader>
       <div className="px-4 pt-3 pb-4 lg:px-8 lg:pt-4 lg:pb-8">
         <Button
           variant="ghost"
@@ -281,6 +286,7 @@ export function ProviderPage() {
 function ProviderFilters({ showSource, showCache }: { showSource: boolean; showCache: boolean }) {
   const [sidecarId] = useUsageSource();
   const { excludeCache } = useExcludeCache();
+  // Count only filters exposed on this tab so the badge matches the visible controls.
   const activeCount = Number(showSource && Boolean(sidecarId)) + Number(showCache && excludeCache);
   return (
     <Popover

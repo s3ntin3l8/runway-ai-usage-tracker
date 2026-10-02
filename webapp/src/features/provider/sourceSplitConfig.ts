@@ -31,18 +31,21 @@ export function getSourceSplitConfig({
     : sourceIsSidecar
       ? bySidecar
       : (aggregation?.by_model ?? {});
-  const useWindowSplit = kind === 'quota';
-  const split = useWindowSplit ? windowSplit : (scopeBucket?.by_model ?? {});
-  const title = useWindowSplit
-    ? sourceIsSidecar
-      ? 'Current window by source'
-      : 'Current window by model'
-    : `Tokens by model · ${scopeLabel}`;
+  if (kind === 'quota') {
+    return {
+      title: sourceIsSidecar ? 'Current window by source' : 'Current window by model',
+      split: windowSplit,
+      useWindowSplit: true,
+      windowType: aggregation?.window_type,
+      hasSourceSplit: Object.keys(windowSplit).length > 0,
+    };
+  }
 
+  const split = scopeBucket?.by_model ?? {};
   return {
-    title,
+    title: `Tokens by model · ${scopeLabel}`,
     split,
-    useWindowSplit,
+    useWindowSplit: false,
     windowType: aggregation?.window_type,
     hasSourceSplit: Object.keys(split).length > 0,
   };

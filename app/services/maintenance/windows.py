@@ -31,7 +31,7 @@ _WindowMeta = tuple[float | None, float | None]
 
 
 def _index_by_identity(rows: list[UsageWindow]) -> dict[_WindowKey, _WindowMeta]:
-    """Group by the 6-tuple window identity, preferring the all-grains
+    """Group by the 7-tuple window identity, preferring the all-grains
     (model_id='', sidecar_id='') row for the limit/pct metadata to restore."""
     index: dict[_WindowKey, _WindowMeta] = {}
     for w in rows:

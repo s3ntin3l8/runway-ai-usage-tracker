@@ -155,8 +155,8 @@ function nextPollLabel(iso: string | null | undefined): string {
 }
 
 // Match credential inventory accounts to this provider detail account.
-// Provider-wide generic IDs never equal a user's real account_id, so include
-// them whenever the provider matches — they are this provider's credentials too.
+// Provider-wide generic IDs and unscoped config rows intentionally match each
+// pane. Account-keyed config sources match only their account (or default).
 const GENERIC_ACCOUNT_IDS = new Set(['server', 'config', 'config-cookie', 'local-file']);
 // `config:<account>` / `config-cookie:<account>` are per-account: only show the
 // one belonging to this pane's account (or the unscoped `default` config row).
