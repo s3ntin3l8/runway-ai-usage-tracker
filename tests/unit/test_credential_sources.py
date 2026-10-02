@@ -5,11 +5,21 @@ from datetime import UTC, datetime
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.models.db import CredentialSource
+from app.models.db import (
+    CredentialSource,
+    CredentialTag,
+    LatestUsage,
+    ProviderAccountLabel,
+    ProviderConfig,
+    UsageEvent,
+)
 from app.services.credential_sources import (
     account_sources,
+    configured_account_ids,
     describe_origin,
+    phantom_accounts,
     prune_server_sources,
+    real_account_ids,
     record_source_result,
     register_server_source,
     resolve_source_account,
@@ -351,3 +361,144 @@ def test_default_keyed_registration_stays_default_when_nothing_is_resolved_yet()
             session, provider_id="github", account_id="default", source_type="env", label="T"
         )
         assert row.account_id == "default"
+
+
+def test_configured_account_ids_only_reports_provider_configs():
+    with _mem_session() as session:
+        session.add(ProviderConfig(provider_id="openrouter", account_id="alice@example.com"))
+        session.commit()
+        touch_source(
+            session,
+            provider_id="openrouter",
+            account_id="bob@example.com",
+            source_id="host-a",
+            source_type="file",
+            source_label="auth.json",
+            sidecar_id="host-a",
+        )
+
+        assert configured_account_ids(session, "openrouter") == {"alice@example.com"}
+        assert configured_account_ids(session, "minimax") == set()
+
+
+def test_real_account_ids_union_every_kind_of_evidence():
+    with _mem_session() as session:
+        session.add(ProviderConfig(provider_id="openrouter", account_id="alice@example.com"))
+        session.add(
+            LatestUsage(
+                provider_id="openrouter",
+                account_id="bob@example.com",
+                window_type="daily",
+                variant="",
+                model_id="",
+                card_json="{}",
+            )
+        )
+        session.add(
+            UsageEvent(
+                provider_id="openrouter",
+                account_id="carol@example.com",
+                sidecar_id="dev-01",
+                event_id="msg_1",
+                ts=datetime(2026, 9, 1, tzinfo=UTC),
+                kind="message",
+                model_id="gpt-5",
+                tokens_input=10,
+                tokens_output=5,
+                cost_usd=0.01,
+                attribution_source="default",
+            )
+        )
+        session.add(
+            CredentialTag(
+                provider_id="openrouter",
+                credential_origin="env:OPENROUTER_API_KEY",
+                account_id="dave@example.com",
+            )
+        )
+        session.add(
+            ProviderAccountLabel(
+                provider_id="openrouter",
+                account_id="erin@example.com",
+                account_label="Erin",
+            )
+        )
+        session.commit()
+
+        assert real_account_ids(session, "openrouter") == {
+            "alice@example.com",
+            "bob@example.com",
+            "carol@example.com",
+            "dave@example.com",
+            "erin@example.com",
+        }
+        assert real_account_ids(session, "minimax") == set()
+
+
+def test_phantom_accounts_are_the_ones_with_only_credential_rows():
+    """The account an account rename left behind: its credential rows survive
+    with no config, card or events of their own."""
+    with _mem_session() as session:
+        touch_source(
+            session,
+            provider_id="deepseek",
+            account_id="bd6d58cf",
+            source_id="host-a",
+            source_type="file",
+            source_label="auth.json",
+            sidecar_id="host-a",
+        )
+        touch_source(
+            session,
+            provider_id="deepseek",
+            account_id="alice@example.com",
+            source_id="host-a",
+            source_type="file",
+            source_label="auth.json",
+            sidecar_id="host-a",
+        )
+        session.add(ProviderConfig(provider_id="deepseek", account_id="alice@example.com"))
+        session.commit()
+
+        assert phantom_accounts(session, "deepseek") == {"bd6d58cf"}
+        # no source rows for this provider at all: nothing to be phantom about
+        assert phantom_accounts(session, "minimax") == set()
+
+
+def test_a_tag_or_label_keeps_a_configless_account_off_the_phantom_list():
+    """An operator can point a credential at a discovered account that has no
+    configuration, card or usage yet. That is a deliberate choice, so ingest
+    and the repair must not read it as a rename leftover."""
+    with _mem_session() as session:
+        for account_id, source_id in (
+            ("discovered@example.com", "host-a"),
+            ("labelled@example.com", "host-b"),
+            ("bd6d58cf", "host-c"),
+        ):
+            touch_source(
+                session,
+                provider_id="deepseek",
+                account_id=account_id,
+                source_id=source_id,
+                source_type="file",
+                source_label="auth.json",
+                sidecar_id=source_id,
+            )
+        session.add(
+            CredentialTag(
+                provider_id="deepseek",
+                credential_origin="path:/auth.json",
+                account_id="discovered@example.com",
+                sidecar_id="host-a",
+            )
+        )
+        session.add(
+            ProviderAccountLabel(
+                provider_id="deepseek",
+                account_id="labelled@example.com",
+                account_label="Labelled",
+            )
+        )
+        session.commit()
+
+        assert phantom_accounts(session, "deepseek") == {"bd6d58cf"}

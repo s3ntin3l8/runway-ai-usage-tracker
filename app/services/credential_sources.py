@@ -11,7 +11,14 @@ from typing import Any
 
 from sqlmodel import Session, col, select
 
-from app.models.db import CredentialSource
+from app.models.db import (
+    CredentialSource,
+    CredentialTag,
+    LatestUsage,
+    ProviderAccountLabel,
+    ProviderConfig,
+    UsageEvent,
+)
 from app.services.account_identity import canonical_account_id
 
 
@@ -308,6 +315,74 @@ HEALTH_DETAILS = {
     "unavailable": "Collection failed",
     "degraded": "Some requests were rejected; quota was collected",
 }
+
+
+def configured_account_ids(session: Session, provider_id: str) -> set[str]:
+    """Accounts with a ``provider_configs`` row — the only thing a ``config:``
+    source row (whose id embeds its account) is written alongside."""
+    return set(
+        session.exec(
+            select(ProviderConfig.account_id).where(ProviderConfig.provider_id == provider_id)
+        ).all()
+    )
+
+
+def real_account_ids(session: Session, provider_id: str) -> set[str]:
+    """Accounts this provider really has: a configuration, a quota card, usage,
+    or the tag/label an operator gave it.
+
+    A ``credential_sources`` row only claims where a credential was filed, and
+    an account rename strands that claim; these five kinds of evidence are
+    what survive one — the same set ``misidentified_gauge_series`` treats as
+    proof an account exists, so a deliberate choice (a credential tagged onto
+    a discovered-but-not-yet-collected account) is never read as a stray.
+    Source rows on an account outside this set are ``phantom`` — see
+    :func:`phantom_accounts`.
+    """
+    cards = session.exec(
+        select(LatestUsage.account_id).where(LatestUsage.provider_id == provider_id).distinct()
+    ).all()
+    events = session.exec(
+        select(UsageEvent.account_id).where(UsageEvent.provider_id == provider_id).distinct()
+    ).all()
+    tags = session.exec(
+        select(CredentialTag.account_id).where(CredentialTag.provider_id == provider_id).distinct()
+    ).all()
+    labels = session.exec(
+        select(ProviderAccountLabel.account_id)
+        .where(ProviderAccountLabel.provider_id == provider_id)
+        .distinct()
+    ).all()
+    return (
+        configured_account_ids(session, provider_id)
+        | set(cards)
+        | set(events)
+        | set(tags)
+        | set(labels)
+    )
+
+
+def phantom_accounts(session: Session, provider_id: str) -> set[str]:
+    """Accounts a credential source is filed under that have no configuration,
+    quota card, usage or operator-set tag/label — the id an account was
+    renamed *away from* (a credential-hash id later re-keyed onto its email
+    label, typically).
+
+    Never operator intent: an account an operator actually chose keeps at
+    least its own configuration, the history it produced, or the identity
+    they gave it. Ingest uses this to retire the copy of a source it is
+    re-filing (a source belongs to exactly one account), and the Data Health
+    ``orphan_credential_sources`` fixer uses it to delete rows nothing else
+    will ever move.
+    """
+    filed = session.exec(
+        select(CredentialSource.account_id)
+        .where(CredentialSource.provider_id == provider_id)
+        .distinct()
+    ).all()
+    if not filed:
+        return set()
+    return set(filed) - real_account_ids(session, provider_id)
 
 
 def record_source_result(row: CredentialSource, health: str) -> None:

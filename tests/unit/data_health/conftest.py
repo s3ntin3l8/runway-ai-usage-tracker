@@ -15,6 +15,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.models.db import (
+    CredentialSource,
     CredentialTag,
     LatestUsage,
     ProviderConfig,
@@ -110,6 +111,27 @@ def make_tag(
     }
     base.update(overrides)
     row = CredentialTag(**base)
+    session.add(row)
+    session.commit()
+    return row
+
+
+def make_source(
+    session: Session, *, provider_id: str, account_id: str, source_id: str, **overrides
+) -> CredentialSource:
+    """A credential source row; the config-shaped fields follow ``source_id``,
+    the only thing that distinguishes a manual configuration from a machine one."""
+    is_config = source_id.startswith("config:")
+    base: dict = {
+        "provider_id": provider_id,
+        "account_id": account_id,
+        "source_id": source_id,
+        "source_type": "config" if is_config else "sidecar",
+        "source_label": "Manual configuration" if is_config else "auth.json",
+        "sidecar_id": None if is_config else "dev-01",
+    }
+    base.update(overrides)
+    row = CredentialSource(**base)
     session.add(row)
     session.commit()
     return row

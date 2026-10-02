@@ -15,6 +15,7 @@ from app.services.data_health.checks.lone_default_events import LoneDefaultEvent
 from app.services.data_health.checks.misidentified_gauge_series import (
     MisidentifiedGaugeSeriesCheck,
 )
+from app.services.data_health.checks.orphan_credential_sources import OrphanCredentialSourcesCheck
 from app.services.data_health.checks.orphan_credential_tags import OrphanCredentialTagsCheck
 from app.services.data_health.checks.orphan_gauge_series import OrphanGaugeSeriesCheck
 from app.services.data_health.checks.pending_events import PendingEventsCheck
@@ -26,6 +27,7 @@ REGISTRY: list[Check] = [
     LegacyProviderIdsCheck(),
     LoneDefaultEventsCheck(),
     OrphanCredentialTagsCheck(),
+    OrphanCredentialSourcesCheck(),
     OrphanGaugeSeriesCheck(),
     MisidentifiedGaugeSeriesCheck(),
     UnpricedModelsCheck(),

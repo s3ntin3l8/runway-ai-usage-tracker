@@ -102,7 +102,12 @@ _INGEST_CREDENTIAL_KEYS = frozenset(
 _COOKIE_BUNDLE_KEYS = frozenset({"session_cookie", "console_session"})
 
 
-def _can_reconcile_row(provider_id: str, row_account_id: str, target_account_id: str) -> bool:
+def _can_reconcile_row(
+    provider_id: str,
+    row_account_id: str,
+    target_account_id: str,
+    phantom_account_ids: set[str] | None = None,
+) -> bool:
     """May ingest move/delete a source row filed under ``row_account_id`` now that the
     source resolves to ``target_account_id``?
 
@@ -110,12 +115,17 @@ def _can_reconcile_row(provider_id: str, row_account_id: str, target_account_id:
     ingest may touch differs by provider. Anthropic reconciles every other account (its
     sources used to be filed under token-derived placeholder identities). Everyone else
     only retires the ``default`` placeholder the manifest may have created before the
-    real identity was known; a row an operator moved to another account is not ours to
-    touch here.
+    real identity was known, plus any *phantom* account — one with no configuration,
+    quota card, usage or operator-set tag/label, i.e. the id an account was renamed away
+    from (a credential-hash id later re-keyed to its email label, typically). A row an
+    operator moved to another account is not ours to touch here;
+    ``phantom_account_ids`` is computed by the caller, once per provider per request.
     """
     if row_account_id == target_account_id:
         return False
-    return provider_id == "anthropic" or row_account_id == "default"
+    if provider_id == "anthropic" or row_account_id == "default":
+        return True
+    return row_account_id in (phantom_account_ids or ())
 
 
 def _is_cookie_key(key: str) -> bool:
@@ -352,6 +362,19 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
     # Store tokens in cache for each identified account
     tokens_received_count = 0
+
+    # Accounts this request's providers have credential rows for but no evidence
+    # of — computed at most once per provider (see `_can_reconcile_row`), and
+    # only when a source turns out to be filed under another account.
+    phantom_cache: dict[str, set[str]] = {}
+
+    def _phantoms_for(provider_id: str) -> set[str]:
+        if provider_id not in phantom_cache:
+            from app.services.credential_sources import phantom_accounts
+
+            phantom_cache[provider_id] = phantom_accounts(session, provider_id=provider_id)
+        return phantom_cache[provider_id]
+
     for p_id, p_tokens, a_id, a_name, origin, identity_pending in tokens_to_store:
         sidecar_id = payload.sidecar_id or "local"
         from app.services.credential_sources import (
@@ -404,10 +427,18 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # Anthropic reconciles every other account this source was filed under
         # (token-derived placeholder identities). Other providers only retire the
         # ``default`` placeholder the manifest may have created before ingest
-        # resolved the real identity — a source belongs to exactly one account, but
-        # an operator-moved row elsewhere is not ours to touch here.
+        # resolved the real identity, and rows on an account nothing collects for
+        # any more — a source belongs to exactly one account, but an operator-moved
+        # row on a live account is not ours to touch here.
+        phantoms = (
+            _phantoms_for(p_id)
+            if any(row.account_id != actual_acc_id for row in prior_sources)
+            else set()
+        )
         replaceable = [
-            row for row in prior_sources if _can_reconcile_row(p_id, row.account_id, actual_acc_id)
+            row
+            for row in prior_sources
+            if _can_reconcile_row(p_id, row.account_id, actual_acc_id, phantoms)
         ]
         old_accounts = {row.account_id for row in replaceable}
         target_exists = any(row.account_id == actual_acc_id for row in prior_sources)
