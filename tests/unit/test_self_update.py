@@ -720,11 +720,15 @@ class TestWindowsSwapScript:
     def test_logs_swap_result_and_checks_each_move(self):
         script = self._script(restart=True, display_version="2.13.0")
         assert 'set "LOG=%~dp0runway-self-update.log"' in script
-        assert "if %wait_attempts% GEQ 120 goto swap_failed" in script
+        assert "if %wait_attempts% GEQ 120 goto move_failed" in script
         assert "if errorlevel 1 goto restore_previous" in script
         assert "if errorlevel 1 goto restore_failed" in script
         assert "Failed to restore previous sidecar from backup" in script
         assert "Installed updated sidecar" in script
+        assert "locked after %wait_attempts% move attempts" in script
+        assert 'tasklist /FI "IMAGENAME eq RunwaySidecar.exe" >>"%LOG%" 2>&1' in script
+        assert script.index(":move_failed") < script.index(":swap_failed")
+        assert 'del "%~f0"\r\nexit /b 1' in script
         assert "Relaunch requested" not in script
         assert script.index('set "LOG=%~dp0runway-self-update.log"') < script.index("echo [")
         assert 'Self-update helper started.>"%LOG%"' in script

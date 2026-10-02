@@ -645,7 +645,7 @@ def _windows_swap_script(
         f'move /Y "{install}" "{backup}" >NUL 2>&1\r\n'
         "if not errorlevel 1 goto install_new\r\n"
         "set /a wait_attempts+=1 >NUL\r\n"
-        "if %wait_attempts% GEQ 120 goto swap_failed\r\n"
+        "if %wait_attempts% GEQ 120 goto move_failed\r\n"
         "ping -n 2 127.0.0.1 >NUL\r\n"
         "goto move_original\r\n"
         ":install_new\r\n"
@@ -666,13 +666,17 @@ def _windows_swap_script(
         ":restore_failed\r\n"
         'echo [%date% %time%] Failed to restore previous sidecar from backup.>>"%LOG%"\r\n'
         "goto swap_failed\r\n"
+        ":move_failed\r\n"
+        f'echo [%date% %time%] Original sidecar PID {pid} exited, but the executable stayed locked after %wait_attempts% move attempts.>>"%LOG%"\r\n'
+        'tasklist /FI "IMAGENAME eq RunwaySidecar.exe" >>"%LOG%" 2>&1\r\n'
+        "goto swap_failed\r\n"
         ":swap_failed\r\n"
         'echo [%date% %time%] Sidecar swap failed; check file permissions and running RunwaySidecar processes.>>"%LOG%"\r\n'
         # The first move may have failed before the original was renamed;
         # relaunch it when it is still present.
         f'if exist "{install}" {relaunch}\r\n'
-        '  del "%~f0"\r\n'
-        "  exit /b 1\r\n"
+        'del "%~f0"\r\n'
+        "exit /b 1\r\n"
     )
 
 
