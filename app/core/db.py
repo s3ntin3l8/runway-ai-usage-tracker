@@ -185,6 +185,8 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("credential_sources", "last_attempt_at", "DATETIME"),
     ("credential_sources", "last_success_at", "DATETIME"),
     ("credential_sources", "last_error", "TEXT"),
+    ("pending_credential_tags", "verify_attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("pending_credential_tags", "next_verify_at", "DATETIME"),
     ("system_config", "user_timezone", "VARCHAR"),
     ("system_config", "sidecar_update_channel", "VARCHAR"),
     ("system_config", "sidecar_auto_update", "BOOLEAN"),

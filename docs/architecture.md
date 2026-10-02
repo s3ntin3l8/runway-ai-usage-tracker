@@ -164,7 +164,10 @@ email from the usage endpoint after exchanging the cookie. Anthropic files its p
 under their source id rather than `default`, so the verifier looks across every cache slot
 (`TokenCache.get_pending_sources`). A pinned run never reads the server host's own login (it
 belongs to another account), and a source that works but cannot name its account stays pending
-without blocking the others. Anything unverifiable stays "Needs mapping" for the operator.
+without blocking the others. Anything unverifiable stays "Needs mapping" for the operator, and
+is retried with exponential backoff (`pending_credential_tags.next_verify_at`: 15 minutes
+doubling to 6 hours; five sources per provider per cycle, oldest-due first). A new secret for
+the same source resets it.
 A ChatGPT token whose JWT already carries the email (`id_token`, or the
 `https://api.openai.com/profile` claim of an access token, from a file or `CHATGPT_OAUTH_TOKEN`)
 is identified by the sidecar and never needs verifying.

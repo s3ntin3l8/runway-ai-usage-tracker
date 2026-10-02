@@ -737,6 +737,11 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     # Safe quota fields only; tokens and cookies are never written here.
     quota_preview_json: str | None = None
     quota_preview_observed_at: UTCDateTime | None = None
+    # Identity-verifier retry state: a source that cannot name its account is retried
+    # with exponential backoff instead of on every poll. Cleared when it is promoted
+    # (the row is deleted) or when ingest stores a different secret.
+    verify_attempts: int = 0
+    next_verify_at: UTCDateTime | None = None
 
 
 class PendingUsageEvent(SQLModel, table=True):  # type: ignore[call-arg]

@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 
 
 IDENTITY_VERIFIER_SUFFIX = ":identity-pending"
+# Pending sources verified per provider per cycle (oldest-due first), so a host reporting
+# many unidentifiable credentials cannot turn every cycle into a burst of upstream calls.
+MAX_VERIFICATIONS_PER_CYCLE = 5
+# What ingest calls a push that carries no sidecar id; keys the retry state the same way.
+LOCAL_SIDECAR_ID = "local"
 
 
 def verifier_key(provider_id: str) -> str:
@@ -746,22 +751,27 @@ class CollectorManager:
                 else candidate.get("enabled", True)
             )
         ]
-        candidates.sort(
-            key=lambda candidate: (
-                # A bundle whose access token is already dead cannot answer this
-                # poll, so it goes behind every live (or undatable) bundle even
-                # when the operator ranked it first: priority orders usable
-                # credentials, it must not hand the first attempt to a
-                # credential that is known dead and can only reject the call
-                # (#474). Freshness only splits candidates into
-                # live-then-expired; within each group the configured
-                # (priority, source_id) order still decides.
-                self._access_token_expired(candidate),
-                preferences[candidate["source_id"]][1]
-                if candidate["source_id"] in preferences
-                else candidate.get("priority", 0),
-                candidate["source_id"],
-            )
+        candidates = await self._due_for_verification(
+            identity_verification,
+            provider_id,
+            sorted(
+                candidates,
+                key=lambda candidate: (
+                    # A bundle whose access token is already dead cannot answer this
+                    # poll, so it goes behind every live (or undatable) bundle even
+                    # when the operator ranked it first: priority orders usable
+                    # credentials, it must not hand the first attempt to a
+                    # credential that is known dead and can only reject the call
+                    # (#474). Freshness only splits candidates into
+                    # live-then-expired; within each group the configured
+                    # (priority, source_id) order still decides.
+                    self._access_token_expired(candidate),
+                    preferences[candidate["source_id"]][1]
+                    if candidate["source_id"] in preferences
+                    else candidate.get("priority", 0),
+                    candidate["source_id"],
+                ),
+            ),
         )
         if not candidates:
             return []
@@ -769,6 +779,7 @@ class CollectorManager:
         successful_result: list[dict[str, Any]] | None = None
         last_kept_failure_result: list[dict[str, Any]] | None = None
         skipped_for_renewal = False
+        attempted: list[dict[str, Any]] = []
         deadline = asyncio.get_running_loop().time() + 25.0
         await smart.reset()
         for index, candidate in enumerate(candidates):
@@ -792,6 +803,7 @@ class CollectorManager:
                 skipped_for_renewal = True
                 continue
             cache_slot = candidate.get("account_slot") or account_id
+            attempted.append(candidate)
             async with token_cache.using_source(
                 provider_id, cache_slot, candidate["source_id"]
             ) as attempt:
@@ -893,6 +905,9 @@ class CollectorManager:
                 continue
             successful_result = result
             break
+        # Every source tried but not promoted (a promotion deletes its pending row, so
+        # noting it is a no-op) is scheduled for a later retry.
+        await self._note_unverified(identity_verification, provider_id, attempted)
         if successful_result is None and last_kept_failure_result is None and skipped_for_renewal:
             # Nothing ran, so the collector still holds the previous poll's state (often
             # "complete"). Say "skipped" so the poller keeps the last good cards instead of
@@ -1179,6 +1194,73 @@ class CollectorManager:
             await token_cache.move_source(
                 provider_id, cache_account_id or old_account_id, target, source_id
             )
+
+    @classmethod
+    async def _due_for_verification(
+        cls, identity_verification: bool, provider_id: str, candidates: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not identity_verification:
+            return candidates
+        return await asyncio.to_thread(cls._due_verification_candidates, provider_id, candidates)
+
+    @classmethod
+    async def _note_unverified(
+        cls, identity_verification: bool, provider_id: str, attempted: list[dict[str, Any]]
+    ) -> None:
+        if identity_verification and attempted:
+            await asyncio.to_thread(cls._note_verification_tries, provider_id, attempted)
+
+    @staticmethod
+    def _due_verification_candidates(
+        provider_id: str, candidates: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Pending sources whose backoff has elapsed, oldest-due first, capped per cycle."""
+        from datetime import UTC, datetime
+
+        from sqlmodel import Session
+
+        from app.core.db import engine
+        from app.services.credential_tags import PendingCredentialTagRepo
+
+        with Session(engine) as session:
+            schedule = PendingCredentialTagRepo.get_verify_schedule(
+                session, provider_id=provider_id
+            )
+        now = datetime.now(UTC)
+        floor = datetime.min.replace(tzinfo=UTC)
+        due: list[tuple[datetime, dict[str, Any]]] = []
+        for candidate in candidates:
+            key = (
+                candidate.get("sidecar_id") or LOCAL_SIDECAR_ID,
+                candidate.get("credential_origin"),
+            )
+            at = schedule.get(key)  # type: ignore[arg-type]
+            if at is not None and at > now:
+                continue
+            due.append((at or floor, candidate))
+        due.sort(key=lambda item: item[0])
+        return [candidate for _, candidate in due[:MAX_VERIFICATIONS_PER_CYCLE]]
+
+    @staticmethod
+    def _note_verification_tries(provider_id: str, attempted: list[dict[str, Any]]) -> None:
+        """Tries that left a source pending: schedule each one's next attempt."""
+        from sqlmodel import Session
+
+        from app.core.db import engine
+        from app.services.credential_tags import PendingCredentialTagRepo
+
+        with Session(engine) as session:
+            for candidate in attempted:
+                sidecar_id = candidate.get("sidecar_id") or LOCAL_SIDECAR_ID
+                origin = candidate.get("credential_origin")
+                if isinstance(sidecar_id, str) and isinstance(origin, str):
+                    PendingCredentialTagRepo.record_verify_attempt(
+                        session,
+                        sidecar_id=sidecar_id,
+                        provider_id=provider_id,
+                        credential_origin=origin,
+                    )
+            session.commit()
 
     def _persist_identity_pending_preview(
         self,
