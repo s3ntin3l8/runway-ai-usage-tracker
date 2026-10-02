@@ -264,6 +264,15 @@ class XaiCollector(BaseCollector):
         cap (xAI's "SuperGrok Heavy" plan allows pay-as-you-go overage;
         the proxy surfaces ``onDemandCap.val`` and ``onDemandUsed.val`` as
         microcents).
+
+        The proxy emits proto3-JSON, which drops scalar fields equal to
+        their default: a window with no usage yet returns ``currentPeriod``
+        but omits ``creditUsagePercent`` (and ``productUsage``) entirely.
+        Reading that absence as "0% used" is what keeps the gauge alive
+        across a window reset; without it every fresh window would surface
+        a ``parse_error`` card instead of quota. ``currentPeriod`` is the
+        guard — a response carrying no period at all is not a credits
+        answer, so it still fails loudly.
         """
         config = (body or {}).get("config") or {}
         if not isinstance(config, dict):
@@ -277,6 +286,8 @@ class XaiCollector(BaseCollector):
 
         cards: list[dict[str, Any]] = []
         pct = self._percent_or_none(config.get("creditUsagePercent"))
+        if pct is None and period:
+            pct = 0.0
         if pct is not None:
             cards.append(
                 self._build_credits_card(

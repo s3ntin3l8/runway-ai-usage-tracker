@@ -137,8 +137,22 @@ class TestBuildCardsFromBilling:
         cards = c._build_cards_from_billing(body)
         assert cards[0]["window_type"] == "monthly"
 
-    def test_missing_credit_percent_skips_credits_card(self):
+    def test_missing_credit_percent_reads_as_zero_usage(self):
+        """proto3-JSON omits default-valued scalars: a window with no usage
+        yet sends ``currentPeriod`` but no ``creditUsagePercent``. That is
+        0% used, not a parse failure."""
         body = {"config": {"currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY"}}}
+        c = XaiCollector(account_id="acc_test")
+        cards = c._build_cards_from_billing(body)
+        assert len(cards) == 1
+        assert cards[0]["pct_used"] == 0.0
+        assert cards[0]["remaining"] == "100.0%"
+        assert c._last_error_reason == "unknown"
+
+    def test_missing_period_without_credit_percent_still_errors(self):
+        """No ``currentPeriod`` means this isn't a credits answer at all —
+        degrade to the error card rather than inventing a window."""
+        body = {"config": {"isUnifiedBillingUser": True}}
         c = XaiCollector(account_id="acc_test")
         cards = c._build_cards_from_billing(body)
         assert cards == []
@@ -206,6 +220,56 @@ class TestGetXaiApi:
         assert cards[0]["pct_used"] == 18.0
         assert cards[0]["usage_url"] == "https://grok.com"
         assert c._plan_tier == "SuperGrok Heavy"
+
+    @pytest.mark.asyncio
+    async def test_fresh_window_without_usage_fields_emits_zero_card(self):
+        """Live ``?format=credits`` body for a window that has not accrued
+        usage yet — every default-valued scalar is omitted, and the gauge
+        must still render instead of erroring (the failure mode that left
+        the Grok card Stale across a window reset)."""
+        fresh_window = {
+            "config": {
+                "currentPeriod": {
+                    "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                    "start": "2026-10-01T23:01:54.034878+00:00",
+                    "end": "2026-10-08T23:01:54.034878+00:00",
+                },
+                "onDemandCap": {"val": 0},
+                "onDemandUsed": {"val": 0},
+                "isUnifiedBillingUser": True,
+                "prepaidBalance": {"val": 0},
+                "billingPeriodStart": "2026-10-01T00:00:00+00:00",
+                "billingPeriodEnd": "2026-11-01T00:00:00+00:00",
+            }
+        }
+        c = XaiCollector(account_id="acc_test")
+        with (
+            patch(
+                "app.services.collectors.xai.token_cache.get_token",
+                new_callable=AsyncMock,
+                return_value="eyJ.eyJ.zzz",
+            ),
+            patch(
+                "app.services.collectors.xai.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=({"xai_access": "eyJ.eyJ.zzz"}, {"source": "sidecar-123"}),
+            ),
+            patch(
+                "app.services.collectors.xai.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[
+                    _make_response(SETTINGS_SUPERGROK),
+                    _make_response(fresh_window),
+                ],
+            ),
+        ):
+            cards = await c._get_xai_api(MagicMock())
+
+        assert len(cards) == 1
+        assert cards[0]["pct_used"] == 0.0
+        assert cards[0]["window_type"] == "weekly"
+        assert cards[0]["reset_at"].startswith("2026-10-08T")
+        assert c._last_error_reason == "unknown"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
