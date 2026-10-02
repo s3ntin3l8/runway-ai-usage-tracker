@@ -39,6 +39,16 @@ In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message ev
 4. **Requirement**: Always use **HTTPS** for the `APP_HOST` in production to encrypt the request body during transit.
 5. **Config endpoint**: `GET /api/v1/fleet/config` needs no key, but only a request signed with the same HMAC (message: `X-Timestamp + "GET:" + query string`, which binds `sidecar_id`) receives account ids, operator tag hints and per-account credential tokens. Unsigned callers on a non-loopback bind get only the enabled/strategies view; a present-but-invalid signature is rejected (401).
 
+### Unidentified credentials and identity verification
+
+A sidecar normally keeps a credential it cannot attribute to an account on the machine. For the providers whose server collector can ask the upstream API who owns a credential (Anthropic, ChatGPT, Gemini, Antigravity, GitHub, OpenCode), it instead sends the secret (a browser session cookie, a session env var or an access token) to the server flagged `identity_pending`, and the server calls the provider (`claude.ai`, `chatgpt.com`, Google) with it. What that means for your trust model:
+
+- **Fixed destinations only.** The upstream URLs are literals in the collectors; a payload only ever supplies header values (cookie / bearer), never a host or path.
+- **The proof comes from the provider, not the sidecar.** The email bound to a source is the one the provider returns for that credential; a sidecar cannot make a credential report someone else's email. A source is bound to its account by a durable `identity_verification` tag, and an operator's own mapping is never overwritten by it.
+- **Isolation while pending.** A pending bundle is only readable through its pinned source: it never enters the shared `default` cache, never uses the server host's own login, and its exchanged bearer is not stored. The server persists only a whitelisted quota preview (no card detail text) so you can map it by hand.
+- **Shared key, shared trust.** Sidecar identity is not authenticated beyond the shared `INGEST_API_KEY`, so anyone holding it can already claim any `sidecar_id`, `account_id` or origin. Treat a sidecar host that can reach the key as trusted for every account it could pair with.
+- **What is never sent.** A credential the sidecar can name from the credential itself (an `id_token` or access-token email claim, `OPENCODE_ACCOUNT_LABEL`, a tag you set) is never sent for verification.
+
 ## 🔗 Sidecar Pairing (`runway-sidecar://` links)
 
 New sidecars can be set up from the dashboard (*Fleet → Add sidecar → Generate pairing link*) instead of by pasting the server URL and `INGEST_API_KEY` into each machine. The design keeps the shared key out of URLs and out of the user's hands:

@@ -86,7 +86,7 @@ class TestCollectorManagerInitialization:
             yield {"auth_failed": False}
 
         monkeypatch.setattr(
-            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+            "app.services.collector_manager.token_cache.get_pending_sources", get_candidates
         )
         monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
         promote = AsyncMock()
@@ -103,7 +103,11 @@ class TestCollectorManagerInitialization:
         assert health[candidate["source_id"]] == "healthy"
         if resolved_account:
             promote.assert_awaited_once_with(
-                "antigravity", "default", candidate["source_id"], resolved_account
+                "antigravity",
+                "default",
+                candidate["source_id"],
+                resolved_account,
+                cache_account_id="default",
             )
         else:
             promote.assert_not_awaited()
@@ -273,8 +277,8 @@ class TestCollectorManagerInitialization:
             )
         }
 
-        async def source_candidates(provider_id, account_id):
-            if provider_id == "antigravity" and account_id == "default":
+        async def pending_sources(provider_id):
+            if provider_id == "antigravity":
                 return [
                     {
                         "source_id": "sidecar:laptop:auth-json",
@@ -282,13 +286,14 @@ class TestCollectorManagerInitialization:
                         "sidecar_id": "laptop",
                         "credential_origin": "path:/auth.json",
                         "identity_pending": True,
+                        "account_slot": "default",
                     }
                 ]
             return []
 
         with patch(
-            "app.services.collector_manager.token_cache.get_source_candidates",
-            side_effect=source_candidates,
+            "app.services.collector_manager.token_cache.get_pending_sources",
+            side_effect=pending_sources,
         ):
             await manager._sync_collectors(force=True)
 
@@ -341,7 +346,7 @@ class TestCollectorManagerInitialization:
             yield {"auth_failed": False}
 
         monkeypatch.setattr(
-            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+            "app.services.collector_manager.token_cache.get_pending_sources", get_candidates
         )
         monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
         promote = AsyncMock()
@@ -354,7 +359,11 @@ class TestCollectorManagerInitialization:
         assert credential_slots == ["default", "default"]
         assert result == [{"service_name": "bob@example.com"}]
         promote.assert_awaited_once_with(
-            "antigravity", "default", candidates[1]["source_id"], "bob@example.com"
+            "antigravity",
+            "default",
+            candidates[1]["source_id"],
+            "bob@example.com",
+            cache_account_id="default",
         )
 
     @pytest.mark.parametrize(
@@ -1275,6 +1284,28 @@ class TestCollectorManagerInitialization:
         manager._sync_collectors = sync
         manager._get_client = AsyncMock(return_value=MagicMock())
         manager._collect_with_semaphore = fail
+
+        await manager._do_collect()
+
+        assert manager.last_collection_outcomes == []
+
+    @pytest.mark.asyncio
+    async def test_a_verifier_that_adopted_an_email_records_no_server_outcome_for_it(self, manager):
+        """After proving an email the verifier's collector carries that account id; its state is
+        the pending source's, not that account's own server credential."""
+        collector = SimpleNamespace(PROVIDER_ID="chatgpt", account_id="alice@example.com")
+        smart = MagicMock(collector=collector, last_collection_state="failed")
+        manager.smart_collectors = {"chatgpt:default:identity-pending": smart}
+
+        async def sync(_force=False):
+            return None
+
+        async def done(_key, _client):
+            return []
+
+        manager._sync_collectors = sync
+        manager._get_client = AsyncMock(return_value=MagicMock())
+        manager._collect_with_semaphore = done
 
         await manager._do_collect()
 

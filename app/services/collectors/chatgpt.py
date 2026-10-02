@@ -49,6 +49,7 @@ class ChatGPTCollector(
 
         # In-memory session state for mixins
         self._refreshed_token = None
+        self._refreshed_for: tuple[str, str] | None = None
         self._refreshed_token_expiry = None
         self._device_id = str(uuid.uuid4())
 
