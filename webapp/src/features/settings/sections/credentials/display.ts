@@ -11,6 +11,7 @@ export const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   expiring: 'warning',
   expired: 'critical',
   invalid: 'critical',
+  failing: 'critical',
   stale: 'neutral',
   unknown: 'neutral',
 };
@@ -20,6 +21,7 @@ export const STATUS_LABEL: Record<string, string> = {
   expiring: 'Expiring',
   expired: 'Expired',
   invalid: 'Rejected',
+  failing: 'Failing',
   stale: 'Not reported',
   unknown: 'Unknown',
 };
@@ -29,6 +31,7 @@ export const STATUS_HINT: Record<string, string> = {
   expiring: 'Expires soon and cannot be rolled automatically.',
   expired: 'The credential has expired.',
   invalid: 'The provider rejected this credential on the last collection.',
+  failing: 'The last several collections with this credential failed (the provider did not reject it).',
   stale: 'The machine stopped reporting this credential; its stored state is out of date.',
   unknown: 'No expiry information is available.',
 };

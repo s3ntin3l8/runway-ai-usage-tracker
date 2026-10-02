@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -25,6 +25,7 @@ from app.services.credential_sources import (
     real_account_ids,
     record_source_result,
     register_server_source,
+    reset_source_retry,
     resolve_source_account,
     sidecar_source_id,
     touch_source,
@@ -582,3 +583,51 @@ def test_merge_source_provenance_carries_a_legacy_row_whole():
         "Authentication failed",
         "Authentication failed",
     )
+
+
+def test_rejected_source_backs_off_on_the_shared_schedule_and_a_success_clears_it():
+    row = _source_row()
+    record_source_result(row, "auth_failed")
+    assert row.consecutive_failures == 1
+    first = row.next_retry_at
+    assert first is not None
+    assert timedelta(minutes=14) < first - datetime.now(UTC) <= timedelta(minutes=15)
+
+    record_source_result(row, "auth_failed")
+    assert row.consecutive_failures == 2
+    assert timedelta(minutes=29) < row.next_retry_at - datetime.now(UTC) <= timedelta(minutes=30)
+
+    record_source_result(row, "healthy")
+    assert (row.consecutive_failures, row.next_retry_at) == (0, None)
+
+
+def test_unavailable_counts_failures_but_never_rests_the_source():
+    row = _source_row()
+    for expected in (1, 2, 3):
+        record_source_result(row, "unavailable")
+        assert row.consecutive_failures == expected
+        assert row.next_retry_at is None
+
+
+def test_reset_source_retry_clears_only_that_source():
+    with _mem_session() as session:
+        for source_id in ("src:a", "src:b"):
+            row = touch_source(
+                session,
+                provider_id="openrouter",
+                account_id="alice@example.com",
+                source_id=source_id,
+                source_type="file",
+                source_label="auth.json",
+                credential_origin="path:auth.json",
+                sidecar_id="host-a",
+            )
+            record_source_result(row, "auth_failed")
+        session.commit()
+
+        reset_source_retry(session, provider_id="openrouter", source_id="src:a")
+        session.commit()
+
+        rows = {r.source_id: r for r in session.exec(select(CredentialSource))}
+        assert (rows["src:a"].consecutive_failures, rows["src:a"].next_retry_at) == (0, None)
+        assert rows["src:b"].consecutive_failures == 1 and rows["src:b"].next_retry_at is not None

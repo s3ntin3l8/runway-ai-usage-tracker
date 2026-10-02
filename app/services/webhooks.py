@@ -306,6 +306,8 @@ _CREDENTIAL_ALERT_HINT = (
 
 
 def _credential_title(status: str) -> str:
+    if status == "failing":
+        return "Credential failing to collect"
     return (
         "Credential invalid (rejected by provider)" if status == "invalid" else "Credential expired"
     )

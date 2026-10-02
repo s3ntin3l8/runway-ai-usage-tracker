@@ -123,6 +123,35 @@ async def test_fires_on_invalid(session):
 
 
 @pytest.mark.asyncio
+async def test_fires_on_a_credential_that_keeps_failing_to_collect(session):
+    _config(session)
+    client = await _run(session, [_row(status="failing")])
+    assert client.post.called
+    assert session.exec(select(WebhookCredentialAlert)).one().status == "failing"
+    assert "failing to collect" in str(client.post.call_args)
+
+
+@pytest.mark.asyncio
+async def test_failing_alert_escalates_to_invalid_but_never_back_down(session):
+    _config(session)
+    await _run(session, [_row(status="failing")])
+    await _run(session, [_row(status="invalid")])
+    assert session.exec(select(WebhookCredentialAlert)).one().status == "invalid"
+    await _run(session, [_row(status="failing")])
+    assert session.exec(select(WebhookCredentialAlert)).one().status == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_a_working_sibling_suppresses_a_failing_alert(session):
+    _config(session)
+    rows = [
+        _row(account_id="alice@example.com", status="failing"),
+        _row(account_id="alice@example.com", status="valid", source_name="cache"),
+    ]
+    assert not (await _run(session, rows)).post.called
+
+
+@pytest.mark.asyncio
 async def test_fires_on_non_rollable_expired(session):
     _config(session)
     client = await _run(session, [_row(status="expired", token_types=["access_token"])])

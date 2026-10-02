@@ -380,6 +380,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         from app.services.credential_sources import (
             describe_origin,
             pending_cache_slot,
+            reset_source_retry,
             retire_unkeyed_origin,
             sidecar_source_id,
             touch_source,
@@ -406,11 +407,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             # that placeholder even if its durable CredentialSource row was
             # lost; otherwise its OAuth bundle survives beside the resolved one.
             await token_cache.remove_source(p_id, source_id, source_id, retire_matching_oauth=True)
-        secret_changed = bool(
-            identity_pending
-            and origin
-            and not await _bundle_holds(p_id, cache_account_id or "default", source_id, p_tokens)
+        bundle_changed = bool(origin) and not await _bundle_holds(
+            p_id, cache_account_id or "default", source_id, p_tokens
         )
+        secret_changed = bool(identity_pending and bundle_changed)
         actual_acc_id = await token_cache.store(
             p_id,
             p_tokens,
@@ -429,6 +429,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         )
         if not isinstance(actual_acc_id, str):
             actual_acc_id = a_id or "default"
+        if bundle_changed:
+            # A re-login (or a pasted new key) ends a rejected source's rest period: it is a
+            # different credential now, so it is retried at once instead of at its old backoff.
+            reset_source_retry(session, provider_id=p_id, source_id=source_id)
         if secret_changed and origin:
             # A re-login (or first sighting): the identity verifier retries it next cycle
             # instead of waiting out the backoff earned by the previous secret.

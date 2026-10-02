@@ -146,6 +146,7 @@ def test_local_credential_ingest_registers_source_without_sidecar_id(session):
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="alice@example.com")
         mock_tc.remove_source = AsyncMock(return_value=False)
+        mock_tc.get_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     mock_touch.assert_called_once()
@@ -197,6 +198,7 @@ def test_ingest_keeps_bundled_cookie_credentials(session):
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="alice@example.com")
         mock_tc.remove_source = AsyncMock(return_value=False)
+        mock_tc.get_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     stored = {call.args[0]: call.args[1] for call in mock_tc.store.await_args_list}
@@ -256,6 +258,7 @@ def test_ingest_retires_default_placeholder_source_once_identity_resolves(sessio
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="alice@example.com")
         mock_tc.remove_source = AsyncMock(return_value=False)
+        mock_tc.get_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     rows = session.exec(
@@ -313,6 +316,7 @@ def test_ingest_drops_default_placeholder_when_real_account_row_already_exists(s
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="alice@example.com")
         mock_tc.remove_source = AsyncMock(return_value=False)
+        mock_tc.get_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     rows = session.exec(
@@ -358,6 +362,7 @@ def test_ingest_applies_existing_verified_tag_to_stale_pending_heartbeat(session
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="s3ntin3l8@gmail.com")
+        mock_tc.get_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     assert mock_tc.store.call_args.args[2] == "s3ntin3l8@gmail.com"
@@ -1247,6 +1252,60 @@ async def test_ingest_resets_verification_backoff_only_when_the_secret_changes(s
         _ingest(client, payload("claude-token-two"))  # a re-login
         row = pending()
         assert row.verify_attempts == 0 and row.next_verify_at is None
+
+
+@pytest.mark.asyncio
+async def test_ingest_ends_a_rejected_sources_rest_only_when_its_secret_changes(session):
+    from app.models.db import CredentialSource
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    origin = "env:CLAUDE_CODE_OAUTH_TOKEN"
+
+    def payload(token: str) -> dict:
+        return {
+            "provider": "anthropic-sidecar",
+            "sidecar_id": "test-host-01",
+            "metrics": [
+                {
+                    "provider_id": "anthropic",
+                    "service_name": "Claude",
+                    "remaining": "Token",
+                    "unit": "oauth",
+                    "metadata": {"oauth_token": token, "credential_origin": origin},
+                }
+            ],
+            "events": [],
+        }
+
+    def source() -> CredentialSource:
+        session.expire_all()
+        return session.exec(select(CredentialSource)).one()
+
+    def rest() -> None:
+        row = source()
+        row.health = "auth_failed"
+        row.consecutive_failures = 4
+        row.next_retry_at = datetime.now(UTC) + timedelta(hours=3)
+        session.add(row)
+        session.commit()
+
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache", cache),
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        client = TestClient(app)
+        _ingest(client, payload("claude-token-one"))
+        rest()
+
+        _ingest(client, payload("claude-token-one"))  # a heartbeat: same secret
+        assert source().consecutive_failures == 4 and source().next_retry_at is not None
+
+        _ingest(client, payload("claude-token-two"))  # a re-login
+        row = source()
+        assert (row.consecutive_failures, row.next_retry_at) == (0, None)
 
 
 async def test_a_re_login_on_an_oauth_file_origin_moves_the_source_to_the_new_claimed_account(

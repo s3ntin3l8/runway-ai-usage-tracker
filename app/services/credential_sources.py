@@ -20,6 +20,7 @@ from app.models.db import (
     UsageEvent,
 )
 from app.services.account_identity import canonical_account_id
+from app.services.credential_tags import retry_backoff
 
 
 def describe_origin(origin: str | None) -> tuple[str, str]:
@@ -437,5 +438,26 @@ def record_source_result(row: CredentialSource, health: str) -> None:
     if health in ("healthy", "degraded"):
         row.last_success_at = now
         row.last_error = row.health_detail
+        row.consecutive_failures = 0
+        row.next_retry_at = None
     else:
         row.last_error = HEALTH_DETAILS.get(health, "Collection failed")
+        row.consecutive_failures = (row.consecutive_failures or 0) + 1
+        if health == "auth_failed":
+            # A rejected credential keeps failing until someone replaces it: back off so it
+            # stops leading every cycle. A transient ``unavailable`` is retried as usual.
+            row.next_retry_at = now + retry_backoff(row.consecutive_failures)
+
+
+def reset_source_retry(session: Session, *, provider_id: str, source_id: str) -> None:
+    """Forget a source's failure streak: it holds a different secret now, so retry at once."""
+    for row in session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == provider_id,
+            CredentialSource.source_id == source_id,
+        )
+    ).all():
+        if row.consecutive_failures or row.next_retry_at is not None:
+            row.consecutive_failures = 0
+            row.next_retry_at = None
+            session.add(row)
