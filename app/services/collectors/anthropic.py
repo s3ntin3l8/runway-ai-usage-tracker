@@ -103,7 +103,11 @@ class AnthropicCollector(
                     self._current_input_source = "server"
                     # Mirror into token cache so the Tokens health tab can see it
                     token_data: dict[str, str] = {"oauth_token": token}
-                    if oauth.get("refreshToken"):
+                    # A CLI's own login file is renewed by that CLI: keeping its refresh
+                    # token out of the cache means the auto-refresher never rotates it.
+                    if oauth.get("refreshToken") and not credential_provider.is_cli_owned_file(
+                        "anthropic", self._credentials_path
+                    ):
                         token_data["refresh_token"] = oauth["refreshToken"]
                     label = creds.get("oauthAccount", {}).get("emailAddress")
                     await token_cache.store(

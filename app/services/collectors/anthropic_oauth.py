@@ -26,6 +26,7 @@ from app.services.collectors._anthropic_common import (
     classify_anthropic_window_type,
 )
 from app.services.collectors.oauth_base import OAuthBaseCollector
+from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         """Execute the HTTP request to refresh the Claude OAuth token."""
         creds = await self._get_credentials()
         refresh_token = creds.get("claudeAiOauth", {}).get("refreshToken") if creds else None
+        from_cli_file = bool(refresh_token) and credential_provider.is_cli_owned_file(
+            "anthropic", self._credentials_path
+        )
 
         if not refresh_token:
             refresh_token = await token_cache.get_token(
@@ -110,6 +114,12 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             )
 
         if not refresh_token:
+            return None
+
+        if from_cli_file:
+            # The server host's own Claude Code login: that CLI renews it. Rotating its
+            # refresh token here (proactively, on expiry or after a 429) signs it out.
+            logger.info("Not refreshing the Claude login in the CLI file: its CLI renews it")
             return None
 
         from app.services.token_refresher import machine_owns_credential

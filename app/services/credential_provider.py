@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from sqlmodel import Session
@@ -208,6 +209,20 @@ class CredentialMap(dict):
         super().__init__(*args, **kwargs)
 
 
+def _inside_runway_config_dir(path: str | os.PathLike[str]) -> bool:
+    """Whether *path* is inside Runway's own config dir (a plain prefix test would also
+    match a sibling such as ``runway-old``, and trips over separators on Windows)."""
+    runway_config_dir = get_platform_config_dir("runway")
+    if not runway_config_dir:
+        return False
+    try:
+        return Path(os.path.realpath(path)).is_relative_to(
+            Path(os.path.realpath(runway_config_dir))
+        )
+    except (OSError, ValueError):
+        return False
+
+
 class CredentialProvider:
     """
     Centralized service for discovering credentials from various sources.
@@ -271,7 +286,6 @@ class CredentialProvider:
 
         discovered: dict[str, str] = {}
         sources: dict[str, str] = {}
-        runway_config_dir = get_platform_config_dir("runway")
 
         # DB override: user-provided API key takes precedence over env/file/keychain
         try:
@@ -335,9 +349,9 @@ class CredentialProvider:
                                 # If the file is in our own internal config dir, it's UI-managed -> config.
                                 # Otherwise it's discovered in the wild -> server.
                                 is_internal = (
-                                    runway_config_dir
-                                    and str(path).startswith(str(runway_config_dir))
-                                ) or str(path) == settings.GITHUB_OAUTH_PATH
+                                    _inside_runway_config_dir(path)
+                                    or str(path) == settings.GITHUB_OAUTH_PATH
+                                )
                                 if val and is_internal:
                                     # Runway's own files (the GitHub OAuth token) are
                                     # encrypted at rest when a key is configured.
@@ -367,18 +381,32 @@ class CredentialProvider:
         }
 
     @staticmethod
+    def is_cli_owned_file(provider_id: str, path: str) -> bool:
+        """A rotating provider's login file that a CLI on this host renews.
+
+        Anything outside Runway's own config dir (``~/.claude/.credentials.json``,
+        ``~/.codex/auth.json``) belongs to the CLI that wrote it; the server must not
+        rotate its refresh token (the CLI is signed out and never learns the new one).
+        Files inside Runway's config dir are Runway's own and stay server-refreshed.
+        """
+        from app.services.refresh_policy import ROTATING_REFRESH_PROVIDERS
+
+        if provider_id not in ROTATING_REFRESH_PROVIDERS:
+            return False
+        return not _inside_runway_config_dir(path)
+
+    @staticmethod
     def server_credential_origins(provider_id: str) -> list[dict[str, Any]]:
         """Where the *server host itself* finds credentials for ``provider_id``.
 
         One entry per env var / file rule that currently yields a value:
         ``{"source_type": "env"|"file", "label": <VAR|basename>, "keys": [targets],
         "managed": <file inside Runway's own config dir>, "exp": <epoch seconds or None>,
-        "rollable": <holds a refresh credential>}``. ``exp`` and ``rollable`` are derived
+        "rollable": <holds a refresh credential>, "cli_owned": <a CLI on this host renews it>}``. ``exp`` and ``rollable`` are derived
         from the values here so callers can classify the credential; the values themselves
         are never returned. Blocking file reads; call through ``asyncio.to_thread`` from
         async code.
         """
-        runway_config_dir = get_platform_config_dir("runway")
         origins: list[dict[str, Any]] = []
         for rule in registry.get_provider(provider_id).get("rules", []):
             rule_type = rule.get("type")
@@ -394,6 +422,7 @@ class CredentialProvider:
                             "label": variable,
                             "keys": [target],
                             "managed": False,
+                            "cli_owned": False,
                             **CredentialProvider._classify_values({target: env_value}),
                         }
                     )
@@ -419,9 +448,9 @@ class CredentialProvider:
                                 "source_type": "file",
                                 "label": os.path.basename(str(path)),
                                 "keys": keys,
-                                "managed": bool(
-                                    runway_config_dir
-                                    and str(path).startswith(str(runway_config_dir))
+                                "managed": _inside_runway_config_dir(path),
+                                "cli_owned": CredentialProvider.is_cli_owned_file(
+                                    provider_id, str(path)
                                 ),
                                 **CredentialProvider._classify_values(
                                     {k: v for k, v in resolved.items() if v}
