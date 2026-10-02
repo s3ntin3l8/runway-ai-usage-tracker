@@ -1,14 +1,15 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
+  CredentialSourceView,
   DataHealthCheckReport,
   DataHealthReport,
   FleetEntry,
   LimitCard,
-  TokenHealthEntry,
 } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { Banners } from './Banners';
+import { inventoryWith, source } from '@/features/settings/sections/credentials/testData';
 
 const card = (o: Partial<LimitCard> = {}): LimitCard => ({
   service_name: 'Ollama',
@@ -31,7 +32,7 @@ describe('Banners collection failure', () => {
   it('renders a critical banner when a fleet card is collection-failing', () => {
     renderWithProviders(
       <Banners
-        tokens={[]}
+        credentials={undefined}
         anomalies={[]}
         fleet={[
           entry({
@@ -51,7 +52,7 @@ describe('Banners collection failure', () => {
   it('renders a multi-provider summary when several entries fail', () => {
     renderWithProviders(
       <Banners
-        tokens={[]}
+        credentials={undefined}
         anomalies={[]}
         fleet={[
           entry({
@@ -78,13 +79,13 @@ describe('Banners collection failure', () => {
   });
 
   it('does not raise a banner when cards are healthy', () => {
-    renderWithProviders(<Banners tokens={[]} anomalies={[]} fleet={[entry()]} />);
+    renderWithProviders(<Banners credentials={undefined} anomalies={[]} fleet={[entry()]} />);
     expect(screen.queryByText(/collection failing/i)).not.toBeInTheDocument();
   });
 
   it('treats stale=true as collection failing even without the detail prefix', () => {
     renderWithProviders(
-      <Banners tokens={[]} anomalies={[]} fleet={[entry({ critical_gauge: card({ stale: true }) })]} />,
+      <Banners credentials={undefined} anomalies={[]} fleet={[entry({ critical_gauge: card({ stale: true }) })]} />,
     );
     expect(screen.getByText(/collection failing/i)).toBeInTheDocument();
   });
@@ -92,7 +93,7 @@ describe('Banners collection failure', () => {
   it('treats collection_failing=true as collection failing without stale or prefix', () => {
     renderWithProviders(
       <Banners
-        tokens={[]}
+        credentials={undefined}
         anomalies={[]}
         fleet={[entry({ critical_gauge: card({ collection_failing: true }) })]}
       />,
@@ -103,7 +104,7 @@ describe('Banners collection failure', () => {
   it('uses the stale secondary card timestamp when the critical gauge is fresh', () => {
     renderWithProviders(
       <Banners
-        tokens={[]}
+        credentials={undefined}
         anomalies={[]}
         fleet={[
           entry({
@@ -128,7 +129,7 @@ describe('Banners collection failure', () => {
   it('falls back to the provider name and prefers fetched_at for stale cards', () => {
     renderWithProviders(
       <Banners
-        tokens={[]}
+        credentials={undefined}
         anomalies={[]}
         fleet={[
           entry({
@@ -148,7 +149,7 @@ describe('Banners collection failure', () => {
   it('dismisses the banner', async () => {
     renderWithProviders(
       <Banners
-        tokens={[]}
+        credentials={undefined}
         anomalies={[]}
         fleet={[
           entry({
@@ -166,18 +167,21 @@ describe('Banners collection failure', () => {
   });
 });
 
-const tokenEntry = (o: Partial<TokenHealthEntry> = {}): TokenHealthEntry => ({
-  provider: 'zai',
-  account_id: 'server',
-  account_label: null,
-  status: 'invalid',
-  token_types: ['api_key'],
-  ...o,
-});
+const attention = (o: Partial<CredentialSourceView> = {}): CredentialSourceView =>
+  source({
+    provider_id: 'zai',
+    account_id: 'default',
+    origin_kind: 'server',
+    origin_type: 'env',
+    label: 'ZAI_API_KEY',
+    status: 'invalid',
+    token_types: ['api_key'],
+    ...o,
+  });
 
 describe('Banners credential health', () => {
   it('raises a critical banner for a provider-rejected (invalid) credential', () => {
-    renderWithProviders(<Banners tokens={[tokenEntry()]} anomalies={[]} />);
+    renderWithProviders(<Banners credentials={inventoryWith([attention()])} anomalies={[]} />);
     expect(
       screen.getByText(/credential for zai \(server environment\) was rejected by the provider/i),
     ).toBeInTheDocument();
@@ -187,7 +191,9 @@ describe('Banners credential health', () => {
   it('keeps the expired copy for a timed-out token', () => {
     renderWithProviders(
       <Banners
-        tokens={[tokenEntry({ status: 'expired', account_id: 'a@x.com' })]}
+        credentials={inventoryWith([attention({ status: 'expired', origin_kind: 'machine' })], {
+          account_id: 'a@x.com',
+        })}
         anomalies={[]}
       />,
     );
@@ -196,7 +202,10 @@ describe('Banners credential health', () => {
 
   it('does not raise a banner for a redundant credential', () => {
     renderWithProviders(
-      <Banners tokens={[tokenEntry({ status: 'expired', redundant: true })]} anomalies={[]} />,
+      <Banners
+        credentials={inventoryWith([attention({ status: 'expired', redundant: true })])}
+        anomalies={[]}
+      />,
     );
     expect(screen.queryByText(/credential/i)).not.toBeInTheDocument();
   });
@@ -204,7 +213,10 @@ describe('Banners credential health', () => {
   it('summarises several unhealthy credentials', () => {
     renderWithProviders(
       <Banners
-        tokens={[tokenEntry(), tokenEntry({ provider: 'openrouter', status: 'expiring' })]}
+        credentials={inventoryWith([
+          attention(),
+          attention({ source_id: 'sidecar:b', status: 'expiring' }),
+        ])}
         anomalies={[]}
       />,
     );
@@ -232,7 +244,7 @@ describe('Banners data health', () => {
   it('raises a banner for a single error-severity check with findings', () => {
     renderWithProviders(
       <Banners
-        tokens={[]}
+        credentials={undefined}
         anomalies={[]}
         dataHealth={{ scanning: false, checks: [dataHealthCheck({ total_count: 1 })] }}
       />,
@@ -252,7 +264,7 @@ describe('Banners data health', () => {
         dataHealthCheck({ check_id: 'b', total_count: 2 }),
       ],
     };
-    renderWithProviders(<Banners tokens={[]} anomalies={[]} dataHealth={report} />);
+    renderWithProviders(<Banners credentials={undefined} anomalies={[]} dataHealth={report} />);
     expect(screen.getByText(/data health found issues in 2 checks/i)).toBeInTheDocument();
   });
 
@@ -264,12 +276,12 @@ describe('Banners data health', () => {
         dataHealthCheck({ severity: 'error', total_count: 0 }),
       ],
     };
-    renderWithProviders(<Banners tokens={[]} anomalies={[]} dataHealth={report} />);
+    renderWithProviders(<Banners credentials={undefined} anomalies={[]} dataHealth={report} />);
     expect(screen.queryByText(/data health found/i)).not.toBeInTheDocument();
   });
 
   it('does not render when dataHealth is undefined', () => {
-    renderWithProviders(<Banners tokens={[]} anomalies={[]} />);
+    renderWithProviders(<Banners credentials={undefined} anomalies={[]} />);
     expect(screen.queryByText(/data health found/i)).not.toBeInTheDocument();
   });
 });

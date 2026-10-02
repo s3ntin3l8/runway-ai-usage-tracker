@@ -40,7 +40,6 @@ import type {
   SidecarChannel,
   SidecarDownloads,
   SystemSettings,
-  TokenHealthEntry,
   TopModelsResponse,
   TopProjectsResponse,
   TopToolsResponse,
@@ -406,8 +405,6 @@ export const postCleanup = (body: CleanupRequest) =>
     body: JSON.stringify(body),
   });
 
-export const fetchTokenHealth = () =>
-  api<{ tokens: TokenHealthEntry[] }>('/api/v1/system/token-health');
 
 export const fetchCredentialInventory = () =>
   api<CredentialInventory>('/api/v1/system/credentials');

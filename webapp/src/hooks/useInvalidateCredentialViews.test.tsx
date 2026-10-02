@@ -17,7 +17,6 @@ describe('useInvalidateCredentialViews', () => {
     // Includes the keys the old dialog missed or misspelled ('provider_configs').
     expect(spy.mock.calls.map(([arg]) => arg?.queryKey)).toEqual([
       credentialInventoryKey,
-      ['system', 'token-health'],
       ['system', 'provider-configs'],
       ['fleet'],
       ['usage'],

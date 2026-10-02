@@ -224,19 +224,32 @@ def _apply_invalid(rows: list[dict[str, Any]]) -> None:
         r["status"] = apply_rejection(r["status"], rejected or is_flagged(r, accounts_by_provider))
 
 
-def _redundancy_sibling(healthy: dict[str, Any], row: dict[str, Any]) -> bool:
-    """True when *healthy* is a credential that could stand in for the expired *row*.
+def is_redundancy_sibling(
+    healthy_account_id: str, row_account_id: str, *, healthy_is_server_or_config: bool
+) -> bool:
+    """True when a healthy credential of *healthy_account_id* could stand in for an expired
+    one of *row_account_id* (the one rule behind ``redundant`` in Token Health and the
+    credential inventory).
 
     Same canonical account, or an identity-less **cache** entry standing in for an
     identified (email) account — the borrowing direction collectors actually use.
-    Two different opaque hashes are different accounts, and server/config rows
+    Two different opaque hashes are different accounts, and server/config credentials
     never count as a sibling of another account.
     """
-    h_id = canonical_account_id(_underlying_account(healthy["account_id"]))
-    r_id = canonical_account_id(_underlying_account(row["account_id"]))
+    h_id = canonical_account_id(_underlying_account(healthy_account_id))
+    r_id = canonical_account_id(_underlying_account(row_account_id))
     if h_id == r_id:
         return True
-    return "@" in r_id and "@" not in h_id and not _is_synthetic(healthy["account_id"])
+    return "@" in r_id and "@" not in h_id and not healthy_is_server_or_config
+
+
+def _redundancy_sibling(healthy: dict[str, Any], row: dict[str, Any]) -> bool:
+    """True when *healthy* is a credential that could stand in for the expired *row*."""
+    return is_redundancy_sibling(
+        healthy["account_id"],
+        row["account_id"],
+        healthy_is_server_or_config=_is_synthetic(healthy["account_id"]),
+    )
 
 
 def _collect_server_credentials() -> dict[str, dict[str, Any]]:

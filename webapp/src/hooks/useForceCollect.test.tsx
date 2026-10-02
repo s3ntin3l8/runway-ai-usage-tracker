@@ -25,7 +25,7 @@ describe('useForceCollect', () => {
     vi.spyOn(client, 'invalidateQueries');
   });
 
-  it('toasts success and invalidates usage/fleet/token-health on a successful collect', async () => {
+  it('toasts success and invalidates usage/fleet/credential inventory on a successful collect', async () => {
     vi.mocked(api.forceCollect).mockResolvedValue({ ok: true, cards: 3, sidecars_triggered: 1 });
     const { result } = renderHook(() => useForceCollect(), { wrapper: wrapper(client) });
 
@@ -37,7 +37,7 @@ describe('useForceCollect', () => {
     expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['usage'] });
     expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['fleet'] });
     expect(client.invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ['system', 'token-health'],
+      queryKey: ['system', 'credentials'],
     });
   });
 

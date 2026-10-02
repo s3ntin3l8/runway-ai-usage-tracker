@@ -9,7 +9,6 @@ import {
   patchCredentialSources,
   fetchSidecars,
   fetchStatus,
-  fetchTokenHealth,
   fetchWebhooks,
   deleteProviderConfig,
   forceCollect,
@@ -162,14 +161,6 @@ describe('endpoints', () => {
     const data = await getDashboardLayout();
     expect(data).toEqual(payload);
     expect(lastCall()[0]).toBe('/api/v1/system/dashboard-layout');
-  });
-
-  it('fetchTokenHealth hits the token-health path', async () => {
-    const payload = { tokens: [{ provider: 'claude', account_id: 'default' }] };
-    mockFetch().mockResolvedValue(jsonResponse(payload));
-    const data = await fetchTokenHealth();
-    expect(data).toEqual(payload);
-    expect(lastCall()[0]).toBe('/api/v1/system/token-health');
   });
 
   it('fetchWebhooks hits the webhooks path', async () => {

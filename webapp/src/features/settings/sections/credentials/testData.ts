@@ -26,6 +26,8 @@ export function source(o: Partial<CredentialSourceView> = {}): CredentialSourceV
     can_refresh: false,
     rollable: false,
     refreshed_by: null,
+    rejected: false,
+    redundant: false,
     removable: true,
     enabled: true,
     priority: 0,
@@ -101,6 +103,24 @@ export function multiMachineInventory(): CredentialInventory {
       { machine_id: 'dev-01', name: 'DEV-01', last_seen: null, credential_count: 1, unmapped_count: 0 },
       { machine_id: 'macbook', name: 'MacBook', last_seen: null, credential_count: 1, unmapped_count: 2 },
       { machine_id: 'mgmt', name: 'mgmt', last_seen: null, credential_count: 1, unmapped_count: 0 },
+    ],
+  });
+}
+
+/** An inventory with one provider/account holding the given sources (for banner tests). */
+export function inventoryWith(
+  sources: CredentialSourceView[],
+  o: { provider_id?: string; account_id?: string; account_label?: string | null } = {},
+): CredentialInventory {
+  const provider_id = o.provider_id ?? 'zai';
+  const account_id = o.account_id ?? 'default';
+  return inventory({
+    providers: [
+      {
+        provider_id,
+        name: provider_id,
+        accounts: [account(sources, { provider_id, account_id, account_label: o.account_label ?? null })],
+      },
     ],
   });
 }

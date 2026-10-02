@@ -3,6 +3,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { credentialInventoryKey } from '@/hooks/useInvalidateCredentialViews';
 import {
   fetchAnomalies,
   fetchCostForecast,
@@ -10,7 +11,7 @@ import {
   fetchFleetUsage,
   fetchForecast,
   fetchProviderConfigs,
-  fetchTokenHealth,
+  fetchCredentialInventory,
   getDashboardLayout,
 } from '@/api/endpoints';
 
@@ -48,10 +49,13 @@ export const useCumulative = () =>
     refetchInterval: 120_000,
   });
 
-export const useTokenHealth = () =>
+// The credential inventory, on the Home page's quiet cadence. Same key as the Settings views,
+// so a credential mutation refreshes the banner too; the inventory does a request-time scan of
+// the server host, so Home polls it every 5 minutes, not every minute.
+export const useCredentialBanners = () =>
   useQuery({
-    queryKey: ['system', 'token-health'],
-    queryFn: fetchTokenHealth,
+    queryKey: credentialInventoryKey,
+    queryFn: fetchCredentialInventory,
     refetchInterval: 300_000,
     // Admin-gated: a locked-down remote instance may 403 — banner just hides.
     retry: false,
