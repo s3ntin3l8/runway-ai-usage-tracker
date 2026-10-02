@@ -13,6 +13,10 @@ from sqlmodel import Session, select
 from app.models.db import WebhookConfig
 from app.services.data_health.base import Check, CheckReport, Finding, FindingGroup, Severity
 
+# Where the operator fixes it. One definition: the sample row and the group both carry it
+# (the generic data-health UI reads samples, Home reads the check id and links itself).
+WEBHOOKS_LINK = "/settings/webhooks"
+
 
 class AlertChannelsCheck(Check):
     id = "alert_channels"
@@ -37,14 +41,13 @@ class AlertChannelsCheck(Check):
         )
         if has_channel:
             return CheckReport(check_id=self.id, severity=self.severity, total_count=0, groups=[])
-        link = "/settings/webhooks"
         group = FindingGroup(
             key="no_channel",
             label="No webhook will receive credential alerts",
             count=1,
             fixable=False,
             not_fixable_reason="add a webhook (it needs your Discord or Slack URL)",
-            samples=[Finding(label="credential alerts", detail={"link": link})],
-            detail={"link": link},
+            samples=[Finding(label="credential alerts", detail={"link": WEBHOOKS_LINK})],
+            detail={"link": WEBHOOKS_LINK},
         )
         return CheckReport(check_id=self.id, severity=self.severity, total_count=1, groups=[group])

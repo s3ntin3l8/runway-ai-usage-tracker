@@ -30,6 +30,7 @@ def test_flags_a_deployment_with_no_webhook_at_all(session):
     (group,) = report.groups
     assert group.fixable is False
     assert group.detail == {"link": "/settings/webhooks"}
+    assert group.samples[0].detail == group.detail
 
 
 def test_an_inactive_or_credential_alert_less_webhook_does_not_count(session):
