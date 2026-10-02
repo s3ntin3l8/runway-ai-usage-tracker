@@ -261,6 +261,21 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         sc = machines.get(sidecar_id)
         return (sc.custom_name or sc.hostname or sidecar_id) if sc else sidecar_id
 
+    # A `config:` source row is written only alongside its `provider_configs` row, so
+    # one whose config is gone is a claim nothing backs — an account rename that
+    # didn't carry its credential rows (the `orphan_credential_sources` fixer deletes
+    # these). Hide it rather than render a second, empty identity for the provider,
+    # and leave it out of `is_flagged`'s "sole account" accounting too.
+    configured_pairs = {
+        (cfg.provider_id, cfg.account_id) for cfgs in configs_by_provider.values() for cfg in cfgs
+    }
+
+    def is_config_ghost(row: CredentialSource) -> bool:
+        return (
+            row.source_id.startswith("config:")
+            and (row.provider_id, row.account_id) not in configured_pairs
+        )
+
     # Live bundles, per (provider, account), keyed by source id.
     live: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
     for provider_id, account_id in {(s.provider_id, s.account_id) for s in sources}:
@@ -270,6 +285,8 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
     # provider → the identified accounts it has, for ``is_flagged``'s "sole account" rule.
     accounts_by_provider: dict[str, set[str]] = {}
     for row in sources:
+        if is_config_ghost(row):
+            continue
         if row.sidecar_id is not None and row.account_id in ("default", row.source_id):
             continue  # a machine credential still waiting for an identity
         accounts_by_provider.setdefault(row.provider_id, set()).add(
@@ -281,10 +298,14 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
     rejected_by_source: dict[tuple[str, str], bool] = {}
     siblings_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
     for row in sources:
+        if is_config_ghost(row):
+            continue
         siblings_by_account.setdefault((row.provider_id, row.account_id), []).append(row)
 
     accounts: dict[tuple[str, str], list[CredentialSourceView]] = {}
     for row in sources:
+        if is_config_ghost(row):
+            continue
         bundle = live.get((row.provider_id, row.account_id), {}).get(row.source_id)
         tokens = (bundle or {}).get("tokens") or {}
         if bundle is not None:

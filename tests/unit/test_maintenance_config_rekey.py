@@ -8,7 +8,13 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
-from app.models.db import CredentialTag, ProviderConfig, WebhookConfig
+from app.models.db import (
+    CredentialSource,
+    CredentialTag,
+    ProviderAccountLabel,
+    ProviderConfig,
+    WebhookConfig,
+)
 from app.services.maintenance.config_rekey import (
     RekeyCollisionError,
     apply_rekey_config,
@@ -268,3 +274,139 @@ def test_the_returned_hook_tolerates_no_cached_tokens():
 
     fake_cache.store.assert_not_awaited()
     fake_cache.remove.assert_not_awaited()
+
+
+def _source(session: Session, account_id: str, source_id: str, **overrides) -> CredentialSource:
+    base = {
+        "provider_id": "minimax",
+        "account_id": account_id,
+        "source_id": source_id,
+        "source_type": "config" if source_id.startswith("config:") else "file",
+        "source_label": "Manual configuration" if source_id.startswith("config:") else "auth.json",
+        "sidecar_id": None if source_id.startswith("config:") else "host-a",
+    }
+    base.update(overrides)
+    row = CredentialSource(**base)
+    session.add(row)
+    session.commit()
+    return row
+
+
+def test_apply_carries_credential_sources_and_rewrites_the_config_id():
+    """A `config:` source id embeds its account: move the row without renaming
+    it and it keeps naming the account it just left."""
+    session = _session()
+    _config(session, "default")
+    _source(session, "default", "config:minimax:default")
+    _source(session, "default", "host-a")
+
+    plan = plan_rekey_config(
+        session, provider_id="minimax", old_account_id="default", new_account_id="alice@example.com"
+    )
+    assert plan.credential_sources == 2
+    assert plan.credential_sources_dropped_duplicate == 0
+
+    result, _hooks = apply_rekey_config(
+        session, provider_id="minimax", old_account_id="default", new_account_id="alice@example.com"
+    )
+
+    assert result.credential_sources_moved == 2
+    assert result.credential_sources_dropped_duplicate == 0
+    rows = session.exec(select(CredentialSource)).all()
+    assert sorted((r.account_id, r.source_id) for r in rows) == [
+        ("alice@example.com", "config:minimax:alice@example.com"),
+        ("alice@example.com", "host-a"),
+    ]
+
+
+def test_apply_drops_the_source_the_target_already_holds():
+    """The target's row wins, the same rule the webhook move follows — this is
+    the orphan an older build left behind when it moved only the config."""
+    session = _session()
+    _config(session, "default")
+    _config(session, "alice@example.com")
+    _source(session, "default", "config:minimax:default")
+    _source(session, "alice@example.com", "config:minimax:alice@example.com")
+
+    result, _hooks = apply_rekey_config(
+        session,
+        provider_id="minimax",
+        old_account_id="default",
+        new_account_id="alice@example.com",
+        on_collision="archive_default",
+    )
+
+    assert result.credential_sources_moved == 0
+    assert result.credential_sources_dropped_duplicate == 1
+    rows = session.exec(select(CredentialSource)).all()
+    assert [(r.account_id, r.source_id) for r in rows] == [
+        ("alice@example.com", "config:minimax:alice@example.com")
+    ]
+
+
+def test_plan_reports_the_credential_source_counts():
+    session = _session()
+    _config(session, "default")
+    _config(session, "alice@example.com")
+    _source(session, "default", "config:minimax:default")
+    _source(session, "default", "host-a")
+
+    plan = plan_rekey_config(
+        session, provider_id="minimax", old_account_id="default", new_account_id="alice@example.com"
+    )
+
+    assert plan.credential_sources == 2
+    assert plan.credential_sources_dropped_duplicate == 0
+    # read-only: both rows still sit under the old account
+    assert {r.account_id for r in session.exec(select(CredentialSource)).all()} == {"default"}
+
+
+def test_apply_moves_the_account_label_override():
+    session = _session()
+    _config(session, "default")
+    session.add(
+        ProviderAccountLabel(
+            provider_id="minimax", account_id="default", account_label="Custom name"
+        )
+    )
+    session.commit()
+
+    result, _hooks = apply_rekey_config(
+        session, provider_id="minimax", old_account_id="default", new_account_id="alice@example.com"
+    )
+
+    assert result.provider_account_labels_moved == 1
+    labels = session.exec(select(ProviderAccountLabel)).all()
+    assert [(r.account_id, r.account_label) for r in labels] == [
+        ("alice@example.com", "Custom name")
+    ]
+
+
+def test_apply_keeps_the_targets_own_account_label():
+    session = _session()
+    _config(session, "default")
+    _config(session, "alice@example.com")
+    session.add(
+        ProviderAccountLabel(
+            provider_id="minimax", account_id="default", account_label="Custom name"
+        )
+    )
+    session.add(
+        ProviderAccountLabel(
+            provider_id="minimax", account_id="alice@example.com", account_label="Alice"
+        )
+    )
+    session.commit()
+
+    result, _hooks = apply_rekey_config(
+        session,
+        provider_id="minimax",
+        old_account_id="default",
+        new_account_id="alice@example.com",
+        on_collision="archive_default",
+    )
+
+    assert result.provider_account_labels_moved == 0
+    assert result.provider_account_labels_dropped_duplicate == 1
+    labels = session.exec(select(ProviderAccountLabel)).all()
+    assert [(r.account_id, r.account_label) for r in labels] == [("alice@example.com", "Alice")]

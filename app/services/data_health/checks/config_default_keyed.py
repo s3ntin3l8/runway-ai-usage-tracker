@@ -289,6 +289,12 @@ class ConfigDefaultKeyedCheck(Check):
             confirmation_text = f"I confirm {provider_id}/{old_account_id} and {provider_id}/{target} are the same provider account."
         counts = {
             "credential_tags": rekey_plan.credential_tags,
+            "credential_sources": rekey_plan.credential_sources,
+            "credential_sources_dropped_duplicate": rekey_plan.credential_sources_dropped_duplicate,
+            "provider_account_labels": rekey_plan.provider_account_labels,
+            "provider_account_labels_dropped_duplicate": (
+                rekey_plan.provider_account_labels_dropped_duplicate
+            ),
             "webhook_configs": rekey_plan.webhook_configs,
             "webhook_configs_dropped_duplicate": rekey_plan.webhook_configs_dropped_duplicate,
             "gauge_series_merged": rekey_plan.gauge_series.merged,
@@ -361,6 +367,14 @@ class ConfigDefaultKeyedCheck(Check):
                 ),
                 counts={
                     "credential_tags_moved": result.credential_tags_moved,
+                    "credential_sources_moved": result.credential_sources_moved,
+                    "credential_sources_dropped_duplicate": (
+                        result.credential_sources_dropped_duplicate
+                    ),
+                    "provider_account_labels_moved": result.provider_account_labels_moved,
+                    "provider_account_labels_dropped_duplicate": (
+                        result.provider_account_labels_dropped_duplicate
+                    ),
                     "webhook_configs_moved": result.webhook_configs_moved,
                     "webhook_configs_dropped_duplicate": result.webhook_configs_dropped_duplicate,
                     "gauge_series_merged": result.gauge_series.merged,
