@@ -954,7 +954,11 @@ class TestKimiApiRegistryId:
 
         fp = credential_fingerprint("sk-test-kimi-key")  # pragma: allowlist secret
         assert blocked == [
-            {"provider_id": "kimi_api", "credential_origin": f"env:KIMI_API_KEY#{fp}"}
+            {
+                "provider_id": "kimi_api",
+                "credential_origin": f"env:KIMI_API_KEY#{fp}",
+                "reason": "token_withheld",
+            }
         ]
 
 
@@ -2314,7 +2318,11 @@ def test_run_collection_events_use_server_hint_when_local_default(
     # operator can resolve via the dialog. The per-event canonical_hints
     # forwarding is what closes the actual card-split.
     assert posted.get("entries") == [
-        {"provider_id": "opencode", "credential_origin": "provider:opencode"},
+        {
+            "provider_id": "opencode",
+            "credential_origin": "provider:opencode",
+            "reason": "events_untagged",
+        },
     ]
 
 
@@ -2399,7 +2407,11 @@ def test_run_collection_events_reported_untagged_when_no_hint(
     # the canonical hint to retarget minimax-coding-plan events onto
     # the labeled quota card.
     assert posted["entries"] == [
-        {"provider_id": "opencode", "credential_origin": "provider:opencode"},
+        {
+            "provider_id": "opencode",
+            "credential_origin": "provider:opencode",
+            "reason": "events_untagged",
+        },
     ]
 
 
@@ -2687,6 +2699,7 @@ def test_xai_grok_uses_user_id_then_operator_tag_when_email_missing(monkeypatch,
             "provider_id": "xai",
             "credential_origin": f"path:{untagged_auth.resolve()}"
             f"#{credential_fingerprint('token')}",
+            "reason": "token_withheld",
         }
     ]
 

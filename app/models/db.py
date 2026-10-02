@@ -757,6 +757,10 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     # (the row is deleted) or when ingest stores a different secret.
     verify_attempts: int = 0
     next_verify_at: UTCDateTime | None = None
+    # Why the sidecar reported this origin: "token_withheld" = the token stayed on the machine
+    # (no server-side verifier for the provider), so quota will not collect until an account is
+    # assigned. None = an older sidecar, or an origin that is only awaiting verification.
+    reason: str | None = None
 
 
 class PendingUsageEvent(SQLModel, table=True):  # type: ignore[call-arg]

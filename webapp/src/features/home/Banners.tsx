@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { AlertTriangle, HeartPulse, KeyRound, TrendingUp, X } from 'lucide-react';
+import { AlertTriangle, HeartPulse, KeyRound, TrendingUp, Unlink, X } from 'lucide-react';
 import type { AnomalyEntry, CredentialInventory, DataHealthReport, FleetEntry } from '@/api/types';
 import { timeAgo } from '@/lib/format';
 import { cardStale } from '@/lib/quota';
@@ -20,6 +20,8 @@ interface BannersProps {
 
 export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersProps) {
   const unhealthy = credentialsNeedingAttention(credentials);
+  const blocked = credentials?.blocked_collection ?? [];
+  const machineNames = new Map((credentials?.machines ?? []).map((m) => [m.machine_id, m.name]));
   const spikes = anomalies ?? [];
   const failing = (fleet ?? []).filter((e) => {
     const cards = [e.critical_gauge, ...(e.secondary_limits ?? [])];
@@ -51,6 +53,36 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
                   .join(', ')}${failing.length > 3 ? ` and ${failing.length - 3} more` : ''}.`}{' '}
             <Link to="/settings" className="font-medium underline underline-offset-2">
               Check settings
+            </Link>
+          </span>
+        </Banner>
+      ) : null}
+      {blocked.length > 0 ? (
+        <Banner tone="critical" icon={<Unlink className="size-4 shrink-0" aria-hidden />}>
+          <span>
+            {blocked.length === 1
+              ? `Credential unmapped on ${
+                  machineNames.get(blocked[0].sidecar_id) ?? blocked[0].sidecar_id
+                } — quota for ${blocked[0].provider_id} won't collect until it is assigned an account.`
+              : `${blocked.length} credentials are unmapped — quota for ${[
+                  ...new Set(blocked.map((b) => b.provider_id)),
+                ].join(', ')} won't collect until they are assigned an account.`}{' '}
+            <Link
+              to={
+                blocked.length === 1
+                  ? `/settings/credentials?${new URLSearchParams({
+                      view: 'mapping',
+                      sidecar: blocked[0].sidecar_id,
+                      provider: blocked[0].provider_id,
+                      // Without a credential fingerprint ("#…"): it adds nothing to find the
+                      // row and doesn't belong in history or logs.
+                      origin: blocked[0].credential_origin.split('#')[0],
+                    }).toString()}`
+                  : '/settings/credentials?view=mapping'
+              }
+              className="font-medium underline underline-offset-2"
+            >
+              Assign account
             </Link>
           </span>
         </Banner>

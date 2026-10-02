@@ -634,12 +634,27 @@ _RENEWED_BY_MACHINE = (
 @limiter.limit("30/minute")
 async def get_credential_inventory(
     request: Request,
+    session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> CredentialInventory:
     """Every discovered credential — provider → account → source — with the machine it
     came from, why it maps to its account, its status, and which source is currently
     feeding the data. Never returns secret values."""
-    return await build_credential_inventory()
+    from app.api.endpoints.fleet import visible_pending_rows
+    from app.services.blocked_collection import blocked_collection
+
+    inventory = await build_credential_inventory()
+    # "Unmapped" means what the Untagged list shows: rows that already have an effective
+    # hint are not waiting for anyone, so they neither count nor warn.
+    visible = visible_pending_rows(session)
+    per_machine: dict[str, int] = {}
+    for row in visible:
+        per_machine[row.sidecar_id] = per_machine.get(row.sidecar_id, 0) + 1
+    inventory.unmapped_count = len(visible)
+    for machine in inventory.machines:
+        machine.unmapped_count = per_machine.get(machine.machine_id, 0)
+    inventory.blocked_collection = blocked_collection(session, visible)
+    return inventory
 
 
 @router.post("/credentials/{provider}/{account_id}/{source_id}/refresh")

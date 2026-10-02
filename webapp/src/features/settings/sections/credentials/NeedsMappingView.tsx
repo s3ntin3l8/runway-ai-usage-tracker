@@ -1,7 +1,8 @@
 // Credentials a machine reported that no account is known for, plus collected usage that
 // couldn't be filed under an account. Both end the same way: pick the account.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2 } from 'lucide-react';
 import { fetchUntaggedCredentials } from '@/api/endpoints';
@@ -25,6 +26,32 @@ export function NeedsMappingView({ pendingUsageEvents }: { pendingUsageEvents: n
   const [resolving, setResolving] = useState<UntaggedCredential | 'all' | null>(null);
 
   const items = untagged.data?.items ?? [];
+
+  // A deep link (the Home "credential unmapped" banner) names one origin on one machine:
+  // open its assignment dialog once, then drop the params so closing it stays closed.
+  const [params, setParams] = useSearchParams();
+  const wanted = {
+    sidecar: params.get('sidecar'),
+    provider: params.get('provider'),
+    origin: params.get('origin'),
+  };
+  useEffect(() => {
+    if (!wanted.sidecar || !wanted.provider || !wanted.origin || untagged.isPending) return;
+    const match = items.find(
+      (i) =>
+        i.sidecar_id === wanted.sidecar &&
+        i.provider_id === wanted.provider &&
+        i.credential_origin.split('#')[0] === wanted.origin,
+    );
+    // A cached list can predate the credential: keep the link until fresh data says it is
+    // really gone.
+    if (!match && (untagged.isFetching || !untagged.isSuccess)) return;
+    if (match) setResolving(match);
+    const copy = new URLSearchParams(params);
+    ['sidecar', 'provider', 'origin'].forEach((key) => copy.delete(key));
+    setParams(copy, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [untagged.isPending, untagged.isFetching, wanted.sidecar, wanted.provider, wanted.origin]);
 
   return (
     <div className="space-y-4">

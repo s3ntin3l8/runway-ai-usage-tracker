@@ -495,6 +495,32 @@ class TestCollectProviderBlockGuard:
         assert len(blocked) == 1, "exactly one blocked origin expected"
         assert blocked[0]["provider_id"] == "antigravity"
 
+    def test_withheld_token_is_reported_with_a_reason_and_verifiable_ones_are_not(
+        self, monkeypatch
+    ):
+        """The dashboard warns only about origins whose token stayed on the machine: a
+        provider with no server-side verifier ships nothing, so quota will not collect."""
+        import scripts.sidecar as sc
+
+        monkeypatch.setenv("SOME_DEEPSEEK_KEY", "sk-test-123")
+        rules = {
+            "name": "x",
+            "icon": "x",
+            "rules": [
+                {"type": "env", "variable": "SOME_DEEPSEEK_KEY", "mapping": {"value": "api_key"}}
+            ],
+        }
+        monkeypatch.setattr(sc, "_ag_account_email", lambda: None)
+
+        cards, blocked = sc.GenericCollector.collect_provider("deepseek", rules)
+        assert cards == []  # the token stays on this machine
+        assert [b.get("reason") for b in blocked] == ["token_withheld"]
+
+        # A provider the server can verify by source ships its token, so nothing is withheld.
+        cards, blocked = sc.GenericCollector.collect_provider("antigravity", rules)
+        assert len(cards) == 1
+        assert [b.get("reason") for b in blocked] == [None]
+
     def test_no_block_when_no_tokens_extracted(self):
         """No credentials found → no blocked origin (because there was nothing to ship)."""
         import scripts.sidecar as sc

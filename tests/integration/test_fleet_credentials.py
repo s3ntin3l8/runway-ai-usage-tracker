@@ -391,6 +391,52 @@ def test_manifest_upserts_pending_and_returns_resolved_for_tagged_origins(
     }
 
 
+def test_manifest_records_why_an_origin_was_reported(client: TestClient, session: Session):
+    from app.models.db import PendingCredentialTag
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "entries": [
+            {
+                "provider_id": "deepseek",
+                "credential_origin": "path:/home/u/.deepseek/credentials.json",
+                "reason": "token_withheld",
+            },
+            {"provider_id": "deepseek", "credential_origin": "path:/older/sidecar.json"},
+        ],
+    }
+    assert _post_manifest(client, body).status_code == 200
+    session.expire_all()
+    reasons = {
+        r.credential_origin: r.reason for r in session.exec(select(PendingCredentialTag)).all()
+    }
+    assert reasons == {
+        "path:/home/u/.deepseek/credentials.json": "token_withheld",
+        "path:/older/sidecar.json": None,
+    }
+
+
+def test_manifest_keeps_the_louder_reason_whatever_the_entry_order(
+    client: TestClient, session: Session
+):
+    from app.models.db import PendingCredentialTag
+
+    origin = "path:/home/u/.deepseek/credentials.json"
+    for entries in (
+        [{"reason": "token_withheld"}, {"reason": "events_untagged"}],
+        [{"reason": "events_untagged"}, {"reason": "token_withheld"}],
+    ):
+        body = {
+            "sidecar_id": "alpha-host",
+            "entries": [
+                {"provider_id": "deepseek", "credential_origin": origin, **e} for e in entries
+            ],
+        }
+        assert _post_manifest(client, body).status_code == 200
+        session.expire_all()
+        assert session.exec(select(PendingCredentialTag)).one().reason == "token_withheld"
+
+
 def test_manifest_persists_safe_health_metadata_without_token_values(
     client: TestClient, session: Session
 ):

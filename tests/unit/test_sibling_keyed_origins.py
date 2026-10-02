@@ -204,6 +204,7 @@ class TestKeyedOrigins:
             {
                 "provider_id": pid,
                 "credential_origin": f"env:{variable}#{credential_fingerprint(value)}",
+                "reason": "token_withheld",
             }
         ]
 
@@ -226,6 +227,7 @@ class TestKeyedOrigins:
             {
                 "provider_id": pid,
                 "credential_origin": f"path:{auth.resolve()}#{credential_fingerprint(value)}",
+                "reason": "token_withheld",
             }
         ]
 
@@ -469,7 +471,13 @@ class TestNonKeyCandidatesStayPlain:
 
         _, blocked = _collect("ollama", [_rule("ollama", "cookie")])
 
-        assert blocked == [{"provider_id": "ollama", "credential_origin": "cookie:ollama/session"}]
+        assert blocked == [
+            {
+                "provider_id": "ollama",
+                "credential_origin": "cookie:ollama/session",
+                "reason": "token_withheld",
+            }
+        ]
 
     def test_cli_oauth_file_keeps_its_plain_origin(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -491,5 +499,9 @@ class TestNonKeyCandidatesStayPlain:
         )
 
         assert blocked == [
-            {"provider_id": "kimi_coding", "credential_origin": f"path:{cli_file.resolve()}"}
+            {
+                "provider_id": "kimi_coding",
+                "credential_origin": f"path:{cli_file.resolve()}",
+                "reason": "token_withheld",
+            }
         ]
