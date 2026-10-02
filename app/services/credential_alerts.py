@@ -75,10 +75,25 @@ def _as_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+_ALERT_SEVERITY = {"failing": 0, "expired": 1, "invalid": 2}
+
+
 def _worst_status(a: str | None, b: str) -> str:
     if a is None:
         return b
-    return "invalid" if "invalid" in (a, b) else "expired"
+    return max(a, b, key=lambda s: _ALERT_SEVERITY.get(s, 1))
+
+
+def _note_bad_row(state: dict[str, Any], row: dict[str, Any]) -> None:
+    """Fold one bad row into its account's state: the worst status wins, and the detail row
+    is the one that earned it."""
+    previous = state["status"]
+    state["bad"] = True
+    state["status"] = _worst_status(previous, row["status"])
+    if state["detail"] is None or _ALERT_SEVERITY.get(row["status"], 1) > _ALERT_SEVERITY.get(
+        previous, 1
+    ):
+        state["detail"] = row
 
 
 def _commit_step(session: Session, context: str) -> None:
@@ -118,7 +133,7 @@ def _is_alert_bad(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]
     401/403 sets the same `auth_failures` flag `_apply_invalid` reads,
     regardless of what it did to this row's status.
     """
-    if row["status"] == "invalid":
+    if row["status"] in ("invalid", "failing"):
         return True
     if row["status"] != "expired" or row.get("redundant"):
         return False
@@ -214,10 +229,7 @@ async def check_credential_alerts(session: Session) -> None:
             {"bad": False, "healthy": False, "status": None, "detail": None},
         )
         if _is_alert_bad(row, accounts_by_provider):
-            state["bad"] = True
-            state["status"] = _worst_status(state["status"], row["status"])
-            if state["detail"] is None or row["status"] == "invalid":
-                state["detail"] = row
+            _note_bad_row(state, row)
         # Deliberately broader than token_health's own redundancy math,
         # which excludes "_assumed" (config/env, no real expiry) rows as
         # evidence — here, any non-bad valid/expiring sibling is enough
@@ -288,8 +300,10 @@ async def check_credential_alerts(session: Session) -> None:
                     if alert.healthy_since is not None:
                         alert.healthy_since = None
                         changed = True
-                    if state["status"] == "invalid" and alert.status != "invalid":
-                        alert.status = "invalid"
+                    if _ALERT_SEVERITY.get(state["status"], 1) > _ALERT_SEVERITY.get(
+                        alert.status, 1
+                    ):
+                        alert.status = state["status"]
                         changed = True
                     if changed:
                         session.add(alert)

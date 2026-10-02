@@ -53,6 +53,7 @@ from app.services.token_cache import token_cache
 from app.services.token_health import (
     credential_status,
     is_durably_rejected,
+    is_failing,
     is_flagged,
     is_redundancy_sibling,
 )
@@ -60,7 +61,15 @@ from app.services.token_refresher import _REFRESH_ENDPOINTS, ROTATING_REFRESH_PR
 
 # Best → worst. An account is as healthy as its best enabled source: a working
 # credential beside a dead one means collection still works.
-_STATUS_RANK = {"valid": 0, "expiring": 1, "unknown": 2, "stale": 3, "expired": 4, "invalid": 5}
+_STATUS_RANK = {
+    "valid": 0,
+    "expiring": 1,
+    "unknown": 2,
+    "stale": 3,
+    "failing": 4,
+    "expired": 5,
+    "invalid": 6,
+}
 
 _TAG_MAPPING = {
     "operator": "operator",
@@ -190,7 +199,12 @@ def _scan_server_credentials() -> tuple[dict[str, list[dict[str, Any]]], set[str
 
 
 def _apply_server_expiry(
-    view: CredentialSourceView, origin: dict[str, Any], now: float, *, rejected: bool
+    view: CredentialSourceView,
+    origin: dict[str, Any],
+    now: float,
+    *,
+    rejected: bool,
+    failing: bool = False,
 ) -> None:
     """Classify a server env/file credential from what the scan saw (expiry, refresh token).
 
@@ -209,6 +223,7 @@ def _apply_server_expiry(
         live=True,
         machine_sourced=False,
         last_seen=None,
+        failing=failing,
     )
     view.rollable = rollable
     # The scan is authoritative: a stored expiry from an earlier credential must not sit
@@ -332,6 +347,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
     # What the main loop decided per source, so a server row re-classified from the scan
     # below keeps a rejection even when its status ended up ``expired``/``stale``.
     rejected_by_source: dict[tuple[str, str], bool] = {}
+    failing_by_source: dict[tuple[str, str], bool] = {}
     siblings_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
     for row in sources:
         if is_config_ghost(row):
@@ -383,6 +399,8 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             )
         )
         rejected_by_source[(row.provider_id, row.source_id)] = rejected
+        failing = is_failing(row, siblings_by_account[(row.provider_id, row.account_id)])
+        failing_by_source[(row.provider_id, row.source_id)] = failing
         status = credential_status(
             exp=exp,
             token_types=token_types,
@@ -391,6 +409,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             live=bundle is not None,
             machine_sourced=machine_sourced,
             last_seen=row.last_seen,
+            failing=failing,
         )
         accounts.setdefault((row.provider_id, row.account_id), []).append(
             CredentialSourceView(
@@ -459,6 +478,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                     origin,
                     now,
                     rejected=rejected_by_source.get((view.provider_id, view.source_id), False),
+                    failing=failing_by_source.get((view.provider_id, view.source_id), False),
                 )
                 seen.add((view.provider_id, view.source_id))
             kept.append(view)

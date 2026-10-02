@@ -9,6 +9,7 @@ Now supports multi-account dynamic spawning based on discovered tokens.
 import asyncio
 import logging
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -91,6 +92,11 @@ class CollectorManager:
         self._client = None
         self._last_sync_time: float = 0.0
         self._credential_source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
+        # (provider, account) -> source_id -> (last health, next_retry_at): what failover needs
+        # to push a rejected credential behind working ones and rest it between retries.
+        self._credential_source_state: dict[
+            tuple[str, str], dict[str, tuple[str, datetime | None]]
+        ] = {}
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
         self.last_collection_outcomes: list[dict[str, Any]] = []
@@ -123,6 +129,7 @@ class CollectorManager:
             db_configs: dict[str, dict[str, Any]] = {}
             global_poll_interval: int | None = None
             source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
+            source_state: dict[tuple[str, str], dict[str, tuple[str, datetime | None]]] = {}
             try:
                 from sqlmodel import Session
                 from sqlmodel import select as sqlselect
@@ -157,6 +164,9 @@ class CollectorManager:
                             (row.provider_id, row.account_id), {}
                         )
                         account_sources[row.source_id] = (row.enabled, row.priority)
+                        source_state.setdefault((row.provider_id, row.account_id), {})[
+                            row.source_id
+                        ] = (row.health, row.next_retry_at)
 
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
@@ -177,6 +187,7 @@ class CollectorManager:
                 and not any(cfg.enabled and not cfg.archived for cfg in accounts.values())
             }
             self._credential_source_preferences = source_preferences
+            self._credential_source_state = source_state
             await self.reconcile_token_cache_from_durable_tags()
 
             # 1. Ensure Default/Static collectors are present
@@ -619,13 +630,24 @@ class CollectorManager:
                     self._record_server_sources,
                     provider_id,
                     getattr(collector, "account_id", None) or "default",
-                    self._result_health(result) if used else None,
+                    self._result_health(
+                        result,
+                        empty_allowed=bool(getattr(collector, "successful_empty_result", False)),
+                    )
+                    if used
+                    else None,
                 )
         return result
 
     @staticmethod
-    def _result_health(result: list[dict[str, Any]]) -> str:
-        """Collapse a collector result into the per-source health vocabulary."""
+    def _result_health(result: list[dict[str, Any]], *, empty_allowed: bool = False) -> str:
+        """Collapse a collector result into the per-source health vocabulary.
+
+        A collector that legitimately reports nothing (``successful_empty_result``) is not
+        failing when it does.
+        """
+        if not result and empty_allowed:
+            return "healthy"
         if any(
             card.get("data_source") != "error"
             and card.get("remaining") != "ERR"
@@ -773,6 +795,14 @@ class CollectorManager:
                 return int(preference[1])
             return int(candidate.get("priority", 0))
 
+        def candidate_state(candidate: dict[str, Any]) -> tuple[str, datetime | None]:
+            slot = candidate.get("account_slot") or account_id
+            for key in ((provider_id, slot), (provider_id, account_id)):
+                state = self._credential_source_state.get(key, {}).get(candidate["source_id"])
+                if state is not None:
+                    return state
+            return ("healthy", None)
+
         ordered = [candidate for candidate in candidates if candidate_enabled(candidate)]
         ordered.sort(
             key=lambda candidate: (
@@ -781,7 +811,22 @@ class CollectorManager:
                 candidate["source_id"],
             )
         )
-        return ordered
+        # A source whose last attempt was rejected rests between retries (15 min doubling to
+        # 6 h), so it stops costing an upstream call at the head of every cycle. When the rest
+        # is over it is simply due: it is tried in its normal place, and a success brings it
+        # back while another failure doubles the rest. (Demoting it instead would starve it —
+        # failover stops at the first source that works.) The last credential standing is
+        # never starved: if every candidate is resting, the best one is still probed.
+        now = datetime.now(UTC)
+
+        def resting(candidate: dict[str, Any]) -> bool:
+            retry_at = candidate_state(candidate)[1]
+            if retry_at is None:
+                return False
+            return (retry_at if retry_at.tzinfo else retry_at.replace(tzinfo=UTC)) > now
+
+        awake = [candidate for candidate in ordered if not resting(candidate)]
+        return awake or ordered[:1]
 
     async def _collect_with_source_failover(
         self,
@@ -1515,8 +1560,9 @@ class CollectorManager:
                 )
         return len(moves)
 
-    @staticmethod
-    def _record_source_health(provider_id: str, account_id: str, updates: dict[str, str]) -> None:
+    def _record_source_health(
+        self, provider_id: str, account_id: str, updates: dict[str, str]
+    ) -> None:
         if not updates:
             return
 
@@ -1552,10 +1598,25 @@ class CollectorManager:
                         )
                     ).all()
                 )
+            fresh: list[tuple[str, str, str, datetime | None]] = []
             for row in rows:
                 record_source_result(row, updates[row.source_id])
                 session.add(row)
+                fresh.append((row.account_id, row.source_id, row.health, row.next_retry_at))
             session.commit()
+        # Failover reads this cache; waiting for the next sync would re-try a source that
+        # just failed for up to a minute. Keyed by the row's own account (a promoted source no
+        # longer lives under the collector's pre-run id), the same key the sync loads.
+        for row_account_id, source_id, health, retry_at in fresh:
+            self._credential_source_state.setdefault((provider_id, row_account_id), {})[
+                source_id
+            ] = (health, retry_at)
+
+    def clear_source_retry(self, provider_id: str, source_id: str) -> None:
+        """A re-login ended this source's rest: forget it in the failover cache too."""
+        for (provider, _account), states in self._credential_source_state.items():
+            if provider == provider_id and source_id in states:
+                states[source_id] = (states[source_id][0], None)
 
     def get_collector_stats(self) -> dict[str, Any]:
         """Get flattened statistics for all active collectors."""

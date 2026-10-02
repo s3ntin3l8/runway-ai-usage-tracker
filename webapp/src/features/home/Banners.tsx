@@ -62,9 +62,11 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
               ? `Credential for ${unhealthy[0].provider} (${unhealthy[0].accountName}) ${
                   unhealthy[0].status === 'invalid'
                     ? 'was rejected by the provider'
-                    : `is ${unhealthy[0].status}`
+                    : unhealthy[0].status === 'failing'
+                      ? 'keeps failing to collect'
+                      : `is ${unhealthy[0].status}`
                 }.`
-              : `${unhealthy.length} credentials need attention (expiring, expired or rejected).`}{' '}
+              : `${unhealthy.length} credentials need attention (expiring, expired, rejected or failing).`}{' '}
             <Link to="/settings/credentials" className="font-medium underline underline-offset-2">
               Review credentials
             </Link>

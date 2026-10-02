@@ -380,6 +380,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         from app.services.credential_sources import (
             describe_origin,
             pending_cache_slot,
+            reset_source_retry,
             retire_unkeyed_origin,
             sidecar_source_id,
             touch_source,
@@ -406,11 +407,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             # that placeholder even if its durable CredentialSource row was
             # lost; otherwise its OAuth bundle survives beside the resolved one.
             await token_cache.remove_source(p_id, source_id, source_id, retire_matching_oauth=True)
-        secret_changed = bool(
-            identity_pending
-            and origin
-            and not await _bundle_holds(p_id, cache_account_id or "default", source_id, p_tokens)
+        bundle_changed = bool(origin) and not await _bundle_holds(
+            p_id, cache_account_id or "default", source_id, p_tokens
         )
+        secret_changed = bool(identity_pending and bundle_changed)
         actual_acc_id = await token_cache.store(
             p_id,
             p_tokens,
@@ -429,6 +429,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         )
         if not isinstance(actual_acc_id, str):
             actual_acc_id = a_id or "default"
+        if bundle_changed:
+            # A re-login (or a pasted new key) ends a rejected source's rest period: it is a
+            # different credential now, so it is retried at once instead of at its old backoff.
+            from app.services.collector_manager import manager as _collector_manager
+
+            reset_source_retry(session, provider_id=p_id, source_id=source_id)
+            _collector_manager.clear_source_retry(p_id, source_id)
         if secret_changed and origin:
             # A re-login (or first sighting): the identity verifier retries it next cycle
             # instead of waiting out the backoff earned by the previous secret.
@@ -780,7 +787,16 @@ async def _bundle_holds(
         if tokens.get("refresh_token")
         else {k: v for k, v in tokens.items() if k not in _VOLATILE_TOKEN_KEYS}
     )
-    for candidate in await token_cache.get_source_candidates(provider_id, cache_account_id):
+    if not stable:
+        # Nothing but an access token, with no refresh token behind it: that token is the
+        # secret, so a different one is a different login.
+        stable = {k: v for k, v in tokens.items() if k == "access_token"}
+    # The bundle sits in the account slot the push resolves to, which ingest cannot always
+    # know up front (a push without an account lands under its resolved identity): look in the
+    # given slot first, then wherever else this source is filed.
+    candidates = await token_cache.get_source_candidates(provider_id, cache_account_id)
+    candidates = candidates + await token_cache.get_account_source_candidates(provider_id)
+    for candidate in candidates:
         if candidate["source_id"] == source_id:
             held = candidate["tokens"]
             return all(held.get(key) == value for key, value in stable.items())

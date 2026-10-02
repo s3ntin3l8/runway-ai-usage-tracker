@@ -5,7 +5,7 @@
 import type { CredentialAccountView, CredentialInventory, CredentialSourceView } from '@/api/types';
 import { maskAccountId } from '@/lib/accountDisplay';
 
-export type AttentionStatus = 'expired' | 'expiring' | 'invalid';
+export type AttentionStatus = 'expired' | 'expiring' | 'invalid' | 'failing';
 
 export interface AttentionCredential {
   provider: string;
@@ -14,7 +14,12 @@ export interface AttentionCredential {
   status: AttentionStatus;
 }
 
-const ATTENTION: ReadonlySet<string> = new Set<AttentionStatus>(['expired', 'expiring', 'invalid']);
+const ATTENTION: ReadonlySet<string> = new Set<AttentionStatus>([
+  'expired',
+  'expiring',
+  'invalid',
+  'failing',
+]);
 
 function accountName(account: CredentialAccountView, source: CredentialSourceView): string {
   const label = (account.account_label ?? '').trim();

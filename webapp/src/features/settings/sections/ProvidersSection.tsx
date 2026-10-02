@@ -93,12 +93,14 @@ function useProviders(): UseProvidersResult {
 }
 
 /** `{account_id: status}` for a provider's accounts whose credential is expired or rejected. */
+const CREDENTIAL_PROBLEMS: ReadonlySet<string> = new Set(['invalid', 'expired', 'failing']);
+
 function accountCredentialProblems(
   provider: CredentialProviderView | undefined,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const account of provider?.accounts ?? []) {
-    if (account.status === 'invalid' || account.status === 'expired') {
+    if (CREDENTIAL_PROBLEMS.has(account.status)) {
       out[account.account_id] = account.status;
     }
   }
@@ -144,7 +146,7 @@ function ProvidersSectionV2({
   const credentialInventory = useCredentialInventory();
   const credentialProblems = new Map<string, string>();
   for (const p of credentialInventory.data?.providers ?? []) {
-    const bad = p.accounts.find((a) => a.status === 'invalid' || a.status === 'expired');
+    const bad = p.accounts.find((a) => CREDENTIAL_PROBLEMS.has(a.status));
     if (bad) credentialProblems.set(p.provider_id, bad.status);
   }
 

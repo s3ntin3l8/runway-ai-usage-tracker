@@ -188,6 +188,15 @@ describe('Banners credential health', () => {
     expect(screen.getByRole('link', { name: /review credentials/i })).toBeInTheDocument();
   });
 
+  it('says a credential that keeps failing to collect is failing, not rejected', () => {
+    renderWithProviders(
+      <Banners credentials={inventoryWith([attention({ status: 'failing' })])} anomalies={[]} />,
+    );
+    expect(
+      screen.getByText(/credential for zai \(server environment\) keeps failing to collect/i),
+    ).toBeInTheDocument();
+  });
+
   it('keeps the expired copy for a timed-out token', () => {
     renderWithProviders(
       <Banners

@@ -826,7 +826,7 @@ export interface Webhook {
   last_fired_at?: string | null;
 }
 
-/** `invalid` = the provider rejected the credential (401/403) — opaque keys and
+/** `failing` = not rejected, but the last several collections with it failed. `invalid` = the provider rejected the credential (401/403) — opaque keys and
  * cookies carry no expiry, so this is the only way they ever go bad. `stale` = a
  * sidecar-reported credential that hasn't been re-reported recently (machine gone). */
 export type TokenHealthStatus =
@@ -834,6 +834,7 @@ export type TokenHealthStatus =
   | 'expiring'
   | 'expired'
   | 'invalid'
+  | 'failing'
   | 'stale'
   | 'unknown'
   | string;

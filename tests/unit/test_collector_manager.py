@@ -987,6 +987,12 @@ class TestCollectorManagerInitialization:
             session.commit()
 
         manager._record_source_health("antigravity", "default", {"sidecar:host-a:oauth": "healthy"})
+        # The failover cache is keyed by where the row lives now, not the pre-run id, or a
+        # promoted source would keep its stale state until the next sync.
+        assert manager._credential_source_state[("antigravity", "alice@example.com")] == {
+            "sidecar:host-a:oauth": ("healthy", None)
+        }
+        assert ("antigravity", "default") not in manager._credential_source_state
 
         with Session(engine) as session:
             row = session.exec(select(CredentialSource)).one()
@@ -1033,6 +1039,11 @@ class TestCollectorManagerInitialization:
         assert rows["sidecar:a"].last_error == "Authentication failed"
         assert rows["sidecar:b"].last_success_at is not None
         assert rows["sidecar:b"].last_error is None
+        # Failover reads its own cache, so the outcome must be visible to the very next
+        # cycle instead of after the next sync: a rejected source rests, a working one doesn't.
+        state = manager._credential_source_state[("gemini", "alice@example.com")]
+        assert state["sidecar:a"][0] == "auth_failed" and state["sidecar:a"][1] is not None
+        assert state["sidecar:b"] == ("healthy", None)
 
     def test_record_server_sources_registers_the_env_credential_that_fed_collection(
         self, manager, monkeypatch
@@ -1531,6 +1542,74 @@ class TestDefaultCollectorSourceSweep:
             "src:pinned",
             "src:default-view",
         ]
+
+    async def test_rejected_source_rests_between_retries_then_comes_due_in_its_normal_place(
+        self, manager
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        def cand(source_id: str, priority: int) -> dict:
+            return {"source_id": source_id, "enabled": True, "priority": priority}
+
+        candidates = [cand("src:revoked", 0), cand("src:good", 1), cand("src:other", 2)]
+        later = datetime.now(UTC) + timedelta(hours=1)
+        manager._credential_source_state = {
+            ("anthropic", "default"): {"src:revoked": ("auth_failed", later)}
+        }
+        # Resting: the revoked key is not tried this cycle, and it no longer leads.
+        ordered = manager._ordered_candidates("anthropic", "default", candidates)
+        assert [c["source_id"] for c in ordered] == ["src:good", "src:other"]
+
+        # Rest is over: it is due, so it is tried in its normal place. Demoting it instead
+        # would starve it — failover stops at the first source that works.
+        manager._credential_source_state = {
+            ("anthropic", "default"): {
+                "src:revoked": ("auth_failed", datetime.now(UTC) - timedelta(seconds=1))
+            }
+        }
+        ordered = manager._ordered_candidates("anthropic", "default", candidates)
+        assert [c["source_id"] for c in ordered] == ["src:revoked", "src:good", "src:other"]
+
+    def test_a_collector_that_legitimately_reports_nothing_is_not_failing(self, manager):
+        assert manager._result_health([], empty_allowed=True) == "healthy"
+        assert manager._result_health([]) == "unavailable"
+        assert manager._result_health([{"error_type": "api_error"}], empty_allowed=True) == (
+            "unavailable"
+        )
+
+    def test_a_reset_rest_is_forgotten_by_the_failover_cache_too(self, manager):
+        from datetime import UTC, datetime, timedelta
+
+        later = datetime.now(UTC) + timedelta(hours=3)
+        manager._credential_source_state = {
+            ("anthropic", "alice@example.com"): {"src:a": ("auth_failed", later)},
+            ("gemini", "alice@example.com"): {"src:a": ("auth_failed", later)},
+        }
+        manager.clear_source_retry("anthropic", "src:a")
+        assert manager._credential_source_state[("anthropic", "alice@example.com")]["src:a"] == (
+            "auth_failed",
+            None,
+        )
+        assert manager._credential_source_state[("gemini", "alice@example.com")]["src:a"][1] == (
+            later
+        )
+
+    async def test_the_last_credential_standing_is_never_starved_by_its_rest_period(self, manager):
+        from datetime import UTC, datetime, timedelta
+
+        later = datetime.now(UTC) + timedelta(hours=1)
+        candidates = [
+            {"source_id": "src:a", "enabled": True, "priority": 0},
+            {"source_id": "src:b", "enabled": True, "priority": 1},
+        ]
+        manager._credential_source_state = {
+            ("anthropic", "default"): {
+                "src:a": ("auth_failed", later),
+                "src:b": ("auth_failed", later),
+            }
+        }
+        ordered = manager._ordered_candidates("anthropic", "default", candidates)
+        assert [c["source_id"] for c in ordered] == ["src:a"]  # one probe, best first
 
     async def test_all_pending_sweep_falls_back_to_unpinned_collect(self, manager, monkeypatch):
         """Identity-pending rows never reach the default collector's failover.

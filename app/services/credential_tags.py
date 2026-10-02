@@ -611,6 +611,14 @@ VERIFY_BACKOFF_BASE = timedelta(minutes=15)
 VERIFY_BACKOFF_MAX = timedelta(hours=6)
 
 
+def retry_backoff(attempts: int) -> timedelta:
+    """Delay before the next try: 15 min doubling, capped at 6 h (shared by every retry schedule)."""
+    return min(
+        VERIFY_BACKOFF_BASE * 2 ** min(max(attempts - 1, 0), 10),
+        VERIFY_BACKOFF_MAX,
+    )
+
+
 class PendingCredentialTagRepo:
     """Read/write operations on the ``pending_credential_tags`` table.
 
@@ -762,10 +770,7 @@ class PendingCredentialTagRepo:
     @staticmethod
     def verification_backoff(attempts: int) -> timedelta:
         """Delay before the next verification try: 15 min doubling, capped at 6 h."""
-        return min(
-            VERIFY_BACKOFF_BASE * 2 ** min(max(attempts - 1, 0), 10),
-            VERIFY_BACKOFF_MAX,
-        )
+        return retry_backoff(attempts)
 
     @staticmethod
     def get_verify_schedule(

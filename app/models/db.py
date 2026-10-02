@@ -105,7 +105,7 @@ class WebhookCredentialAlert(SQLModel, table=True):  # type: ignore[call-arg]
     webhook_id: int
     provider_id: str
     account_id: str
-    status: str  # "expired" | "invalid" — the worst status seen this episode
+    status: str  # "failing" | "expired" | "invalid" — the worst status seen this episode
     fired_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     healthy_since: UTCDateTime | None = Field(default=None)
 
@@ -246,6 +246,14 @@ class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
     # means the browser behind the cookie switched users.
     verified_subject: str | None = None
     verified_subject_account: str | None = None
+    # Consecutive failed attempts (auth_failed / unavailable); any success resets it. An
+    # auth failure also pushes ``next_retry_at`` out on the verification backoff schedule so
+    # a revoked credential isn't re-tried at the head of every cycle.
+    consecutive_failures: int = 0
+    next_retry_at: UTCDateTime | None = None
+    # When the current failure streak began (cleared by a success): a provider outage must
+    # last a while before every source it touches reads ``failing``.
+    failing_since: UTCDateTime | None = None
 
 
 class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]

@@ -114,6 +114,52 @@ def is_durably_rejected(source: CredentialSource, siblings: Iterable[CredentialS
     return True
 
 
+# Consecutive failed attempts before an ``unavailable`` source counts as failing, and how old
+# its last attempt may be before we stop vouching for the verdict.
+FAILING_AFTER_ATTEMPTS = 3
+# The streak must also have lasted this long: a provider outage or a rate-limit burst fails
+# every source it touches for a few cycles, and none of them is "failing" yet.
+FAILING_MIN_DURATION_SECS = 3600
+FAILING_MAX_AGE_SECS = 86400
+
+
+def is_failing(source: CredentialSource, siblings: Iterable[CredentialSource]) -> bool:
+    """A credential the provider has not rejected but that keeps failing to collect.
+
+    ``auth_failed`` is the rejection rule (:func:`is_durably_rejected`). This is its
+    non-auth twin: the last ``FAILING_AFTER_ATTEMPTS`` attempts all failed over at least
+    ``FAILING_MIN_DURATION_SECS`` (a blip, one bad cycle or a short provider outage must not
+    flip a status or fire an alert), the verdict is recent, and — as with
+    rejection — no enabled sibling has succeeded since, because a working sibling means
+    collection still works.
+    """
+    if source.health != "unavailable" or not source.enabled:
+        return False
+    if (source.consecutive_failures or 0) < FAILING_AFTER_ATTEMPTS:
+        return False
+    attempted = _utc(source.last_attempt_at)
+    since = _utc(source.failing_since)
+    if attempted is None or since is None:
+        return False
+    if time.time() - attempted.timestamp() > FAILING_MAX_AGE_SECS:
+        return False
+    if attempted.timestamp() - since.timestamp() < FAILING_MIN_DURATION_SECS:
+        return False
+    for other in siblings:
+        if other.source_id == source.source_id or not other.enabled:
+            continue
+        succeeded = _utc(other.last_success_at)
+        if succeeded is not None and succeeded >= attempted:
+            return False
+    return True
+
+
+def apply_failure(status: str, failing: bool) -> str:
+    """A credential that looks usable (``valid``/``expiring``/``unknown``) but keeps failing
+    to collect reads ``failing``. Rejection (``invalid``) and ``expired`` are already worse."""
+    return "failing" if failing and status in ("valid", "expiring", "unknown") else status
+
+
 def apply_rejection(status: str, rejected: bool) -> str:
     """The single rule for "the provider rejected this credential".
 
@@ -135,6 +181,7 @@ def credential_status(
     machine_sourced: bool,
     last_seen: datetime | None,
     now: float | None = None,
+    failing: bool = False,
 ) -> str:
     """One status for one credential: expiry, rejection and staleness combined.
 
@@ -151,7 +198,7 @@ def credential_status(
     base = _classify_status(
         exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable
     )
-    return apply_rejection(base, rejected)
+    return apply_failure(apply_rejection(base, rejected), failing)
 
 
 def _underlying_account(account_id: str) -> str:
@@ -219,9 +266,12 @@ def _apply_invalid(rows: list[dict[str, Any]]) -> None:
     accounts_by_provider = _build_accounts_by_provider(rows)
     for r in rows:
         rejected = bool(r.pop("_rejected", False))
+        failing = bool(r.pop("_failing", False))
         if r.get("assignment_pending") or r.get("identity_pending"):
             continue
-        r["status"] = apply_rejection(r["status"], rejected or is_flagged(r, accounts_by_provider))
+        r["status"] = apply_failure(
+            apply_rejection(r["status"], rejected or is_flagged(r, accounts_by_provider)), failing
+        )
 
 
 def is_redundancy_sibling(
@@ -549,6 +599,9 @@ class TokenHealthService:
                 and bool(durable_source.sidecar_id),
             )
             row["_rejected"] = is_durably_rejected(
+                durable_source, durable_by_account.get((provider_id, account_id), [])
+            )
+            row["_failing"] = is_failing(
                 durable_source, durable_by_account.get((provider_id, account_id), [])
             )
             if live is None and _is_stale_source(durable_source.last_seen):

@@ -18,7 +18,7 @@ describe('credentialsNeedingAttention', () => {
     expect(credentialsNeedingAttention(undefined)).toEqual([]);
   });
 
-  it.each(['expired', 'expiring', 'invalid'])('flags a %s credential', (status) => {
+  it.each(['expired', 'expiring', 'invalid', 'failing'])('flags a %s credential', (status) => {
     expect(credentialsNeedingAttention(inv([source({ status })]))).toEqual([
       { provider: 'gemini', accountName: 'alice@example.com', status },
     ]);

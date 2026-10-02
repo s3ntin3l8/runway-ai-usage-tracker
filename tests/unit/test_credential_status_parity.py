@@ -504,3 +504,68 @@ async def test_both_views_agree_on_the_servers_own_credentials(monkeypatch):
     }
 
     assert health == inventory == {"github": "valid", "gemini": "expired", "zai": "invalid"}
+
+
+def test_is_failing_needs_a_streak_a_recent_verdict_and_no_working_sibling():
+    from app.services.token_health import apply_failure, is_failing
+
+    now = datetime.now(UTC)
+    streak = {
+        "health": "unavailable",
+        "consecutive_failures": 3,
+        "last_attempt_at": now - timedelta(minutes=5),
+        "failing_since": now - timedelta(hours=2),
+    }
+    assert is_failing(_src("a", **streak), []) is True
+    # One bad cycle, or a blip, is not a verdict.
+    assert is_failing(_src("a", **{**streak, "consecutive_failures": 2}), []) is False
+    # A provider outage or rate-limit burst fails every source for a few cycles: not yet.
+    short = {**streak, "failing_since": now - timedelta(minutes=20)}
+    assert is_failing(_src("a", **short), []) is False
+    assert is_failing(_src("a", **{**streak, "failing_since": None}), []) is False
+    # A rejection is `invalid`'s business, not this rule's.
+    assert is_failing(_src("a", **{**streak, "health": "auth_failed"}), []) is False
+    assert is_failing(_src("a", **{**streak, "enabled": False}), []) is False
+    # Too old to vouch for.
+    assert (
+        is_failing(_src("a", **{**streak, "last_attempt_at": now - timedelta(days=2)}), []) is False
+    )
+    # A sibling that has collected since: the account still works.
+    assert is_failing(_src("a", **streak), [_src("b", last_success_at=now)]) is False
+    assert (
+        is_failing(_src("a", **streak), [_src("b", last_success_at=now - timedelta(hours=1))])
+        is True
+    )
+
+    # It only demotes credentials that otherwise look usable.
+    assert [apply_failure(x, True) for x in ("valid", "expiring", "unknown")] == ["failing"] * 3
+    assert [apply_failure(x, True) for x in ("expired", "invalid", "stale")] == [
+        "expired",
+        "invalid",
+        "stale",
+    ]
+    assert apply_failure("valid", False) == "valid"
+
+
+@pytest.mark.asyncio
+async def test_both_views_report_a_failing_source_the_same_way(monkeypatch):
+    await build_world(monkeypatch)
+    auth_failures.reset()
+    now = datetime.now(UTC)
+    await _set_health(
+        th,
+        "sidecar:g1",
+        health="unavailable",
+        consecutive_failures=5,
+        failing_since=now - timedelta(hours=3),
+        last_attempt_at=now - timedelta(minutes=2),
+    )
+    monkeypatch.setattr(credential_inventory, "engine", th.engine)
+    monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+
+    inv = await credential_inventory.build_inventory()
+    inventory = {
+        s.source_id: s.status for p in inv.providers for a in p.accounts for s in a.sources
+    }
+    assert inventory["sidecar:g1"] == (await _statuses())["sidecar:g1"] == "failing"
