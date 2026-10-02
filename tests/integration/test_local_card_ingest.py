@@ -147,6 +147,7 @@ def test_local_credential_ingest_registers_source_without_sidecar_id(session):
         mock_tc.store = AsyncMock(return_value="alice@example.com")
         mock_tc.remove_source = AsyncMock(return_value=False)
         mock_tc.get_source_candidates = AsyncMock(return_value=[])
+        mock_tc.get_account_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     mock_touch.assert_called_once()
@@ -199,6 +200,7 @@ def test_ingest_keeps_bundled_cookie_credentials(session):
         mock_tc.store = AsyncMock(return_value="alice@example.com")
         mock_tc.remove_source = AsyncMock(return_value=False)
         mock_tc.get_source_candidates = AsyncMock(return_value=[])
+        mock_tc.get_account_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     stored = {call.args[0]: call.args[1] for call in mock_tc.store.await_args_list}
@@ -259,6 +261,7 @@ def test_ingest_retires_default_placeholder_source_once_identity_resolves(sessio
         mock_tc.store = AsyncMock(return_value="alice@example.com")
         mock_tc.remove_source = AsyncMock(return_value=False)
         mock_tc.get_source_candidates = AsyncMock(return_value=[])
+        mock_tc.get_account_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     rows = session.exec(
@@ -317,6 +320,7 @@ def test_ingest_drops_default_placeholder_when_real_account_row_already_exists(s
         mock_tc.store = AsyncMock(return_value="alice@example.com")
         mock_tc.remove_source = AsyncMock(return_value=False)
         mock_tc.get_source_candidates = AsyncMock(return_value=[])
+        mock_tc.get_account_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     rows = session.exec(
@@ -363,6 +367,7 @@ def test_ingest_applies_existing_verified_tag_to_stale_pending_heartbeat(session
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         mock_tc.store = AsyncMock(return_value="s3ntin3l8@gmail.com")
         mock_tc.get_source_candidates = AsyncMock(return_value=[])
+        mock_tc.get_account_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     assert mock_tc.store.call_args.args[2] == "s3ntin3l8@gmail.com"
@@ -412,6 +417,7 @@ def test_claude_oauth_email_requires_matching_account(session, configured):
         mock_tc.store = AsyncMock(return_value="alice@example.com" if configured else source_id)
         mock_tc.remove_source = AsyncMock(return_value=False)
         mock_tc.get_source_candidates = AsyncMock(return_value=[])
+        mock_tc.get_account_source_candidates = AsyncMock(return_value=[])
         _ingest(TestClient(app), payload)
 
     assert mock_tc.store.call_args.args[2] == ("alice@example.com" if configured else source_id)
@@ -1374,3 +1380,45 @@ def test_ingest_response_no_longer_carries_the_unread_identity_and_hint_maps(ses
     assert "account_identities" not in result
     assert "account_tag_hints" not in result
     assert "identities" in result and "reset_anchors" in result
+
+
+@pytest.mark.asyncio
+async def test_bundle_holds_compares_the_access_token_when_nothing_else_identifies_the_login():
+    from app.api.endpoints.fleet import _bundle_holds
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    await cache.store(
+        "xai", {"access_token": "tok-one"}, "alice@example.com", source_id="sidecar:h:o"
+    )
+    with patch("app.api.endpoints.fleet.token_cache", cache):
+        # Same account slot: the very same token is held; a different one is a new login.
+        assert await _bundle_holds(
+            "xai", "alice@example.com", "sidecar:h:o", {"access_token": "tok-one"}
+        )
+        assert not await _bundle_holds(
+            "xai", "alice@example.com", "sidecar:h:o", {"access_token": "tok-two"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_bundle_holds_finds_a_source_filed_under_its_resolved_account():
+    """A push without an account lands under its resolved identity; comparing against the
+    ``default`` slot would call every heartbeat a re-login."""
+    from app.api.endpoints.fleet import _bundle_holds
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    await cache.store(
+        "openrouter",
+        {"oauth_token": "tok-one"},
+        "bob@example.com",
+        source_id="sidecar:h:o",
+    )
+    with patch("app.api.endpoints.fleet.token_cache", cache):
+        assert await _bundle_holds(
+            "openrouter", "default", "sidecar:h:o", {"oauth_token": "tok-one"}
+        )
+        assert not await _bundle_holds(
+            "openrouter", "default", "sidecar:h:o", {"oauth_token": "tok-two"}
+        )

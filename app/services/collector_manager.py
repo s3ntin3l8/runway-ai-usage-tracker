@@ -630,13 +630,24 @@ class CollectorManager:
                     self._record_server_sources,
                     provider_id,
                     getattr(collector, "account_id", None) or "default",
-                    self._result_health(result) if used else None,
+                    self._result_health(
+                        result,
+                        empty_allowed=bool(getattr(collector, "successful_empty_result", False)),
+                    )
+                    if used
+                    else None,
                 )
         return result
 
     @staticmethod
-    def _result_health(result: list[dict[str, Any]]) -> str:
-        """Collapse a collector result into the per-source health vocabulary."""
+    def _result_health(result: list[dict[str, Any]], *, empty_allowed: bool = False) -> str:
+        """Collapse a collector result into the per-source health vocabulary.
+
+        A collector that legitimately reports nothing (``successful_empty_result``) is not
+        failing when it does.
+        """
+        if not result and empty_allowed:
+            return "healthy"
         if any(
             card.get("data_source") != "error"
             and card.get("remaining") != "ERR"
@@ -793,18 +804,19 @@ class CollectorManager:
             return ("healthy", None)
 
         ordered = [candidate for candidate in candidates if candidate_enabled(candidate)]
-        # A source whose last attempt was rejected goes behind every one that wasn't — the
-        # same reasoning as an expired token: it can only reject the call again.
         ordered.sort(
             key=lambda candidate: (
                 self._access_token_expired(candidate),
-                candidate_state(candidate)[0] == "auth_failed",
                 candidate_priority(candidate),
                 candidate["source_id"],
             )
         )
-        # ...and a rejected source rests between retries (15 min doubling to 6 h), so it stops
-        # costing an upstream call every cycle. The last credential standing is never starved.
+        # A source whose last attempt was rejected rests between retries (15 min doubling to
+        # 6 h), so it stops costing an upstream call at the head of every cycle. When the rest
+        # is over it is simply due: it is tried in its normal place, and a success brings it
+        # back while another failure doubles the rest. (Demoting it instead would starve it —
+        # failover stops at the first source that works.) The last credential standing is
+        # never starved: if every candidate is resting, the best one is still probed.
         now = datetime.now(UTC)
 
         def resting(candidate: dict[str, Any]) -> bool:
@@ -1586,16 +1598,25 @@ class CollectorManager:
                         )
                     ).all()
                 )
-            fresh: dict[str, tuple[str, datetime | None]] = {}
+            fresh: list[tuple[str, str, str, datetime | None]] = []
             for row in rows:
                 record_source_result(row, updates[row.source_id])
                 session.add(row)
-                fresh[row.source_id] = (row.health, row.next_retry_at)
+                fresh.append((row.account_id, row.source_id, row.health, row.next_retry_at))
             session.commit()
-        if fresh:
-            # Failover reads this cache; waiting for the next sync would re-try a source that
-            # just failed for up to a minute.
-            self._credential_source_state.setdefault((provider_id, account_id), {}).update(fresh)
+        # Failover reads this cache; waiting for the next sync would re-try a source that
+        # just failed for up to a minute. Keyed by the row's own account (a promoted source no
+        # longer lives under the collector's pre-run id), the same key the sync loads.
+        for row_account_id, source_id, health, retry_at in fresh:
+            self._credential_source_state.setdefault((provider_id, row_account_id), {})[
+                source_id
+            ] = (health, retry_at)
+
+    def clear_source_retry(self, provider_id: str, source_id: str) -> None:
+        """A re-login ended this source's rest: forget it in the failover cache too."""
+        for (provider, _account), states in self._credential_source_state.items():
+            if provider == provider_id and source_id in states:
+                states[source_id] = (states[source_id][0], None)
 
     def get_collector_stats(self) -> dict[str, Any]:
         """Get flattened statistics for all active collectors."""

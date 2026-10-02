@@ -303,6 +303,14 @@ def _slack_payload(card: LimitCard, used_pct: float, threshold: float) -> dict:
 _CREDENTIAL_ALERT_HINT = (
     "Re-authenticate in Settings → Providers, or check Token Health for details."
 )
+_CREDENTIAL_FAILING_HINT = (
+    "Collection with this credential keeps failing without being rejected — check the "
+    "provider's status and the last error under Settings → Credentials."
+)
+
+
+def _credential_hint(status: str) -> str:
+    return _CREDENTIAL_FAILING_HINT if status == "failing" else _CREDENTIAL_ALERT_HINT
 
 
 def _credential_title(status: str) -> str:
@@ -331,7 +339,7 @@ def _credential_discord_payload(
                     {"name": "Status", "value": status, "inline": True},
                     {"name": "Source", "value": source_name or "unknown", "inline": True},
                 ],
-                "description": _CREDENTIAL_ALERT_HINT,
+                "description": _credential_hint(status),
                 "footer": {"text": "Runway · credential alert"},
             }
         ]
@@ -362,7 +370,7 @@ def _credential_slack_payload(
             },
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": _CREDENTIAL_ALERT_HINT},
+                "text": {"type": "mrkdwn", "text": _credential_hint(status)},
             },
         ]
     }

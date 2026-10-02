@@ -251,6 +251,9 @@ class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
     # a revoked credential isn't re-tried at the head of every cycle.
     consecutive_failures: int = 0
     next_retry_at: UTCDateTime | None = None
+    # When the current failure streak began (cleared by a success): a provider outage must
+    # last a while before every source it touches reads ``failing``.
+    failing_since: UTCDateTime | None = None
 
 
 class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]

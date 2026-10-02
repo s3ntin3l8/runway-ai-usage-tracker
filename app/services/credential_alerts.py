@@ -84,6 +84,18 @@ def _worst_status(a: str | None, b: str) -> str:
     return max(a, b, key=lambda s: _ALERT_SEVERITY.get(s, 1))
 
 
+def _note_bad_row(state: dict[str, Any], row: dict[str, Any]) -> None:
+    """Fold one bad row into its account's state: the worst status wins, and the detail row
+    is the one that earned it."""
+    previous = state["status"]
+    state["bad"] = True
+    state["status"] = _worst_status(previous, row["status"])
+    if state["detail"] is None or _ALERT_SEVERITY.get(row["status"], 1) > _ALERT_SEVERITY.get(
+        previous, 1
+    ):
+        state["detail"] = row
+
+
 def _commit_step(session: Session, context: str) -> None:
     """Commit one webhook's dedup-row change immediately, rather than batching
     the whole cycle into one commit.
@@ -217,10 +229,7 @@ async def check_credential_alerts(session: Session) -> None:
             {"bad": False, "healthy": False, "status": None, "detail": None},
         )
         if _is_alert_bad(row, accounts_by_provider):
-            state["bad"] = True
-            state["status"] = _worst_status(state["status"], row["status"])
-            if state["detail"] is None or row["status"] == "invalid":
-                state["detail"] = row
+            _note_bad_row(state, row)
         # Deliberately broader than token_health's own redundancy math,
         # which excludes "_assumed" (config/env, no real expiry) rows as
         # evidence — here, any non-bad valid/expiring sibling is enough

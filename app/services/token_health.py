@@ -117,6 +117,9 @@ def is_durably_rejected(source: CredentialSource, siblings: Iterable[CredentialS
 # Consecutive failed attempts before an ``unavailable`` source counts as failing, and how old
 # its last attempt may be before we stop vouching for the verdict.
 FAILING_AFTER_ATTEMPTS = 3
+# The streak must also have lasted this long: a provider outage or a rate-limit burst fails
+# every source it touches for a few cycles, and none of them is "failing" yet.
+FAILING_MIN_DURATION_SECS = 3600
 FAILING_MAX_AGE_SECS = 86400
 
 
@@ -124,8 +127,9 @@ def is_failing(source: CredentialSource, siblings: Iterable[CredentialSource]) -
     """A credential the provider has not rejected but that keeps failing to collect.
 
     ``auth_failed`` is the rejection rule (:func:`is_durably_rejected`). This is its
-    non-auth twin: the last ``FAILING_AFTER_ATTEMPTS`` attempts all failed (a blip or one
-    bad cycle must not flip a status or fire an alert), the verdict is recent, and — as with
+    non-auth twin: the last ``FAILING_AFTER_ATTEMPTS`` attempts all failed over at least
+    ``FAILING_MIN_DURATION_SECS`` (a blip, one bad cycle or a short provider outage must not
+    flip a status or fire an alert), the verdict is recent, and — as with
     rejection — no enabled sibling has succeeded since, because a working sibling means
     collection still works.
     """
@@ -134,7 +138,12 @@ def is_failing(source: CredentialSource, siblings: Iterable[CredentialSource]) -
     if (source.consecutive_failures or 0) < FAILING_AFTER_ATTEMPTS:
         return False
     attempted = _utc(source.last_attempt_at)
-    if attempted is None or time.time() - attempted.timestamp() > FAILING_MAX_AGE_SECS:
+    since = _utc(source.failing_since)
+    if attempted is None or since is None:
+        return False
+    if time.time() - attempted.timestamp() > FAILING_MAX_AGE_SECS:
+        return False
+    if attempted.timestamp() - since.timestamp() < FAILING_MIN_DURATION_SECS:
         return False
     for other in siblings:
         if other.source_id == source.source_id or not other.enabled:

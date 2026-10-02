@@ -603,6 +603,26 @@ def test_rejected_source_backs_off_on_the_shared_schedule_and_a_success_clears_i
     assert (row.consecutive_failures, row.next_retry_at) == (0, None)
 
 
+def test_failure_streak_start_is_stamped_once_and_cleared_by_a_success():
+    row = _source_row()
+    record_source_result(row, "unavailable")
+    started = row.failing_since
+    assert started is not None
+    record_source_result(row, "unavailable")
+    record_source_result(row, "auth_failed")
+    assert row.failing_since == started  # the streak began at the first failure
+    record_source_result(row, "healthy")
+    assert row.failing_since is None
+
+
+def test_a_non_auth_failure_ends_the_rest_an_earlier_rejection_earned():
+    row = _source_row()
+    record_source_result(row, "auth_failed")
+    assert row.next_retry_at is not None
+    record_source_result(row, "unavailable")
+    assert row.next_retry_at is None
+
+
 def test_unavailable_counts_failures_but_never_rests_the_source():
     row = _source_row()
     for expected in (1, 2, 3):

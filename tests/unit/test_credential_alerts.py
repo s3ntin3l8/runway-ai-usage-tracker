@@ -553,3 +553,24 @@ async def test_healthy_key_with_no_prior_alert_is_a_noop(session):
     assert not client.post.called
     alerts = session.exec(select(WebhookCredentialAlert)).all()
     assert alerts == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_alert_says_so_instead_of_telling_you_to_reauthenticate(session):
+    _config(session)
+    client = await _run(session, [_row(status="failing")])
+    sent = str(client.post.call_args)
+    assert "keeps failing without being rejected" in sent
+    assert "Re-authenticate" not in sent
+
+
+@pytest.mark.asyncio
+async def test_the_detail_row_follows_the_worst_status_in_a_mixed_account(session):
+    _config(session)
+    rows = [
+        _row(status="failing", source_name="gemini-key"),
+        _row(status="expired", source_name="oauth-file", token_types=["access_token"]),
+    ]
+    client = await _run(session, rows)
+    assert "oauth-file" in str(client.post.call_args)
+    assert session.exec(select(WebhookCredentialAlert)).one().status == "expired"

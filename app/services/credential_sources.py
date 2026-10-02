@@ -338,6 +338,7 @@ def merge_source_provenance(target: CredentialSource, source: CredentialSource) 
         target.last_error = source.last_error
         target.consecutive_failures = source.consecutive_failures
         target.next_retry_at = source.next_retry_at
+        target.failing_since = source.failing_since
     elif source.last_attempt_at is None and target.last_attempt_at is None:
         target.health = source.health
         target.health_detail = source.health_detail
@@ -442,13 +443,18 @@ def record_source_result(row: CredentialSource, health: str) -> None:
         row.last_error = row.health_detail
         row.consecutive_failures = 0
         row.next_retry_at = None
+        row.failing_since = None
     else:
         row.last_error = HEALTH_DETAILS.get(health, "Collection failed")
+        if not row.consecutive_failures:
+            row.failing_since = now
         row.consecutive_failures = (row.consecutive_failures or 0) + 1
-        if health == "auth_failed":
-            # A rejected credential keeps failing until someone replaces it: back off so it
-            # stops leading every cycle. A transient ``unavailable`` is retried as usual.
-            row.next_retry_at = now + retry_backoff(row.consecutive_failures)
+        # A rejected credential keeps failing until someone replaces it: back off so it stops
+        # costing a call at the head of every cycle. A transient ``unavailable`` is retried as
+        # usual (and clears any rest an earlier rejection earned).
+        row.next_retry_at = (
+            now + retry_backoff(row.consecutive_failures) if health == "auth_failed" else None
+        )
 
 
 def reset_source_retry(session: Session, *, provider_id: str, source_id: str) -> None:
@@ -462,4 +468,5 @@ def reset_source_retry(session: Session, *, provider_id: str, source_id: str) ->
         if row.consecutive_failures or row.next_retry_at is not None:
             row.consecutive_failures = 0
             row.next_retry_at = None
+            row.failing_since = None
             session.add(row)

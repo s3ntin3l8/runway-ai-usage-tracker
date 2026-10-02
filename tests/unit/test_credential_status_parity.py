@@ -514,10 +514,15 @@ def test_is_failing_needs_a_streak_a_recent_verdict_and_no_working_sibling():
         "health": "unavailable",
         "consecutive_failures": 3,
         "last_attempt_at": now - timedelta(minutes=5),
+        "failing_since": now - timedelta(hours=2),
     }
     assert is_failing(_src("a", **streak), []) is True
     # One bad cycle, or a blip, is not a verdict.
     assert is_failing(_src("a", **{**streak, "consecutive_failures": 2}), []) is False
+    # A provider outage or rate-limit burst fails every source for a few cycles: not yet.
+    short = {**streak, "failing_since": now - timedelta(minutes=20)}
+    assert is_failing(_src("a", **short), []) is False
+    assert is_failing(_src("a", **{**streak, "failing_since": None}), []) is False
     # A rejection is `invalid`'s business, not this rule's.
     assert is_failing(_src("a", **{**streak, "health": "auth_failed"}), []) is False
     assert is_failing(_src("a", **{**streak, "enabled": False}), []) is False
@@ -552,6 +557,7 @@ async def test_both_views_report_a_failing_source_the_same_way(monkeypatch):
         "sidecar:g1",
         health="unavailable",
         consecutive_failures=5,
+        failing_since=now - timedelta(hours=3),
         last_attempt_at=now - timedelta(minutes=2),
     )
     monkeypatch.setattr(credential_inventory, "engine", th.engine)

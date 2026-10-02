@@ -191,6 +191,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("credential_sources", "verified_subject_account", "TEXT"),
     ("credential_sources", "consecutive_failures", "INTEGER NOT NULL DEFAULT 0"),
     ("credential_sources", "next_retry_at", "DATETIME"),
+    ("credential_sources", "failing_since", "DATETIME"),
     ("system_config", "user_timezone", "VARCHAR"),
     ("system_config", "sidecar_update_channel", "VARCHAR"),
     ("system_config", "sidecar_auto_update", "BOOLEAN"),
