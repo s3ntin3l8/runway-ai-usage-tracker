@@ -294,3 +294,64 @@ describe('Banners data health', () => {
     expect(screen.queryByText(/data health found/i)).not.toBeInTheDocument();
   });
 });
+
+
+describe('Banners unmapped credentials', () => {
+  const withBlocked = (blocked: NonNullable<CredentialInventory['blocked_collection']>) => ({
+    ...inventoryWith([]),
+    machines: [
+      { machine_id: 'host-a', name: 'Workstation', last_seen: null, credential_count: 1, unmapped_count: 1 },
+    ],
+    blocked_collection: blocked,
+  });
+
+  it('names the machine and provider and deep-links to the exact origin', () => {
+    renderWithProviders(
+      <Banners
+        credentials={withBlocked([
+          { sidecar_id: 'host-a', provider_id: 'deepseek', credential_origin: 'env:DEEPSEEK_API_KEY' },
+        ])}
+        anomalies={[]}
+      />,
+    );
+    expect(
+      screen.getByText(
+        /credential unmapped on workstation — quota for deepseek won't collect until it is assigned an account/i,
+      ),
+    ).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /assign account/i });
+    const href = link.getAttribute('href') ?? '';
+    expect(href).toContain('/settings/credentials?');
+    const query = new URLSearchParams(href.split('?')[1]);
+    expect(Object.fromEntries(query)).toEqual({
+      view: 'mapping',
+      sidecar: 'host-a',
+      provider: 'deepseek',
+      origin: 'env:DEEPSEEK_API_KEY',
+    });
+  });
+
+  it('summarises several unmapped credentials and links to the list', () => {
+    renderWithProviders(
+      <Banners
+        credentials={withBlocked([
+          { sidecar_id: 'host-a', provider_id: 'deepseek', credential_origin: 'env:A' },
+          { sidecar_id: 'host-a', provider_id: 'kimi_coding', credential_origin: 'cookie:b' },
+        ])}
+        anomalies={[]}
+      />,
+    );
+    expect(
+      screen.getByText(/2 credentials are unmapped — quota for deepseek, kimi_coding/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /assign account/i })).toHaveAttribute(
+      'href',
+      '/settings/credentials?view=mapping',
+    );
+  });
+
+  it('shows nothing when no credential is blocking collection (or the server is older)', () => {
+    renderWithProviders(<Banners credentials={inventoryWith([])} anomalies={[]} />);
+    expect(screen.queryByText(/credential unmapped/i)).not.toBeInTheDocument();
+  });
+});

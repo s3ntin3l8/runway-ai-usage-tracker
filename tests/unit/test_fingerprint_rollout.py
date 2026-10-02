@@ -57,7 +57,11 @@ def test_env_key_origins_carry_the_credential_fingerprint(monkeypatch, provider,
 
     fp = credential_fingerprint(KEY)
     assert blocked == [
-        {"provider_id": provider, "credential_origin": f"env:{rule['variable']}#{fp}"}
+        {
+            "provider_id": provider,
+            "credential_origin": f"env:{rule['variable']}#{fp}",
+            "reason": "token_withheld",
+        }
     ]
 
 

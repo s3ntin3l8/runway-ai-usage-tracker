@@ -930,12 +930,23 @@ export interface CredentialMachineView {
   unmapped_count: number;
 }
 
+/** A credential a machine found but could not map to an account, whose provider is not
+ * collecting from any other source — the quota behind it stays dark until it is assigned. */
+export interface BlockedCollection {
+  sidecar_id: string;
+  provider_id: string;
+  credential_origin: string;
+  first_seen?: string | null;
+}
+
 export interface CredentialInventory {
   providers: CredentialProviderView[];
   machines: CredentialMachineView[];
   unmapped_count: number;
   rule_count: number;
   pending_usage_events: number;
+  /** Absent from an older server. */
+  blocked_collection?: BlockedCollection[];
 }
 
 export interface AuditEntry {

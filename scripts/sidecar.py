@@ -3506,6 +3506,7 @@ class GenericCollector:
                 else:
                     resolved_account_id = None
                 if resolved_account_id is None or not source_identity_strong:
+                    blocked_entry = {"provider_id": provider_id, "credential_origin": origin}
                     if provider_id in _SERVER_IDENTITY_PROVIDERS:
                         logging.warning(
                             f"  [{provider_id}] token card blocked (origin={origin}) — "
@@ -3518,9 +3519,10 @@ class GenericCollector:
                             "its token; configure an account before server-side quota "
                             "collection is available."
                         )
-                    blocked_origins.append(
-                        {"provider_id": provider_id, "credential_origin": origin}
-                    )
+                        # Tells the server this origin's quota will not collect until it is
+                        # assigned an account (the dashboard warns about it).
+                        blocked_entry["reason"] = "token_withheld"
+                    blocked_origins.append(blocked_entry)
                 identity_pending = not bool(resolved_account_id and source_identity_strong)
                 if (
                     provider_id == "anthropic"

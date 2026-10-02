@@ -528,9 +528,21 @@ class CredentialMachineView(BaseModel):
     unmapped_count: int = 0
 
 
+class BlockedCollectionView(BaseModel):
+    """A credential a machine found but could not map to an account, whose provider is not
+    collecting: the quota behind it stays dark until someone assigns an account."""
+
+    sidecar_id: str
+    provider_id: str
+    credential_origin: str
+    first_seen: str | None = None
+
+
 class CredentialInventory(BaseModel):
     providers: list[CredentialProviderView] = Field(default_factory=list)
     machines: list[CredentialMachineView] = Field(default_factory=list)
     unmapped_count: int = 0  # credentials awaiting an account (Fleet "untagged")
     rule_count: int = 0  # operator mapping rules
     pending_usage_events: int = 0  # collected events with no account yet
+    # Unmapped credentials whose provider has no fresh collection anywhere (Home banner).
+    blocked_collection: list[BlockedCollectionView] = Field(default_factory=list)

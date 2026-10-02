@@ -269,3 +269,44 @@ async def test_forgetting_the_last_source_clears_the_accounts_rejection_flag(
 
     client.delete(f"/api/v1/system/credentials/gemini/{ALICE}/sidecar:b", headers=_headers())
     assert auth_failures.flagged_accounts("gemini") == set()
+
+
+def test_inventory_warns_about_unmapped_credentials_that_stop_collection(client, session):
+    from app.models.db import PendingCredentialTag
+    from app.services.credential_tags import CredentialTagRepo
+
+    for origin in ("env:A_KEY", "env:B_KEY"):
+        session.add(
+            PendingCredentialTag(
+                sidecar_id="host-a",
+                provider_id="deepseek",
+                credential_origin=origin,
+                reason="token_withheld",
+            )
+        )
+    session.commit()
+
+    body = client.get("/api/v1/system/credentials", headers=_headers()).json()
+    assert body["unmapped_count"] == 2
+    assert {b["credential_origin"] for b in body["blocked_collection"]} == {
+        "env:A_KEY",
+        "env:B_KEY",
+    }
+    assert all(
+        b["sidecar_id"] == "host-a" and b["provider_id"] == "deepseek"
+        for b in body["blocked_collection"]
+    )
+
+    # Once an operator tags one, it is no longer waiting: the count and the warning drop it,
+    # exactly as the Untagged list does.
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="deepseek",
+        credential_origin="env:A_KEY",
+        account_id="alice@example.com",
+        sidecar_id="host-a",
+    )
+    session.commit()
+    body = client.get("/api/v1/system/credentials", headers=_headers()).json()
+    assert body["unmapped_count"] == 1
+    assert [b["credential_origin"] for b in body["blocked_collection"]] == ["env:B_KEY"]

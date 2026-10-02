@@ -182,6 +182,46 @@ describe('NeedsMappingView', () => {
   });
 });
 
+describe('NeedsMappingView deep link', () => {
+  const entry = {
+    sidecar_id: 'host-a',
+    provider_id: 'deepseek',
+    credential_origin: 'env:DEEPSEEK_API_KEY',
+    first_seen: new Date().toISOString(),
+    claimed_account_id: null,
+  };
+  const other = { ...entry, provider_id: 'chatgpt', credential_origin: 'env:CHATGPT_TOKEN' };
+
+  it('opens the dialog for the origin named in the link, and only that one', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [other, entry],
+      counts_by_sidecar: { 'host-a': 2 },
+    });
+    renderWithProviders(<NeedsMappingView pendingUsageEvents={0} />, {
+      route:
+        '/settings/credentials?view=mapping&sidecar=host-a&provider=deepseek&origin=env%3ADEEPSEEK_API_KEY',
+    });
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/deepseek · env:DEEPSEEK_API_KEY/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/chatgpt/)).not.toBeInTheDocument();
+  });
+
+  it('stays closed when the origin is no longer waiting', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [other],
+      counts_by_sidecar: { 'host-a': 1 },
+    });
+    renderWithProviders(<NeedsMappingView pendingUsageEvents={0} />, {
+      route:
+        '/settings/credentials?view=mapping&sidecar=host-a&provider=deepseek&origin=env%3ADEEPSEEK_API_KEY',
+    });
+
+    expect(await screen.findByText('env:CHATGPT_TOKEN')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
 describe('RulesView', () => {
   const rule = {
     provider_id: 'anthropic',

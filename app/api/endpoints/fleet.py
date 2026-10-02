@@ -23,6 +23,7 @@ from app.models.db import (
     CredentialSource,
     CredentialTag,
     LatestUsage,
+    PendingCredentialTag,
     PendingUsageEvent,
     ProviderConfig,
     SidecarRegistry,
@@ -1091,6 +1092,8 @@ async def post_credential_manifest(
             provider_id=provider_id,
             credential_origin=origin,
         )
+        reason = entry.get("reason")
+        pending.reason = reason if isinstance(reason, str) and reason else None
         pending.claimed_account_id = (
             canonical_account_id(claimed_id)
             if provider_id == "anthropic" and isinstance(claimed_id, str) and "@" in claimed_id
@@ -1436,6 +1439,27 @@ async def delete_credential_tag(
     return {"status": "deleted"}
 
 
+def visible_pending_rows(session: Session) -> list[PendingCredentialTag]:
+    """Pending rows an operator still has to resolve: every row except those whose origin
+    already has an effective hint (an explicit tag or an active single-account auto-hint).
+
+    One definition for the Untagged list, its per-sidecar counts, and the credential inventory,
+    so the badge, the list and the Home banner can never disagree about what is "untagged".
+    """
+    by_sidecar: dict[str, list[PendingCredentialTag]] = {}
+    for r in PendingCredentialTagRepo.list_all(session):
+        by_sidecar.setdefault(r.sidecar_id, []).append(r)
+
+    visible: list[PendingCredentialTag] = []
+    for sc_id, sc_rows in by_sidecar.items():
+        pids = sorted({r.provider_id for r in sc_rows})
+        hints = _account_tag_hints_for_providers(session, pids, sidecar_id=sc_id)
+        visible.extend(
+            r for r in sc_rows if r.credential_origin not in hints.get(r.provider_id, {})
+        )
+    return visible
+
+
 @router.get("/credentials/tags/pending")
 async def list_pending_credential_tags(
     sidecar_id: str | None = None,
@@ -1454,23 +1478,10 @@ async def list_pending_credential_tags(
     auto-hint doesn't oscillate, but they're not "untagged" from the
     operator's perspective.
     """
-    all_rows = PendingCredentialTagRepo.list_all(session)
-
-    # Group by sidecar so hints resolve with that host's scope.
-    by_sidecar: dict[str, list] = {}
-    for r in all_rows:
-        by_sidecar.setdefault(r.sidecar_id, []).append(r)
-
-    visible_rows = []
+    visible_rows = visible_pending_rows(session)
     counts_by_sidecar: dict[str, int] = {}
-    for sc_id, sc_rows in by_sidecar.items():
-        pids = sorted({r.provider_id for r in sc_rows})
-        hints = _account_tag_hints_for_providers(session, pids, sidecar_id=sc_id)
-        for r in sc_rows:
-            if r.credential_origin in hints.get(r.provider_id, {}):
-                continue
-            visible_rows.append(r)
-            counts_by_sidecar[sc_id] = counts_by_sidecar.get(sc_id, 0) + 1
+    for r in visible_rows:
+        counts_by_sidecar[r.sidecar_id] = counts_by_sidecar.get(r.sidecar_id, 0) + 1
 
     if sidecar_id is not None:
         visible_rows = [r for r in visible_rows if r.sidecar_id == sidecar_id]
