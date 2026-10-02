@@ -49,7 +49,12 @@ from app.services.credential_sources import (
 )
 from app.services.credential_tags import origin_candidates, pick_effective_tag
 from app.services.token_cache import token_cache
-from app.services.token_health import credential_status, is_durably_rejected, is_flagged
+from app.services.token_health import (
+    credential_status,
+    is_durably_rejected,
+    is_flagged,
+    is_redundancy_sibling,
+)
 from app.services.token_refresher import _REFRESH_ENDPOINTS, ROTATING_REFRESH_PROVIDERS
 
 # Best → worst. An account is as healthy as its best enabled source: a working
@@ -209,9 +214,38 @@ def _apply_server_expiry(
     view.expires_at = datetime.fromtimestamp(exp, tz=UTC).isoformat() if exp is not None else None
     view.expires_in_seconds = int(exp - now) if exp is not None else None
     view.can_refresh = False  # the server's own credential has no source bundle to refresh
+    view.rejected = rejected
     # A rotating provider's login in a CLI's own file is renewed by that CLI.
     if origin.get("cli_owned") and rollable:
         view.refreshed_by = "machine"
+
+
+def _mark_redundant(views: list[CredentialSourceView]) -> None:
+    """Flag expired, unrefreshable credentials that another healthy one can stand in for.
+
+    Same rule as Token Health's ``redundant`` (see ``is_redundancy_sibling``): a pasted key or
+    env var with no expiry is only *assumed* valid, so it never counts as the healthy sibling.
+    """
+
+    def assumed(view: CredentialSourceView) -> bool:
+        return view.origin_kind in ("config", "server") and view.expires_at is None
+
+    healthy = [v for v in views if v.status in ("valid", "expiring") and not assumed(v)]
+    for view in views:
+        view.redundant = (
+            view.status == "expired"
+            and not view.rollable
+            and any(
+                h is not view
+                and h.provider_id == view.provider_id
+                and is_redundancy_sibling(
+                    h.account_id,
+                    view.account_id,
+                    healthy_is_server_or_config=h.origin_kind in ("config", "server"),
+                )
+                for h in healthy
+            )
+        )
 
 
 def _unused_reason(configs: list[ProviderConfig], origin: dict[str, Any]) -> str | None:
@@ -384,6 +418,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 token_types=token_types,
                 can_refresh=server_refreshable and bundle is not None,
                 refreshed_by=refreshed_by,
+                rejected=rejected,
                 rollable=rollable,
                 removable=machine_sourced,
                 enabled=row.enabled,
@@ -453,6 +488,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         )
         accounts.setdefault((provider_id, "default"), []).append(view)
     accounts = {key: views for key, views in accounts.items() if views}
+    _mark_redundant([view for views in accounts.values() for view in views])
 
     by_provider: dict[str, list[CredentialAccountView]] = {}
     for (provider_id, account_id), views in accounts.items():

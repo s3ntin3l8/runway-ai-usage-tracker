@@ -838,33 +838,6 @@ export type TokenHealthStatus =
   | 'unknown'
   | string;
 
-export interface TokenHealthEntry {
-  provider: string;
-  account_id: string;
-  account_label?: string | null;
-  source?: string | null;
-  source_name?: string | null;
-  source_id?: string;
-  assignment_pending?: boolean;
-  token_types?: string[];
-  status: TokenHealthStatus;
-  expires_at?: string | null;
-  ttl_remaining_seconds?: number;
-  can_refresh?: boolean;
-  /** True when this credential is expired+unrefreshable but another healthy
-   * credential this account can fall back on exists (same account, or one that
-   * carries no identity of its own) — not blocking collection, should not raise
-   * a hard dashboard alert. */
-  redundant?: boolean;
-  /** False for credentials managed outside the cache (dashboard-saved keys,
-   * server env/file discoveries): they are re-seeded every cycle, so they are
-   * changed in Settings → Providers / the environment, not removed here. */
-  removable?: boolean;
-  /** Sidecar host that reported this source; the source is informational. */
-  sidecar_id?: string | null;
-  identity_pending?: boolean;
-}
-
 // ── Credential inventory (`GET /api/v1/system/credentials`) ─────────────────
 // One row per credential *source* (a secret found in one place), grouped
 // provider → account. Never carries secret values.
@@ -901,6 +874,11 @@ export interface CredentialSourceView {
   can_refresh: boolean;
   rollable: boolean;
   refreshed_by: 'server' | 'machine' | null;
+  /** The provider rejected this credential (HTTP 401/403 at the last collection). */
+  rejected: boolean;
+  /** Expired and unrefreshable, but another healthy credential for the same account can stand
+   * in for it: not blocking collection, so it should not raise a hard dashboard alert. */
+  redundant: boolean;
   removable: boolean;
   enabled: boolean;
   priority: number;

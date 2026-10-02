@@ -1,4 +1,4 @@
-// Debug: authoritative-source + token-health panes (always shown) plus an
+// Debug: the collection-context pane (always shown, from the credential inventory) plus an
 // on-demand capture of raw upstream collector responses (admin-gated, runs
 // live HTTP calls — never auto-fetches).
 
@@ -154,17 +154,10 @@ function nextPollLabel(iso: string | null | undefined): string {
   return until === 'now' ? 'now' : `in ${until}`;
 }
 
-// Match credential inventory accounts to this provider detail account.
-// Provider-wide generic IDs and unscoped config rows intentionally match each
-// pane. Account-keyed config sources match only their account (or default).
-const GENERIC_ACCOUNT_IDS = new Set(['server', 'config', 'config-cookie', 'local-file']);
-// `config:<account>` / `config-cookie:<account>` are per-account: only show the
-// one belonging to this pane's account (or the unscoped `default` config row).
-const matchesAccount = (id: string, accountId: string) => {
-  if (GENERIC_ACCOUNT_IDS.has(id) || id === accountId) return true;
-  const m = /^config(?:-cookie)?:(.+)$/.exec(id);
-  return m !== null && (m[1] === accountId || m[1] === 'default');
-};
+// Match credential inventory accounts to this provider detail account. The ``default`` account
+// holds the credentials not tied to one account (the server's env var, an unscoped pasted key), so
+// it shows on every pane of the provider; any other account matches only its own pane.
+const matchesAccount = (id: string, accountId: string) => id === accountId || id === 'default';
 
 function RawCapturePane({
   providerId,

@@ -25,7 +25,7 @@ import {
   useFleet,
   useForecast,
   useProviderConfigs,
-  useTokenHealth,
+  useCredentialBanners,
 } from './queries';
 import { applyLayoutOrder, atRiskItems, buildRiskItems } from './risk';
 
@@ -35,9 +35,9 @@ export function HomePage() {
   const forecast = useForecast();
   const cost = useCostForecast();
   const cumulative = useCumulative();
-  const tokenHealth = useTokenHealth();
+  const credentials = useCredentialBanners();
   const anomalies = useAnomalies();
-  // 300s quiet-path cadence, matching useTokenHealth — this is just the
+  // 300s quiet-path cadence, matching useCredentialBanners — this is just the
   // error badge, not the Settings page's own report, so it doesn't need
   // the tighter default poll.
   const dataHealth = useDataHealthReport(300_000);
@@ -116,7 +116,7 @@ export function HomePage() {
       />
       <div className="flex flex-col gap-5 p-4 lg:p-8">
         <Banners
-          tokens={tokenHealth.data?.tokens}
+          credentials={credentials.data}
           anomalies={anomalies.data?.anomalies}
           fleet={fleet.data?.fleet}
           dataHealth={dataHealth.data}
