@@ -73,10 +73,6 @@ _NON_REMOVABLE_SOURCES = frozenset({"config", "manual_config", "server"})
 _OAUTH_FAMILY_KEYS = _OAUTH_CREDENTIAL_KEYS | {"access_token"}
 
 
-class CredentialNotRemovableError(Exception):
-    """The credential is managed outside the cache (Settings → Providers / env)."""
-
-
 def _utc(value: datetime | None) -> datetime | None:
     """SQLite hands datetimes back naive; treat them as UTC so they compare with aware ones."""
     if value is None:
@@ -627,33 +623,6 @@ class TokenHealthService:
             r.pop("_rollable", None)
 
         return result
-
-    async def delete_credential(self, provider: str, account_id: str) -> bool:
-        """
-        Manually remove a credential from the in-memory cache.
-
-        Credentials managed outside the cache — dashboard-saved keys/cookies and
-        server env/file discoveries — are re-seeded on the next collection, so
-        removing them here would only *look* like it worked. Those raise
-        :class:`CredentialNotRemovableError`; change them in Settings → Providers or
-        the server environment.
-
-        Returns true if removed.
-        """
-        if account_id == "server" or account_id.startswith(("config:", "config-cookie:")):
-            raise CredentialNotRemovableError(account_id)
-
-        for entry in await token_cache.get_accounts(provider):
-            if (
-                entry["account_id"] == canonical_account_id(account_id)
-                and entry.get("source") in _NON_REMOVABLE_SOURCES
-            ):
-                raise CredentialNotRemovableError(account_id)
-
-        removed = await token_cache.remove(provider, account_id)
-        if removed:
-            auth_failures.clear(provider, account_id)
-        return removed
 
 
 token_health_service = TokenHealthService()

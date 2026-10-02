@@ -356,13 +356,27 @@ class CredentialProvider:
         return CredentialMap(discovered, sources=sources)
 
     @staticmethod
+    def _classify_values(values: dict[str, Any]) -> dict[str, Any]:
+        """Expiry and refreshability of a discovered credential, without its values."""
+        from app.core.utils import IdentityExtractor, has_refresh_credential
+
+        tokens = {k: str(v) for k, v in values.items() if v}
+        return {
+            "exp": IdentityExtractor.exp_from_tokens(tokens),
+            "rollable": has_refresh_credential(tokens),
+        }
+
+    @staticmethod
     def server_credential_origins(provider_id: str) -> list[dict[str, Any]]:
         """Where the *server host itself* finds credentials for ``provider_id``.
 
         One entry per env var / file rule that currently yields a value:
         ``{"source_type": "env"|"file", "label": <VAR|basename>, "keys": [targets],
-        "managed": <file inside Runway's own config dir>}``. Values are never
-        returned. Blocking file reads; call through ``asyncio.to_thread`` from async code.
+        "managed": <file inside Runway's own config dir>, "exp": <epoch seconds or None>,
+        "rollable": <holds a refresh credential>}``. ``exp`` and ``rollable`` are derived
+        from the values here so callers can classify the credential; the values themselves
+        are never returned. Blocking file reads; call through ``asyncio.to_thread`` from
+        async code.
         """
         runway_config_dir = get_platform_config_dir("runway")
         origins: list[dict[str, Any]] = []
@@ -371,13 +385,16 @@ class CredentialProvider:
             mapping = rule.get("mapping", {})
             if rule_type == "env":
                 variable = rule.get("variable")
-                if variable and os.getenv(variable):
+                env_value = os.getenv(variable) if variable else None
+                if variable and env_value:
+                    target = mapping.get("value", "token")
                     origins.append(
                         {
                             "source_type": "env",
                             "label": variable,
-                            "keys": [mapping.get("value", "token")],
+                            "keys": [target],
                             "managed": False,
+                            **CredentialProvider._classify_values({target: env_value}),
                         }
                     )
             elif rule_type == "file":
@@ -391,11 +408,11 @@ class CredentialProvider:
                             )
                     except Exception:
                         continue
-                    keys = [
-                        target
+                    resolved = {
+                        target: CredentialProvider._resolve_mapping_value(data, key_path)
                         for key_path, target in mapping.items()
-                        if CredentialProvider._resolve_mapping_value(data, key_path)
-                    ]
+                    }
+                    keys = [target for target, value in resolved.items() if value]
                     if keys:
                         origins.append(
                             {
@@ -405,6 +422,9 @@ class CredentialProvider:
                                 "managed": bool(
                                     runway_config_dir
                                     and str(path).startswith(str(runway_config_dir))
+                                ),
+                                **CredentialProvider._classify_values(
+                                    {k: v for k, v in resolved.items() if v}
                                 ),
                             }
                         )

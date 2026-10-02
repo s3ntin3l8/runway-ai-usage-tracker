@@ -182,6 +182,35 @@ def _scan_server_credentials() -> tuple[dict[str, list[dict[str, Any]]], set[str
     return found, scanned
 
 
+def _apply_server_expiry(
+    view: CredentialSourceView, origin: dict[str, Any], now: float, *, rejected: bool
+) -> None:
+    """Classify a server env/file credential from what the scan saw (expiry, refresh token).
+
+    The scan reads the host's own values, so unlike a machine credential it is always
+    "live": a dead OAuth JWT reads expired and a rejected key reads invalid, the same as
+    Token Health's ``server`` row.
+    """
+    # The scan is authoritative even if a stale bundle exists for this row.
+    exp = origin.get("exp")
+    rollable = bool(origin.get("rollable"))
+    view.status = credential_status(
+        exp=exp,
+        token_types=origin["keys"],
+        rollable=rollable,
+        rejected=rejected,
+        live=True,
+        machine_sourced=False,
+        last_seen=None,
+    )
+    view.rollable = rollable
+    # The scan is authoritative: a stored expiry from an earlier credential must not sit
+    # beside a status computed from the one the host has now.
+    view.expires_at = datetime.fromtimestamp(exp, tz=UTC).isoformat() if exp is not None else None
+    view.expires_in_seconds = int(exp - now) if exp is not None else None
+    view.can_refresh = False  # the server's own credential has no source bundle to refresh
+
+
 def _unused_reason(configs: list[ProviderConfig], origin: dict[str, Any]) -> str | None:
     """Why the server would not use ``origin`` — mirrors when the default collector runs
     (``CollectorManager._sync_collectors``) and what ``get_credentials`` prefers."""
@@ -244,6 +273,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             canonical_account_id(row.account_id)
         )
 
+    # What the main loop decided per source, so a server row re-classified from the scan
+    # below keeps a rejection even when its status ended up ``expired``/``stale``.
+    rejected_by_source: dict[tuple[str, str], bool] = {}
     siblings_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
     for row in sources:
         siblings_by_account.setdefault((row.provider_id, row.account_id), []).append(row)
@@ -290,6 +322,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 {"provider": row.provider_id, "account_id": row.account_id}, accounts_by_provider
             )
         )
+        rejected_by_source[(row.provider_id, row.source_id)] = rejected
         status = credential_status(
             exp=exp,
             token_types=token_types,
@@ -360,34 +393,41 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 view.unused_reason = _unused_reason(
                     configs_by_provider.get(view.provider_id, []), origin
                 )
+                _apply_server_expiry(
+                    view,
+                    origin,
+                    now,
+                    rejected=rejected_by_source.get((view.provider_id, view.source_id), False),
+                )
                 seen.add((view.provider_id, view.source_id))
             kept.append(view)
         accounts[key] = kept
     for (provider_id, source_id), origin in present.items():
         if (provider_id, source_id) in seen:
             continue
-        accounts.setdefault((provider_id, "default"), []).append(
-            CredentialSourceView(
-                source_id=source_id,
-                provider_id=provider_id,
-                account_id="default",
-                origin_kind="server",
-                origin_type=origin["source_type"],
-                label=origin["label"],
-                mapping="server",
-                status=credential_status(
-                    exp=None,
-                    token_types=origin["keys"],
-                    rollable=False,
-                    rejected=False,
-                    live=False,
-                    machine_sourced=False,
-                    last_seen=None,
-                ),
-                token_types=origin["keys"],
-                unused_reason=_unused_reason(configs_by_provider.get(provider_id, []), origin),
-            )
+        view = CredentialSourceView(
+            source_id=source_id,
+            provider_id=provider_id,
+            account_id="default",
+            origin_kind="server",
+            origin_type=origin["source_type"],
+            label=origin["label"],
+            mapping="server",
+            status="unknown",
+            token_types=origin["keys"],
+            unused_reason=_unused_reason(configs_by_provider.get(provider_id, []), origin),
         )
+        # A rejected unscoped credential is flagged under ``default``; the server's own
+        # env/file credential is that account's, exactly as Token Health's ``server`` row.
+        _apply_server_expiry(
+            view,
+            origin,
+            now,
+            rejected=is_flagged(
+                {"provider": provider_id, "account_id": "default"}, accounts_by_provider
+            ),
+        )
+        accounts.setdefault((provider_id, "default"), []).append(view)
     accounts = {key: views for key, views in accounts.items() if views}
 
     by_provider: dict[str, list[CredentialAccountView]] = {}

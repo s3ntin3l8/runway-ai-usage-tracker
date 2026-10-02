@@ -1007,32 +1007,6 @@ class TestPerAccountAndInvalid:
         assert rows["alice@example.com"]["status"] == "valid"
         assert rows["alice@example.com"]["expires_at"] is not None
 
-    @pytest.mark.asyncio
-    async def test_delete_refuses_managed_credentials(self):
-        from app.services.token_health import CredentialNotRemovableError
-
-        cache = self._cache([("zai", "default", {"api_key": "k"}, {"source": "config"})])
-        service = TokenHealthService()
-        with patch("app.services.token_health.token_cache", cache):
-            with pytest.raises(CredentialNotRemovableError):
-                await service.delete_credential("zai", "server")
-            with pytest.raises(CredentialNotRemovableError):
-                await service.delete_credential("zai", "config:default")
-            with pytest.raises(CredentialNotRemovableError):
-                await service.delete_credential("zai", "default")  # config-sourced cache row
-            assert await cache.get("zai", "default") is not None
-
-    @pytest.mark.asyncio
-    async def test_delete_removes_sidecar_entry_and_clears_flag(self):
-        from app.services import auth_failures
-
-        cache = self._cache([("zai", "opaque-hash-b", {"api_key": "k"}, {"source": "sc1"})])
-        auth_failures.mark("zai", "opaque-hash-b")  # pragma: allowlist secret
-        service = TokenHealthService()
-        with patch("app.services.token_health.token_cache", cache):
-            assert await service.delete_credential("zai", "opaque-hash-b") is True
-        assert auth_failures.flagged_accounts("zai") == set()  # pragma: allowlist secret
-
 
 class TestServerCredentialScan:
     def test_includes_runway_config_dir_files_but_not_other_sources(self):

@@ -372,3 +372,33 @@ def test_opencode_auth_json_env_rule_beats_file_rule(
     creds = CredentialProvider.get_credentials(provider_id)
 
     assert creds["api_key"] == "sk-from-env"  # pragma: allowlist secret
+
+
+def test_server_credential_origins_classify_a_credential_without_returning_it(monkeypatch):
+    """The scan derives expiry and refreshability from the values so the inventory can
+    classify a server credential; the values themselves must never come back."""
+    import base64
+    import time
+
+    from app.services.credential_provider import CredentialProvider
+
+    def b64(d: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+    exp = time.time() - 600
+    token = f"{b64({'alg': 'none'})}.{b64({'exp': exp})}.sig"
+    monkeypatch.setattr(
+        "app.services.credential_provider.registry.get_provider",
+        lambda _pid: {
+            "rules": [
+                {"type": "env", "variable": "SOME_OAUTH_TOKEN", "mapping": {"value": "oauth_token"}}
+            ]
+        },
+    )
+    monkeypatch.setenv("SOME_OAUTH_TOKEN", token)
+
+    (origin,) = CredentialProvider.server_credential_origins("anything")
+
+    assert origin["exp"] == pytest.approx(exp, abs=1)
+    assert origin["rollable"] is False
+    assert token not in json.dumps(origin)
