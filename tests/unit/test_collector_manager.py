@@ -1290,6 +1290,28 @@ class TestCollectorManagerInitialization:
         assert manager.last_collection_outcomes == []
 
     @pytest.mark.asyncio
+    async def test_a_verifier_that_adopted_an_email_records_no_server_outcome_for_it(self, manager):
+        """After proving an email the verifier's collector carries that account id; its state is
+        the pending source's, not that account's own server credential."""
+        collector = SimpleNamespace(PROVIDER_ID="chatgpt", account_id="alice@example.com")
+        smart = MagicMock(collector=collector, last_collection_state="failed")
+        manager.smart_collectors = {"chatgpt:default:identity-pending": smart}
+
+        async def sync(_force=False):
+            return None
+
+        async def done(_key, _client):
+            return []
+
+        manager._sync_collectors = sync
+        manager._get_client = AsyncMock(return_value=MagicMock())
+        manager._collect_with_semaphore = done
+
+        await manager._do_collect()
+
+        assert manager.last_collection_outcomes == []
+
+    @pytest.mark.asyncio
     async def test_step2_does_not_respawn_default_from_cache(self, manager):
         """Sidecar may stamp the token cache with account_id="default"
         (`_gemini_account_email` / `_ag_account_email` fallbacks). When config

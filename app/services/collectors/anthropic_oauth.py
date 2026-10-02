@@ -339,7 +339,12 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             except (httpx.HTTPError, ValueError, KeyError) as e:
                 logger.debug(f"Failed to fetch Anthropic organization info: {e}")
 
-        local_hints = await asyncio.to_thread(self._get_local_config_hints)
+        # The server host's own config describes its own login, not a pinned source bundle.
+        local_hints = (
+            {}
+            if token_cache.is_source_selected("anthropic", self.account_id)
+            else await asyncio.to_thread(self._get_local_config_hints)
+        )
         return self._parse_oauth_response(
             data, name_map, creds, api_account_info, local_hints=local_hints
         )

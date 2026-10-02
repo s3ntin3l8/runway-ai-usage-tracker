@@ -546,14 +546,17 @@ class CollectorManager:
                         scrub_log(provider_id),
                     )
                 continue
-            outcomes.append(
-                {
-                    "provider_id": provider_id,
-                    "account_id": account_id,
-                    "source_id": f"server:{provider_id}",
-                    "state": state,
-                }
-            )
+            # The verifier is not the server's own credential: once it has adopted a proven
+            # email its state must not be recorded against that account's server outcome.
+            if not key.endswith(":identity-pending"):
+                outcomes.append(
+                    {
+                        "provider_id": provider_id,
+                        "account_id": account_id,
+                        "source_id": f"server:{provider_id}",
+                        "state": state,
+                    }
+                )
             if failed:
                 logger.error(f"Unexpected error from collector {active_keys[i]}: {res}")
                 continue
@@ -933,6 +936,27 @@ class CollectorManager:
                 )
             ).first()
             if source is None or not source.credential_origin:
+                return
+            existing_tag = (
+                CredentialTagRepo.get(
+                    session,
+                    provider_id=provider_id,
+                    credential_origin=source.credential_origin,
+                    sidecar_id=source.sidecar_id,
+                )
+                if source.sidecar_id
+                else None
+            )
+            if existing_tag is not None and existing_tag.set_by not in (
+                None,
+                "identity_claim",
+                "identity_verification",
+            ):
+                # An operator mapped this source while verification was in flight: theirs wins.
+                logger.info(
+                    "Not promoting %s: the operator already mapped this source",
+                    scrub_log(source_id),
+                )
                 return
             existing_target = session.exec(
                 select(CredentialSource).where(

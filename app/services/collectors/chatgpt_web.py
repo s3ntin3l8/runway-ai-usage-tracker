@@ -101,7 +101,11 @@ class ChatGPTWebMixin:
         if email:
             self.account_label = email
             effective_account_id = self.account_id or account_id
-            if effective_account_id:
+            pending = token_cache.current_source_metadata(
+                "chatgpt", effective_account_id or "default"
+            )
+            # A source still waiting for its identity must not relabel the shared default slot.
+            if effective_account_id and not (pending and pending.get("identity_pending") is True):
                 asyncio.create_task(
                     token_cache.update_account_metadata("chatgpt", effective_account_id, name=email)
                 )

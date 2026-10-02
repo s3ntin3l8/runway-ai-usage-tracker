@@ -1946,11 +1946,8 @@ class TestChatGPTCollector:
     """Test suite for ChatGPT collector."""
 
     @pytest.mark.asyncio
-    async def test_collect_api_success(self, mock_http_client, mock_chatgpt_usage_response, caplog):
+    async def test_collect_api_success(self, mock_http_client, mock_chatgpt_usage_response):
         """Test successful ChatGPT API collection."""
-        import logging
-
-        caplog.set_level(logging.DEBUG)
         collector = ChatGPTCollector()
 
         # Mock Usage Info (Unified)
@@ -1973,19 +1970,7 @@ class TestChatGPTCollector:
 
         assert isinstance(result, list)
         assert len(result) == 1
-        from app.services import token_cache as _tc
-
-        diag = {
-            "card": {k: v for k, v in result[0].items() if k in ("detail", "error_type", "pace")},
-            "active_source": _tc._active_source.get(),
-            "refreshed_for": getattr(collector, "_refreshed_for", "n/a"),
-            "log": [
-                ln[:200]
-                for ln in caplog.text.splitlines()
-                if "chatgpt" in ln.lower() or "ChatGPT" in ln
-            ][-12:],
-        }
-        assert result[0].get("variant") == "Codex", diag
+        assert result[0].get("variant") == "Codex"
         assert "PLUS" in str(result[0].get("detail", ""))
         assert "%" in str(result[0].get("remaining", ""))
 

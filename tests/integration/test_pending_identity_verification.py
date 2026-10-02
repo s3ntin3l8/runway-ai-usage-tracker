@@ -7,6 +7,7 @@ Runs the real verifier path (``CollectorManager._collect_with_source_failover`` 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 
@@ -17,6 +18,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models.db import CredentialSource, PendingCredentialTag
 from app.services.collector_manager import CollectorManager
+from app.services.collectors import chatgpt
 from app.services.credential_tags import CredentialTagRepo
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import TokenCache
@@ -311,9 +313,15 @@ async def test_a_pinned_chatgpt_source_never_uses_the_servers_own_login(world, m
     engine, cache = world
     from app.services.credential_provider import CredentialMap
 
+    # Patch the class, not the shared instance: undoing an instance patch leaves an instance
+    # attribute behind that shadows every later class-level patch of this method.
     monkeypatch.setattr(
-        "app.services.collectors.chatgpt_oauth.credential_provider.get_chatgpt_data",
-        lambda: CredentialMap({"access_token": SERVER_BEARER}, sources={"access_token": "server"}),
+        "app.services.credential_provider.CredentialProvider.get_chatgpt_data",
+        staticmethod(
+            lambda: CredentialMap(
+                {"access_token": SERVER_BEARER}, sources={"access_token": "server"}
+            )
+        ),
     )
     source_id = await _seed(
         world,
@@ -373,6 +381,79 @@ async def test_a_chatgpt_bearer_is_not_reused_for_the_next_source(world):
     # verified instead of being starved.
     assert _outcome(engine, "chatgpt", first)[0] == "default"
     assert _outcome(engine, "chatgpt", second)[0] == "carol@example.com"
+
+
+@pytest.mark.asyncio
+async def test_verification_does_not_overwrite_a_tag_the_operator_set_meanwhile(world):
+    """The operator maps a pending source while the verifier is mid-call: theirs wins."""
+    engine, cache = world
+    origin = "cookie:chatgpt/session"
+    source_id = await _seed(
+        world, "chatgpt", origin, {"cookie___Secure-next-auth.session-token": CHATGPT_COOKIE}
+    )
+    with Session(engine) as session:
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id="chatgpt",
+            credential_origin=origin,
+            account_id="operator-choice@example.com",
+            sidecar_id=SIDECAR,
+            set_by="operator",
+        )
+        session.commit()
+
+    await _verify("chatgpt", _chatgpt([]))
+
+    _account, tag = _outcome(engine, "chatgpt", source_id)
+    assert tag is not None
+    assert (tag.account_id, tag.set_by) == ("operator-choice@example.com", "operator")
+
+
+@pytest.mark.asyncio
+async def test_a_pending_chatgpt_run_does_not_relabel_the_shared_default_slot(world):
+    """A configured default account must keep its own label while a sidecar cookie verifies."""
+    engine, cache = world
+    await cache.store(
+        "chatgpt",
+        {"oauth_token": "configured-token"},  # pragma: allowlist secret
+        account_id="default",
+        account_label="Configured Account",
+        source="config",
+    )
+    await _seed(
+        world,
+        "chatgpt",
+        "cookie:chatgpt/session",
+        {"cookie___Secure-next-auth.session-token": CHATGPT_COOKIE},
+    )
+
+    await _verify("chatgpt", _chatgpt([]))
+    await asyncio.sleep(0)  # let any fire-and-forget metadata task run
+
+    assert cache._cache["chatgpt"]["default"][1].get("account_label") == "Configured Account"
+
+
+@pytest.mark.asyncio
+async def test_the_exchanged_bearer_is_never_written_into_a_sidecars_bundle(world):
+    """Once a source is identified it is polled by its own collector: the hour-long bearer
+    stored into its bundle would shadow the cookie the bundle really holds."""
+    engine, cache = world
+    source_id = f"sidecar:{SIDECAR}:cookie:chatgpt/session"
+    await cache.store(
+        "chatgpt",
+        {"cookie___Secure-next-auth.session-token": CHATGPT_COOKIE},
+        account_id=BOB,
+        source_id=source_id,
+        source=SIDECAR,
+        source_metadata={"sidecar_id": SIDECAR, "identity_pending": False},
+    )
+    collector = chatgpt.ChatGPTCollector(account_id=BOB)
+
+    async with cache.using_source("chatgpt", BOB, source_id):
+        await collector._store_refreshed_bearer(CHATGPT_BEARER, "sidecar")
+
+    bundle = cache._source_cache["chatgpt"][BOB][source_id][0]
+    assert "oauth_token" not in bundle
 
 
 # --- the sidecar ---------------------------------------------------------------------------

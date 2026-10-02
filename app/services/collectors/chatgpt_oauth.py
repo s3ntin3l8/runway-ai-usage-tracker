@@ -179,7 +179,9 @@ class ChatGPTWebOAuthMixin:
         the shared ``default`` slot, publishing an unidentified credential as a real account.
         """
         meta = token_cache.current_source_metadata("chatgpt", self.account_id or "default")
-        if meta and meta.get("identity_pending") is True:
+        if meta and (meta.get("identity_pending") is True or meta.get("sidecar_id")):
+            # Not into a sidecar's bundle either: it would outlive the hour-long bearer and
+            # shadow the cookie the bundle really holds.
             return
         await token_cache.store(
             "chatgpt",
@@ -288,5 +290,6 @@ class ChatGPTWebOAuthMixin:
                 resp.text[:300],
             )
         except Exception as e:
-            logger.warning("Error refreshing ChatGPT token: %s", e)
+            # Class only: the message of a malformed-header error can echo the cookie value.
+            logger.warning("Error refreshing ChatGPT token: %s", type(e).__name__)
         return None
