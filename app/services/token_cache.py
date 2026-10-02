@@ -278,25 +278,33 @@ class TokenCache:
     def _is_staler(incoming: dict[str, str], existing: dict[str, str]) -> bool:
         """True when *incoming* should not be allowed to replace *existing*.
 
-        A token with a *known* expiry already in the past is treated as
-        maximally stale regardless of the existing entry's expiry — this
-        guards against a sidecar with no comparable expiry signal on the
-        existing side (e.g. an unpatched binary, or a provider whose existing
-        entry predates an expiry-stamping fix) still holding a valid token
-        while a different sidecar re-pushes its own expired credential. Without
-        this, `exist_exp is None` would make the two sides incomparable and the
-        expired push would win on recency alone (this is exactly how one
-        sidecar's expired Antigravity token clobbered another's valid one).
+        A spent incoming access token is maximally stale only while the cached
+        side still has life — or carries no expiry to compare against (e.g. an
+        unpatched binary, or a provider whose existing entry predates an
+        expiry-stamping fix). Without that second clause `exist_exp is None`
+        would make the two sides incomparable and the expired push would win
+        on recency alone (this is exactly how one sidecar's expired
+        Antigravity token clobbered another's valid one).
 
-        Otherwise, only meaningful when BOTH carry a comparable expiry
+        When BOTH sides are already spent, the newer lineage wins instead of
+        the incoming one being rejected out of hand. That is what lets a
+        machine that has just rotated its refresh token deliver it on its next
+        push: between CLI rotations every access JWT it reports is expired, so
+        an unconditional "expired means maximally stale" rule would pin a dead
+        refresh token in the cache forever (issue #474).
+
+        Otherwise only meaningful when BOTH carry a comparable expiry
         (`exp_from_tokens` — JWT `exp` or `expiry_date`). Opaque credentials
         (api keys, cookies) yield None on either side, so this returns False
         and the normal overwrite wins.
         """
+        now = time.time()
         inc_exp = IdentityExtractor.exp_from_tokens(incoming)
-        if inc_exp is not None and inc_exp < time.time():
-            return True
         exist_exp = IdentityExtractor.exp_from_tokens(existing)
+        if inc_exp is not None and inc_exp < now:
+            if exist_exp is None or exist_exp >= now:
+                return True
+            # Both lineages are spent — fall through and compare them.
         if inc_exp is None or exist_exp is None:
             return False
         return inc_exp < exist_exp
