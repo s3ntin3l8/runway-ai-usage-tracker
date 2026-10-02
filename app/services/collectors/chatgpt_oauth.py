@@ -5,7 +5,6 @@ from typing import Any
 
 import httpx
 
-from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import http_request_with_retry
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import borrowable_entries, token_cache
@@ -42,28 +41,8 @@ class ChatGPTWebOAuthMixin:
         refresh_token = auth_data.get("refresh_token")
 
         if token:
-            # Check if we need to refresh the OAuth token (if it's from auth.json and stale)
-            last_refresh = auth_data.get("last_refresh")
-            if client and last_refresh and refresh_token:
-                try:
-                    lr_dt = parse_iso8601_utc(last_refresh)
-                    if (datetime.now(UTC) - lr_dt).days >= 8:
-                        from app.services.token_cache import server_may_refresh
-
-                        # ChatGPT rotates refresh tokens: never rotate one a machine's
-                        # Codex CLI also holds.
-                        if await server_may_refresh(
-                            "chatgpt",
-                            self.account_id or "default",
-                            {"refresh_token": refresh_token},
-                        ):
-                            logger.info("ChatGPT OAuth token is stale (8+ days), refreshing...")
-                            new_tokens = await self._refresh_oauth_token(client, refresh_token)
-                            if new_tokens:
-                                token = new_tokens["access_token"]
-                except Exception as e:
-                    logger.debug(f"Failed to check/refresh stale ChatGPT token: {e}")
-
+            # The server never refreshes this login: ChatGPT rotates refresh tokens, and a
+            # Codex CLI file on this host is renewed by that CLI (see refresh_policy).
             input_source = getattr(auth_data, "sources", {}).get("access_token", "server")
             self._current_input_source = input_source
             return {
@@ -221,38 +200,6 @@ class ChatGPTWebOAuthMixin:
             "account_label": newest["account_label"],
             "source": newest["source"],
         }
-
-    async def _refresh_oauth_token(
-        self, client: httpx.AsyncClient, refresh_token: str
-    ) -> dict[str, str] | None:
-        """Refresh OAuth token using the OpenAI auth endpoint."""
-        try:
-            resp = await http_request_with_retry(
-                client,
-                "POST",
-                "https://auth.openai.com/oauth/token",
-                json={
-                    "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                    "scope": "openid profile email",
-                },
-                timeout=10,
-                retry_on_429=False,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                new_data = {
-                    "access_token": data.get("access_token"),
-                    "refresh_token": data.get("refresh_token"),
-                    "id_token": data.get("id_token"),
-                }
-                # Refreshed token is cached via token_cache.store() in the caller;
-                # disk persistence of auth.json is the sidecar's responsibility now.
-                return new_data
-        except Exception as e:
-            logger.debug(f"Error refreshing ChatGPT OAuth token: {e}")
-        return None
 
     async def _get_device_id(self) -> str:
         """Get a device ID for ChatGPT API calls.

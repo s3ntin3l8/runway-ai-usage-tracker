@@ -45,8 +45,9 @@ def machine_owns_credential(
     treated as ownership on its own (conservative: it can only pause a refresh, never rotate
     a CLI's token).
 
-    The server host's own CLI file is owned by a machine only when a co-located sidecar
-    pushes it; otherwise the server is that login's only holder (see docs/architecture.md).
+    A CLI's login file on the server host is a separate rule: ``CredentialProvider.
+    is_cli_owned_file`` (the collector declines to refresh it), since a merged ``"server"``
+    source cannot tell that file from an env var (see docs/architecture.md).
     """
     if provider not in ROTATING_REFRESH_PROVIDERS:
         return False

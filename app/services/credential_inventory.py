@@ -209,6 +209,9 @@ def _apply_server_expiry(
     view.expires_at = datetime.fromtimestamp(exp, tz=UTC).isoformat() if exp is not None else None
     view.expires_in_seconds = int(exp - now) if exp is not None else None
     view.can_refresh = False  # the server's own credential has no source bundle to refresh
+    # A rotating provider's login in a CLI's own file is renewed by that CLI.
+    if origin.get("cli_owned") and rollable:
+        view.refreshed_by = "machine"
 
 
 def _unused_reason(configs: list[ProviderConfig], origin: dict[str, Any]) -> str | None:

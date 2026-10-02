@@ -190,10 +190,15 @@ Google does not rotate Gemini's.
   refresh secret) and the provider rotates: the server **never** refreshes it. The
   machine's CLI renews it and the sidecar re-pushes. The inventory shows
   `refreshed_by: "machine"`, there is no Refresh action, and the endpoints answer 409.
-- **Server-owned** (pasted key, the server host's own login) and **Gemini** everywhere:
-  the server refreshes it (`TokenAutoRefresher`, collectors, the Refresh action).
-- The server host's own CLI login counts as machine-owned only when a co-located
-  sidecar pushes it; otherwise the server is its only holder and refreshes it.
+- **A CLI's own login file on the server host** (`~/.claude/.credentials.json`,
+  `~/.codex/auth.json`, anything outside Runway's config dir): the CLI renews it, so
+  the server never rotates it, whether or not a sidecar also pushes it. The inventory
+  shows `refreshed_by: "machine"`; on a headless host with no CLI running its access
+  token simply expires (the usual 3-day alert applies). Put the credential into
+  Runway's own config dir or an env var to have the server refresh it.
+- **Server-owned** (pasted key, env var, a login file inside Runway's config dir) and
+  **Gemini** everywhere: the server refreshes it (`TokenAutoRefresher`, collectors,
+  the Refresh action).
 - A machine-renewed login that stays expired for more than 3 days raises the usual
   credential alert (an idle CLI is normal for a day or two, not for a week).
 - While a machine's access token is expired and its CLI is idle, collection skips that
