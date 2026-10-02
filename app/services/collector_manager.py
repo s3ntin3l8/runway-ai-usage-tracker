@@ -37,6 +37,19 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 
+IDENTITY_VERIFIER_SUFFIX = ":identity-pending"
+
+
+def verifier_key(provider_id: str) -> str:
+    """Smart-collector key of a provider's identity-verification run."""
+    return f"{provider_id}:default{IDENTITY_VERIFIER_SUFFIX}"
+
+
+def is_verifier_key(key: str) -> bool:
+    """Whether a smart-collector key is an identity-verification run (not a credential)."""
+    return key.endswith(IDENTITY_VERIFIER_SUFFIX)
+
+
 class CollectorManager:
     """
     Manages collection of all AI provider quotas with support for multiple accounts.
@@ -228,16 +241,16 @@ class CollectorManager:
             # display identity and therefore read another credential slot.
             for p_id, (cls, name, ttl) in self.collector_registry.items():
                 if p_id in inactive_providers:
-                    self.smart_collectors.pop(f"{p_id}:default:identity-pending", None)
+                    self.smart_collectors.pop(verifier_key(p_id), None)
                     continue
-                pending_sources = await token_cache.get_source_candidates(p_id, "default")
+                pending_sources = await token_cache.get_pending_sources(p_id)
                 has_pending_source = any(
                     is_sidecar_source(source)
                     and source.get("credential_origin")
                     and source.get("identity_pending") is True
                     for source in pending_sources
                 )
-                key = f"{p_id}:default:identity-pending"
+                key = verifier_key(p_id)
                 if not has_pending_source:
                     self.smart_collectors.pop(key, None)
                     continue
@@ -539,21 +552,24 @@ class CollectorManager:
             # failure must not be attributed to the shared server:<provider>
             # contribution under `default` (which may belong to another
             # credential or an archived account).
-            if key.endswith(":identity-pending") and account_id == "default":
+            if is_verifier_key(key) and account_id == "default":
                 if failed:
                     logger.debug(
                         "Identity-pending collection failed for %s; no account outcome recorded",
                         scrub_log(provider_id),
                     )
                 continue
-            outcomes.append(
-                {
-                    "provider_id": provider_id,
-                    "account_id": account_id,
-                    "source_id": f"server:{provider_id}",
-                    "state": state,
-                }
-            )
+            # The verifier is not the server's own credential: once it has adopted a proven
+            # email its state must not be recorded against that account's server outcome.
+            if not is_verifier_key(key):
+                outcomes.append(
+                    {
+                        "provider_id": provider_id,
+                        "account_id": account_id,
+                        "source_id": f"server:{provider_id}",
+                        "state": state,
+                    }
+                )
             if failed:
                 logger.error(f"Unexpected error from collector {active_keys[i]}: {res}")
                 continue
@@ -671,6 +687,18 @@ class CollectorManager:
                 exc_info=True,
             )
 
+    @staticmethod
+    async def _source_candidates(
+        provider_id: object, account_id: object, identity_verification: bool
+    ) -> list[dict[str, Any]]:
+        if not isinstance(provider_id, str) or not isinstance(account_id, str):
+            return []
+        if identity_verification:
+            # Pending bundles may sit in a slot other than ``default`` (Anthropic keys them
+            # by source id); each carries its ``account_slot``.
+            return await token_cache.get_pending_sources(provider_id)
+        return await token_cache.get_source_candidates(provider_id, account_id)
+
     async def _collect_with_source_failover(
         self,
         key: str,
@@ -686,12 +714,8 @@ class CollectorManager:
             or "default"
         )
         default_account_label = getattr(collector, "account_label", None)
-        identity_verification = key.endswith(":identity-pending")
-        candidates = (
-            await token_cache.get_source_candidates(provider_id, account_id)
-            if isinstance(provider_id, str) and isinstance(account_id, str)
-            else []
-        )
+        identity_verification = is_verifier_key(key)
+        candidates = await self._source_candidates(provider_id, account_id, identity_verification)
         if not candidates or not isinstance(provider_id, str):
             if identity_verification:
                 return []
@@ -765,8 +789,9 @@ class CollectorManager:
                 )
                 skipped_for_renewal = True
                 continue
+            cache_slot = candidate.get("account_slot") or account_id
             async with token_cache.using_source(
-                provider_id, account_id, candidate["source_id"]
+                provider_id, cache_slot, candidate["source_id"]
             ) as attempt:
                 result: list[dict[str, Any]] = []
                 try:
@@ -835,6 +860,7 @@ class CollectorManager:
                     account_id,
                     candidate["source_id"],
                     resolved_id,
+                    cache_account_id=cache_slot,
                 )
             elif (
                 account_id == "default"
@@ -852,8 +878,10 @@ class CollectorManager:
                 await asyncio.to_thread(
                     self._persist_identity_pending_preview, provider_id, candidate, preview
                 )
+                # Keep going: a source that works but cannot name its account must not
+                # starve the other pending sources of their own verification.
                 successful_result = []
-                break
+                continue
             successful_result = result
             break
         if successful_result is None and last_kept_failure_result is None and skipped_for_renewal:
@@ -881,12 +909,23 @@ class CollectorManager:
         return exp is not None and exp <= time.time()
 
     async def _promote_source_identity(
-        self, provider_id: str, old_account_id: str, source_id: str, account_id: str
+        self,
+        provider_id: str,
+        old_account_id: str,
+        source_id: str,
+        account_id: str,
+        *,
+        cache_account_id: str | None = None,
     ) -> None:
-        """Move one default source to the stable identity it proved itself."""
+        """Move one default source to the stable identity it proved itself.
+
+        ``old_account_id`` is the durable row's account (``default``); ``cache_account_id`` is
+        the token-cache slot holding the bundle when that differs (Anthropic's pending
+        bundles sit under their source id).
+        """
         from datetime import UTC, datetime
 
-        from sqlmodel import Session, select
+        from sqlmodel import Session, col, select
 
         from app.core.db import engine
         from app.models.db import CredentialSource
@@ -897,14 +936,40 @@ class CollectorManager:
         if not target or target == "default":
             return
         with Session(engine) as session:
+            # The durable row sits under the account the bundle was filed under: ``default``,
+            # or (Anthropic) the source id itself while the identity is pending.
+            filed_under = {old_account_id}
+            if cache_account_id:
+                filed_under.add(cache_account_id)
             source = session.exec(
                 select(CredentialSource).where(
                     CredentialSource.provider_id == provider_id,
-                    CredentialSource.account_id == old_account_id,
+                    col(CredentialSource.account_id).in_(filed_under),
                     CredentialSource.source_id == source_id,
                 )
             ).first()
             if source is None or not source.credential_origin:
+                return
+            existing_tag = (
+                CredentialTagRepo.get(
+                    session,
+                    provider_id=provider_id,
+                    credential_origin=source.credential_origin,
+                    sidecar_id=source.sidecar_id,
+                )
+                if source.sidecar_id
+                else None
+            )
+            if existing_tag is not None and existing_tag.set_by not in (
+                None,
+                "identity_claim",
+                "identity_verification",
+            ):
+                # An operator mapped this source while verification was in flight: theirs wins.
+                logger.info(
+                    "Not promoting %s: the operator already mapped this source",
+                    scrub_log(source_id),
+                )
                 return
             existing_target = session.exec(
                 select(CredentialSource).where(
@@ -965,7 +1030,9 @@ class CollectorManager:
                 provider_id,
                 source_id,
             )
-            await token_cache.move_source(provider_id, old_account_id, target, source_id)
+            await token_cache.move_source(
+                provider_id, cache_account_id or old_account_id, target, source_id
+            )
 
     def _persist_identity_pending_preview(
         self,
@@ -1165,9 +1232,7 @@ class CollectorManager:
                 if (
                     account_id is None
                     or key == f"{provider_id}:{account_id}"
-                    or (
-                        account_id == "default" and key == f"{provider_id}:default:identity-pending"
-                    )
+                    or (account_id == "default" and key == verifier_key(provider_id))
                 ):
                     await sc.reset()
                     try:

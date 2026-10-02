@@ -200,8 +200,9 @@ def test_the_sidecar_sends_unidentified_gemini_credentials_for_verification():
     assert "gemini" in sidecar._SERVER_IDENTITY_PROVIDERS
 
 
-def test_chatgpt_is_not_sent_for_verification_there_is_nothing_to_ask():
-    assert "chatgpt" not in sidecar._SERVER_IDENTITY_PROVIDERS
+def test_unidentified_chatgpt_and_claude_credentials_are_sent_for_verification():
+    """The server asks the usage endpoint (ChatGPT) / claude.ai (Anthropic) who they are (#460)."""
+    assert {"chatgpt", "anthropic"} <= sidecar._SERVER_IDENTITY_PROVIDERS
 
 
 def test_openai_access_tokens_carry_the_email_in_a_profile_claim():

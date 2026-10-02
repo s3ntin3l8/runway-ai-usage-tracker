@@ -704,8 +704,15 @@ class TestCredentialCandidateOwnership:
             ],
         }
         cards, blocked = sc.GenericCollector.collect_provider("chatgpt", config)
-        assert [c["metadata"]["account_id"] for c in cards] == ["a@example.com"]
-        assert cards[0]["metadata"]["oauth_token"] == "cli-a"
+        # The CLI file is identified by its id_token. The cookie has no identity of its own, so
+        # it ships pending (the server verifies it, #460) and stays a separate owner.
+        by_origin = {c["metadata"]["credential_origin"]: c for c in cards}
+        cli = by_origin[f"path:{auth_file}"]
+        assert cli["metadata"]["account_id"] == "a@example.com"
+        assert cli["metadata"]["oauth_token"] == "cli-a"
+        cookie = by_origin["cookie:chatgpt/session"]
+        assert cookie["metadata"]["identity_pending"] is True
+        assert "account_id" not in cookie["metadata"]
         assert blocked == [
             {"provider_id": "chatgpt", "credential_origin": "cookie:chatgpt/session"}
         ]

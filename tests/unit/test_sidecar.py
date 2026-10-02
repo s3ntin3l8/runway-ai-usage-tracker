@@ -547,8 +547,12 @@ class TestChatGPTTokenStamp:
         with patch.object(sidecar.os.path, "expanduser", return_value=str(auth_file)):
             cards, _blocked = sidecar.GenericCollector.collect_provider("chatgpt", config)
 
+        # No email anywhere: the credential ships pending so the server can ask the usage
+        # endpoint whose it is (#460), and the origin is reported as needing a mapping.
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
-        assert token_cards == []
+        assert len(token_cards) == 1
+        assert token_cards[0]["metadata"]["identity_pending"] is True
+        assert token_cards[0]["account_id"] is None
         assert len(_blocked) == 1
 
 

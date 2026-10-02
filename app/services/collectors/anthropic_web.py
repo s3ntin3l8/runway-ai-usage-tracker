@@ -320,7 +320,7 @@ class AnthropicWebMixin:
             return self._parse_web_api_response(usage_data, org, account_data)
 
         except httpx.HTTPError as e:
-            logger.debug(f"Claude Web API HTTP error: {e}")
+            logger.debug("Claude Web API HTTP error: %s", type(e).__name__)
             return []
         except json.JSONDecodeError as e:
             logger.debug(f"Claude Web API JSON decode error: {e}")
