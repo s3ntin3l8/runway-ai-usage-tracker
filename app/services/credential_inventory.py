@@ -47,6 +47,7 @@ from app.services.credential_sources import (
     is_server_source_id,
     server_source_id,
 )
+from app.services.credential_tags import origin_candidates, pick_effective_tag
 from app.services.token_cache import token_cache
 from app.services.token_health import credential_status, is_durably_rejected, is_flagged
 from app.services.token_refresher import _REFRESH_ENDPOINTS, ROTATING_REFRESH_PROVIDERS
@@ -81,11 +82,15 @@ def _resolve_tag(
     tags: dict[tuple[str, str], list[CredentialTag]], row: CredentialSource
 ) -> CredentialTag | None:
     """Machine-scoped tag first, then the deployment-wide one (same as the read path)."""
-    candidates = tags.get((row.provider_id, row.credential_origin or ""), [])
-    for tag in candidates:
-        if tag.sidecar_id and tag.sidecar_id == row.sidecar_id:
+    # Exact origin first, then its plain form (a tag written before the origin was
+    # fingerprinted). Within one origin the machine-scoped tag beats the deployment-wide
+    # one, so a deployment-wide tag on the exact origin still beats a machine-scoped tag
+    # on the plain one. Same order as the tag repo and the sidecar.
+    for origin in origin_candidates(row.credential_origin or ""):
+        tag = pick_effective_tag(tags.get((row.provider_id, origin), []), row.sidecar_id)
+        if tag is not None:
             return tag
-    return next((tag for tag in candidates if tag.sidecar_id is None), None)
+    return None
 
 
 def _mapping(

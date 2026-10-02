@@ -162,6 +162,23 @@ leaves the machine. ChatGPT is deliberately not on the list: its tokens carry th
 a JWT claim (`id_token`, or the `https://api.openai.com/profile` claim of the access token)
 that the sidecar decodes locally, and there is no reliable upstream endpoint to ask.
 
+### Credential origins and operator tags
+
+A credential's *origin* (`env:ZAI_API_KEY`, `path:/…/auth.json`, `cookie:kimi_coding/session`)
+is what an operator tag is keyed on. For providers whose credential is a bare static key
+(opencode siblings, plus the env-key providers kimi_api, kimi_k2 and zai) the sidecar suffixes
+a fingerprint of the value (`env:ZAI_API_KEY#<fp>`), so a rotated key is a new origin and a
+tag can't silently follow it. A tag written against the plain origin still applies to the
+key-scoped one (the tag repo, the inventory and the sidecar's own hint lookup all fall back to
+it), and the superseded plain-origin row is retired when its key-scoped successor first reports.
+
+Cookies, keychain entries and OAuth bundles stay unfingerprinted on purpose: their secret
+changes with every login or refresh, so a fingerprint would orphan the tag each time. A tag on
+a **cookie or keychain** origin therefore can't be deployment-wide (422); on a **path** or
+**env** origin it can (a shared home directory is one origin), and the Credentials view warns
+that such a tag follows an account switch. Not covered: a browser account switch on one
+machine under a machine-scoped cookie tag.
+
 ### Who refreshes an OAuth login
 
 A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT and xAI

@@ -1197,6 +1197,23 @@ class CollectorManager:
         """Replace the in-memory source preferences for one account."""
         self._credential_source_preferences[(provider_id, account_id)] = preferences
 
+    def set_credential_source_preference(
+        self, provider_id: str, account_id: str, source_id: str, enabled: bool, priority: int
+    ) -> None:
+        """Set one source's in-memory (enabled, priority) without touching its siblings."""
+        self._credential_source_preferences.setdefault((provider_id, account_id), {})[source_id] = (
+            enabled,
+            priority,
+        )
+
+    def drop_credential_source_preference(
+        self, provider_id: str, account_id: str, source_id: str
+    ) -> None:
+        """Forget one source's in-memory preference (its row is gone)."""
+        preferences = self._credential_source_preferences.get((provider_id, account_id))
+        if preferences is not None:
+            preferences.pop(source_id, None)
+
     def clear_credential_source_preferences(self, provider_id: str, account_id: str) -> None:
         """Drop the in-memory source preferences for one account."""
         self._credential_source_preferences.pop((provider_id, account_id), None)

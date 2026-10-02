@@ -904,7 +904,13 @@ class TestKimiApiRegistryId:
             "kimi_api", sidecar.__REGISTRY__["providers"]["kimi_api"]
         )
         assert cards == []
-        assert blocked == [{"provider_id": "kimi_api", "credential_origin": "env:KIMI_API_KEY"}]
+        # The origin is key-scoped (#443), so a rotated key is a new origin.
+        from scripts.sidecar_pkg.identity import credential_fingerprint
+
+        fp = credential_fingerprint("sk-test-kimi-key")  # pragma: allowlist secret
+        assert blocked == [
+            {"provider_id": "kimi_api", "credential_origin": f"env:KIMI_API_KEY#{fp}"}
+        ]
 
 
 class TestKimiCliCredentialGlob:

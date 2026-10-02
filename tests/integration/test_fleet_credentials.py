@@ -1396,15 +1396,14 @@ def test_fingerprint_hint_skips_unusable_rows(client: TestClient, session: Sessi
 def test_fingerprint_hint_only_fires_for_keyed_providers(
     client: TestClient, session: Session
 ) -> None:
-    """#349 widens fingerprinting to the OpenCode-file siblings (openrouter,
-    minimax, kimi_coding, ollama, xai) — `kimi_api` is deliberately outside
-    that set, so its row keeps the plain descriptor and gains no
-    ``#<fingerprint>`` hint."""
+    """Fingerprinting covers providers whose credential is a bare static key. `github`
+    can be an OAuth token that rotates on its own, so it stays outside the set: its row
+    keeps the plain descriptor and gains no ``#<fingerprint>`` hint."""
     _add_provider_config(
         session,
-        provider_id="kimi_api",
+        provider_id="github",
         account_id="alice@example.com",
-        api_key="sk-kimi-plain-origin",  # pragma: allowlist secret
+        api_key="ghp-plain-origin",  # pragma: allowlist secret
     )
 
     r = client.get("/api/v1/fleet/config")
@@ -1412,7 +1411,29 @@ def test_fingerprint_hint_only_fires_for_keyed_providers(
     hints = r.json()["account_tag_hints"]
     assert "opencode" not in hints
     # A configured account without a credential-specific match is ambiguous.
-    assert "kimi_api" not in hints
+    assert "github" not in hints
+
+
+def test_static_key_providers_beyond_opencode_get_a_fingerprint_hint(
+    client: TestClient, session: Session
+) -> None:
+    """#443: kimi_api / kimi_k2 / zai read their key from an env var, so their origin is
+    now key-scoped and the server can answer ``provider:<pid>#<fp>`` for a pasted key."""
+    from app.services.account_identity import credential_fingerprint
+
+    for pid in ("kimi_api", "kimi_k2", "zai"):
+        _add_provider_config(
+            session,
+            provider_id=pid,
+            account_id="alice@example.com",
+            api_key=f"sk-{pid}-pasted-key",  # pragma: allowlist secret
+        )
+
+    hints = client.get("/api/v1/fleet/config").json()["account_tag_hints"]
+
+    for pid in ("kimi_api", "kimi_k2", "zai"):
+        fp = credential_fingerprint(f"sk-{pid}-pasted-key")  # pragma: allowlist secret
+        assert hints[pid] == {f"provider:{pid}#{fp}": "alice@example.com"}
 
 
 def test_operator_tag_wins_over_fingerprint_hint(client: TestClient, session: Session) -> None:
@@ -2666,3 +2687,197 @@ def test_ingest_reports_events_error_when_event_storage_fails(
         )
     assert resp.status_code == 200, resp.text
     assert resp.json()["events_error"] is True
+
+
+# --- #443: key-scoped env origins, legacy tags and rows --------------------------------
+
+
+def _token_card(provider: str, origin: str, api_key: str, account_id: str | None = None) -> dict:
+    return {
+        "service_name": provider,
+        "remaining": "Token",
+        "unit": "api_key",
+        "provider_id": provider,
+        "account_id": account_id,
+        "metadata": {
+            "provider_id": provider,
+            "api_key": api_key,
+            "credential_origin": origin,
+            **({"account_id": account_id} if account_id else {}),
+        },
+    }
+
+
+def _ingest(client: TestClient, sidecar_id: str, cards: list[dict]):
+    body = json.dumps({"provider": "sidecar", "sidecar_id": sidecar_id, "metrics": cards}).encode()
+    ts, sig = _sign(body)
+    return client.post(
+        "/api/v1/fleet/ingest",
+        content=body,
+        headers={"X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"},
+    )
+
+
+def test_ingest_retires_the_plain_origin_row_a_keyed_origin_supersedes(
+    client: TestClient, session: Session
+):
+    """zai's env origin used to be plain; once it is key-scoped the same credential reports
+    under a new source id and the old row would sit there stale forever."""
+    from app.services.account_identity import credential_fingerprint, keyed_credential_origin
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    plain = "env:ZAI_API_KEY"
+    touch_source(
+        session,
+        provider_id="zai",
+        account_id="alice@example.com",
+        source_id=sidecar_source_id("laptop", plain),
+        source_type="env",
+        source_label="ZAI_API_KEY",
+        credential_origin=plain,
+        sidecar_id="laptop",
+    )
+    # An unrelated machine's plain row must survive.
+    touch_source(
+        session,
+        provider_id="zai",
+        account_id="alice@example.com",
+        source_id=sidecar_source_id("desktop", plain),
+        source_type="env",
+        source_label="ZAI_API_KEY",
+        credential_origin=plain,
+        sidecar_id="desktop",
+    )
+    session.commit()
+    key = "zai-secret-key-value"  # pragma: allowlist secret
+    keyed = keyed_credential_origin(plain, credential_fingerprint(key) or "")
+
+    resp = _ingest(client, "laptop", [_token_card("zai", keyed, key, "alice@example.com")])
+
+    assert resp.status_code == 200, resp.text
+    ids = {r.source_id for r in session.exec(select(CredentialSource)).all()}
+    assert sidecar_source_id("laptop", keyed) in ids
+    assert sidecar_source_id("laptop", plain) not in ids, "superseded row is retired"
+    assert sidecar_source_id("desktop", plain) in ids, "another machine's row is untouched"
+
+
+def test_ingest_leaves_a_plain_origin_row_alone_when_the_origin_stays_plain(
+    client: TestClient, session: Session
+):
+    from app.services.credential_sources import sidecar_source_id
+
+    resp = _ingest(
+        client,
+        "laptop",
+        [_token_card("gemini", "path:/home/u/.gemini/oauth_creds.json", "k", "a@example.com")],
+    )
+
+    assert resp.status_code == 200, resp.text
+    ids = {r.source_id for r in session.exec(select(CredentialSource)).all()}
+    assert ids == {sidecar_source_id("laptop", "path:/home/u/.gemini/oauth_creds.json")}
+
+
+@pytest.mark.parametrize(
+    "origin", ["cookie:kimi_coding/session", "keychain:Claude Code-credentials"]
+)
+def test_an_all_machines_tag_is_refused_for_browser_and_keychain_credentials(
+    client: TestClient, session: Session, origin: str
+):
+    """Those exist on one machine only; a deployment-wide tag would follow an account
+    switch on a host it was never made for."""
+    _add_provider_config(session, provider_id="kimi_coding", account_id="alice@example.com")
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "laptop",
+            "provider_id": "kimi_coding",
+            "credential_origin": origin,
+            "account_id": "alice@example.com",
+            "scope": "deployment",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "belong to one machine" in resp.text
+
+
+def test_a_machine_scoped_tag_is_still_allowed_for_a_cookie_origin(
+    client: TestClient, session: Session
+):
+    _add_provider_config(session, provider_id="kimi_coding", account_id="alice@example.com")
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "laptop",
+            "provider_id": "kimi_coding",
+            "credential_origin": "cookie:kimi_coding/session",
+            "account_id": "alice@example.com",
+            "scope": "sidecar",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+
+
+def test_an_all_machines_tag_is_still_allowed_for_a_shared_path_origin(
+    client: TestClient, session: Session
+):
+    """A shared (NFS) home directory really is one origin: that is what the scope is for."""
+    _add_provider_config(session, provider_id="gemini", account_id="alice@example.com")
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "laptop",
+            "provider_id": "gemini",
+            "credential_origin": "path:/shared/.gemini/oauth_creds.json",
+            "account_id": "alice@example.com",
+            "scope": "deployment",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+
+
+def test_the_keyed_row_inherits_enabled_and_priority_from_the_row_it_replaces(
+    client: TestClient, session: Session
+):
+    """An operator who disabled (or ordered) the plain source must not have that undone
+    just because its origin became key-scoped."""
+    from app.services.account_identity import credential_fingerprint, keyed_credential_origin
+    from app.services.collector_manager import manager
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    plain = "env:ZAI_API_KEY"
+    old = touch_source(
+        session,
+        provider_id="zai",
+        account_id="alice@example.com",
+        source_id=sidecar_source_id("laptop", plain),
+        source_type="env",
+        source_label="ZAI_API_KEY",
+        credential_origin=plain,
+        sidecar_id="laptop",
+    )
+    old.enabled = False
+    old.priority = 7
+    session.add(old)
+    session.commit()
+    key = "zai-inherit-key-value"  # pragma: allowlist secret
+    keyed = keyed_credential_origin(plain, credential_fingerprint(key) or "")
+
+    resp = _ingest(client, "laptop", [_token_card("zai", keyed, key, "alice@example.com")])
+
+    assert resp.status_code == 200, resp.text
+    session.expire_all()
+    new = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.source_id == sidecar_source_id("laptop", keyed)
+        )
+    ).one()
+    assert (new.enabled, new.priority) == (False, 7)
+    prefs = manager._credential_source_preferences[("zai", "alice@example.com")]
+    assert prefs[new.source_id] == (False, 7)
+    assert old.source_id not in prefs

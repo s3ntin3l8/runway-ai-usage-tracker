@@ -138,16 +138,28 @@ class TestSharedProviderSet:
         to answer ``provider:<pid>#<fp>`` hints. Two copies that disagree
         would silently drop tier-1b hints for half the fleet."""
         expected = frozenset(
-            {"opencode", "openrouter", "minimax", "kimi_coding", "ollama", "xai", "deepseek"}
+            {
+                "opencode",
+                "openrouter",
+                "minimax",
+                "kimi_coding",
+                "kimi_api",
+                "kimi_k2",
+                "ollama",
+                "xai",
+                "deepseek",
+                "zai",
+            }
         )
         assert SERVER_SET == expected
         assert SIDECAR_SET == expected
 
     def test_scope_excludes_kimi_and_identity_bearing_providers(self) -> None:
-        """#349's explicit non-goals, pinned so a later PR has to change
-        this test on purpose: ``kimi`` is out of scope, and providers whose
-        credential carries a real identity were never in it."""
-        assert SERVER_SET - {"opencode"} == frozenset(SIBLINGS)
+        """Pinned so a later PR has to change this test on purpose: the legacy ``kimi``
+        id is gone, and providers whose credential carries a real identity or rotates
+        by itself (OAuth) were never in the set. #443 added the env-key providers
+        (kimi_api, kimi_k2, zai) next to the OpenCode-file siblings."""
+        assert SERVER_SET - {"opencode", "kimi_api", "kimi_k2", "zai"} == frozenset(SIBLINGS)
         for pid in ("kimi", "anthropic", "chatgpt", "gemini"):
             assert pid not in SERVER_SET
             assert pid not in SIDECAR_SET

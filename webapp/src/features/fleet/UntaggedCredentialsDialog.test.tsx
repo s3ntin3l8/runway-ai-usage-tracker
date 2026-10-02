@@ -318,6 +318,29 @@ describe('UntaggedCredentialsDialog', () => {
     );
   });
 
+  it('offers no "All machines" scope for a browser-cookie credential', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [{ ...entry, credential_origin: 'cookie:anthropic/session' }],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
+    vi.mocked(api.tagCredential).mockResolvedValue({ status: 'ok' });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/cookie:anthropic\/session/);
+
+    expect(within(dialog).getByRole('radio', { name: /all machines/i })).toBeDisabled();
+    expect(within(dialog).getByText(/belong to one machine/i)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('combobox'));
+    await user.click(await screen.findByText('Alice · alice@example.com'));
+    await user.click(within(dialog).getByRole('button', { name: /^tag$/i }));
+    await waitFor(() =>
+      expect(api.tagCredential).toHaveBeenCalledWith(expect.objectContaining({ scope: 'sidecar' })),
+    );
+  });
+
   it('defaults the scope switch to "This machine" and resets on reopen', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [entry],
@@ -523,6 +546,17 @@ describe('stageToBody', () => {
       scope: 'sidecar',
     });
     expect(stageToBody(entry, staged, true)?.scope).toBe('deployment');
+  });
+
+  it('never stages an all-machines tag for a cookie or keychain origin', async () => {
+    const { stageToBody, isMachineBoundOrigin } = await import('./UntaggedCredentialsDialog');
+    for (const origin of ['cookie:anthropic/session', 'keychain:Claude Code-credentials']) {
+      const e = { ...entry, credential_origin: origin };
+      const state = { ...staged, credential_origin: origin };
+      expect(isMachineBoundOrigin(origin)).toBe(true);
+      expect(stageToBody(e, state, true)?.scope).toBe('sidecar');
+    }
+    expect(isMachineBoundOrigin('path:/shared/auth.json')).toBe(false);
   });
 
   it("never saves another machine's staged pick onto this row", async () => {
