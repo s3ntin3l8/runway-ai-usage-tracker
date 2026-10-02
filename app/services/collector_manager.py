@@ -706,7 +706,82 @@ class CollectorManager:
             # Pending bundles may sit in a slot other than ``default`` (Anthropic keys them
             # by source id); each carries its ``account_slot``.
             return await token_cache.get_pending_sources(provider_id)
-        return await token_cache.get_source_candidates(provider_id, account_id)
+        slot_candidates = await token_cache.get_source_candidates(provider_id, account_id)
+        if account_id != "default":
+            return slot_candidates
+        # Sidecar ingest files bundles under the resolved identity, never under
+        # ``default``. Without this sweep a default collector finds nothing,
+        # silently degrades to a single unpinned ``collect()`` (no cross-source
+        # failover, merged-cache reads only) — the 2026-10-02 Antigravity
+        # incident, where a dead merged token was served while a live source
+        # bundle sat unused under its identity slot. Identity-pending rows from
+        # the sweep are dropped by the pending filter in the caller.
+        # Two separate cache reads with no shared lock between them: a push
+        # that lands in between appears in exactly one of the two sets (never
+        # a duplicate pin), and the dedupe below only covers ids present in
+        # both snapshots.
+        swept = await token_cache.get_account_source_candidates(provider_id)
+        # Defensive: the two lookups are slot-scoped today, but if some future
+        # path files the same source_id under both the default slot and an
+        # identity slot, failover must not attempt that bundle twice.
+        seen = {candidate["source_id"] for candidate in slot_candidates}
+        return slot_candidates + [
+            candidate for candidate in swept if candidate["source_id"] not in seen
+        ]
+
+    def _ordered_candidates(
+        self, provider_id: str, account_id: str, candidates: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Drop disabled sources and order the rest for failover.
+
+        A bundle whose access token is already dead cannot answer this poll, so
+        it goes behind every live (or undatable) bundle even when the operator
+        ranked it first: priority orders usable credentials, it must not hand
+        the first attempt to a credential that is known dead and can only
+        reject the call (#474). Freshness only splits candidates into
+        live-then-expired; within each group the configured (priority,
+        source_id) order still decides.
+
+        Preferences are keyed by each candidate's own ``account_slot`` — where
+        the bundle was filed (the resolved identity) — falling back to the
+        requesting collector's ``account_id`` when that slot has no row for
+        the source, so a preference set from e.g. the default account view
+        still applies to candidates the sweep brought in.
+        """
+
+        def candidate_preference(candidate: dict[str, Any]) -> tuple[bool, int] | None:
+            source_id = candidate["source_id"]
+            slot = candidate.get("account_slot") or account_id
+            keys = [(provider_id, slot)]
+            if slot != account_id:
+                keys.append((provider_id, account_id))
+            for key in keys:
+                row = self._credential_source_preferences.get(key, {})
+                if source_id in row:
+                    return row[source_id]
+            return None
+
+        def candidate_enabled(candidate: dict[str, Any]) -> bool:
+            preference = candidate_preference(candidate)
+            if preference is not None:
+                return bool(preference[0])
+            return bool(candidate.get("enabled", True))
+
+        def candidate_priority(candidate: dict[str, Any]) -> int:
+            preference = candidate_preference(candidate)
+            if preference is not None:
+                return int(preference[1])
+            return int(candidate.get("priority", 0))
+
+        ordered = [candidate for candidate in candidates if candidate_enabled(candidate)]
+        ordered.sort(
+            key=lambda candidate: (
+                self._access_token_expired(candidate),
+                candidate_priority(candidate),
+                candidate["source_id"],
+            )
+        )
+        return ordered
 
     async def _collect_with_source_failover(
         self,
@@ -724,58 +799,30 @@ class CollectorManager:
         )
         default_account_label = getattr(collector, "account_label", None)
         identity_verification = is_verifier_key(key)
-        candidates = await self._source_candidates(provider_id, account_id, identity_verification)
+        candidates: list[dict[str, Any]] = []
+        if isinstance(provider_id, str):
+            candidates = await self._source_candidates(
+                provider_id, account_id, identity_verification
+            )
+            # A regular default collector must not race the verifier for pending
+            # sources. The dedicated collector sees only pending sidecar bundles.
+            candidates = [
+                candidate
+                for candidate in candidates
+                if bool(candidate.get("identity_pending")) == identity_verification
+            ]
         if not candidates or not isinstance(provider_id, str):
             if identity_verification:
                 return []
             return await asyncio.wait_for(smart.collect(client), timeout=25.0)
 
-        # A regular default collector must not race the verifier for pending
-        # sources. The dedicated collector sees only pending sidecar bundles.
-        candidates = [
-            candidate
-            for candidate in candidates
-            if bool(candidate.get("identity_pending")) == identity_verification
-        ]
-        if not candidates:
-            if identity_verification:
-                return []
-            return await asyncio.wait_for(smart.collect(client), timeout=25.0)
-
-        # Ownership is judged against every source of the account (a pasted config bundle
-        # can hold a machine's refresh secret), including ones filtered out below.
+        # Ownership is judged against every source of the account (a pasted config
+        # bundle can hold a machine's refresh secret), including ones filtered out below.
         all_candidates = list(candidates)
-        preferences = self._credential_source_preferences.get((provider_id, account_id), {})
-        candidates = [
-            candidate
-            for candidate in candidates
-            if (
-                preferences[candidate["source_id"]][0]
-                if candidate["source_id"] in preferences
-                else candidate.get("enabled", True)
-            )
-        ]
         candidates = await self._due_for_verification(
             identity_verification,
             provider_id,
-            sorted(
-                candidates,
-                key=lambda candidate: (
-                    # A bundle whose access token is already dead cannot answer this
-                    # poll, so it goes behind every live (or undatable) bundle even
-                    # when the operator ranked it first: priority orders usable
-                    # credentials, it must not hand the first attempt to a
-                    # credential that is known dead and can only reject the call
-                    # (#474). Freshness only splits candidates into
-                    # live-then-expired; within each group the configured
-                    # (priority, source_id) order still decides.
-                    self._access_token_expired(candidate),
-                    preferences[candidate["source_id"]][1]
-                    if candidate["source_id"] in preferences
-                    else candidate.get("priority", 0),
-                    candidate["source_id"],
-                ),
-            ),
+            self._ordered_candidates(provider_id, account_id, candidates),
         )
         if not candidates:
             return []

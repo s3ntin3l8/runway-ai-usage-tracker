@@ -48,6 +48,9 @@ a = Analysis(
         "urllib.request",
         # Notify-only update check, shared by the CLI and the tray updater.
         "scripts.sidecar_pkg.update_check",
+        # Optional --keep-alive (agy token renewal) — imported from main() only
+        # when opted in, so PyInstaller's scan must be told about it.
+        "scripts.sidecar_pkg.keep_alive",
         # One-time pairing (runway-sidecar://pair links, --pair).
         "scripts.sidecar_pkg.pairing",
         # Shared TLS trust-store helper + bundled CA store (certifi). The

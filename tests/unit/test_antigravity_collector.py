@@ -227,3 +227,47 @@ class TestAntigravityTier:
             assert card.get("tier") == "pro", (
                 f"Expected tier='pro' in card {card.get('service_name')}"
             )
+
+
+class TestAntigravityNoServerSideRefresh:
+    @pytest.mark.asyncio
+    async def test_force_refresh_path_never_claims_a_server_side_refresh(self, caplog):
+        """A 401 makes the collector re-read the cache (another host's push may
+        be live), but the server cannot rotate agy's login — it must not log
+        `Refreshing … access token` as if a refresh happened."""
+        await token_cache.reset()
+        try:
+            import logging
+            import time
+
+            await token_cache.store(
+                "antigravity",
+                {
+                    "oauth_token": "ya29.current",
+                    "expiry_date": str(int(time.time() * 1000) + 3_600_000),
+                },
+                account_id="user@example.com",
+                source="mgmt",
+            )
+            collector = AntigravityCollector(account_id="user@example.com")
+            assert collector.REFRESHABLE is False
+            refresh_attempted = AsyncMock(return_value=None)
+            collector._execute_refresh = refresh_attempted
+
+            with caplog.at_level(logging.DEBUG):
+                token = await collector._get_valid_token(MagicMock(), force_refresh=True)
+
+            # Cache re-read succeeded; nothing was rotated.
+            assert token == "ya29.current"
+            messages = [record.getMessage() for record in caplog.records]
+            assert not any(message.startswith("Refreshing ") for message in messages)
+            assert any("refresh skipped" in message for message in messages)
+            # The contract: no client_id → the base never even attempts a refresh.
+            refresh_attempted.assert_not_awaited()
+        finally:
+            await token_cache.reset()
+
+    def test_refreshable_defaults_true_for_providers_that_can_rotate(self):
+        from app.services.collectors.oauth_base import OAuthBaseCollector
+
+        assert OAuthBaseCollector.REFRESHABLE is True

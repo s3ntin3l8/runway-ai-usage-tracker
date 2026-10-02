@@ -33,6 +33,11 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
     if the file token is expired we wait for agy to run again.
     """
 
+    # No OAuth client_id on this side: only the user's agy CLI renews this
+    # login. A 401 re-reads the cache (another host's push may be live) but
+    # must never log as though the server refreshed the token.
+    REFRESHABLE = False
+
     async def _get_token_data(self) -> dict:
         """Return the ``token`` sub-dict from the agy credentials file."""
         raw = await self._get_credentials()
@@ -49,7 +54,19 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
             cache_data = await token_cache.get_with_metadata(
                 "antigravity", account_id=self.account_id
             )
-            if not cache_data or _is_token_expired(cache_data[0]):
+            # Which read path answered? A single DEBUG below carries the final
+            # outcome; no identifiers here (slot keys are token-derived) — the
+            # hit state plus the borrowed entry's source is enough to tell
+            # "fresh merged hit" from "expired hit, borrowed newest" from
+            # "nothing usable" when diagnosing a 401 incident.
+            if cache_data is None:
+                slot_state = "missing"
+            elif _is_token_expired(cache_data[0]):
+                slot_state = "expired"
+            else:
+                slot_state = "fresh"
+            read_outcome = "fresh hit for requested slot"
+            if slot_state != "fresh":
                 # Identity-mismatch fallback: the agy token file carries no id_token,
                 # so the sidecar-pushed token is cached under a refresh-token-derived
                 # hash — NOT the email that seeds self.account_id from LatestUsage, and
@@ -74,12 +91,19 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
                 pool = fresh or candidates
                 if pool:
                     newest = min(pool, key=lambda a: a["age"])
+                    read_outcome = (
+                        f"requested slot {slot_state}; borrowed newest "
+                        f"{'non-expired' if fresh else 'expired'} entry "
+                        f"(source={newest['source']})"
+                    )
                     cache_data = (
                         newest["tokens"],
                         {"account_label": newest["account_label"], "source": newest["source"]},
                     )
                 else:
                     cache_data = None
+                    read_outcome = f"requested slot {slot_state}; nothing borrowable"
+            logger.debug("Antigravity token read: %s", read_outcome)
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"
