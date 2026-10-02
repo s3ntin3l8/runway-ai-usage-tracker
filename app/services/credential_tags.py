@@ -78,6 +78,19 @@ def origin_candidates(credential_origin: str) -> list[str]:
     return [credential_origin, base] if fingerprint else [credential_origin]
 
 
+def pick_effective_tag(
+    candidates: list[CredentialTag], sidecar_id: str | None
+) -> CredentialTag | None:
+    """The tag that applies on *sidecar_id* among rows for one origin: the machine-scoped
+    one if present, else the deployment-wide one. In-memory twin of the ordering
+    :meth:`CredentialTagRepo.get` asks the database for, kept next to it so the two stay
+    in step."""
+    for tag in candidates:
+        if tag.sidecar_id and tag.sidecar_id == sidecar_id:
+            return tag
+    return next((tag for tag in candidates if tag.sidecar_id is None), None)
+
+
 class CredentialTagRepo:
     """Lookup / write / list operations on the ``credential_tags`` table."""
 

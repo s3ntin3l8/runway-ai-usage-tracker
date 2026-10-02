@@ -448,8 +448,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 if not prior_sources:
                     # The keyed row is new this cycle: it inherits the operator's choices
                     # (enabled, failover priority) from the row it replaces instead of
-                    # silently re-enabling a source they turned off.
-                    inherited = retired_rows[0]
+                    # silently re-enabling a source they turned off. A machine reports one
+                    # key per plain origin, so there is normally a single retired row; prefer
+                    # the one filed under the resolved account if a future provider has more.
+                    inherited = next(
+                        (row for row in retired_rows if row.account_id == actual_acc_id),
+                        retired_rows[0],
+                    )
                     successor = session.exec(
                         select(CredentialSource).where(
                             CredentialSource.provider_id == p_id,
@@ -461,16 +466,14 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         successor.enabled = inherited.enabled
                         successor.priority = inherited.priority
                         session.add(successor)
-                        manager._credential_source_preferences.setdefault(
-                            (p_id, actual_acc_id), {}
-                        )[source_id] = (inherited.enabled, inherited.priority)
+                        manager.set_credential_source_preference(
+                            p_id, actual_acc_id, source_id, inherited.enabled, inherited.priority
+                        )
                 for retired in retired_rows:
                     await token_cache.remove_source(p_id, retired.account_id, retired.source_id)
-                    old_prefs = manager._credential_source_preferences.get(
-                        (p_id, retired.account_id)
+                    manager.drop_credential_source_preference(
+                        p_id, retired.account_id, retired.source_id
                     )
-                    if old_prefs is not None:
-                        old_prefs.pop(retired.source_id, None)
         tokens_received_count += len(p_tokens)
         logger.info(
             f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {payload.provider}"

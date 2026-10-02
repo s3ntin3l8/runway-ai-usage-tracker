@@ -61,6 +61,7 @@ def retire_unkeyed_origin(
             select(CredentialSource).where(
                 CredentialSource.provider_id == provider_id,
                 CredentialSource.source_id == old_source_id,
+                CredentialSource.sidecar_id == sidecar_id,
             )
         ).all()
     )

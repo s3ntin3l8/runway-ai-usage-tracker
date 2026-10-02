@@ -310,6 +310,8 @@ export function stageToBody(
   state: DialogState,
   applyToAllMachines: boolean,
 ): CredentialTagRequest | null {
+  // Guard per entry as well as at the dialog level: this is exported and the request must
+  // never carry an all-machines scope for a cookie or keychain origin, whoever calls it.
   // The dialog keeps a single staged selection per open, but the Tag
   // button is rendered per row. Only use the staged account when it was
   // staged *for this row* (same sidecar + provider + origin) — otherwise a
