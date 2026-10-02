@@ -27,6 +27,7 @@ from app.services.collectors._anthropic_common import (
 )
 from app.services.collectors.oauth_base import OAuthBaseCollector
 from app.services.credential_provider import credential_provider
+from app.services.identity_lookup import claude_profile_email
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,24 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             logger.error(f"Failed to refresh Anthropic token: {e}")
             return None
 
+    async def _pending_identity(
+        self, client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> str | None:
+        """The email of whoever holds a token the sidecar couldn't identify, if learnable.
+
+        Only for the identity-verification run, i.e. when pinned to a bundle the sidecar
+        marked ``identity_pending``. The holder's own profile names them; the organization
+        contact (``/v1/organizations/me``) never does, since it can be an admin. Returned,
+        not assigned: ``account_id`` changes how the rest of the call sees its pin, so it is
+        set once the call is done (``CollectorManager`` then binds it to that exact source).
+        """
+        if self.account_id and self.account_id.lower() != "default":
+            return None
+        meta = token_cache.current_source_metadata("anthropic", self.account_id or "default")
+        if not meta or meta.get("identity_pending") is not True:
+            return None
+        return await claude_profile_email(client, headers)
+
     async def _get_claude_oauth(
         self, client: httpx.AsyncClient, token: str
     ) -> list[dict[str, Any]]:
@@ -315,10 +334,12 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             logger.error(f"Claude OAuth response parse failed: {e}")
             return [error_card("Claude Pro", "🟠", "Invalid API response", error_type="api_error")]
         creds = await self._get_credentials()
+        holder = await self._pending_identity(client, headers)
 
-        # Attempt to fetch account info from API if missing in local credentials
+        # Attempt to fetch account info from API if missing in local credentials. Skipped
+        # once the holder is known: the organization's contact is not who holds the token.
         api_account_info = {}
-        if not creds or not creds.get("oauthAccount", {}).get("emailAddress"):
+        if not holder and (not creds or not creds.get("oauthAccount", {}).get("emailAddress")):
             try:
                 org_resp = await http_request_with_retry(
                     client,
@@ -345,9 +366,12 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if token_cache.is_source_selected("anthropic", self.account_id)
             else await asyncio.to_thread(self._get_local_config_hints)
         )
-        return self._parse_oauth_response(
+        cards = self._parse_oauth_response(
             data, name_map, creds, api_account_info, local_hints=local_hints
         )
+        if holder:
+            self.account_id = self.account_label = holder
+        return cards
 
     def _extract_identity_from_oauth(self, data: dict[str, Any] | None) -> str:
         """Extract account identity string from OAuth API response or credentials file."""

@@ -197,26 +197,91 @@ async def test_a_pinned_claude_cookie_is_not_verified_as_the_servers_own_cli_log
     assert _outcome(engine, "anthropic", source_id)[0] == BOB
 
 
+def _claude_oauth(seen: list[httpx.Request], *, profile_status: int = 200, email: str = BOB):
+    """Usage works; the profile names the holder; the organization names an admin."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/oauth/usage":
+            return httpx.Response(200, json=CLAUDE_USAGE)
+        if request.url.path == "/api/oauth/profile":
+            if profile_status != 200:
+                return httpx.Response(profile_status, json={"error": "forbidden"})
+            return httpx.Response(200, json={"account": {"email": email, "full_name": "Bob"}})
+        if request.url.path == "/v1/organizations/me":
+            return httpx.Response(200, json={"name": "Org", "contact_email": "admin@example.com"})
+        return httpx.Response(404)
+
+    return handler
+
+
 @pytest.mark.asyncio
-async def test_a_pending_claude_oauth_token_is_not_given_the_organizations_contact(world):
-    """An organization's contact email can be an admin, not the token's holder: the credential
-    stays pending for the operator rather than being tagged to the wrong person."""
+async def test_a_pending_claude_oauth_token_is_identified_by_its_own_profile(world):
+    """The holder's profile names them, not the organization's contact (which may be an admin)."""
+    engine, cache = world
+    source_id = await _seed(
+        world, "anthropic", "env:CLAUDE_CODE_OAUTH_TOKEN", {"oauth_token": CLAUDE_OAUTH}
+    )
+    seen: list[httpx.Request] = []
+
+    await _verify("anthropic", _claude_oauth(seen))
+
+    account, tag = _outcome(engine, "anthropic", source_id)
+    assert account == BOB
+    assert tag is not None and tag.set_by == "identity_verification"
+    # The admin the organization lists is neither adopted nor even asked for.
+    assert not [r for r in seen if r.url.path == "/v1/organizations/me"]
+    profile = [r for r in seen if r.url.path == "/api/oauth/profile"]
+    assert [r.headers["authorization"] for r in profile] == [f"Bearer {CLAUDE_OAUTH}"]
+    assert await cache.get_pending_sources("anthropic") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 404])
+async def test_a_claude_token_the_profile_refuses_stays_pending_not_tagged_to_the_org_contact(
+    world, status
+):
+    """A token without the profile scope can't be named: it stays for the operator rather
+    than being tagged to whoever the organization lists as its contact."""
     engine, cache = world
     source_id = await _seed(
         world, "anthropic", "env:CLAUDE_CODE_OAUTH_TOKEN", {"oauth_token": CLAUDE_OAUTH}
     )
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/oauth/usage":
-            return httpx.Response(200, json=CLAUDE_USAGE)
-        if request.url.path == "/v1/organizations/me":
-            return httpx.Response(200, json={"name": "Org", "contact_email": "admin@example.com"})
-        return httpx.Response(404)
-
-    await _verify("anthropic", handler)
+    await _verify("anthropic", _claude_oauth([], profile_status=status))
 
     assert _outcome(engine, "anthropic", source_id)[0] == source_id
     assert [s["source_id"] for s in await cache.get_pending_sources("anthropic")] == [source_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("account_id", "pinned_pending"),
+    [
+        ("alice@example.com", False),  # an identified collector, not pinned
+        ("alice@example.com", True),  # an identified collector, even on a pending bundle
+        ("default", False),  # the server's own default collector, not pinned
+    ],
+)
+async def test_only_the_verifier_looks_a_claude_token_up(world, account_id, pinned_pending):
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    engine, cache = world
+    source_id = await _seed(
+        world, "anthropic", "env:CLAUDE_CODE_OAUTH_TOKEN", {"oauth_token": CLAUDE_OAUTH}
+    )
+    seen: list[httpx.Request] = []
+    collector = AnthropicCollector(account_id=account_id)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_claude_oauth(seen))) as client:
+        if pinned_pending:
+            async with cache.using_source("anthropic", source_id, source_id):
+                await collector._get_claude_oauth(client, CLAUDE_OAUTH)
+        else:
+            await collector._get_claude_oauth(client, CLAUDE_OAUTH)
+
+    assert not [r for r in seen if r.url.path == "/api/oauth/profile"]
+    assert collector.account_id == account_id
 
 
 @pytest.mark.asyncio
@@ -502,3 +567,33 @@ def test_a_chatgpt_env_access_token_is_identified_from_its_profile_claim(monkeyp
 
     assert cards and cards[0]["account_id"] == BOB
     assert cards[0]["metadata"].get("identity_pending") is not True
+
+
+@pytest.mark.asyncio
+async def test_a_resolved_claude_holder_is_labelled_with_their_email_and_never_reads_the_servers_config(
+    world, monkeypatch
+):
+    """Resolving the holder must not unpin the call: the server host's own ``~/.claude.json``
+    describes another login, and the card is labelled with the holder, not an org admin."""
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    _, cache = world
+    source_id = await _seed(
+        world, "anthropic", "env:CLAUDE_CODE_OAUTH_TOKEN", {"oauth_token": CLAUDE_OAUTH}
+    )
+    reads: list[int] = []
+    monkeypatch.setattr(
+        AnthropicCollector,
+        "_get_local_config_hints",
+        lambda self: reads.append(1) or {"tier": "Server Owner Max"},
+    )
+    collector = AnthropicCollector(account_id="default")
+    seen: list[httpx.Request] = []
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_claude_oauth(seen))) as client:
+        async with cache.using_source("anthropic", source_id, source_id):
+            cards = await collector._get_claude_oauth(client, CLAUDE_OAUTH)
+
+    assert collector.account_id == BOB and collector.account_label == BOB
+    assert reads == []
+    assert not any("Server Owner" in str(card) for card in cards)

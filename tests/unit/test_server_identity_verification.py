@@ -15,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from app.services.identity_lookup import google_userinfo_email  # noqa: E402
+from app.services.identity_lookup import claude_profile_email, google_userinfo_email  # noqa: E402
 from app.services.token_cache import TokenCache  # noqa: E402
 from scripts import sidecar  # noqa: E402
 
@@ -31,6 +31,35 @@ def _jwt(payload: dict) -> str:
 
 
 # --- the lookup -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(403, json={"error": "forbidden"}),
+        httpx.Response(200, json={"organization": {"name": "Org"}}),
+        httpx.Response(200, json={"account": {"email": " @ "}}),
+        httpx.Response(200, json={"account": {"email": "a@b"}}),
+        httpx.Response(200, json={"account": "bob@example.com"}),
+        httpx.Response(200, json={"email": BOB}),  # only account.email names the holder
+    ],
+)
+@pytest.mark.asyncio
+async def test_claude_profile_resolves_only_the_holders_account_email(response):
+    async with _client(lambda _r: response) as client:
+        assert await claude_profile_email(client, {"Authorization": "Bearer t"}) is None
+
+
+@pytest.mark.asyncio
+async def test_claude_profile_returns_the_account_email_and_never_raises():
+    async with _client(lambda _r: httpx.Response(200, json={"account": {"email": BOB}})) as client:
+        assert await claude_profile_email(client, {"Authorization": "Bearer t"}) == BOB
+
+    def boom(_request):
+        raise httpx.ConnectError("down")
+
+    async with _client(boom) as client:
+        assert await claude_profile_email(client, {"Authorization": "Bearer t"}) is None
 
 
 def _client(handler) -> httpx.AsyncClient:

@@ -41,7 +41,7 @@ In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message ev
 
 ### Unidentified credentials and identity verification
 
-A sidecar normally keeps a credential it cannot attribute to an account on the machine. For the providers whose server collector can ask the upstream API who owns a credential (Anthropic, ChatGPT, Gemini, Antigravity, GitHub, OpenCode), it instead sends the secret (a browser session cookie, a session env var or an access token) to the server flagged `identity_pending`, and the server calls the provider (`claude.ai`, `chatgpt.com`, Google) with it. What that means for your trust model:
+A sidecar normally keeps a credential it cannot attribute to an account on the machine. For the providers whose server collector can ask the upstream API who owns a credential (Anthropic, ChatGPT, Gemini, Antigravity, GitHub, OpenCode), it instead sends the secret (a browser session cookie, a session env var or an access token) to the server flagged `identity_pending`, and the server calls the provider (`claude.ai`, `api.anthropic.com`, `chatgpt.com`, Google) with it. What that means for your trust model:
 
 - **Fixed destinations only.** The upstream URLs are literals in the collectors; a payload only ever supplies header values (cookie / bearer), never a host or path.
 - **The proof comes from the provider, not the sidecar.** The email bound to a source is the one the provider returns for that credential; a sidecar cannot make a credential report someone else's email. A source is bound to its account by a durable `identity_verification` tag, and an operator's own mapping is never overwritten by it.

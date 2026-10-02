@@ -158,8 +158,10 @@ opencode. The server then runs a dedicated `<provider>:default:identity-pending`
 pinned to each pending source in turn; when its API call reveals the account, `CollectorManager`
 binds that identity to the exact source and moves it to the account. How each provider
 answers: Gemini and Antigravity ask Google's userinfo endpoint; Claude asks `claude.ai`
-(`/api/account`) for a session cookie (a bare OAuth token stays "Needs mapping": the only
-endpoint that answers names the organization's contact, not the token's holder); ChatGPT reads the
+(`/api/account`) for a session cookie and `api.anthropic.com/api/oauth/profile` for an OAuth
+token (the token's own holder; a token without the `user:profile` scope is refused and stays
+"Needs mapping", and the organization's contact, which can be an admin, is never adopted);
+ChatGPT reads the
 email from the usage endpoint after exchanging the cookie. Anthropic files its pending bundles
 under their source id rather than `default`, so the verifier looks across every cache slot
 (`TokenCache.get_pending_sources`). A pinned run never reads the server host's own login (it
