@@ -110,6 +110,10 @@ class ChatGPTWebMixin:
                     token_cache.update_account_metadata("chatgpt", effective_account_id, name=email)
                 )
 
+        if isinstance(email, str) and "@" in email:
+            from app.services.collectors.base import normalize_account_id
+
+            self.verified_identity = normalize_account_id(email)
         self._adopt_pending_identity(email)
 
         rate_limit = data.get("rate_limit", {})

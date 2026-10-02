@@ -183,8 +183,16 @@ Cookies, keychain entries and OAuth bundles stay unfingerprinted on purpose: the
 changes with every login or refresh, so a fingerprint would orphan the tag each time. A tag on
 a **cookie or keychain** origin therefore can't be deployment-wide (422); on a **path** or
 **env** origin it can (a shared home directory is one origin), and the Credentials view warns
-that such a tag follows an account switch. Not covered: a browser account switch on one
-machine under a machine-scoped cookie tag.
+that such a tag follows an account switch.
+
+A browser switching accounts on one machine behind a machine-scoped **cookie** tag is caught
+at poll time. Collectors whose provider reports the account's email (Claude via `/api/account`,
+ChatGPT via the usage endpoint, Ollama via the page header) set `verified_identity`; when it
+resolves to a different canonical account than the tagged one, `CollectorManager` drops the
+tag, takes the source out of the old account (nothing from that poll is published there) and the
+sidecar's next push files it as pending, so the identity verifier maps it to the new account. It
+never second-guesses a tag on a non-email account (hash-keyed or label-based), a deployment-wide
+tag (it applies on other machines too), or a source whose provider reported no email.
 
 ### Who refreshes an OAuth login
 

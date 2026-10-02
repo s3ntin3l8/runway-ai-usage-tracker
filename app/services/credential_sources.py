@@ -29,6 +29,16 @@ def describe_origin(origin: str | None) -> tuple[str, str]:
     return "sidecar", "Sidecar credential"
 
 
+def pending_cache_slot(provider_id: str, source_id: str) -> str:
+    """The account a source is filed under while its identity is unknown.
+
+    Anthropic keys a pending bundle by its stable source id (a rotating token must not spawn
+    orphan rows); every other provider files it under ``default``. Ingest and the identity
+    handlers (verification, cookie-switch revoke) must agree, so they all ask here.
+    """
+    return source_id if provider_id == "anthropic" else "default"
+
+
 def is_machine_bound_origin(origin: str | None) -> bool:
     """A credential that only exists on one machine: a browser's cookie jar or a keychain.
 

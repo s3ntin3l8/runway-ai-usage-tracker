@@ -94,6 +94,11 @@ class BaseCollector(ABC):
     CREDENTIALS_KEYED_BY_ACCOUNT_ID: bool = False
     # Concrete collectors must opt in after verifying they report full snapshots.
     COMPLETE_SNAPSHOT: bool = False
+    # The email the provider itself reported for the credential used by the latest request
+    # (``None`` when it did not say). Unlike ``account_label`` it is never configured, so it
+    # is proof: CollectorManager compares it with a cookie source's tagged account to catch
+    # a browser switching accounts. The manager resets it before every source attempt.
+    verified_identity: str | None = None
 
     @property
     def successful_empty_result(self) -> bool:
