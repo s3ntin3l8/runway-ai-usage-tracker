@@ -65,6 +65,7 @@ _TAG_MAPPING = {
     "operator": "operator",
     "identity_claim": "claim",
     "identity_verification": "verified",
+    "rotation": "rotation",
 }
 
 

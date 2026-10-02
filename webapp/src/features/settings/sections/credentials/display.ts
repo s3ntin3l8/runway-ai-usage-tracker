@@ -38,6 +38,7 @@ export const MAPPING_LABEL: Record<CredentialMapping, string> = {
   verified: 'Verified by server',
   claim: 'Claimed by machine',
   operator: 'Assigned by you',
+  rotation: 'Carried over after re-login',
   config: 'Saved in Settings',
   server: 'Server environment',
   pending: 'Needs an account',
@@ -48,6 +49,8 @@ export const MAPPING_HINT: Record<CredentialMapping, string> = {
   verified: 'The server called the provider and confirmed which account this is.',
   claim: 'The machine claimed this identity; the server accepted it.',
   operator: 'You assigned this credential to the account with a rule.',
+  rotation:
+    'A re-login re-keyed this credential; the binding you made for its previous key was carried over because this location has only ever belonged to this one account.',
   config: 'Pasted into Settings → Providers.',
   server: 'Found in an environment variable or file on the server host.',
   pending: 'No account is known yet. Assign one under "Needs mapping".',

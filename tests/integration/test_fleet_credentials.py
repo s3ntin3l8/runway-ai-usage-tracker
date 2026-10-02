@@ -2965,3 +2965,176 @@ def test_the_keyed_row_inherits_enabled_and_priority_from_the_row_it_replaces(
     prefs = manager._credential_source_preferences[("zai", "alice@example.com")]
     assert prefs[new.source_id] == (False, 7)
     assert old.source_id not in prefs
+
+
+# --- rotation carry (#474) -------------------------------------------------
+
+
+def _rotation_origins() -> tuple[str, str]:
+    base = "path:/home/alice/.local/share/opencode/auth.json"
+    return f"{base}#0123456789ab", f"{base}#abcdef012345"
+
+
+def test_manifest_carries_the_binding_across_a_fingerprint_rotation(
+    client: TestClient, session: Session
+):
+    """A re-login re-keys the origin; the operator's binding must follow.
+
+    Without the carry the new origin lands in ``pending_credential_tags``,
+    the sidecar withholds the token for it (#349), and quota collection
+    silently dies even though nothing about the credential's location or
+    account changed.
+    """
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    old, new = _rotation_origins()
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin=old,
+        account_id="alice@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    r = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "completed_providers": ["opencode"],
+            "entries": [{"provider_id": "opencode", "credential_origin": new}],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    tag = CredentialTagRepo.get(
+        session, provider_id="opencode", credential_origin=new, sidecar_id="alpha-host"
+    )
+    assert tag is not None
+    assert tag.account_id == "alice@example.com"
+    assert tag.set_by == "rotation"
+    assert PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host") == []
+    # The new origin ships as a hint on this same round-trip, so the
+    # sidecar's next push already carries the token.
+    assert r.json()["resolved"]["opencode"][new] == "alice@example.com"
+
+
+def test_manifest_keeps_a_rotation_pending_when_two_accounts_shared_the_location(
+    client: TestClient, session: Session
+):
+    """Two accounts ever tagged here means it is the operator's call, not ours."""
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    base = "path:/home/shared/.local/share/opencode/auth.json"
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin=f"{base}#0123456789ab",
+        account_id="alice@example.com",
+        sidecar_id="alpha-host",
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin=f"{base}#000000000000",
+        account_id="bob@example.com",
+        sidecar_id=None,
+    )
+    session.commit()
+
+    new = f"{base}#abcdef012345"
+    r = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "completed_providers": ["opencode"],
+            "entries": [{"provider_id": "opencode", "credential_origin": new}],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    assert (
+        CredentialTagRepo.get(
+            session, provider_id="opencode", credential_origin=new, sidecar_id="alpha-host"
+        )
+        is None
+    )
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert [row.credential_origin for row in pending] == [new]
+    assert new not in r.json()["resolved"].get("opencode", {})
+
+
+def test_manifest_does_not_inherit_another_machines_binding(client: TestClient, session: Session):
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    old, new = _rotation_origins()
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin=old,
+        account_id="alice@example.com",
+        sidecar_id="beta-host",
+    )
+    session.commit()
+
+    r = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "completed_providers": ["opencode"],
+            "entries": [{"provider_id": "opencode", "credential_origin": new}],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    assert (
+        CredentialTagRepo.get(
+            session, provider_id="opencode", credential_origin=new, sidecar_id="alpha-host"
+        )
+        is None
+    )
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert [row.credential_origin for row in pending] == [new]
+
+
+def test_manifest_rotation_yields_to_a_contradicting_reported_identity(
+    client: TestClient, session: Session
+):
+    """If the credential now claims a different account, the old binding must not win."""
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    old, new = _rotation_origins()
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin=old,
+        account_id="alice@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    r = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "completed_providers": ["anthropic"],
+            "entries": [
+                {
+                    "provider_id": "anthropic",
+                    "credential_origin": new,
+                    "account_id": "bob@example.com",
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    assert (
+        CredentialTagRepo.get(
+            session, provider_id="anthropic", credential_origin=new, sidecar_id="alpha-host"
+        )
+        is None
+    )
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert [row.credential_origin for row in pending] == [new]
+    assert pending[0].claimed_account_id == "bob@example.com"

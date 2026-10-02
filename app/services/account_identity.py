@@ -166,7 +166,11 @@ def credential_fingerprint(value: str | None) -> str | None:
     Used to make a ``credential_origin`` identify the *credential* rather
     than the file or variable it was found in, so two hosts (or one host
     after a key rotation) can never share an origin and inherit each
-    other's operator tag.
+    other's operator tag. The one deliberate exception is the server's
+    rotation carry (``CredentialTagRepo.inherited_account_for_rotation``,
+    #474): a new fingerprint on the *same* base origin inherits the old
+    binding only when exactly one account was ever tagged there — origins
+    themselves stay distinct, and nothing ever crosses hosts.
 
     PBKDF2-HMAC-SHA256 with a fixed domain-separation salt and a single
     iteration rather than a bare ``hashlib.sha256``: the input is a
