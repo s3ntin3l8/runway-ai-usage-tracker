@@ -1182,3 +1182,46 @@ async def test_apply_refresh_to_sources_without_sources_is_a_noop(cache):
         )
         == 0
     )
+
+
+@pytest.mark.asyncio
+async def test_get_account_source_candidates_sweeps_identity_slots(cache):
+    """Discovery for collectors pinned to ``default``: bundles filed under any
+    non-default (resolved-identity) slot, each tagged with its ``account_slot``
+    so the caller can pin reads to the right slot. ``default``-slot bundles
+    belong to ``get_source_candidates`` and must not be duplicated here."""
+    now_ms = str(int(time.time() * 1000) + 3_600_000)
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "ya29.bob", "expiry_date": now_ms},
+        account_id="bob@example.com",
+        source="mgmt",
+        source_id="sidecar:mgmt:path:/b/token",
+        source_metadata={"priority": 5, "sidecar_id": "mgmt"},
+    )
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "ya29.alice", "expiry_date": now_ms},
+        account_id="alice@example.com",
+        source="dev-01",
+        source_id="sidecar:dev-01:path:/a/token",
+        source_metadata={"priority": 0, "sidecar_id": "dev-01"},
+    )
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "ya29.default", "expiry_date": now_ms},
+        account_id="default",
+        source="manual",
+        source_id="sidecar:manual:path:/d/token",
+    )
+
+    rows = await cache.get_account_source_candidates("antigravity")
+
+    assert [row["source_id"] for row in rows] == [
+        "sidecar:dev-01:path:/a/token",
+        "sidecar:mgmt:path:/b/token",
+    ]
+    assert [(row["account_slot"], row["priority"]) for row in rows] == [
+        ("alice@example.com", 0),
+        ("bob@example.com", 5),
+    ]

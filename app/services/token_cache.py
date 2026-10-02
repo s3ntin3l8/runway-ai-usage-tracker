@@ -567,6 +567,29 @@ class TokenCache:
                 key=lambda row: (int(row.get("priority", 0)), row["source_id"]),
             )
 
+    async def get_account_source_candidates(self, provider: str) -> list[dict[str, Any]]:
+        """Live source bundles in every *resolved-identity* slot, tagged ``account_slot``.
+
+        Sidecar ingest files bundles under the account it proved, never under
+        ``default``. A collector pinned to ``default`` therefore finds none of
+        them via ``get_source_candidates``; this sweep is its discovery path —
+        the regular-collector counterpart of ``get_pending_sources``. The
+        ``account_slot`` tag lets the caller pin reads to the slot that actually
+        holds the bundle.
+        """
+        async with self._lock:
+            self._clear_expired_unlocked()
+            candidates = [
+                {"source_id": source_id, "tokens": tokens, "account_slot": slot, **metadata}
+                for slot, rows in self._source_cache.get(provider, {}).items()
+                if slot != "default"
+                for source_id, (tokens, metadata, _timestamp) in rows.items()
+            ]
+            return sorted(
+                candidates,
+                key=lambda row: (int(row.get("priority", 0)), row["source_id"]),
+            )
+
     async def get_pending_sources(self, provider: str) -> list[dict[str, Any]]:
         """Identity-pending source bundles in *any* cache slot, each tagged ``account_slot``.
 

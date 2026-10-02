@@ -35,7 +35,43 @@ Each card carries `pct_used = round((1 − remainingFraction) × 100, 4)`, `rese
 ```json
 {"auth_method": "consumer", "token": {"access_token": "…", "refresh_token": "…", "expiry": "ISO8601"}}
 ```
-agy refreshes this file on each CLI invocation. Runway reads it fresh on every poll; it cannot refresh the token independently (no `client_id` in the file). In multi-host topology the sidecar ships the token via the credential registry rule.
+The **access token lives one hour** and only agy can renew it: the file carries no OAuth `client_id`, so neither the server nor the sidecar can refresh it (`_execute_refresh` is a no-op; a 401 just re-reads the cache in case another host pushed a live token — it never logs a refresh, see `REFRESHABLE = False`). Runway reads the file fresh on every poll; in multi-host topology the sidecar ships the token via the credential registry rule, and a sidecar whose local token has **lapsed does not push it at all**, so one machine's dead session cannot poison the shared cache entry another machine keeps fresh.
+
+### Token lifetime & keep-alive
+
+Because the token renews only when agy itself runs, a host without regular agy sessions lapses hourly — four lapses in one day in the 2026-10-02 incident. Keep it fresh with any of:
+
+1. **Sidecar keep-alive (opt-in):** `runway-sidecar-cli --keep-alive` (or `"keep_alive": true` in `config.json`). The sidecar checks the token file every minute and, once the access token has lapsed, runs `agy models` — a metadata call that renews the token in place: **verified 2026-10-02** that it rewrites only the access token and `expiry` (the refresh_token is never rotated), makes no model call, and works even while the access token is already expired. A failed attempt backs off to one retry every five minutes; the thread logs and never takes the sidecar down.
+2. **systemd timer (hosts without the sidecar):** run `agy models` on a short interval. agy only rewrites the file once the token has actually lapsed, so a frequent timer stays cheap and bounds the dead-token window to one tick:
+
+   ```ini
+   # ~/.config/systemd/user/agy-keepalive.service
+   [Unit]
+   Description=Renew the agy access token
+
+   [Service]
+   Type=oneshot
+   ExecStart=%h/.local/bin/agy models
+   ```
+   ```ini
+   # ~/.config/systemd/user/agy-keepalive.timer
+   [Unit]
+   Description=Renew the agy access token every 10 minutes
+
+   [Timer]
+   OnBootSec=5min
+   OnUnitActiveSec=10min
+   AccuracySec=1min
+
+   [Install]
+   WantedBy=timers.target
+   ```
+   Then `systemctl --user enable --now agy-keepalive.timer`.
+3. **A live `agy` session** on the machine — what masked the lapses before keep-alive existed (a long-running session renews on each turn).
+
+While the token is still valid but within 10 minutes of expiry, the sidecar logs a pre-expiry `WARNING` ("run `agy models` … or start the sidecar with `--keep-alive`") — suppressed automatically when keep-alive already owns renewal.
+
+**Multi-machine:** every machine's sidecar pushes its own agy token under the resolved account, and the server keeps the freshest push. The default collector discovers those identity-keyed bundles and fails over between them, so as long as *any* machine holds a live session the quota keeps flowing; Fleet → Token Health shows per-source `auth_failed` / `healthy` state.
 
 ## Per-Message Token Events (Sidecar)
 
@@ -102,16 +138,20 @@ Antigravity events use `provider_id="antigravity"` pricing rows (independent of 
 
 ## Setup
 
-No configuration needed when running the sidecar on the same host as `agy`. The sidecar discovers `~/.gemini/antigravity-cli/antigravity-oauth-token` automatically. Run `agy` at least once to create the token file; agy keeps it refreshed on each invocation.
+No configuration needed when running the sidecar on the same host as `agy`. The sidecar discovers `~/.gemini/antigravity-cli/antigravity-oauth-token` automatically. Run `agy` at least once to create the token file.
 
 For multi-host (server + remote sidecar), the sidecar ships the OAuth token to the server via the credential registry rule; the server reads it from the token cache.
+
+On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` / `"keep_alive": true`) or install the systemd timer — see [Token lifetime & keep-alive](#token-lifetime--keep-alive). Without one of these, the token renews only when agy next runs.
 
 ## Troubleshooting
 
 ### No quota cards
-- Verify `~/.gemini/antigravity-cli/antigravity-oauth-token` exists and is recent (run `agy` once).
-- Check server logs: `[antigravity] collect_via_api failed` with status or error detail.
-- The token expires; agy refreshes it on its next run. If Runway polls before agy runs again it returns an Error Card — it will self-heal on the next successful poll.
+- Renew the token first: `agy models` (metadata call, no chat, rotates only the access token). Then re-poll.
+- A sidecar `WARNING — local token expired … not pushing` means *this* host's session lapsed; the server then serves whichever machine still has a live token — nobody, if all of them lapsed. Fix with `agy models`, a live agy session, or `--keep-alive`.
+- A pre-expiry `WARNING — local token expires at … (within 10 min)` is the early version of the same signal: act before quota collection breaks.
+- Check server logs: `[antigravity] collect_via_api failed` with status or error detail; `Refreshing … access token` never appears for Antigravity (the server cannot refresh it), so a 401 there means every candidate token was dead.
+- Per-source state lives in Fleet → Token Health: `auth_failed` on one source while another shows `healthy` means failover is carrying the account.
 
 ### No token events / zero cost
 - Events only appear after `agy` conversations: check `~/.gemini/antigravity-cli/conversations/` for `*.db` files.
@@ -127,6 +167,7 @@ For multi-host (server + remote sidecar), the sidecar ships the OAuth token to t
 | `app/core/config.py` | `ANTIGRAVITY_OAUTH_PATH` setting |
 | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Conversation DB parser |
 | `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
+| `scripts/sidecar_pkg/keep_alive.py` | Optional `--keep-alive` thread (`agy models` renewal) |
 | `scripts/reclassify_antigravity_models.py` | One-shot repair for pre-version-preservation rows |
 | `scripts/recost_events.py` | Reprice after pricing-seed changes (`--provider antigravity`) |
 | `app/services/pricing_seed.py` | Antigravity pricing rows |

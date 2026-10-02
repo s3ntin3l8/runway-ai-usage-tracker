@@ -2311,6 +2311,11 @@ def _gemini_account_email() -> str:
         return "default"
 
 
+# Warn this long before the agy access token lapses — while quota still flows
+# and the operator can still act — unless keep-alive already owns renewal.
+_AG_PRE_EXPIRY_WARNING_SECONDS = 10 * 60
+
+
 def _ag_account_email() -> str:
     """Return the unresolved sentinel; this token file has no account claim."""
     return "default"
@@ -3326,11 +3331,21 @@ class GenericCollector:
                     if expiry_dt.timestamp() < time.time():
                         logging.warning(
                             f"  [{provider_id}] local token expired at {raw_expiry} — "
-                            "not pushing (run `agy` to refresh)"
+                            "not pushing (run `agy models` to refresh, or start the "
+                            "sidecar with --keep-alive)"
                         )
                         tokens.pop("oauth_token", None)
                         tokens.pop("refresh_token", None)
                     else:
+                        from scripts.sidecar_pkg.keep_alive import is_enabled
+
+                        seconds_left = expiry_dt.timestamp() - time.time()
+                        if not is_enabled() and seconds_left <= _AG_PRE_EXPIRY_WARNING_SECONDS:
+                            logging.warning(
+                                f"  [{provider_id}] local token expires at {raw_expiry} "
+                                "(within 10 min) — run `agy models` to renew, or start "
+                                "the sidecar with --keep-alive"
+                            )
                         tokens["expiry_date"] = str(int(expiry_dt.timestamp() * 1000))
                 except (ValueError, TypeError):
                     logging.debug(f"  [{provider_id}] could not parse token expiry: {raw_expiry!r}")
@@ -4869,6 +4884,15 @@ def main():
         help="Swap the build kept by the last self-update back in, then exit",
     )
     parser.add_argument(
+        "--keep-alive",
+        action="store_true",
+        help=(
+            "Daemon mode: renew the Antigravity (agy) access token with "
+            "`agy models` whenever it lapses (opt-in; config "
+            '"keep_alive": true does the same)'
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {_SIDECAR_VERSION}",
@@ -4950,6 +4974,20 @@ def main():
         except Exception:
             logging.debug("Update-check thread not started", exc_info=True)
 
+        # Optional Antigravity keep-alive: the agy access token lives one hour
+        # and only agy can renew it. Off by default — opt in with --keep-alive
+        # (or config "keep_alive": true) on hosts that run agy.
+        keep_alive_thread = None
+        if args.keep_alive or config.get("keep_alive") is True:
+            from scripts.sidecar_pkg.keep_alive import KeepAliveThread, enable
+
+            enable()
+            keep_alive_thread = KeepAliveThread()
+            keep_alive_thread.start()
+            logging.info(
+                "Antigravity keep-alive enabled (checks every minute, renews via `agy models`)"
+            )
+
         try:
             # Block until signal handler sets _daemon_running = False
             while _daemon_running:
@@ -4957,6 +4995,8 @@ def main():
         finally:
             if update_thread is not None:
                 update_thread.stop()
+            if keep_alive_thread is not None:
+                keep_alive_thread.stop()
             runner.stop()
 
     logging.info("Sidecar stopping...")

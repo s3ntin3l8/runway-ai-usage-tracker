@@ -26,6 +26,12 @@ class OAuthBaseCollector(BaseCollector):
     MAX_RATE_LIMIT_FAILURES = 5
     TOKEN_REFRESH_THRESHOLD_SECONDS = 600  # 10 minutes proactive refresh
 
+    # Providers whose refresh credentials the server may rotate itself. Set
+    # False when only the user's own CLI can renew the login (no client_id on
+    # this side) — such collectors still re-read the cache on a 401, but they
+    # must not log or imply that a server-side refresh happened.
+    REFRESHABLE: bool = True
+
     def __init__(
         self,
         provider_name: str,
@@ -136,9 +142,19 @@ class OAuthBaseCollector(BaseCollector):
                 return token
 
             # 3. Attempt refresh
-            logger.info(
-                f"Refreshing {self.provider_name} access token for account {self.account_id or 'default'}..."
-            )
+            if self.REFRESHABLE:
+                logger.info(
+                    f"Refreshing {self.provider_name} access token for account {self.account_id or 'default'}..."
+                )
+            else:
+                # No refresh capability on this side (e.g. the CLI owns the
+                # renewal). The re-read below can still pick up a token another
+                # host pushed — but a 401 path must not claim a refresh happened.
+                logger.debug(
+                    "%s cannot refresh server-side; reusing the cached token for account %s",
+                    self.provider_name,
+                    self.account_id or "default",
+                )
             new_creds = await self._execute_refresh(client)
             if new_creds:
                 self._persist_credentials(new_creds)

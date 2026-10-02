@@ -33,6 +33,11 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
     if the file token is expired we wait for agy to run again.
     """
 
+    # No OAuth client_id on this side: only the user's agy CLI renews this
+    # login. A 401 re-reads the cache (another host's push may be live) but
+    # must never log as though the server refreshed the token.
+    REFRESHABLE = False
+
     async def _get_token_data(self) -> dict:
         """Return the ``token`` sub-dict from the agy credentials file."""
         raw = await self._get_credentials()
@@ -49,6 +54,16 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
             cache_data = await token_cache.get_with_metadata(
                 "antigravity", account_id=self.account_id
             )
+            # Which read path answered? No identifiers here (slot keys are
+            # token-derived) — the hit state plus the borrowed entry's source
+            # is enough to tell "fresh merged hit" from "expired hit, borrowed
+            # newest" from "nothing usable" when diagnosing a 401 incident.
+            if cache_data is None:
+                logger.debug("Antigravity token cache miss for requested slot")
+            elif _is_token_expired(cache_data[0]):
+                logger.debug("Antigravity token cache hit for requested slot is expired")
+            else:
+                logger.debug("Antigravity token cache hit for requested slot (fresh)")
             if not cache_data or _is_token_expired(cache_data[0]):
                 # Identity-mismatch fallback: the agy token file carries no id_token,
                 # so the sidecar-pushed token is cached under a refresh-token-derived
@@ -74,6 +89,11 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
                 pool = fresh or candidates
                 if pool:
                     newest = min(pool, key=lambda a: a["age"])
+                    logger.debug(
+                        "Antigravity token read borrowing newest %s entry (source=%s)",
+                        "non-expired" if fresh else "expired",
+                        newest["source"],
+                    )
                     cache_data = (
                         newest["tokens"],
                         {"account_label": newest["account_label"], "source": newest["source"]},

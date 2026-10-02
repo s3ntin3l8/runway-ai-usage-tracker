@@ -1360,6 +1360,126 @@ class TestCollectorManagerInitialization:
         assert "anthropic:alice@example.com" not in manager.smart_collectors
 
 
+class TestDefaultCollectorSourceSweep:
+    """The default collector must find bundles filed under a resolved identity.
+
+    Sidecar ingest keys source bundles by the account it proved (the email from
+    userinfo), never by ``default``. Without a sweep, ``_source_candidates``
+    returns nothing for the default slot and the failover loop silently
+    degrades to a single unpinned ``collect()``: no cross-source failover, and
+    reads that depend on the merged cache alone — the 2026-10-02 Antigravity
+    incident, where the default collector 401'd on a dead merged token while a
+    live source bundle sat unused under the identity slot.
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_collector_pins_to_identity_keyed_bundle(self, manager, monkeypatch):
+        from app.services.token_cache import token_cache
+
+        email = "s3ntin3l8@gmail.com"
+        source_id = "sidecar:mgmt:path:/home/user/antigravity-oauth-token"
+        now_ms = str(int(time.time() * 1000) + 3_600_000)
+        await token_cache.store(
+            "antigravity",
+            {"oauth_token": "ya29.live", "expiry_date": now_ms},
+            account_id=email,
+            account_label=email,
+            source="mgmt",
+            source_id=source_id,
+            source_metadata={
+                "source_type": "sidecar",
+                "credential_origin": "path:/home/user/antigravity-oauth-token",
+                "sidecar_id": "mgmt",
+            },
+        )
+
+        collector = SimpleNamespace(
+            PROVIDER_ID="antigravity",
+            account_id="default",
+            account_label="Default",
+            credential_account_id="default",
+        )
+        smart = MagicMock(collector=collector)
+        smart.reset = AsyncMock()
+        pinned: list[tuple[str, str] | None] = []
+
+        async def collect(_client):
+            pinned.append(token_cache.selected_source("antigravity"))
+            collector.account_id = email  # userinfo resolution inside the real collector
+            return [{"service_name": "Antigravity", "remaining": 7}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["antigravity:default"] = smart
+        promote = AsyncMock()
+        monkeypatch.setattr(manager, "_promote_source_identity", promote)
+        monkeypatch.setattr(manager, "_persist_identity_pending_preview", MagicMock())
+        health = {}
+
+        result = await manager._collect_with_source_failover(
+            "antigravity:default", MagicMock(), health
+        )
+
+        assert result == [{"service_name": "Antigravity", "remaining": 7}]
+        # Pinned to the bundle (account_slot = resolved identity), never unpinned:
+        assert pinned == [(email, source_id)]
+        assert health[source_id] == "healthy"
+        promote.assert_awaited_once_with(
+            "antigravity",
+            "default",
+            source_id,
+            email,
+            cache_account_id=email,
+        )
+
+    @pytest.mark.asyncio
+    async def test_identified_account_never_sweeps_other_accounts_bundles(
+        self, manager, monkeypatch
+    ):
+        """A sweep must only rescue the default slot: alice's collector with no
+        bundles of her own stays unpinned (today's behavior) and must never
+        borrow bob's credentials."""
+        from app.services.token_cache import token_cache
+
+        await token_cache.store(
+            "antigravity",
+            {"oauth_token": "ya29.bob", "expiry_date": str(int(time.time() * 1000) + 3_600_000)},
+            account_id="bob@example.com",
+            source="mgmt",
+            source_id="sidecar:mgmt:path:/home/bob/antigravity-oauth-token",
+            source_metadata={
+                "source_type": "sidecar",
+                "credential_origin": "path:/home/bob/antigravity-oauth-token",
+                "sidecar_id": "mgmt",
+            },
+        )
+
+        collector = SimpleNamespace(
+            PROVIDER_ID="antigravity",
+            account_id="alice@example.com",
+            account_label="Alice",
+            credential_account_id="alice@example.com",
+        )
+        smart = MagicMock(collector=collector)
+        smart.reset = AsyncMock()
+        pinned: list[tuple[str, str] | None] = []
+
+        async def collect(_client):
+            pinned.append(token_cache.selected_source("antigravity"))
+            return [{"service_name": "Antigravity", "remaining": 3}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["antigravity:alice@example.com"] = smart
+        health = {}
+
+        result = await manager._collect_with_source_failover(
+            "antigravity:alice@example.com", MagicMock(), health
+        )
+
+        assert result == [{"service_name": "Antigravity", "remaining": 3}]
+        assert pinned == [None]
+        assert health == {}
+
+
 class TestCollectorManagerWarmup:
     @pytest.mark.skip(reason="keychain warmup removed; keychain access moved to sidecar")
     @pytest.mark.asyncio

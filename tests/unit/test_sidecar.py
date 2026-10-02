@@ -629,6 +629,47 @@ class TestAntigravityTokenExpiry:
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
         assert token_cards == []
 
+    def test_nearing_expiry_logs_pre_expiry_warning_and_still_pushes(self, tmp_path, caplog):
+        """While quota still flows, a token minutes from lapsing gets a WARNING
+        telling the operator how to renew it — the 2026-10-02 incident had four
+        silent hourly lapses."""
+        import datetime as dt
+        import logging
+
+        soon = (dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)).isoformat()
+        tok = self._write_token_file(tmp_path, soon)
+        config = self._config(tok)
+
+        with caplog.at_level(logging.WARNING):
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("local token expires at" in w and "--keep-alive" in w for w in warnings)
+        token_cards = [c for c in cards if c.get("remaining") == "Token"]
+        assert len(token_cards) == 1  # still pushable: it is not dead yet
+        assert "expiry_date" in token_cards[0]["metadata"]
+
+    def test_pre_expiry_warning_is_silent_when_keep_alive_owns_renewal(self, tmp_path, caplog):
+        """With --keep-alive enabled the thread (and its own failure logs)
+        owns renewal; the per-cycle pre-expiry nag would just be noise."""
+        import datetime as dt
+        import logging
+
+        from scripts.sidecar_pkg import keep_alive
+
+        soon = (dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)).isoformat()
+        tok = self._write_token_file(tmp_path, soon)
+        config = self._config(tok)
+
+        with (
+            patch.object(keep_alive, "_enabled", True),
+            caplog.at_level(logging.WARNING),
+        ):
+            sidecar.GenericCollector.collect_provider("antigravity", config)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("local token expires at" in w for w in warnings)
+
 
 class TestQueueRotate:
     """C3: queue_rotate must not crash when called with no arguments."""
