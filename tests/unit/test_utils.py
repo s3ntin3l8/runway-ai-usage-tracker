@@ -151,6 +151,32 @@ class TestIdentityExtractorExpFromTokens:
         }
         assert IdentityExtractor.exp_from_tokens(tokens) == 500.0
 
+    def test_access_token_jwt_outranks_expiry_date(self):
+        # The access token is what the collector sends and what the server
+        # checks, so its own `exp` wins even when a stored `expiry_date`
+        # disagrees with it (issue #474: the badge said expired, collection said
+        # fine, and neither was provably right).
+        tokens = {
+            "xai_access": _make_jwt({"exp": 100.0}),
+            "expiry_date": "500000",  # ms → 500.0 s
+        }
+        assert IdentityExtractor.exp_from_tokens(tokens) == 100.0
+
+    def test_expiry_date_still_wins_for_an_opaque_access_token(self):
+        # Google's `ya29.*` carries no JWT exp of its own, so expiry_date —
+        # which tracks that access token — is all there is.
+        tokens = {"oauth_token": "ya29.a0AfBearerOpaqueValue", "expiry_date": "500000"}
+        assert IdentityExtractor.exp_from_tokens(tokens) == 500.0
+
+    def test_expired_access_jwt_beats_a_future_expiry_date(self):
+        # The badge must go red when the token collection actually holds is
+        # dead, even if expiry_date claims otherwise.
+        tokens = {
+            "access_token": _make_jwt({"exp": 0.0}),  # already expired
+            "expiry_date": "500000",  # ms → 500.0 s (in the future)
+        }
+        assert IdentityExtractor.exp_from_tokens(tokens) == 0.0
+
     def test_falls_back_to_jwt_exp_when_expiry_date_unparseable(self):
         tokens = {"id_token": _make_jwt({"exp": 100.0}), "expiry_date": "not-a-number"}
         assert IdentityExtractor.exp_from_tokens(tokens) == 100.0

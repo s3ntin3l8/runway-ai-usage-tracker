@@ -124,13 +124,14 @@ class IdentityExtractor:
         except Exception:
             return {}
 
-    # Token fields that may carry a JWT `exp`, in preference order.
-    _EXP_TOKEN_KEYS = (
+    # Token fields that carry the *access* credential the collector actually
+    # sends, in preference order. Their own JWT `exp` is authoritative for that
+    # token's life, so it outranks any stored `expiry_date`.
+    _ACCESS_TOKEN_KEYS = (
         "oauth_token",
         "access_token",
         "cli_access_token",
         "xai_access",
-        "id_token",
     )
 
     @classmethod
@@ -152,13 +153,30 @@ class IdentityExtractor:
         """When does this credential expire (seconds since epoch), or None.
 
         Single source of truth for expiry across the token cache, auto-refresher,
-        and Token Health. Prefers an explicit `expiry_date` (ms epoch, as written
-        by gemini-cli / Google `oauth_creds.json`) because it tracks the *access*
-        token — opaque Google `ya29.*` access tokens are not JWTs, so no `exp`
-        claim exists, and a Gemini refresh returns no fresh `id_token`, leaving its
-        JWT `exp` permanently stale. Falls back to a JWT `exp` on the first token
-        field that carries one. Returns None when nothing parseable is present.
+        and Token Health, resolved in this order:
+
+        1. The access token's own JWT `exp`, when the access token *is* a JWT.
+           That claim is what the collector sends and what the server checks, so
+           it must beat a stored `expiry_date` — which can drift from the token
+           it describes and otherwise makes the "Expired" badge disagree with
+           what collection actually sees.
+        2. `expiry_date` (ms epoch, as written by gemini-cli / Google
+           `oauth_creds.json`) for *opaque* access tokens: Google's `ya29.*`
+           carries no `exp` claim, so there is nothing JWT-shaped to read.
+        3. An identity token's `exp` as a last resort. It describes who, not the
+           access token, and a Gemini refresh returns no fresh `id_token`, so it
+           can be permanently stale — which is why it never outranks
+           `expiry_date`.
+
+        Returns None when nothing parseable is present.
         """
+        for key in cls._ACCESS_TOKEN_KEYS:
+            tok = tokens.get(key)
+            if tok:
+                exp = cls.extract_jwt_exp(tok)
+                if exp is not None:
+                    return exp
+
         expiry_ms = tokens.get("expiry_date")
         if expiry_ms is not None:
             try:
@@ -166,13 +184,9 @@ class IdentityExtractor:
             except (TypeError, ValueError):
                 pass
 
-        for key in cls._EXP_TOKEN_KEYS:
-            tok = tokens.get(key)
-            if not tok:
-                continue
-            exp = cls.extract_jwt_exp(tok)
-            if exp is not None:
-                return exp
+        tok = tokens.get("id_token")
+        if tok:
+            return cls.extract_jwt_exp(tok)
         return None
 
     @classmethod
