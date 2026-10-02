@@ -261,12 +261,13 @@ class TestKeyedOrigins:
 class TestXaiRefreshPreference:
     """xai is the sibling whose key rotates under Runway's feet.
 
-    Its access JWT expires in about seven days and the Grok / OpenCode CLI
-    refreshes it — Runway never does — so fingerprinting that field would
-    mint a new origin every week and strand whatever tag the operator
-    wrote. The refresh token wins whenever the candidate carries one, and
-    the access-only ``GROK_OAUTH_TOKEN`` candidate falls back to its bearer
-    because it has nothing else to identify it by.
+    Its access JWT expires in about six hours (measured ``iat → exp`` on a
+    fresh login's token, 2026-10) and the Grok / OpenCode CLI refreshes it
+    — Runway never does — so fingerprinting that field would mint a new
+    origin on every refresh, several times a day, and strand whatever tag
+    the operator wrote. The refresh token wins whenever the candidate
+    carries one, and the access-only ``GROK_OAUTH_TOKEN`` candidate falls
+    back to its bearer because it has nothing else to identify it by.
     """
 
     ACCESS_OLD = "xai-access-jwt-old"  # pragma: allowlist secret
