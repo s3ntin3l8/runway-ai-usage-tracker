@@ -727,9 +727,15 @@ class TestWindowsSwapScript:
         assert "Installed updated sidecar" in script
         assert "Relaunch requested" not in script
         assert script.index('set "LOG=%~dp0runway-self-update.log"') < script.index("echo [")
+        assert 'Self-update helper started.>"%LOG%"' in script
+        assert script.index('Self-update helper started.>"%LOG%"') < script.index(
+            "Waiting for sidecar PID"
+        )
 
     def test_windows_helper_spawn_failure_is_reported(self, tmp_path, monkeypatch, caplog):
         helper = tmp_path / "runway-self-update.bat"
+        incoming = tmp_path / "RunwaySidecar.new.exe"
+        incoming.write_bytes(b"staged update")
 
         def fail_spawn(*_args, **_kwargs):
             raise OSError("cmd.exe unavailable")
@@ -738,11 +744,12 @@ class TestWindowsSwapScript:
         assert (
             self_update._apply_windows(
                 tmp_path / "RunwaySidecar.exe",
-                tmp_path / "RunwaySidecar.new.exe",
+                incoming,
                 restart=False,
             )
             is False
         )
         assert not helper.exists()
+        assert not incoming.exists()
         assert "Could not start Windows self-update helper" in caplog.text
         assert "cmd.exe unavailable" in caplog.text

@@ -626,6 +626,7 @@ def _windows_swap_script(
     return (
         "@echo off\r\n"
         'set "LOG=%~dp0runway-self-update.log"\r\n'
+        'echo [%date% %time%] Self-update helper started.>"%LOG%"\r\n'
         f'echo [%date% %time%] Waiting for sidecar PID {pid} to exit.>>"%LOG%"\r\n'
         ":waitloop\r\n"
         f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\r\n'
@@ -697,12 +698,15 @@ def _apply_windows(
         )
     except OSError:
         logger.exception("Could not start Windows self-update helper %s", helper)
-        try:
-            helper.unlink(missing_ok=True)
-        except OSError:
-            logger.warning(
-                "Could not remove failed Windows self-update helper %s", helper, exc_info=True
-            )
+        for staged_file in (helper, incoming):
+            try:
+                staged_file.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Could not remove failed Windows self-update file %s",
+                    staged_file,
+                    exc_info=True,
+                )
         return False
     logger.info("Self-update staged; helper will swap %s after exit", install)
     if restart:
