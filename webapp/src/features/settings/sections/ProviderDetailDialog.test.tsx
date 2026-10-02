@@ -107,6 +107,7 @@ function renderDialog(
     onClose?: () => void;
     onAccountDeleted?: (id: string, accountId: string) => void;
     onAddAccount?: (provider: ProviderConfig) => void;
+    credentialProblems?: Record<string, string>;
   } = {},
 ) {
   return renderWithProviders(
@@ -115,6 +116,7 @@ function renderDialog(
       onClose={props.onClose ?? vi.fn()}
       onAccountDeleted={props.onAccountDeleted}
       onAddAccount={props.onAddAccount}
+      credentialProblems={props.credentialProblems}
     />,
   );
 }
@@ -259,6 +261,19 @@ describe('ProviderDetailDialog — account list + menu', () => {
     expect(within(dialog).getAllByText(/^cookie$/i).length).toBeGreaterThan(0);
     expect(within(dialog).getByText(/^enabled$/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/^disabled$/i)).toBeInTheDocument();
+  });
+
+  it('shows the key and cookie badges as critical only for an account with a credential problem', async () => {
+    renderDialog(multiAccount, { credentialProblems: { 'alice@example.com': 'expired' } });
+    const dialog = await screen.findByRole('dialog');
+
+    const aliceKey = within(dialog).getByText(/^key$/i);
+    expect(aliceKey).toHaveClass('text-critical');
+    expect(aliceKey).toHaveAttribute('title', 'A credential is expired — see Credentials');
+    // Bob's cookie credential has no known problem.
+    const bobCookie = within(dialog).getByText(/^cookie$/i);
+    expect(bobCookie).toHaveClass('text-ok');
+    expect(bobCookie).not.toHaveAttribute('title');
   });
 
   it('opens the ⋮ menu and exposes Edit + Remove actions', async () => {

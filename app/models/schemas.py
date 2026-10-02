@@ -460,7 +460,7 @@ class CredentialSourceView(BaseModel):
     # "machine" = a sidecar found it, "config" = pasted in Settings → Providers,
     # "server" = env var / file on the server host.
     origin_kind: str
-    origin_type: str  # file | env | cookie | sidecar | config ...
+    origin_type: str  # file | env | cookie | keychain | sidecar (unrecognised origin) | config ...
     label: str  # file name, env var, "Browser cookie", "Manual configuration"
     machine_id: str | None = None
     machine_name: str | None = None
