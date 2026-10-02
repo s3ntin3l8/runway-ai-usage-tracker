@@ -58,7 +58,7 @@ component fields. Cache-specific metrics remain cache-inclusive by definition.
 | `POST` | `/api/v1/fleet/pair` | Unauthenticated one-time-code redeem: exchanges a pairing code for `api_url` + ingest key (10/min/IP) |
 | `POST` | `/api/v1/fleet/credentials/manifest` | Sidecar reports credential origins found this cycle; Claude OAuth entries may include a claimed `account_id`, which Runway matches to an enabled account or surfaces for assignment |
 | `GET` | `/api/v1/fleet/credentials/tags` | List every resolved credential tag (deployment-wide and per-sidecar scopes) |
-| `POST` | `/api/v1/fleet/credentials/tags` | Resolve a pending credential origin to a configured account (admin) |
+| `POST` | `/api/v1/fleet/credentials/tags` | Resolve a pending credential origin to a configured account (admin). `scope: "deployment"` (all machines) is refused with 422 for `cookie:` and `keychain:` origins, which exist on one machine only; `path:` and `env:` origins can still be tagged deployment-wide (a shared home directory is one origin). A tag written against a plain origin also applies to its key-scoped form (`env:ZAI_API_KEY` covers `env:ZAI_API_KEY#<fp>`) |
 | `DELETE` | `/api/v1/fleet/credentials/tags` | Remove one resolved tag in a given scope (admin) |
 | `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution, with a claimed Claude account ID when available, safe quota previews, and staleness status |
 | `GET` | `/api/v1/fleet/events/pending` | Paginated queue of events held back under an unresolved `default` identity (admin) |

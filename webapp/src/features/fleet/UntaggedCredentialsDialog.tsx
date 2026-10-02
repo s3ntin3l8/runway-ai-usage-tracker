@@ -187,7 +187,11 @@ export function UntaggedCredentialsDialog({
       account_id: accountId,
     });
 
-  const scopeLabel = applyToAllMachines ? 'All machines' : 'This machine';
+  // Browser cookies and keychain entries belong to one machine, so an "All machines" tag
+  // would follow an account switch on a host it was never made for (the server refuses it).
+  const machineBound = visibleEntries.some((e) => isMachineBoundOrigin(e.credential_origin));
+  const allMachines = applyToAllMachines && !machineBound;
+  const scopeLabel = allMachines ? 'All machines' : 'This machine';
 
   return (
     <ResponsiveDialog
@@ -217,9 +221,11 @@ export function UntaggedCredentialsDialog({
             <div className="min-w-0">
               <p className="text-[12px] font-medium">Scope</p>
               <p className="text-[11px] text-fg-subtle">
-                {applyToAllMachines
-                  ? 'Applies to every sidecar that reports this credential.'
-                  : 'Applies only to the sidecar that reported it.'}
+                {machineBound
+                  ? 'Browser and keychain credentials belong to one machine, so the tag applies only to the sidecar that reported it.'
+                  : allMachines
+                    ? 'Applies to every sidecar that reports this credential.'
+                    : 'Applies only to the sidecar that reported it.'}
               </p>
             </div>
             <div
@@ -230,9 +236,9 @@ export function UntaggedCredentialsDialog({
               <button
                 type="button"
                 role="radio"
-                aria-checked={!applyToAllMachines}
+                aria-checked={!allMachines}
                 className={`rounded px-2 py-1 text-[11px] font-medium transition-colors ${
-                  !applyToAllMachines
+                  !allMachines
                     ? 'bg-accent text-fg-inverse'
                     : 'text-fg-muted hover:text-fg'
                 }`}
@@ -243,9 +249,11 @@ export function UntaggedCredentialsDialog({
               <button
                 type="button"
                 role="radio"
-                aria-checked={applyToAllMachines}
-                className={`rounded px-2 py-1 text-[11px] font-medium transition-colors ${
-                  applyToAllMachines
+                aria-checked={allMachines}
+                disabled={machineBound}
+                title={machineBound ? 'Not available for browser or keychain credentials' : undefined}
+                className={`rounded px-2 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  allMachines
                     ? 'bg-accent text-fg-inverse'
                     : 'text-fg-muted hover:text-fg'
                 }`}
@@ -266,7 +274,7 @@ export function UntaggedCredentialsDialog({
               scopeLabel={scopeLabel}
               onSelect={(accountId) => stage(entry, accountId)}
               onSave={() => {
-                const body = stageToBody(entry, state, applyToAllMachines);
+                const body = stageToBody(entry, state, allMachines);
                 if (body) save.mutate(body);
               }}
               saving={save.isPending}
@@ -285,6 +293,11 @@ export function UntaggedCredentialsDialog({
       </div>
     </ResponsiveDialog>
   );
+}
+
+/** Origins that cannot be shared between machines: a browser's cookie jar or a keychain. */
+export function isMachineBoundOrigin(origin: string): boolean {
+  return origin.startsWith('cookie:') || origin.startsWith('keychain:');
 }
 
 export function stageToBody(
@@ -309,7 +322,7 @@ export function stageToBody(
     provider_id: entry.provider_id,
     credential_origin: entry.credential_origin,
     account_id: state.account_id,
-    scope: applyToAllMachines ? 'deployment' : 'sidecar',
+    scope: applyToAllMachines && !isMachineBoundOrigin(entry.credential_origin) ? 'deployment' : 'sidecar',
   };
 }
 

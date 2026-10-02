@@ -65,6 +65,19 @@ def live_sidecar_ids(session: Session) -> list[str]:
     )
 
 
+def origin_candidates(credential_origin: str) -> list[str]:
+    """The origins whose tags apply to *credential_origin*, most specific first.
+
+    A key-scoped origin (``env:ZAI_API_KEY#<fp>``) is also covered by a tag written
+    against its plain origin (``env:ZAI_API_KEY``): tags made before the origin was
+    fingerprinted must keep applying, exactly as the sidecar's own hint lookup does.
+    """
+    from app.services.account_identity import split_keyed_origin
+
+    base, fingerprint = split_keyed_origin(credential_origin)
+    return [credential_origin, base] if fingerprint else [credential_origin]
+
+
 class CredentialTagRepo:
     """Lookup / write / list operations on the ``credential_tags`` table."""
 
@@ -88,24 +101,28 @@ class CredentialTagRepo:
         ``sidecar_id=None``: only deployment-wide rows match (the view
         an unidentified requester gets).
         """
-        stmt = select(CredentialTag).where(
-            CredentialTag.provider_id == provider_id,
-            CredentialTag.credential_origin == credential_origin,
-        )
-        if sidecar_id is None:
-            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
-        else:
-            stmt = (
-                stmt.where(
-                    or_(
-                        CredentialTag.sidecar_id == sidecar_id,
-                        col(CredentialTag.sidecar_id).is_(None),
-                    )
-                )
-                # Scoped rows (False) sort before deployment-wide (True).
-                .order_by(col(CredentialTag.sidecar_id).is_(None))
+        for origin in origin_candidates(credential_origin):
+            stmt = select(CredentialTag).where(
+                CredentialTag.provider_id == provider_id,
+                CredentialTag.credential_origin == origin,
             )
-        return session.exec(stmt).first()
+            if sidecar_id is None:
+                stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+            else:
+                stmt = (
+                    stmt.where(
+                        or_(
+                            CredentialTag.sidecar_id == sidecar_id,
+                            col(CredentialTag.sidecar_id).is_(None),
+                        )
+                    )
+                    # Scoped rows (False) sort before deployment-wide (True).
+                    .order_by(col(CredentialTag.sidecar_id).is_(None))
+                )
+            found = session.exec(stmt).first()
+            if found is not None:
+                return found
+        return None
 
     @staticmethod
     def get_account_id(
@@ -121,20 +138,13 @@ class CredentialTagRepo:
         cadence — endpoints don't need to materialize the full row.
         Scoped-first precedence matches :meth:`get`.
         """
-        stmt = select(CredentialTag.account_id).where(
-            CredentialTag.provider_id == provider_id,
-            CredentialTag.credential_origin == credential_origin,
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id=provider_id,
+            credential_origin=credential_origin,
+            sidecar_id=sidecar_id,
         )
-        if sidecar_id is None:
-            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
-        else:
-            stmt = stmt.where(
-                or_(
-                    CredentialTag.sidecar_id == sidecar_id,
-                    col(CredentialTag.sidecar_id).is_(None),
-                )
-            ).order_by(col(CredentialTag.sidecar_id).is_(None))
-        return session.exec(stmt).first()
+        return tag.account_id if tag else None
 
     @staticmethod
     def set_tag(

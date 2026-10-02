@@ -121,10 +121,10 @@ def resolve_account_id(
 FINGERPRINT_LEN = 12
 _FINGERPRINT_RE = re.compile(rf"^[0-9a-f]{{{FINGERPRINT_LEN}}}$")
 
-# Providers whose credential is a bare key with no per-account identity of
-# its own (#347, #349): exactly the providers whose sidecar rules read
-# OpenCode's ``auth.json`` — one file, one key per backend, no email or
-# account id anywhere in it. ``path:/home/u/.local/share/opencode/
+# Providers whose credential is a bare static key with no per-account identity of
+# its own (#347, #349, #443): the providers whose sidecar rules read OpenCode's
+# ``auth.json`` — one file, one key per backend, no email or account id anywhere in
+# it — plus those that read their key from an env var (kimi_api, kimi_k2, zai). ``path:/home/u/.local/share/opencode/
 # auth.json`` is the same string on every host with the same username and
 # the same string before and after a rotation, so two keys sharing that
 # origin would share one operator tag and inherit each other's account;
@@ -132,10 +132,11 @@ _FINGERPRINT_RE = re.compile(rf"^[0-9a-f]{{{FINGERPRINT_LEN}}}$")
 # the file it was found in.
 #
 # Everything else keeps the plain descriptor: its credential carries a real
-# identity (anthropic, chatgpt), or key-scoping was scoped out of #349
-# (``kimi``). Cookie / CLI-OAuth candidates *of* the providers listed here
+# identity or rotates by itself (anthropic, chatgpt, gemini, antigravity, github's
+# OAuth token). Cookie / CLI-OAuth candidates *of* the providers listed here
 # stay plain as well — they carry no key field, so the sidecar's
-# fingerprinting finds nothing to fingerprint.
+# fingerprinting finds nothing to fingerprint, and a fingerprint of a rotating
+# secret would orphan its tag on every rotation.
 #
 # Both halves need this set: the sidecar to suffix origins
 # (``fingerprinted_credential_origin`` in ``scripts/sidecar.py``), and the
@@ -144,7 +145,18 @@ _FINGERPRINT_RE = re.compile(rf"^[0-9a-f]{{{FINGERPRINT_LEN}}}$")
 # ``provider:<pid>#<fp>`` hint for. Mirrored in
 # ``scripts/sidecar_pkg/identity.py`` — keep the two in sync.
 FINGERPRINTED_ORIGIN_PROVIDERS: frozenset[str] = frozenset(
-    {"opencode", "openrouter", "minimax", "kimi_coding", "ollama", "xai", "deepseek"}
+    {
+        "opencode",
+        "openrouter",
+        "minimax",
+        "kimi_coding",
+        "kimi_api",
+        "kimi_k2",
+        "ollama",
+        "xai",
+        "deepseek",
+        "zai",
+    }
 )
 
 

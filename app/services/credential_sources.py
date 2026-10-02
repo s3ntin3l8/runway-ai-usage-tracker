@@ -29,6 +29,46 @@ def describe_origin(origin: str | None) -> tuple[str, str]:
     return "sidecar", "Sidecar credential"
 
 
+def is_machine_bound_origin(origin: str | None) -> bool:
+    """A credential that only exists on one machine: a browser's cookie jar or a keychain.
+
+    Such an origin is the same string on every host, so a deployment-wide ("All
+    machines") tag on it would follow an account switch on a machine it was never made
+    for. Path and env origins are different: a shared home directory really is one origin.
+    """
+    return bool(origin) and str(origin).startswith(("cookie:", "keychain:"))
+
+
+def retire_unkeyed_origin(
+    session: Session, *, provider_id: str, sidecar_id: str, origin: str
+) -> list[CredentialSource]:
+    """Delete the plain-origin row superseded by *origin*'s key-scoped form.
+
+    When a provider's origins start carrying a credential fingerprint
+    (``env:ZAI_API_KEY`` becomes ``env:ZAI_API_KEY#<fp>``), the same credential is
+    reported under a new source id and the old row would sit there stale. The source id
+    is derived from machine and origin, so the superseded one is computable. Returns the
+    deleted rows so the caller can drop their cached bundles.
+    """
+    from app.services.account_identity import split_keyed_origin
+
+    base, fingerprint = split_keyed_origin(origin)
+    if fingerprint is None:
+        return []
+    old_source_id = sidecar_source_id(sidecar_id, base)
+    rows = list(
+        session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == provider_id,
+                CredentialSource.source_id == old_source_id,
+            )
+        ).all()
+    )
+    for row in rows:
+        session.delete(row)
+    return rows
+
+
 def sidecar_source_id(sidecar_id: str, origin: str | None) -> str:
     """Stable source identity, scoped to the machine that reported it."""
     digest = hashlib.sha256(f"{sidecar_id}\0{origin or 'legacy'}".encode()).hexdigest()[:24]
