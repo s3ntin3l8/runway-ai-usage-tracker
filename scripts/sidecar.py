@@ -50,6 +50,13 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
+def _subprocess_creationflags() -> int:
+    """Hide console windows opened by child commands on Windows."""
+    if platform.system() == "Windows":
+        return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return 0
+
+
 def _resolve_sidecar_version() -> str:
     """Source-of-truth for the sidecar version reported to the server.
 
@@ -113,6 +120,7 @@ def _from_source_edge_suffix() -> str:
             capture_output=True,
             text=True,
             timeout=3,
+            creationflags=_subprocess_creationflags(),
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -1857,7 +1865,13 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
                 service = "Microsoft Edge Safe Storage"
 
             cmd = ["security", "find-generic-password", "-s", service, "-w"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=_subprocess_creationflags(),
+            )
             if result.returncode != 0:
                 return None
 
@@ -2205,7 +2219,7 @@ def get_windows_credential(target: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=10,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=_subprocess_creationflags(),
         )
         if result.returncode == 0:
             password = result.stdout.strip()
@@ -3087,7 +3101,13 @@ class GenericCollector:
                         rule.get("service_name"),
                         "-w",
                     ]
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        creationflags=_subprocess_creationflags(),
+                    )
                     if result.returncode == 0:
                         raw = result.stdout.strip()
                         fmt = rule.get("format", "raw")
@@ -3147,7 +3167,13 @@ class GenericCollector:
                 try:
                     cmd = rule.get("command")
                     if cmd:
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=5,
+                            creationflags=_subprocess_creationflags(),
+                        )
                         if result.returncode == 0:
                             val = result.stdout.strip()
                             if val:
