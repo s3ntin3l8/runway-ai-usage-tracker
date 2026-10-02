@@ -17,6 +17,7 @@ from app.services.credential_sources import (
     account_sources,
     configured_account_ids,
     describe_origin,
+    effective_health,
     phantom_accounts,
     prune_server_sources,
     real_account_ids,
@@ -503,3 +504,17 @@ def test_a_tag_or_label_keeps_a_configless_account_off_the_phantom_list():
         session.commit()
 
         assert phantom_accounts(session, "deepseek") == {"bd6d58cf"}
+
+
+def test_effective_health_only_trusts_a_recorded_attempt():
+    row = _source_row()
+    assert row.health == "healthy" and row.last_attempt_at is None
+    assert effective_health(row) == "untried"  # registered, never collected
+
+    record_source_result(row, "healthy")
+    assert effective_health(row) == "healthy"
+
+    # A legacy row with a real non-default health keeps it even without an attempt time.
+    legacy = _source_row(health="auth_failed")
+    assert legacy.last_attempt_at is None
+    assert effective_health(legacy) == "auth_failed"

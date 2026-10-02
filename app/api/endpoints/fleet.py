@@ -1284,7 +1284,21 @@ async def post_credential_tag(
             target_source.credential_origin = source_row.credential_origin
             target_source.sidecar_id = source_row.sidecar_id
             target_source.last_seen = source_row.last_seen
-            target_source.health = source_row.health
+            # Health travels with the attempt that produced it, or "healthy" could outlive
+            # (or predate) the evidence for it.
+            if source_row.last_attempt_at and (
+                target_source.last_attempt_at is None
+                or source_row.last_attempt_at > target_source.last_attempt_at
+            ):
+                target_source.health = source_row.health
+                target_source.health_detail = source_row.health_detail
+                target_source.last_attempt_at = source_row.last_attempt_at
+                target_source.last_success_at = (
+                    source_row.last_success_at or target_source.last_success_at
+                )
+                target_source.last_error = source_row.last_error
+            elif target_source.last_attempt_at is None:
+                target_source.health = source_row.health
             session.add(target_source)
             session.delete(source_row)
             preference_row = target_source

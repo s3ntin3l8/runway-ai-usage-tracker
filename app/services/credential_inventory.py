@@ -44,6 +44,7 @@ from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
 from app.services.credential_sources import (
     describe_origin,
+    effective_health,
     is_server_source_id,
     server_source_id,
 )
@@ -425,7 +426,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 enabled=row.enabled,
                 priority=row.priority,
                 live=bundle is not None,
-                health=row.health,
+                health=effective_health(row),
                 last_seen=_iso(row.last_seen),
                 last_attempt_at=_iso(row.last_attempt_at),
                 last_success_at=_iso(row.last_success_at),

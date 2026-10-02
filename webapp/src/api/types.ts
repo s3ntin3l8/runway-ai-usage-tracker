@@ -724,7 +724,7 @@ export interface CredentialSourceSummary {
   enabled: boolean;
   priority: number;
   last_seen?: string | null;
-  health: 'healthy' | 'auth_failed' | 'unavailable' | 'degraded' | string;
+  health: 'untried' | 'healthy' | 'auth_failed' | 'unavailable' | 'degraded' | string;
   available: boolean;
 }
 

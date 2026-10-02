@@ -313,10 +313,24 @@ def prune_server_sources(session: Session, provider_id: str, keep_source_ids: se
 
 
 HEALTH_DETAILS = {
+    "untried": "Not yet tried",
     "auth_failed": "Authentication failed",
     "unavailable": "Collection failed",
     "degraded": "Some requests were rejected; quota was collected",
 }
+
+
+def effective_health(row: CredentialSource) -> str:
+    """The health a reader should show for *row*.
+
+    ``health`` defaults to ``"healthy"`` and ``touch_source`` creates rows without any
+    collection attempt, so a credential that was only ever registered would read as
+    working. Only a recorded attempt can make it healthy; a legacy row that holds a
+    non-default health (``auth_failed``...) keeps it.
+    """
+    if row.health == "healthy" and row.last_attempt_at is None:
+        return "untried"
+    return row.health
 
 
 def configured_account_ids(session: Session, provider_id: str) -> set[str]:

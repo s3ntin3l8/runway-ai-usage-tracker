@@ -492,7 +492,7 @@ class CredentialSourceView(BaseModel):
     priority: int = 0
     live: bool = False  # a secret bundle is currently held in the server cache
     is_active: bool = False  # produced this account's most recent successful collection
-    health: str = "healthy"
+    health: str = "untried"  # untried | healthy | degraded | auth_failed | unavailable
     last_seen: str | None = None
     last_attempt_at: str | None = None
     last_success_at: str | None = None
