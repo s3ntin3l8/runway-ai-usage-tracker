@@ -122,7 +122,6 @@ export function ProviderPage() {
   return (
     <>
       <PageHeader
-        title={name}
         sticky
         className="h-auto flex-wrap items-center justify-start gap-x-3 gap-y-2 bg-surface-1/95 pb-2 md:h-14 md:flex-nowrap md:gap-3 md:pb-0 md:pt-0"
       >
@@ -286,8 +285,12 @@ export function ProviderPage() {
 function ProviderFilters({ showSource, showCache }: { showSource: boolean; showCache: boolean }) {
   const [sidecarId] = useUsageSource();
   const { excludeCache } = useExcludeCache();
-  // Count only filters exposed on this tab so the badge matches the visible controls.
-  const activeCount = Number(showSource && Boolean(sidecarId)) + Number(showCache && excludeCache);
+  const filters = [
+    { visible: showSource, active: Boolean(sidecarId) },
+    { visible: showCache, active: excludeCache },
+  ];
+  // Count only exposed filters so the badge stays aligned as controls are added.
+  const activeCount = filters.reduce((count, filter) => count + Number(filter.visible && filter.active), 0);
   return (
     <Popover
       align="start"

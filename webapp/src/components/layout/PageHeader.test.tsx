@@ -46,7 +46,7 @@ describe('PageHeader', () => {
 
   it('supports a custom responsive layout inside the shared header', () => {
     const { container } = render(
-      <PageHeader title="Provider" sticky>
+      <PageHeader sticky>
         <div>Responsive provider controls</div>
       </PageHeader>,
     );

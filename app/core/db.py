@@ -362,6 +362,9 @@ def _rebuild_usage_window_table_for_series_identity(conn: Any) -> None:
     alter in place. The new columns distinguish quota-card model/pool identity
     from the existing event model/sidecar breakdown. Legacy rows copy with
     empty series identity and remain explicitly unscoped.
+
+    This init_db migration helper owns its transaction boundary, including
+    early-return commits, so callers can safely continue schema initialization.
     """
     from sqlalchemy import MetaData, Table, insert, literal_column, select, text
     from sqlalchemy.schema import CreateIndex, CreateTable

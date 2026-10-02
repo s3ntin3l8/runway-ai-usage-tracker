@@ -45,6 +45,23 @@ describe('getSourceSplitConfig', () => {
     expect(result.split).toEqual({ laptop: bySidecar.laptop });
   });
 
+  it('shows the current-window empty state when the selected sidecar has no activity', () => {
+    const result = getSourceSplitConfig({
+      kind: 'quota',
+      sidecarId: 'phone',
+      aggregation,
+      scopeBucket: null,
+      scopeLabel: 'Last 7 days',
+    });
+
+    expect(result).toMatchObject({
+      title: 'Current window by source',
+      split: {},
+      useWindowSplit: true,
+      hasSourceSplit: false,
+    });
+  });
+
   it('uses the selected-period model split for non-quota providers', () => {
     const bucket = { by_model: byModel };
     const result = getSourceSplitConfig({

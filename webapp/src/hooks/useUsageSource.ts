@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router';
 
 const PARAM = 'sidecar';
 
+// Provider queries that consume this hook share the same source-filter scope;
+// keep new filtered endpoints aligned with the URL-selected sidecar.
 export function useUsageSource(): readonly [string | undefined, (value: string | undefined) => void] {
   const [searchParams, setSearchParams] = useSearchParams();
   const sidecarId = searchParams.get(PARAM) || undefined;

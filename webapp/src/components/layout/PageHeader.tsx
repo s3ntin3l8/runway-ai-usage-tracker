@@ -1,9 +1,13 @@
 import { cn } from '@/lib/cn';
 
 interface PageHeaderProps {
-  title: string;
+  /** @deprecated Prefer children for custom layouts; retained for existing page headers. */
+  title?: string;
+  /** @deprecated Prefer children for custom layouts; retained for existing page headers. */
   description?: string;
+  /** @deprecated Prefer children for custom layouts; retained for existing page headers. */
   leading?: React.ReactNode;
+  /** @deprecated Prefer children for custom layouts; retained for existing page headers. */
   actions?: React.ReactNode;
   className?: string;
   sticky?: boolean;
@@ -32,7 +36,7 @@ export function PageHeader({
         className,
       )}
     >
-      {children ?? (
+      {children ?? (title ? (
         <>
           <div className="flex min-w-0 items-center gap-3">
             {leading}
@@ -49,7 +53,7 @@ export function PageHeader({
             </div>
           ) : null}
         </>
-      )}
+      ) : null)}
     </header>
   );
 }

@@ -144,6 +144,11 @@ describe('ForecastTab', () => {
       <ForecastTab providerId="anthropic" accountId="me@example.com" entry={fleetEntry()} />,
     );
     expect(await screen.findByText(/no forecast available yet/i)).toBeInTheDocument();
+    await waitFor(() => expect(api.fetchWindowHistory).toHaveBeenCalledWith(expect.objectContaining({
+      window_type: 'weekly',
+      series_model_id: '',
+      series_variant: 'default',
+    })));
   });
 
   it('renders closed windows in the history table', async () => {

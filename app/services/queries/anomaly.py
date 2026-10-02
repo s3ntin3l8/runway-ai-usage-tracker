@@ -35,6 +35,8 @@ def query_anomalies(
 
     stmt = select(UsagePeriodRollup).where(
         UsagePeriodRollup.period_type == "day",
+        # Rollups use real sidecar IDs, or '' for the all-sidecars grain;
+        # values such as the LatestUsage default 'local' are not rollup grains.
         UsagePeriodRollup.sidecar_id == (sidecar_id or ""),
         UsagePeriodRollup.period_key >= oldest_key,
         UsagePeriodRollup.period_key <= today_key,
