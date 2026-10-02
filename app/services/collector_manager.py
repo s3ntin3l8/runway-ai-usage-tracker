@@ -768,14 +768,7 @@ class CollectorManager:
                 break
             if index:
                 await smart.reset()
-            if account_id == "default":
-                # Collectors can mutate account_id after an API response.
-                # Reset before each source attempt so a verified identity from
-                # source A can never be attributed to source B on a later poll.
-                collector.account_id = "default"
-                collector.account_label = default_account_label
-            if hasattr(collector, "credential_account_id"):
-                collector.credential_account_id = account_id
+            self._reset_attempt_identity(collector, account_id, default_account_label)
             if self._awaiting_machine_renewal(provider_id, candidate, all_candidates):
                 # An idle CLI let its access token lapse. The machine renews it (the server
                 # must not: rotating its refresh token would sign that CLI out), so calling
@@ -840,6 +833,13 @@ class CollectorManager:
                 health_updates[candidate["source_id"]] = "unavailable"
                 last_kept_failure_result = result or last_kept_failure_result
                 continue
+            if not identity_verification and await self._cookie_switched_account(
+                provider_id, account_id, candidate, collector
+            ):
+                # The browser now holds a different account than the one this source is tagged
+                # to: the tag is gone and the source is pending again. Publish nothing from
+                # this poll under the old account.
+                continue
             if not attempt["auth_failed"]:
                 health_updates[candidate["source_id"]] = "healthy"
             # A provider may learn a stable identity only after calling its
@@ -892,6 +892,129 @@ class CollectorManager:
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
         )
+
+    @staticmethod
+    def _reset_attempt_identity(collector: Any, account_id: str, default_label: Any) -> None:
+        """Clear what a previous source attempt taught the shared collector instance."""
+        if account_id == "default":
+            # Collectors can mutate account_id after an API response. Reset before each source
+            # attempt so a verified identity from source A can never be attributed to source B
+            # on a later poll.
+            collector.account_id = "default"
+            collector.account_label = default_label
+        if hasattr(collector, "credential_account_id"):
+            collector.credential_account_id = account_id
+        # Proof from one source's response must never be read as another's.
+        collector.verified_identity = None
+
+    async def _cookie_switched_account(
+        self,
+        provider_id: str,
+        account_id: str,
+        candidate: dict[str, Any],
+        collector: Any,
+    ) -> bool:
+        """Detect a browser account switch behind a machine-scoped cookie tag, and undo the tag.
+
+        A cookie's origin is the same string whichever account the browser is signed into, so a
+        tag keeps applying after a switch. Collectors that learn the account's email from the
+        provider (``verified_identity``) let the server notice: when that email resolves to a
+        *different canonical account* than the (email-shaped) tagged one, the tag is deleted,
+        the source leaves the old account, and the next sidecar push files it as pending so the
+        identity verifier maps it to the new account. Anything uncertain is left alone: a tag on
+        a non-email account (hash-keyed, label-based, ``user@x @ Org``) is never second-guessed.
+        Accounts are keyed by login email, so an operator's own tag on a *different* email than
+        the one the cookie logs into counts as a switch too (the verifier then re-maps it).
+        """
+        from app.services.account_identity import EMAIL_RE, canonical_account_id
+        from app.services.credential_sources import is_machine_bound_origin
+
+        origin = candidate.get("credential_origin")
+        sidecar_id = candidate.get("sidecar_id")
+        verified = getattr(collector, "verified_identity", None)
+        if (
+            candidate.get("identity_pending")
+            or not is_sidecar_source(candidate)
+            or not isinstance(origin, str)
+            or not origin.startswith("cookie:")
+            or not is_machine_bound_origin(origin)
+            or not isinstance(sidecar_id, str)
+            or not isinstance(verified, str)
+            or not EMAIL_RE.match(verified)
+            or not EMAIL_RE.match(account_id)
+            or canonical_account_id(verified) == canonical_account_id(account_id)
+        ):
+            return False
+        revoked = await asyncio.to_thread(
+            self._revoke_cookie_tag,
+            provider_id,
+            account_id,
+            candidate["source_id"],
+            origin,
+            sidecar_id,
+        )
+        if not revoked:
+            return False
+        await token_cache.remove_source(
+            provider_id, account_id, candidate["source_id"], retire_matching_oauth=True
+        )
+        logger.warning(
+            "A browser on %s switched account behind %s: dropped its %s cookie tag; "
+            "the source is pending again",
+            scrub_log(sidecar_id),
+            scrub_log(account_id),
+            scrub_log(provider_id),
+        )
+        return True
+
+    @staticmethod
+    def _revoke_cookie_tag(
+        provider_id: str, account_id: str, source_id: str, origin: str, sidecar_id: str
+    ) -> bool:
+        """Delete this sidecar's tag on a cookie origin and put its durable row back to pending.
+
+        Only a sidecar-scoped tag that a person or a verification (not a mere claim) wrote
+        whose account is the one being polled; an older deployment-wide tag is left to the
+        operator because it applies on other machines too.
+        """
+        from sqlmodel import Session, col, select
+
+        from app.core.db import engine
+        from app.models.db import CredentialSource, CredentialTag
+        from app.services.account_identity import canonical_account_id
+        from app.services.credential_sources import pending_cache_slot
+        from app.services.credential_tags import CredentialTagRepo
+
+        with Session(engine) as session:
+            tag = session.exec(
+                select(CredentialTag).where(
+                    CredentialTag.provider_id == provider_id,
+                    CredentialTag.credential_origin == origin,
+                    CredentialTag.sidecar_id == sidecar_id,
+                )
+            ).first()
+            if (
+                tag is None
+                or tag.set_by == "identity_claim"
+                or canonical_account_id(tag.account_id) != canonical_account_id(account_id)
+            ):
+                return False
+            CredentialTagRepo.delete_tag(
+                session, provider_id=provider_id, credential_origin=origin, sidecar_id=sidecar_id
+            )
+            pending_account = pending_cache_slot(provider_id, source_id)
+            row = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == provider_id,
+                    col(CredentialSource.account_id).in_({account_id, tag.account_id}),
+                    CredentialSource.source_id == source_id,
+                )
+            ).first()
+            if row is not None:
+                row.account_id = pending_account
+                session.add(row)
+            session.commit()
+        return True
 
     @staticmethod
     def _awaiting_machine_renewal(

@@ -372,6 +372,10 @@ class AnthropicWebMixin:
             # authenticated email is a stable account identity. The current
             # source was selected by CollectorManager, so this API response
             # belongs to that exact credential bundle.
+            if "@" in identity_str:
+                from app.services.collectors.base import normalize_account_id
+
+                self.verified_identity = normalize_account_id(identity_str)
             if "@" in identity_str and (
                 not self.account_id or self.account_id.lower() == "default"
             ):
