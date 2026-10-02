@@ -11,6 +11,11 @@ def _since(days_ago: int = 1) -> datetime:
     return datetime.now(UTC) - timedelta(days=days_ago)
 
 
+# The fixtures below carry fixed 2026-09-25 timestamps, so the window start is fixed too: a
+# ``now - 7 days`` cutoff silently aged them out once a week had passed (CI failed on 2026-10-02).
+SINCE = datetime(2026, 9, 1, tzinfo=UTC)
+
+
 def _write_updates(tmp_path, records, *, session_id="session-1", cwd="%2Fhome%2Fuser%2Fproj"):
     path = tmp_path / cwd / session_id / "updates.jsonl"
     path.parent.mkdir(parents=True)
@@ -74,7 +79,7 @@ def test_extracts_model_splits_without_double_counting_cache_or_reasoning(tmp_pa
         ],
     )
 
-    events = parse_xai_events([path], account_id="alice@example.com", since=_since(7))
+    events = parse_xai_events([path], account_id="alice@example.com", since=SINCE)
 
     assert [
         (
@@ -137,7 +142,7 @@ def test_fallback_uses_current_model_and_turn_totals_only_once(tmp_path):
         ],
     )
 
-    events = parse_xai_events([path], account_id="account", since=_since(7))
+    events = parse_xai_events([path], account_id="account", since=SINCE)
 
     assert [
         (
@@ -176,7 +181,7 @@ def test_ignores_malformed_non_turn_and_incomplete_records(tmp_path):
     # A malformed line in the middle must not invalidate neighboring entries.
     path.write_text(path.read_text() + "\n{not valid json}\n", encoding="utf-8")
 
-    assert parse_xai_events([path], account_id="a", since=_since(7)) == []
+    assert parse_xai_events([path], account_id="a", since=SINCE) == []
 
 
 def test_partial_model_cost_is_not_reported(tmp_path):
@@ -204,7 +209,7 @@ def test_partial_model_cost_is_not_reported(tmp_path):
         ],
     )
 
-    events = parse_xai_events([path], account_id="a", since=_since(7))
+    events = parse_xai_events([path], account_id="a", since=SINCE)
 
     assert len(events) == 1
     assert events[0].tokens_input == 15
@@ -232,7 +237,7 @@ def test_headless_usage_keeps_uncached_input_and_cache_buckets_disjoint(tmp_path
         ],
     )
 
-    events = parse_xai_events([path], account_id="a", since=_since(7))
+    events = parse_xai_events([path], account_id="a", since=SINCE)
 
     assert len(events) == 1
     assert events[0].tokens_input == 60
@@ -290,7 +295,7 @@ def test_headless_and_float_cost_spellings_are_preserved_only_when_complete(tmp_
         ],
     )
 
-    events = parse_xai_events([path], account_id="a", since=_since(7))
+    events = parse_xai_events([path], account_id="a", since=SINCE)
 
     assert [(event.event_id, event.cost_usd) for event in events] == [
         ("xai|grok|session-1|float-cost|unknown", 1.25),
