@@ -290,6 +290,30 @@ describe('Banners data health', () => {
     expect(screen.queryByText(/data health found/i)).not.toBeInTheDocument();
   });
 
+  it('warns when credential alerts have nowhere to go, with a link to add a webhook', () => {
+    const report: DataHealthReport = {
+      scanning: false,
+      checks: [dataHealthCheck({ check_id: 'alert_channels', severity: 'warn', total_count: 1 })],
+    };
+    renderWithProviders(<Banners credentials={undefined} anomalies={[]} dataHealth={report} />);
+    expect(screen.getByText(/credential alerts have no delivery channel/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /add a webhook/i })).toHaveAttribute(
+      'href',
+      '/settings/webhooks',
+    );
+    // It is not a repair, so the generic data-health banner stays out of it.
+    expect(screen.queryByText(/data health found/i)).not.toBeInTheDocument();
+  });
+
+  it('stays quiet once a channel exists', () => {
+    const report: DataHealthReport = {
+      scanning: false,
+      checks: [dataHealthCheck({ check_id: 'alert_channels', severity: 'warn', total_count: 0 })],
+    };
+    renderWithProviders(<Banners credentials={undefined} anomalies={[]} dataHealth={report} />);
+    expect(screen.queryByText(/delivery channel/i)).not.toBeInTheDocument();
+  });
+
   it('does not render when dataHealth is undefined', () => {
     renderWithProviders(<Banners credentials={undefined} anomalies={[]} />);
     expect(screen.queryByText(/data health found/i)).not.toBeInTheDocument();

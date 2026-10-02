@@ -45,6 +45,7 @@ applied until it's fixed — the dependency order below reflects that.
 | `unpriced_models` · Warning / Info | Some token usage has no reliable cost | Token-bearing events have zero stored cost. This includes actionable missing prices and informational configured-zero or source-reported-zero evidence. | Review per-model evidence; recompute when a rate is available or add a pricing seed. Existing nonzero costs are not lowered. |
 | `rollup_drift` · Warning | Cached usage totals do not match events | Lifetime cached totals differ from usage events, including rollup rows left behind after their events were removed. | Rebuild the affected provider/account rollups from current events. |
 | `pending_events` · Info | Events need account assignment | Events await evidence-backed or manual account assignment. | Open Fleet and decide the account for each event. |
+| `alert_channels` · Warn | Credential alerts have no delivery channel | No active webhook has credential alerts on, so an expired, rejected or failing credential notifies nobody. Not fixable here (it needs your webhook URL); Home shows a banner linking to Settings → Alerts. | Add a Discord or Slack webhook with credential alerts enabled. |
 
 `config_default_keyed` blocks `lone_default_events`, `orphan_credential_tags`
 and `orphan_credential_sources`; `legacy_provider_ids` blocks `unpriced_models`

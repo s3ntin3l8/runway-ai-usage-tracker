@@ -9,6 +9,7 @@ allowed to run.
 from __future__ import annotations
 
 from app.services.data_health.base import Check
+from app.services.data_health.checks.alert_channels import AlertChannelsCheck
 from app.services.data_health.checks.config_default_keyed import ConfigDefaultKeyedCheck
 from app.services.data_health.checks.legacy_provider_ids import LegacyProviderIdsCheck
 from app.services.data_health.checks.lone_default_events import LoneDefaultEventsCheck
@@ -33,6 +34,7 @@ REGISTRY: list[Check] = [
     UnpricedModelsCheck(),
     RollupDriftCheck(),
     PendingEventsCheck(),
+    AlertChannelsCheck(),
 ]
 
 BY_ID: dict[str, Check] = {check.id: check for check in REGISTRY}
