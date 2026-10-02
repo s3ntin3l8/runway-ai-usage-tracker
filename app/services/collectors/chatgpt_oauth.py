@@ -41,8 +41,9 @@ class ChatGPTWebOAuthMixin:
         refresh_token = auth_data.get("refresh_token")
 
         if token:
-            # The server never refreshes this login: ChatGPT rotates refresh tokens, and a
-            # Codex CLI file on this host is renewed by that CLI (see refresh_policy).
+            # No refresh here: ChatGPT rotates refresh tokens, and a Codex CLI file on this
+            # host is renewed by that CLI (see refresh_policy). Other server-owned logins
+            # are the auto-refresher's.
             input_source = getattr(auth_data, "sources", {}).get("access_token", "server")
             self._current_input_source = input_source
             return {
