@@ -603,7 +603,8 @@ class KimiCodingCollector(BaseCollector):
                 ]
             if resp.status_code == 200:
                 usage_data = resp.json()
-                self._note_cookie_subject(token)
+                if input_source == self.INPUT_SOURCE_SIDECAR:
+                    self._note_cookie_subject(token)
         except (httpx.RequestError, ValueError, KeyError, TypeError):
             # Non-fatal: the strategy may still build cards from the other
             # web calls, or degrade to an error card downstream.
@@ -644,7 +645,7 @@ class KimiCodingCollector(BaseCollector):
         return cards
 
     def _note_cookie_subject(self, token: str) -> None:
-        """Remember whose login the cookie is (its JWT ``sub``) once Kimi accepted it.
+        """Remember whose login a *sidecar-reported* cookie is (its JWT ``sub``) once Kimi accepted it.
 
         The claim only feeds a comparison with the value recorded for this source, so a
         browser switching users is noticed; it is never used to name an account.

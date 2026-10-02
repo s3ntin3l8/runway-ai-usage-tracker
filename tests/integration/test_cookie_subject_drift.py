@@ -283,3 +283,30 @@ async def test_the_subject_comparison_ignores_case(world):  # noqa: F811
 
     assert await _poll(ACCOUNT, _kimi, "kimi_coding")
     assert _kimi_state(engine)[1] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("setup", "expected"),
+    [("env", None), ("sidecar", "user-1")],
+)
+async def test_only_a_sidecar_reported_cookie_records_a_subject(monkeypatch, setup, expected):
+    """The server's own KIMI_AUTH_TOKEN is not a sidecar source: nothing to watch."""
+    from app.services.collectors.kimi_coding import KimiCodingCollector
+
+    collector = KimiCodingCollector(account_id="default")
+    token = _jwt("user-1")
+    resolved = (
+        (token, KimiCodingCollector.INPUT_SOURCE_SERVER)
+        if setup == "env"
+        else (token, KimiCodingCollector.INPUT_SOURCE_SIDECAR)
+    )
+
+    async def fake_resolve():
+        return resolved
+
+    monkeypatch.setattr(collector, "_resolve_cookie", fake_resolve)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_kimi)) as client:
+        await collector._strategy_web(client)
+
+    assert collector.verified_subject == expected
