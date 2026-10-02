@@ -125,7 +125,7 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
                 "Token refresh failed for provider=%s status=%s body=%s",
                 scrub_log(provider),
                 resp.status_code,
-                scrub_log(redact_secrets(str(resp.text)[:1000]))[:300],
+                _describe_failure_body(str(resp.text)),
             )
             raise
         data = resp.json()
@@ -158,6 +158,25 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
 
     logger.info(f"Refreshed OAuth token for provider={scrub_log(provider)}")
     return updated
+
+
+def _describe_failure_body(raw: str) -> str:
+    """Redacted, single-line, at-most-300-char rendering of a failure body.
+
+    Parsed first: on a JSON payload the dict path of `redact_secrets` replaces
+    whole values under credential-shaped keys, which redacts more thoroughly
+    than the string-shape regexes and avoids their cosmetic leftovers (a
+    base64 ``=`` left behind after a JWT match). Bodies that don't parse —
+    HTML error pages, truncated payloads — fall back to string redaction.
+    """
+    try:
+        parsed: object = json.loads(raw)
+    except ValueError:
+        parsed = raw[:4000]
+    redacted = redact_secrets(parsed)
+    if not isinstance(redacted, str):
+        redacted = json.dumps(redacted, ensure_ascii=False)
+    return scrub_log(redacted)[:300]
 
 
 def persist_to_local_file(provider: str, new_tokens: dict[str, str], source: str | None) -> None:

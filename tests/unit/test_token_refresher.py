@@ -358,9 +358,28 @@ class TestRefreshOAuthTokenHTTPErrors:
         message = "\n".join(record.getMessage() for record in caplog.records)
         assert "eyJhbGciOiJIUzI1NiJ9" not in message
         assert "alice@example.com" not in message
+        assert '"access_token": "[REDACTED]"' in message  # whole value, dict path
         assert "[REDACTED" in message
         assert "invalid_grant" in message
         assert len(message) < 1000  # body capped well below its raw 5 kB size
+
+    async def test_non_json_error_body_falls_back_to_string_redaction(self, caplog):
+        """HTML/plain error pages still get redacted on the string path."""
+        resp = _make_mock_response(400, {"error": "invalid_client"})
+        resp.text = "<html>client rejected for alice@example.com</html>"
+        ctx = _make_async_client(resp)
+
+        with (
+            patch("httpx.AsyncClient", return_value=ctx),
+            caplog.at_level(logging.WARNING, logger="app.services.token_refresher"),
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            await refresh_oauth_token("xai", {"xai_refresh": "rt"})
+
+        message = "\n".join(record.getMessage() for record in caplog.records)
+        assert "<html>" in message
+        assert "alice@example.com" not in message
+        assert "[REDACTED_EMAIL]" in message
 
 
 class TestRefreshOAuthTokenTokenRotation:
