@@ -39,16 +39,20 @@ applied until it's fixed — the dependency order below reflects that.
 | `legacy_provider_ids` · Error | Usage uses an old provider ID | Events use a provider ID Runway now folds into a canonical provider (for example, `opencode-xai` → `xai`). | Retag to the canonical provider; collisions keep the richer event. |
 | `lone_default_events` · Error | Usage is assigned to a generic account | Usage events or quota history remain under `default` while a specific target identity is known from configured or discovered account data. This can also appear when a default config remains active. | Preview the proposed move and explicitly confirm before moving history to the selected account. |
 | `orphan_credential_tags` · Warning | Credential tags point to a missing account | A tag still points at `default` after its provider config was re-keyed or removed. | Delete the tag or repoint it to a configured account. |
+| `orphan_credential_sources` · Warning | Credential sources point to a missing account | A stored credential source no longer has anything behind it — its configuration was re-keyed or removed, or the source is filed under two accounts and only one of them still has evidence. | Delete the stranded row; the copy under the real account is kept. |
 | `orphan_gauge_series` · Warning | Quota history belongs to an inactive account | A quota card or history series has no config or activity for at least 30 days. | Merge it into a configured account or delete it. Recent activity is checked again before preview and apply. |
 | `misidentified_gauge_series` · Error | Gauge data has no supporting evidence | Quota history exists for an account with no usage events, credentials, or config — indicating a transient collector mis-identification (e.g. an email label leaked from another provider's token cache). Unlike `orphan_gauge_series`, there is no 30-day wait — the absence of all five evidence types is the safety gate. A credential the server host found itself (an env var such as `GITHUB_TOKEN`, or a local file) counts as evidence too: it is recorded as a `server:` credential source the first time a collection uses it, so an account fed only that way is not flagged — but one that has never completed a collection since upgrading may be, until it does. | Delete immediately; there is no real usage history to preserve. |
 | `unpriced_models` · Warning / Info | Some token usage has no reliable cost | Token-bearing events have zero stored cost. This includes actionable missing prices and informational configured-zero or source-reported-zero evidence. | Review per-model evidence; recompute when a rate is available or add a pricing seed. Existing nonzero costs are not lowered. |
 | `rollup_drift` · Warning | Cached usage totals do not match events | Lifetime cached totals differ from usage events, including rollup rows left behind after their events were removed. | Rebuild the affected provider/account rollups from current events. |
 | `pending_events` · Info | Events need account assignment | Events await evidence-backed or manual account assignment. | Open Fleet and decide the account for each event. |
 
-`config_default_keyed` blocks `lone_default_events` and `orphan_credential_tags`;
-`legacy_provider_ids` blocks `unpriced_models` and `rollup_drift` — fix the
-blocking check first if you see a **Blocked** badge. The expanded check names
-the prerequisite that needs attention.
+`config_default_keyed` blocks `lone_default_events`, `orphan_credential_tags`
+and `orphan_credential_sources`; `legacy_provider_ids` blocks `unpriced_models`
+and `rollup_drift` — fix the blocking check first if you see a **Blocked**
+badge. The expanded check names the prerequisite that needs attention. (The
+re-key now carries a provider's credential sources with it, so resolving
+`config_default_keyed` first is usually what clears the credential-source
+findings too.)
 
 The `config_default_keyed` preview exposes `counts.usage_events_to_move`.
 The former `counts.usage_events_retained_on_default` field remains as a

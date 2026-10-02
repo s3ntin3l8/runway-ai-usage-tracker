@@ -2777,6 +2777,90 @@ def test_ingest_leaves_a_plain_origin_row_alone_when_the_origin_stays_plain(
     assert ids == {sidecar_source_id("laptop", "path:/home/u/.gemini/oauth_creds.json")}
 
 
+def _file_source(
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    source_id: str,
+    origin: str,
+    sidecar_id: str = "laptop",
+) -> None:
+    from app.services.credential_sources import touch_source
+
+    touch_source(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        source_id=source_id,
+        source_type="path",
+        source_label="oauth_creds.json",
+        credential_origin=origin,
+        sidecar_id=sidecar_id,
+    )
+
+
+def test_ingest_moves_a_source_off_a_phantom_account_it_is_filed_under_alone(
+    client: TestClient, session: Session
+):
+    """The shape an out-of-band account rename leaves: the same source still filed
+    under the id the account was renamed away from. Ingest re-points it, because
+    nothing at all (config, card, usage, tag, label) stands behind that id."""
+    from app.services.credential_sources import sidecar_source_id
+
+    origin = "path:/home/u/.gemini/oauth_creds.json"
+    source_id = sidecar_source_id("laptop", origin)
+    _file_source(
+        session,
+        provider_id="gemini",
+        account_id="hash:stale-identity",
+        source_id=source_id,
+        origin=origin,
+    )
+    _add_provider_config(session, provider_id="gemini", account_id="alice@example.com")
+    session.commit()
+
+    resp = _ingest(client, "laptop", [_token_card("gemini", origin, "k", "alice@example.com")])
+
+    assert resp.status_code == 200, resp.text
+    rows = session.exec(select(CredentialSource)).all()
+    assert {(r.provider_id, r.account_id, r.source_id) for r in rows} == {
+        ("gemini", "alice@example.com", source_id)
+    }
+
+
+def test_ingest_drops_a_phantom_copy_but_leaves_accounts_that_have_evidence(
+    client: TestClient, session: Session
+):
+    """When the resolved account already holds the source, the stranded copy is deleted
+    — and only that: a row under a second account with its own configuration is an
+    operator choice, not ours to touch."""
+    from app.services.credential_sources import sidecar_source_id
+
+    origin = "path:/home/u/.gemini/oauth_creds.json"
+    source_id = sidecar_source_id("laptop", origin)
+    for account_id in ("hash:stale-identity", "alice@example.com", "bob@example.com"):
+        _file_source(
+            session,
+            provider_id="gemini",
+            account_id=account_id,
+            source_id=source_id,
+            origin=origin,
+        )
+    _add_provider_config(session, provider_id="gemini", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="gemini", account_id="bob@example.com")
+    session.commit()
+
+    resp = _ingest(client, "laptop", [_token_card("gemini", origin, "k", "alice@example.com")])
+
+    assert resp.status_code == 200, resp.text
+    rows = session.exec(select(CredentialSource)).all()
+    assert {(r.account_id, r.source_id) for r in rows} == {
+        ("alice@example.com", source_id),
+        ("bob@example.com", source_id),
+    }
+
+
 @pytest.mark.parametrize(
     "origin", ["cookie:kimi_coding/session", "keychain:Claude Code-credentials"]
 )

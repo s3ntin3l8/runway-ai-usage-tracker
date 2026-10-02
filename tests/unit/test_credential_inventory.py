@@ -18,7 +18,7 @@ from app.models.db import (
     ProviderConfig,
     SidecarRegistry,
 )
-from app.services import credential_inventory
+from app.services import auth_failures, credential_inventory
 from app.services.credential_inventory import build_inventory
 from app.services.token_cache import TokenCache
 from app.services.token_health import credential_status
@@ -249,6 +249,9 @@ async def test_mapping_kinds(engine, cache):
             source_label="Manual configuration",
             credential_origin=None,
         )
+        # A config source row is only ever written with its provider_configs row —
+        # the pair the inventory keys `config:` rows on (see `is_config_ghost`).
+        _cfg(s, "gemini", ALICE)
         _source(
             s,
             source_id="server:gemini:env:GEMINI_API_KEY",
@@ -405,6 +408,7 @@ async def test_env_and_config_credentials_on_default_are_a_real_account_not_pend
             sidecar_id=None,
             credential_origin=None,
         )
+        _cfg(s, "minimax", "default")
     inv = await build_inventory()
     for provider in ("openrouter", "minimax"):
         acct, by_id = _sources(inv, provider=provider, account="default")
@@ -616,3 +620,68 @@ async def test_scan_server_credentials_reads_env_and_flags_shadowing(monkeypatch
     )
     assert origin["shadowed"] is False
     assert "github" in scanned
+
+
+@pytest.mark.asyncio
+async def test_a_config_source_without_its_config_is_hidden(engine, cache):
+    """A `config:` row is only written beside its provider_configs row, so one
+    whose config is gone (an account rename that didn't carry it) is a claim
+    nothing backs — Settings must not render it as a second identity."""
+    with Session(engine) as s:
+        _cfg(s, "gemini", ALICE)
+        _source(
+            s,
+            source_id="config:gemini:alice",
+            sidecar_id=None,
+            source_type="config",
+            source_label="Manual configuration",
+            credential_origin=None,
+        )
+        _source(
+            s,
+            account_id="bd6d58cf00000000",
+            source_id="config:gemini:bd6d58cf00000000",
+            sidecar_id=None,
+            source_type="config",
+            source_label="Manual configuration",
+            credential_origin=None,
+        )
+
+    inv = await build_inventory()
+    (prov,) = [p for p in inv.providers if p.provider_id == "gemini"]
+    assert [a.account_id for a in prov.accounts] == [ALICE]
+    _, by_id = _sources(inv)
+    assert "config:gemini:bd6d58cf00000000" not in by_id
+    assert by_id["config:gemini:alice"].mapping == "config"
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_config_ghost_does_not_count_as_an_account(engine, cache):
+    """`is_flagged`'s "sole account" rule reads the same account set: an
+    account nothing renders must not stop the real one from being the sole
+    account (or it would under-flag a rejected pasted/env key)."""
+    with Session(engine) as s:
+        _cfg(s, "gemini", ALICE)
+        _source(
+            s,
+            source_id="config:gemini:alice",
+            sidecar_id=None,
+            source_type="config",
+            source_label="Manual configuration",
+            credential_origin=None,
+        )
+        _source(
+            s,
+            account_id="bd6d58cf00000000",
+            source_id="config:gemini:bd6d58cf00000000",
+            sidecar_id=None,
+            source_type="config",
+            source_label="Manual configuration",
+            credential_origin=None,
+        )
+    auth_failures.mark("gemini", "default")  # a pasted/env key was rejected
+    try:
+        _, by_id = _sources(await build_inventory())
+        assert by_id["config:gemini:alice"].status == "invalid"
+    finally:
+        auth_failures.clear("gemini")
