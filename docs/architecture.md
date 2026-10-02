@@ -199,6 +199,15 @@ sidecar's next push files it as pending, so the identity verifier maps it to the
 never second-guesses a tag on a non-email account (hash-keyed or label-based), a deployment-wide
 tag (it applies on other machines too), or a source whose provider reported no email.
 
+Providers that never reveal an email set `verified_subject` instead, a stable opaque id of
+whoever the cookie logs in as (Kimi: the `sub` of the `kimi-auth` JWT; opencode:
+`subscriberUserId`). The subject is recorded on the source (`credential_sources.verified_subject`,
+with the account it was recorded under); a different subject for the same account counts as a
+switch and takes the same path. The first sighting, and the first one after the source moves to
+another account, is recorded rather than compared. A source that reveals no subject is not
+watched. **OAuth and keychain** origins need none of this: the sidecar re-claims the account from
+the login itself on every push, so a re-login simply moves the source to the new account.
+
 ### Who refreshes an OAuth login
 
 A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT and xAI

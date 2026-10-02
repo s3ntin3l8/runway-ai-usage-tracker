@@ -99,6 +99,10 @@ class BaseCollector(ABC):
     # is proof: CollectorManager compares it with a cookie source's tagged account to catch
     # a browser switching accounts. The manager resets it before every source attempt.
     verified_identity: str | None = None
+    # A stable non-email id for whoever the credential logs in as (a Kimi JWT ``sub``), for
+    # providers that never reveal an email. Compared with the value recorded for the source:
+    # a change means the browser behind a cookie switched users. Reset like ``verified_identity``.
+    verified_subject: str | None = None
 
     @property
     def successful_empty_result(self) -> bool:

@@ -1247,3 +1247,50 @@ async def test_ingest_resets_verification_backoff_only_when_the_secret_changes(s
         _ingest(client, payload("claude-token-two"))  # a re-login
         row = pending()
         assert row.verify_attempts == 0 and row.next_verify_at is None
+
+
+async def test_a_re_login_on_an_oauth_file_origin_moves_the_source_to_the_new_claimed_account(
+    session,
+):
+    """OAuth and keychain origins are not browser cookies: their secret rotates with the login
+    and the sidecar re-claims the account on every push, so a different login is a different
+    claimed account and the source follows it (#472)."""
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    origin = "path:/home/user/.codex/auth.json"
+
+    def payload(email: str, token: str) -> dict:
+        return {
+            "provider": "chatgpt-sidecar",
+            "sidecar_id": "test-host-01",
+            "metrics": [
+                {
+                    "provider_id": "chatgpt",
+                    "service_name": "ChatGPT",
+                    "account_id": email,
+                    "remaining": "Token",
+                    "unit": "oauth",
+                    "metadata": {"oauth_token": token, "credential_origin": origin},
+                }
+            ],
+            "events": [],
+        }
+
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache", cache),
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        client = TestClient(app)
+        _ingest(client, payload("alice@example.com", "alice-token"))
+        _ingest(client, payload("bob@example.com", "bob-token"))
+
+    rows = session.exec(select(CredentialSource)).all()
+    assert [row.account_id for row in rows] == ["bob@example.com"]
+    assert await cache.get_source_candidates("chatgpt", "alice@example.com") == []
+    assert [
+        c["tokens"]["oauth_token"]
+        for c in await cache.get_source_candidates("chatgpt", "bob@example.com")
+    ] == ["bob-token"]

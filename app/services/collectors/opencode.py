@@ -333,6 +333,10 @@ class OpenCodeCollector(BaseCollector):
         if not meters:
             return []
         account = body.get("subscriberUserId") or ""
+        if account and isinstance(account, str):
+            # Whoever the cookie logs in as, email-shaped or not: compared with the value
+            # recorded for the source so a browser switching users is noticed.
+            self.verified_subject = account.strip() or None
         if account and "@" in account:
             self._pin_identity(account)
         period_end_iso = access.get("endsAt")

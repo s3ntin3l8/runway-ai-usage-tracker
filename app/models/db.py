@@ -239,6 +239,11 @@ class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
     last_attempt_at: UTCDateTime | None = None
     last_success_at: UTCDateTime | None = None
     last_error: str | None = None
+    # The stable, non-email id a cookie collector last saw behind this source (a Kimi JWT
+    # ``sub``), and the account it was recorded under. A changed subject for the same account
+    # means the browser behind the cookie switched users.
+    verified_subject: str | None = None
+    verified_subject_account: str | None = None
 
 
 class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]
