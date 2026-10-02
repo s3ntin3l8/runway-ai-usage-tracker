@@ -1,9 +1,10 @@
-// Sub-card components: ProviderKpis, ProviderAlerts, ProviderTrendCard,
+// Sub-card components: ProviderKpis, ProviderErrorBanner, ProviderTrendCard,
 // QuotaWindowRow, RecentSessions.
 import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { ProviderKpis } from './ProviderKpis';
-import { ProviderAlerts } from './ProviderAlerts';
+import { ProviderErrorBanner } from './ProviderErrorBanner';
+import { ProviderAnomalies } from './ProviderAnomalies';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { QuotaWindowRow } from './QuotaWindowRow';
 import { RecentSessions } from './RecentSessions';
@@ -185,7 +186,7 @@ describe('ProviderKpis', () => {
   });
 });
 
-describe('ProviderAlerts', () => {
+describe('ProviderErrorBanner', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.fetchAnomalies).mockResolvedValue(anomaliesResponse());
@@ -194,7 +195,7 @@ describe('ProviderAlerts', () => {
 
   it('renders nothing when there are no spikes or errors', async () => {
     const { container } = renderWithProviders(
-      <ProviderAlerts providerId="anthropic" accountId="me@example.com" />,
+      <ProviderErrorBanner providerId="anthropic" accountId="me@example.com" />,
     );
     // Wait a tick for queries to settle; nothing renders.
     await Promise.resolve();
@@ -203,12 +204,20 @@ describe('ProviderAlerts', () => {
 
   it('surfaces a recent-errors banner', async () => {
     vi.mocked(api.fetchEvents).mockResolvedValue(errorEvents());
-    renderWithProviders(<ProviderAlerts providerId="anthropic" accountId="me@example.com" />);
+    renderWithProviders(<ProviderErrorBanner providerId="anthropic" accountId="me@example.com" />);
     expect(await screen.findByText(/error in the last 24h/i)).toBeInTheDocument();
     expect(screen.getByText(/overloaded/i)).toBeInTheDocument();
   });
 
-  it('surfaces a usage-spike banner', async () => {
+});
+
+describe('ProviderAnomalies', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.fetchAnomalies).mockResolvedValue(anomaliesResponse());
+  });
+
+  it('shows the today-versus-history comparison in its own card', async () => {
     vi.mocked(api.fetchAnomalies).mockResolvedValue(
       anomaliesResponse({
         anomalies: [
@@ -226,8 +235,21 @@ describe('ProviderAlerts', () => {
         ],
       }),
     );
-    renderWithProviders(<ProviderAlerts providerId="anthropic" accountId="me@example.com" />);
-    expect(await screen.findByText(/usage spike on/i)).toBeInTheDocument();
+    renderWithProviders(<ProviderAnomalies providerId="anthropic" accountId="me@example.com" />);
+    expect(await screen.findByText('Usage anomalies')).toBeInTheDocument();
+    expect(await screen.findByText(/today vs prior 30 days/i)).toBeInTheDocument();
+    expect(await screen.findByText('claude-opus')).toBeInTheDocument();
+  });
+
+  it('explains when the selected source is no longer registered', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
+    renderWithProviders(
+      <ProviderAnomalies providerId="anthropic" accountId="me@example.com" />,
+      { route: '/provider/anthropic?sidecar=removed-host' },
+    );
+    expect(
+      await screen.findByText(/selected source is no longer registered/i),
+    ).toBeInTheDocument();
   });
 });
 

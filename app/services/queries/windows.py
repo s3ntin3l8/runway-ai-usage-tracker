@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func
-from sqlmodel import Session, select
+from sqlmodel import Session, and_, col, or_, select
 
 from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsageWindow
@@ -24,6 +24,8 @@ def query_window_history(
     account_id: str,
     window_type: str,
     limit: int = 12,
+    series_model_id: str | None = None,
+    series_variant: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return the N most recent closed windows, each with totals/by_model/by_sidecar.
 
@@ -42,6 +44,23 @@ def query_window_history(
         )
         .order_by(UsageWindow.window_end.desc())  # type: ignore[attr-defined]
     )
+    if series_model_id is not None or series_variant is not None:
+        # Missing variants are written as "default" on new rows. Also retain
+        # empty-identity rows from before series identity was introduced.
+        requested_variant = series_variant or "default"
+        stmt = stmt.where(
+            or_(
+                and_(
+                    col(UsageWindow.series_model_id) == (series_model_id or ""),
+                    col(UsageWindow.series_variant) == requested_variant,
+                ),
+                # Keep pre-migration history, whose series identity defaults to ('', '').
+                and_(
+                    col(UsageWindow.series_model_id) == "",
+                    col(UsageWindow.series_variant) == "",
+                ),
+            )
+        )
 
     # Identify the N most-recent window_end values (the "top N windows")
     all_rows = list(session.exec(stmt).all())
@@ -60,14 +79,22 @@ def query_window_history(
     allowed_ends = set(seen_ends)
     rows = [r for r in all_rows if r.window_end in allowed_ends]
 
-    # Group by (window_start, window_end)
+    # Group by interval and quota-series identity. Event model/sidecar grains
+    # remain nested inside each quota-series window.
     window_map: dict[tuple, dict[str, Any]] = {}
     for r in rows:
-        key = (r.window_start, r.window_end)
+        key = (
+            r.window_start,
+            r.window_end,
+            r.series_model_id or "",
+            r.series_variant or "",
+        )
         if key not in window_map:
             window_map[key] = {
                 "window_start": iso_utc(r.window_start),
                 "window_end": iso_utc(r.window_end),
+                "series_model_id": r.series_model_id or "",
+                "series_variant": r.series_variant or "",
                 "totals": None,
                 "by_model": [],
                 "by_sidecar": [],

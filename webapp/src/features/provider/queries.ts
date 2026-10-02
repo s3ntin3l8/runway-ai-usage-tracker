@@ -287,14 +287,32 @@ export const useProjects = (providerId: string, range?: DateRange) => {
   });
 };
 
-export const useWindowHistory = (providerId: string, accountId: string, windowType: string) =>
+// Series identity is required: pass '' / 'default' to match unscoped rows with
+// the default variant, including legacy rows retained by the history query.
+export const useWindowHistory = (
+  providerId: string,
+  accountId: string,
+  windowType: string,
+  seriesModelId: string,
+  seriesVariant: string,
+) =>
   useQuery({
-    queryKey: ['usage', 'window-history', providerId, accountId, windowType],
+    queryKey: [
+      'usage',
+      'window-history',
+      providerId,
+      accountId,
+      windowType,
+      seriesModelId,
+      seriesVariant,
+    ],
     queryFn: () =>
       fetchWindowHistory({
         provider_id: providerId,
         account_id: accountId,
         window_type: windowType,
+        series_model_id: seriesModelId,
+        series_variant: seriesVariant,
         limit: 12,
       }),
     enabled: windowType !== 'unknown' && windowType !== '',
@@ -326,12 +344,19 @@ export const useProviderHistoryChart = (
   });
 };
 
-export const useProviderAnomalies = (providerId: string, accountId: string) =>
-  useQuery({
-    queryKey: ['usage', 'anomalies', providerId, accountId],
-    queryFn: () => fetchAnomalies({ provider_id: providerId, account_id: accountId }),
+export const useProviderAnomalies = (providerId: string, accountId: string) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'anomalies', providerId, accountId, sidecarId],
+    queryFn: () =>
+      fetchAnomalies({
+        provider_id: providerId,
+        account_id: accountId,
+        sidecar_id: sidecarId,
+      }),
     refetchInterval: 300_000,
   });
+};
 
 export const useProviderCostForecast = (providerId: string, accountId: string) => {
   const { excludeCache } = useExcludeCache();
@@ -342,9 +367,10 @@ export const useProviderCostForecast = (providerId: string, accountId: string) =
   });
 };
 
-// Error events (kind="error") in the last 24h — feeds the alert banner.
-export const useProviderErrors = (providerId: string, accountId: string) =>
-  useQuery({
+// Error events (kind="error") in the last 24h — feeds a provider-wide alert
+// banner so a source filter cannot hide errors from another source.
+export const useProviderErrors = (providerId: string, accountId: string) => {
+  return useQuery({
     queryKey: ['usage', 'events', 'errors', providerId, accountId],
     queryFn: () =>
       fetchEvents({
@@ -356,6 +382,7 @@ export const useProviderErrors = (providerId: string, accountId: string) =>
       }),
     refetchInterval: 120_000,
   });
+};
 
 export const useDebugRaw = (providerId: string, accountId: string, enabled: boolean) =>
   useQuery({

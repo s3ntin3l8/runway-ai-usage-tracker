@@ -134,6 +134,8 @@ def test_window_close_triggered_when_reset_at_advances():
     # SQLite strips timezone info on round-trip; compare naive representations
     assert rollup.window_start.replace(tzinfo=None) == _WINDOW_START.replace(tzinfo=None)
     assert rollup.window_type == "weekly"
+    assert rollup.series_model_id == ""
+    assert rollup.series_variant == "default"
 
 
 def test_window_close_not_triggered_when_reset_at_unchanged():

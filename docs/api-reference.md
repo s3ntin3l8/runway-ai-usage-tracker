@@ -18,7 +18,7 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/usage/history/deltas` | Event-sourced consumption deltas; optional `sidecar_id` scopes to one source |
 | `GET` | `/api/v1/usage/events` | Recent event tail for (provider, account) |
 | `GET` | `/api/v1/usage/events/range` | Earliest/latest event timestamps for (provider, account), optionally scoped by `sidecar_id` |
-| `GET` | `/api/v1/usage/window-history` | Closed-window history with per-model & per-sidecar splits |
+| `GET` | `/api/v1/usage/window-history` | Closed-window history with per-model & per-sidecar splits; optional `series_model_id` and `series_variant` scope to a quota series and retain legacy unscoped rows; for scoped requests, an omitted/empty variant means `default` |
 | `GET` | `/api/v1/usage/heatmap` | 7×24 hour-of-day activity grid; optional `sidecar_id` and `exclude_cache` filters |
 | `GET` | `/api/v1/usage/sessions` | Top-N sessions (`sort_by=tokens` or `recent`), optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/sessions/paginated` | Paginated session browser with server-side sort (`sort_by=recent\|tokens\|duration\|messages\|cost`, `sort_dir=asc\|desc`) and optional `project` / `sidecar_id` filters |
@@ -28,7 +28,7 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/usage/top-models` | Cross-provider Top Models ranked by `metric=tokens\|cost`, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/global-stats` | Global cross-provider snapshot; optional `sidecar_id` and `exclude_cache` filters |
 | `GET` | `/api/v1/usage/cost-forecast` | MTD cost + 7-day burn extrapolated to EOM; optional `exclude_cache` |
-| `GET` | `/api/v1/usage/anomalies` | Z-score spike detection vs. historical mean |
+| `GET` | `/api/v1/usage/anomalies` | Z-score spike detection vs. historical mean; omitted/empty `sidecar_id` selects the all-source rollup, while a non-empty ID selects that source |
 | `GET` | `/api/v1/usage/archived-providers` | Lifetime stats for archived providers, kept out of the main fleet view |
 | `POST` | `/api/v1/usage/reset/{provider}` | Clear terminal failure state for a provider |
 | `POST` | `/api/v1/usage/collect/{provider}` | Force immediate re-collection for one provider |

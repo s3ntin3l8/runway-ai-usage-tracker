@@ -434,6 +434,8 @@ class UsageWindow(SQLModel, table=True):  # type: ignore[call-arg]
             "account_id",
             "window_type",
             "window_end",
+            "series_model_id",
+            "series_variant",
             "model_id",
             "sidecar_id",
             name="uq_usage_windows_identity",
@@ -447,6 +449,10 @@ class UsageWindow(SQLModel, table=True):  # type: ignore[call-arg]
     window_type: str  # session, daily, weekly, monthly, weekly_sonnet, ...
     window_start: UTCDateTime
     window_end: UTCDateTime  # the reset_at from authoritative scrape
+    # Quota-card identity (distinct from the model/sidecar event breakdown below).
+    # Empty strings mark legacy rows whose originating quota series is unknown.
+    series_model_id: str = Field(default="")
+    series_variant: str = Field(default="")
     model_id: str = Field(default="")  # "" = all-models rollup row
     sidecar_id: str = Field(default="")  # "" = all-sidecars rollup row
     msgs: int = Field(default=0)

@@ -1,10 +1,11 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { DebugRawResponse, TokenHealthEntry } from '@/api/types';
+import type { DebugRawResponse } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { DebugTab } from './DebugTab';
 import { fleetEntry, limitCard } from './test-fixtures';
 import * as api from '@/api/endpoints';
+import { account, inventory, source } from '@/features/settings/sections/credentials/testData';
 
 vi.mock('@/api/endpoints');
 
@@ -27,118 +28,34 @@ const renderTab = () =>
 describe('DebugTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: token-health query resolves empty so it never returns undefined.
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [] });
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue(inventory({
+      providers: [{
+        provider_id: 'anthropic', name: 'Claude', accounts: [account([
+          source({
+            provider_id: 'anthropic', account_id: 'me@example.com',
+            source_id: 'config:me@example.com', origin_kind: 'config',
+            origin_type: 'api_key', label: 'Settings credential', is_active: true,
+            last_success_at: new Date(Date.now() - 60_000).toISOString(),
+          }),
+        ], { provider_id: 'anthropic', account_id: 'me@example.com', active_source_id: 'config:me@example.com' })],
+      }],
+    }));
   });
 
-  it('renders the authoritative-source pane from the critical gauge', () => {
+  it('separates the successful credential, quota card, and collector schedule', async () => {
     renderTab();
-    expect(screen.getByText('Authoritative source')).toBeInTheDocument();
+    expect(await screen.findByText('Collection context')).toBeInTheDocument();
+    expect(await screen.findByText('Settings credential')).toBeInTheDocument();
+    expect(screen.getByText('Valid')).toBeInTheDocument();
+    expect(screen.getByText('Most restrictive quota card')).toBeInTheDocument();
     expect(screen.getByText('Max')).toBeInTheDocument();
     expect(screen.getByText('weekly')).toBeInTheDocument();
     expect(screen.getByText('api · config')).toBeInTheDocument();
+    expect(screen.getByText('Collector schedule · account')).toBeInTheDocument();
     expect(screen.getByText('3600s')).toBeInTheDocument();
-    // last poll is relative ("5m ago"); next poll is prefixed "in ".
-    expect(screen.getByText(/ago$/)).toBeInTheDocument();
+    expect(screen.getAllByText(/ago$/).length).toBeGreaterThan(0);
     expect(screen.getByText(/^in /)).toBeInTheDocument();
-  });
-
-  it('shows token health for the matching provider/account', async () => {
-    const token: TokenHealthEntry = {
-      provider: 'anthropic',
-      account_id: 'me@example.com',
-      status: 'valid',
-      token_types: ['oauth'],
-      source: 'OAuth · /v1/limits',
-      can_refresh: true,
-      expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
-    };
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [token] });
-    renderTab();
-
-    expect(await screen.findByText('Token health')).toBeInTheDocument();
-    expect(screen.getByText('oauth')).toBeInTheDocument();
-    expect(screen.getByText('auto-rotate')).toBeInTheDocument();
-    expect(screen.getByText(/expires in/i)).toBeInTheDocument();
-  });
-
-  it('hides the token-health pane when nothing matches the account', async () => {
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [] });
-    renderTab();
-    // Source pane is synchronous; give the (empty) token query a tick.
-    await screen.findByText('Authoritative source');
-    expect(screen.queryByText('Token health')).not.toBeInTheDocument();
-  });
-
-  it('shows token health for UI-configured (config account_id) credentials', async () => {
-    // Providers configured via the Settings UI use account_id='config', which
-    // doesn't match the usage card's real account_id. They should still appear
-    // in the Debug tab's Token health pane.
-    const configToken: TokenHealthEntry = {
-      provider: 'anthropic',
-      account_id: 'config',
-      status: 'valid',
-      token_types: ['api_key'],
-      source: 'config',
-      source_name: 'config',
-      can_refresh: false,
-    };
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [configToken] });
-    renderTab();
-    expect(await screen.findByText('Token health')).toBeInTheDocument();
-    expect(screen.getByText('api_key')).toBeInTheDocument();
-  });
-
-  it('shows only this account\'s config credential, not other accounts\'', async () => {
-    const mine: TokenHealthEntry = {
-      provider: 'anthropic',
-      account_id: 'config:me@example.com',
-      status: 'valid',
-      token_types: ['api_key'],
-    };
-    const unscoped: TokenHealthEntry = {
-      provider: 'anthropic',
-      account_id: 'config:default',
-      status: 'valid',
-      token_types: ['session_cookie'],
-    };
-    const other: TokenHealthEntry = {
-      provider: 'anthropic',
-      account_id: 'config:someone-else@example.com',
-      status: 'invalid',
-      token_types: ['other_account_key'],
-    };
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [mine, unscoped, other] });
-    renderTab();
-    expect(await screen.findByText('api_key')).toBeInTheDocument();
-    expect(screen.getByText('session_cookie')).toBeInTheDocument();
-    expect(screen.queryByText('other_account_key')).not.toBeInTheDocument();
-  });
-
-  it('labels a provider-rejected credential', async () => {
-    const rejected: TokenHealthEntry = {
-      provider: 'anthropic',
-      account_id: 'server',
-      status: 'invalid',
-      token_types: ['api_key'],
-    };
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [rejected] });
-    renderTab();
-    expect(await screen.findByText('rejected by provider')).toBeInTheDocument();
-  });
-
-  it('shows token health for local-file credentials (local-file account_id)', async () => {
-    const localToken: TokenHealthEntry = {
-      provider: 'anthropic',
-      account_id: 'local-file',
-      status: 'valid',
-      token_types: ['session_key'],
-      can_refresh: false,
-    };
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [localToken] });
-    renderTab();
-    expect(await screen.findByText('Token health')).toBeInTheDocument();
-    expect(screen.getByText('session_key')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /full credential inventory/i })).toHaveAttribute('href', '/settings/credentials');
   });
 
   it('shows the capture prompt and does not auto-fetch', () => {
@@ -191,7 +108,7 @@ describe('DebugTab', () => {
         active
       />,
     );
-    expect(screen.getByText(/usage only · quota unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText('Collection context')).toBeInTheDocument();
     expect(screen.getByText(/capture raw collector output/i)).toBeInTheDocument();
   });
 

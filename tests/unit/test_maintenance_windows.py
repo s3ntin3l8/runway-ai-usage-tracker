@@ -93,6 +93,36 @@ def test_rebuild_windows_for_providers_preserves_limit_and_pct():
     assert row.msgs == 1  # rebuilt from the one event, not carried over
 
 
+def test_rebuild_keeps_quota_series_with_shared_window_boundaries_separate():
+    session = _session()
+    _event(session, event_id="1", ts=datetime(2026, 8, 28, tzinfo=UTC))
+    _window(
+        session,
+        series_model_id="sonnet",
+        series_variant="default",
+        limit_value=100.0,
+        pct_used=25.0,
+    )
+    _window(
+        session, series_model_id="opus", series_variant="default", limit_value=200.0, pct_used=75.0
+    )
+
+    count = rebuild_windows_for_providers(session, ["minimax"])
+
+    assert count == 2
+    rows = list(
+        session.exec(
+            select(UsageWindow).where(UsageWindow.model_id == "", UsageWindow.sidecar_id == "")
+        )
+    )
+    assert {
+        (row.series_model_id, row.series_variant, row.limit_value, row.pct_used) for row in rows
+    } == {
+        ("sonnet", "default", 100.0, 25.0),
+        ("opus", "default", 200.0, 75.0),
+    }
+
+
 def test_rebuild_windows_for_providers_none_means_every_provider():
     session = _session()
     _event(session, event_id="1", provider_id="minimax", ts=datetime(2026, 8, 28, tzinfo=UTC))

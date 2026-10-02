@@ -4,10 +4,11 @@
 // switch.
 
 import { useMemo } from 'react';
-import type { CumulativeBucket, FleetEntry } from '@/api/types';
+import type { CumulativeBucket, CumulativeModelBucket, FleetEntry } from '@/api/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { useUsageSource } from '@/hooks/useUsageSource';
 import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenBar } from '@/components/charts/TokenBar';
 import { TokenDonut } from '@/components/charts/TokenDonut';
@@ -16,11 +17,13 @@ import { hasTokenData, sumTokens } from '@/lib/cumulative';
 import { formatNumber, formatPct, formatTokens } from '@/lib/format';
 import { cardKind, findForecast } from '@/lib/quota';
 import { CostOutlookCard } from './CostOutlookCard';
-import { ProviderAlerts } from './ProviderAlerts';
+import { ProviderErrorBanner } from './ProviderErrorBanner';
+import { ProviderAnomalies } from './ProviderAnomalies';
 import { ProviderKpis } from './ProviderKpis';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { QuotaWindowRow } from './QuotaWindowRow';
 import { RecentSessions } from './RecentSessions';
+import { getSourceSplitConfig } from './sourceSplitConfig';
 import type { TabScope } from './period';
 import {
   useProviderCumulative,
@@ -35,6 +38,7 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
   // user drop it from the month totals and both token donuts. Shared, persisted
   // pref so the choice carries across tabs and the Home strip.
   const { excludeCache } = useExcludeCache();
+  const [sidecarId] = useUsageSource();
   const forecast = useProviderForecast(entry.provider_id, entry.account_id);
   // Scope-matching bucket source — same 3-way split as ProviderKpis (which
   // shares the React Query cache), so the donuts and KPI tiles agree.
@@ -89,21 +93,31 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
   // per-model split so single-host setups still get a useful breakdown.
   // For token/spend providers there is no active quota window, so window_aggregations
   // is empty — fall back to the cumulative month bucket's by_model instead.
-  const agg = entry.window_aggregations?.longest;
-  const bySidecar = agg?.by_sidecar ?? {};
-  const sourceIsSidecar = Object.keys(bySidecar).length > 1;
-  const windowSplit = sourceIsSidecar ? bySidecar : (agg?.by_model ?? {});
-  const useWindowSplit = kind === 'quota';
-  const sourceSplit = useWindowSplit ? windowSplit : (scopeBucket?.by_model ?? {});
-  const sourceTitle = useWindowSplit
-    ? (sourceIsSidecar ? 'Active window by source' : 'Active window by model')
-    : `Tokens by model · ${scopeLabel}`;
-  const hasSourceSplit = Object.keys(sourceSplit).length > 0;
+  const sourceSplit = getSourceSplitConfig({
+    kind,
+    sidecarId,
+    aggregation: entry.window_aggregations?.longest,
+    scopeBucket,
+    scopeLabel,
+  });
+  const sourceSplitCard = (
+    <SourceSplitCard
+      title={sourceSplit.title}
+      split={sourceSplit.split}
+      isLoading={cumulative.isPending}
+      useWindowSplit={sourceSplit.useWindowSplit}
+      windowType={sourceSplit.windowType}
+      hasSourceSplit={sourceSplit.hasSourceSplit}
+      scopeLabel={scopeLabel}
+      excludeCache={excludeCache}
+    />
+  );
 
   return (
     <div className="flex flex-col gap-4">
       <ProviderKpis entry={entry} scope={scope} excludeCache={excludeCache} />
-      <ProviderAlerts providerId={entry.provider_id} accountId={entry.account_id} />
+      <ProviderErrorBanner providerId={entry.provider_id} accountId={entry.account_id} />
+      <ProviderAnomalies providerId={entry.provider_id} accountId={entry.account_id} />
       {entry.server_collector_available && entry.critical_gauge.data_source === 'local' ? (
         <Card role="status" className="border-warning/30 bg-warning-muted px-4 py-2.5 text-[13px] text-fg">
           Usage events are available, but quota data has not been collected. Check the provider credentials in Settings or use Debug to inspect collection.
@@ -111,47 +125,53 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
       ) : null}
 
       {kind === 'quota' && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Quota windows</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              {cards.map((card, i) => (
-                <QuotaWindowRow
-                  key={`${card.service_name}-${card.window_type}-${i}`}
-                  card={card}
-                  siblings={cards}
-                  forecast={findForecast(card, forecast.data?.forecasts ?? [])}
-                />
-              ))}
-            </CardContent>
-          </Card>
+        <>
+          <h2 className="-mb-2 text-sm font-semibold text-fg">Current quota window</h2>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Quota windows</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                {cards.map((card, i) => (
+                  <QuotaWindowRow
+                    key={`${card.service_name}-${card.window_type}-${i}`}
+                    card={card}
+                    siblings={cards}
+                    forecast={findForecast(card, forecast.data?.forecasts ?? [])}
+                  />
+                ))}
+              </CardContent>
+            </Card>
 
-          <Card className="flex flex-col">
-            <CardHeader>
-              <CardTitle>Current window</CardTitle>
-              {criticalForecast ? (
-                <span className="text-[11px] text-fg-subtle">
-                  projected {formatPct(criticalForecast.projected_pct)} at reset
-                </span>
-              ) : null}
-            </CardHeader>
-            <CardContent className="min-h-[11rem] flex-1">
-              {forecast.isPending ? (
-                <Skeleton className="h-full min-h-[11rem] w-full" />
-              ) : criticalForecast ? (
-                <TrajectoryChart forecast={criticalForecast} className="h-full min-h-[11rem] w-full" />
-              ) : (
-                <div className="flex h-full min-h-[11rem] items-center justify-center">
-                  <p className="text-center text-xs text-fg-subtle">No trajectory yet.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+            <Card className="flex flex-col">
+              <CardHeader>
+                <CardTitle>Current window</CardTitle>
+                {criticalForecast ? (
+                  <span className="text-[11px] text-fg-subtle">
+                    projected {formatPct(criticalForecast.projected_pct)} at reset
+                  </span>
+                ) : null}
+              </CardHeader>
+              <CardContent className="min-h-[11rem] flex-1">
+                {forecast.isPending ? (
+                  <Skeleton className="h-full min-h-[11rem] w-full" />
+                ) : criticalForecast ? (
+                  <TrajectoryChart forecast={criticalForecast} className="h-full min-h-[11rem] w-full" />
+                ) : (
+                  <div className="flex h-full min-h-[11rem] items-center justify-center">
+                    <p className="text-center text-xs text-fg-subtle">No trajectory yet.</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
       )}
 
+      {kind === 'quota' ? sourceSplitCard : null}
+
+      <h2 className="-mb-2 text-sm font-semibold text-fg">Usage in {scopeLabel}</h2>
       {kind === 'tokens' && (
         <Card>
           <CardHeader>
@@ -221,25 +241,7 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{sourceTitle}</CardTitle>
-            {useWindowSplit && agg ? (
-              <span className="text-[11px] text-fg-subtle">{agg.window_type} window</span>
-            ) : null}
-          </CardHeader>
-          <CardContent>
-            {!useWindowSplit && cumulative.isPending ? (
-              <Skeleton className="h-44 w-full" />
-            ) : hasSourceSplit ? (
-              <ModelDonut byModel={sourceSplit} className="h-44" excludeCache={excludeCache} />
-            ) : (
-              <p className="py-12 text-center text-xs text-fg-subtle">
-                {useWindowSplit ? 'No activity in the current window.' : `No usage in ${scopeLabel}.`}
-              </p>
-            )}
-          </CardContent>
-        </Card>
+        {kind !== 'quota' ? sourceSplitCard : null}
       </div>
 
       <RecentSessions
@@ -250,5 +252,47 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
         label={scopeLabel}
       />
     </div>
+  );
+}
+
+function SourceSplitCard({
+  title,
+  split,
+  isLoading,
+  useWindowSplit,
+  windowType,
+  hasSourceSplit,
+  scopeLabel,
+  excludeCache,
+}: {
+  title: string;
+  split: Record<string, CumulativeModelBucket>;
+  isLoading: boolean;
+  useWindowSplit: boolean;
+  windowType?: string;
+  hasSourceSplit: boolean;
+  scopeLabel: string;
+  excludeCache: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        {useWindowSplit && windowType ? (
+          <span className="text-[11px] text-fg-subtle">{windowType} window</span>
+        ) : null}
+      </CardHeader>
+      <CardContent>
+        {!useWindowSplit && isLoading ? (
+          <Skeleton className="h-44 w-full" />
+        ) : hasSourceSplit ? (
+          <ModelDonut byModel={split} className="h-44" excludeCache={excludeCache} />
+        ) : (
+          <p className="py-12 text-center text-xs text-fg-subtle">
+            {useWindowSplit ? 'No activity in the current window.' : `No usage in ${scopeLabel}.`}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }

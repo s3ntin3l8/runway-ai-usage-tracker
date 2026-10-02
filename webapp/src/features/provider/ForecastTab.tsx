@@ -15,7 +15,6 @@ import { formatCost, formatPct, formatTokens, timeUntil } from '@/lib/format';
 import { cardKind, findForecast } from '@/lib/quota';
 import { formatLocalDate, formatLocalDateTime } from '@/lib/tz';
 import {
-  useProviderAnomalies,
   useProviderForecast,
   useWindowHistory,
 } from './queries';
@@ -81,74 +80,30 @@ export function ForecastTab({
     forecasts[0] ??
     null;
 
-  const anomalies = useProviderAnomalies(providerId, accountId);
-  const spikes = anomalies.data?.anomalies ?? [];
-
-  const windowType = entry.critical_gauge.window_type ?? 'unknown';
-  const history = useWindowHistory(providerId, accountId, windowType);
-  // The archive stores one row per quota card variant; cards sharing a pool
-  // produce identical windows — collapse them for display.
+  const windowType = selected?.window_type ?? entry.critical_gauge.window_type ?? 'unknown';
+  const seriesModelId = selected?.model_id ?? '';
+  // Cards with no explicit variant are stored under LatestUsage's `default` key.
+  const seriesVariant = selected?.variant || 'default';
+  const history = useWindowHistory(
+    providerId,
+    accountId,
+    windowType,
+    seriesModelId,
+    seriesVariant,
+  );
+  // Keep exact series identity in the dedupe key. Legacy rows have empty series
+  // fields and remain visible as unscoped history.
   const windows = useMemo(() => {
     const seen = new Set<string>();
     return (history.data?.windows ?? []).filter((w) => {
-      const key = `${w.window_start}|${w.window_end}|${w.totals?.msgs}|${w.totals?.cost_usd}`;
+      const key = `${w.window_start}|${w.window_end}|${w.series_model_id ?? ''}|${w.series_variant ?? ''}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
   }, [history.data]);
 
-  // Usage anomalies card — identical content regardless of kind.
-  const anomaliesCard = (
-    <Card>
-      <CardHeader>
-        <CardTitle>Usage anomalies</CardTitle>
-        {anomalies.data ? (
-          <span className="text-[11px] text-fg-subtle">
-            today vs {anomalies.data.lookback_days}d mean
-          </span>
-        ) : null}
-      </CardHeader>
-      {anomalies.isPending ? (
-        <CardContent>
-          <Skeleton className="h-20 w-full" />
-        </CardContent>
-      ) : spikes.length === 0 ? (
-        <CardContent>
-          <p className="py-6 text-center text-xs text-fg-subtle">
-            No usage anomalies detected.
-          </p>
-        </CardContent>
-      ) : (
-        <Table>
-          <THead>
-            <TR>
-              <TH>Model</TH>
-              <TH className="text-right">Today</TH>
-              <TH className="text-right">Mean</TH>
-              <TH className="text-right">z-score</TH>
-            </TR>
-          </THead>
-          <TBody>
-            {spikes.map((a, i) => (
-              <TR key={`${a.model_id}-${i}`}>
-                <TD className="text-xs">{a.model_id}</TD>
-                <TD className="text-right font-mono tabular">{formatTokens(a.today_tokens)}</TD>
-                <TD className="text-right font-mono tabular">
-                  {formatTokens(a.historical_mean_tokens)}
-                </TD>
-                <TD className="text-right font-mono tabular text-warning">
-                  {a.z_score_tokens.toFixed(1)}σ
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
-      )}
-    </Card>
-  );
-
-  // --- Token providers: token-burn trend + anomalies ---
+  // --- Token providers: token-burn trend ---
   if (kind === 'tokens') {
     return (
       <div className="flex flex-col gap-4">
@@ -159,22 +114,20 @@ export function ForecastTab({
           title="Token burn · Last 7 days"
           excludeCache={excludeCache}
         />
-        {anomaliesCard}
       </div>
     );
   }
 
-  // --- Spend providers: cost outlook + anomalies ---
+  // --- Spend providers: cost outlook ---
   if (kind === 'spend') {
     return (
       <div className="flex flex-col gap-4">
         <CostOutlookCard providerId={providerId} accountId={accountId} />
-        {anomaliesCard}
       </div>
     );
   }
 
-  // --- Quota providers: full trajectory + cost outlook + anomalies + past windows ---
+  // --- Quota providers: selected trajectory + matching past windows ---
   return (
     <div className="flex flex-col gap-4">
       <Card>
@@ -241,16 +194,14 @@ export function ForecastTab({
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <CostOutlookCard providerId={providerId} accountId={accountId} />
-        {anomaliesCard}
-      </div>
-
       <Card>
         <CardHeader>
           <CardTitle>
-            Past {windowType !== 'unknown' ? windowType : ''} windows
+            Past {windowType !== 'unknown' ? `${windowType} ` : ''}windows
           </CardTitle>
+          {selected ? (
+            <span className="text-[11px] text-fg-subtle">{forecastTitle(selected)}</span>
+          ) : null}
         </CardHeader>
         {history.isPending && history.isFetching ? (
           <CardContent>
@@ -285,6 +236,9 @@ export function ForecastTab({
                   <TR key={`${w.window_start}-${i}`}>
                     <TD className="font-mono text-xs tabular">
                       {formatLocalDate(w.window_start)} – {formatLocalDate(w.window_end)}
+                      {!w.series_variant ? (
+                        <Badge variant="neutral" className="ml-2 font-sans">unscoped</Badge>
+                      ) : null}
                     </TD>
                     <TD className="text-right font-mono tabular">{tot.msgs ?? '—'}</TD>
                     <TD className="text-right font-mono tabular">{formatTokens(tokens)}</TD>

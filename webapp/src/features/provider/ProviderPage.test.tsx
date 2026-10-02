@@ -84,7 +84,8 @@ describe('ProviderPage', () => {
     renderPage();
     await screen.findByTestId('overview-tab');
 
-    await userEvent.click(screen.getByRole('button', { name: /clear failure state/i }));
+    await userEvent.click(screen.getByRole('button', { name: /more provider actions/i }));
+    await userEvent.click(await screen.findByText('Clear failure state'));
     await waitFor(() =>
       expect(api.resetProvider).toHaveBeenCalledWith('anthropic', 'me@example.com'),
     );
@@ -152,7 +153,8 @@ describe('ProviderPage', () => {
     renderPage();
     await screen.findByTestId('overview-tab');
 
-    await userEvent.click(screen.getByRole('button', { name: /clear failure state/i }));
+    await userEvent.click(screen.getByRole('button', { name: /more provider actions/i }));
+    await userEvent.click(await screen.findByText('Clear failure state'));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Reset failed: nope'));
   });
 

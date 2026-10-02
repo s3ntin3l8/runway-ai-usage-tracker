@@ -44,6 +44,8 @@ def close_window(
     window_type: str,
     window_start: datetime,
     window_end: datetime,
+    series_model_id: str = "",
+    series_variant: str = "",
     limit_value: float | None = None,
     pct_used: float | None = None,
 ) -> int:
@@ -124,6 +126,8 @@ def close_window(
             window_type=window_type,
             window_start=window_start,
             window_end=window_end,
+            series_model_id=series_model_id,
+            series_variant=series_variant,
             model_id=model_id,
             sidecar_id=sidecar_id,
             msgs=totals["msgs"],
@@ -201,6 +205,11 @@ def _maybe_close_previous_window(
             window_type=window_type,
             window_start=window_start,
             window_end=existing_reset_dt,
+            series_model_id=existing.model_id or "",
+            # LatestUsage normalizes absent variants to the explicit `default`
+            # key. Keep that distinct from empty series identity on legacy
+            # UsageWindow rows.
+            series_variant=existing.variant or "default",
             limit_value=existing_data.get("limit_value"),
             pct_used=existing_data.get("pct_used"),
         )

@@ -33,4 +33,24 @@ describe('PageHeader', () => {
     const { container } = render(<PageHeader title="Home" className="custom-x" />);
     expect(container.querySelector('header')).toHaveClass('custom-x');
   });
+
+  it('allows a page to explicitly opt into the shared sticky header behavior', () => {
+    const { container } = render(<PageHeader title="Provider" sticky />);
+    expect(container.querySelector('header')).toHaveClass('sticky', 'top-0', 'z-20');
+  });
+
+  it('can opt out of sticky positioning when embedded in a scroll region', () => {
+    const { container } = render(<PageHeader title="Dialog" sticky={false} />);
+    expect(container.querySelector('header')).not.toHaveClass('sticky');
+  });
+
+  it('supports a custom responsive layout inside the shared header', () => {
+    const { container } = render(
+      <PageHeader sticky>
+        <div>Responsive provider controls</div>
+      </PageHeader>,
+    );
+    expect(container.querySelector('header')).toHaveClass('sticky');
+    expect(screen.getByText('Responsive provider controls')).toBeInTheDocument();
+  });
 });

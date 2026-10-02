@@ -1,10 +1,9 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { ForecastTab } from './ForecastTab';
 import * as api from '@/api/endpoints';
 import {
-  anomaliesResponse,
   costForecast,
   fleetEntry,
   forecastEntry,
@@ -20,7 +19,6 @@ vi.mock('@/components/charts/TrajectoryChart', () => ({
 function mockAll() {
   vi.mocked(api.fetchForecast).mockResolvedValue(forecastResponse([forecastEntry()]));
   vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
-  vi.mocked(api.fetchAnomalies).mockResolvedValue(anomaliesResponse());
   vi.mocked(api.fetchWindowHistory).mockResolvedValue({ windows: [] } as never);
 }
 
@@ -39,45 +37,40 @@ describe('ForecastTab', () => {
     expect(screen.getByText(/samples/)).toBeInTheDocument();
   });
 
-  it('renders the cost outlook with spend and projection', async () => {
+  it('keeps monthly cost outlook out of quota-window forecast', async () => {
     renderWithProviders(
       <ForecastTab providerId="anthropic" accountId="me@example.com" entry={fleetEntry()} />,
     );
-    expect(await screen.findByText('Cost outlook')).toBeInTheDocument();
-    expect(await screen.findByText(/spent/)).toBeInTheDocument();
-    expect(screen.getAllByText(/projected/).length).toBeGreaterThan(0);
+    expect(await screen.findByText('Trajectory')).toBeInTheDocument();
+    expect(screen.queryByText('Cost outlook')).not.toBeInTheDocument();
   });
 
-  it('shows the no-anomalies empty state by default', async () => {
+  it('requests history for the selected quota series', async () => {
+    const selected = forecastEntry({ model_id: 'sonnet', variant: 'default', window_type: 'weekly' });
+    vi.mocked(api.fetchForecast).mockResolvedValue(forecastResponse([selected]));
     renderWithProviders(
       <ForecastTab providerId="anthropic" accountId="me@example.com" entry={fleetEntry()} />,
     );
-    expect(await screen.findByText(/no usage anomalies detected/i)).toBeInTheDocument();
+    await screen.findByText('Trajectory');
+    await waitFor(() => expect(api.fetchWindowHistory).toHaveBeenCalledWith(expect.objectContaining({
+      series_model_id: 'sonnet',
+      series_variant: 'default',
+      window_type: 'weekly',
+    })));
   });
 
-  it('renders the anomalies table when spikes exist', async () => {
-    vi.mocked(api.fetchAnomalies).mockResolvedValue(
-      anomaliesResponse({
-        anomalies: [
-          {
-            provider_id: 'anthropic',
-            account_id: 'me@example.com',
-            model_id: 'claude-opus',
-            today_tokens: 50000,
-            today_cost_usd: 5,
-            historical_mean_tokens: 1000,
-            historical_stddev_tokens: 200,
-            z_score_tokens: 4.2,
-            verdict: 'spike',
-          },
-        ],
-      }),
+  it('normalizes an empty forecast variant to the default series identity', async () => {
+    vi.mocked(api.fetchForecast).mockResolvedValue(
+      forecastResponse([forecastEntry({ model_id: '', variant: '' })]),
     );
     renderWithProviders(
       <ForecastTab providerId="anthropic" accountId="me@example.com" entry={fleetEntry()} />,
     );
-    expect(await screen.findByText('claude-opus')).toBeInTheDocument();
-    expect(screen.getByText(/4\.2σ/)).toBeInTheDocument();
+    await screen.findByText('Trajectory');
+    await waitFor(() => expect(api.fetchWindowHistory).toHaveBeenCalledWith(expect.objectContaining({
+      series_model_id: '',
+      series_variant: 'default',
+    })));
   });
 
   it('offers a window selector when multiple forecasts exist', async () => {
@@ -151,6 +144,11 @@ describe('ForecastTab', () => {
       <ForecastTab providerId="anthropic" accountId="me@example.com" entry={fleetEntry()} />,
     );
     expect(await screen.findByText(/no forecast available yet/i)).toBeInTheDocument();
+    await waitFor(() => expect(api.fetchWindowHistory).toHaveBeenCalledWith(expect.objectContaining({
+      window_type: 'weekly',
+      series_model_id: '',
+      series_variant: 'default',
+    })));
   });
 
   it('renders closed windows in the history table', async () => {
