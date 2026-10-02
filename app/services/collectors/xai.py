@@ -17,7 +17,8 @@ The ``oc_sk_…`` API key surface (https://api.x.ai/v1/…) is *not* the same
 auth — it serves the developer API, not the consumer/Grok subscription.
 Runway uses the OAuth access token that the opencode CLI stores in
 ``~/.local/share/opencode/auth.json["xai"]["access"]`` (auto-extracted
-by the sidecar). Tokens expire after ~7 days; Runway automatically
+by the sidecar). Access tokens are short-lived — a fresh login's JWT carries
+a 6-hour ``exp`` (measured ``iat → exp``, 2026-10) — and Runway automatically
 refreshes xAI OAuth tokens via ``https://auth.x.ai/oauth2/token`` when a
 refresh token (``xai_refresh``) is available. If no refresh token is
 present or refresh fails, the collector surfaces an ``auth_required`` card

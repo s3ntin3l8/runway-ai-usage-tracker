@@ -17,10 +17,12 @@ All three sidecar sources get key-scoped origins (#349), e.g.
 `path:/home/u/.local/share/opencode/auth.json#495fa9c614ce` or
 `env:GROK_OAUTH_TOKEN#495fa9c614ce`. The suffix comes from `xai_refresh`
 when the candidate has it and only falls back to `xai_access`, because the
-access JWT is the part that expires (~7 days) — the Grok / OpenCode CLI
-refreshes it behind Runway's back, and keying on it would mint a new origin
-every week, stranding the tag that was written against the old one. File
-and CLI candidates ship the refresh token (`xai.refresh` in OpenCode's
+access JWT is the part that expires (~6 hours: measured `iat → exp` on a
+fresh login's token, 2026-10), and it rotates several times a day — both
+Runway (when a refresh token is present) and the Grok / OpenCode CLI, from
+its own session, refresh it — and keying on it would mint a new origin on
+every refresh, stranding the tag that was written against the old one.
+File and CLI candidates ship the refresh token (`xai.refresh` in OpenCode's
 `auth.json`, `refresh_token` in `~/.grok/auth.json`) and are keyed by it;
 the access-only `GROK_OAUTH_TOKEN` candidate has nothing else to go on and
 is keyed by its bearer. See *The sibling providers (#349)* in

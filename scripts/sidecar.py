@@ -2850,10 +2850,13 @@ def credential_origin_for_provider(provider_id: str) -> str:
 # ``api_key`` there and no suffix would be derivable at all.
 #
 # xai then takes the *first* field it finds, and that order matters: the
-# access JWT expires in about seven days and the Grok / OpenCode CLI
-# refreshes it behind Runway's back (``app/services/collectors/xai.py``), so
-# fingerprinting it would mint a new origin — and strand the operator tag on
-# the old one — every week. File and CLI candidates ship the refresh token
+# access JWT expires in about six hours (measured ``iat → exp`` on a fresh
+# login's token, 2026-10) and it rotates several times a day — Runway
+# refreshes it via ``auth.x.ai/oauth2/token`` when a candidate ships a
+# refresh token, and the Grok / OpenCode CLI refreshes it too from its own
+# session (``app/services/collectors/xai.py``). Fingerprinting it would
+# mint a new origin — and strand the operator tag on the old one — on
+# every refresh. File and CLI candidates ship the refresh token
 # (``xai.refresh`` / ``refresh_token``), so they key on that; only the
 # access-only ``GROK_OAUTH_TOKEN`` env candidate falls back to
 # ``xai_access``, because it has nothing else to identify it by.
