@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
-from app.core.utils import error_card, http_request_with_retry, human_delta
+from app.core.utils import IdentityExtractor, error_card, http_request_with_retry, human_delta
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
@@ -603,6 +603,8 @@ class KimiCodingCollector(BaseCollector):
                 ]
             if resp.status_code == 200:
                 usage_data = resp.json()
+                if input_source == self.INPUT_SOURCE_SIDECAR:
+                    self._note_cookie_subject(token)
         except (httpx.RequestError, ValueError, KeyError, TypeError):
             # Non-fatal: the strategy may still build cards from the other
             # web calls, or degrade to an error card downstream.
@@ -641,6 +643,16 @@ class KimiCodingCollector(BaseCollector):
             for card in cards:
                 card["tier"] = plan_title
         return cards
+
+    def _note_cookie_subject(self, token: str) -> None:
+        """Remember whose login a *sidecar-reported* cookie is (its JWT ``sub``) once Kimi accepted it.
+
+        The claim only feeds a comparison with the value recorded for this source, so a
+        browser switching users is noticed; it is never used to name an account.
+        """
+        subject = IdentityExtractor.extract_jwt_payload(token).get("sub")
+        if isinstance(subject, str) and subject.strip():
+            self.verified_subject = subject.strip()
 
     @staticmethod
     def _plan_info_from_subscription(data: dict[str, Any]) -> tuple[str | None, str | None]:

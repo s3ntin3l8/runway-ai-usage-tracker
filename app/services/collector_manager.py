@@ -930,6 +930,7 @@ class CollectorManager:
             collector.credential_account_id = account_id
         # Proof from one source's response must never be read as another's.
         collector.verified_identity = None
+        collector.verified_subject = None
 
     async def _cookie_switched_account(
         self,
@@ -956,6 +957,7 @@ class CollectorManager:
         origin = candidate.get("credential_origin")
         sidecar_id = candidate.get("sidecar_id")
         verified = getattr(collector, "verified_identity", None)
+        subject = getattr(collector, "verified_subject", None)
         if (
             candidate.get("identity_pending")
             or not is_sidecar_source(candidate)
@@ -963,11 +965,18 @@ class CollectorManager:
             or not origin.startswith("cookie:")
             or not is_machine_bound_origin(origin)
             or not isinstance(sidecar_id, str)
-            or not isinstance(verified, str)
-            or not EMAIL_RE.match(verified)
-            or not EMAIL_RE.match(account_id)
-            or canonical_account_id(verified) == canonical_account_id(account_id)
         ):
+            return False
+        if isinstance(verified, str) and EMAIL_RE.match(verified):
+            switched = EMAIL_RE.match(account_id) is not None and canonical_account_id(
+                verified
+            ) != canonical_account_id(account_id)
+        else:
+            # No email from the provider: fall back to its stable subject, if it gave one.
+            switched = isinstance(subject, str) and await asyncio.to_thread(
+                self._subject_drifted, provider_id, account_id, candidate["source_id"], subject
+            )
+        if not switched:
             return False
         revoked = await asyncio.to_thread(
             self._revoke_cookie_tag,
@@ -978,6 +987,11 @@ class CollectorManager:
             sidecar_id,
         )
         if not revoked:
+            logger.debug(
+                "Cookie switch behind %s/%s left alone: no sidecar-scoped operator tag to drop",
+                scrub_log(provider_id),
+                scrub_log(account_id),
+            )
             return False
         await token_cache.remove_source(
             provider_id, account_id, candidate["source_id"], retire_matching_oauth=True
@@ -990,6 +1004,39 @@ class CollectorManager:
             scrub_log(provider_id),
         )
         return True
+
+    @staticmethod
+    def _subject_drifted(provider_id: str, account_id: str, source_id: str, subject: str) -> bool:
+        """Compare the login behind a cookie with the one last seen for this source and account.
+
+        The first sighting (or the first one after the source moved to another account, i.e. a
+        re-tag) is recorded rather than compared; a different subject for the same account
+        means the browser switched users.
+        """
+        from sqlmodel import Session, col, select
+
+        from app.core.db import engine
+        from app.models.db import CredentialSource
+        from app.services.account_identity import canonical_account_id
+
+        account = canonical_account_id(account_id)
+        with Session(engine) as session:
+            row = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == provider_id,
+                    CredentialSource.source_id == source_id,
+                    col(CredentialSource.account_id).in_({account_id, account}),
+                )
+            ).first()
+            if row is None:
+                return False
+            if row.verified_subject is None or row.verified_subject_account != account:
+                row.verified_subject = subject
+                row.verified_subject_account = account
+                session.add(row)
+                session.commit()
+                return False
+            return row.verified_subject.casefold() != subject.casefold()
 
     @staticmethod
     def _revoke_cookie_tag(
@@ -1036,6 +1083,9 @@ class CollectorManager:
             ).first()
             if row is not None:
                 row.account_id = pending_account
+                # Whoever logs in next is a new login, not a drift from the old one.
+                row.verified_subject = None
+                row.verified_subject_account = None
                 session.add(row)
             session.commit()
         return True
