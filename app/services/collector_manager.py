@@ -922,10 +922,13 @@ class CollectorManager:
         with Session(engine) as session:
             # The durable row sits under the account the bundle was filed under: ``default``,
             # or (Anthropic) the source id itself while the identity is pending.
+            filed_under = {old_account_id}
+            if cache_account_id:
+                filed_under.add(cache_account_id)
             source = session.exec(
                 select(CredentialSource).where(
                     CredentialSource.provider_id == provider_id,
-                    col(CredentialSource.account_id).in_({old_account_id, cache_account_id or ""}),
+                    col(CredentialSource.account_id).in_(filed_under),
                     CredentialSource.source_id == source_id,
                 )
             ).first()

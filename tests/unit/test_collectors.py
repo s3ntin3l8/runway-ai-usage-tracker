@@ -1946,8 +1946,11 @@ class TestChatGPTCollector:
     """Test suite for ChatGPT collector."""
 
     @pytest.mark.asyncio
-    async def test_collect_api_success(self, mock_http_client, mock_chatgpt_usage_response):
+    async def test_collect_api_success(self, mock_http_client, mock_chatgpt_usage_response, caplog):
         """Test successful ChatGPT API collection."""
+        import logging
+
+        caplog.set_level(logging.DEBUG)
         collector = ChatGPTCollector()
 
         # Mock Usage Info (Unified)
@@ -1970,7 +1973,7 @@ class TestChatGPTCollector:
 
         assert isinstance(result, list)
         assert len(result) == 1
-        assert result[0].get("variant") == "Codex"
+        assert result[0].get("variant") == "Codex", (result[0], caplog.text[-3000:])
         assert "PLUS" in str(result[0].get("detail", ""))
         assert "%" in str(result[0].get("remaining", ""))
 

@@ -17,15 +17,6 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models.db import CredentialSource, PendingCredentialTag
 from app.services.collector_manager import CollectorManager
-from app.services.collectors import (  # noqa: F401 - imported so the fixture can rebind their cache
-    anthropic,
-    anthropic_oauth,
-    anthropic_web,
-    chatgpt,
-    chatgpt_oauth,
-    chatgpt_web,
-    oauth_base,
-)
 from app.services.credential_tags import CredentialTagRepo
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import TokenCache
@@ -51,8 +42,7 @@ def world(monkeypatch):
     SQLModel.metadata.create_all(engine)
     cache = TokenCache()
     for name, module in list(sys.modules.items()):
-        # Never the defining module: a module first imported *during* the test would bind the
-        # temporary cache for good (the collectors are imported above for the same reason).
+        # Never the defining module itself.
         if (
             name.startswith("app.")
             and name != "app.services.token_cache"
