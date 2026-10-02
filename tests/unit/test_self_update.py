@@ -687,7 +687,7 @@ class TestWindowsSwapScript:
 
     def test_keeps_previous_and_refreshes_display_version(self):
         script = self._script(restart=True, display_version="2.13.0")
-        assert 'move /Y "' in script and 'RunwaySidecar.exe.previous" >>"%LOG%"' in script
+        assert 'move /Y "' in script and 'RunwaySidecar.exe.previous" >NUL 2>&1' in script
         assert "reg query" in script
         assert '/v DisplayVersion /t REG_SZ /d "2.13.0" /f' in script
         # Only touches the installer's key, and only if it exists (portable
@@ -720,7 +720,7 @@ class TestWindowsSwapScript:
     def test_logs_swap_result_and_checks_each_move(self):
         script = self._script(restart=True, display_version="2.13.0")
         assert 'set "LOG=%~dp0runway-self-update.log"' in script
-        assert "if errorlevel 1 goto swap_failed" in script
+        assert "if %wait_attempts% GEQ 120 goto swap_failed" in script
         assert "if errorlevel 1 goto restore_previous" in script
         assert "if errorlevel 1 goto restore_failed" in script
         assert "Failed to restore previous sidecar from backup" in script
@@ -731,6 +731,13 @@ class TestWindowsSwapScript:
         assert script.index('Self-update helper started.>"%LOG%"') < script.index(
             "Waiting for sidecar PID"
         )
+
+    def test_relaunch_uses_fresh_onefile_runtime_after_parent_releases_exe(self):
+        script = self._script(restart=True, display_version=None)
+        assert script.index('set "PYINSTALLER_RESET_ENVIRONMENT=1"') < script.index('start "" "')
+        assert script.index(":move_original") < script.index(":install_new")
+        assert "goto move_original" in script
+        assert "timeout /t" not in script
 
     def test_windows_helper_spawn_failure_is_reported(self, tmp_path, monkeypatch, caplog):
         helper = tmp_path / "runway-self-update.bat"
@@ -753,3 +760,17 @@ class TestWindowsSwapScript:
         assert not incoming.exists()
         assert "Could not start Windows self-update helper" in caplog.text
         assert "cmd.exe unavailable" in caplog.text
+
+    def test_windows_helper_launch_quotes_path_and_hides_console(self, tmp_path, monkeypatch):
+        install_dir = tmp_path / "Runway Sidecar"
+        install_dir.mkdir()
+        install = install_dir / "RunwaySidecar.exe"
+        incoming = install_dir / "RunwaySidecar.new.exe"
+        calls = []
+        monkeypatch.setattr(self_update.subprocess, "Popen", lambda *a, **kw: calls.append((a, kw)))
+
+        assert self_update._apply_windows(install, incoming, restart=False)
+        (args, kwargs) = calls[0]
+        assert args[0] == f'cmd.exe /d /s /c ""{install_dir / "runway-self-update.bat"}""'
+        assert kwargs["executable"] == "cmd.exe"
+        assert kwargs["creationflags"] & 0x08000000
