@@ -11,17 +11,9 @@ def _since(days_ago: int = 1) -> datetime:
     return datetime.now(UTC) - timedelta(days=days_ago)
 
 
-# Envelope timestamps used to be hard-coded dates, and ``parse_xai_events`` is
-# called with ``since=_since(7)`` — so every fixture silently expired exactly
-# seven days after its own date, turning the suite from green to red the
-# moment the clock passed 2026-10-02T12:00Z with no code change behind it.
-# Anchor to "now minus six days" instead: always inside the window, always
-# ordered by the per-envelope offset.
-_ANCHOR = datetime.now(UTC) - timedelta(days=6)
-
-
-def _ts(seconds_after: int = 0) -> str:
-    return (_ANCHOR + timedelta(seconds=seconds_after)).isoformat().replace("+00:00", "Z")
+# The fixtures below carry fixed 2026-09-25 timestamps, so the window start is fixed too: a
+# ``now - 7 days`` cutoff silently aged them out once a week had passed (CI failed on 2026-10-02).
+SINCE = datetime(2026, 9, 1, tzinfo=UTC)
 
 
 def _write_updates(tmp_path, records, *, session_id="session-1", cwd="%2Fhome%2Fuser%2Fproj"):
@@ -54,7 +46,7 @@ def test_extracts_model_splits_without_double_counting_cache_or_reasoning(tmp_pa
         tmp_path,
         [
             _envelope(
-                _ts(0),
+                "2026-09-25T12:00:00Z",
                 _turn(
                     "prompt-1",
                     {
@@ -87,7 +79,7 @@ def test_extracts_model_splits_without_double_counting_cache_or_reasoning(tmp_pa
         ],
     )
 
-    events = parse_xai_events([path], account_id="alice@example.com", since=_since(7))
+    events = parse_xai_events([path], account_id="alice@example.com", since=SINCE)
 
     assert [
         (
@@ -116,9 +108,11 @@ def test_fallback_uses_current_model_and_turn_totals_only_once(tmp_path):
     path = _write_updates(
         tmp_path,
         [
-            _envelope(_ts(0), {"sessionUpdate": "model_changed", "model_id": "grok-4"}),
             _envelope(
-                _ts(1),
+                "2026-09-25T12:00:00Z", {"sessionUpdate": "model_changed", "model_id": "grok-4"}
+            ),
+            _envelope(
+                "2026-09-25T12:00:01Z",
                 _turn(
                     "p1",
                     {
@@ -130,9 +124,11 @@ def test_fallback_uses_current_model_and_turn_totals_only_once(tmp_path):
                     },
                 ),
             ),
-            _envelope(_ts(2), {"sessionUpdate": "model_changed", "model_id": "grok-4.1"}),
             _envelope(
-                _ts(3),
+                "2026-09-25T12:00:02Z", {"sessionUpdate": "model_changed", "model_id": "grok-4.1"}
+            ),
+            _envelope(
+                "2026-09-25T12:00:03Z",
                 _turn(
                     "p2",
                     {
@@ -146,7 +142,7 @@ def test_fallback_uses_current_model_and_turn_totals_only_once(tmp_path):
         ],
     )
 
-    events = parse_xai_events([path], account_id="account", since=_since(7))
+    events = parse_xai_events([path], account_id="account", since=SINCE)
 
     assert [
         (
@@ -170,22 +166,22 @@ def test_ignores_malformed_non_turn_and_incomplete_records(tmp_path):
         tmp_path,
         [
             {
-                "timestamp": _ts(0),
+                "timestamp": "2026-09-25T12:00:00Z",
                 "params": {"update": {"sessionUpdate": "agent_message_chunk"}},
             },
-            _envelope(_ts(1), _turn("no-usage", None)),
+            _envelope("2026-09-25T12:00:01Z", _turn("no-usage", None)),
             _envelope(
-                _ts(2),
+                "2026-09-25T12:00:02Z",
                 {"sessionUpdate": "turn_completed", "usage": {"inputTokens": 1}},
             ),
-            _envelope(_ts(3), _turn("no-token-usage", {"usageIsIncomplete": True})),
+            _envelope("2026-09-25T12:00:03Z", _turn("no-token-usage", {"usageIsIncomplete": True})),
         ]
         + [],
     )
     # A malformed line in the middle must not invalidate neighboring entries.
     path.write_text(path.read_text() + "\n{not valid json}\n", encoding="utf-8")
 
-    assert parse_xai_events([path], account_id="a", since=_since(7)) == []
+    assert parse_xai_events([path], account_id="a", since=SINCE) == []
 
 
 def test_partial_model_cost_is_not_reported(tmp_path):
@@ -193,7 +189,7 @@ def test_partial_model_cost_is_not_reported(tmp_path):
         tmp_path,
         [
             _envelope(
-                _ts(0),
+                "2026-09-25T12:00:00Z",
                 _turn(
                     "p1",
                     {
@@ -213,7 +209,7 @@ def test_partial_model_cost_is_not_reported(tmp_path):
         ],
     )
 
-    events = parse_xai_events([path], account_id="a", since=_since(7))
+    events = parse_xai_events([path], account_id="a", since=SINCE)
 
     assert len(events) == 1
     assert events[0].tokens_input == 15
@@ -226,7 +222,7 @@ def test_headless_usage_keeps_uncached_input_and_cache_buckets_disjoint(tmp_path
         tmp_path,
         [
             _envelope(
-                _ts(0),
+                "2026-09-25T12:00:00Z",
                 _turn(
                     "p1",
                     {
@@ -241,7 +237,7 @@ def test_headless_usage_keeps_uncached_input_and_cache_buckets_disjoint(tmp_path
         ],
     )
 
-    events = parse_xai_events([path], account_id="a", since=_since(7))
+    events = parse_xai_events([path], account_id="a", since=SINCE)
 
     assert len(events) == 1
     assert events[0].tokens_input == 60
@@ -255,17 +251,17 @@ def test_headless_and_float_cost_spellings_are_preserved_only_when_complete(tmp_
     path = _write_updates(
         tmp_path,
         [
-            _envelope(_ts(0), _turn("float-cost", {"costUSD": 1.25})),
+            _envelope("2026-09-25T12:00:00Z", _turn("float-cost", {"costUSD": 1.25})),
             _envelope(
-                _ts(1),
+                "2026-09-25T12:00:01Z",
                 _turn("headless-ticks", {"total_cost_usd_ticks": 20_000_000_000}),
             ),
             _envelope(
-                _ts(2),
+                "2026-09-25T12:00:02Z",
                 _turn("headless-float", {"total_cost_usd": 3.5}),
             ),
             _envelope(
-                _ts(3),
+                "2026-09-25T12:00:03Z",
                 _turn(
                     "incomplete-headless",
                     {
@@ -276,21 +272,21 @@ def test_headless_and_float_cost_spellings_are_preserved_only_when_complete(tmp_
                 ),
             ),
             _envelope(
-                _ts(4),
+                "2026-09-25T12:00:04Z",
                 _turn(
                     "partial-headless-int",
                     {"input_tokens": 1, "total_cost_usd": 90.0, "cost_is_partial": 1},
                 ),
             ),
             _envelope(
-                _ts(5),
+                "2026-09-25T12:00:05Z",
                 _turn(
                     "partial-headless-string",
                     {"input_tokens": 1, "total_cost_usd": 90.0, "cost_is_partial": "true"},
                 ),
             ),
             _envelope(
-                _ts(6),
+                "2026-09-25T12:00:06Z",
                 _turn(
                     "incomplete-headless-string",
                     {"input_tokens": 1, "total_cost_usd": 90.0, "usage_is_incomplete": "true"},
@@ -299,7 +295,7 @@ def test_headless_and_float_cost_spellings_are_preserved_only_when_complete(tmp_
         ],
     )
 
-    events = parse_xai_events([path], account_id="a", since=_since(7))
+    events = parse_xai_events([path], account_id="a", since=SINCE)
 
     assert [(event.event_id, event.cost_usd) for event in events] == [
         ("xai|grok|session-1|float-cost|unknown", 1.25),
