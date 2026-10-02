@@ -1040,6 +1040,36 @@ class TestWindowsCredCache:
         sidecar._windows_cred_cache.pop(target, None)
 
 
+class TestSidecarSubprocessWindows:
+    def test_generic_exec_rule_hides_windows_console(self, monkeypatch):
+        no_window = 0x08000000
+        monkeypatch.setattr(sidecar.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(sidecar.subprocess, "CREATE_NO_WINDOW", no_window, raising=False)
+        result = MagicMock(returncode=0, stdout="value\n")
+
+        with patch.object(sidecar.subprocess, "run", return_value=result) as run:
+            sidecar.GenericCollector.collect_provider(
+                "test-provider",
+                {
+                    "rules": [
+                        {
+                            "type": "exec",
+                            "command": ["git", "config", "--global", "user.email"],
+                            "mapping": {"value": "api_key"},
+                        }
+                    ]
+                },
+            )
+
+        assert run.call_args.kwargs["creationflags"] == no_window
+
+    @pytest.mark.parametrize("system", ["Linux", "Darwin"])
+    def test_non_windows_subprocess_flags_remain_zero(self, monkeypatch, system):
+        monkeypatch.setattr(sidecar.platform, "system", lambda: system)
+
+        assert sidecar._subprocess_creationflags() == 0
+
+
 # ---------------------------------------------------------------------------
 # DaemonRunner tests
 # ---------------------------------------------------------------------------
