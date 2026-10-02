@@ -780,6 +780,85 @@ async def test_staler_push_absorbs_missing_xai_refresh(cache):
 
 
 @pytest.mark.asyncio
+async def test_newer_expired_push_replaces_dead_refresh_lineage(cache):
+    """A machine that rotated its refresh token must be able to deliver it.
+
+    Between CLI rotations every access JWT that machine reports is expired, so
+    treating any spent access as maximally stale pinned a dead refresh token in
+    the cache for good: each push was rejected, the refresh lineage could never
+    recover, and collection stayed broken until the cache was cleared (issue
+    #474). With both sides spent the newer lineage wins.
+    """
+    now = time.time()
+    spent_yesterday = str(int((now - 86_400) * 1000))
+    spent_recently = str(int((now - 300) * 1000))
+
+    await cache.store(
+        "xai",
+        {"xai_access": "old_access", "xai_refresh": "dead-rt", "expiry_date": spent_yesterday},
+        account_id="user@example.com",
+        source_id="sidecar-source",
+    )
+    await cache.store(
+        "xai",
+        {
+            "xai_access": "rotated_access",
+            "xai_refresh": "rotated-rt",
+            "expiry_date": spent_recently,
+        },
+        account_id="user@example.com",
+        source_id="sidecar-source",
+    )
+
+    tokens = await cache.get("xai", "user@example.com")
+    assert tokens["xai_access"] == "rotated_access"
+    assert tokens["xai_refresh"] == "rotated-rt"
+
+    async with cache.using_source("xai", "user@example.com", "sidecar-source"):
+        src_tokens = cache.current_source_tokens("xai", "user@example.com")
+        assert src_tokens["xai_access"] == "rotated_access"
+        assert src_tokens["xai_refresh"] == "rotated-rt"
+
+
+@pytest.mark.asyncio
+async def test_older_expired_push_still_cannot_replace_a_newer_spent_lineage(cache):
+    """Two spent lineages compare by expiry — recency alone must not decide.
+
+    The counterpart to `test_newer_expired_push_replaces_dead_refresh_lineage`:
+    a machine reporting an *older* (already superseded) bundle still loses, so
+    the newer rule cannot degrade into "expired beats expired".
+    """
+    now = time.time()
+    spent_recently = str(int((now - 300) * 1000))
+    spent_yesterday = str(int((now - 86_400) * 1000))
+
+    await cache.store(
+        "xai",
+        {
+            "xai_access": "current_access",
+            "xai_refresh": "current-rt",
+            "expiry_date": spent_recently,
+        },
+        account_id="user@example.com",
+        source_id="sidecar-source",
+    )
+    await cache.store(
+        "xai",
+        {
+            "xai_access": "ancient_access",
+            "xai_refresh": "ancient-rt",
+            "expiry_date": spent_yesterday,
+        },
+        account_id="user@example.com",
+        source_id="sidecar-source",
+    )
+
+    tokens = await cache.get("xai", "user@example.com")
+    assert tokens["xai_access"] == "current_access"
+    assert tokens["xai_refresh"] == "current-rt"
+
+
+@pytest.mark.asyncio
 async def test_sibling_credential_push_does_not_keep_removed_family_alive(monkeypatch):
     """A live CLI push must not extend the TTL of a browser credential no longer reported."""
     short_cache = TokenCache(ttl_seconds=10)

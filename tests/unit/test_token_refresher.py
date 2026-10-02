@@ -1,5 +1,7 @@
 """Unit tests for app/services/token_refresher.py"""
 
+import json
+import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +16,7 @@ def _make_mock_response(status_code: int, body: dict) -> MagicMock:
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
     resp.json.return_value = body
+    resp.text = json.dumps(body)
     if status_code >= 400:
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
             f"HTTP {status_code}",
@@ -311,6 +314,53 @@ class TestRefreshOAuthTokenHTTPErrors:
         with patch("httpx.AsyncClient", return_value=ctx):
             with pytest.raises(httpx.HTTPStatusError):
                 await refresh_oauth_token("anthropic", {"refresh_token": "rt"})
+
+    async def test_http_error_logs_status_and_oauth_error_code(self, caplog):
+        """`invalid_grant` vs `invalid_client` is the whole diagnosis — log it.
+
+        A dead refresh lineage used to surface as nothing more than
+        `HTTPStatusError: HTTP 400`, which cannot distinguish a rotated grant
+        from a malformed request (issue #474).
+        """
+        resp = _make_mock_response(400, {"error": "invalid_grant"})
+        ctx = _make_async_client(resp)
+
+        with (
+            patch("httpx.AsyncClient", return_value=ctx),
+            caplog.at_level(logging.WARNING, logger="app.services.token_refresher"),
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            await refresh_oauth_token("xai", {"xai_refresh": "rt"})
+
+        message = "\n".join(record.getMessage() for record in caplog.records)
+        assert "provider=xai" in message
+        assert "status=400" in message
+        assert "invalid_grant" in message
+
+    async def test_http_error_body_is_redacted_and_truncated(self, caplog):
+        """Token-shaped and PII content in the body must not reach the log."""
+        body = {
+            "error": "invalid_grant",
+            "access_token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGljZSJ9.sig",  # pragma: allowlist secret
+            "detail": "alice@example.com is not registered",
+            "verbose": "x" * 5000,
+        }
+        resp = _make_mock_response(400, body)
+        ctx = _make_async_client(resp)
+
+        with (
+            patch("httpx.AsyncClient", return_value=ctx),
+            caplog.at_level(logging.WARNING, logger="app.services.token_refresher"),
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            await refresh_oauth_token("xai", {"xai_refresh": "rt"})
+
+        message = "\n".join(record.getMessage() for record in caplog.records)
+        assert "eyJhbGciOiJIUzI1NiJ9" not in message
+        assert "alice@example.com" not in message
+        assert "[REDACTED" in message
+        assert "invalid_grant" in message
+        assert len(message) < 1000  # body capped well below its raw 5 kB size
 
 
 class TestRefreshOAuthTokenTokenRotation:

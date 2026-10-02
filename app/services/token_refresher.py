@@ -7,6 +7,7 @@ import time
 import httpx
 
 from app.core.config import settings
+from app.core.log_redaction import redact_secrets
 from app.core.utils import IdentityExtractor, safe_write_json, scrub_log
 from app.services.refresh_policy import ROTATING_REFRESH_PROVIDERS, machine_owns_credential
 
@@ -50,7 +51,9 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
 
     Raises:
         ValueError: provider has no known refresh endpoint or no refresh token found.
-        httpx.HTTPStatusError: upstream returned a non-2xx response.
+        httpx.HTTPStatusError: upstream returned a non-2xx response. The
+            response body (redacted) is logged at WARNING before re-raising,
+            because the OAuth error code it carries is the whole diagnosis.
     """
     endpoint = _REFRESH_ENDPOINTS.get(provider)
     if not endpoint:
@@ -110,7 +113,21 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
             data=payload,
             headers=headers,
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            # The status line alone drops the only part that explains a dead
+            # refresh lineage: `invalid_grant` (rotated or revoked grant) vs
+            # `invalid_request` (malformed) vs `invalid_client`. Keep the body
+            # — redacted, single-lined, truncated — then re-raise so every
+            # caller sees exactly the exception it saw before (issue #474).
+            logger.warning(
+                "Token refresh failed for provider=%s status=%s body=%s",
+                scrub_log(provider),
+                resp.status_code,
+                scrub_log(redact_secrets(str(resp.text)[:1000]))[:300],
+            )
+            raise
         data = resp.json()
 
     updated = dict(tokens)
