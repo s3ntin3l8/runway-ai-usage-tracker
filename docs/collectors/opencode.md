@@ -114,14 +114,16 @@ worth knowing:
 - **xai's field is `xai_refresh`, falling back to `xai_access`.** No xai
   candidate carries `api_key` — its rules map every source's bearer to
   `xai_access` — and that bearer is the part that expires: a fresh login's
-  token measured `iat → exp` at ~6 hours (2026-10), refreshed by the Grok /
-  OpenCode CLI rather than Runway. Fingerprinting it would therefore re-key
-  the origin on every refresh, several times a day. File and CLI candidates
-  ship a refresh token and are keyed by it; `GROK_OAUTH_TOKEN` has none and
-  falls back to its bearer. The server still fingerprints
-  `provider_configs.api_key`, which holds a pasted *access* bearer, so its
-  `provider:xai#<fp>` hint answers for the env candidate and never for a
-  refresh-keyed file/CLI origin — see [xai.md](xai.md).
+  token measured `iat → exp` at ~6 hours (2026-10), and it rotates several
+  times a day — Runway refreshes it when a candidate ships a refresh
+  token, and the Grok / OpenCode CLI refreshes it from its own session
+  too. Fingerprinting it would therefore re-key the origin on every
+  refresh. File and CLI candidates ship a refresh token and are keyed by
+  it; `GROK_OAUTH_TOKEN` has none and falls back to its bearer. The server
+  still fingerprints `provider_configs.api_key`, which holds a pasted
+  *access* bearer, so its `provider:xai#<fp>` hint answers for the env
+  candidate and never for a refresh-keyed file/CLI origin — see
+  [xai.md](xai.md).
 - **Non-key candidates stay plain.** A cookie (`cookie:ollama/session`),
   `kimi_coding`'s own CLI credential file, and `openrouter`'s cosmetic
   `OPENROUTER_HTTP_REFERER` / `OPENROUTER_X_TITLE` env vars carry no key
