@@ -1061,6 +1061,7 @@ class TestSidecarSubprocessWindows:
                 },
             )
 
+        assert run.call_args.args[0] == ["git", "config", "--global", "user.email"]
         assert run.call_args.kwargs["creationflags"] == no_window
 
     @pytest.mark.parametrize("system", ["Linux", "Darwin"])
