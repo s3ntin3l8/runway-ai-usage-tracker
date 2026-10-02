@@ -385,7 +385,8 @@ class CredentialProvider:
             mapping = rule.get("mapping", {})
             if rule_type == "env":
                 variable = rule.get("variable")
-                if variable and os.getenv(variable):
+                env_value = os.getenv(variable) if variable else None
+                if variable and env_value:
                     target = mapping.get("value", "token")
                     origins.append(
                         {
@@ -393,7 +394,7 @@ class CredentialProvider:
                             "label": variable,
                             "keys": [target],
                             "managed": False,
-                            **CredentialProvider._classify_values({target: os.getenv(variable)}),
+                            **CredentialProvider._classify_values({target: env_value}),
                         }
                     )
             elif rule_type == "file":

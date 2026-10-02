@@ -378,7 +378,6 @@ def test_server_credential_origins_classify_a_credential_without_returning_it(mo
     """The scan derives expiry and refreshability from the values so the inventory can
     classify a server credential; the values themselves must never come back."""
     import base64
-    import json
     import time
 
     from app.services.credential_provider import CredentialProvider

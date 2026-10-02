@@ -191,6 +191,7 @@ def _apply_server_expiry(
     "live": a dead OAuth JWT reads expired and a rejected key reads invalid, the same as
     Token Health's ``server`` row.
     """
+    # The scan is authoritative even if a stale bundle exists for this row.
     exp = origin.get("exp")
     rollable = bool(origin.get("rollable"))
     view.status = credential_status(
