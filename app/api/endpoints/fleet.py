@@ -356,6 +356,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         sidecar_id = payload.sidecar_id or "local"
         from app.services.credential_sources import (
             describe_origin,
+            pending_cache_slot,
             retire_unkeyed_origin,
             sidecar_source_id,
             touch_source,
@@ -376,7 +377,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # Claude OAuth sources from older sidecars may still be keyed by the
         # token-derived placeholder identity; use a stable host+origin key while
         # identity is pending so token rotations do not create orphan entries.
-        cache_account_id = source_id if p_id == "anthropic" and identity_pending else a_id
+        cache_account_id = pending_cache_slot(p_id, source_id) if identity_pending else a_id
         if p_id == "anthropic" and not identity_pending:
             # A pending source is cache-keyed by its stable source_id. Retire
             # that placeholder even if its durable CredentialSource row was

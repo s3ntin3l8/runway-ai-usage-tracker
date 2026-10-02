@@ -925,3 +925,14 @@ class TestOllamaApiCollector:
         )
         assert cards == []
         assert collector._last_error_reason == "missing_data"
+
+
+def test_the_page_email_is_reported_as_verified_identity(ollama_html):
+    """The collector proves which account a cookie is signed into (#462): the server compares
+    it with the account the cookie's origin is tagged to."""
+    collector = OllamaCollector()
+    assert collector.verified_identity is None
+
+    collector._parse_html(ollama_html)
+
+    assert collector.verified_identity == "user@example.com"

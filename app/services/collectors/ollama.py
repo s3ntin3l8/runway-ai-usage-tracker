@@ -523,6 +523,10 @@ class OllamaCollector(BaseCollector):
                 )
             )
             self.account_label = email
+        if email and "@" in email:
+            from app.services.collectors.base import normalize_account_id
+
+            self.verified_identity = normalize_account_id(email)
 
         # 3. Build cards using already-parsed blocks (session/weekly first)
         order = {"session": 0, "weekly": 1}
