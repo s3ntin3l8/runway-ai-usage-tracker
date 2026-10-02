@@ -481,6 +481,12 @@ class CredentialSourceView(BaseModel):
     # Who renews it: "server", or "machine" (a rotating provider's login owned by a
     # machine's CLI, which the server must not refresh); None when nothing does.
     refreshed_by: str | None = None
+    # The provider rejected this credential (HTTP 401/403 at the last collection, or an
+    # in-memory rejection flag matches its identity).
+    rejected: bool = False
+    # Expired and unrefreshable, but another healthy credential for the same account can stand
+    # in for it: not blocking collection, so it should not raise a hard dashboard alert.
+    redundant: bool = False
     removable: bool = False
     enabled: bool = True
     priority: int = 0

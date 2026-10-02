@@ -1,6 +1,5 @@
 import {
   accountSubtitle,
-  credentialAccountName,
   displayAccountName,
   labelOrMaskedId,
   maskAccountId,
@@ -121,25 +120,6 @@ describe('accountSubtitle', () => {
   });
 });
 
-describe('credentialAccountName', () => {
-  const hash = 'a'.repeat(64);
-
-  it('prefers a label', () => {
-    expect(credentialAccountName('server', ' Work ')).toBe('Work');
-  });
-
-  it('names synthetic server / config rows', () => {
-    expect(credentialAccountName('server')).toBe('Server environment');
-    expect(credentialAccountName('config:default')).toBe('Default account');
-    expect(credentialAccountName('config-cookie:default')).toBe('Default account');
-    expect(credentialAccountName('config:alice@x.com')).toBe('alice@x.com');
-  });
-
-  it('masks hash-like ids, including inside a config: prefix', () => {
-    expect(credentialAccountName(hash)).toBe(`${hash.slice(0, 8)}…${hash.slice(-4)}`);
-    expect(credentialAccountName(`config:${hash}`)).toBe(`${hash.slice(0, 8)}…${hash.slice(-4)}`);
-  });
-});
 
 describe('labelOrMaskedId', () => {
   const hash = '72ca8b0011223344556677889900aabbccddeeff00112233445566778899a9f5'; // pragma: allowlist secret

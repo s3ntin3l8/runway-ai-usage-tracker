@@ -5,25 +5,21 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { AlertTriangle, HeartPulse, KeyRound, TrendingUp, X } from 'lucide-react';
-import type { AnomalyEntry, DataHealthReport, FleetEntry, TokenHealthEntry } from '@/api/types';
+import type { AnomalyEntry, CredentialInventory, DataHealthReport, FleetEntry } from '@/api/types';
 import { timeAgo } from '@/lib/format';
 import { cardStale } from '@/lib/quota';
 import { cn } from '@/lib/cn';
-import { credentialAccountName } from '@/lib/accountDisplay';
+import { credentialsNeedingAttention } from '@/lib/credentialAttention';
 
 interface BannersProps {
-  tokens: TokenHealthEntry[] | undefined;
+  credentials: CredentialInventory | undefined;
   anomalies: AnomalyEntry[] | undefined;
   fleet?: FleetEntry[] | undefined;
   dataHealth?: DataHealthReport | undefined;
 }
 
-export function Banners({ tokens, anomalies, fleet, dataHealth }: BannersProps) {
-  const unhealthy = (tokens ?? []).filter(
-    (t) =>
-      (t.status === 'expired' || t.status === 'expiring' || t.status === 'invalid') &&
-      !t.redundant,
-  );
+export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersProps) {
+  const unhealthy = credentialsNeedingAttention(credentials);
   const spikes = anomalies ?? [];
   const failing = (fleet ?? []).filter((e) => {
     const cards = [e.critical_gauge, ...(e.secondary_limits ?? [])];
@@ -63,7 +59,7 @@ export function Banners({ tokens, anomalies, fleet, dataHealth }: BannersProps) 
         <Banner tone="critical" icon={<KeyRound className="size-4 shrink-0" aria-hidden />}>
           <span>
             {unhealthy.length === 1
-              ? `Credential for ${unhealthy[0].provider} (${credentialAccountName(unhealthy[0].account_id, unhealthy[0].account_label)}) ${
+              ? `Credential for ${unhealthy[0].provider} (${unhealthy[0].accountName}) ${
                   unhealthy[0].status === 'invalid'
                     ? 'was rejected by the provider'
                     : `is ${unhealthy[0].status}`

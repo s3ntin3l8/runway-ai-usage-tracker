@@ -6,6 +6,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { forceCollect } from '@/api/endpoints';
+import { credentialInventoryKey } from '@/hooks/useInvalidateCredentialViews';
 
 export function useForceCollect() {
   const queryClient = useQueryClient();
@@ -17,7 +18,7 @@ export function useForceCollect() {
       );
       queryClient.invalidateQueries({ queryKey: ['usage'] });
       queryClient.invalidateQueries({ queryKey: ['fleet'] });
-      queryClient.invalidateQueries({ queryKey: ['system', 'token-health'] });
+      queryClient.invalidateQueries({ queryKey: credentialInventoryKey });
     },
     onError: (err) => toast.error(`Collection failed: ${err.message}`),
   });

@@ -11,6 +11,7 @@ import { renderWithProviders } from '@/test/utils';
 import { formatCost } from '@/lib/format';
 import { HomePage } from './HomePage';
 import * as api from '@/api/endpoints';
+import { inventory, inventoryWith, source } from '@/features/settings/sections/credentials/testData';
 
 vi.mock('@/api/endpoints');
 vi.mock('sonner', () => ({
@@ -89,7 +90,7 @@ function primeDefaults() {
   vi.mocked(api.fetchForecast).mockResolvedValue({ forecasts: [] });
   vi.mocked(api.fetchCostForecast).mockResolvedValue(costResponse);
   vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse);
-  vi.mocked(api.fetchTokenHealth).mockResolvedValue({ tokens: [] });
+  vi.mocked(api.fetchCredentialInventory).mockResolvedValue(inventory());
   vi.mocked(api.fetchAnomalies).mockResolvedValue({
     as_of: new Date().toISOString(),
     lookback_days: 30,
@@ -271,26 +272,22 @@ describe('HomePage banners', () => {
   });
 
   it('renders a credential banner when a token is expiring', async () => {
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
-      tokens: [
-        {
-          provider: 'Claude',
-          account_id: 'default',
-          account_label: 'me',
-          status: 'expiring',
-        } as never,
-      ],
-    });
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
+      inventoryWith([source({ provider_id: 'Claude', status: 'expiring', account_id: 'default' })], {
+        provider_id: 'Claude',
+        account_label: 'me',
+      }),
+    );
     renderWithProviders(<HomePage />);
     expect(await screen.findByText(/credential for claude/i)).toBeInTheDocument();
   });
 
   it('dismisses a banner when its close button is clicked', async () => {
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
-      tokens: [
-        { provider: 'Claude', account_id: 'default', status: 'expired' } as never,
-      ],
-    });
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
+      inventoryWith([source({ provider_id: 'Claude', status: 'expired' })], {
+        provider_id: 'Claude',
+      }),
+    );
     renderWithProviders(<HomePage />);
     const banner = await screen.findByText(/credential for claude/i);
     await userEvent.click(screen.getByRole('button', { name: /dismiss/i }));
@@ -299,16 +296,12 @@ describe('HomePage banners', () => {
 
   it('does not raise a banner for an expired but redundant credential', async () => {
     // redundant=true means another healthy cred exists — no hard alarm should fire.
-    vi.mocked(api.fetchTokenHealth).mockResolvedValue({
-      tokens: [
-        {
-          provider: 'Claude',
-          account_id: 'sidecar-123',
-          status: 'expired',
-          redundant: true,
-        } as never,
-      ],
-    });
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
+      inventoryWith([source({ provider_id: 'Claude', status: 'expired', redundant: true })], {
+        provider_id: 'Claude',
+        account_id: 'sidecar-123',
+      }),
+    );
     renderWithProviders(<HomePage />);
     // Give the query a tick to settle; no credential banner should appear.
     await screen.findByText(/providers/i);
