@@ -231,3 +231,24 @@ async def test_a_rotating_access_token_under_one_refresh_token_is_not_a_new_secr
     assert not await _bundle_holds(
         "chatgpt", "default", source_id, {"refresh_token": "rt-2", "access_token": "at-1"}
     )
+
+
+@pytest.mark.asyncio
+async def test_one_failing_backoff_write_does_not_lose_the_others(world, monkeypatch):  # noqa: F811
+    engine, _ = world
+    for n in range(3):
+        await _seed(world, "chatgpt", _origin(n), {COOKIE_KEY: f"{CHATGPT_COOKIE}-{n}"})
+    real = PendingCredentialTagRepo.record_verify_attempt
+
+    def flaky(session, **kwargs):
+        if kwargs["credential_origin"] == _origin(0):
+            raise RuntimeError("database is locked")
+        return real(session, **kwargs)
+
+    monkeypatch.setattr(PendingCredentialTagRepo, "record_verify_attempt", staticmethod(flaky))
+
+    await _verify("chatgpt", _chatgpt([], email=None))
+
+    assert [
+        (_row(engine, _origin(n)) or PendingCredentialTag()).verify_attempts for n in range(3)
+    ] == [0, 1, 1]

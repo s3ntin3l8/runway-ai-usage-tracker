@@ -1249,18 +1249,27 @@ class CollectorManager:
         from app.core.db import engine
         from app.services.credential_tags import PendingCredentialTagRepo
 
-        with Session(engine) as session:
-            for candidate in attempted:
-                sidecar_id = candidate.get("sidecar_id") or LOCAL_SIDECAR_ID
-                origin = candidate.get("credential_origin")
-                if isinstance(sidecar_id, str) and isinstance(origin, str):
+        for candidate in attempted:
+            sidecar_id = candidate.get("sidecar_id") or LOCAL_SIDECAR_ID
+            origin = candidate.get("credential_origin")
+            if not isinstance(sidecar_id, str) or not isinstance(origin, str):
+                continue
+            # One session per source: a failing write loses that source's backoff only.
+            try:
+                with Session(engine) as session:
                     PendingCredentialTagRepo.record_verify_attempt(
                         session,
                         sidecar_id=sidecar_id,
                         provider_id=provider_id,
                         credential_origin=origin,
                     )
-            session.commit()
+                    session.commit()
+            except Exception:
+                logger.exception(
+                    "Could not schedule the next identity verification for %s source %s",
+                    scrub_log(provider_id),
+                    scrub_log(candidate.get("source_id")),
+                )
 
     def _persist_identity_pending_preview(
         self,
