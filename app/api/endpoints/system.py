@@ -730,6 +730,15 @@ async def delete_credential_source(
     if row is not None:
         session.delete(row)
         session.commit()
+    remaining = session.exec(
+        select(CredentialSource.source_id).where(
+            CredentialSource.provider_id == provider,
+            CredentialSource.account_id == canonical_account_id(account_id),
+        )
+    ).first()
+    if remaining is None:
+        # Nothing of this account is left to be rejected; don't keep it flagged invalid.
+        auth_failures.clear(provider, account_id)
     return {"ok": True}
 
 

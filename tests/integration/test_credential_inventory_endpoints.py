@@ -163,3 +163,109 @@ async def test_delete_refuses_a_live_config_bundle_even_without_a_durable_row(cl
     )
     assert resp.status_code == 409
     assert len(await cache.get_source_candidates("gemini", ALICE)) == 1
+
+
+def _server_origin(exp=None, **kw):
+    return {
+        "source_type": "file",
+        "label": "oauth_creds.json",
+        "keys": ["oauth_token"],
+        "managed": False,
+        "shadowed": False,
+        "exp": exp,
+        "rollable": False,
+        **kw,
+    }
+
+
+def _inventory_server_row(client):
+    body = client.get("/api/v1/system/credentials", headers=_headers()).json()
+    (row,) = [
+        s
+        for p in body["providers"]
+        for a in p["accounts"]
+        for s in a["sources"]
+        if s["origin_kind"] == "server"
+    ]
+    return row
+
+
+def test_a_registered_server_row_keeps_a_durable_rejection_when_its_credential_is_replaced(
+    client, session, monkeypatch
+):
+    """The row was rejected and its stored expiry has passed; the host has since swapped in
+    a fresh credential. The rejection (recorded at the last collection) must still show."""
+    import time
+    from datetime import UTC, datetime, timedelta
+
+    _add(
+        session,
+        provider_id="gemini",
+        account_id="default",
+        source_id="server:gemini:file:oauth_creds.json",
+        source_type="file",
+        source_label="oauth_creds.json",
+        credential_origin=None,
+        sidecar_id=None,
+        health="auth_failed",
+        credential_expires_at=datetime.now(UTC) - timedelta(days=1),
+        token_types_json='["oauth_token"]',
+    )
+    origin = _server_origin(exp=time.time() + 3600)
+    monkeypatch.setattr(
+        credential_inventory,
+        "_scan_server_credentials",
+        lambda: ({"gemini": [origin]}, {"gemini"}),
+    )
+
+    row = _inventory_server_row(client)
+
+    assert row["status"] == "invalid"
+    assert row["expires_in_seconds"] > 0, "the expiry shown is the host's current credential"
+
+
+def test_a_registered_server_row_drops_a_stale_expiry_the_scan_no_longer_sees(
+    client, session, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+
+    _add(
+        session,
+        provider_id="zai",
+        account_id="default",
+        source_id="server:zai:env:ZAI_API_KEY",
+        source_type="env",
+        source_label="ZAI_API_KEY",
+        credential_origin=None,
+        sidecar_id=None,
+        credential_expires_at=datetime.now(UTC) - timedelta(days=1),
+        token_types_json='["api_key"]',
+    )
+    origin = _server_origin(source_type="env", label="ZAI_API_KEY", keys=["api_key"], exp=None)
+    monkeypatch.setattr(
+        credential_inventory, "_scan_server_credentials", lambda: ({"zai": [origin]}, {"zai"})
+    )
+
+    row = _inventory_server_row(client)
+
+    assert row["status"] == "valid"
+    assert row["expires_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_forgetting_the_last_source_clears_the_accounts_rejection_flag(
+    client, session, cache
+):
+    from app.services import auth_failures
+
+    auth_failures.reset()
+    _add(session)
+    _add(session, source_id="sidecar:b", sidecar_id="host-b")
+    await cache.store("gemini", {"oauth_token": "t"}, account_id=ALICE, source_id="sidecar:a")
+    auth_failures.mark("gemini", ALICE)
+
+    client.delete(f"/api/v1/system/credentials/gemini/{ALICE}/sidecar:a", headers=_headers())
+    assert auth_failures.flagged_accounts("gemini") == {ALICE}, "another source still stands"
+
+    client.delete(f"/api/v1/system/credentials/gemini/{ALICE}/sidecar:b", headers=_headers())
+    assert auth_failures.flagged_accounts("gemini") == set()
