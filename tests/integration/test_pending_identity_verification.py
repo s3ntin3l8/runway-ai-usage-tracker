@@ -251,6 +251,31 @@ async def test_an_expired_pending_claude_login_is_not_refreshed_into_the_default
     assert _outcome(engine, "anthropic", source_id)[0] == source_id
 
 
+@pytest.mark.asyncio
+async def test_a_pinned_claude_bundle_ignores_the_servers_own_config_hints(world, monkeypatch):
+    """``~/.claude.json`` describes the server host's login: it must not label (or tier) a
+    sidecar's bundle, but the unpinned default collector still reads it."""
+    from unittest.mock import MagicMock
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    hints = MagicMock(return_value={"billing_tier": "max"})
+    monkeypatch.setattr(AnthropicCollector, "_get_local_config_hints", hints)
+    await _seed(world, "anthropic", "env:CLAUDE_CODE_OAUTH_TOKEN", {"oauth_token": CLAUDE_OAUTH})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/oauth/usage":
+            return httpx.Response(200, json=CLAUDE_USAGE)
+        return httpx.Response(404)
+
+    await _verify("anthropic", handler)
+    hints.assert_not_called()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await AnthropicCollector(account_id="default")._get_claude_oauth(client, CLAUDE_OAUTH)
+    hints.assert_called()
+
+
 # --- ChatGPT -----------------------------------------------------------------------------
 
 

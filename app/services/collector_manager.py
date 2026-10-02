@@ -37,6 +37,19 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 
+IDENTITY_VERIFIER_SUFFIX = ":identity-pending"
+
+
+def verifier_key(provider_id: str) -> str:
+    """Smart-collector key of a provider's identity-verification run."""
+    return f"{provider_id}:default{IDENTITY_VERIFIER_SUFFIX}"
+
+
+def is_verifier_key(key: str) -> bool:
+    """Whether a smart-collector key is an identity-verification run (not a credential)."""
+    return key.endswith(IDENTITY_VERIFIER_SUFFIX)
+
+
 class CollectorManager:
     """
     Manages collection of all AI provider quotas with support for multiple accounts.
@@ -228,7 +241,7 @@ class CollectorManager:
             # display identity and therefore read another credential slot.
             for p_id, (cls, name, ttl) in self.collector_registry.items():
                 if p_id in inactive_providers:
-                    self.smart_collectors.pop(f"{p_id}:default:identity-pending", None)
+                    self.smart_collectors.pop(verifier_key(p_id), None)
                     continue
                 pending_sources = await token_cache.get_pending_sources(p_id)
                 has_pending_source = any(
@@ -237,7 +250,7 @@ class CollectorManager:
                     and source.get("identity_pending") is True
                     for source in pending_sources
                 )
-                key = f"{p_id}:default:identity-pending"
+                key = verifier_key(p_id)
                 if not has_pending_source:
                     self.smart_collectors.pop(key, None)
                     continue
@@ -539,7 +552,7 @@ class CollectorManager:
             # failure must not be attributed to the shared server:<provider>
             # contribution under `default` (which may belong to another
             # credential or an archived account).
-            if key.endswith(":identity-pending") and account_id == "default":
+            if is_verifier_key(key) and account_id == "default":
                 if failed:
                     logger.debug(
                         "Identity-pending collection failed for %s; no account outcome recorded",
@@ -548,7 +561,7 @@ class CollectorManager:
                 continue
             # The verifier is not the server's own credential: once it has adopted a proven
             # email its state must not be recorded against that account's server outcome.
-            if not key.endswith(":identity-pending"):
+            if not is_verifier_key(key):
                 outcomes.append(
                     {
                         "provider_id": provider_id,
@@ -701,7 +714,7 @@ class CollectorManager:
             or "default"
         )
         default_account_label = getattr(collector, "account_label", None)
-        identity_verification = key.endswith(":identity-pending")
+        identity_verification = is_verifier_key(key)
         candidates = await self._source_candidates(provider_id, account_id, identity_verification)
         if not candidates or not isinstance(provider_id, str):
             if identity_verification:
@@ -1219,9 +1232,7 @@ class CollectorManager:
                 if (
                     account_id is None
                     or key == f"{provider_id}:{account_id}"
-                    or (
-                        account_id == "default" and key == f"{provider_id}:default:identity-pending"
-                    )
+                    or (account_id == "default" and key == verifier_key(provider_id))
                 ):
                     await sc.reset()
                     try:

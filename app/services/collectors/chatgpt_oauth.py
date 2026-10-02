@@ -175,8 +175,12 @@ class ChatGPTWebOAuthMixin:
     async def _store_refreshed_bearer(self, bearer: str, input_source: str) -> None:
         """Cache the exchanged bearer for token-health visibility.
 
-        Never for a source still awaiting its identity: ``store`` would put the bearer into
-        the shared ``default`` slot, publishing an unidentified credential as a real account.
+        Never when pinned to a sidecar's bundle: for a source still awaiting its identity
+        ``store`` would put the bearer into the shared ``default`` slot (publishing an
+        unidentified credential as a real account), and for an identified one the hour-long
+        bearer would outlive its use and shadow the cookie the bundle really holds. Token
+        health reads a sidecar's cookie bundle directly, so nothing is lost. Unpinned
+        collectors (the server's own credential) still cache it.
         """
         meta = token_cache.current_source_metadata("chatgpt", self.account_id or "default")
         if meta and (meta.get("identity_pending") is True or meta.get("sidecar_id")):
