@@ -196,7 +196,7 @@ async def test_an_all_machines_tag_is_left_for_the_operator(world):  # noqa: F81
     await _poll(ACCOUNT, _kimi, "kimi_coding")
     await _swap_cookie(world, "user-2")
 
-    await _poll(ACCOUNT, _kimi, "kimi_coding")
+    result = await _poll(ACCOUNT, _kimi, "kimi_coding")
 
     with Session(engine) as session:
         assert (
@@ -208,6 +208,9 @@ async def test_an_all_machines_tag_is_left_for_the_operator(world):  # noqa: F81
             )
             is not None
         )
+    # Nothing is revoked, so the source keeps publishing and keeps its baseline.
+    assert result
+    assert _kimi_state(engine)[0].verified_subject == "user-1"
 
 
 def test_a_subject_seen_for_one_source_attempt_is_never_read_as_the_next_ones():
@@ -221,3 +224,62 @@ def test_a_subject_seen_for_one_source_attempt_is_never_read_as_the_next_ones():
     CollectorManager._reset_attempt_identity(collector, "default", None)
 
     assert collector.verified_subject is None and collector.verified_identity is None
+
+
+@pytest.mark.asyncio
+async def test_a_subject_is_only_recorded_when_kimi_accepted_the_cookie(world):  # noqa: F811
+    engine, _ = world
+    await _kimi_source(world, "user-1")
+
+    def rejected(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401)
+
+    await _poll(ACCOUNT, rejected, "kimi_coding")
+
+    assert _kimi_state(engine)[0].verified_subject is None
+
+
+@pytest.mark.asyncio
+async def test_the_subject_is_compared_for_the_polled_account_not_a_stranded_row(world):  # noqa: F811
+    """A stale row for the same source under another account (inserted first, so an
+    unscoped lookup finds it first) must not hold the baseline."""
+    engine, _ = world
+    with Session(engine) as session:
+        session.add(
+            CredentialSource(
+                provider_id="kimi_coding",
+                account_id="aaa-stranded-account",
+                source_id=KIMI_SOURCE,
+                source_type="cookie",
+                source_label=SIDECAR,
+                credential_origin=KIMI_ORIGIN,
+                sidecar_id=SIDECAR,
+            )
+        )
+        session.commit()
+    await _kimi_source(world, "user-1")
+    await _poll(ACCOUNT, _kimi, "kimi_coding")  # records user-1 for the polled account
+
+    with Session(engine) as session:
+        recorded = {
+            row.account_id: row.verified_subject
+            for row in session.exec(
+                select(CredentialSource).where(CredentialSource.provider_id == "kimi_coding")
+            ).all()
+        }
+    assert recorded == {ACCOUNT: "user-1", "aaa-stranded-account": None}
+
+    await _swap_cookie(world, "user-2")
+    assert await _poll(ACCOUNT, _kimi, "kimi_coding") == []
+
+
+@pytest.mark.asyncio
+async def test_the_subject_comparison_ignores_case(world):  # noqa: F811
+    engine, _ = world
+    await _kimi_source(world, "User-1")
+    await _poll(ACCOUNT, _kimi, "kimi_coding")
+
+    await _swap_cookie(world, "user-1")
+
+    assert await _poll(ACCOUNT, _kimi, "kimi_coding")
+    assert _kimi_state(engine)[1] is not None

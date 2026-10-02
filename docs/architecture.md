@@ -59,7 +59,7 @@ live in `app/models/db.py`.
 | `quota_snapshots` | Append-only time-series of `pct_used`/`reset_at` observations. Written on every `upsert_latest_usage` call when `pct_used` is non-null. Backs the `%` history chart and the Theil-Sen forecast. |
 | `provider_pricing` | Time-versioned per-(provider, model) prices used by `app/services/cost_calculator.py` so historical cost stays stable across price changes. |
 | `provider_configs` | Per-provider user config — API keys, session cookies (Fernet-encrypted), account labels, poll intervals, per-strategy enable toggles. Unique on `(provider_id, account_id)`. |
-| `credential_sources` | One row per credential *source* — a secret found in one place: a sidecar's file/env/cookie (`sidecar_id` set), a key pasted in Settings → Providers (`config:`), or an env var / file on the server host (`server:`, no origin). Holds the operator's `enabled`/`priority` failover order — a bundle whose access token has already expired is attempted after every live one, so priority orders usable credentials rather than dead ones — the credential's non-secret expiry/token types, `health`, and collection provenance (`last_attempt_at`, `last_success_at`, `last_error`) stamped by the failover loop — the "active source" for an account is the one with the latest success. Backs `GET /system/credentials`. Unique on `(provider_id, account_id, source_id)`, so an account rename has to carry these rows with it (`config_rekey` does; rows an older build stranded are removed by `orphan_credential_sources`). |
+| `credential_sources` | One row per credential *source* — a secret found in one place: a sidecar's file/env/cookie (`sidecar_id` set), a key pasted in Settings → Providers (`config:`), or an env var / file on the server host (`server:`, no origin). Holds the operator's `enabled`/`priority` failover order — a bundle whose access token has already expired is attempted after every live one, so priority orders usable credentials rather than dead ones — the credential's non-secret expiry/token types, `health`, and collection provenance (`last_attempt_at`, `last_success_at`, `last_error`) stamped by the failover loop, and the `verified_subject` last seen behind a cookie source (account-switch detection) — the "active source" for an account is the one with the latest success. Backs `GET /system/credentials`. Unique on `(provider_id, account_id, source_id)`, so an account rename has to carry these rows with it (`config_rekey` does; rows an older build stranded are removed by `orphan_credential_sources`). |
 | `provider_account_labels` | Operator display-name override for a discovered `(provider, account)`. |
 | `credential_tags` | Operator mapping from a host-side credential origin (`path:...`/`env:...`, never the value) to a server account, optionally scoped to one sidecar or deployment-wide. Unresolved origins sit in `pending_credential_tags` until tagged in the Fleet UI. |
 | `pending_credential_tags` | Credential origins a sidecar has reported but no operator tag exists yet — powers the "Untagged credentials" surface (`GET /fleet/credentials/tags/pending`). |
@@ -199,9 +199,9 @@ sidecar's next push files it as pending, so the identity verifier maps it to the
 never second-guesses a tag on a non-email account (hash-keyed or label-based), a deployment-wide
 tag (it applies on other machines too), or a source whose provider reported no email.
 
-Providers that never reveal an email set `verified_subject` instead, a stable opaque id of
-whoever the cookie logs in as (Kimi: the `sub` of the `kimi-auth` JWT; opencode:
-`subscriberUserId`). The subject is recorded on the source (`credential_sources.verified_subject`,
+Providers that never reveal an email may set `verified_subject` instead, a stable opaque id of
+whoever the cookie logs in as (Kimi: the `sub` of the `kimi-auth` JWT; opencode is not watched,
+its `subscriberUserId` names the workspace's subscriber, not necessarily the member). The subject is recorded on the source (`credential_sources.verified_subject`,
 with the account it was recorded under); a different subject for the same account counts as a
 switch and takes the same path. The first sighting, and the first one after the source moves to
 another account, is recorded rather than compared. A source that reveals no subject is not

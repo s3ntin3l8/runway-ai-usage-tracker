@@ -987,6 +987,11 @@ class CollectorManager:
             sidecar_id,
         )
         if not revoked:
+            logger.debug(
+                "Cookie switch behind %s/%s left alone: no sidecar-scoped operator tag to drop",
+                scrub_log(provider_id),
+                scrub_log(account_id),
+            )
             return False
         await token_cache.remove_source(
             provider_id, account_id, candidate["source_id"], retire_matching_oauth=True
@@ -1008,7 +1013,7 @@ class CollectorManager:
         re-tag) is recorded rather than compared; a different subject for the same account
         means the browser switched users.
         """
-        from sqlmodel import Session, select
+        from sqlmodel import Session, col, select
 
         from app.core.db import engine
         from app.models.db import CredentialSource
@@ -1020,6 +1025,7 @@ class CollectorManager:
                 select(CredentialSource).where(
                     CredentialSource.provider_id == provider_id,
                     CredentialSource.source_id == source_id,
+                    col(CredentialSource.account_id).in_({account_id, account}),
                 )
             ).first()
             if row is None:
@@ -1030,7 +1036,7 @@ class CollectorManager:
                 session.add(row)
                 session.commit()
                 return False
-            return row.verified_subject != subject
+            return row.verified_subject.casefold() != subject.casefold()
 
     @staticmethod
     def _revoke_cookie_tag(
