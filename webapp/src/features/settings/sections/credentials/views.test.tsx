@@ -207,6 +207,18 @@ describe('NeedsMappingView deep link', () => {
     expect(within(dialog).queryByText(/chatgpt/)).not.toBeInTheDocument();
   });
 
+  it('matches a fingerprinted origin by the link\'s plain one', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [{ ...entry, credential_origin: 'env:DEEPSEEK_API_KEY#86e40eb64385' }],
+      counts_by_sidecar: { 'host-a': 1 },
+    });
+    renderWithProviders(<NeedsMappingView pendingUsageEvents={0} />, {
+      route:
+        '/settings/credentials?view=mapping&sidecar=host-a&provider=deepseek&origin=env%3ADEEPSEEK_API_KEY',
+    });
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
   it('stays closed when the origin is no longer waiting', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [other],

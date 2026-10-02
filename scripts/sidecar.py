@@ -4245,6 +4245,9 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                         {
                             "provider_id": provider_id,
                             "credential_origin": event_origin,
+                            # Events still flow (under 'default'); only the account is
+                            # missing. Not "token withheld": no quota collection is lost.
+                            "reason": "events_untagged",
                         }
                     )
                     logging.warning(

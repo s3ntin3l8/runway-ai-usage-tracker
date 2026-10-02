@@ -41,14 +41,17 @@ export function NeedsMappingView({ pendingUsageEvents }: { pendingUsageEvents: n
       (i) =>
         i.sidecar_id === wanted.sidecar &&
         i.provider_id === wanted.provider &&
-        i.credential_origin === wanted.origin,
+        i.credential_origin.split('#')[0] === wanted.origin,
     );
+    // A cached list can predate the credential: keep the link until fresh data says it is
+    // really gone.
+    if (!match && (untagged.isFetching || !untagged.isSuccess)) return;
     if (match) setResolving(match);
     const copy = new URLSearchParams(params);
     ['sidecar', 'provider', 'origin'].forEach((key) => copy.delete(key));
     setParams(copy, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [untagged.isPending, wanted.sidecar, wanted.provider, wanted.origin]);
+  }, [untagged.isPending, untagged.isFetching, wanted.sidecar, wanted.provider, wanted.origin]);
 
   return (
     <div className="space-y-4">

@@ -895,6 +895,19 @@ class CredentialManifestRequest(BaseModel):
     observations: list[CredentialHealthObservation] = Field(default_factory=list, max_length=256)
 
 
+def _entry_reason(
+    seen: dict[tuple[str, str], str | None], key: tuple[str, str], entry: dict[str, str]
+) -> str | None:
+    """Why the sidecar reported this origin. One origin can appear twice in a payload (a
+    withheld token and untagged events); the louder reason wins whatever the entry order."""
+    reason = entry.get("reason")
+    reason = reason if isinstance(reason, str) and reason else None
+    if seen.get(key) == "token_withheld":
+        reason = "token_withheld"
+    seen[key] = reason
+    return reason
+
+
 @router.post("/credentials/manifest")
 @limiter.limit("60/minute")
 async def post_credential_manifest(
@@ -992,6 +1005,7 @@ async def post_credential_manifest(
 
     keep_by_provider: dict[str, set[str]] = {}
     entries_received = 0
+    reasons_in_payload: dict[tuple[str, str], str | None] = {}
     for entry in payload.entries:
         provider_id = entry.get("provider_id")
         origin = entry.get("credential_origin")
@@ -1092,8 +1106,7 @@ async def post_credential_manifest(
             provider_id=provider_id,
             credential_origin=origin,
         )
-        reason = entry.get("reason")
-        pending.reason = reason if isinstance(reason, str) and reason else None
+        pending.reason = _entry_reason(reasons_in_payload, (provider_id, origin), entry)
         pending.claimed_account_id = (
             canonical_account_id(claimed_id)
             if provider_id == "anthropic" and isinstance(claimed_id, str) and "@" in claimed_id

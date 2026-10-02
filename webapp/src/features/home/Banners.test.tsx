@@ -331,6 +331,23 @@ describe('Banners unmapped credentials', () => {
     });
   });
 
+  it('keeps the credential fingerprint out of the link', () => {
+    renderWithProviders(
+      <Banners
+        credentials={withBlocked([
+          {
+            sidecar_id: 'host-a',
+            provider_id: 'deepseek',
+            credential_origin: 'env:DEEPSEEK_TOKEN#86e40eb64385',
+          },
+        ])}
+        anomalies={[]}
+      />,
+    );
+    const href = screen.getByRole('link', { name: /assign account/i }).getAttribute('href') ?? '';
+    expect(new URLSearchParams(href.split('?')[1]).get('origin')).toBe('env:DEEPSEEK_TOKEN');
+  });
+
   it('summarises several unmapped credentials and links to the list', () => {
     renderWithProviders(
       <Banners

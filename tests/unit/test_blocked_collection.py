@@ -54,6 +54,9 @@ def test_withholds_token_trusts_the_reason_then_infers_for_older_sidecars():
     assert withholds_token(_pending(reason=TOKEN_WITHHELD)) is True
     assert withholds_token(_pending(provider="anthropic", reason=TOKEN_WITHHELD)) is True
     assert withholds_token(_pending(reason="other")) is False
+    # A current sidecar says when only the events are untagged: no quota collection is lost,
+    # so the "older sidecar" inference must not apply to it.
+    assert withholds_token(_pending(provider="deepseek", reason="events_untagged")) is False
     # An older sidecar sends no reason: a provider the server cannot verify always withholds,
     # one it can verify ships its token (pending verification, not blocked).
     assert withholds_token(_pending(provider="deepseek")) is True

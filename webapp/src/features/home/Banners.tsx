@@ -74,7 +74,9 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
                       view: 'mapping',
                       sidecar: blocked[0].sidecar_id,
                       provider: blocked[0].provider_id,
-                      origin: blocked[0].credential_origin,
+                      // Without a credential fingerprint ("#…"): it adds nothing to find the
+                      // row and doesn't belong in history or logs.
+                      origin: blocked[0].credential_origin.split('#')[0],
                     }).toString()}`
                   : '/settings/credentials?view=mapping'
               }

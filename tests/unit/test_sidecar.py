@@ -2318,7 +2318,11 @@ def test_run_collection_events_use_server_hint_when_local_default(
     # operator can resolve via the dialog. The per-event canonical_hints
     # forwarding is what closes the actual card-split.
     assert posted.get("entries") == [
-        {"provider_id": "opencode", "credential_origin": "provider:opencode"},
+        {
+            "provider_id": "opencode",
+            "credential_origin": "provider:opencode",
+            "reason": "events_untagged",
+        },
     ]
 
 
@@ -2403,7 +2407,11 @@ def test_run_collection_events_reported_untagged_when_no_hint(
     # the canonical hint to retarget minimax-coding-plan events onto
     # the labeled quota card.
     assert posted["entries"] == [
-        {"provider_id": "opencode", "credential_origin": "provider:opencode"},
+        {
+            "provider_id": "opencode",
+            "credential_origin": "provider:opencode",
+            "reason": "events_untagged",
+        },
     ]
 
 
