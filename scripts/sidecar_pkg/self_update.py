@@ -611,7 +611,7 @@ def _windows_swap_script(
     restart: bool,
     display_version: str | None,
 ) -> str:
-    """Batch helper: wait for *pid* to exit, move *install* → *backup* and
+    """Batch helper: wait for *pid* and the onefile bootloader to exit, move *install* → *backup* and
     *incoming* → *install* (restoring on failure), refresh the installer's
     DisplayVersion, relaunch, and delete itself. Its log is kept beside the
     helper because the parent process exits before the swap finishes."""
@@ -626,16 +626,29 @@ def _windows_swap_script(
     return (
         "@echo off\r\n"
         'set "LOG=%~dp0runway-self-update.log"\r\n'
+        # A new onefile instance must unpack its own runtime. The helper
+        # inherits the old frozen process's _PYI_* environment variables.
+        'set "PYINSTALLER_RESET_ENVIRONMENT=1"\r\n'
         'echo [%date% %time%] Self-update helper started.>"%LOG%"\r\n'
         f'echo [%date% %time%] Waiting for sidecar PID {pid} to exit.>>"%LOG%"\r\n'
         ":waitloop\r\n"
         f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\r\n'
         "if not errorlevel 1 (\r\n"
-        "  timeout /t 1 /nobreak >NUL\r\n"
+        "  ping -n 2 127.0.0.1 >NUL\r\n"
         "  goto waitloop\r\n"
         ")\r\n"
-        f'move /Y "{install}" "{backup}" >>"%LOG%" 2>&1\r\n'
-        "if errorlevel 1 goto swap_failed\r\n"
+        # PyInstaller's onefile parent remains alive briefly after its Python
+        # child exits to clean up the extraction directory. Retry the rename
+        # until Windows releases the image, with a bound so failures are logged.
+        "set /a wait_attempts=0 >NUL\r\n"
+        ":move_original\r\n"
+        f'move /Y "{install}" "{backup}" >NUL 2>&1\r\n'
+        "if not errorlevel 1 goto install_new\r\n"
+        "set /a wait_attempts+=1 >NUL\r\n"
+        "if %wait_attempts% GEQ 120 goto move_failed\r\n"
+        "ping -n 2 127.0.0.1 >NUL\r\n"
+        "goto move_original\r\n"
+        ":install_new\r\n"
         f'move /Y "{incoming}" "{install}" >>"%LOG%" 2>&1\r\n'
         "if errorlevel 1 goto restore_previous\r\n"
         'echo [%date% %time%] Installed updated sidecar.>>"%LOG%"\r\n'
@@ -653,13 +666,17 @@ def _windows_swap_script(
         ":restore_failed\r\n"
         'echo [%date% %time%] Failed to restore previous sidecar from backup.>>"%LOG%"\r\n'
         "goto swap_failed\r\n"
+        ":move_failed\r\n"
+        f'echo [%date% %time%] Original sidecar PID {pid} exited, but the executable stayed locked after %wait_attempts% move attempts.>>"%LOG%"\r\n'
+        'tasklist /FI "IMAGENAME eq RunwaySidecar.exe" >>"%LOG%" 2>&1\r\n'
+        "goto swap_failed\r\n"
         ":swap_failed\r\n"
-        'echo [%date% %time%] Sidecar swap failed.>>"%LOG%"\r\n'
+        'echo [%date% %time%] Sidecar swap failed; check file permissions and running RunwaySidecar processes.>>"%LOG%"\r\n'
         # The first move may have failed before the original was renamed;
         # relaunch it when it is still present.
         f'if exist "{install}" {relaunch}\r\n'
-        '  del "%~f0"\r\n'
-        "  exit /b 1\r\n"
+        'del "%~f0"\r\n'
+        "exit /b 1\r\n"
     )
 
 
@@ -688,12 +705,16 @@ def _apply_windows(
         logger.exception("Self-update helper write failed")
         return False
 
-    DETACHED_PROCESS = 0x00000008
+    CREATE_NO_WINDOW = 0x08000000
     CREATE_NEW_PROCESS_GROUP = 0x00000200
     try:
+        # cmd /s removes the outer quotes and keeps the quoted batch path.
+        # Passing the path as a separate argv element can lose its quotes when
+        # the per-user install directory contains spaces.
         subprocess.Popen(  # noqa: S603
-            ["cmd.exe", "/c", str(helper)],
-            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            f'cmd.exe /d /s /c ""{helper}""',
+            executable="cmd.exe",
+            creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
             close_fds=True,
         )
     except OSError:
