@@ -559,6 +559,23 @@ class TokenCache:
                 key=lambda row: (int(row.get("priority", 0)), row["source_id"]),
             )
 
+    async def get_pending_sources(self, provider: str) -> list[dict[str, Any]]:
+        """Identity-pending source bundles in *any* cache slot, each tagged ``account_slot``.
+
+        Most providers file a pending bundle under ``default``; Anthropic files it under its
+        own stable source id so a rotating token can't spawn orphan rows. The identity
+        verifier needs both.
+        """
+        async with self._lock:
+            self._clear_expired_unlocked()
+            pending = [
+                {"source_id": source_id, "tokens": tokens, "account_slot": slot, **metadata}
+                for slot, rows in self._source_cache.get(provider, {}).items()
+                for source_id, (tokens, metadata, _timestamp) in rows.items()
+                if metadata.get("identity_pending") is True
+            ]
+            return sorted(pending, key=lambda row: (int(row.get("priority", 0)), row["source_id"]))
+
     async def get_all_source_descriptors(self, provider: str) -> list[dict[str, Any]]:
         """Return sidecar ownership metadata without exposing credential values."""
         async with self._lock:

@@ -230,7 +230,7 @@ class CollectorManager:
                 if p_id in inactive_providers:
                     self.smart_collectors.pop(f"{p_id}:default:identity-pending", None)
                     continue
-                pending_sources = await token_cache.get_source_candidates(p_id, "default")
+                pending_sources = await token_cache.get_pending_sources(p_id)
                 has_pending_source = any(
                     is_sidecar_source(source)
                     and source.get("credential_origin")
@@ -671,6 +671,18 @@ class CollectorManager:
                 exc_info=True,
             )
 
+    @staticmethod
+    async def _source_candidates(
+        provider_id: object, account_id: object, identity_verification: bool
+    ) -> list[dict[str, Any]]:
+        if not isinstance(provider_id, str) or not isinstance(account_id, str):
+            return []
+        if identity_verification:
+            # Pending bundles may sit in a slot other than ``default`` (Anthropic keys them
+            # by source id); each carries its ``account_slot``.
+            return await token_cache.get_pending_sources(provider_id)
+        return await token_cache.get_source_candidates(provider_id, account_id)
+
     async def _collect_with_source_failover(
         self,
         key: str,
@@ -687,11 +699,7 @@ class CollectorManager:
         )
         default_account_label = getattr(collector, "account_label", None)
         identity_verification = key.endswith(":identity-pending")
-        candidates = (
-            await token_cache.get_source_candidates(provider_id, account_id)
-            if isinstance(provider_id, str) and isinstance(account_id, str)
-            else []
-        )
+        candidates = await self._source_candidates(provider_id, account_id, identity_verification)
         if not candidates or not isinstance(provider_id, str):
             if identity_verification:
                 return []
@@ -765,8 +773,9 @@ class CollectorManager:
                 )
                 skipped_for_renewal = True
                 continue
+            cache_slot = candidate.get("account_slot") or account_id
             async with token_cache.using_source(
-                provider_id, account_id, candidate["source_id"]
+                provider_id, cache_slot, candidate["source_id"]
             ) as attempt:
                 result: list[dict[str, Any]] = []
                 try:
@@ -835,6 +844,7 @@ class CollectorManager:
                     account_id,
                     candidate["source_id"],
                     resolved_id,
+                    cache_account_id=cache_slot,
                 )
             elif (
                 account_id == "default"
@@ -852,8 +862,10 @@ class CollectorManager:
                 await asyncio.to_thread(
                     self._persist_identity_pending_preview, provider_id, candidate, preview
                 )
+                # Keep going: a source that works but cannot name its account must not
+                # starve the other pending sources of their own verification.
                 successful_result = []
-                break
+                continue
             successful_result = result
             break
         if successful_result is None and last_kept_failure_result is None and skipped_for_renewal:
@@ -881,12 +893,23 @@ class CollectorManager:
         return exp is not None and exp <= time.time()
 
     async def _promote_source_identity(
-        self, provider_id: str, old_account_id: str, source_id: str, account_id: str
+        self,
+        provider_id: str,
+        old_account_id: str,
+        source_id: str,
+        account_id: str,
+        *,
+        cache_account_id: str | None = None,
     ) -> None:
-        """Move one default source to the stable identity it proved itself."""
+        """Move one default source to the stable identity it proved itself.
+
+        ``old_account_id`` is the durable row's account (``default``); ``cache_account_id`` is
+        the token-cache slot holding the bundle when that differs (Anthropic's pending
+        bundles sit under their source id).
+        """
         from datetime import UTC, datetime
 
-        from sqlmodel import Session, select
+        from sqlmodel import Session, col, select
 
         from app.core.db import engine
         from app.models.db import CredentialSource
@@ -897,10 +920,12 @@ class CollectorManager:
         if not target or target == "default":
             return
         with Session(engine) as session:
+            # The durable row sits under the account the bundle was filed under: ``default``,
+            # or (Anthropic) the source id itself while the identity is pending.
             source = session.exec(
                 select(CredentialSource).where(
                     CredentialSource.provider_id == provider_id,
-                    CredentialSource.account_id == old_account_id,
+                    col(CredentialSource.account_id).in_({old_account_id, cache_account_id or ""}),
                     CredentialSource.source_id == source_id,
                 )
             ).first()
@@ -965,7 +990,9 @@ class CollectorManager:
                 provider_id,
                 source_id,
             )
-            await token_cache.move_source(provider_id, old_account_id, target, source_id)
+            await token_cache.move_source(
+                provider_id, cache_account_id or old_account_id, target, source_id
+            )
 
     def _persist_identity_pending_preview(
         self,

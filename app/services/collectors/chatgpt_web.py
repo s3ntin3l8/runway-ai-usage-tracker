@@ -106,6 +106,8 @@ class ChatGPTWebMixin:
                     token_cache.update_account_metadata("chatgpt", effective_account_id, name=email)
                 )
 
+        self._adopt_pending_identity(email)
+
         rate_limit = data.get("rate_limit", {})
         cards: list[dict[str, Any]] = []
 

@@ -153,14 +153,21 @@ collectors only do `api` and `web`.
 
 A sidecar that can't tell whose credential it found (no email in the id_token, no
 configured identity) reports it as `identity_pending` and sends the secret only for
-providers the server can verify: antigravity, anthropic, gemini, github and opencode. The
-server then runs a dedicated `<provider>:default:identity-pending` collector pinned to that
-one source; when its API call reveals the account (Gemini and Antigravity ask Google's
-userinfo endpoint), `CollectorManager` binds that identity to the exact source and moves it
-to the account. Anything else stays "Needs mapping" for the operator, and the secret never
-leaves the machine. ChatGPT is deliberately not on the list: its tokens carry the email in
-a JWT claim (`id_token`, or the `https://api.openai.com/profile` claim of the access token)
-that the sidecar decodes locally, and there is no reliable upstream endpoint to ask.
+providers the server can verify: antigravity, anthropic, chatgpt, gemini, github and
+opencode. The server then runs a dedicated `<provider>:default:identity-pending` collector
+pinned to each pending source in turn; when its API call reveals the account, `CollectorManager`
+binds that identity to the exact source and moves it to the account. How each provider
+answers: Gemini and Antigravity ask Google's userinfo endpoint; Claude asks `claude.ai`
+(`/api/account`) for a session cookie (a bare OAuth token stays "Needs mapping": the only
+endpoint that answers names the organization's contact, not the token's holder); ChatGPT reads the
+email from the usage endpoint after exchanging the cookie. Anthropic files its pending bundles
+under their source id rather than `default`, so the verifier looks across every cache slot
+(`TokenCache.get_pending_sources`). A pinned run never reads the server host's own login (it
+belongs to another account), and a source that works but cannot name its account stays pending
+without blocking the others. Anything unverifiable stays "Needs mapping" for the operator.
+A ChatGPT token whose JWT already carries the email (`id_token`, or the
+`https://api.openai.com/profile` claim of an access token, from a file or `CHATGPT_OAUTH_TOKEN`)
+is identified by the sidecar and never needs verifying.
 
 ### Credential origins and operator tags
 

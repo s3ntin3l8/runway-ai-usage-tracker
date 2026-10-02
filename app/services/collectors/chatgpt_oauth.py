@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 
 from app.core.utils import http_request_with_retry
-from app.services.credential_provider import credential_provider
+from app.services.credential_provider import CredentialMap, credential_provider
 from app.services.token_cache import borrowable_entries, token_cache
 
 logger = logging.getLogger(__name__)
@@ -22,10 +22,13 @@ class ChatGPTWebOAuthMixin:
         # Priority 0: Instance-level Refreshed Token (short-lived in-memory cache)
         # This is populated after a successful cookie-based refresh.
         now = datetime.now(UTC)
+        pinned = token_cache.selected_source("chatgpt")
         if (
             getattr(self, "_refreshed_token", None)
             and getattr(self, "_refreshed_token_expiry", None)
             and now < self._refreshed_token_expiry
+            # A bearer minted from one source's cookie must never serve another source.
+            and getattr(self, "_refreshed_for", None) == pinned
         ):
             self._current_input_source = getattr(self, "_refreshed_input_source", "unknown")
             return {
@@ -35,7 +38,13 @@ class ChatGPTWebOAuthMixin:
             }
 
         # Priority 1 & 2: Env var or auth.json (Centralized in CredentialProvider)
-        auth_data = credential_provider.get_chatgpt_data()
+        # A collector pinned to a source bundle reads only that bundle: the server host's own
+        # login belongs to whichever account is signed in there, not to the bundle.
+        auth_data = (
+            credential_provider.get_chatgpt_data()
+            if pinned is None
+            else CredentialMap({}, sources={})
+        )
         token = auth_data.get("access_token")
         account_id = auth_data.get("account_id")
         refresh_token = auth_data.get("refresh_token")
@@ -109,13 +118,8 @@ class ChatGPTWebOAuthMixin:
                         self._refreshed_token = refreshed
                         self._refreshed_token_expiry = now + timedelta(hours=1)
                         self._refreshed_input_source = input_source
-                        # Store in token cache for token health visibility
-                        await token_cache.store(
-                            "chatgpt",
-                            {"oauth_token": refreshed},
-                            account_id=self.account_id,
-                            source=input_source if input_source == "config" else "server",
-                        )
+                        self._refreshed_for = pinned
+                        await self._store_refreshed_bearer(refreshed, input_source)
                         return {
                             "token": refreshed,
                             "source": self.DATA_SOURCE_WEB,
@@ -152,12 +156,8 @@ class ChatGPTWebOAuthMixin:
                         self._refreshed_token = refreshed
                         self._refreshed_token_expiry = now + timedelta(hours=1)
                         self._refreshed_input_source = input_source
-                        await token_cache.store(
-                            "chatgpt",
-                            {"oauth_token": refreshed},
-                            account_id=self.account_id,
-                            source=input_source if input_source == "config" else "server",
-                        )
+                        self._refreshed_for = pinned
+                        await self._store_refreshed_bearer(refreshed, input_source)
                         return {
                             "token": refreshed,
                             "source": self.DATA_SOURCE_WEB,
@@ -171,6 +171,40 @@ class ChatGPTWebOAuthMixin:
                     }
 
         return {}
+
+    async def _store_refreshed_bearer(self, bearer: str, input_source: str) -> None:
+        """Cache the exchanged bearer for token-health visibility.
+
+        Never for a source still awaiting its identity: ``store`` would put the bearer into
+        the shared ``default`` slot, publishing an unidentified credential as a real account.
+        """
+        meta = token_cache.current_source_metadata("chatgpt", self.account_id or "default")
+        if meta and meta.get("identity_pending") is True:
+            return
+        await token_cache.store(
+            "chatgpt",
+            {"oauth_token": bearer},
+            account_id=self.account_id,
+            source=input_source if input_source == "config" else "server",
+        )
+
+    def _adopt_pending_identity(self, email: str | None) -> None:
+        """Learn the account of a credential a sidecar couldn't identify.
+
+        Only for the identity-verification run: pinned to a source bundle the sidecar marked
+        ``identity_pending``. The email becomes this collector's ``account_id``;
+        ``CollectorManager`` then binds it to that exact source.
+        """
+        if not email or "@" not in email:
+            return
+        if self.account_id and self.account_id.lower() != "default":
+            return
+        meta = token_cache.current_source_metadata("chatgpt", self.account_id or "default")
+        if not meta or meta.get("identity_pending") is not True:
+            return
+        from app.services.collectors.base import normalize_account_id
+
+        self.account_id = normalize_account_id(email)
 
     async def _find_cross_account_oauth_token(
         self,

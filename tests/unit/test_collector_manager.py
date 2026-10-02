@@ -86,7 +86,7 @@ class TestCollectorManagerInitialization:
             yield {"auth_failed": False}
 
         monkeypatch.setattr(
-            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+            "app.services.collector_manager.token_cache.get_pending_sources", get_candidates
         )
         monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
         promote = AsyncMock()
@@ -103,7 +103,11 @@ class TestCollectorManagerInitialization:
         assert health[candidate["source_id"]] == "healthy"
         if resolved_account:
             promote.assert_awaited_once_with(
-                "antigravity", "default", candidate["source_id"], resolved_account
+                "antigravity",
+                "default",
+                candidate["source_id"],
+                resolved_account,
+                cache_account_id="default",
             )
         else:
             promote.assert_not_awaited()
@@ -273,8 +277,8 @@ class TestCollectorManagerInitialization:
             )
         }
 
-        async def source_candidates(provider_id, account_id):
-            if provider_id == "antigravity" and account_id == "default":
+        async def pending_sources(provider_id):
+            if provider_id == "antigravity":
                 return [
                     {
                         "source_id": "sidecar:laptop:auth-json",
@@ -282,13 +286,14 @@ class TestCollectorManagerInitialization:
                         "sidecar_id": "laptop",
                         "credential_origin": "path:/auth.json",
                         "identity_pending": True,
+                        "account_slot": "default",
                     }
                 ]
             return []
 
         with patch(
-            "app.services.collector_manager.token_cache.get_source_candidates",
-            side_effect=source_candidates,
+            "app.services.collector_manager.token_cache.get_pending_sources",
+            side_effect=pending_sources,
         ):
             await manager._sync_collectors(force=True)
 
@@ -341,7 +346,7 @@ class TestCollectorManagerInitialization:
             yield {"auth_failed": False}
 
         monkeypatch.setattr(
-            "app.services.collector_manager.token_cache.get_source_candidates", get_candidates
+            "app.services.collector_manager.token_cache.get_pending_sources", get_candidates
         )
         monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
         promote = AsyncMock()
@@ -354,7 +359,11 @@ class TestCollectorManagerInitialization:
         assert credential_slots == ["default", "default"]
         assert result == [{"service_name": "bob@example.com"}]
         promote.assert_awaited_once_with(
-            "antigravity", "default", candidates[1]["source_id"], "bob@example.com"
+            "antigravity",
+            "default",
+            candidates[1]["source_id"],
+            "bob@example.com",
+            cache_account_id="default",
         )
 
     @pytest.mark.parametrize(
