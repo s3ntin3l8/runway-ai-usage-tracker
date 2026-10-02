@@ -18,6 +18,10 @@ Collision handling (a canonical twin of the same row already exists):
   merged by hand.
 - ``latest_usage`` / ``quota_snapshots``: the canonical row is the live
   one (the accumulator already writes canonical ids) — drop the stale twin.
+- ``credential_sources``: renamed per row; a ``config:`` id embeds its account
+  (``config:{provider}:{account}``) so it is rewritten too. A canonical twin
+  at the same ``(provider, account, source_id)`` is reported, not merged.
+- ``provider_account_labels``: plain rename, same collision rule as below.
 - ``usage_windows`` / ``provider_configs`` / ``credential_tags`` /
   ``webhook_configs``: left in place and logged — these hold operator
   intent or frozen totals that shouldn't be merged silently.
@@ -40,7 +44,13 @@ logger = logging.getLogger(__name__)
 # Tables whose colliding non-canonical rows are safe to drop (see module doc).
 _DROP_ON_COLLISION = ("usage_events", "latest_usage", "quota_snapshots")
 # Tables where a collision is reported, never resolved automatically.
-_KEEP_ON_COLLISION = ("usage_windows", "provider_configs", "credential_tags", "webhook_configs")
+_KEEP_ON_COLLISION = (
+    "usage_windows",
+    "provider_configs",
+    "credential_tags",
+    "webhook_configs",
+    "provider_account_labels",
+)
 
 
 @dataclass
@@ -81,6 +91,45 @@ def _non_canonical_pairs(session: Session, table: str) -> list[tuple[str, str, s
         if canon != raw:
             out.append((provider_id, raw, canon))
     return out
+
+
+def _canonicalize_credential_sources(session: Session, report: CanonicalizationReport) -> None:
+    """Move credential_sources rows to the canonical account, rewriting ``config:`` ids.
+
+    A plain ``UPDATE ... SET account_id`` would strand a ``config:`` row twice
+    over — wrong account *and* a source id still naming the raw one.
+    """
+    table = "credential_sources"
+    if not _table_exists(session, table):
+        return
+    for provider_id, raw, canon in _non_canonical_pairs(session, table):
+        rows = session.execute(
+            text(
+                "SELECT id, source_id FROM credential_sources WHERE provider_id = :p AND account_id = :raw"
+            ),
+            {"p": provider_id, "raw": raw},
+        ).all()
+        for row_id, source_id in rows:
+            target = (
+                f"config:{provider_id}:{canon}" if source_id.startswith("config:") else source_id
+            )
+            twin = session.execute(
+                text(
+                    "SELECT 1 FROM credential_sources WHERE provider_id = :p "
+                    "AND account_id = :canon AND source_id = :sid"
+                ),
+                {"p": provider_id, "canon": canon, "sid": target},
+            ).first()
+            if twin is not None:
+                report.conflicts[table] = report.conflicts.get(table, 0) + 1
+                continue
+            session.execute(
+                text(
+                    "UPDATE credential_sources SET account_id = :canon, source_id = :sid WHERE id = :id"
+                ),
+                {"canon": canon, "sid": target, "id": row_id},
+            )
+            report.renamed[table] = report.renamed.get(table, 0) + 1
 
 
 def canonicalize_stored_account_ids(session: Session) -> CanonicalizationReport:
@@ -135,6 +184,8 @@ def canonicalize_stored_account_ids(session: Session) -> CanonicalizationReport:
                 report.dropped[table] = report.dropped.get(table, 0) + leftover
             else:
                 report.conflicts[table] = report.conflicts.get(table, 0) + leftover
+
+    _canonicalize_credential_sources(session, report)
 
     if rollup_pairs:
         rebuild_rollups_for_pairs(session, rollup_pairs)

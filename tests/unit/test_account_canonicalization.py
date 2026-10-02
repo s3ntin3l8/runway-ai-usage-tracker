@@ -19,7 +19,9 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import (
+    CredentialSource,
     LatestUsage,
+    ProviderAccountLabel,
     ProviderConfig,
     QuotaSnapshot,
     UsageEvent,
@@ -324,6 +326,59 @@ def test_repair_reports_but_keeps_conflicting_provider_configs(session: Session)
         ("gemini", "bob@x.com"),  # no conflict — renamed
     ]
     assert report.conflicts == {"provider_configs": 1}
+
+
+def _source(provider: str, account: str, source_id: str) -> CredentialSource:
+    return CredentialSource(
+        provider_id=provider,
+        account_id=account,
+        source_id=source_id,
+        source_type="config",
+        source_label="x",
+    )
+
+
+def test_repair_moves_credential_sources_and_rewrites_config_ids(session: Session):
+    session.add(_source("deepseek", "Bob@X.com", "config:deepseek:Bob@X.com"))
+    session.add(_source("deepseek", "Bob@X.com", "sidecar:abc"))
+    session.add(_source("deepseek", "carol@x.com", "sidecar:def"))  # already canonical
+    session.commit()
+
+    report = canonicalize_stored_account_ids(session)
+
+    rows = sorted((r.account_id, r.source_id) for r in session.exec(select(CredentialSource)))
+    assert rows == [
+        ("bob@x.com", "config:deepseek:bob@x.com"),
+        ("bob@x.com", "sidecar:abc"),
+        ("carol@x.com", "sidecar:def"),
+    ]
+    assert report.renamed["credential_sources"] == 2
+
+
+def test_repair_reports_colliding_credential_source_twin(session: Session):
+    session.add(_source("deepseek", "bob@x.com", "config:deepseek:bob@x.com"))
+    session.add(_source("deepseek", "Bob@X.com", "config:deepseek:Bob@X.com"))
+    session.commit()
+
+    report = canonicalize_stored_account_ids(session)
+
+    ids = sorted((r.account_id, r.source_id) for r in session.exec(select(CredentialSource)))
+    assert ids == [
+        ("Bob@X.com", "config:deepseek:Bob@X.com"),  # left for the operator
+        ("bob@x.com", "config:deepseek:bob@x.com"),
+    ]
+    assert report.conflicts == {"credential_sources": 1}
+
+
+def test_repair_renames_account_labels(session: Session):
+    session.add(
+        ProviderAccountLabel(provider_id="deepseek", account_id="Bob@X.com", account_label="B")
+    )
+    session.commit()
+
+    canonicalize_stored_account_ids(session)
+
+    assert [r.account_id for r in session.exec(select(ProviderAccountLabel))] == ["bob@x.com"]
 
 
 # ---------------------------------------------------------------------------
