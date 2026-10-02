@@ -1179,6 +1179,10 @@ class CollectorManager:
                 None,
                 "identity_claim",
                 "identity_verification",
+                # Carried over from the previous fingerprint (#474): inferred,
+                # not mapped for this origin, so a proved identity may correct
+                # it — unlike the operator's own assignment below.
+                "rotation",
             ):
                 # An operator mapped this source while verification was in flight: theirs wins.
                 logger.info(

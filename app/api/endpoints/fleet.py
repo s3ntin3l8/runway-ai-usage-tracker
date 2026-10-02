@@ -1000,6 +1000,40 @@ async def post_credential_manifest(
             )
             continue
         claimed_id = entry.get("account_id")
+        if existing_tag is None:
+            carried = CredentialTagRepo.inherited_account_for_rotation(
+                session,
+                provider_id=provider_id,
+                credential_origin=origin,
+                sidecar_id=payload.sidecar_id,
+                claimed_account_id=claimed_id if isinstance(claimed_id, str) else None,
+            )
+            if carried is not None:
+                # The credential rotated — a CLI re-login re-fingerprints the
+                # origin (#349) — but the location did not and exactly one
+                # account was ever bound there: carry that binding over instead
+                # of reopening a silent quota outage (#474).
+                CredentialTagRepo.set_tag(
+                    session,
+                    provider_id=provider_id,
+                    credential_origin=origin,
+                    account_id=carried,
+                    sidecar_id=payload.sidecar_id,
+                    set_by="rotation",
+                )
+                PendingCredentialTagRepo.delete(
+                    session,
+                    sidecar_id=payload.sidecar_id,
+                    provider_id=provider_id,
+                    credential_origin=origin,
+                )
+                logger.info(
+                    "Carried the %s credential binding across a rotation: %s → %s",
+                    provider_id,
+                    scrub_log(origin),
+                    scrub_log(carried),
+                )
+                continue
         if provider_id == "anthropic" and isinstance(claimed_id, str):
             matched = session.exec(
                 select(ProviderConfig.id).where(

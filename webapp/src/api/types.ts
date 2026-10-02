@@ -848,6 +848,7 @@ export type CredentialMapping =
   | 'verified' // the server resolved it
   | 'claim' // the sidecar claimed it
   | 'operator' // an assignment rule
+  | 'rotation' // carried over from the same location after a re-login re-keyed it
   | 'config' // pasted in Settings → Providers
   | 'server' // env var / file on the server host
   | 'pending'; // not mapped yet

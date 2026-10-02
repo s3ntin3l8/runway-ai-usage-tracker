@@ -206,6 +206,79 @@ class CredentialTagRepo:
         return row
 
     @staticmethod
+    def inherited_account_for_rotation(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+        sidecar_id: str | None,
+        claimed_account_id: str | None = None,
+    ) -> str | None:
+        """The account a freshly rotated origin should be carried over to, if any.
+
+        A CLI re-login rewrites the credential, which re-fingerprints the
+        origin (#349): the operator's tag is keyed to the old fingerprint, so
+        the source drops back to Untagged and its token is withheld until
+        someone re-tags it — a silent quota outage (#474). When the *base*
+        origin (everything before ``#<fingerprint>``) is unchanged and every
+        in-scope tag written against that base agrees on one account, the
+        binding is unambiguous and this returns that account for the new
+        origin to inherit.
+
+        Conservative by construction:
+
+        * only fingerprinted origins — ``split_keyed_origin`` yields
+          ``fingerprint=None`` for a plain origin, so a path-only tag can never
+          hop to a different machine's credential;
+        * only tags scoped to ``sidecar_id`` or deployment-wide (NULL): another
+          machine's tag is not evidence about this one (same precedence as
+          :meth:`get`);
+        * exactly one distinct account across those rows — two accounts ever
+          tagged at this location is an operator decision, not an inheritance;
+        * a contradicting ``claimed_account_id`` (the credential's own reported
+          identity) vetoes inheritance: the account changed under the path.
+
+        Identity-claim rows count as evidence (they are a binding someone
+        allowed), so a stale claim that disagrees with an operator tag makes
+        this refuse rather than guess.
+        """
+        from app.services.account_identity import canonical_account_id, split_keyed_origin
+
+        base, fingerprint = split_keyed_origin(credential_origin)
+        if fingerprint is None:
+            return None
+        prefix = f"{base}#"
+        stmt = select(CredentialTag.credential_origin, CredentialTag.account_id).where(
+            CredentialTag.provider_id == provider_id,
+        )
+        if sidecar_id is None:
+            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+        else:
+            stmt = stmt.where(
+                or_(
+                    CredentialTag.sidecar_id == sidecar_id,
+                    col(CredentialTag.sidecar_id).is_(None),
+                )
+            )
+        # Python prefix match, not SQL LIKE: a path may contain "_" or "%",
+        # and LIKE would let one location's tag answer for a look-alike one.
+        accounts = {
+            account
+            for origin, account in session.exec(stmt).all()
+            if isinstance(origin, str)
+            and isinstance(account, str)
+            and account
+            and origin.startswith(prefix)
+        }
+        if len(accounts) != 1:
+            return None
+        account = next(iter(accounts))
+        if isinstance(claimed_account_id, str) and claimed_account_id.strip():
+            if canonical_account_id(claimed_account_id) != canonical_account_id(account):
+                return None
+        return account
+
+    @staticmethod
     def delete_tag(
         session: Session,
         *,
