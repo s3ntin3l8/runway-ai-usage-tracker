@@ -69,6 +69,8 @@ Because the token renews only when agy itself runs, a host without regular agy s
    Then `systemctl --user enable --now agy-keepalive.timer`.
 3. **A live `agy` session** on the machine — what masked the lapses before keep-alive existed (a long-running session renews on each turn).
 
+> **Keep-alive assumes today's renewal semantics.** The "rewrites only the access token, never the refresh token" property was verified manually (2026-10-02) and cannot be checked by this repo's test suite: before enabling unattended keep-alive against a new agy release, diff the token file's `refresh_token` across one `agy models` renewal (it must not change) and scan the release notes for refresh-token handling — a CLI that starts rotating it would sign every other machine's login out.
+
 While the token is still valid but within 10 minutes of expiry, the sidecar logs a pre-expiry `WARNING` ("run `agy models` … or start the sidecar with `--keep-alive`") — suppressed automatically when keep-alive already owns renewal.
 
 **Multi-machine:** every machine's sidecar pushes its own agy token under the resolved account, and the server keeps the freshest push. The default collector discovers those identity-keyed bundles and fails over between them, so as long as *any* machine holds a live session the quota keeps flowing; Fleet → Token Health shows per-source `auth_failed` / `healthy` state.

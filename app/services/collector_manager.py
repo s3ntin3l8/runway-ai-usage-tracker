@@ -716,7 +716,14 @@ class CollectorManager:
         # incident, where a dead merged token was served while a live source
         # bundle sat unused under its identity slot. Identity-pending rows from
         # the sweep are dropped by the pending filter in the caller.
-        return slot_candidates + await token_cache.get_account_source_candidates(provider_id)
+        swept = await token_cache.get_account_source_candidates(provider_id)
+        # Defensive: the two lookups are slot-scoped today, but if some future
+        # path files the same source_id under both the default slot and an
+        # identity slot, failover must not attempt that bundle twice.
+        seen = {candidate["source_id"] for candidate in slot_candidates}
+        return slot_candidates + [
+            candidate for candidate in swept if candidate["source_id"] not in seen
+        ]
 
     def _ordered_candidates(
         self, provider_id: str, account_id: str, candidates: list[dict[str, Any]]

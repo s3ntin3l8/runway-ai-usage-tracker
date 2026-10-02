@@ -1532,6 +1532,86 @@ class TestDefaultCollectorSourceSweep:
             "src:default-view",
         ]
 
+    async def test_all_pending_sweep_falls_back_to_unpinned_collect(self, manager, monkeypatch):
+        """Identity-pending rows never reach the default collector's failover.
+
+        When the sweep's only candidates are pending, the default collector
+        falls back to the unpinned merged-cache read — not ``[]``, not a pin —
+        and the dropped rows record no health: the verifier owns them.
+        """
+        collector = SimpleNamespace(
+            PROVIDER_ID="antigravity",
+            account_id="default",
+            account_label="Default",
+            credential_account_id="default",
+        )
+        smart = MagicMock(collector=collector)
+        smart.reset = AsyncMock()
+
+        async def collect(_client):
+            return [{"service_name": "Antigravity", "remaining": 5}]
+
+        smart.collect = AsyncMock(side_effect=collect)
+        manager.smart_collectors["antigravity:default"] = smart
+
+        async def no_slot_sources(*_args):
+            return []
+
+        async def only_pending(*_args):
+            return [
+                {
+                    "source_id": "sidecar:host:path:/x",
+                    "identity_pending": True,
+                    "account_slot": "someone@example.com",
+                }
+            ]
+
+        def _no_pin(*_args, **_kwargs):
+            raise AssertionError(
+                "a pending source must never be attempted by the default collector"
+            )
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", no_slot_sources
+        )
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_account_source_candidates",
+            only_pending,
+        )
+        monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", _no_pin)
+        health = {}
+
+        result = await manager._collect_with_source_failover(
+            "antigravity:default", MagicMock(), health
+        )
+
+        assert result == [{"service_name": "Antigravity", "remaining": 5}]
+        smart.collect.assert_awaited_once()
+        assert health == {}
+        assert collector.credential_account_id == "default"
+
+    async def test_sweep_dedupes_source_ids_already_in_the_slot(self, monkeypatch):
+        shared = {"source_id": "src:dup", "account_slot": "default"}
+        only_swept = {"source_id": "src:swept", "account_slot": "user@example.com"}
+
+        async def slot_rows(*_args):
+            return [shared]
+
+        async def swept_rows(*_args):
+            return [shared, only_swept]
+
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_source_candidates", slot_rows
+        )
+        monkeypatch.setattr(
+            "app.services.collector_manager.token_cache.get_account_source_candidates",
+            swept_rows,
+        )
+
+        candidates = await CollectorManager._source_candidates("antigravity", "default", False)
+
+        assert [candidate["source_id"] for candidate in candidates] == ["src:dup", "src:swept"]
+
 
 class TestCollectorManagerWarmup:
     @pytest.mark.skip(reason="keychain warmup removed; keychain access moved to sidecar")
