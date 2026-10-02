@@ -287,6 +287,8 @@ export const useProjects = (providerId: string, range?: DateRange) => {
   });
 };
 
+// Series identity is required: pass '' / 'default' to match unscoped rows with
+// the default variant, including legacy rows retained by the history query.
 export const useWindowHistory = (
   providerId: string,
   accountId: string,
@@ -365,16 +367,15 @@ export const useProviderCostForecast = (providerId: string, accountId: string) =
   });
 };
 
-// Error events (kind="error") in the last 24h — feeds the alert banner.
+// Error events (kind="error") in the last 24h — feeds a provider-wide alert
+// banner so a source filter cannot hide errors from another source.
 export const useProviderErrors = (providerId: string, accountId: string) => {
-  const [sidecarId] = useUsageSource();
   return useQuery({
-    queryKey: ['usage', 'events', 'errors', providerId, accountId, sidecarId],
+    queryKey: ['usage', 'events', 'errors', providerId, accountId],
     queryFn: () =>
       fetchEvents({
         provider_id: providerId,
         account_id: accountId,
-        sidecar_id: sidecarId,
         kind: 'error',
         since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
         limit: 100,

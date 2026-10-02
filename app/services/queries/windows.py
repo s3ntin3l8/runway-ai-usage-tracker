@@ -51,6 +51,7 @@ def query_window_history(
                     col(UsageWindow.series_model_id) == (series_model_id or ""),
                     col(UsageWindow.series_variant) == (series_variant or ""),
                 ),
+                # Keep pre-migration history, whose series identity defaults to ('', '').
                 and_(
                     col(UsageWindow.series_model_id) == "",
                     col(UsageWindow.series_variant) == "",
