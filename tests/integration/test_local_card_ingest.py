@@ -1298,7 +1298,8 @@ async def test_a_re_login_on_an_oauth_file_origin_moves_the_source_to_the_new_cl
 
 def test_ingest_response_no_longer_carries_the_unread_identity_and_hint_maps(session):
     """``account_identities`` and ``account_tag_hints`` were never read from the ingest
-    response (the sidecar takes tag hints from /fleet/config); only ``identities`` remains."""
+    response; only ``identities`` remains. The hints still ship on /fleet/config, which
+    ``test_config_response_carries_account_tag_hints`` pins."""
     with (
         patch("app.core.config.settings") as mock_settings,
         patch("app.api.endpoints.fleet.token_cache") as mock_tc,
