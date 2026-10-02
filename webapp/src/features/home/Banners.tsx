@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { AlertTriangle, HeartPulse, KeyRound, TrendingUp, Unlink, X } from 'lucide-react';
+import { AlertTriangle, BellOff, HeartPulse, KeyRound, TrendingUp, Unlink, X } from 'lucide-react';
 import type { AnomalyEntry, CredentialInventory, DataHealthReport, FleetEntry } from '@/api/types';
 import { timeAgo } from '@/lib/format';
 import { cardStale } from '@/lib/quota';
@@ -29,6 +29,10 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
   });
   const dataHealthErrors = (dataHealth?.checks ?? []).filter(
     (c) => c.severity === 'error' && c.total_count > 0,
+  );
+  // Not a repair, so it has its own banner (and its own link) instead of the generic one.
+  const noAlertChannel = (dataHealth?.checks ?? []).some(
+    (c) => c.check_id === 'alert_channels' && c.total_count > 0,
   );
 
   const failingLabel = (e: FleetEntry): string => {
@@ -114,6 +118,17 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
               .map((a) => `${a.provider_id}/${a.model_id} (${a.z_score_tokens.toFixed(1)}σ)`)
               .join(', ')}
             {spikes.length > 2 ? ` and ${spikes.length - 2} more` : ''}
+          </span>
+        </Banner>
+      ) : null}
+      {noAlertChannel ? (
+        <Banner tone="warning" icon={<BellOff className="size-4 shrink-0" aria-hidden />}>
+          <span>
+            Credential alerts have no delivery channel — an expired or rejected credential won't
+            notify anyone.{' '}
+            <Link to="/settings/webhooks" className="font-medium underline underline-offset-2">
+              Add a webhook
+            </Link>
           </span>
         </Banner>
       ) : null}
