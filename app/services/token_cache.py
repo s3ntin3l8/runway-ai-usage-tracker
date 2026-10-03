@@ -24,6 +24,7 @@ from app.core.utils import (
     scrub_log,
 )
 from app.services.account_identity import canonical_account_id
+from app.services.probe_mode import is_probing
 from app.services.refresh_policy import (
     ROTATING_REFRESH_PROVIDERS,
     is_machine_bundle,
@@ -153,6 +154,10 @@ class TokenCache:
         Returns:
             str: The account_id used for storage
         """
+        if is_probing():
+            # A probe only looks: whatever a collector would remember (a mirrored login file, an
+            # exchanged bearer, a refreshed token) is not stored.
+            return canonical_account_id(account_id or "default")
         selection = _active_source.get()
         if source_id is None and selection and selection[0] == provider:
             source_id = selection[2]

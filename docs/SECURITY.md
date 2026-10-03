@@ -184,6 +184,8 @@ Scope: this is a diagnostic trail with the same trust model as the rest of Runwa
 
 `GET /api/v1/system/debug/raw/{provider_id}` (admin-only, rate-limited) runs a collector live and returns the upstream HTTP exchanges. Known secret headers are masked, and request URLs, response bodies and error messages are passed through `app.core.log_redaction.redact_secrets` / `redact_url`: token-shaped strings (JWTs, bearer values, `sk-…` keys, session cookies), emails, and string values under sensitive keys (`access_token`, `password`, …) become `[REDACTED]`. This is best-effort pattern matching, not a guarantee — treat captures as sensitive.
 
+`POST /api/v1/system/debug/sources/{provider_id}` (admin-only, `5/minute`) makes one live request per credential source to show which of an account's credentials work. It returns only status codes, error types, a redacted message and counts — no bodies, headers or tokens — and is side-effect-free by construction: each source runs on a fresh collector copy in a task-local *probe mode* (`app/services/probe_mode.py`) in which token-cache stores (mirrored login files, exchanged bearers, refreshed tokens), the account's "rejected" flag and provider error events are all suppressed at the write itself, server-side OAuth refresh is disabled (a refresh would rotate a refresh token; xAI's own refresh honours the same switch), and a machine-owned login whose token has expired is reported rather than called. It is still a real request, so the provider sees it.
+
 ## 🔄 Maintenance & Hygiene
 
 ### Credential Rotation

@@ -1,6 +1,6 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { DebugRawResponse } from '@/api/types';
+import type { DebugRawResponse, SourceProbeResponse } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { DebugTab } from './DebugTab';
 import { fleetEntry, limitCard } from './test-fixtures';
@@ -45,8 +45,8 @@ describe('DebugTab', () => {
   it('separates the successful credential, quota card, and collector schedule', async () => {
     renderTab();
     expect(await screen.findByText('Collection context')).toBeInTheDocument();
-    expect(await screen.findByText('Settings credential')).toBeInTheDocument();
-    expect(screen.getByText('Valid')).toBeInTheDocument();
+    expect((await screen.findAllByText('Settings credential')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Valid').length).toBeGreaterThan(0);
     expect(screen.getByText('Most restrictive quota card')).toBeInTheDocument();
     expect(screen.getByText('Max')).toBeInTheDocument();
     expect(screen.getByText('weekly')).toBeInTheDocument();
@@ -56,6 +56,162 @@ describe('DebugTab', () => {
     expect(screen.getAllByText(/ago$/).length).toBeGreaterThan(0);
     expect(screen.getByText(/^in /)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /full credential inventory/i })).toHaveAttribute('href', '/settings/credentials');
+  });
+
+  describe('credential sources', () => {
+    const probeResponse = (sources: SourceProbeResponse['sources']): SourceProbeResponse => ({
+      provider_id: 'anthropic',
+      account_id: 'me@example.com',
+      probed_at: new Date().toISOString(),
+      sources,
+    });
+
+    it('lists the account\'s sources and never probes on its own', async () => {
+      renderTab();
+      const list = await screen.findByRole('list', { name: 'Credential sources' });
+      expect(within(list).getByText('Settings credential')).toBeInTheDocument();
+      expect(within(list).getByText('Feeding data')).toBeInTheDocument();
+      expect(within(list).getByText(/priority 0/)).toBeInTheDocument();
+      expect(api.probeCredentialSources).not.toHaveBeenCalled();
+    });
+
+    it('probes on demand and shows each source\'s result without secrets', async () => {
+      vi.mocked(api.probeCredentialSources).mockResolvedValue(
+        probeResponse([
+          {
+            source_id: 'config:me@example.com',
+            outcome: 'auth_failed',
+            probed: true,
+            http_status: 401,
+            error_type: 'auth_failed',
+            duration_ms: 123,
+          },
+        ]),
+      );
+      renderTab();
+      await userEvent.click(await screen.findByRole('button', { name: 'Probe sources' }));
+
+      expect(api.probeCredentialSources).toHaveBeenCalledWith('anthropic', 'me@example.com');
+      expect(await screen.findByText('Rejected by the provider')).toBeInTheDocument();
+      expect(screen.getByText('HTTP 401')).toBeInTheDocument();
+      expect(screen.getByText('123 ms')).toBeInTheDocument();
+      expect(screen.getByText(/changes nothing/i)).toBeInTheDocument();
+    });
+
+    it('explains a source that was not called instead of implying it works', async () => {
+      vi.mocked(api.probeCredentialSources).mockResolvedValue(
+        probeResponse([
+          { source_id: 'config:me@example.com', outcome: 'waiting_on_machine', probed: false },
+        ]),
+      );
+      renderTab();
+      await userEvent.click(await screen.findByRole('button', { name: 'Probe sources' }));
+      expect(await screen.findByText(/waiting for its machine/i)).toBeInTheDocument();
+      expect(screen.queryByText(/ms$/)).not.toBeInTheDocument();
+    });
+
+    it('shows a failed probe (rate limit, not admin) as an alert', async () => {
+      vi.mocked(api.probeCredentialSources).mockRejectedValue(new Error('429 Too Many Requests'));
+      renderTab();
+      await userEvent.click(await screen.findByRole('button', { name: 'Probe sources' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Probe failed: 429 Too Many Requests');
+    });
+
+    it('marks a listed source the probe did not reach and lists swept ones it found elsewhere', async () => {
+      vi.mocked(api.probeCredentialSources).mockResolvedValue(
+        probeResponse([
+          { source_id: 'sidecar:elsewhere', outcome: 'healthy', probed: true, http_status: 200 },
+        ]),
+      );
+      renderTab();
+      await userEvent.click(await screen.findByRole('button', { name: 'Probe sources' }));
+
+      expect(await screen.findByText(/not probed — it belongs to a different account/i)).toBeInTheDocument();
+      const other = screen.getByRole('list', { name: 'Other probed sources' });
+      expect(within(other).getByText('sidecar:elsewhere')).toBeInTheDocument();
+      expect(within(other).getByText('Working')).toBeInTheDocument();
+    });
+
+    it('forgets the previous account\'s probe when the account changes', async () => {
+      vi.mocked(api.probeCredentialSources).mockResolvedValue(
+        probeResponse([{ source_id: 'config:me@example.com', outcome: 'healthy', probed: true }]),
+      );
+      const { rerender } = renderTab();
+      await userEvent.click(await screen.findByRole('button', { name: 'Probe sources' }));
+      expect(await screen.findByText(/changes nothing/i)).toBeInTheDocument();
+
+      rerender(
+        <DebugTab providerId="anthropic" accountId="other@example.com" entry={entry} active />,
+      );
+      expect(screen.queryByText(/changes nothing/i)).not.toBeInTheDocument();
+    });
+
+    it('shows the details of a failed source and a disabled one, and the probe limit', async () => {
+      vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
+        inventory({
+          providers: [
+            {
+              provider_id: 'anthropic',
+              name: 'Claude',
+              accounts: [
+                account(
+                  [
+                    source({
+                      provider_id: 'anthropic',
+                      account_id: 'me@example.com',
+                      source_id: 'sidecar:off',
+                      label: 'auth.json',
+                      enabled: false,
+                      health: 'untried',
+                      last_success_at: null,
+                    }),
+                    source({
+                      provider_id: 'anthropic',
+                      account_id: 'me@example.com',
+                      source_id: 'sidecar:slow',
+                      label: 'creds.json',
+                    }),
+                  ],
+                  { provider_id: 'anthropic', account_id: 'me@example.com' },
+                ),
+              ],
+            },
+          ],
+        }),
+      );
+      vi.mocked(api.probeCredentialSources).mockResolvedValue({
+        ...probeResponse([
+          { source_id: 'sidecar:off', outcome: 'over_limit', probed: false },
+          {
+            source_id: 'sidecar:slow',
+            outcome: 'unavailable',
+            probed: true,
+            http_status: 503,
+            error_type: 'api_error',
+            message: 'upstream unavailable',
+            duration_ms: 20_000,
+          },
+        ]),
+        truncated: true,
+      });
+      renderTab();
+      expect(await screen.findByText('Disabled')).toBeInTheDocument();
+      expect(screen.getByText(/not yet tried/i)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Probe sources' }));
+
+      expect(await screen.findByText('Not tried — probe limit reached')).toBeInTheDocument();
+      expect(screen.getByText('Collection failed')).toBeInTheDocument();
+      expect(screen.getByText('HTTP 503')).toBeInTheDocument();
+      expect(screen.getByText('api_error')).toBeInTheDocument();
+      expect(screen.getByText('upstream unavailable')).toBeInTheDocument();
+    });
+
+    it('has nothing to probe when no source is reported', async () => {
+      vi.mocked(api.fetchCredentialInventory).mockResolvedValue(inventory({ providers: [] }));
+      renderTab();
+      expect(await screen.findByText(/no credential source reported/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Probe sources' })).toBeDisabled();
+    });
   });
 
   it('shows the capture prompt and does not auto-fetch', () => {

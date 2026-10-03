@@ -12,6 +12,7 @@ successful strategy using a different credential clears it.
 import threading
 
 from app.services.account_identity import canonical_account_id
+from app.services.probe_mode import is_probing
 
 _lock = threading.Lock()
 _flagged: dict[str, set[str]] = {}
@@ -19,6 +20,8 @@ _flagged: dict[str, set[str]] = {}
 
 def mark(provider: str, account_id: str | None) -> None:
     """Record that *provider* rejected the credential used for *account_id*."""
+    if is_probing():
+        return  # a probe must not turn an account's status red by itself
     with _lock:
         _flagged.setdefault(provider, set()).add(canonical_account_id(account_id or "default"))
 

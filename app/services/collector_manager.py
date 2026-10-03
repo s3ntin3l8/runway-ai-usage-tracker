@@ -33,6 +33,7 @@ from app.services.collectors.zai import ZaiCollector
 from app.services.credential_sources import is_sidecar_source
 from app.services.refresh_policy import machine_owns_credential
 from app.services.smart_collector import SmartCollector
+from app.services.source_outcome import source_outcome
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -752,7 +753,12 @@ class CollectorManager:
         ]
 
     def _ordered_candidates(
-        self, provider_id: str, account_id: str, candidates: list[dict[str, Any]]
+        self,
+        provider_id: str,
+        account_id: str,
+        candidates: list[dict[str, Any]],
+        *,
+        include_resting: bool = False,
     ) -> list[dict[str, Any]]:
         """Drop disabled sources and order the rest for failover.
 
@@ -825,6 +831,8 @@ class CollectorManager:
                 return False
             return (retry_at if retry_at.tzinfo else retry_at.replace(tzinfo=UTC)) > now
 
+        if include_resting:
+            return ordered  # a probe looks at every enabled source, rested or not
         awake = [candidate for candidate in ordered if not resting(candidate)]
         return awake or ordered[:1]
 
@@ -917,30 +925,25 @@ class CollectorManager:
                     # Do not retain a result from a crashed collector; returned
                     # failure cards are handled below, after collection completes.
                     continue
-            empty_allowed = bool(getattr(collector, "successful_empty_result", False))
-            has_usable_card = any(
-                card.get("data_source") != "error"
-                and card.get("remaining") != "ERR"
-                and not card.get("error_type")
-                for card in result
-            )
-            # A failed fetch may still carry cached or partial usable cards;
-            # fail over only when the response has no usable card at all.
-            result_failed = (not result and not empty_allowed) or (result and not has_usable_card)
-            has_auth_failure = attempt["auth_failed"] or any(
-                card.get("error_type") in {"auth_failed", "invalid_api_key"} for card in result
+            # A failed fetch may still carry cached or partial usable cards; fail over only
+            # when the response has no usable card at all (the on-demand source probe
+            # classifies with the same rule).
+            outcome = source_outcome(
+                result,
+                bool(attempt["auth_failed"]),
+                bool(getattr(collector, "successful_empty_result", False)),
             )
             # Keep the last useful failure card if a later source fails silently.
-            if has_auth_failure and result_failed:
+            if outcome == "auth_failed":
                 health_updates[candidate["source_id"]] = "auth_failed"
                 last_kept_failure_result = result or last_kept_failure_result
                 continue
-            if attempt["auth_failed"]:
+            if outcome == "degraded":
                 # An optional request or a refresh retry may return 401/403 even
                 # though the collector produced usable quota. Keep the data;
                 # preserve the partial failure for the source diagnostics.
                 health_updates[candidate["source_id"]] = "degraded"
-            if result_failed:
+            if outcome == "unavailable":
                 # Any failed attempt that did not trigger the auth_failed short-circuit
                 # (e.g. missing_config, api_error, or empty response) is functionally down.
                 # Note: Transient errors (rate_limited, timeout) trigger failover to try the
@@ -957,7 +960,7 @@ class CollectorManager:
                 # to: the tag is gone and the source is pending again. Publish nothing from
                 # this poll under the old account.
                 continue
-            if not attempt["auth_failed"]:
+            if outcome == "healthy":
                 health_updates[candidate["source_id"]] = "healthy"
             # A provider may learn a stable identity only after calling its
             # upstream API (Antigravity userinfo is one example). Bind that
