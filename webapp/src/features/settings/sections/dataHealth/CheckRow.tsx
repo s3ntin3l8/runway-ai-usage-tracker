@@ -57,7 +57,9 @@ export function CheckRow({
         ) : (
           <ChevronRight className="size-3.5 shrink-0 text-fg-subtle" aria-hidden />
         )}
-        <Badge variant={severity.variant}>{severity.label}</Badge>
+        <Badge variant={severity.variant} className="w-[4.5rem] shrink-0 justify-center">
+          {severity.label}
+        </Badge>
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">
           {check.title}
         </span>
