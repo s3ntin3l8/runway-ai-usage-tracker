@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountConfigProviderIdForUsage } from './providerAccountAliases';
+import { accountConfigProviderIdForUsage, relatedAccountProviderIds } from './providerAccountAliases';
 
 describe('accountConfigProviderIdForUsage', () => {
   it.each(['opencode-free', 'opencode-zen', 'hermes-auto'])('maps %s to the shared OpenCode config', (providerId) => {
@@ -13,5 +13,15 @@ describe('accountConfigProviderIdForUsage', () => {
   it('preserves provider IDs without a shared config alias', () => {
     expect(accountConfigProviderIdForUsage('opencode')).toBe('opencode');
     expect(accountConfigProviderIdForUsage('xai')).toBe('xai');
+  });
+});
+
+describe('relatedAccountProviderIds', () => {
+  it('lets Gemini usage be assigned to Antigravity accounts', () => {
+    expect(relatedAccountProviderIds('gemini')).toEqual(['antigravity']);
+  });
+
+  it('has no related providers by default', () => {
+    expect(relatedAccountProviderIds('xai')).toEqual([]);
   });
 });

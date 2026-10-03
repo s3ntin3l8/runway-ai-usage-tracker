@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, and_, col, or_, select
 
 from app.models.db import (
     CredentialSource,
@@ -389,7 +389,17 @@ def real_account_ids(session: Session, provider_id: str) -> set[str]:
         select(UsageEvent.account_id).where(UsageEvent.provider_id == provider_id).distinct()
     ).all()
     tags = session.exec(
-        select(CredentialTag.account_id).where(CredentialTag.provider_id == provider_id).distinct()
+        select(CredentialTag.account_id)
+        .where(
+            or_(
+                CredentialTag.target_provider_id == provider_id,
+                and_(
+                    CredentialTag.provider_id == provider_id,
+                    col(CredentialTag.target_provider_id).is_(None),
+                ),
+            )
+        )
+        .distinct()
     ).all()
     labels = session.exec(
         select(ProviderAccountLabel.account_id)

@@ -24,7 +24,6 @@ from app.models._datetime import iso_utc
 from app.models.db import (
     AuditLog,
     CredentialSource,
-    CredentialTag,
     LatestUsage,
     LatestUsageContribution,
     ProviderAccountLabel,
@@ -47,6 +46,7 @@ from app.services.collector_manager import manager
 from app.services.credential_inventory import build_inventory as build_credential_inventory
 from app.services.credential_provider import CredentialProvider
 from app.services.credential_sources import effective_health, is_server_source_id
+from app.services.credential_tags import CredentialTagRepo
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.source_probe import isolated_collector, probe_sources
@@ -1218,13 +1218,13 @@ async def preview_provider_account_merge(
         "collisions": sum(row.source_id in destination_source_ids for row in source_credentials),
     }
     counts["credential_tags"] = {
-        "affected": session.exec(
-            select(CredentialTag).where(
-                CredentialTag.provider_id == body.provider_id, CredentialTag.account_id == source_id
+        "affected": sum(
+            1
+            for tag in CredentialTagRepo.list_for_account_provider(
+                session, provider_id=body.provider_id
             )
-        )
-        .all()
-        .__len__(),
+            if tag.account_id == source_id
+        ),
         "collisions": 0,
     }
     return {
@@ -1307,12 +1307,11 @@ async def apply_provider_account_merge(
         else:
             row.account_id = destination_id
     if source_id != "default":
-        for row in session.exec(
-            select(CredentialTag).where(
-                CredentialTag.provider_id == body.provider_id, CredentialTag.account_id == source_id
-            )
-        ).all():
-            row.account_id = destination_id
+        for row in CredentialTagRepo.list_for_account_provider(
+            session, provider_id=body.provider_id
+        ):
+            if row.account_id == source_id:
+                row.account_id = destination_id
     src = session.exec(
         select(ProviderConfig).where(
             ProviderConfig.provider_id == body.provider_id, ProviderConfig.account_id == source_id
@@ -1952,7 +1951,6 @@ async def delete_provider_config_for_account(
     # shipping the hint to sidecars and the /fleet/ingest path stamps
     # every new event with the now-removed account — effectively
     # resurrecting the pair on the dashboard via the synthetic loop.
-    from app.services.credential_tags import CredentialTagRepo
 
     tags_cleared = CredentialTagRepo.delete_by_account(
         session, provider_id=provider_id, account_id=account_id

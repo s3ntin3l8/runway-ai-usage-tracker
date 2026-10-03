@@ -50,7 +50,7 @@ def _orphaned_tags(session: Session, provider_id: str) -> list[CredentialTag]:
         return []
     return [
         t
-        for t in CredentialTagRepo.list_by_provider(session, provider_id=provider_id)
+        for t in CredentialTagRepo.list_for_account_provider(session, provider_id=provider_id)
         if t.account_id == "default"
     ]
 
@@ -68,7 +68,7 @@ class OrphanCredentialTagsCheck(Check):
         tags = session.exec(
             select(CredentialTag).where(col(CredentialTag.account_id) == "default")
         ).all()
-        provider_ids = sorted({t.provider_id for t in tags})
+        provider_ids = sorted({t.target_provider_id or t.provider_id for t in tags})
 
         groups: list[FindingGroup] = []
         for provider_id in provider_ids:

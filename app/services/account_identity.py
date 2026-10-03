@@ -46,9 +46,34 @@ _CONFIG_TO_USAGE_PROVIDER_IDS: dict[str, frozenset[str]] = {
 }
 
 
+# Usage streams whose account may legitimately be an account of *another*
+# provider: gemini-cli is gone and Google's subscription now surfaces through
+# Antigravity, so Hermes' Gemini events can be assigned to either. Keep in sync
+# with RELATED_ACCOUNT_PROVIDERS in webapp/src/lib/providerAccountAliases.ts.
+_RELATED_ACCOUNT_PROVIDERS: dict[str, tuple[str, ...]] = {
+    "gemini": ("antigravity",),
+}
+
+
 def account_config_provider_id(provider_id: str) -> str:
     """Return the provider whose account config owns a usage provider ID."""
     return _USAGE_TO_CONFIG_PROVIDER_MAP.get(provider_id, provider_id)
+
+
+def related_account_provider_ids(config_provider_id: str) -> tuple[str, ...]:
+    """Return other providers whose accounts may own this provider's usage."""
+    return _RELATED_ACCOUNT_PROVIDERS.get(config_provider_id, ())
+
+
+def allowed_assignment_provider_ids(usage_provider_id: str) -> tuple[str, ...]:
+    """Return config providers an event of ``usage_provider_id`` may be assigned to."""
+    config_provider_id = account_config_provider_id(usage_provider_id)
+    return (config_provider_id, *related_account_provider_ids(config_provider_id))
+
+
+def is_redirect_source_provider(usage_provider_id: str) -> bool:
+    """True when events of this provider can be redirected to a related provider."""
+    return bool(related_account_provider_ids(account_config_provider_id(usage_provider_id)))
 
 
 def account_usage_provider_ids(provider_id: str) -> frozenset[str]:

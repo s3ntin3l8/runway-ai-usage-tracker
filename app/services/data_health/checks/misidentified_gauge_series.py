@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, col, select
 
 from app.models.db import (
@@ -76,7 +76,10 @@ def _fetch_evidence_pairs(session: Session) -> set[tuple[str, str]]:
     tags_pairs = {
         (row[0], row[1])
         for row in session.execute(
-            select(CredentialTag.provider_id, CredentialTag.account_id).distinct()
+            select(
+                func.coalesce(CredentialTag.target_provider_id, CredentialTag.provider_id),
+                CredentialTag.account_id,
+            ).distinct()
         )
     }
     config_pairs = {
@@ -145,7 +148,13 @@ def _has_evidence(
             select(func.count())
             .select_from(CredentialTag)
             .where(
-                col(CredentialTag.provider_id) == provider_id,
+                or_(
+                    col(CredentialTag.target_provider_id) == provider_id,
+                    and_(
+                        col(CredentialTag.provider_id) == provider_id,
+                        col(CredentialTag.target_provider_id).is_(None),
+                    ),
+                ),
                 col(CredentialTag.account_id) == account_id,
             )
         ).scalar_one()

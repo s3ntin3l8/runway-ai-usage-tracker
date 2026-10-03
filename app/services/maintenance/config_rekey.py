@@ -188,7 +188,7 @@ def plan_rekey_config(
 ) -> RekeyPlan:
     """Read-only preview."""
     target_exists = _get_config(session, provider_id, new_account_id) is not None
-    tags = CredentialTagRepo.list_by_provider(session, provider_id=provider_id)
+    tags = CredentialTagRepo.list_for_account_provider(session, provider_id=provider_id)
     tags_at_old = sum(1 for t in tags if t.account_id == old_account_id)
 
     from app.models.db import WebhookConfig
@@ -294,7 +294,7 @@ def apply_rekey_config(
     # credential_tags.account_id has no uniqueness of its own (the table's
     # keys are (provider_id, credential_origin[, sidecar_id])), so this is a
     # plain bulk retag — no collision handling needed.
-    tags = CredentialTagRepo.list_by_provider(session, provider_id=provider_id)
+    tags = CredentialTagRepo.list_for_account_provider(session, provider_id=provider_id)
     for tag in tags:
         if tag.account_id == old_account_id:
             tag.account_id = new_account_id

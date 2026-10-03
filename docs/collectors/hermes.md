@@ -98,6 +98,12 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
    - `_build_canonical_hints_for_provider("hermes")` forwards the hint to `parse_hermes_events`.
    - Future events are automatically tagged with `account_id="s3ntin3l8@gmail.com"` and `account_source="tag"`, merging directly into the quota gauge.
 
+   **Archived accounts and related providers.** The account list also offers:
+   - *Archived accounts* of the same provider. Usage is stored on the archived account, so it is hidden from Fleet but still counted in Stats and archived lifetime stats. Disabled-but-not-archived accounts are never offered.
+   - *Accounts of a related provider*: Gemini usage can be assigned to an Antigravity account (Google's subscription replaced gemini-cli). The events are re-homed to `provider_id="antigravity"` and the tag stores `target_provider_id`, so later Gemini events from that host are redirected server-side at ingest (no sidecar change). The allow-list is `_RELATED_ACCOUNT_PROVIDERS` in `app/services/account_identity.py`.
+
+   Both mappings are per host. A sidecar with a stale hint cache can keep stamping events with the previous account for up to ~10 minutes. Hermes sends raw Gemini model ids (e.g. `gemini-3-pro-preview`) that don't match the Antigravity price rows, so redirected events fall back to Hermes' reported cost or show as unpriced.
+
 4. **Native Hermes Events:**
    Unmapped non-canonical events retain the host's Hermes identity (from `HERMES_ACCOUNT_LABEL` or `"default"`) and leave `account_source=None` to defer to the sidecar's host attribution loop.
 

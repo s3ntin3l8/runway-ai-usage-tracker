@@ -1946,8 +1946,18 @@ def test_pending_usage_batch_assigns_provider_specific_accounts_and_host_tags(
         "assigned": 2,
         "providers": ["anthropic", "xai"],
         "mappings": [
-            {"provider_id": "anthropic", "sidecar_id": "host-a", "account_id": "alice@example.com"},
-            {"provider_id": "xai", "sidecar_id": "host-b", "account_id": "bob@example.com"},
+            {
+                "provider_id": "anthropic",
+                "sidecar_id": "host-a",
+                "target_provider_id": "anthropic",
+                "account_id": "alice@example.com",
+            },
+            {
+                "provider_id": "xai",
+                "sidecar_id": "host-b",
+                "target_provider_id": "xai",
+                "account_id": "bob@example.com",
+            },
         ],
     }
     assert session.exec(select(PendingUsageEvent)).all() == []
@@ -3228,3 +3238,349 @@ def test_retagging_onto_an_existing_source_row_carries_its_attempt_history(
     assert merged.account_id == "alice@example.com"
     assert (merged.health, merged.last_error) == ("auth_failed", "Authentication failed")
     assert merged.last_attempt_at is not None
+
+
+# --- Gemini usage -> archived Gemini / Antigravity targets ------------------
+
+
+def _pending_gemini(session: Session, event_id: str, sidecar_id: str = "laptop") -> int:
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent
+    from app.models.schemas import UsageEventPush
+
+    push = UsageEventPush(
+        provider_id="gemini",
+        account_id="default",
+        account_source="default",
+        event_id=event_id,
+        ts="2026-09-01T10:00:00Z",
+        model_id="gemini-3-pro-preview",
+    )
+    row = PendingUsageEvent(
+        provider_id="gemini",
+        event_id=event_id,
+        sidecar_id=sidecar_id,
+        ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+        payload_json=push.model_dump_json(),
+    )
+    session.add(row)
+    session.commit()
+    assert row.id is not None
+    return row.id
+
+
+def _known_antigravity(monkeypatch: pytest.MonkeyPatch, account_id: str = "me@example.com"):
+    async def _accounts():
+        return [("antigravity", account_id, account_id)]
+
+    # Same instance-level patch as the neighbouring tests: earlier ones leave a
+    # bound-method instance attribute behind that would shadow a class patch.
+    monkeypatch.setattr("app.api.endpoints.fleet.token_cache.get_all_active_accounts", _accounts)
+
+
+def test_gemini_event_assigns_to_antigravity_and_redirects_future_events(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    from app.models.db import CredentialTag, PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+    from app.services.event_ingestor import EventIngestor
+
+    _known_antigravity(monkeypatch)
+    event_pk = _pending_gemini(session, "g-1")
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={
+            "event_ids": [event_pk],
+            "account_id": "me@example.com",
+            "target_provider_id": "antigravity",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["target_provider_id"] == "antigravity"
+    stored = session.exec(select(UsageEvent)).one()
+    assert (stored.provider_id, stored.account_id) == ("antigravity", "me@example.com")
+    assert session.exec(select(PendingUsageEvent)).all() == []
+    tag = session.exec(select(CredentialTag)).one()
+    assert (tag.provider_id, tag.sidecar_id, tag.target_provider_id) == (
+        "gemini",
+        "laptop",
+        "antigravity",
+    )
+
+    def push(event_id: str, source: str, account: str) -> UsageEventPush:
+        return UsageEventPush(
+            provider_id="gemini",
+            account_id=account,
+            account_source=source,
+            event_id=event_id,
+            ts="2026-09-01T11:00:00Z",
+            model_id="gemini-3-pro-preview",
+        )
+
+    EventIngestor(session).ingest(
+        [
+            push("g-default", "default", "default"),
+            push("g-tag", "tag", "me@example.com"),
+            push("g-other", "tag", "someone-else@example.com"),
+        ],
+        sidecar_id="laptop",
+    )
+    by_event = {e.event_id: (e.provider_id, e.account_id) for e in session.exec(select(UsageEvent))}
+    assert by_event["g-default"] == ("antigravity", "me@example.com")
+    assert by_event["g-tag"] == ("antigravity", "me@example.com")
+    assert by_event["g-other"] == ("gemini", "someone-else@example.com")
+
+    EventIngestor(session).ingest([push("g-elsewhere", "default", "default")], sidecar_id="desktop")
+    pending = session.exec(select(PendingUsageEvent)).one()
+    assert (pending.event_id, pending.sidecar_id) == ("g-elsewhere", "desktop")
+
+
+def test_redirect_does_not_double_count_event_already_stored_under_gemini(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    from app.models.db import UsageEvent
+    from app.models.schemas import UsageEventPush
+    from app.services.event_ingestor import EventIngestor
+
+    _known_antigravity(monkeypatch)
+    EventIngestor(session).ingest(
+        [
+            UsageEventPush(
+                provider_id="gemini",
+                account_id="old@example.com",
+                account_source="tag",
+                event_id="g-old",
+                ts="2026-08-01T10:00:00Z",
+                model_id="m",
+            )
+        ],
+        sidecar_id="laptop",
+    )
+    event_pk = _pending_gemini(session, "g-1")
+    client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={
+            "event_ids": [event_pk],
+            "account_id": "me@example.com",
+            "target_provider_id": "antigravity",
+        },
+    )
+
+    EventIngestor(session).ingest(
+        [
+            UsageEventPush(
+                provider_id="gemini",
+                account_id="default",
+                account_source="default",
+                event_id="g-old",
+                ts="2026-08-01T10:00:00Z",
+                model_id="m",
+            )
+        ],
+        sidecar_id="laptop",
+    )
+    stored = [e for e in session.exec(select(UsageEvent)) if e.event_id == "g-old"]
+    assert [(e.provider_id, e.account_id) for e in stored] == [("gemini", "old@example.com")]
+
+
+def test_pending_assign_rejects_target_provider_outside_allow_list(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    _known_antigravity(monkeypatch)
+    event_pk = _pending_gemini(session, "g-1")
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={
+            "event_ids": [event_pk],
+            "account_id": "me@example.com",
+            "target_provider_id": "anthropic",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_pending_assign_accepts_archived_account_but_not_disabled(
+    client: TestClient, session: Session
+):
+    from app.models.db import ProviderConfig, UsageEvent
+
+    _add_provider_config(session, provider_id="gemini", account_id="old@example.com")
+    cfg = session.exec(
+        select(ProviderConfig).where(ProviderConfig.account_id == "old@example.com")
+    ).one()
+    cfg.archived = True
+    cfg.enabled = False
+    session.add(cfg)
+    session.commit()
+    event_pk = _pending_gemini(session, "g-1")
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [event_pk], "account_id": "old@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    stored = session.exec(select(UsageEvent)).one()
+    assert (stored.provider_id, stored.account_id) == ("gemini", "old@example.com")
+
+    cfg.archived = False
+    session.add(cfg)
+    session.commit()
+    event_pk = _pending_gemini(session, "g-2")
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [event_pk], "account_id": "old@example.com"},
+    )
+    assert response.status_code == 404, response.text
+
+
+def test_batch_rejects_conflicting_targets_for_same_provider_and_host(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    from app.models.db import PendingUsageEvent
+
+    _known_antigravity(monkeypatch)
+    _add_provider_config(session, provider_id="gemini", account_id="me@example.com")
+    first = _pending_gemini(session, "g-1")
+    second = _pending_gemini(session, "g-2")
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={
+            "assignments": [
+                {
+                    "event_ids": [first],
+                    "account_id": "me@example.com",
+                    "target_provider_id": "antigravity",
+                },
+                {"event_ids": [second], "account_id": "me@example.com"},
+            ]
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert len(session.exec(select(PendingUsageEvent)).all()) == 2
+
+
+def test_reassigning_to_gemini_clears_redirect(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    from app.models.db import CredentialTag
+
+    _known_antigravity(monkeypatch)
+    _add_provider_config(session, provider_id="gemini", account_id="me@example.com")
+    first = _pending_gemini(session, "g-1")
+    initial = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={
+            "event_ids": [first],
+            "account_id": "me@example.com",
+            "target_provider_id": "antigravity",
+        },
+    )
+    assert initial.status_code == 200, initial.text
+    second = _pending_gemini(session, "g-2")
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [second], "account_id": "me@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert session.exec(select(CredentialTag)).one().target_provider_id is None
+
+
+def test_delete_by_account_matches_effective_provider(session: Session):
+    from app.models.db import CredentialTag
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="gemini",
+        credential_origin="provider:gemini",
+        account_id="me@example.com",
+        sidecar_id="laptop",
+        target_provider_id="antigravity",
+    )
+    session.commit()
+
+    assert (
+        CredentialTagRepo.delete_by_account(
+            session, provider_id="gemini", account_id="me@example.com"
+        )
+        == 0
+    )
+    assert (
+        CredentialTagRepo.delete_by_account(
+            session, provider_id="antigravity", account_id="me@example.com"
+        )
+        == 1
+    )
+    assert session.exec(select(CredentialTag)).all() == []
+
+
+def test_mixed_provider_assignment_keeps_each_events_own_provider(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import CredentialTag, PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="gemini", account_id="me@example.com")
+    _add_provider_config(session, provider_id="xai", account_id="me@example.com")
+    gemini_pk = _pending_gemini(session, "g-1")
+    push = UsageEventPush(
+        provider_id="xai",
+        account_id="default",
+        account_source="default",
+        event_id="x-1",
+        ts="2026-09-01T10:00:00Z",
+        model_id="grok",
+    )
+    xai_row = PendingUsageEvent(
+        provider_id="xai",
+        event_id="x-1",
+        sidecar_id="laptop",
+        ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+        payload_json=push.model_dump_json(),
+    )
+    session.add(xai_row)
+    session.commit()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [gemini_pk, xai_row.id], "account_id": "me@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    stored = {(e.provider_id, e.account_id) for e in session.exec(select(UsageEvent))}
+    assert stored == {("gemini", "me@example.com"), ("xai", "me@example.com")}
+    assert all(t.target_provider_id is None for t in session.exec(select(CredentialTag)))
+
+    # An explicit related-provider target is rejected when any event isn't allowed it.
+    gemini_pk = _pending_gemini(session, "g-2")
+    xai_row = PendingUsageEvent(
+        provider_id="xai",
+        event_id="x-2",
+        sidecar_id="laptop",
+        ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+        payload_json=push.model_copy(update={"event_id": "x-2"}).model_dump_json(),
+    )
+    session.add(xai_row)
+    session.commit()
+    rejected = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={
+            "event_ids": [gemini_pk, xai_row.id],
+            "account_id": "me@example.com",
+            "target_provider_id": "antigravity",
+        },
+    )
+    assert rejected.status_code == 422, rejected.text

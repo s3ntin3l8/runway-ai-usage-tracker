@@ -42,6 +42,25 @@ def test_detect_ignores_a_tag_pointing_at_a_real_account(session):
     assert report.total_count == 0
 
 
+def test_detect_judges_a_redirect_tag_against_its_target_provider(session):
+    # The tag's account belongs to antigravity, so a gemini default config is irrelevant.
+    make_config(session, provider_id="gemini", account_id="default")
+    session.add(
+        CredentialTag(
+            provider_id="gemini",
+            credential_origin="provider:gemini",
+            account_id="default",
+            sidecar_id="laptop",
+            target_provider_id="antigravity",
+        )
+    )
+    session.commit()
+
+    report = _check().detect(session)
+
+    assert [g.key for g in report.groups] == ["antigravity"]
+
+
 def test_plan_is_read_only(session):
     make_tag(session, provider_id="minimax", credential_origin="path:/x", account_id="default")
 

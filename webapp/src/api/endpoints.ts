@@ -32,6 +32,7 @@ import type {
   PendingUsageEvent,
   PendingUsageFilter,
   PendingUsageAssignmentGroup,
+  PendingUsageMapping,
   PendingUsageSessionsResponse,
   ProviderConfig,
   SessionEntry,
@@ -166,17 +167,28 @@ export const fetchPendingUsageSessions = (
     `/api/v1/fleet/events/pending/sessions${qs({ offset, limit, ...filters })}`,
   );
 
-export const assignPendingUsageEvents = (eventIds: number[], accountId: string) =>
-  api<{ assigned: number; provider_id: string }>('/api/v1/fleet/events/pending/assign', {
-    method: 'POST',
-    body: JSON.stringify({ event_ids: eventIds, account_id: accountId }),
-  });
+export const assignPendingUsageEvents = (
+  eventIds: number[],
+  accountId: string,
+  targetProviderId?: string,
+) =>
+  api<{ assigned: number; provider_id: string; target_provider_id?: string }>(
+    '/api/v1/fleet/events/pending/assign',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        event_ids: eventIds,
+        account_id: accountId,
+        ...(targetProviderId ? { target_provider_id: targetProviderId } : {}),
+      }),
+    },
+  );
 
 export const assignPendingUsageEventsBatch = (assignments: PendingUsageAssignmentGroup[]) =>
   api<{
     assigned: number;
     providers: string[];
-    mappings: { provider_id: string; sidecar_id: string; account_id: string }[];
+    mappings: PendingUsageMapping[];
   }>('/api/v1/fleet/events/pending/assign-batch', {
     method: 'POST',
     body: JSON.stringify({ assignments }),

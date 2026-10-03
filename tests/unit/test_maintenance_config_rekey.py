@@ -150,6 +150,41 @@ def test_apply_moves_credential_tags():
     assert tag.account_id == "alice@example.com"
 
 
+def test_rekey_follows_the_effective_provider_of_a_redirect_tag():
+    session = _session()
+    _config(session, "me@example.com", provider_id="gemini")
+    _config(session, "me@example.com", provider_id="antigravity")
+    session.add(
+        CredentialTag(
+            provider_id="gemini",
+            credential_origin="provider:gemini",
+            account_id="me@example.com",
+            sidecar_id="laptop",
+            target_provider_id="antigravity",
+        )
+    )
+    session.commit()
+
+    # A Gemini rekey of the same email must not move a tag that points at Antigravity.
+    result, _hooks = apply_rekey_config(
+        session,
+        provider_id="gemini",
+        old_account_id="me@example.com",
+        new_account_id="g@example.com",
+    )
+    assert result.credential_tags_moved == 0
+    assert session.exec(select(CredentialTag)).one().account_id == "me@example.com"
+
+    result, _hooks = apply_rekey_config(
+        session,
+        provider_id="antigravity",
+        old_account_id="me@example.com",
+        new_account_id="ag@example.com",
+    )
+    assert result.credential_tags_moved == 1
+    assert session.exec(select(CredentialTag)).one().account_id == "ag@example.com"
+
+
 def test_apply_moves_webhook_and_drops_a_duplicate():
     session = _session()
     _config(session, "default")

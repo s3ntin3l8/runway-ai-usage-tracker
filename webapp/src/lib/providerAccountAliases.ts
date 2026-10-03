@@ -13,3 +13,16 @@ const PROVIDER_CONFIG_ID_BY_USAGE_PROVIDER: Record<string, string> = {
 export function accountConfigProviderIdForUsage(providerId: string): string {
   return PROVIDER_CONFIG_ID_BY_USAGE_PROVIDER[providerId] ?? providerId;
 }
+
+// Usage streams whose events may also be assigned to an account of another
+// provider (gemini-cli is gone; Google's subscription now surfaces through
+// Antigravity). Keep in sync with _RELATED_ACCOUNT_PROVIDERS in
+// app/services/account_identity.py.
+const RELATED_ACCOUNT_PROVIDERS: Record<string, string[]> = {
+  gemini: ['antigravity'],
+};
+
+/** Return other providers whose accounts may own this provider's usage. */
+export function relatedAccountProviderIds(configProviderId: string): string[] {
+  return RELATED_ACCOUNT_PROVIDERS[configProviderId] ?? [];
+}

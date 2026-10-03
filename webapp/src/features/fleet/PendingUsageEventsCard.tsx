@@ -15,10 +15,11 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import type {
   PendingUsageAssignmentGroup,
   PendingUsageFilter,
+  PendingUsageMapping,
   PendingUsageSession,
   ProviderConfig,
 } from '@/api/types';
-import { accountConfigProviderIdForUsage } from '@/lib/providerAccountAliases';
+import { accountConfigProviderIdForUsage, relatedAccountProviderIds } from '@/lib/providerAccountAliases';
 import { AddProviderWizard } from '@/features/settings/sections/AddProviderWizard';
 import { buildSidecarNameMap, useSidecars } from './queries';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
@@ -30,6 +31,29 @@ function sessionKey(group: PendingUsageSession) {
 
 function groupLabel(group: PendingUsageSession) {
   return group.session_id ?? `event ${group.event_ids[0]}`;
+}
+
+type AssignOptionKind = 'active' | 'archived' | 'related';
+
+interface AssignOption {
+  /** Encoded `[providerId, accountId]` — the option's <select> value. */
+  value: string;
+  providerId: string;
+  accountId: string;
+  label: string;
+  kind: AssignOptionKind;
+}
+
+interface AssignOptionGroup {
+  label: string;
+  options: AssignOption[];
+}
+
+const encodeAssignTarget = (providerId: string, accountId: string) => JSON.stringify([providerId, accountId]);
+
+function decodeAssignTarget(value: string): { providerId: string; accountId: string } {
+  const [providerId, accountId] = JSON.parse(value) as [string, string];
+  return { providerId, accountId };
 }
 
 export function PendingUsageEventsCard() {
@@ -59,11 +83,23 @@ export function PendingUsageEventsCard() {
     queryFn: fetchProviderConfigs,
   });
   const assign = useMutation({
-    mutationFn: ({ eventIds, accountId }: { eventIds: number[]; accountId: string; sidecarId: string }) =>
-      assignPendingUsageEvents(eventIds, accountId),
-    onSuccess: ({ assigned, provider_id }, variables) => {
+    mutationFn: ({
+      eventIds,
+      accountId,
+      targetProviderId,
+    }: {
+      eventIds: number[];
+      accountId: string;
+      targetProviderId?: string;
+      sidecarId: string;
+    }) =>
+      targetProviderId
+        ? assignPendingUsageEvents(eventIds, accountId, targetProviderId)
+        : assignPendingUsageEvents(eventIds, accountId),
+    onSuccess: ({ assigned, provider_id, target_provider_id }, variables) => {
+      const redirected = target_provider_id && target_provider_id !== accountConfigProviderIdForUsage(provider_id);
       toast.success(
-        `${assigned} usage event${assigned === 1 ? '' : 's'} assigned. Future ${provider_id} events from ${variables.sidecarId} will use the selected account after its next config sync.`,
+        `${assigned} usage event${assigned === 1 ? '' : 's'} assigned${redirected ? ` to ${providerName(target_provider_id)}` : ''}. Future ${provider_id} events from ${variables.sidecarId} will use the selected account after its next config sync.`,
       );
       const assignedIds = new Set(variables.eventIds);
       setSelected((current) =>
@@ -82,7 +118,7 @@ export function PendingUsageEventsCard() {
     {
       assigned: number;
       providers: string[];
-      mappings: { provider_id: string; sidecar_id: string; account_id: string }[];
+      mappings: PendingUsageMapping[];
     },
     Error,
     PendingUsageAssignmentGroup[]
@@ -113,10 +149,81 @@ export function PendingUsageEventsCard() {
   const selectedGroups = Object.values(selected);
   const selectedEventCount = selectedGroups.reduce((sum, group) => sum + group.event_count, 0);
   const selectedProviders = [...new Set(selectedGroups.map((group) => group.provider_id))].sort();
-  const optionsForProvider = (providerId: string) => {
-    const configProviderId = accountConfigProviderIdForUsage(providerId);
-    const configured = configs.data?.providers.find((item) => item.provider_id === configProviderId);
-    return configured?.accounts.filter((account) => !account.archived && account.enabled !== false) ?? [];
+  // Account choices for a usage provider: its own active accounts, its archived
+  // ones (the backend accepts them), and accounts of related providers (e.g.
+  // Antigravity for Gemini). Disabled-but-not-archived accounts stay hidden.
+  const optionGroupsForProvider = (usageProviderId: string): AssignOptionGroup[] => {
+    const configProviderId = accountConfigProviderIdForUsage(usageProviderId);
+    const toOption = (item: ProviderConfig, account: ProviderConfig['accounts'][number], kind: AssignOptionKind) => {
+      const label = labelOrMaskedId(account);
+      return {
+        value: encodeAssignTarget(item.provider_id, account.account_id),
+        providerId: item.provider_id,
+        accountId: account.account_id,
+        label: account.account_id === 'default' ? `${label} (default)` : label,
+        kind,
+      };
+    };
+    const own = configs.data?.providers.find((item) => item.provider_id === configProviderId);
+    const groups: AssignOptionGroup[] = [];
+    if (own) {
+      groups.push({
+        label: own.name || own.provider_id,
+        options: own.accounts
+          .filter((account) => !account.archived && account.enabled !== false)
+          .map((account) => toOption(own, account, 'active')),
+      });
+      groups.push({
+        label: `${own.name || own.provider_id} (archived)`,
+        options: own.accounts
+          .filter((account) => account.archived)
+          .map((account) => toOption(own, account, 'archived')),
+      });
+    }
+    for (const relatedId of relatedAccountProviderIds(configProviderId)) {
+      const related = configs.data?.providers.find((item) => item.provider_id === relatedId);
+      if (!related) continue;
+      groups.push({
+        label: related.name || related.provider_id,
+        options: related.accounts
+          .filter((account) => !account.archived && account.enabled !== false)
+          .map((account) => toOption(related, account, 'related')),
+      });
+    }
+    return groups.filter((group) => group.options.length > 0);
+  };
+  const optionsForProvider = (usageProviderId: string) =>
+    optionGroupsForProvider(usageProviderId).flatMap((group) => group.options);
+  const findOption = (usageProviderId: string, value: string | undefined) =>
+    value ? optionsForProvider(usageProviderId).find((option) => option.value === value) : undefined;
+  // A stored choice only counts while it is still offered (the account may have
+  // been archived or disabled elsewhere while the card was open). A just-saved
+  // account becomes valid again once the configs refetch lands.
+  const validChoice = (usageProviderId: string, value: string | undefined) =>
+    findOption(usageProviderId, value) ? value : undefined;
+  // Only send a target when the account isn't the event provider's own config provider.
+  const targetProviderFor = (usageProviderId: string, value: string) => {
+    const { providerId } = decodeAssignTarget(value);
+    return providerId === accountConfigProviderIdForUsage(usageProviderId) ? undefined : providerId;
+  };
+  const renderOptionGroups = (usageProviderId: string) =>
+    optionGroupsForProvider(usageProviderId).map((group) => (
+      <optgroup key={group.label} label={group.label}>
+        {group.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.kind === 'archived' ? `${option.label} · archived` : option.label}
+          </option>
+        ))}
+      </optgroup>
+    ));
+  const optionNote = (usageProviderId: string, option: AssignOption | undefined) => {
+    if (option?.kind === 'archived') {
+      return `Usage will be stored on this archived account: hidden from Fleet, still counted in Stats and archived lifetime stats. Future default-identity ${usageProviderId} events from this host go there too.`;
+    }
+    if (option?.kind === 'related') {
+      return `These ${usageProviderId} events will be counted as ${providerName(option.providerId)} usage on this account. Future ${usageProviderId} events from this host follow after the next config sync.`;
+    }
+    return null;
   };
 
   const [wizardTarget, setWizardTarget] = useState<{
@@ -185,11 +292,16 @@ export function PendingUsageEventsCard() {
     for (const group of selectedGroups) {
       byProvider.set(group.provider_id, [...(byProvider.get(group.provider_id) ?? []), ...group.event_ids]);
     }
-    const assignments = [...byProvider.entries()].map(([providerId, eventIds]) => ({
-      event_ids: eventIds,
-      account_id: batchAccounts[providerId] ?? '',
-    }));
-    if (assignments.some((assignment) => !assignment.account_id)) return;
+    if ([...byProvider.keys()].some((providerId) => !validChoice(providerId, batchAccounts[providerId]))) return;
+    const assignments: PendingUsageAssignmentGroup[] = [...byProvider.entries()].map(([providerId, eventIds]) => {
+      const value = batchAccounts[providerId]!;
+      const targetProviderId = targetProviderFor(providerId, value);
+      return {
+        event_ids: eventIds,
+        account_id: decodeAssignTarget(value).accountId,
+        ...(targetProviderId ? { target_provider_id: targetProviderId } : {}),
+      };
+    });
     batch.mutate(assignments);
   }
 
@@ -313,6 +425,7 @@ export function PendingUsageEventsCard() {
               const key = sessionKey(group);
               const selectedHere = Boolean(selected[key]);
               const options = optionsForProvider(group.provider_id);
+              const chosen = validChoice(group.provider_id, accounts[key]);
               const models = group.model_ids.length ? group.model_ids.join(', ') : 'Unknown model';
               const first = new Date(group.first_ts).toLocaleString();
               const last = new Date(group.last_ts).toLocaleString();
@@ -356,40 +469,41 @@ export function PendingUsageEventsCard() {
                         + Set up {providerName(group.provider_id)}
                       </Button>
                     ) : (
-                      <select
-                        aria-label={`Account for ${group.provider_id} session ${groupLabel(group)}`}
-                        className="h-8 min-w-40 max-w-52 rounded-sm border border-edge bg-surface-2 px-2 text-xs"
-                        value={accounts[key] ?? ''}
-                        onChange={(event) => {
-                          if (event.target.value === '__add_new__') {
-                            openWizard(group.provider_id, key);
-                            return;
-                          }
-                          setAccounts((old) => ({ ...old, [key]: event.target.value }));
-                        }}
-                      >
-                        <option value="">Choose account…</option>
-                        {options.map((account) => {
-                          const label = labelOrMaskedId(account);
-                          return (
-                            <option key={account.account_id} value={account.account_id}>
-                              {account.account_id === 'default' ? `${label} (default)` : label}
-                            </option>
-                          );
-                        })}
-                        <option value="__add_new__">+ Set up new account…</option>
-                      </select>
+                      <div>
+                        <select
+                          aria-label={`Account for ${group.provider_id} session ${groupLabel(group)}`}
+                          className="h-8 min-w-40 max-w-52 rounded-sm border border-edge bg-surface-2 px-2 text-xs"
+                          value={chosen ?? ''}
+                          onChange={(event) => {
+                            if (event.target.value === '__add_new__') {
+                              openWizard(group.provider_id, key);
+                              return;
+                            }
+                            setAccounts((old) => ({ ...old, [key]: event.target.value }));
+                          }}
+                        >
+                          <option value="">Choose account…</option>
+                          {renderOptionGroups(group.provider_id)}
+                          <option value="__add_new__">+ Set up new account…</option>
+                        </select>
+                        {optionNote(group.provider_id, findOption(group.provider_id, chosen)) && (
+                          <p className="mt-1 max-w-52 whitespace-normal text-[11px] text-fg-muted">
+                            {optionNote(group.provider_id, findOption(group.provider_id, chosen))}
+                          </p>
+                        )}
+                      </div>
                     )}
                   </TD>
                   <TD>
                     <Button
                       size="sm"
                       variant="primary"
-                      disabled={!accounts[key] || assign.isPending || batch.isPending}
+                      disabled={!chosen || assign.isPending || batch.isPending}
                       loading={assign.isPending}
                       onClick={() => assign.mutate({
                         eventIds: group.event_ids,
-                        accountId: accounts[key],
+                        accountId: decodeAssignTarget(chosen!).accountId,
+                        targetProviderId: targetProviderFor(group.provider_id, chosen!),
                         sidecarId: group.sidecar_id,
                       })}
                     >
@@ -438,6 +552,7 @@ export function PendingUsageEventsCard() {
             const groups = selectedGroups.filter((group) => group.provider_id === providerId);
             const count = groups.reduce((sum, group) => sum + group.event_count, 0);
             const options = optionsForProvider(providerId);
+            const chosenBatch = validChoice(providerId, batchAccounts[providerId]);
             return (
               <div
                 key={providerId}
@@ -457,29 +572,29 @@ export function PendingUsageEventsCard() {
                     </Button>
                   </div>
                 ) : (
-                  <select
-                    aria-label={`Batch account for ${providerId}`}
-                    className="h-9 w-full rounded-sm border border-edge bg-surface-2 px-2 text-[13px] text-fg"
-                    value={batchAccounts[providerId] ?? ''}
-                    onChange={(event) => {
-                      if (event.target.value === '__add_new__') {
-                        openWizard(providerId);
-                        return;
-                      }
-                      setBatchAccounts((old) => ({ ...old, [providerId]: event.target.value }));
-                    }}
-                  >
-                    <option value="">Choose account…</option>
-                    {options.map((account) => {
-                      const label = labelOrMaskedId(account);
-                      return (
-                        <option key={account.account_id} value={account.account_id}>
-                          {account.account_id === 'default' ? `${label} (default)` : label}
-                        </option>
-                      );
-                    })}
-                    <option value="__add_new__">+ Set up new account…</option>
-                  </select>
+                  <div>
+                    <select
+                      aria-label={`Batch account for ${providerId}`}
+                      className="h-9 w-full rounded-sm border border-edge bg-surface-2 px-2 text-[13px] text-fg"
+                      value={chosenBatch ?? ''}
+                      onChange={(event) => {
+                        if (event.target.value === '__add_new__') {
+                          openWizard(providerId);
+                          return;
+                        }
+                        setBatchAccounts((old) => ({ ...old, [providerId]: event.target.value }));
+                      }}
+                    >
+                      <option value="">Choose account…</option>
+                      {renderOptionGroups(providerId)}
+                      <option value="__add_new__">+ Set up new account…</option>
+                    </select>
+                    {optionNote(providerId, findOption(providerId, chosenBatch)) && (
+                      <p className="mt-1 text-[11px] font-normal text-fg-muted">
+                        {optionNote(providerId, findOption(providerId, chosenBatch))}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             );
@@ -488,7 +603,7 @@ export function PendingUsageEventsCard() {
             <Button variant="secondary" onClick={() => setBatchOpen(false)}>Cancel</Button>
             <Button
               variant="primary"
-              disabled={!selectedProviders.length || selectedProviders.some((providerId) => !batchAccounts[providerId]) || batch.isPending}
+              disabled={!selectedProviders.length || selectedProviders.some((providerId) => !validChoice(providerId, batchAccounts[providerId])) || batch.isPending}
               loading={batch.isPending}
               onClick={applyBatch}
             >
@@ -504,16 +619,20 @@ export function PendingUsageEventsCard() {
           providers={configs.data?.providers ?? []}
           existingAccountIdsByProvider={existingAccountIdsByProvider}
           onClose={() => setWizardTarget(null)}
-          onSaved={(_savedProviderId, savedAccountId) => {
-            setBatchAccounts((old) => ({ ...old, [wizardTarget.providerId]: savedAccountId }));
+          onSaved={(savedProviderId, savedAccountId) => {
+            const savedValue = encodeAssignTarget(
+              savedProviderId || accountConfigProviderIdForUsage(wizardTarget.providerId),
+              savedAccountId,
+            );
+            setBatchAccounts((old) => ({ ...old, [wizardTarget.providerId]: savedValue }));
             if (wizardTarget.rowKey) {
-              setAccounts((old) => ({ ...old, [wizardTarget.rowKey!]: savedAccountId }));
+              setAccounts((old) => ({ ...old, [wizardTarget.rowKey!]: savedValue }));
             }
             setAccounts((old) => {
               const next = { ...old };
               for (const item of pending.data?.items ?? []) {
                 if (item.provider_id === wizardTarget.providerId) {
-                  next[sessionKey(item)] = savedAccountId;
+                  next[sessionKey(item)] = savedValue;
                 }
               }
               return next;

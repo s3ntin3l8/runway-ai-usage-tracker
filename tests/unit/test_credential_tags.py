@@ -1396,6 +1396,28 @@ def test_existing_pending_table_gets_preview_columns_idempotently():
         assert "quota_preview_observed_at" in columns
 
 
+def test_existing_credential_tags_table_gets_target_provider_column_idempotently():
+    from sqlalchemy import text
+
+    from app.core.db import _add_columns_if_missing
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE credential_tags DROP COLUMN target_provider_id"))
+        conn.commit()
+
+        _add_columns_if_missing(conn)
+        _add_columns_if_missing(conn)
+
+        columns = {row[1] for row in conn.execute(text("PRAGMA table_info(credential_tags)"))}
+        assert "target_provider_id" in columns
+
+
 # --- rotation carry (#474) -------------------------------------------------
 # A CLI re-login re-fingerprints a fingerprinted origin; when the base
 # location is unchanged and exactly one account was ever tagged there, the
@@ -1593,3 +1615,37 @@ def test_rotation_carries_again_on_a_second_relogin(session: Session):
         )
         == "alice@example.com"
     )
+
+
+def test_retagging_without_a_target_clears_a_previous_redirect(session: Session):
+    kwargs = {
+        "provider_id": "gemini",
+        "credential_origin": "provider:gemini",
+        "account_id": "me@example.com",
+        "sidecar_id": "laptop",
+    }
+    CredentialTagRepo.set_tag(session, target_provider_id="antigravity", **kwargs)
+    assert CredentialTagRepo.get_redirect(session, provider_id="gemini", sidecar_id="laptop")
+
+    row = CredentialTagRepo.set_tag(session, **kwargs)
+
+    assert row.target_provider_id is None
+    assert (
+        CredentialTagRepo.get_redirect(session, provider_id="gemini", sidecar_id="laptop") is None
+    )
+
+
+def test_real_account_ids_count_a_redirect_tag_under_its_target_provider(session: Session):
+    from app.services.credential_sources import real_account_ids
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="gemini",
+        credential_origin="provider:gemini",
+        account_id="me@example.com",
+        sidecar_id="laptop",
+        target_provider_id="antigravity",
+    )
+
+    assert "me@example.com" in real_account_ids(session, "antigravity")
+    assert "me@example.com" not in real_account_ids(session, "gemini")
