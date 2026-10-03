@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import AuditLog, CredentialSource, LatestUsage
+from app.models.db import AuditLog, CredentialSource, CredentialTag, LatestUsage
 
 
 @pytest.fixture(name="session")
@@ -1016,6 +1016,39 @@ def test_account_merge_requires_explicit_confirmation_for_gauge_collision(
     assert applied.status_code == 200, applied.text
     rows = session.exec(select(LatestUsage).where(LatestUsage.provider_id == "openrouter")).all()
     assert [row.account_id for row in rows] == ["target@example.com"]
+
+
+def test_account_merge_moves_redirect_tags_by_effective_provider(
+    client: TestClient, session: Session
+):
+    session.add(
+        CredentialTag(
+            provider_id="gemini",
+            credential_origin="provider:gemini",
+            account_id="source@example.com",
+            sidecar_id="laptop",
+            target_provider_id="antigravity",
+        )
+    )
+    session.commit()
+    body = {
+        "provider_id": "antigravity",
+        "source_account_id": "source@example.com",
+        "destination_account_id": "target@example.com",
+    }
+
+    preview = client.post(
+        "/api/v1/system/provider-account-merge/preview", json=body, headers=_admin_headers()
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["counts"]["credential_tags"]["affected"] == 1
+
+    applied = client.post(
+        "/api/v1/system/provider-account-merge/apply", json=body, headers=_admin_headers()
+    )
+    assert applied.status_code == 200, applied.text
+    session.expire_all()
+    assert session.exec(select(CredentialTag)).one().account_id == "target@example.com"
 
 
 def test_account_merge_warns_when_default_is_destination(client: TestClient, session: Session):

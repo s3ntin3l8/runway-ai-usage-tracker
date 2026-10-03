@@ -703,6 +703,10 @@ class CredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     sidecar_id: str | None = Field(default=None)
     set_by: str = "operator"
     set_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    # Provider that owns ``account_id`` when it differs from ``provider_id``
+    # (e.g. Gemini usage assigned to an Antigravity account). NULL = same
+    # provider; events are rewritten to this provider at ingest.
+    target_provider_id: str | None = Field(default=None)
 
 
 class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]

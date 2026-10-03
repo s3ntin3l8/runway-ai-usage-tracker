@@ -35,6 +35,7 @@ from app.services import audit_log, pairing
 from app.services.account_identity import (
     FINGERPRINTED_ORIGIN_PROVIDERS,
     account_config_provider_id,
+    allowed_assignment_provider_ids,
     canonical_account_id,
     credential_fingerprint,
     keyed_credential_origin,
@@ -52,7 +53,7 @@ from app.services.credential_tags import (
     live_sidecar_ids,
 )
 from app.services.credential_token import issue_credential_token
-from app.services.event_ingestor import EventIngestor
+from app.services.event_ingestor import EventIngestor, redirect_push
 from app.services.fleet_registry import fleet_registry
 from app.services.token_cache import token_cache
 
@@ -146,6 +147,9 @@ class SidecarUpdateRequest(BaseModel):
 class PendingEventAssignment(BaseModel):
     event_ids: list[int]
     account_id: str
+    # Provider owning ``account_id`` when it isn't the event's own provider
+    # (e.g. Gemini usage assigned to an Antigravity account).
+    target_provider_id: str | None = None
 
 
 class PendingEventBatchAssignment(BaseModel):
@@ -1404,6 +1408,7 @@ async def list_credential_tags(
                 "account_id": t.account_id,
                 "sidecar_id": t.sidecar_id,
                 "set_by": t.set_by,
+                "target_provider_id": t.target_provider_id,
                 "set_at": t.set_at.isoformat() if t.set_at else None,
             }
             for t in CredentialTagRepo.list_all(session)
@@ -1659,7 +1664,7 @@ async def list_pending_usage_sessions(
 
 async def _validate_pending_event_assignments(
     assignments: list[PendingEventAssignment], session: Session
-) -> list[tuple[str, list[PendingUsageEvent]]]:
+) -> list[tuple[str, str, list[PendingUsageEvent]]]:
     event_ids = [event_id for assignment in assignments for event_id in assignment.event_ids]
     if not assignments or not event_ids or len(event_ids) > 10_000:
         raise HTTPException(status_code=422, detail="Select between 1 and 10000 events.")
@@ -1693,25 +1698,35 @@ async def _validate_pending_event_assignments(
     by_id = {row.id: row for row in rows}
     # Check mapping collisions before validating account configuration so a
     # malformed batch cannot partially populate the validated work list.
-    future_tags: dict[tuple[str, str], str] = {}
+    future_tags: dict[tuple[str, str], tuple[str, str]] = {}
     for assignment in assignments:
         account_id = resolve_account_id("", assignment.account_id, None)
         for event_id in assignment.event_ids:
             row = by_id[event_id]
+            target = assignment.target_provider_id or account_config_provider_id(row.provider_id)
+            if target not in allowed_assignment_provider_ids(row.provider_id):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Account provider {target!r} is not a valid target for "
+                    f"{row.provider_id!r} events.",
+                )
             tag_key = (row.provider_id, row.sidecar_id)
-            if tag_key in future_tags and future_tags[tag_key] != account_id:
+            if tag_key in future_tags and future_tags[tag_key] != (target, account_id):
                 raise HTTPException(
                     status_code=422,
                     detail="A provider on one host can only be assigned to one account per batch.",
                 )
-            future_tags[tag_key] = account_id
-    validated: list[tuple[str, list[PendingUsageEvent]]] = []
+            future_tags[tag_key] = (target, account_id)
+    validated: list[tuple[str, str, list[PendingUsageEvent]]] = []
     assignable_accounts: dict[tuple[str, str], bool] = {}
     for assignment in assignments:
         account_id = resolve_account_id("", assignment.account_id, None)
         assignment_rows = [by_id[event_id] for event_id in assignment.event_ids]
+        assignment_target = assignment.target_provider_id or account_config_provider_id(
+            assignment_rows[0].provider_id
+        )
         for row in assignment_rows:
-            config_provider_id = account_config_provider_id(row.provider_id)
+            config_provider_id = assignment_target
             account_key = (config_provider_id, account_id)
             if account_key not in assignable_accounts:
                 configured = session.exec(
@@ -1721,9 +1736,9 @@ async def _validate_pending_event_assignments(
                     )
                 ).first()
                 if configured is not None:
-                    assignable_accounts[account_key] = (
-                        configured.enabled and not configured.archived
-                    )
+                    # Archived rows are always disabled, so accept them explicitly;
+                    # disabled-but-not-archived accounts stay rejected.
+                    assignable_accounts[account_key] = configured.enabled or configured.archived
                 else:
                     assignable_accounts[account_key] = account_key in active_account_keys or (
                         config_provider_id not in providers_with_config
@@ -1735,7 +1750,7 @@ async def _validate_pending_event_assignments(
                     status_code=404,
                     detail=f"No active account {account_id!r} known for {row.provider_id!r}.",
                 )
-        validated.append((account_id, assignment_rows))
+        validated.append((assignment_target, account_id, assignment_rows))
     return validated
 
 
@@ -1743,6 +1758,7 @@ def _promote_pending_event_rows(
     request: Request,
     session: Session,
     rows: list[PendingUsageEvent],
+    target_provider_id: str,
     account_id: str,
     *,
     clear_pending: bool = True,
@@ -1757,9 +1773,12 @@ def _promote_pending_event_rows(
         event_key_counts[event_key] = event_key_counts.get(event_key, 0) + 1
     ingestor = EventIngestor(session)
     for row in rows:
+        redirected = target_provider_id != account_config_provider_id(row.provider_id)
         payload = UsageEventPush.model_validate_json(row.payload_json).model_copy(
             update={"account_id": account_id, "account_source": "tag"}
         )
+        if redirected:
+            payload = redirect_push(payload, target_provider_id, account_id)
         # OpenCode doesn't identify which credential origin handled a
         # message. Persist an explicit provider-level tag scoped to the
         # source sidecar so later messages use the operator's resolution.
@@ -1770,10 +1789,23 @@ def _promote_pending_event_rows(
             account_id=account_id,
             sidecar_id=row.sidecar_id,
             set_by="operator",
+            target_provider_id=target_provider_id if redirected else None,
         )
+        if (
+            redirected
+            and session.exec(
+                select(UsageEvent.id).where(
+                    UsageEvent.provider_id == row.provider_id,
+                    UsageEvent.event_id == row.event_id,
+                )
+            ).first()
+            is not None
+        ):
+            # Already counted under the source provider; just drop the pending copy.
+            continue
         existing = session.exec(
             select(UsageEvent).where(
-                UsageEvent.provider_id == row.provider_id,
+                UsageEvent.provider_id == payload.provider_id,
                 UsageEvent.event_id == row.event_id,
             )
         ).first()
@@ -1799,7 +1831,11 @@ def _promote_pending_event_rows(
             session,
             request,
             action="usage.pending_events_assigned",
-            target_id=f"{rows[0].provider_id if rows else ''}/{account_id}",
+            target_id=(
+                f"{rows[0].provider_id}->{target_provider_id}/{account_id}"
+                if rows and target_provider_id != account_config_provider_id(rows[0].provider_id)
+                else f"{rows[0].provider_id if rows else ''}/{account_id}"
+            ),
             payload={"event_count": len(rows)},
         )
 
@@ -1814,9 +1850,13 @@ async def assign_pending_usage_events(
     if not body.event_ids or len(body.event_ids) > 1000:
         raise HTTPException(status_code=422, detail="Select between 1 and 1000 events.")
     validated = await _validate_pending_event_assignments([body], session)
-    account_id, rows = validated[0]
-    _promote_pending_event_rows(request, session, rows, account_id)
-    return {"assigned": len(rows), "provider_id": rows[0].provider_id if rows else None}
+    target_provider_id, account_id, rows = validated[0]
+    _promote_pending_event_rows(request, session, rows, target_provider_id, account_id)
+    return {
+        "assigned": len(rows),
+        "provider_id": rows[0].provider_id if rows else None,
+        "target_provider_id": target_provider_id,
+    }
 
 
 @router.post("/events/pending/assign-batch")
@@ -1827,20 +1867,28 @@ async def assign_pending_usage_events_batch(
     _: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
     validated = await _validate_pending_event_assignments(body.assignments, session)
-    for account_id, rows in validated:
+    for target_provider_id, account_id, rows in validated:
         _promote_pending_event_rows(
-            request, session, rows, account_id, clear_pending=False, record_audit=False
+            request,
+            session,
+            rows,
+            target_provider_id,
+            account_id,
+            clear_pending=False,
+            record_audit=False,
         )
-    for _account_id, rows in validated:
+    for _target, _account_id, rows in validated:
         for row in rows:
             session.delete(row)
     session.commit()
-    assigned = sum(len(rows) for _account_id, rows in validated)
-    providers = sorted({row.provider_id for _account_id, rows in validated for row in rows})
+    assigned = sum(len(rows) for _target, _account_id, rows in validated)
+    providers = sorted(
+        {row.provider_id for _target, _account_id, rows in validated for row in rows}
+    )
     mapping_targets = sorted(
         {
-            (row.provider_id, row.sidecar_id, account_id)
-            for account_id, rows in validated
+            (row.provider_id, row.sidecar_id, target_provider_id, account_id)
+            for target_provider_id, account_id, rows in validated
             for row in rows
         }
     )
@@ -1855,8 +1903,13 @@ async def assign_pending_usage_events_batch(
         "assigned": assigned,
         "providers": providers,
         "mappings": [
-            {"provider_id": provider_id, "sidecar_id": sidecar_id, "account_id": account_id}
-            for provider_id, sidecar_id, account_id in mapping_targets
+            {
+                "provider_id": provider_id,
+                "sidecar_id": sidecar_id,
+                "target_provider_id": target_provider_id,
+                "account_id": account_id,
+            }
+            for provider_id, sidecar_id, target_provider_id, account_id in mapping_targets
         ],
     }
 

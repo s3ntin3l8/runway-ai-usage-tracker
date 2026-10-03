@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from app.core.date_utils import parse_iso8601_utc
 from app.models.db import PendingUsageEvent, ProviderConfig, UsageEvent
 from app.models.schemas import UsageEventPush
-from app.services.account_identity import canonical_account_id
+from app.services.account_identity import canonical_account_id, is_redirect_source_provider
 from app.services.credential_tags import CredentialTagRepo
 from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.period_rollups import update_rollups_for_event
@@ -43,6 +43,17 @@ _REFRESHED_FIELDS = tuple(
 )
 
 
+def redirect_push(push: UsageEventPush, target_provider_id: str, account_id: str) -> UsageEventPush:
+    """Re-home an event onto an account of a related provider (operator tag)."""
+    return push.model_copy(
+        update={
+            "provider_id": target_provider_id,
+            "account_id": account_id,
+            "account_source": "tag",
+        }
+    )
+
+
 class EventIngestor:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -54,8 +65,47 @@ class EventIngestor:
         sidecar_id: str | None = None,
     ) -> IngestResult:
         result = IngestResult(events_received=len(pushes))
+        redirects: dict[str, tuple[str, str] | None] = {}
         try:
             for push in pushes:
+                if is_redirect_source_provider(push.provider_id):
+                    if push.provider_id not in redirects:
+                        tag = CredentialTagRepo.get_redirect(
+                            self.session, provider_id=push.provider_id, sidecar_id=sidecar_id
+                        )
+                        redirects[push.provider_id] = (
+                            (tag.target_provider_id or push.provider_id, tag.account_id)
+                            if tag is not None
+                            else None
+                        )
+                    redirect = redirects[push.provider_id]
+                    if redirect is not None:
+                        target_provider_id, target_account = redirect
+                        is_default = push.account_source == "default" or (
+                            push.account_source is None
+                            and canonical_account_id(push.account_id) == "default"
+                        )
+                        if is_default or (
+                            push.account_source == "tag"
+                            and canonical_account_id(push.account_id)
+                            == canonical_account_id(target_account)
+                        ):
+                            if (
+                                self.session.exec(
+                                    select(UsageEvent.id).where(
+                                        UsageEvent.provider_id == push.provider_id,
+                                        UsageEvent.event_id == push.event_id,
+                                    )
+                                ).first()
+                                is not None
+                            ):
+                                # Already stored under the source provider (e.g.
+                                # history from before the redirect); don't double-count.
+                                result.events_duplicate += 1
+                                continue
+                            push = redirect_push(
+                                push, target_provider_id, canonical_account_id(target_account)
+                            )
                 ts = parse_iso8601_utc(push.ts)
                 # Same canonical form the card path uses (resolve_account_id),
                 # so a mixed-case email from a sidecar can't split an account

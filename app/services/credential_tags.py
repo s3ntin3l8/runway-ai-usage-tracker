@@ -19,7 +19,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlmodel import Session, col, or_, select
+from sqlmodel import Session, and_, col, or_, select
 
 from app.models.db import CredentialTag, PendingCredentialTag
 
@@ -138,6 +138,21 @@ class CredentialTagRepo:
         return None
 
     @staticmethod
+    def get_redirect(
+        session: Session, *, provider_id: str, sidecar_id: str | None = None
+    ) -> CredentialTag | None:
+        """Return the provider-level tag when it redirects to another provider."""
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id=provider_id,
+            credential_origin=CredentialTagRepo.provider_origin(provider_id),
+            sidecar_id=sidecar_id,
+        )
+        if tag is not None and tag.target_provider_id and tag.target_provider_id != provider_id:
+            return tag
+        return None
+
+    @staticmethod
     def get_account_id(
         session: Session,
         *,
@@ -168,6 +183,7 @@ class CredentialTagRepo:
         account_id: str,
         sidecar_id: str | None = None,
         set_by: str = "operator",
+        target_provider_id: str | None = None,
     ) -> CredentialTag:
         """Set (idempotently) the operator's tag for the (provider, origin) pair.
 
@@ -178,6 +194,9 @@ class CredentialTagRepo:
         ``account_id`` and ``set_at`` are refreshed in-place; otherwise a
         new row is inserted. Always returns the resulting row so callers
         can echo it back to the UI.
+
+        ``target_provider_id`` is always written (including ``None``), so any
+        re-tag clears a previous cross-provider redirect.
         """
         stmt = select(CredentialTag).where(
             CredentialTag.provider_id == provider_id,
@@ -196,10 +215,12 @@ class CredentialTagRepo:
                 sidecar_id=sidecar_id,
                 set_by=set_by,
                 set_at=datetime.now(UTC),
+                target_provider_id=target_provider_id,
             )
             session.add(row)
         else:
             row.account_id = account_id
+            row.target_provider_id = target_provider_id
             row.set_by = set_by
             row.set_at = datetime.now(UTC)
         session.flush()
@@ -392,13 +413,23 @@ class CredentialTagRepo:
         table is ``(provider_id, credential_origin)`` so multiple rows
         can share the same ``account_id``; this removes all of them.
 
+        ``provider_id`` is the *effective* provider: a redirect tag whose
+        ``target_provider_id`` matches is removed, while one that merely
+        shares the account id under its own provider is kept.
+
         Returns the number of rows actually removed (0 if none matched).
         """
         rows = list(
             session.exec(
                 select(CredentialTag).where(
-                    CredentialTag.provider_id == provider_id,
                     CredentialTag.account_id == account_id,
+                    or_(
+                        CredentialTag.target_provider_id == provider_id,
+                        and_(
+                            CredentialTag.provider_id == provider_id,
+                            col(CredentialTag.target_provider_id).is_(None),
+                        ),
+                    ),
                 )
             ).all()
         )
@@ -407,6 +438,25 @@ class CredentialTagRepo:
         if rows:
             session.flush()
         return len(rows)
+
+    @staticmethod
+    def list_for_account_provider(session: Session, *, provider_id: str) -> list[CredentialTag]:
+        """Tags whose account belongs to ``provider_id`` (effective provider)."""
+        return list(
+            session.exec(
+                select(CredentialTag)
+                .where(
+                    or_(
+                        CredentialTag.target_provider_id == provider_id,
+                        and_(
+                            CredentialTag.provider_id == provider_id,
+                            col(CredentialTag.target_provider_id).is_(None),
+                        ),
+                    )
+                )
+                .order_by(CredentialTag.credential_origin)
+            ).all()
+        )
 
     @staticmethod
     def list_by_provider(session: Session, *, provider_id: str) -> list[CredentialTag]:

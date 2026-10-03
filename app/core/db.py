@@ -188,6 +188,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("pending_credential_tags", "verify_attempts", "INTEGER NOT NULL DEFAULT 0"),
     ("pending_credential_tags", "next_verify_at", "DATETIME"),
     ("pending_credential_tags", "reason", "VARCHAR"),
+    ("credential_tags", "target_provider_id", "VARCHAR"),
     ("credential_sources", "verified_subject", "TEXT"),
     ("credential_sources", "verified_subject_account", "TEXT"),
     ("credential_sources", "consecutive_failures", "INTEGER NOT NULL DEFAULT 0"),

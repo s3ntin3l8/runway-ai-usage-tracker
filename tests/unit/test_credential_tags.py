@@ -1396,6 +1396,28 @@ def test_existing_pending_table_gets_preview_columns_idempotently():
         assert "quota_preview_observed_at" in columns
 
 
+def test_existing_credential_tags_table_gets_target_provider_column_idempotently():
+    from sqlalchemy import text
+
+    from app.core.db import _add_columns_if_missing
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE credential_tags DROP COLUMN target_provider_id"))
+        conn.commit()
+
+        _add_columns_if_missing(conn)
+        _add_columns_if_missing(conn)
+
+        columns = {row[1] for row in conn.execute(text("PRAGMA table_info(credential_tags)"))}
+        assert "target_provider_id" in columns
+
+
 # --- rotation carry (#474) -------------------------------------------------
 # A CLI re-login re-fingerprints a fingerprinted origin; when the base
 # location is unchanged and exactly one account was ever tagged there, the

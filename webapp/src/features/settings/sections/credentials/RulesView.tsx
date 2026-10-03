@@ -67,6 +67,9 @@ export function RulesView() {
                   <span className="font-mono text-[11px] text-fg-muted">{t.credential_origin}</span>
                   {' → '}
                   <span>{maskAccountId(t.account_id)}</span>
+                  {t.target_provider_id && t.target_provider_id !== t.provider_id && (
+                    <span className="text-fg-muted"> ({t.target_provider_id})</span>
+                  )}
                 </p>
                 <p className="truncate text-[11px] text-fg-subtle">
                   {t.sidecar_id ? `on ${names.get(t.sidecar_id) ?? t.sidecar_id}` : 'on all machines'}

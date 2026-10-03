@@ -587,6 +587,9 @@ export interface CredentialTag {
   account_id: string;
   sidecar_id: string | null;
   set_by: string;
+  // Provider owning account_id when it differs from provider_id (e.g. Gemini
+  // usage assigned to an Antigravity account); null = same provider.
+  target_provider_id?: string | null;
   set_at: string | null;
 }
 
@@ -637,6 +640,15 @@ export interface PendingUsageFilter {
 
 export interface PendingUsageAssignmentGroup {
   event_ids: number[];
+  account_id: string;
+  // Only set when the account belongs to a related provider (e.g. antigravity).
+  target_provider_id?: string;
+}
+
+export interface PendingUsageMapping {
+  provider_id: string;
+  sidecar_id: string;
+  target_provider_id: string;
   account_id: string;
 }
 

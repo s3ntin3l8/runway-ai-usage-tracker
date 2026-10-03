@@ -6,6 +6,9 @@ import * as api from '@/api/endpoints';
 import { renderWithProviders } from '@/test/utils';
 import { PendingUsageEventsCard } from './PendingUsageEventsCard';
 
+// Option values encode [providerId, accountId].
+const target = (providerId: string, accountId: string) => JSON.stringify([providerId, accountId]);
+
 vi.mock('@/api/endpoints');
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/features/settings/sections/AddProviderWizard', () => ({
@@ -44,7 +47,9 @@ describe('PendingUsageEventsCard', () => {
     vi.mocked(api.assignPendingUsageEventsBatch).mockResolvedValue({
       assigned: 3,
       providers: ['xai'],
-      mappings: [{ provider_id: 'xai', sidecar_id: 'laptop', account_id: 'alice@example.com' }],
+      mappings: [
+        { provider_id: 'xai', sidecar_id: 'laptop', target_provider_id: 'xai', account_id: 'alice@example.com' },
+      ],
     });
     vi.mocked(api.fetchPendingUsageSessions).mockImplementation(async ({ offset = 0 } = {}) => ({
       items: [
@@ -81,9 +86,9 @@ describe('PendingUsageEventsCard', () => {
     expect(screen.getByRole('option', { name: 'Alice' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'discovered@example.com' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'disabled@example.com' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'archived@example.com' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'archived@example.com · archived' })).toBeInTheDocument();
 
-    await user.selectOptions(account, 'alice@example.com');
+    await user.selectOptions(account, target('xai', 'alice@example.com'));
     await user.click(screen.getByRole('button', { name: 'Assign' }));
     await waitFor(() =>
       expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([12, 13], 'alice@example.com'),
@@ -93,6 +98,117 @@ describe('PendingUsageEventsCard', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() => expect(api.fetchPendingUsageSessions).toHaveBeenCalledWith({ offset: 100, filters: { sidecar_id: undefined, provider_id: undefined, search: undefined } }));
     expect(await screen.findByText(/Showing 101–101 of 101 groups/)).toBeInTheDocument();
+  });
+
+  describe('Gemini usage with an archived Gemini account', () => {
+    beforeEach(() => {
+      vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+        providers: [
+          {
+            provider_id: 'gemini',
+            name: 'Gemini API',
+            accounts: [{ account_id: 'old@example.com', source: 'config', enabled: false, archived: true }],
+            account_count: 0,
+          },
+          {
+            provider_id: 'antigravity',
+            name: 'Antigravity',
+            accounts: [{ account_id: 'me@example.com', source: 'discovered', enabled: true }],
+            account_count: 1,
+          },
+        ],
+      });
+      vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+        items: [
+          {
+            provider_id: 'gemini',
+            sidecar_id: 'hermes-01',
+            session_id: 'sess-1',
+            event_ids: [7, 8],
+            event_count: 2,
+            first_ts: '2026-10-02T07:46:40Z',
+            last_ts: '2026-10-02T07:46:41Z',
+            model_ids: ['gemini-3-pro-preview'],
+          },
+        ],
+        total_events: 2,
+        matching_events: 2,
+        total_groups: 1,
+        sidecars: ['hermes-01'],
+        providers: ['gemini'],
+        offset: 0,
+        limit: 100,
+      });
+      vi.mocked(api.assignPendingUsageEvents).mockResolvedValue({
+        assigned: 2,
+        provider_id: 'gemini',
+        target_provider_id: 'antigravity',
+      });
+    });
+
+    it('offers the archived Gemini account and the Antigravity account instead of a setup button', async () => {
+      renderWithProviders(<PendingUsageEventsCard />);
+
+      await screen.findByRole('combobox', { name: /account for gemini session sess-1/i });
+      expect(screen.queryByRole('button', { name: /set up gemini/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'old@example.com · archived' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'me@example.com' })).toBeInTheDocument();
+    });
+
+    it('assigns to the Antigravity account with an explicit target provider and explains it', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<PendingUsageEventsCard />);
+
+      const account = await screen.findByRole('combobox', { name: /account for gemini session sess-1/i });
+      await user.selectOptions(account, target('antigravity', 'me@example.com'));
+      expect(screen.getByText(/counted as Antigravity usage on this account/i)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Assign' }));
+
+      await waitFor(() =>
+        expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([7, 8], 'me@example.com', 'antigravity'),
+      );
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('assigned to Antigravity'));
+    });
+
+    it('assigns to the archived Gemini account without a target provider and warns about it', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<PendingUsageEventsCard />);
+
+      const account = await screen.findByRole('combobox', { name: /account for gemini session sess-1/i });
+      await user.selectOptions(account, target('gemini', 'old@example.com'));
+      expect(screen.getByText(/stored on this archived account/i)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Assign' }));
+
+      await waitFor(() =>
+        expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([7, 8], 'old@example.com'),
+      );
+    });
+
+    it('sends target_provider_id for related-provider accounts in a batch', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.assignPendingUsageEventsBatch).mockResolvedValue({
+        assigned: 2,
+        providers: ['gemini'],
+        mappings: [
+          { provider_id: 'gemini', sidecar_id: 'hermes-01', target_provider_id: 'antigravity', account_id: 'me@example.com' },
+        ],
+      });
+      renderWithProviders(<PendingUsageEventsCard />);
+
+      await user.click(await screen.findByRole('checkbox', { name: /select gemini on hermes-01/i }));
+      await user.click(screen.getByRole('button', { name: 'Assign selected' }));
+      await user.selectOptions(
+        screen.getByRole('combobox', { name: 'Batch account for gemini' }),
+        target('antigravity', 'me@example.com'),
+      );
+      await user.click(screen.getByRole('button', { name: 'Assign 2 events' }));
+
+      await waitFor(() =>
+        expect(api.assignPendingUsageEventsBatch).toHaveBeenCalledWith([
+          { event_ids: [7, 8], account_id: 'me@example.com', target_provider_id: 'antigravity' },
+        ]),
+      );
+    });
   });
 
   it('keeps selections across pages and assigns a selected batch', async () => {
@@ -105,7 +221,7 @@ describe('PendingUsageEventsCard', () => {
     expect(screen.getByText('2 groups · 3 events selected')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Assign selected' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Batch account for xai' }), 'alice@example.com');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Batch account for xai' }), target('xai', 'alice@example.com'));
     await user.click(screen.getByRole('button', { name: 'Assign 3 events' }));
 
     await waitFor(() => expect(api.assignPendingUsageEventsBatch).toHaveBeenCalledWith([
@@ -147,10 +263,10 @@ describe('PendingUsageEventsCard', () => {
     await user.click(await screen.findByRole('checkbox', { name: /select xai on laptop/i }));
     await user.click(screen.getByRole('checkbox', { name: /select anthropic on laptop/i }));
     await user.click(screen.getByRole('button', { name: 'Assign selected' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Batch account for xai' }), 'xai@example.com');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Batch account for xai' }), target('xai', 'xai@example.com'));
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Batch account for anthropic' }),
-      'anthropic@example.com',
+      target('anthropic', 'anthropic@example.com'),
     );
     await user.click(screen.getByRole('button', { name: 'Assign 3 events' }));
 
@@ -184,7 +300,9 @@ describe('PendingUsageEventsCard', () => {
     vi.mocked(api.assignPendingUsageEventsBatch).mockResolvedValue({
       assigned: 3,
       providers: ['xai'],
-      mappings: [{ provider_id: 'xai', sidecar_id: 'laptop', account_id: 'alice@example.com' }],
+      mappings: [
+        { provider_id: 'xai', sidecar_id: 'laptop', target_provider_id: 'xai', account_id: 'alice@example.com' },
+      ],
     });
     renderWithProviders(<PendingUsageEventsCard />);
 
@@ -192,7 +310,7 @@ describe('PendingUsageEventsCard', () => {
     await user.click(screen.getByRole('button', { name: 'Select all 3 matching groups' }));
     await waitFor(() => expect(screen.getByText('3 groups · 3 events selected')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: 'Assign selected' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Batch account for xai' }), 'alice@example.com');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Batch account for xai' }), target('xai', 'alice@example.com'));
     await user.click(screen.getByRole('button', { name: 'Assign 3 events' }));
     await waitFor(() => expect(api.assignPendingUsageEventsBatch).toHaveBeenCalledWith([
       { event_ids: [1, 2, 3], account_id: 'alice@example.com' },
@@ -290,7 +408,7 @@ describe('PendingUsageEventsCard', () => {
     expect(await screen.findByText(/No session ID · event 44/)).toBeInTheDocument();
     expect(screen.getByText(/unknown model/i)).toBeInTheDocument();
     const account = screen.getByRole('combobox', { name: /account for xai session event 44/i });
-    await user.selectOptions(account, 'alice@example.com');
+    await user.selectOptions(account, target('xai', 'alice@example.com'));
     await user.click(screen.getByRole('button', { name: 'Assign event' }));
 
     await waitFor(() => expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([44], 'alice@example.com'));
@@ -338,7 +456,7 @@ describe('PendingUsageEventsCard', () => {
       name: new RegExp(`account for ${providerId} session tier-session`, 'i'),
     });
     expect(screen.getByRole('option', { name: 'Alice' })).toBeInTheDocument();
-    await user.selectOptions(account, 'alice@example.com');
+    await user.selectOptions(account, target('opencode', 'alice@example.com'));
     await user.click(screen.getByRole('button', { name: 'Assign' }));
     await waitFor(() =>
       expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([63], 'alice@example.com'),
