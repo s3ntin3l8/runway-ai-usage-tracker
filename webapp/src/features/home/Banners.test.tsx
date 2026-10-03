@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { cleanup, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   CredentialInventory,
@@ -395,5 +395,89 @@ describe('Banners unmapped credentials', () => {
   it('shows nothing when no credential is blocking collection (or the server is older)', () => {
     renderWithProviders(<Banners credentials={inventoryWith([])} anomalies={[]} />);
     expect(screen.queryByText(/credential unmapped/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('Banners remembered dismissals', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => vi.useRealTimers());
+
+  const noChannel: DataHealthReport = {
+    scanning: false,
+    checks: [dataHealthCheck({ check_id: 'alert_channels', severity: 'warn', total_count: 1 })],
+  };
+  const failingEntry = (providerId: string) =>
+    entry({
+      provider_id: providerId,
+      critical_gauge: card({ stale: true, collection_failing: true }),
+    });
+
+  it('keeps a dismissed banner hidden after a remount', async () => {
+    const user = userEvent.setup();
+    const first = renderWithProviders(
+      <Banners credentials={undefined} anomalies={[]} dataHealth={noChannel} />,
+    );
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    expect(screen.queryByText(/delivery channel/i)).not.toBeInTheDocument();
+    first.unmount();
+
+    renderWithProviders(<Banners credentials={undefined} anomalies={[]} dataHealth={noChannel} />);
+    expect(screen.queryByText(/delivery channel/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the banner again when its condition changes', async () => {
+    const user = userEvent.setup();
+    const first = renderWithProviders(
+      <Banners credentials={undefined} anomalies={[]} fleet={[failingEntry('ollama')]} />,
+    );
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    first.unmount();
+
+    renderWithProviders(
+      <Banners
+        credentials={undefined}
+        anomalies={[]}
+        fleet={[failingEntry('ollama'), failingEntry('zai')]}
+      />,
+    );
+    expect(screen.getByText(/collection failing for 2 providers/i)).toBeInTheDocument();
+  });
+
+  it('shows the anomaly banner again on a later day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-03T12:00:00') });
+    const spike = {
+      provider_id: 'anthropic',
+      account_id: 'default',
+      model_id: 'opus',
+      today_tokens: 1,
+      today_cost_usd: 1,
+      historical_mean_tokens: 1,
+      historical_stddev_tokens: 1,
+      z_score_tokens: 4,
+      verdict: 'spike',
+    };
+    const user = userEvent.setup();
+    const first = renderWithProviders(<Banners credentials={undefined} anomalies={[spike]} />);
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    first.unmount();
+
+    renderWithProviders(<Banners credentials={undefined} anomalies={[spike]} />);
+    expect(screen.queryByText(/unusual usage today/i)).not.toBeInTheDocument();
+    cleanup();
+
+    vi.setSystemTime(new Date('2026-10-04T12:00:00'));
+    renderWithProviders(<Banners credentials={undefined} anomalies={[spike]} />);
+    expect(screen.getByText(/unusual usage today/i)).toBeInTheDocument();
+  });
+
+  it('still dismisses for the session when localStorage throws', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    renderWithProviders(<Banners credentials={undefined} anomalies={[]} dataHealth={noChannel} />);
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    expect(screen.queryByText(/delivery channel/i)).not.toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 });
