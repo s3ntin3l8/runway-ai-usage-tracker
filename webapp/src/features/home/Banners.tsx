@@ -55,6 +55,8 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
     unmapped: fingerprintOf(
       blocked.map((b) => `${b.sidecar_id}/${b.provider_id}/${b.credential_origin}`),
     ),
+    // Status is part of the fingerprint on purpose: expiring -> expired (or a recovery and a
+    // relapse) is a new problem and should re-show a banner dismissed for the old state.
     credentials: fingerprintOf(
       unhealthy.map((c) => `${c.provider}/${c.accountName}/${c.status}`),
     ),
