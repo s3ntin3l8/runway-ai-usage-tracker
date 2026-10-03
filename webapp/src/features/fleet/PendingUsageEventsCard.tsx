@@ -196,17 +196,11 @@ export function PendingUsageEventsCard() {
     optionGroupsForProvider(usageProviderId).flatMap((group) => group.options);
   const findOption = (usageProviderId: string, value: string | undefined) =>
     value ? optionsForProvider(usageProviderId).find((option) => option.value === value) : undefined;
-  // Drop a stored choice once its account is known but no longer offered (archived
-  // or disabled elsewhere while the card was open). An account we haven't seen yet,
-  // e.g. one the wizard just saved, stays valid until the configs refetch lands.
-  const validChoice = (usageProviderId: string, value: string | undefined) => {
-    if (!value || findOption(usageProviderId, value)) return value;
-    const { providerId, accountId } = decodeAssignTarget(value);
-    const known = configs.data?.providers
-      .find((item) => item.provider_id === providerId)
-      ?.accounts.some((account) => account.account_id === accountId);
-    return known ? undefined : value;
-  };
+  // A stored choice only counts while it is still offered (the account may have
+  // been archived or disabled elsewhere while the card was open). A just-saved
+  // account becomes valid again once the configs refetch lands.
+  const validChoice = (usageProviderId: string, value: string | undefined) =>
+    findOption(usageProviderId, value) ? value : undefined;
   // Only send a target when the account isn't the event provider's own config provider.
   const targetProviderFor = (usageProviderId: string, value: string) => {
     const { providerId } = decodeAssignTarget(value);

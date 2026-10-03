@@ -25,6 +25,20 @@ vi.mock('@/features/settings/sections/AddProviderWizard', () => ({
     ),
 }));
 
+// After the wizard saves, the invalidated provider-configs query refetches with the new account.
+function mockSavedAccountRefetch() {
+  vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+    providers: [
+      {
+        provider_id: 'openrouter',
+        name: 'OpenRouter',
+        accounts: [{ account_id: 'saved-acc@example.com', source: 'config', enabled: true }],
+        account_count: 1,
+      },
+    ],
+  });
+}
+
 describe('PendingUsageEventsCard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -664,13 +678,14 @@ describe('PendingUsageEventsCard', () => {
     const setupBtn = await screen.findByRole('button', { name: '+ Set up OpenRouter' });
     await user.click(setupBtn);
 
-    // Simulate save in wizard
+    // Simulate save in wizard; the refetched configs now include the saved account
+    mockSavedAccountRefetch();
     await user.click(screen.getByRole('button', { name: 'Simulate Save' }));
 
     // Wizard closes and assign button is enabled
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     const assignBtn = screen.getByRole('button', { name: 'Assign' });
-    expect(assignBtn).not.toBeDisabled();
+    await waitFor(() => expect(assignBtn).not.toBeDisabled());
     await user.click(assignBtn);
     await waitFor(() =>
       expect(api.assignPendingUsageEvents).toHaveBeenCalledWith([50], 'saved-acc@example.com'),
@@ -719,11 +734,12 @@ describe('PendingUsageEventsCard', () => {
     const batchSetupBtn = screen.getByRole('button', { name: '+ Set up OpenRouter' });
     await user.click(batchSetupBtn);
 
+    mockSavedAccountRefetch();
     await user.click(screen.getByRole('button', { name: 'Simulate Save' }));
 
     // Batch dialog is open with Assign button enabled
     const batchAssignBtn = screen.getByRole('button', { name: 'Assign 1 events' });
-    expect(batchAssignBtn).not.toBeDisabled();
+    await waitFor(() => expect(batchAssignBtn).not.toBeDisabled());
     await user.click(batchAssignBtn);
     await waitFor(() =>
       expect(api.assignPendingUsageEventsBatch).toHaveBeenCalledWith([

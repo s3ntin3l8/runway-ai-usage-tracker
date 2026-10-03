@@ -3523,3 +3523,64 @@ def test_delete_by_account_matches_effective_provider(session: Session):
         == 1
     )
     assert session.exec(select(CredentialTag)).all() == []
+
+
+def test_mixed_provider_assignment_keeps_each_events_own_provider(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import CredentialTag, PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="gemini", account_id="me@example.com")
+    _add_provider_config(session, provider_id="xai", account_id="me@example.com")
+    gemini_pk = _pending_gemini(session, "g-1")
+    push = UsageEventPush(
+        provider_id="xai",
+        account_id="default",
+        account_source="default",
+        event_id="x-1",
+        ts="2026-09-01T10:00:00Z",
+        model_id="grok",
+    )
+    xai_row = PendingUsageEvent(
+        provider_id="xai",
+        event_id="x-1",
+        sidecar_id="laptop",
+        ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+        payload_json=push.model_dump_json(),
+    )
+    session.add(xai_row)
+    session.commit()
+
+    response = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": [gemini_pk, xai_row.id], "account_id": "me@example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    stored = {(e.provider_id, e.account_id) for e in session.exec(select(UsageEvent))}
+    assert stored == {("gemini", "me@example.com"), ("xai", "me@example.com")}
+    assert all(t.target_provider_id is None for t in session.exec(select(CredentialTag)))
+
+    # An explicit related-provider target is rejected when any event isn't allowed it.
+    gemini_pk = _pending_gemini(session, "g-2")
+    xai_row = PendingUsageEvent(
+        provider_id="xai",
+        event_id="x-2",
+        sidecar_id="laptop",
+        ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+        payload_json=push.model_copy(update={"event_id": "x-2"}).model_dump_json(),
+    )
+    session.add(xai_row)
+    session.commit()
+    rejected = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={
+            "event_ids": [gemini_pk, xai_row.id],
+            "account_id": "me@example.com",
+            "target_provider_id": "antigravity",
+        },
+    )
+    assert rejected.status_code == 422, rejected.text

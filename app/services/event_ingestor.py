@@ -99,6 +99,9 @@ class EventIngestor:
                                 ).first()
                                 is not None
                             ):
+                                # Source-side check only: a row already stored under the
+                                # target provider is caught later by the unique index
+                                # (IntegrityError -> _reattribute, a no-op for the same account).
                                 # Already stored under the source provider (e.g.
                                 # history from before the redirect); don't double-count.
                                 result.events_duplicate += 1

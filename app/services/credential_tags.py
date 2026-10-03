@@ -141,7 +141,11 @@ class CredentialTagRepo:
     def get_redirect(
         session: Session, *, provider_id: str, sidecar_id: str | None = None
     ) -> CredentialTag | None:
-        """Return the provider-level tag when it redirects to another provider."""
+        """Return the provider-level tag when it redirects to another provider.
+
+        ``target_provider_id`` is written only by :meth:`set_tag` (NULL = the tag's
+        own provider, and any re-tag resets it).
+        """
         tag = CredentialTagRepo.get(
             session,
             provider_id=provider_id,

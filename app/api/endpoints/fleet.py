@@ -1721,17 +1721,21 @@ async def _validate_pending_event_assignments(
     assignable_accounts: dict[tuple[str, str], bool] = {}
     for assignment in assignments:
         account_id = resolve_account_id("", assignment.account_id, None)
-        assignment_rows = [by_id[event_id] for event_id in assignment.event_ids]
-        assignment_target = assignment.target_provider_id or account_config_provider_id(
-            assignment_rows[0].provider_id
-        )
-        for row in assignment_rows:
-            config_provider_id = assignment_target
-            account_key = (config_provider_id, account_id)
+        # One entry per config provider: an assignment whose events span providers
+        # must not take its first row's target for the rest.
+        rows_by_config_provider: dict[str, list[PendingUsageEvent]] = {}
+        for event_id in assignment.event_ids:
+            row = by_id[event_id]
+            rows_by_config_provider.setdefault(
+                account_config_provider_id(row.provider_id), []
+            ).append(row)
+        for row_config_provider, assignment_rows in rows_by_config_provider.items():
+            assignment_target = assignment.target_provider_id or row_config_provider
+            account_key = (assignment_target, account_id)
             if account_key not in assignable_accounts:
                 configured = session.exec(
                     select(ProviderConfig).where(
-                        ProviderConfig.provider_id == config_provider_id,
+                        ProviderConfig.provider_id == assignment_target,
                         ProviderConfig.account_id == account_id,
                     )
                 ).first()
@@ -1741,16 +1745,16 @@ async def _validate_pending_event_assignments(
                     assignable_accounts[account_key] = configured.enabled or configured.archived
                 else:
                     assignable_accounts[account_key] = account_key in active_account_keys or (
-                        config_provider_id not in providers_with_config
+                        assignment_target not in providers_with_config
                         and account_key in latest_account_keys
                     )
-            assignable = assignable_accounts[account_key]
-            if not assignable:
+            if not assignable_accounts[account_key]:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"No active account {account_id!r} known for {row.provider_id!r}.",
+                    detail=f"No active account {account_id!r} known for "
+                    f"{assignment_rows[0].provider_id!r}.",
                 )
-        validated.append((assignment_target, account_id, assignment_rows))
+            validated.append((assignment_target, account_id, assignment_rows))
     return validated
 
 
@@ -1850,12 +1854,14 @@ async def assign_pending_usage_events(
     if not body.event_ids or len(body.event_ids) > 1000:
         raise HTTPException(status_code=422, detail="Select between 1 and 1000 events.")
     validated = await _validate_pending_event_assignments([body], session)
-    target_provider_id, account_id, rows = validated[0]
-    _promote_pending_event_rows(request, session, rows, target_provider_id, account_id)
+    # One entry per config provider (events may span providers sharing a config).
+    for target_provider_id, account_id, rows in validated:
+        _promote_pending_event_rows(request, session, rows, target_provider_id, account_id)
+    first_target, _first_account, first_rows = validated[0]
     return {
-        "assigned": len(rows),
-        "provider_id": rows[0].provider_id if rows else None,
-        "target_provider_id": target_provider_id,
+        "assigned": sum(len(rows) for _target, _account, rows in validated),
+        "provider_id": first_rows[0].provider_id if first_rows else None,
+        "target_provider_id": first_target,
     }
 
 
