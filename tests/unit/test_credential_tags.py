@@ -1615,3 +1615,37 @@ def test_rotation_carries_again_on_a_second_relogin(session: Session):
         )
         == "alice@example.com"
     )
+
+
+def test_retagging_without_a_target_clears_a_previous_redirect(session: Session):
+    kwargs = {
+        "provider_id": "gemini",
+        "credential_origin": "provider:gemini",
+        "account_id": "me@example.com",
+        "sidecar_id": "laptop",
+    }
+    CredentialTagRepo.set_tag(session, target_provider_id="antigravity", **kwargs)
+    assert CredentialTagRepo.get_redirect(session, provider_id="gemini", sidecar_id="laptop")
+
+    row = CredentialTagRepo.set_tag(session, **kwargs)
+
+    assert row.target_provider_id is None
+    assert (
+        CredentialTagRepo.get_redirect(session, provider_id="gemini", sidecar_id="laptop") is None
+    )
+
+
+def test_real_account_ids_count_a_redirect_tag_under_its_target_provider(session: Session):
+    from app.services.credential_sources import real_account_ids
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="gemini",
+        credential_origin="provider:gemini",
+        account_id="me@example.com",
+        sidecar_id="laptop",
+        target_provider_id="antigravity",
+    )
+
+    assert "me@example.com" in real_account_ids(session, "antigravity")
+    assert "me@example.com" not in real_account_ids(session, "gemini")

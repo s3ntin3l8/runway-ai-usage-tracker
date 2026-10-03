@@ -73,9 +73,10 @@ class EventIngestor:
                         tag = CredentialTagRepo.get_redirect(
                             self.session, provider_id=push.provider_id, sidecar_id=sidecar_id
                         )
+                        # get_redirect only returns tags with a target set.
                         redirects[push.provider_id] = (
-                            (tag.target_provider_id or push.provider_id, tag.account_id)
-                            if tag is not None
+                            (tag.target_provider_id, tag.account_id)
+                            if tag is not None and tag.target_provider_id
                             else None
                         )
                     redirect = redirects[push.provider_id]
@@ -85,6 +86,7 @@ class EventIngestor:
                             push.account_source is None
                             and canonical_account_id(push.account_id) == "default"
                         )
+                        # 'tag' events for a different account keep their source provider.
                         if is_default or (
                             push.account_source == "tag"
                             and canonical_account_id(push.account_id)

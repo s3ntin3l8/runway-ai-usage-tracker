@@ -1858,11 +1858,14 @@ async def assign_pending_usage_events(
     for target_provider_id, account_id, rows in validated:
         _promote_pending_event_rows(request, session, rows, target_provider_id, account_id)
     first_target, _first_account, first_rows = validated[0]
-    return {
+    result: dict[str, Any] = {
         "assigned": sum(len(rows) for _target, _account, rows in validated),
         "provider_id": first_rows[0].provider_id if first_rows else None,
-        "target_provider_id": first_target,
     }
+    # Only echoed when events were actually re-homed to another provider.
+    if first_rows and first_target != account_config_provider_id(first_rows[0].provider_id):
+        result["target_provider_id"] = first_target
+    return result
 
 
 @router.post("/events/pending/assign-batch")
