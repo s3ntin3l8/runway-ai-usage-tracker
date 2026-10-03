@@ -126,7 +126,7 @@ describe('FixDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: /preview/i }));
     expect(await screen.findByText(/same provider account/i)).toBeInTheDocument();
     expect(screen.getByText('minimax/alice@example.com (target)')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('switch'));
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /apply fix/i })).toBeDisabled();
     await userEvent.click(screen.getByRole('checkbox'));
     expect(screen.getByRole('button', { name: /apply fix/i })).not.toBeDisabled();
