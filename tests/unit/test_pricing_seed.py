@@ -306,6 +306,16 @@ def test_seed_anthropic_fable_5_1_cache_read_is_discounted():
     assert row.cache_create_1h_per_mtok == 20.00
 
 
+def test_seed_anthropic_opus_5_5_rates():
+    """Opus 5.5 is $4/$20, not the bare `opus` family's $5/$25."""
+    row = _anthropic_row("opus-5.5")
+    assert row.input_per_mtok == 4.00
+    assert row.output_per_mtok == 20.00
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 5.00
+    assert row.cache_create_1h_per_mtok == 8.00
+
+
 def test_seed_anthropic_sonnet_5_and_5_5_rates():
     """Sonnet 5/5.5 are $2/$10 — not the bare `sonnet` (4.5) family's $3/$15."""
     for model_id in ("sonnet-5", "sonnet-5.5"):

@@ -37,8 +37,8 @@ PRICING_SEED: list[dict] = [
     # Versioned rows (exact match wins over the bare-family fallback in
     # cost_calculator). Rates per platform.claude.com/docs/en/about-claude/pricing
     # and opencode.ai/docs/zen, cross-checked 2026-10-03; both agree.
-    # effective_from is backdated so events from before the seed still find a
-    # row — no historical price series exists for these ids.
+    # effective_from is deliberately early: these ids only appear in usage after
+    # the model exists, so the exact release date is irrelevant.
     {
         "provider_id": "anthropic",
         "model_id": "fable-5.1",
@@ -49,6 +49,17 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 12.50,  # 5m TTL writes: 1.25x input
         "cache_create_1h_per_mtok": 20.00,  # 1h TTL writes: 2x input
         "notes": "Fable 5.1 — same as Fable 5 except cache reads at 0.025x input",
+    },
+    {
+        "provider_id": "anthropic",
+        "model_id": "opus-5.5",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 4.00,
+        "output_per_mtok": 20.00,
+        "cache_read_per_mtok": 0.20,  # 0.05x input (other Opus: 0.1x)
+        "cache_create_per_mtok": 5.00,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 8.00,  # 1h TTL writes: 2x input
+        "notes": "Opus 5.5 — cheaper than Opus 5 ($5/$25); cache reads at 0.05x input",
     },
     {
         "provider_id": "anthropic",
