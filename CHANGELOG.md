@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.3...v3.0.0-beta.4) (2026-10-03)
+
+
+### Features
+
+* assign unassigned Gemini usage to archived Gemini or Antigravity accounts ([#509](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/509)) ([b4a5fe0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b4a5fe020e2826f3ea269b4a527fa8218e762c14))
+* **home:** remember dismissed attention banners across reloads ([#506](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/506)) ([3bc29a9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3bc29a9f3d952c6af42a10d221a9f642f0f371c4))
+* seed pricing for GPT-6.1 Sol, Fable 5.1, Opus 5.5, Sonnet 5 and 5.5 ([#504](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/504)) ([304a9d6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/304a9d6e9fdbd1020f7c4fe0114a153f6332cb2a))
+
+
+### Bug Fixes
+
+* align data health check titles across severity badges ([#507](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/507)) ([0e08868](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0e0886832ab8c045d5441456f4c9505547669b0a))
+* single confirmation gate in data health fix dialog ([#503](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/503)) ([1745f56](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1745f56c0f17ca6c8ef6226547307d76c7bed504))
+
 ## [3.0.0-beta.3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.2...v3.0.0-beta.3) (2026-10-03)
 
 
