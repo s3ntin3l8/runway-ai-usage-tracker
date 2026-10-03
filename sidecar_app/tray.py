@@ -58,11 +58,18 @@ def _build_status_icon_macos(status: str) -> Image.Image:
     macOS will render all non-transparent pixels as white/black regardless of color,
     so we build a minimalist shape: a centered vertical pill with a status dot.
     Size of the dot varies by status to convey rough state.
+
+    pystray stretches the image to the full menu-bar height, so the glyph is inset
+    in a centred ``CONTENT`` box (~72% of the canvas) to match native menu-bar icons.
     """
     SIZE = 128
+    CONTENT = 92
+    OFFSET = (SIZE - CONTENT) // 2
+    SCALE = CONTENT / SIZE
+
     # Pill dimensions: narrow, centered vertical bar
-    PILL_W = 30
-    PILL_H = 80
+    PILL_W = round(30 * SCALE)
+    PILL_H = round(80 * SCALE)
     PILL_X = (SIZE - PILL_W) // 2
     PILL_Y = (SIZE - PILL_H) // 2
 
@@ -75,18 +82,18 @@ def _build_status_icon_macos(status: str) -> Image.Image:
         "paused": 14,
         "starting": 18,
     }
-    DOT = DOT_SIZES.get(status, 18)
-    DOT_MARGIN = 4
+    DOT = round(DOT_SIZES.get(status, 18) * SCALE)
+    DOT_MARGIN = round(4 * SCALE)
 
     # Start with fully transparent canvas
     img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     # Draw circle outline — matches the Runway logo's circular background
-    RING = 3
-    PAD = 4
+    RING = 4
+    PAD = 3
     draw.ellipse(
-        (PAD, PAD, SIZE - PAD, SIZE - PAD),
+        (OFFSET + PAD, OFFSET + PAD, OFFSET + CONTENT - PAD, OFFSET + CONTENT - PAD),
         outline=(255, 255, 255, 255),
         width=RING,
     )
@@ -98,9 +105,9 @@ def _build_status_icon_macos(status: str) -> Image.Image:
         fill=(255, 255, 255, 255),
     )
 
-    # Draw status dot in bottom-right corner, opaque white
-    x0 = SIZE - DOT - DOT_MARGIN
-    y0 = SIZE - DOT - DOT_MARGIN
+    # Draw status dot in the content box's bottom-right corner, opaque white
+    x0 = OFFSET + CONTENT - DOT - DOT_MARGIN
+    y0 = OFFSET + CONTENT - DOT - DOT_MARGIN
     draw.ellipse((x0, y0, x0 + DOT, y0 + DOT), fill=(255, 255, 255, 255))
 
     return img
