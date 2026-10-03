@@ -53,7 +53,6 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
   const [values, setValues] = useState<Record<string, string>>({});
   const [previewedValues, setPreviewedValues] = useState<Record<string, string> | null>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const [sameAccountConfirmed, setSameAccountConfirmed] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
 
   const preview = usePreviewDataHealthFix();
@@ -74,7 +73,6 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
       setValues(initialValues);
       setPreviewedValues(null);
       setConfirmed(false);
-      setSameAccountConfirmed(false);
       // Defense in depth: setJobId(null) alone already disables the job
       // query, but drop its cache entry too so a future refactor that
       // keeps jobId across reopens can't refire a stale succeeded/failed
@@ -103,7 +101,6 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
     previewedValues !== null &&
     sameParams(previewedValues, values) &&
     confirmed &&
-    (!preview.data?.confirmation_text || sameAccountConfirmed) &&
     jobId === null;
   const requiredParamsReady = group.params.every(
     (param) => !param.required || Boolean(values[param.name]),
@@ -112,7 +109,6 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
   const runPreview = () => {
     const snapshot = { ...values };
     setConfirmed(false);
-    setSameAccountConfirmed(false);
     preview.mutate(
       { checkId, groupKey: group.key, params: cleanParams(values) },
       { onSuccess: () => setPreviewedValues(snapshot) },
@@ -121,7 +117,7 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
 
   const runApply = () => {
     const params = cleanParams(values);
-    if (preview.data?.confirmation_text) params.same_account_confirmed = sameAccountConfirmed;
+    if (preview.data?.confirmation_text) params.same_account_confirmed = confirmed;
     apply.mutate(
       { checkId, groupKey: group.key, params },
       {
@@ -161,7 +157,6 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                       setValues((prev) => ({ ...prev, [param.name]: v }));
                       setPreviewedValues(null);
                       setConfirmed(false);
-                      setSameAccountConfirmed(false);
                       preview.reset();
                     }}
                   >
@@ -187,7 +182,6 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                       setValues((prev) => ({ ...prev, [param.name]: v }));
                       setPreviewedValues(null);
                       setConfirmed(false);
-                      setSameAccountConfirmed(false);
                       preview.reset();
                     }}
                   />
@@ -227,24 +221,25 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
               </div>
             )}
 
-            {preview.data && (
-              <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
-                <Label htmlFor="dh-confirm">I've reviewed the preview — apply this fix</Label>
-                <Switch id="dh-confirm" checked={confirmed} onCheckedChange={setConfirmed} />
-              </div>
-            )}
-
-            {preview.data?.confirmation_text && (
-              <label className="flex items-start gap-2 rounded-md border border-critical/40 px-3 py-2 text-[12px] text-fg">
-                <input
-                  type="checkbox"
-                  checked={sameAccountConfirmed}
-                  onChange={(event) => setSameAccountConfirmed(event.target.checked)}
-                  className="mt-0.5"
-                />
-                {preview.data.confirmation_text}
-              </label>
-            )}
+            {preview.data &&
+              (preview.data.confirmation_text ? (
+                // A check-specific attestation replaces the generic switch —
+                // one deliberate gate, not two stacked ones.
+                <label className="flex items-start gap-2 rounded-md border border-critical/40 px-3 py-2 text-[12px] text-fg">
+                  <input
+                    type="checkbox"
+                    checked={confirmed}
+                    onChange={(event) => setConfirmed(event.target.checked)}
+                    className="mt-0.5"
+                  />
+                  {preview.data.confirmation_text}
+                </label>
+              ) : (
+                <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                  <Label htmlFor="dh-confirm">I've reviewed the preview — apply this fix</Label>
+                  <Switch id="dh-confirm" checked={confirmed} onCheckedChange={setConfirmed} />
+                </div>
+              ))}
 
             <Button
               variant="primary"
