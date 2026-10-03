@@ -2,7 +2,11 @@
 
 import pytest
 
-from sidecar_app import tray
+# pystray/Pillow live in the optional `desktop` extra, which CI doesn't install.
+pytest.importorskip("pystray")
+pytest.importorskip("PIL")
+
+from sidecar_app import tray  # noqa: E402
 
 
 @pytest.mark.parametrize("status", ["ok", "warn", "err", "paused", "starting"])
