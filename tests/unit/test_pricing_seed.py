@@ -283,6 +283,67 @@ def test_seed_anthropic_fable_rates():
     assert fable.cache_create_per_mtok == 12.50
 
 
+def _anthropic_row(model_id: str) -> ProviderPricing:
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "anthropic",
+            ProviderPricing.model_id == model_id,
+        )
+    ).first()
+    assert row is not None
+    return row
+
+
+def test_seed_anthropic_fable_5_1_cache_read_is_discounted():
+    """Fable 5.1 cache hits are 0.025x input ($0.25), unlike Fable 5's $1.00."""
+    row = _anthropic_row("fable-5.1")
+    assert row.input_per_mtok == 10.00
+    assert row.output_per_mtok == 50.00
+    assert row.cache_read_per_mtok == 0.25
+    assert row.cache_create_per_mtok == 12.50
+    assert row.cache_create_1h_per_mtok == 20.00
+
+
+def test_seed_anthropic_opus_5_5_rates():
+    """Opus 5.5 is $4/$20, not the bare `opus` family's $5/$25."""
+    row = _anthropic_row("opus-5.5")
+    assert row.input_per_mtok == 4.00
+    assert row.output_per_mtok == 20.00
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 5.00
+    assert row.cache_create_1h_per_mtok == 8.00
+
+
+def test_seed_anthropic_sonnet_5_and_5_5_rates():
+    """Sonnet 5/5.5 are $2/$10 — not the bare `sonnet` (4.5) family's $3/$15."""
+    for model_id in ("sonnet-5", "sonnet-5.5"):
+        row = _anthropic_row(model_id)
+        assert row.input_per_mtok == 2.00
+        assert row.output_per_mtok == 10.00
+        assert row.cache_read_per_mtok == 0.20
+        assert row.cache_create_per_mtok == 2.50
+        assert row.cache_create_1h_per_mtok == 4.00
+
+
+def test_seed_chatgpt_gpt6_1_sol_rates():
+    """GPT-6.1 Sol matches gpt-6-sol except cached input ($0.10 vs $0.20)."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6.1-sol",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 2.00
+    assert row.output_per_mtok == 10.00
+    assert row.cache_read_per_mtok == 0.10
+    assert row.cache_create_per_mtok == 2.50
+
+
 def test_seed_gemini_2_5_pro_rates_match_official():
     """Per https://ai.google.dev/gemini-api/docs/pricing (paid tier, ≤200K)."""
     s = _make_session()

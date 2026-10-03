@@ -34,6 +34,56 @@ PRICING_SEED: list[dict] = [
         "cache_create_1h_per_mtok": 6.00,  # 1h TTL writes: 2x input
         "notes": "Sonnet 4.5",
     },
+    # Versioned rows (exact match wins over the bare-family fallback in
+    # cost_calculator). Rates per platform.claude.com/docs/en/about-claude/pricing
+    # and opencode.ai/docs/zen, cross-checked 2026-10-03; both agree.
+    # effective_from is deliberately early: these ids only appear in usage after
+    # the model exists, so the exact release date is irrelevant.
+    {
+        "provider_id": "anthropic",
+        "model_id": "fable-5.1",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 10.00,
+        "output_per_mtok": 50.00,
+        "cache_read_per_mtok": 0.25,  # 0.025x input (Fable 5 is 0.1x = $1.00)
+        "cache_create_per_mtok": 12.50,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 20.00,  # 1h TTL writes: 2x input
+        "notes": "Fable 5.1 — same as Fable 5 except cache reads at 0.025x input",
+    },
+    {
+        "provider_id": "anthropic",
+        "model_id": "opus-5.5",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 4.00,
+        "output_per_mtok": 20.00,
+        "cache_read_per_mtok": 0.20,  # 0.05x input (other Opus: 0.1x)
+        "cache_create_per_mtok": 5.00,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 8.00,  # 1h TTL writes: 2x input
+        "notes": "Opus 5.5 — cheaper than Opus 5 ($5/$25); cache reads at 0.05x input",
+    },
+    {
+        "provider_id": "anthropic",
+        "model_id": "sonnet-5",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 2.50,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 4.00,  # 1h TTL writes: 2x input
+        "notes": "Sonnet 5 — $2/$10 (introductory price made permanent; the "
+        "scheduled 2026-09-01 increase to $3/$15 will not occur)",
+    },
+    {
+        "provider_id": "anthropic",
+        "model_id": "sonnet-5.5",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 2.50,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 4.00,  # 1h TTL writes: 2x input
+        "notes": "Sonnet 5.5 — same rates as Sonnet 5",
+    },
     {
         "provider_id": "anthropic",
         "model_id": "opus",
@@ -178,6 +228,18 @@ PRICING_SEED: list[dict] = [
         "cache_read_per_mtok": 0.20,
         "cache_create_per_mtok": 2.50,  # 1.25x input
         "notes": "GPT-6 Sol (rates per developers.openai.com/api/docs/pricing, checked 2026-09-27)",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-6.1-sol",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.10,  # half of gpt-6-sol's $0.20
+        "cache_create_per_mtok": 2.50,  # 1.25x input
+        "notes": "GPT-6.1 Sol (rates per developers.openai.com/api/docs/pricing "
+        "and opencode.ai/docs/zen, checked 2026-10-03) — same as gpt-6-sol "
+        "except cached input is $0.10",
     },
     {
         "provider_id": "chatgpt",
