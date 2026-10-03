@@ -230,6 +230,8 @@ def test_isolated_collector_copies_configuration_but_shares_no_state():
     assert clone._user_strategies == {"web": {"enabled": False}}
     clone.account_id = "changed-by-a-response"
     assert template.account_id == "alice@example.com"
+    clone._user_strategies["web"]["enabled"] = True  # a collector editing its own strategies
+    assert template._user_strategies == {"web": {"enabled": False}}
 
 
 @pytest.mark.asyncio

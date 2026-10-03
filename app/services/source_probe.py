@@ -16,6 +16,7 @@ real request: the provider sees it.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
 from typing import Any
@@ -47,7 +48,8 @@ def isolated_collector(template: Any) -> Any:
         clone.credential_account_id = template.credential_account_id
     user_strategies = getattr(template, "_user_strategies", None)
     if user_strategies:
-        clone.apply_strategy_config(user_strategies)
+        # A copy, so nothing a collector does to its strategies mid-collect reaches the live one.
+        clone.apply_strategy_config(copy.deepcopy(user_strategies))
     return clone
 
 
@@ -66,6 +68,8 @@ def _find_template(manager: Any, provider_id: str, account_id: str) -> Any:
     if live is not None:
         return live.collector
     try:
+        # A bare instance: no account_id/credential_account_id of its own, so the caller's slot
+        # resolution falls through to the requested account_id (which is what we want).
         return manager._create_collector(provider_id)
     except Exception:
         # A collector that cannot even be constructed is a "nothing to probe", not a 500.
