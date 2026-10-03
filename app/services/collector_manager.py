@@ -33,7 +33,7 @@ from app.services.collectors.zai import ZaiCollector
 from app.services.credential_sources import is_sidecar_source
 from app.services.refresh_policy import machine_owns_credential
 from app.services.smart_collector import SmartCollector
-from app.services.source_probe import source_outcome
+from app.services.source_outcome import source_outcome
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)

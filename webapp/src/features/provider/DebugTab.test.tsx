@@ -146,6 +146,66 @@ describe('DebugTab', () => {
       expect(screen.queryByText(/changes nothing/i)).not.toBeInTheDocument();
     });
 
+    it('shows the details of a failed source and a disabled one, and the probe limit', async () => {
+      vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
+        inventory({
+          providers: [
+            {
+              provider_id: 'anthropic',
+              name: 'Claude',
+              accounts: [
+                account(
+                  [
+                    source({
+                      provider_id: 'anthropic',
+                      account_id: 'me@example.com',
+                      source_id: 'sidecar:off',
+                      label: 'auth.json',
+                      enabled: false,
+                      health: 'untried',
+                      last_success_at: null,
+                    }),
+                    source({
+                      provider_id: 'anthropic',
+                      account_id: 'me@example.com',
+                      source_id: 'sidecar:slow',
+                      label: 'creds.json',
+                    }),
+                  ],
+                  { provider_id: 'anthropic', account_id: 'me@example.com' },
+                ),
+              ],
+            },
+          ],
+        }),
+      );
+      vi.mocked(api.probeCredentialSources).mockResolvedValue({
+        ...probeResponse([
+          { source_id: 'sidecar:off', outcome: 'over_limit', probed: false },
+          {
+            source_id: 'sidecar:slow',
+            outcome: 'unavailable',
+            probed: true,
+            http_status: 503,
+            error_type: 'api_error',
+            message: 'upstream unavailable',
+            duration_ms: 20_000,
+          },
+        ]),
+        truncated: true,
+      });
+      renderTab();
+      expect(await screen.findByText('Disabled')).toBeInTheDocument();
+      expect(screen.getByText(/not yet tried/i)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Probe sources' }));
+
+      expect(await screen.findByText('Not tried — probe limit reached')).toBeInTheDocument();
+      expect(screen.getByText('Collection failed')).toBeInTheDocument();
+      expect(screen.getByText('HTTP 503')).toBeInTheDocument();
+      expect(screen.getByText('api_error')).toBeInTheDocument();
+      expect(screen.getByText('upstream unavailable')).toBeInTheDocument();
+    });
+
     it('has nothing to probe when no source is reported', async () => {
       vi.mocked(api.fetchCredentialInventory).mockResolvedValue(inventory({ providers: [] }));
       renderTab();

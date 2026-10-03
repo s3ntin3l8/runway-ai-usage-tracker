@@ -10,7 +10,8 @@ import pytest
 from app.services import auth_failures
 from app.services.collector_manager import CollectorManager
 from app.services.smart_collector import SmartCollector
-from app.services.source_probe import isolated_collector, probe_sources, source_outcome
+from app.services.source_outcome import source_outcome
+from app.services.source_probe import isolated_collector, probe_sources
 from app.services.token_cache import TokenCache, _active_source
 
 GOOD = {"service_name": "x", "remaining": "10", "data_source": "api"}
@@ -330,3 +331,27 @@ def test_provider_error_events_are_not_logged_by_a_probe(monkeypatch):
     # Outside a probe the same failure is still recorded (the guard is the only difference).
     collector._record_strategy_error(failure)
     recorded.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_a_collector_that_cannot_be_built_means_nothing_to_probe_not_a_500(
+    manager, monkeypatch
+):
+    manager.smart_collectors = {}
+    monkeypatch.setattr(manager, "_create_collector", Mock(side_effect=RuntimeError("bad ctor")))
+    assert await probe_sources(manager, "deepseek", "ghost") == []
+
+
+@pytest.mark.asyncio
+async def test_a_probe_calls_at_most_the_limit_and_lists_the_rest_as_not_probed(manager):
+    from app.services.source_probe import MAX_PROBED_SOURCES
+
+    total = MAX_PROBED_SOURCES + 3
+    _serve(manager, [_candidate(f"src:{n:02d}", n) for n in range(total)])
+
+    results = await probe_sources(manager, "deepseek", "default")
+
+    assert len(results) == total
+    assert [r["probed"] for r in results] == [True] * MAX_PROBED_SOURCES + [False] * 3
+    assert {r["outcome"] for r in results[MAX_PROBED_SOURCES:]} == {"over_limit"}
+    assert len(_Stub.seen) == MAX_PROBED_SOURCES  # nothing past the limit touched the network

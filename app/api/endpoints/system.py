@@ -489,6 +489,7 @@ async def probe_provider_sources(
         "provider_id": provider_id,
         "account_id": account_id,
         "probed_at": datetime.now(UTC).isoformat(),
+        "truncated": any(source["outcome"] == "over_limit" for source in sources),
         "sources": sources,
     }
 

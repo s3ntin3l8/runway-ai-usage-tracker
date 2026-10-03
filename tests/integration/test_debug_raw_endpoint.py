@@ -618,7 +618,7 @@ def test_probe_returns_each_sources_outcome_for_the_requested_account(client, mo
     assert seen == [("deepseek", "alice@example.com")]
     assert (body["provider_id"], body["account_id"]) == ("deepseek", "alice@example.com")
     assert [s["outcome"] for s in body["sources"]] == ["healthy", "disabled"]
-    assert body["probed_at"]
+    assert body["probed_at"] and body["truncated"] is False
 
 
 def test_probe_defaults_to_the_default_account(client, monkeypatch):
@@ -658,3 +658,14 @@ def test_raw_capture_runs_on_a_copy_so_it_never_resets_the_pollers_collector(cli
 
     assert r.status_code == 200, r.text
     assert reset_on and live not in reset_on
+
+
+def test_probe_says_when_sources_were_left_out(client, monkeypatch):
+    async def fake_probe(manager, provider_id, account_id):
+        return [
+            {"source_id": "a", "outcome": "healthy", "probed": True},
+            {"source_id": "b", "outcome": "over_limit", "probed": False},
+        ]
+
+    monkeypatch.setattr("app.api.endpoints.system.probe_sources", fake_probe)
+    assert client.post("/api/v1/system/debug/sources/deepseek").json()["truncated"] is True

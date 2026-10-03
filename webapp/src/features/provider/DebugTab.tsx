@@ -164,6 +164,7 @@ const PROBE_LABEL: Record<string, string> = {
   waiting_on_machine: "Expired — waiting for its machine's CLI to renew it",
   disabled: 'Disabled — not tried',
   pending: 'Waiting for an account — not tried',
+  over_limit: 'Not tried — probe limit reached',
 };
 const PROBE_VARIANT: Record<string, 'ok' | 'warning' | 'critical' | 'neutral'> = {
   healthy: 'ok',

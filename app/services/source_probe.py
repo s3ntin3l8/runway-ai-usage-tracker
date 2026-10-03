@@ -18,47 +18,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 
 from app.core.log_redaction import redact_secrets
 from app.core.utils import scrub_log
 from app.services.probe_mode import probing
+from app.services.source_outcome import source_outcome
 from app.services.token_cache import token_cache
-
-if TYPE_CHECKING:
-    from app.services.collector_manager import CollectorManager
 
 logger = logging.getLogger(__name__)
 
 PROBE_TIMEOUT_SECONDS = 20.0
 PROBE_CONCURRENCY = 4
-_AUTH_ERROR_TYPES = {"auth_failed", "invalid_api_key"}
-
-
-def has_usable_card(result: list[dict[str, Any]]) -> bool:
-    return any(
-        card.get("data_source") != "error"
-        and card.get("remaining") != "ERR"
-        and not card.get("error_type")
-        for card in result
-    )
-
-
-def source_outcome(result: list[dict[str, Any]], auth_rejected: bool, empty_allowed: bool) -> str:
-    """Classify one source attempt: ``healthy`` | ``degraded`` | ``auth_failed`` | ``unavailable``.
-
-    The one rule behind both failover's health bookkeeping and the on-demand probe. A fetch
-    that still produced usable cards is not failed (an optional request or a refresh retry may
-    401 while quota is collected: ``degraded``); a failed one is ``auth_failed`` when the
-    provider rejected the credential, else ``unavailable``.
-    """
-    failed = (not result and not empty_allowed) or bool(result and not has_usable_card(result))
-    rejected = auth_rejected or any(card.get("error_type") in _AUTH_ERROR_TYPES for card in result)
-    if failed:
-        return "auth_failed" if rejected else "unavailable"
-    return "degraded" if auth_rejected else "healthy"
+# One probe call is one real upstream request per source: a provider with a large fleet of
+# bundles must not turn a button press into dozens. The rest are listed as not probed.
+MAX_PROBED_SOURCES = 12
 
 
 def isolated_collector(template: Any) -> Any:
@@ -75,7 +51,7 @@ def isolated_collector(template: Any) -> Any:
     return clone
 
 
-def _find_template(manager: CollectorManager, provider_id: str, account_id: str) -> Any:
+def _find_template(manager: Any, provider_id: str, account_id: str) -> Any:
     live = manager.smart_collectors.get(f"{provider_id}:{account_id}")
     if live is None:
         live = next(
@@ -87,7 +63,14 @@ def _find_template(manager: CollectorManager, provider_id: str, account_id: str)
             ),
             None,
         )
-    return live.collector if live is not None else manager._create_collector(provider_id)
+    if live is not None:
+        return live.collector
+    try:
+        return manager._create_collector(provider_id)
+    except Exception:
+        # A collector that cannot even be constructed is a "nothing to probe", not a 500.
+        logger.warning("Source probe: could not build a %s collector", scrub_log(provider_id))
+        return None
 
 
 def _skipped(candidate: dict[str, Any], outcome: str) -> dict[str, Any]:
@@ -95,7 +78,7 @@ def _skipped(candidate: dict[str, Any], outcome: str) -> dict[str, Any]:
 
 
 async def _probe_one(
-    manager: CollectorManager,
+    manager: Any,
     template: Any,
     provider_id: str,
     slot: str,
@@ -169,9 +152,7 @@ async def _run_probe(
     }
 
 
-async def probe_sources(
-    manager: CollectorManager, provider_id: str, account_id: str
-) -> list[dict[str, Any]]:
+async def probe_sources(manager: Any, provider_id: str, account_id: str) -> list[dict[str, Any]]:
     """Probe every credential source of ``(provider_id, account_id)``, in failover order."""
     await manager._sync_collectors()
     template = _find_template(manager, provider_id, account_id)
@@ -198,7 +179,9 @@ async def probe_sources(
         async with gate:
             return await _probe_one(manager, template, provider_id, slot, candidate, live)
 
-    results: list[dict[str, Any]] = list(await asyncio.gather(*(one(c) for c in ordered)))
+    probed, over_limit = ordered[:MAX_PROBED_SOURCES], ordered[MAX_PROBED_SOURCES:]
+    results: list[dict[str, Any]] = list(await asyncio.gather(*(one(c) for c in probed)))
+    results.extend(_skipped(c, "over_limit") for c in over_limit)
     results.extend(_skipped(c, "disabled") for c in disabled)
     results.extend(_skipped(c, "pending") for c in pending)
     return results

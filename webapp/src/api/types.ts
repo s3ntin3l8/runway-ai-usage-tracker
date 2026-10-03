@@ -1081,7 +1081,8 @@ export type SourceProbeOutcome =
   | 'unavailable'
   | 'waiting_on_machine'
   | 'disabled'
-  | 'pending';
+  | 'pending'
+  | 'over_limit';
 
 export interface SourceProbeResult {
   source_id: string;
@@ -1098,6 +1099,8 @@ export interface SourceProbeResponse {
   provider_id: string;
   account_id: string;
   probed_at: string;
+  /** More sources than one probe will call: the rest are listed as `over_limit`. */
+  truncated?: boolean;
   sources: SourceProbeResult[];
 }
 
