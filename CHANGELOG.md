@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.2...v3.0.0-beta.3) (2026-10-03)
+
+
+### Features
+
+* add usage source and cache filters to statistics ([#449](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/449)) ([ae1601f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ae1601f15d6dc646b5224c0cb6e28b8b9f392af7))
+* list and probe every credential source on the provider Debug tab ([#434](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/434)) ([#501](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/501)) ([67bcebd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/67bcebdeffa3844eb73402281103227d97c48a8a))
+* unified credentials view with per-source provenance ([#451](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/451)) ([d6ed0aa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d6ed0aa6e725cca91ef44cebfa49428928fc2a54))
+* warn on Home when an unmapped credential is stopping collection ([#493](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/493)) ([#499](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/499)) ([caa3662](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/caa36623bdbb291bc8e0be3fa55c3c767482417b))
+* warn when credential alerts have no delivery channel ([#479](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/479)) ([#500](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/500)) ([d91a811](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d91a8119c840661ba50d9eaa99de9e743587c131))
+
+
+### Bug Fixes
+
+* add misidentified_gauge_series check and harden github identity shortcut ([#440](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/440)) ([0995f91](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0995f91307a463600a5c59333c96a00114b4b6ec))
+* **alerts:** share one refresh-credential predicate ([#453](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/453)) ([#455](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/455)) ([cba3edc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cba3edce83076517d7fdda7a82de20893d5d4c52))
+* **antigravity:** fail over to identity-keyed sources, keep the agy login fresh ([7822d3c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7822d3c5eda75a28b75301ee8ecde3e974a7f54f))
+* canonicalize credential_sources and account labels at startup ([#477](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/477)) ([#496](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/496)) ([43d62c1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/43d62c11b0298cff9f79379904f2ae9ed40ad8d1))
+* carry an account binding across a credential rotation ([#494](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/494)) ([c00ad87](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c00ad87b7c215b7d4d4a902e5ac05e15729d0f61))
+* catch account switches behind Kimi cookies ([#490](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/490)) ([4bec9ad](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4bec9ade935ad77d1d2b61c3017c5deee61c832c))
+* **data-health:** purge legacy-provider rollup rows during retag ([#450](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/450)) ([de3df71](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/de3df71ea4ac83217302df693428f428046ebd93)), closes [#441](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/441)
+* demote expired credential bundles in source failover ([#489](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/489)) ([2fd40b8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2fd40b8946a9600090eeeb4267ff23e572c6b7ec))
+* discover and surface Claude Code OAuth credentials ([#433](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/433)) ([b3ab082](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b3ab08229b5dd9fbd9083dff209098903da1705d))
+* drop a cookie tag when the browser switches account ([#462](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/462)) ([#473](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/473)) ([1a697b8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1a697b895861e5d1547d51a606291ccf7a2f6dbe))
+* ensure collector fails over on 403 and error result cards ([#435](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/435)) ([98d22fa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/98d22fa795add8de111419ca97de874301d945c7))
+* evict stale cross-window error cards when provider recovers ([#438](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/438)) ([ce047b5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ce047b5c456e8727ca5b7ba53f75b83eada139b8))
+* harden credential source handling (stale sources, label leak, ingest keys, refresh) ([#448](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/448)) ([eb4048f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/eb4048fe20e0caf141c2476b64f876fadc70827e))
+* harden Windows sidecar updates ([#466](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/466)) ([3344457](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3344457d2bc89c2c37a4724f1eb9660d890ce83d))
+* hide zero-balance payg cards from at-risk rail ([#437](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/437)) ([eb0be2d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/eb0be2dca7798af1124a6b3afc599b14ed52472b))
+* identify a bare Claude OAuth token from its own profile ([#488](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/488)) ([e3138ba](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e3138ba5117382a4fec9cad41fd9e89aee876ded))
+* include current day in provider usage views ([#427](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/427)) ([c161930](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c161930e7aca1a92223379dab979af5ff89c876f))
+* key-scope static env-key origins; legacy tags keep applying ([#443](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/443)) ([#463](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/463)) ([730c974](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/730c97479600a8e197d38e8b47b5ec52afbf6ce2))
+* let the CLI renew a login the server reads from its own CLI file ([#458](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/458)) ([#467](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/467)) ([2a0baff](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2a0baffea90e4d59e54f060100515f753c0af407))
+* log refresh failures and let a newer spent lineage win ([#483](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/483)) ([f513e28](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f513e288581653f7ea576dcba5f4b98dbf9fbe4f))
+* never refresh a machine's rotating OAuth login on the server ([#445](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/445)) ([#459](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/459)) ([44e962e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/44e962e3654000030fd347d24a5b0350629864a4))
+* prefer the access token's JWT exp over a stored expiry_date ([#484](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/484)) ([b56caf3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b56caf35d01a2d69fa5298717f42b344e20c566e))
+* preserve quota on partial auth failures ([#428](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/428)) ([d320880](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d3208800de116a9c29eab3992a4b27fcbe303d1f))
+* repair and prevent orphaned credential_sources after an account rename ([#481](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/481)) ([51ed97a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/51ed97a61e579b8523fe570e32e2b04dc63a72c4))
+* report never-tried credential sources as untried, not healthy ([#485](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/485)) ([#497](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/497)) ([df10c90](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/df10c900b9321f274c545ad609648e5b4f656fbb))
+* rest rejected credentials between retries and report sources that keep failing ([#498](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/498)) ([cb652a6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cb652a6c158e57b235828acc6bf0277980fb5635))
+* restart Windows sidecar after self-update ([#495](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/495)) ([9aa0c69](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9aa0c69e547e7e95246e9b2653a0aae5dd9063f4))
+* restore sidecar credential health and collection ([#429](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/429)) ([d05af53](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d05af537ed12e907eba00ad616b689a0dd9ba450))
+* scope provider details to quota windows ([#464](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/464)) ([96289df](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/96289dff7872644cfc7bac35af2a7672fb40eac5))
+* **security:** keep secrets out of the queue, logs, error bodies and plaintext files ([#446](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/446)) ([#457](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/457)) ([6122475](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/61224757d68ec2b730b588f733345d097f4b4161))
+* stop inactive providers from collecting sidecar credentials ([#430](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/430)) ([b3f3ab9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b3f3ab99202915ffd260856fed13dc897ef39cb6))
+* suppress Windows sidecar collection consoles ([#471](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/471)) ([c319320](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c3193200d90559db3bee4ae30a6550a91839cbda))
+* **tests:** stop the xAI extractor tests aging out of a rolling window ([#476](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/476)) ([2698713](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/26987138c502a8220063b012cce46b136d413f66))
+* unify provider account identities when email label is supplied ([b3b130b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b3b130be87369125b20ad6794258442206775b2a))
+* verify Anthropic and ChatGPT env/cookie credentials on the server ([#460](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/460)) ([#470](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/470)) ([0220387](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/02203876462507f69fefebcbe04fb34a6b8f47fd))
+* verify unidentified Gemini credentials on the server; decode ChatGPT's profile claim ([#444](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/444)) ([#461](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/461)) ([84498c5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/84498c5698c3ff6ce130235c6b6d337bfa340bd7))
+* **xai:** add oauth token refresh and fix source failover for auth failures ([#436](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/436)) ([001f1fc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/001f1fc7f51416ddab5a9bc754feb17a4ee59d87))
+* **xai:** treat an omitted credits gauge as zero usage ([#475](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/475)) ([caf9e63](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/caf9e63daeac42b99bd091dbba1cc181d5b2fad5))
+
+
+### Performance Improvements
+
+* back off re-verifying pending sources that can't prove their account ([#487](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/487)) ([8ed6557](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8ed6557ea18ab8e099a470d8711d5bdb2d89d809))
+
 ## [Unreleased]
 
 ### Changed
