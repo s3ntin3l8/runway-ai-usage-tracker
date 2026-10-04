@@ -21,6 +21,7 @@ from app.services.data_health.checks.orphan_credential_tags import OrphanCredent
 from app.services.data_health.checks.orphan_gauge_series import OrphanGaugeSeriesCheck
 from app.services.data_health.checks.pending_events import PendingEventsCheck
 from app.services.data_health.checks.rollup_drift import RollupDriftCheck
+from app.services.data_health.checks.stale_credential_sources import StaleCredentialSourcesCheck
 from app.services.data_health.checks.unpriced_models import UnpricedModelsCheck
 
 REGISTRY: list[Check] = [
@@ -29,6 +30,7 @@ REGISTRY: list[Check] = [
     LoneDefaultEventsCheck(),
     OrphanCredentialTagsCheck(),
     OrphanCredentialSourcesCheck(),
+    StaleCredentialSourcesCheck(),
     OrphanGaugeSeriesCheck(),
     MisidentifiedGaugeSeriesCheck(),
     UnpricedModelsCheck(),

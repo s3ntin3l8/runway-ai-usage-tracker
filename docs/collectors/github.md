@@ -80,7 +80,7 @@ label cannot re-key an explicitly identified account.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITHUB_TOKEN` | Yes | GitHub personal access token with `copilot` scope |
+| `GITHUB_TOKEN` / `GH_TOKEN` | One credential source is enough | GitHub OAuth token (preferred) or PAT; `GH_TOKEN` is the `gh` CLI's variable and is read the same way |
 | `GITHUB_CLIENT_ID` | No | Client ID for OAuth Device Flow (default: `Iv1.b507a08c87ecfe98`) |
 
 ## GitHub OAuth Setup
@@ -98,7 +98,18 @@ Runway uses the public GitHub OAuth Client ID (`Iv1.b507a08c87ecfe98`) to enable
 
 ## Credential Discovery
 
-Runway supports automatic credential discovery for GitHub. If you have logged in via the `gh` CLI (`gh auth login`), Runway will attempt to read your `oauth_token` from the `gh` CLI's configuration file (`~/.config/gh/hosts.yml` on Linux/macOS, or `%APPDATA%\GitHub CLI\hosts.yml` on Windows).
+GitHub credentials come from these sources. The first one found by the server (settings key, then env, then files) is used by the collector; every machine-reported one is kept as its own row in Settings → Credentials.
+
+| Source | Detected by | Notes |
+|---|---|---|
+| Settings key | server | A token pasted in the provider dialog. |
+| `GITHUB_TOKEN` / `GH_TOKEN` | server and sidecar | Environment variable. |
+| Sign in with GitHub (device flow) | server | Button in the GitHub account dialog. The token is stored encrypted at `<config dir>/github_oauth.json` and listed as a server credential. |
+| `gh` CLI `hosts.yml` | server and sidecar | `~/.config/gh/hosts.yml` (Linux/macOS) or `%APPDATA%\GitHub CLI\hosts.yml`; spellings of the same file are read once. |
+| `gh` CLI keyring | sidecar | `gh auth token`, for `gh` ≥ 2.40, which keeps the token in the OS keyring and leaves `hosts.yml` without one. Skipped when it returns a token already found above. |
+| Windows Credential Manager `github.com` | sidecar | |
+
+Not detected: VS Code / JetBrains Copilot sign-in files, browser cookies.
 
 **Custom Config Directory**:
 The default location for Runway's configuration files (including where GitHub OAuth tokens are saved) is platform-specific (e.g., `~/.config/runway` on Linux). You can override this location by setting the `RUNWAY_CONFIG_DIR` environment variable to an absolute path. This is particularly useful for Docker or custom multi-host deployments.

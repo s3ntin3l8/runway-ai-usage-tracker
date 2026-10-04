@@ -1073,6 +1073,44 @@ class TestCollectorManagerInitialization:
         assert row.source_id == "server:github:env:GITHUB_TOKEN"
         assert row.last_success_at is not None
 
+    def test_record_server_sources_registers_runways_device_login_file(self, manager, monkeypatch):
+        """A managed file (the GitHub device-login token) is evidence for its account too."""
+        from sqlalchemy.pool import StaticPool
+        from sqlmodel import SQLModel, create_engine
+        from sqlmodel.orm.session import Session
+
+        from app.models.db import CredentialSource
+        from app.services.credential_provider import CredentialProvider
+
+        monkeypatch.setattr("sqlmodel.Session", Session)
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(engine)
+        monkeypatch.setattr("app.core.db.engine", engine)
+        monkeypatch.setattr(
+            CredentialProvider,
+            "server_credential_origins",
+            staticmethod(
+                lambda _pid: [
+                    {
+                        "source_type": "file",
+                        "label": "github_oauth.json",
+                        "keys": ["api_key"],
+                        "managed": True,
+                        "cli_owned": False,
+                    }
+                ]
+            ),
+        )
+
+        manager._record_server_sources("github", "s3ntin3l8", "healthy")
+
+        with Session(engine) as session:
+            (row,) = session.exec(select(CredentialSource)).all()
+        assert (row.provider_id, row.account_id) == ("github", "s3ntin3l8")
+        assert row.source_type == "file" and row.source_label == "github_oauth.json"
+
     def test_record_server_sources_prunes_a_removed_env_credential(self, manager, monkeypatch):
         from sqlalchemy.pool import StaticPool
         from sqlmodel import SQLModel, create_engine

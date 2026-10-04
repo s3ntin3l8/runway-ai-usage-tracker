@@ -360,14 +360,8 @@ class GitHubCollector(BaseCollector):
         creds = credential_provider.get_github_data()
         token = creds.get("api_key")
 
-        # If we have email/name in creds, cache them as identity
         if token:
             self._current_input_source = getattr(creds, "sources", {}).get("api_key", "server")
-            identity = creds.get("email") or creds.get("name")
-            if identity:
-                self._identity = identity
-                if not self.account_label or self.account_label.lower() == "default":
-                    self.account_label = identity
             return token
 
         # Check account-specific token cache

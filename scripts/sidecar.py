@@ -347,6 +347,13 @@ __REGISTRY__: dict[str, Any] = {
                     },
                 },
                 {
+                    "type": "env",
+                    "variable": "GH_TOKEN",
+                    "mapping": {
+                        "value": "api_key",
+                    },
+                },
+                {
                     "type": "file",
                     "paths": [
                         "~/.config/gh/hosts.yml",
@@ -368,13 +375,14 @@ __REGISTRY__: dict[str, Any] = {
                 {
                     "type": "exec",
                     "command": [
-                        "git",
-                        "config",
-                        "--global",
-                        "user.email",
+                        "gh",
+                        "auth",
+                        "token",
+                        "--hostname",
+                        "github.com",
                     ],
                     "mapping": {
-                        "value": "name",
+                        "value": "api_key",
                     },
                 },
             ],
@@ -3045,7 +3053,17 @@ class GenericCollector:
                 # expand_file_rule_paths resolves plain paths exactly and
                 # expands glob patterns (e.g. kimi-cli's per-install
                 # kimi-code-env-<hash>.json), freshest match last.
+                seen_files: set[str] = set()
                 for path in expand_file_rule_paths(rule.get("paths", [])):
+                    # Distinct spellings of one file (`~/.config/gh` vs the
+                    # platform config dir) must yield a single candidate.
+                    try:
+                        real = str(Path(path).resolve())
+                    except OSError:
+                        real = str(path)
+                    if real in seen_files:
+                        continue
+                    seen_files.add(real)
                     try:
                         fmt = rule.get("format", "json")
                         with open(path) as f:
@@ -3186,7 +3204,12 @@ class GenericCollector:
                             val = result.stdout.strip()
                             if val:
                                 target = mapping.get("value")
-                                if target:
+                                # A command that echoes a token another rule already
+                                # found (`gh auth token` vs hosts.yml) is one credential.
+                                already_found = any(
+                                    c.get(target) == val for c, _, _ in token_candidates
+                                )
+                                if target and not already_found:
                                     token_candidates.append(
                                         (
                                             {target: val},
@@ -3786,6 +3809,11 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
                 expires_at = IdentityExtractor.extract_jwt_exp(token)
                 if expires_at is not None:
                     break
+        # Exec rules carry a fixed `provider:<id>` origin; one that yielded no
+        # credential key (e.g. a metadata-only lookup) is not a credential, and
+        # reporting it created an untried "Sidecar credential" row per machine.
+        if not token_types and origin.startswith("provider:"):
+            continue
         key_tuple = (provider_id, origin)
         observation = found.get(key_tuple)
         if observation is None:

@@ -183,18 +183,21 @@ def _scan_server_credentials() -> tuple[dict[str, list[dict[str, Any]]], set[str
     scanned: set[str] = set()
     for provider_id in registry.get_all_providers():
         try:
-            origins = [
-                o
-                for o in CredentialProvider.server_credential_origins(provider_id)
-                if not o["managed"]
-            ]
+            # Includes Runway's own files (the GitHub device-login token): they are real
+            # credentials the server uses, and hiding them left the account with no
+            # visible credential and no evidence for data-health checks.
+            origins = CredentialProvider.server_credential_origins(provider_id)
             effective = CredentialProvider.get_credentials(provider_id).sources if origins else {}
         except Exception:  # a broken rule must not take the whole inventory down
             continue
         scanned.add(provider_id)
         if origins:
             found[provider_id] = [
-                {**o, "shadowed": not any(effective.get(k) == "server" for k in o["keys"])}
+                {
+                    **o,
+                    "shadowed": not o["managed"]
+                    and not any(effective.get(k) == "server" for k in o["keys"]),
+                }
                 for o in origins
             ]
     return found, scanned

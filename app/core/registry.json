@@ -122,11 +122,16 @@
       "name": "GitHub API",
       "icon": "🐙",
       "api_key_label": "Personal Access Token (api)",
-      "api_key_help": "A GitHub PAT with 'read:user' or Copilot permissions",
+      "api_key_help": "Sign in with GitHub or run 'gh auth login' for an OAuth token; a classic PAT may be rejected by the Copilot endpoints",
       "rules": [
         {
           "type": "env",
           "variable": "GITHUB_TOKEN",
+          "mapping": { "value": "api_key" }
+        },
+        {
+          "type": "env",
+          "variable": "GH_TOKEN",
           "mapping": { "value": "api_key" }
         },
         {
