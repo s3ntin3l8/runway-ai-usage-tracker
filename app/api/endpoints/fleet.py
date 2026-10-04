@@ -1411,7 +1411,7 @@ async def list_credential_tags(
     from app.services.maintenance.stale_credential_rules import find_stale_rules, rule_usage
 
     usage = rule_usage(session)
-    stale_ids = {rule.row_id for rule in find_stale_rules(session)}
+    stale_ids = {rule.row_id for rule in find_stale_rules(session, usage=usage)}
 
     return {
         "items": [

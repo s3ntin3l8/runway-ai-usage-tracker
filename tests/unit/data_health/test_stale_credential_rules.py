@@ -135,6 +135,22 @@ def test_a_machine_rule_is_not_judged_while_its_machine_is_offline(session):
     assert _check().detect(session).total_count == 0
 
 
+def test_an_all_machines_rule_is_not_judged_while_every_machine_is_a_few_days_quiet(session):
+    # Within the 7-day "known" window but past the 1-day "alive" window.
+    _machine(session, "dev-01", seen_days_ago=3)
+    _rule(session)
+
+    assert _check().detect(session).total_count == 0
+
+
+def test_an_all_machines_rule_is_judged_once_one_machine_is_alive(session):
+    _machine(session, "dev-01", seen_days_ago=3)
+    _machine(session, "mgmt")
+    _rule(session)
+
+    assert _check().detect(session).total_count == 1
+
+
 def test_a_machine_rule_for_an_unknown_machine_is_not_judged(session):
     _machine(session, "dev-01")
     _rule(session, sidecar_id="ghost")

@@ -42,6 +42,7 @@ from datetime import UTC, datetime, timedelta
 from sqlmodel import Session, col, select
 
 from app.models.db import CredentialSource, CredentialTag, SidecarRegistry
+from app.services.credential_inventory import _resolve_tag
 from app.services.credential_tags import live_sidecar_ids
 from app.services.maintenance.stale_credential_sources import STALE_AFTER
 
@@ -88,8 +89,6 @@ def _aware(ts: datetime) -> datetime:
 
 def rule_usage(session: Session) -> dict[int, datetime]:
     """``tag id -> last_seen of the freshest machine-reported source it resolved``."""
-    from app.services.credential_inventory import _resolve_tag
-
     tags: dict[tuple[str, str], list[CredentialTag]] = {}
     for tag in session.exec(select(CredentialTag)).all():
         tags.setdefault((tag.provider_id, tag.credential_origin), []).append(tag)
@@ -121,12 +120,15 @@ def _judgeable(tag: CredentialTag) -> bool:
 
 
 def find_stale_rules(
-    session: Session, *, provider_id: str | None = None, now: datetime | None = None
+    session: Session,
+    *,
+    provider_id: str | None = None,
+    now: datetime | None = None,
+    usage: dict[int, datetime] | None = None,
 ) -> list[StaleRule]:
+    """Rules the check would list. Pass ``usage`` (from :func:`rule_usage`) to reuse it."""
     now = now or datetime.now(UTC)
     live = set(live_sidecar_ids(session))
-    if not live:
-        return []  # nothing is reporting, so absence of a match proves nothing
     alive_cutoff = now - MACHINE_ALIVE_WITHIN
     alive = {
         row.sidecar_id
@@ -135,8 +137,13 @@ def find_stale_rules(
         ).all()
         if _aware(row.last_seen) >= alive_cutoff
     }
+    if not alive:
+        # Nothing has reported in the last day, so absence of a match proves nothing —
+        # for an all-machines rule as much as for a machine-scoped one.
+        return []
 
-    usage = rule_usage(session)
+    if usage is None:
+        usage = rule_usage(session)
     query = select(CredentialTag)
     if provider_id is not None:
         query = query.where(col(CredentialTag.provider_id) == provider_id)
