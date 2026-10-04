@@ -400,12 +400,11 @@ class GitHubCollector(BaseCollector):
             display = self._QUOTA_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
             # Totals come only from monthly_quotas; never invent one.
             monthly_val = monthly.get(key)
-            used_val = monthly_val - val if isinstance(monthly_val, int) else 0
-            pct_used = (
-                (used_val / monthly_val * 100)
-                if isinstance(monthly_val, int | float) and monthly_val > 0
-                else 0
-            )
+            # One definition of "the total is known" for every field below, so the
+            # display text and the numeric fields can never disagree.
+            known_total = isinstance(monthly_val, int | float) and not isinstance(monthly_val, bool)
+            used_val = monthly_val - val if known_total else 0
+            pct_used = (used_val / monthly_val * 100) if known_total and monthly_val > 0 else 0
             pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
             results.append(
                 {
@@ -413,18 +412,16 @@ class GitHubCollector(BaseCollector):
                     "variant": display,
                     "icon": "🐙",
                     "remaining": f"{val:,}",
-                    "unit": (f"/ {monthly_val:,}" if isinstance(monthly_val, int) else "remaining"),
+                    "unit": (f"/ {monthly_val:,.0f}" if known_total else "remaining"),
                     "reset": reset_at.isoformat() if reset_at else None,
                     "health": HealthCalculator.from_remaining(val, monthly_val)
-                    if isinstance(monthly_val, int | float)
+                    if known_total
                     else "warning",
                     "pace": pace,
-                    "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
+                    "detail": f"{val}/{f'{monthly_val:.0f}' if known_total else '??'} requests left {detail_context}{identity_suffix}",
                     # Unknown total: leave both unset so nothing derives a (fake) 0% used.
-                    "used_value": float(used_val) if isinstance(monthly_val, int | float) else None,
-                    "limit_value": float(monthly_val)
-                    if isinstance(monthly_val, int | float)
-                    else None,
+                    "used_value": float(used_val) if known_total else None,
+                    "limit_value": float(monthly_val) if known_total else None,
                     "is_unlimited": False,
                     "tier": "free",
                     "unit_type": "requests",

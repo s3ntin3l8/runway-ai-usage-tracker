@@ -1698,6 +1698,19 @@ class TestGitHubCollector:
         assert card["used_value"] is None
 
     @pytest.mark.asyncio
+    async def test_a_float_total_is_a_known_total_in_every_field(self, mock_http_client):
+        """Display text and numeric fields agree whether the total arrives as 50 or 50.0."""
+        cards = await self._collect_with_user_payload(
+            mock_http_client,
+            {"limited_user_quotas": {"chat": 40}, "monthly_quotas": {"chat": 50.0}},
+        )
+
+        (card,) = cards
+        assert card["unit"] == "/ 50"
+        assert card["detail"].startswith("40/50 requests left")
+        assert (card["used_value"], card["limit_value"]) == (10.0, 50.0)
+
+    @pytest.mark.asyncio
     async def test_free_tier_accepts_an_epoch_reset_date(self, mock_http_client):
         cards = await self._collect_with_user_payload(
             mock_http_client,
