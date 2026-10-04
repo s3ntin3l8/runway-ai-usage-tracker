@@ -1693,6 +1693,9 @@ class TestGitHubCollector:
         assert card["remaining"] == "40"
         assert card["unit"] == "remaining"
         assert "??" in card["detail"]
+        # Nothing for the chart/pct derivation to divide by.
+        assert card["limit_value"] is None
+        assert card["used_value"] is None
 
     @pytest.mark.asyncio
     async def test_free_tier_accepts_an_epoch_reset_date(self, mock_http_client):

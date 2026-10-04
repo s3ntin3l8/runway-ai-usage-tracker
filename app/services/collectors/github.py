@@ -420,10 +420,11 @@ class GitHubCollector(BaseCollector):
                     else "warning",
                     "pace": pace,
                     "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
-                    "used_value": float(used_val),
+                    # Unknown total: leave both unset so nothing derives a (fake) 0% used.
+                    "used_value": float(used_val) if isinstance(monthly_val, int | float) else None,
                     "limit_value": float(monthly_val)
                     if isinstance(monthly_val, int | float)
-                    else 100.0,
+                    else None,
                     "is_unlimited": False,
                     "tier": "free",
                     "unit_type": "requests",
