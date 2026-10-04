@@ -1063,3 +1063,27 @@ async def test_a_static_key_on_every_machine_is_listed_as_shared_but_not_rollabl
     _, by_id = _sources(await build_inventory(), provider="openrouter", account="default")
     assert by_id["sidecar:dev-01"].shared_with == ["macbook"]
     assert by_id["sidecar:dev-01"].rollable is False  # the UI keys the inline warning off this
+
+
+@pytest.mark.asyncio
+async def test_a_peer_that_stopped_checking_in_is_listed_but_marked_stale(engine, cache):
+    login = {"oauth_token": "acc", "refresh_token": "ref-SHARED"}  # pragma: allowlist secret
+    now = datetime.now(UTC)
+    with Session(engine) as s:
+        for host, seen in (
+            ("dev-01", now),
+            ("macbook", now),
+            ("hermes-01", now - timedelta(days=97)),
+        ):
+            s.add(SidecarRegistry(sidecar_id=host, hostname=host, last_seen=seen))
+            s.commit()
+            _source(s, source_id=f"sidecar:{host}", sidecar_id=host)
+    for host in ("dev-01", "macbook", "hermes-01"):
+        await _stored(cache, "gemini", ALICE, f"sidecar:{host}", dict(login))
+    _, by_id = _sources(await build_inventory())
+
+    assert by_id["sidecar:dev-01"].shared_with == ["hermes-01", "macbook"]
+    assert by_id["sidecar:dev-01"].shared_with_stale == ["hermes-01"]
+    # The offline machine's own row sees two live peers, so nothing of its peers is stale.
+    assert by_id["sidecar:hermes-01"].shared_with == ["dev-01", "macbook"]
+    assert by_id["sidecar:hermes-01"].shared_with_stale == []

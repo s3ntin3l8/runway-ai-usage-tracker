@@ -102,7 +102,12 @@ export function SourceRow({
   // button's name carries the machine and provider to stay unique.
   const who = context ?? providerName;
   const rowName = `${title} on ${where}${who ? ` (${who})` : ''}`;
-  const sharedLogin = source.rollable && (source.shared_with?.length ?? 0) > 0;
+  // A copied login only matters while another machine can still renew it: an offline peer
+  // can't sign anyone out, and an offline machine's own row has bigger problems.
+  const livePeers = (source.shared_with ?? []).filter(
+    (name) => !(source.shared_with_stale ?? []).includes(name),
+  );
+  const sharedLogin = source.rollable && !source.machine_stale && livePeers.length > 0;
   const detail = [
     source.origin_path,
     source.token_types.length > 0 ? source.token_types.join(', ') : null,
@@ -262,7 +267,7 @@ export function SourceRow({
           {fixHint ? <p className="text-[11px] text-fg-muted">{fixHint}</p> : null}
           {sharedLogin ? (
             <p className="text-[11px] text-warning">
-              Same login also on {source.shared_with?.join(', ')} — whichever renews it first signs
+              Same login also on {livePeers.join(', ')} — whichever renews it first signs
               the others out (unless these machines share a home directory). Sign in separately on
               each.
             </p>

@@ -901,6 +901,8 @@ export interface CredentialSourceView {
   machine_stale?: boolean;
   /** Other machines reporting the same secret (matched by fingerprint, never returned). */
   shared_with?: string[];
+  /** The subset of `shared_with` on machines that stopped checking in. */
+  shared_with_stale?: string[];
   mapping: CredentialMapping;
   mapping_scope?: 'machine' | 'all_machines' | null;
   fingerprinted: boolean;

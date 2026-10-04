@@ -58,7 +58,8 @@ describe('credential display helpers', () => {
             origin_app: 'Gemini CLI',
             machine_name: 'dev-01',
             last_success_at: new Date().toISOString(),
-            shared_with: ['mgmt'],
+            shared_with: ['mgmt', 'hermes-01'],
+            shared_with_stale: ['hermes-01'],
           }),
           source({
             source_id: 'b',
@@ -74,7 +75,7 @@ describe('credential display helpers', () => {
     expect(text).toContain('Runway credentials — Gemini');
     expect(text).toContain('Credentials (2):');
     expect(text).toContain('Gemini CLI · oauth_creds.json on dev-01');
-    expect(text).toContain('same secret on mgmt');
+    expect(text).toContain('same secret on mgmt, hermes-01 (offline)');
     expect(text).toContain('mgmt (offline)');
     expect(text).toContain('last error: Authentication failed');
     expect(text).toContain('(api / sidecar)');
