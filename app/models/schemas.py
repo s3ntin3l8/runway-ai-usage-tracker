@@ -488,7 +488,8 @@ class CredentialSourceView(BaseModel):
     # machine's CLI, which the server must not refresh); None when nothing does.
     refreshed_by: str | None = None
     # Sidecar keep-alive on the machine that owns this login: "on" / "off" / "unknown"
-    # (older sidecar). None when it doesn't apply (not a machine-renewed agy/xAI login).
+    # (older sidecar). None when it doesn't apply (not a machine-sourced login of a KEEP_ALIVE_PROVIDERS provider
+    # that carries a refresh credential).
     keep_alive: str | None = None
     # The provider rejected this credential (HTTP 401/403 at the last collection, or an
     # in-memory rejection flag matches its identity).

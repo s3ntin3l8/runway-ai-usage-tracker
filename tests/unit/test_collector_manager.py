@@ -2036,30 +2036,46 @@ class TestOutcomeReasons:
 class TestRenewalWaitReason:
     """What a stale card says about an expired login its machine must renew."""
 
+    @pytest.fixture
+    def reported(self, manager, monkeypatch):
+        """Pretend each sidecar reports the given keep-alive state."""
+        state: dict[str, bool | None] = {}
+        monkeypatch.setattr(
+            manager, "_read_sidecar_keep_alive", lambda sid: state.get(sid), raising=False
+        )
+        return state
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("provider", ["xai", "antigravity"])
-    @pytest.mark.parametrize("reported", [False, None])
-    def test_suggests_keep_alive_when_it_is_off_or_unknown(self, manager, provider, reported):
-        manager._sidecar_keep_alive = {"host-a": reported}
-        reason = manager._renewal_wait_reason(provider, {"sidecar_id": "host-a"})
-        assert "--keep-alive" in reason
+    @pytest.mark.parametrize("value", [False, None])
+    async def test_suggests_keep_alive_when_it_is_off_or_unknown(
+        self, manager, reported, provider, value
+    ):
+        reported["host-a"] = value
+        reason = await manager._renewal_wait_reason(provider, {"sidecar_id": "host-a"})
+        assert "--keep-alive" in reason and "Fleet" in reason
 
-    def test_unknown_sidecar_is_treated_as_not_reporting(self, manager):
-        assert "--keep-alive" in manager._renewal_wait_reason("xai", {"sidecar_id": "ghost"})
-        assert "--keep-alive" in manager._renewal_wait_reason("xai", {})
+    @pytest.mark.asyncio
+    async def test_unknown_sidecar_is_treated_as_not_reporting(self, manager, reported):
+        assert "--keep-alive" in await manager._renewal_wait_reason("xai", {"sidecar_id": "ghost"})
+        assert "--keep-alive" in await manager._renewal_wait_reason("xai", {})
 
-    def test_keep_alive_on_points_at_the_sidecar_not_the_flag(self, manager):
-        manager._sidecar_keep_alive = {"host-a": True}
-        reason = manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
+    @pytest.mark.asyncio
+    async def test_keep_alive_on_points_at_the_sidecar_not_the_flag(self, manager, reported):
+        reported["host-a"] = True
+        reason = await manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
         assert "--keep-alive" not in reason
         assert "hasn't renewed" in reason
 
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("provider", ["anthropic", "chatgpt", None])
-    def test_other_providers_get_no_keep_alive_advice(self, manager, provider):
-        reason = manager._renewal_wait_reason(provider, {"sidecar_id": "host-a"})
+    async def test_other_providers_get_no_keep_alive_advice(self, manager, reported, provider):
+        reason = await manager._renewal_wait_reason(provider, {"sidecar_id": "host-a"})
         assert "keep-alive" not in reason
 
     @pytest.mark.asyncio
-    async def test_sync_loads_each_sidecars_keep_alive(self, manager, monkeypatch):
+    async def test_a_fleet_toggle_shows_up_on_the_very_next_call(self, manager, monkeypatch):
+        """The flag is read at skip time, not cached at sync: no one-sync lag after a toggle."""
         from sqlalchemy.pool import StaticPool
         from sqlmodel import SQLModel, create_engine
         from sqlmodel.orm.session import Session
@@ -2075,10 +2091,24 @@ class TestRenewalWaitReason:
         # The suite-wide autouse fixture mocks ``sqlmodel.Session``; this needs a real DB.
         monkeypatch.setattr("sqlmodel.Session", Session)
         with Session(eng) as s:
-            s.add(SidecarRegistry(sidecar_id="on-host", hostname="a", keep_alive=True))
-            s.add(SidecarRegistry(sidecar_id="old-host", hostname="b"))
+            s.add(SidecarRegistry(sidecar_id="host-a", hostname="a", keep_alive=False))
             s.commit()
 
-        await manager._sync_collectors(force=True)
+        candidate = {"sidecar_id": "host-a"}
+        assert "--keep-alive" in await manager._renewal_wait_reason("xai", candidate)
 
-        assert manager._sidecar_keep_alive == {"on-host": True, "old-host": None}
+        with Session(eng) as s:
+            row = s.get(SidecarRegistry, "host-a")
+            row.keep_alive = True
+            s.add(row)
+            s.commit()
+
+        assert "hasn't renewed" in await manager._renewal_wait_reason("xai", candidate)
+
+    def test_a_database_error_reads_as_unknown(self, manager, monkeypatch):
+        def broken_session(*_a, **_k):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr("sqlmodel.Session", broken_session)
+        assert manager._read_sidecar_keep_alive("host-a") is None
+        assert manager._read_sidecar_keep_alive("") is None

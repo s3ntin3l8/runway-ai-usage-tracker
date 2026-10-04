@@ -39,6 +39,7 @@ import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
+import { keepAliveLoginsText } from '@/lib/keepAlive';
 import { AddSidecarCard } from './AddSidecarCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 import { buildSidecarNameMap } from './queries';
@@ -297,8 +298,8 @@ function SidecarCard({
   // Reported state is what the sidecar runs now; a pending remote change shows once it checks in.
   const keepAliveOn = sidecar.keep_alive === true;
   const keepAliveTitle = keepAliveOn
-    ? 'Keep-alive is on: this sidecar renews its agy and xAI logins itself. Click to turn it off.'
-    : 'Turn keep-alive on: this sidecar will renew its agy and xAI logins itself, so they never lapse while the CLI is idle.';
+    ? `Keep-alive is on: this sidecar renews its ${keepAliveLoginsText()} logins itself. Click to turn it off.`
+    : `Turn keep-alive on: this sidecar will renew its ${keepAliveLoginsText()} logins itself, so they never lapse while the CLI is idle.`;
   const keepAlive = useMutation({
     mutationFn: () => setSidecarKeepAlive(sidecar.sidecar_id, !keepAliveOn),
     onSuccess: () => {
