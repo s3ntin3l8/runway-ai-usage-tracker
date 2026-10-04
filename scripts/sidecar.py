@@ -373,6 +373,21 @@ __REGISTRY__: dict[str, Any] = {
                     },
                 },
                 {
+                    "type": "file",
+                    "format": "json",
+                    "paths": [
+                        "~/.config/github-copilot/apps.json",
+                        "~/.config/github-copilot/hosts.json",
+                        "{{CONFIG_DIR:github-copilot}}/apps.json",
+                        "{{CONFIG_DIR:github-copilot}}/hosts.json",
+                        "{{DATA_DIR:github-copilot}}/apps.json",
+                        "{{DATA_DIR:github-copilot}}/hosts.json",
+                    ],
+                    "mapping": {
+                        "github.com:Iv1.b507a08c87ecfe98.oauth_token|github.com:Iv23ctfURkiMfJ4xr5mv.oauth_token|github.com:Ov23liV9UpD7Rnfnskm3.oauth_token|github.com.oauth_token": "api_key",
+                    },
+                },
+                {
                     "type": "exec",
                     "command": [
                         "gh",
@@ -2970,6 +2985,18 @@ def parse_simple_yaml(text: str) -> dict[str, Any]:
     return root
 
 
+_KEYLESS_FILES_LOGGED: set[tuple[str, str]] = set()
+
+
+def _log_keyless_file_once(provider_id: str, path: str) -> None:
+    """INFO-log, once per process, that a rule's file exists but holds no credential."""
+    key = (provider_id, path)
+    if key in _KEYLESS_FILES_LOGGED:
+        return
+    _KEYLESS_FILES_LOGGED.add(key)
+    logging.info(f"  [{provider_id}] {path}: file read but no credential keys found")
+
+
 class GenericCollector:
     """Orchestrates data collection based on registry rules."""
 
@@ -3120,7 +3147,13 @@ class GenericCollector:
                                 # Anthropic stores this as milliseconds since epoch,
                                 # matching IdentityExtractor.exp_from_tokens.
                                 candidate_tokens["expiry_date"] = str(int(expires_at))
-                        if candidate_tokens:
+                        # Two files can hold one token (copilot's apps.json and the
+                        # older hosts.json, or gh's hosts.yml): one credential.
+                        duplicate_key = candidate_tokens.get("api_key")
+                        is_duplicate = bool(duplicate_key) and any(
+                            c.get("api_key") == duplicate_key for c, _, _ in token_candidates
+                        )
+                        if candidate_tokens and not is_duplicate:
                             token_candidates.append(
                                 (
                                     candidate_tokens,
@@ -3133,6 +3166,11 @@ class GenericCollector:
                                 )
                             )
                             logging.info(f"  [{provider_id}] token file matched: {path}")
+                        elif not candidate_tokens:
+                            # A readable file with none of the mapped keys fails silently
+                            # (a logged-out CLI, a moved token). Say so once per file;
+                            # key names only, never values.
+                            _log_keyless_file_once(provider_id, str(path))
                     except Exception as e:
                         logging.debug(f"Error reading file {path}: {e}")
 

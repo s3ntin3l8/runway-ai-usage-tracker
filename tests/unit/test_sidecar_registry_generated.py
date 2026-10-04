@@ -150,6 +150,28 @@ def test_github_hosts_yml_maps_the_token_but_not_the_login():
     assert "github.com.user" in json.dumps(REGISTRY["providers"]["github"])
 
 
+def test_github_editor_sign_in_files_are_sidecar_only_and_map_the_token_only():
+    def editor_rules(providers):
+        return [
+            r
+            for r in providers["github"]["rules"]
+            if r["type"] == "file"
+            and r["format"] == "json"
+            and any("github-copilot" in p for p in r["paths"])
+        ]
+
+    (rule,) = editor_rules(sidecar.__REGISTRY__["providers"])
+    assert set(rule["mapping"].values()) == {"api_key"}
+    assert all("oauth_token" in key for key in rule["mapping"])
+    # github.com entries only: the collector always calls api.github.com.
+    assert "ghe.com" not in json.dumps(rule)
+    assert any("apps.json" in p for p in rule["paths"]) and any(
+        "hosts.json" in p for p in rule["paths"]
+    )
+    # The server never reads another app's editor files.
+    assert editor_rules(REGISTRY["providers"]) == []
+
+
 def test_server_only_env_session_tokens_stay_out_of_the_sidecar():
     sidecar_env = {
         r["variable"]

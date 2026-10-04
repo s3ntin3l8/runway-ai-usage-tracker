@@ -1642,29 +1642,99 @@ class TestGeminiCollector:
 class TestGitHubCollector:
     """Test suite for GitHub Copilot collector."""
 
-    @pytest.mark.asyncio
-    async def test_collect_free_tier_quotas(self, mock_http_client, mock_github_copilot_response):
-        """Test collection of free tier Copilot quotas."""
-        collector = GitHubCollector()
+    @staticmethod
+    def _resp(status: int, data) -> MagicMock:
+        r = MagicMock(spec=httpx.Response)
+        r.status_code = status
+        r.json.return_value = data
+        r.headers = {}
+        return r
 
-        token_response = MagicMock(spec=httpx.Response)
-        token_response.status_code = 200
-        token_response.json.return_value = mock_github_copilot_response
-
-        user_response = MagicMock(spec=httpx.Response)
-        user_response.status_code = 200
-        user_response.json.return_value = {"quota_snapshots": []}
-
-        mock_http_client.get.side_effect = [token_response, user_response]
-
-        with patch(
-            "app.services.credential_provider.CredentialProvider.get_github_token",
-            return_value="github_token",
+    async def _collect_with_user_payload(self, mock_http_client, payload) -> list[dict]:
+        """Run one collection where copilot_internal/user returns ``payload``."""
+        collector = GitHubCollector(account_id="s3ntin3l8", account_label="s3ntin3l8")
+        request = AsyncMock(side_effect=[self._resp(200, payload)])
+        with (
+            patch.object(collector, "_get_token", new_callable=AsyncMock, return_value="gho_x"),
+            patch("app.services.collectors.github.http_request_with_retry", request),
         ):
-            result = await collector.collect(mock_http_client)
+            cards = await collector._strategy_api(mock_http_client)
+        # One call only: the v2/token fallback is gone.
+        assert request.await_count == 1
+        return cards
 
-        assert isinstance(result, list)
-        assert any("Copilot" in str(card.get("service_name", "")) for card in result)
+    @pytest.mark.asyncio
+    async def test_collect_free_tier_quotas(self, mock_http_client):
+        """Free-tier cards carry the real totals from monthly_quotas."""
+        cards = await self._collect_with_user_payload(
+            mock_http_client,
+            {
+                "limited_user_quotas": {"completions": 1500, "chat": 40},
+                "monthly_quotas": {"completions": 2000, "chat": 50},
+                "limited_user_reset_date": "2026-11-01",
+                "copilot_plan": "free",
+            },
+        )
+
+        by_variant = {c["variant"]: c for c in cards}
+        assert by_variant["Completions"]["remaining"] == "1,500"
+        assert by_variant["Completions"]["unit"] == "/ 2,000"
+        assert by_variant["Completions"]["used_value"] == 500.0
+        assert by_variant["Chat"]["limit_value"] == 50.0
+        assert by_variant["Chat"]["reset_at"].startswith("2026-11-01")
+
+    @pytest.mark.asyncio
+    async def test_free_tier_without_totals_does_not_invent_a_limit(self, mock_http_client):
+        cards = await self._collect_with_user_payload(
+            mock_http_client, {"limited_user_quotas": {"chat": 40}}
+        )
+
+        (card,) = cards
+        assert card["remaining"] == "40"
+        assert card["unit"] == "remaining"
+        assert "??" in card["detail"]
+
+    @pytest.mark.asyncio
+    async def test_free_tier_accepts_an_epoch_reset_date(self, mock_http_client):
+        cards = await self._collect_with_user_payload(
+            mock_http_client,
+            {
+                "limited_user_quotas": {"chat": 40},
+                "monthly_quotas": {"chat": 50},
+                "limited_user_reset_date": 1793491200,
+            },
+        )
+
+        assert cards[0]["reset_at"].startswith("2026-11-01")
+
+    @pytest.mark.asyncio
+    async def test_null_limited_quotas_for_paid_plans_do_not_crash(self, mock_http_client):
+        cards = await self._collect_with_user_payload(
+            mock_http_client,
+            {
+                "limited_user_quotas": None,
+                "quota_snapshots": {
+                    "chat": {"remaining": 890, "entitlement": 1000},
+                },
+                "copilot_plan": "pro",
+            },
+        )
+
+        assert cards
+        assert all(card["remaining"] != "ERR" for card in cards)
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_token_makes_no_second_request(self, mock_http_client):
+        collector = GitHubCollector(account_id="s3ntin3l8", account_label="s3ntin3l8")
+        request = AsyncMock(side_effect=[self._resp(401, {})])
+        with (
+            patch.object(collector, "_get_token", new_callable=AsyncMock, return_value="gho_x"),
+            patch("app.services.collectors.github.http_request_with_retry", request),
+        ):
+            cards = await collector._strategy_api(mock_http_client)
+
+        assert request.await_count == 1
+        assert cards == []
 
     @pytest.mark.asyncio
     async def test_collect_missing_token(self, mock_http_client):

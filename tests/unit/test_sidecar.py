@@ -1955,6 +1955,76 @@ class TestPostCredentialManifest:
 
         assert len([c for c in cards if c.get("remaining") == "Token"]) == 1
 
+    def _copilot_config(self):
+        (rule,) = [
+            r
+            for r in sidecar.__REGISTRY__["providers"]["github"]["rules"]
+            if r["type"] == "file" and any("github-copilot" in p for p in r["paths"])
+        ]
+        return {"name": "GitHub Copilot", "rules": [rule]}
+
+    def test_colon_and_dot_keys_and_the_app_id_chain_resolve(self):
+        key = next(iter(self._copilot_config()["rules"][0]["mapping"]))
+        for app_id in ("Iv1.b507a08c87ecfe98", "Iv23ctfURkiMfJ4xr5mv", "Ov23liV9UpD7Rnfnskm3"):
+            data = {f"github.com:{app_id}": {"user": "me", "oauth_token": "ghu_abc"}}
+            assert sidecar.GenericCollector.get_nested(data, key) == "ghu_abc"
+        assert sidecar.GenericCollector.get_nested(
+            {"github.com": {"oauth_token": "ghu_old"}}, key
+        ) == ("ghu_old")
+
+    def test_copilot_apps_json_yields_one_pending_token_without_account_id(
+        self, monkeypatch, tmp_path
+    ):
+        apps = tmp_path / "apps.json"
+        apps.write_text(
+            json.dumps(
+                {
+                    "foo.ghe.com:Iv23ctfURkiMfJ4xr5mv": {"user": "ent", "oauth_token": "ghu_ent"},
+                    "github.com:Iv23ctfURkiMfJ4xr5mv": {"user": "me", "oauth_token": "ghu_me"},
+                }
+            )
+        )
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [apps])
+
+        cards, _ = sidecar.GenericCollector.collect_provider("github", self._copilot_config())
+
+        (card,) = [c for c in cards if c.get("remaining") == "Token"]
+        assert card["metadata"]["api_key"] == "ghu_me"
+        assert "ghu_ent" not in json.dumps(card)
+        assert not card.get("account_id")
+        assert card["metadata"]["identity_pending"] is True
+
+    def test_the_same_token_in_apps_and_hosts_json_is_one_credential(self, monkeypatch, tmp_path):
+        apps = tmp_path / "apps.json"
+        apps.write_text(
+            json.dumps({"github.com:Iv1.b507a08c87ecfe98": {"oauth_token": "ghu_same"}})
+        )
+        hosts = tmp_path / "hosts.json"
+        hosts.write_text(json.dumps({"github.com": {"oauth_token": "ghu_same"}}))
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [apps, hosts])
+
+        cards, _ = sidecar.GenericCollector.collect_provider("github", self._copilot_config())
+
+        assert len([c for c in cards if c.get("remaining") == "Token"]) == 1
+
+    def test_a_readable_file_without_credentials_is_logged_once(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        import logging
+
+        monkeypatch.setattr(sidecar, "_KEYLESS_FILES_LOGGED", set())
+        apps = tmp_path / "apps.json"
+        apps.write_text(json.dumps({"github.com:Iv1.b507a08c87ecfe98": {"user": "me"}}))
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [apps])
+
+        with caplog.at_level(logging.INFO):
+            for _ in range(3):
+                sidecar.GenericCollector.collect_provider("github", self._copilot_config())
+
+        lines = [r.getMessage() for r in caplog.records if "no credential keys" in r.getMessage()]
+        assert len(lines) == 1
+        assert str(apps) in lines[0]
+
     def test_two_env_vars_holding_one_token_are_one_credential(self, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "gho_same")
         monkeypatch.setenv("GH_TOKEN", "gho_same")
