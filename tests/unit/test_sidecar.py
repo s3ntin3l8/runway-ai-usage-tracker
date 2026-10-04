@@ -1955,6 +1955,22 @@ class TestPostCredentialManifest:
 
         assert len([c for c in cards if c.get("remaining") == "Token"]) == 1
 
+    def test_two_env_vars_holding_one_token_are_one_credential(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "gho_same")
+        monkeypatch.setenv("GH_TOKEN", "gho_same")
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [])
+        config = {
+            "name": "GitHub Copilot",
+            "rules": [
+                {"type": "env", "variable": "GITHUB_TOKEN", "mapping": {"value": "api_key"}},
+                {"type": "env", "variable": "GH_TOKEN", "mapping": {"value": "api_key"}},
+            ],
+        }
+
+        cards, _ = sidecar.GenericCollector.collect_provider("github", config)
+
+        assert len([c for c in cards if c.get("remaining") == "Token"]) == 1
+
     def test_exec_rule_echoing_an_already_found_token_is_not_a_second_credential(
         self, monkeypatch, tmp_path
     ):

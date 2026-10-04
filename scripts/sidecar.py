@@ -3052,7 +3052,9 @@ class GenericCollector:
                 val = os.getenv(rule.get("variable"))
                 if val:
                     target = mapping.get("value")
-                    if target:
+                    # GITHUB_TOKEN and GH_TOKEN set to one value are one credential.
+                    already_found = any(c.get(target) == val for c, _, _ in token_candidates)
+                    if target and not already_found:
                         env_candidate = {target: val}
                         token_candidates.append(
                             (
@@ -3069,6 +3071,7 @@ class GenericCollector:
                 # expand_file_rule_paths resolves plain paths exactly and
                 # expands glob patterns (e.g. kimi-cli's per-install
                 # kimi-code-env-<hash>.json), freshest match last.
+                # Per rule on purpose: two rules may map one file differently.
                 seen_files: set[str] = set()
                 for path in expand_file_rule_paths(rule.get("paths", [])):
                     # Distinct spellings of one file (`~/.config/gh` vs the

@@ -43,8 +43,11 @@ export function GitHubLoginSection() {
     retry: 1,
   });
 
+  const mountedRef = useRef(true);
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       pendingPollRef.current?.stop();
     };
   }, []);
@@ -97,6 +100,9 @@ export function GitHubLoginSection() {
   const login = useMutation({
     mutationFn: initGitHubOAuth,
     onSuccess: (data) => {
+      // The dialog may have closed while the device code was being requested; don't
+      // start a poll nobody is watching.
+      if (!mountedRef.current) return;
       const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
       setFlow({
         phase: 'pending',

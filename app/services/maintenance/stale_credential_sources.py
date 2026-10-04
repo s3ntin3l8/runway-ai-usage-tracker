@@ -17,7 +17,8 @@ the credential is in fact still there:
 
 `config:` and server (env/file) rows are never touched: they are managed in
 Settings / the server environment, not by machine reports. `apply` re-derives
-what `plan` reported rather than trusting a stale preview.
+what `plan` reported rather than trusting a stale preview. `apply_stale_sources`
+owns its commit — callers must not commit again.
 """
 
 from __future__ import annotations
@@ -75,8 +76,12 @@ def _has_token_types(row: CredentialSource) -> bool:
         return False
 
 
-def _aware(ts: datetime) -> datetime:
-    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+def _is_stale(last_seen: datetime | None, now: datetime) -> bool:
+    # A row that never recorded a sighting (older code paths) is as stale as it gets.
+    if last_seen is None:
+        return True
+    aware = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
+    return now - aware > STALE_AFTER
 
 
 def plan_stale_sources(
@@ -98,7 +103,7 @@ def plan_stale_sources(
             _has_token_types(row)
         ):
             kind = "not_a_credential"
-        elif now - _aware(row.last_seen) > STALE_AFTER:
+        elif _is_stale(row.last_seen, now):
             kind = "stale"
         if kind:
             plan.sources.append(

@@ -105,3 +105,9 @@ def test_apply_deletes_only_the_reported_rows(session):
 def test_plan_raises_when_nothing_is_stale(session):
     with pytest.raises(ValueError, match="No stale credential sources"):
         _check().plan(session, "github", {})
+
+
+def test_a_row_that_never_recorded_a_sighting_is_stale():
+    from app.services.maintenance.stale_credential_sources import _is_stale
+
+    assert _is_stale(None, datetime.now(UTC)) is True

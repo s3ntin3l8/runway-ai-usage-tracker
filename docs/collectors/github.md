@@ -104,7 +104,7 @@ GitHub credentials come from these sources. The first one found by the server (s
 |---|---|---|
 | Settings key | server | A token pasted in the provider dialog. |
 | `GITHUB_TOKEN` / `GH_TOKEN` | server and sidecar | Environment variable. |
-| Sign in with GitHub (device flow) | server | Button in the GitHub account dialog. The token is stored encrypted at `<config dir>/github_oauth.json` and listed as a server credential. |
+| Sign in with GitHub (device flow) | server | Button in the GitHub account dialog. The token is stored encrypted at `<config dir>/github_oauth.json` and listed as a server credential; it counts as evidence for the account while the file exists, and Disconnect deletes it. Sidecars never ship this file. |
 | `gh` CLI `hosts.yml` | server and sidecar | `~/.config/gh/hosts.yml` (Linux/macOS) or `%APPDATA%\GitHub CLI\hosts.yml`; spellings of the same file are read once. |
 | `gh` CLI keyring | sidecar | `gh auth token`, for `gh` ≥ 2.40, which keeps the token in the OS keyring and leaves `hosts.yml` without one. Skipped when it returns a token already found above. |
 | Windows Credential Manager `github.com` | sidecar | |
