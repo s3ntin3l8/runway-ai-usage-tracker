@@ -359,7 +359,12 @@ class MisidentifiedGaugeSeriesCheck(Check):
         )
 
     def _resolve_action(
-        self, session: Session, provider_id: str, account_id: str, params: dict[str, Any]
+        self,
+        session: Session,
+        provider_id: str,
+        account_id: str,
+        params: dict[str, Any],
+        evidence_pairs: set[tuple[str, str]],
     ) -> tuple[str, str | None]:
         """Return ``(action, target)``. Defaults to merging when there is exactly
         one plausible real account (keeps history); otherwise deleting."""
@@ -374,9 +379,7 @@ class MisidentifiedGaugeSeriesCheck(Check):
                 select(QuotaSnapshot.provider_id, QuotaSnapshot.account_id).distinct()
             )
         }
-        candidates = _merge_candidates(
-            provider_id, account_id, gauge_pairs, _fetch_evidence_pairs(session)
-        )
+        candidates = _merge_candidates(provider_id, account_id, gauge_pairs, evidence_pairs)
         action = params.get("action") or ("merge" if len(candidates) == 1 else "delete")
         if action == "merge":
             target = params.get("target") or (candidates[0] if len(candidates) == 1 else None)
@@ -394,7 +397,9 @@ class MisidentifiedGaugeSeriesCheck(Check):
             raise ValueError(
                 f"{provider_id}/{account_id} now has supporting evidence and is not misidentified"
             )
-        action, target = self._resolve_action(session, provider_id, account_id, params)
+        action, target = self._resolve_action(
+            session, provider_id, account_id, params, evidence_pairs
+        )
         if action == "merge" and target:
             merge_plan = plan_merge_gauge_series(
                 session, provider_id=provider_id, source=account_id, target=target
@@ -409,6 +414,7 @@ class MisidentifiedGaugeSeriesCheck(Check):
                     "snapshots_retagged": merge_plan.snapshots_retagged,
                     "snapshots_collided": merge_plan.snapshots_collided,
                 },
+                samples=[Finding(label=sample) for sample in merge_plan.samples],
             )
         confirmation_text = f"I confirm {provider_id}/{account_id} has no real usage history."
         return FixPlan(
@@ -434,7 +440,9 @@ class MisidentifiedGaugeSeriesCheck(Check):
             raise ValueError(
                 f"{provider_id}/{account_id} now has supporting evidence and is not misidentified"
             )
-        action, target = self._resolve_action(session, provider_id, account_id, params)
+        action, target = self._resolve_action(
+            session, provider_id, account_id, params, evidence_pairs
+        )
         if action == "merge" and target:
             merge_result = merge_gauge_series(
                 session, provider_id=provider_id, source=account_id, target=target
