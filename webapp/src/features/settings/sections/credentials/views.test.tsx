@@ -4,12 +4,14 @@ import { toast } from 'sonner';
 import * as api from '@/api/endpoints';
 import { renderWithProviders } from '@/test/utils';
 import { ByMachineView } from './ByMachineView';
+import { copyText } from '@/lib/clipboard';
 import { ByProviderView } from './ByProviderView';
 import { NeedsMappingView } from './NeedsMappingView';
 import { RulesView } from './RulesView';
 import { account, inventory, multiMachineInventory, source } from './testData';
 
 vi.mock('@/api/endpoints');
+vi.mock('@/lib/clipboard', () => ({ copyText: vi.fn() }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 // The unassigned-usage card and tag dialog have their own suites.
 vi.mock('@/features/fleet/PendingUsageEventsCard', () => ({
@@ -102,6 +104,100 @@ describe('ByProviderView', () => {
       />,
     );
     expect(screen.getByText('Needs an account', { selector: 'p' })).toBeInTheDocument();
+  });
+});
+
+describe('account actions', () => {
+  const stale = (id: string, o = {}) =>
+    source({ source_id: id, status: 'expired', machine_stale: true, machine_name: id, ...o });
+  const render = (sources = [source({ is_active: true }), stale('gone-1'), stale('gone-2')]) =>
+    renderWithProviders(
+      <ByProviderView
+        providers={[{ provider_id: 'gemini', name: 'Gemini', accounts: [account(sources)] }]}
+      />,
+    );
+
+  it('removes the stale credentials of an account in one confirmed call', async () => {
+    vi.mocked(api.removeCredentialSources).mockResolvedValue({
+      removed: ['gone-1', 'gone-2'],
+      skipped: [],
+    });
+    render();
+
+    await userEvent.click(screen.getByRole('button', { name: /Remove 2 stale/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(api.removeCredentialSources).not.toHaveBeenCalled();
+    expect(within(dialog).getByText(/come back if the machine reports them again/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() =>
+      expect(api.removeCredentialSources).toHaveBeenCalledWith('gemini', 'alice@example.com', [
+        'gone-1',
+        'gone-2',
+      ]),
+    );
+    expect(toast.success).toHaveBeenCalledWith('Removed 2 credentials');
+  });
+
+  it('only offers bulk removal for credentials that will stay gone', () => {
+    // An expired credential on a machine that is still reporting would simply reappear.
+    render([source({ is_active: true }), source({ source_id: 'x', status: 'expired' })]);
+    expect(screen.queryByRole('button', { name: /stale/ })).not.toBeInTheDocument();
+  });
+
+  it('does not offer bulk removal in the By machine view (the endpoint is per account)', () => {
+    const inv = inventory({
+      providers: [
+        {
+          provider_id: 'gemini',
+          name: 'Gemini',
+          accounts: [account([source({ is_active: true }), stale('gone-1')])],
+        },
+      ],
+      machines: [
+        { machine_id: 'host-a', name: 'Workstation', last_seen: null, credential_count: 2, unmapped_count: 0 },
+      ],
+    });
+    renderWithProviders(<ByMachineView inventory={inv} />);
+    expect(screen.queryByRole('button', { name: /stale/ })).not.toBeInTheDocument();
+  });
+
+  it('re-tests an account live and shows each credential\'s result', async () => {
+    vi.mocked(api.probeCredentialSources).mockResolvedValue({
+      provider_id: 'gemini',
+      account_id: 'alice@example.com',
+      probed_at: new Date().toISOString(),
+      sources: [{ source_id: 'sidecar:a', outcome: 'healthy', probed: true, cards: 3, duration_ms: 420 }],
+    });
+    render([source({ is_active: true })]);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Re-test/ }));
+
+    expect(api.probeCredentialSources).toHaveBeenCalledWith('gemini', 'alice@example.com');
+    expect(await screen.findByText('Working')).toBeInTheDocument();
+    expect(screen.getByText('420 ms')).toBeInTheDocument();
+  });
+
+  it('explains a rate-limited re-test', async () => {
+    vi.mocked(api.probeCredentialSources).mockRejectedValue(new Error('429 Too Many Requests'));
+    render([source()]);
+    await userEvent.click(screen.getByRole('button', { name: /^Re-test/ }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Re-test is rate-limited; try again in a minute'),
+    );
+  });
+
+  it('copies diagnostics, and shows the text when the clipboard is unavailable', async () => {
+    vi.mocked(copyText).mockResolvedValueOnce(true);
+    render([source({ is_active: true })]);
+    await userEvent.click(screen.getByRole('button', { name: /Copy diagnostics/ }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Diagnostics copied'));
+    expect(vi.mocked(copyText).mock.calls[0][0]).toContain('Runway credentials — Gemini');
+
+    vi.mocked(copyText).mockResolvedValueOnce(false);
+    await userEvent.click(screen.getByRole('button', { name: /Copy diagnostics/ }));
+    const area = await screen.findByRole('textbox', { name: 'Diagnostics' });
+    expect((area as HTMLTextAreaElement).value).toContain('Credentials (1):');
   });
 });
 

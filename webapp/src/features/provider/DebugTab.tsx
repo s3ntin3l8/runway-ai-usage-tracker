@@ -25,6 +25,7 @@ import { useCredentialInventory } from '@/features/settings/sections/credentials
 import { timeAgo, timeUntil } from '@/lib/format';
 import { useDebugRaw } from './queries';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
+import { PROBE_LABEL, PROBE_VARIANT } from '@/lib/probeOutcome';
 import { STATUS_LABEL, STATUS_VARIANT, originSummary } from '@/features/settings/sections/credentials/display';
 
 export function DebugTab({
@@ -155,23 +156,6 @@ function CredentialSourceSummary({
     </div>
   );
 }
-
-const PROBE_LABEL: Record<string, string> = {
-  healthy: 'Working',
-  degraded: 'Working, some requests rejected',
-  auth_failed: 'Rejected by the provider',
-  unavailable: 'Collection failed',
-  waiting_on_machine: "Expired — waiting for its machine's CLI to renew it",
-  disabled: 'Disabled — not tried',
-  pending: 'Waiting for an account — not tried',
-  over_limit: 'Not tried — probe limit reached',
-};
-const PROBE_VARIANT: Record<string, 'ok' | 'warning' | 'critical' | 'neutral'> = {
-  healthy: 'ok',
-  degraded: 'warning',
-  auth_failed: 'critical',
-  unavailable: 'critical',
-};
 
 // Every credential source that could feed this account, side by side, with an on-demand
 // live test of each (admin-gated, rate-limited; never auto-runs). The list itself comes

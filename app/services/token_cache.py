@@ -675,13 +675,19 @@ class TokenCache:
         *,
         retire_matching_oauth: bool = False,
     ) -> bool:
-        """Remove one live secret bundle while preserving its durable metadata."""
+        """Remove one live secret bundle while preserving its durable metadata.
+
+        ``retire_matching_oauth`` also strips the account aggregate's OAuth fields that came
+        from this source — but never one a *remaining* source of the account still holds: a
+        dead copy of a login that is also the active one must not take the live token with it.
+        """
         account_id = canonical_account_id(account_id)
         async with self._lock:
             sources = self._source_cache.get(provider, {}).get(account_id)
             if not sources or source_id not in sources:
                 return False
             source_tokens = sources[source_id][0]
+            others = [entry[0] for sid, entry in sources.items() if sid != source_id]
             if retire_matching_oauth:
                 aggregate = self._cache.get(provider, {}).get(account_id)
                 if aggregate:
@@ -697,7 +703,11 @@ class TokenCache:
                         key
                         for key in oauth_keys
                         if retire_all_oauth
-                        or (source_tokens.get(key) and source_tokens[key] == tokens.get(key))
+                        or (
+                            source_tokens.get(key)
+                            and source_tokens[key] == tokens.get(key)
+                            and not any(o.get(key) == source_tokens[key] for o in others)
+                        )
                     }
                     # `tokens` aliases the live dict in `aggregate`; pop in
                     # place before reassigning the tuple.

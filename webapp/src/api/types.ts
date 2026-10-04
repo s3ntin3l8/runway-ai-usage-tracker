@@ -899,6 +899,8 @@ export interface CredentialSourceView {
   machine_name?: string | null;
   /** The machine has stopped checking in (the Fleet page's stale rule). */
   machine_stale?: boolean;
+  /** Other machines reporting the same secret (matched by fingerprint, never returned). */
+  shared_with?: string[];
   mapping: CredentialMapping;
   mapping_scope?: 'machine' | 'all_machines' | null;
   fingerprinted: boolean;

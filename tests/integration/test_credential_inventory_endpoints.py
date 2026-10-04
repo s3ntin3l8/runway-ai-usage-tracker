@@ -310,3 +310,61 @@ def test_inventory_warns_about_unmapped_credentials_that_stop_collection(client,
     body = client.get("/api/v1/system/credentials", headers=_headers()).json()
     assert body["unmapped_count"] == 1
     assert [b["credential_origin"] for b in body["blocked_collection"]] == ["env:B_KEY"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_remove_forgets_machine_sources_and_skips_managed_ones(client, session, cache):
+    for sid, host in (("sidecar:a", "host-a"), ("sidecar:b", "host-b"), ("sidecar:c", "host-c")):
+        _add(session, source_id=sid, sidecar_id=host)
+    _add(session, source_id="config:gemini:alice", sidecar_id=None, source_type="config")
+    await cache.store("gemini", {"oauth_token": "tok"}, account_id=ALICE, source_id="sidecar:a")
+
+    resp = client.post(
+        f"/api/v1/system/credentials/gemini/{ALICE}/remove",
+        json={"source_ids": ["sidecar:a", "sidecar:b", "config:gemini:alice", "sidecar:nope"]},
+        headers=_headers(),
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["removed"] == ["sidecar:a", "sidecar:b"]
+    assert body["skipped"] == [
+        {"source_id": "config:gemini:alice", "reason": "managed_elsewhere"},
+        {"source_id": "sidecar:nope", "reason": "not_found"},
+    ]
+    assert {r.source_id for r in session.exec(select(CredentialSource)).all()} == {
+        "sidecar:c",
+        "config:gemini:alice",
+    }
+    assert await cache.get_source_candidates("gemini", ALICE) == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_remove_keeps_the_active_login_that_a_dead_copy_shares(client, session, cache):
+    _add(session, source_id="sidecar:live", sidecar_id="host-a")
+    _add(session, source_id="sidecar:dead", sidecar_id="host-b")
+    shared = {
+        "oauth_token": "same-access",
+        "refresh_token": "same-refresh",
+    }  # pragma: allowlist secret
+    await cache.store("gemini", dict(shared), account_id=ALICE, source_id="sidecar:live")
+    await cache.store("gemini", dict(shared), account_id=ALICE, source_id="sidecar:dead")
+
+    resp = client.post(
+        f"/api/v1/system/credentials/gemini/{ALICE}/remove",
+        json={"source_ids": ["sidecar:dead"]},
+        headers=_headers(),
+    )
+
+    assert resp.json()["removed"] == ["sidecar:dead"]
+    assert (await cache.get("gemini", ALICE))["oauth_token"] == "same-access"
+    assert [c["source_id"] for c in await cache.get_source_candidates("gemini", ALICE)] == [
+        "sidecar:live"
+    ]
+
+
+def test_bulk_remove_rejects_an_empty_or_oversized_batch(client):
+    url = f"/api/v1/system/credentials/gemini/{ALICE}/remove"
+    assert client.post(url, json={"source_ids": []}, headers=_headers()).status_code == 422
+    too_many = {"source_ids": [f"sidecar:{i}" for i in range(51)]}
+    assert client.post(url, json=too_many, headers=_headers()).status_code == 422

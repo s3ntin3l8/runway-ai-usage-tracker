@@ -40,7 +40,7 @@ from app.models.schemas import (
     CredentialProviderView,
     CredentialSourceView,
 )
-from app.services.account_identity import canonical_account_id
+from app.services.account_identity import canonical_account_id, credential_fingerprint
 from app.services.credential_provider import CredentialProvider
 from app.services.credential_sources import (
     describe_origin_full,
@@ -243,6 +243,35 @@ def _apply_server_expiry(
         view.refreshed_by = "machine"
 
 
+def _mark_shared(
+    accounts: dict[tuple[str, str], list[CredentialSourceView]],
+    fingerprints: dict[tuple[str, str], str],
+) -> None:
+    """Fill ``shared_with``: the same secret reported by more than one machine.
+
+    One login copied between machines is a hazard (the first to renew a rotating refresh token
+    signs the others out); one static key everywhere is normal, so the UI only warns inline for
+    rollable credentials. Machines sharing a home directory legitimately report one origin.
+    """
+    groups: dict[tuple[str, str], list[CredentialSourceView]] = {}
+    for views in accounts.values():
+        for view in views:
+            fingerprint = fingerprints.get((view.provider_id, view.source_id))
+            if fingerprint and view.machine_id:
+                groups.setdefault((view.provider_id, fingerprint), []).append(view)
+    for group in groups.values():
+        if len({v.machine_id for v in group}) < 2:
+            continue
+        for view in group:
+            view.shared_with = sorted(
+                {
+                    other.machine_name or other.machine_id or ""
+                    for other in group
+                    if other.machine_id != view.machine_id
+                }
+            )
+
+
 def _mark_redundant(views: list[CredentialSourceView]) -> None:
     """Flag expired, unrefreshable credentials that another healthy one can stand in for.
 
@@ -370,6 +399,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         siblings_by_account.setdefault((row.provider_id, row.account_id), []).append(row)
 
     accounts: dict[tuple[str, str], list[CredentialSourceView]] = {}
+    # (provider, source_id) → fingerprint of the secret that identifies the credential: its
+    # refresh token (a login), else its key. Only ever compared; never returned.
+    fingerprints: dict[tuple[str, str], str] = {}
     for row in sources:
         if is_config_ghost(row):
             continue
@@ -385,6 +417,12 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             exp = row.credential_expires_at.timestamp() if row.credential_expires_at else None
         rollable = has_refresh_credential(tokens)
         machine_sourced = row.sidecar_id is not None
+        if machine_sourced and bundle is not None:
+            fingerprint = credential_fingerprint(
+                tokens.get("refresh_token") or tokens.get("api_key")
+            )
+            if fingerprint:
+                fingerprints[(row.provider_id, row.source_id)] = fingerprint
         # ``rollable`` = something renews it (status stays "valid" between rolls). Who: the
         # server, or, for a rotating provider's machine-owned login, that machine's CLI. The
         # server must not refresh the latter (rotation signs the CLI out), so no Refresh action.
@@ -486,6 +524,8 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 last_error=row.last_error,
             )
         )
+
+    _mark_shared(accounts, fingerprints)
 
     # Server env/file credentials: the read-time scan is authoritative. It adds credentials
     # that are present but never registered (no collection has used them), says why one

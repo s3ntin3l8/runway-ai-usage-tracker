@@ -62,8 +62,8 @@ _LOGIN_HINTS = {
     "OpenCode": "run `opencode auth login`",
     "GitHub CLI": "run `gh auth login`",
     "Copilot editor sign-in": "sign in again to Copilot in your editor",
-    "Claude Code": "sign in again in Claude Code",
-    "Gemini CLI": "sign in again in Gemini CLI",
+    "Claude Code": "run `claude`, then `/login`",
+    "Gemini CLI": "run `gemini`, then `/auth`",
     "Grok CLI": "sign in again in the Grok CLI",
     "Antigravity CLI": "sign in again in the Antigravity CLI",
 }

@@ -1,5 +1,13 @@
-import { MAPPING_HINT, MAPPING_LABEL, STATUS_LABEL, STATUS_VARIANT, originSummary, relativeExpiry } from './display';
-import { source } from './testData';
+import {
+  MAPPING_HINT,
+  MAPPING_LABEL,
+  STATUS_LABEL,
+  STATUS_VARIANT,
+  diagnosticsText,
+  originSummary,
+  relativeExpiry,
+} from './display';
+import { account, source } from './testData';
 
 describe('credential display helpers', () => {
   it('gives every status a label and a badge variant', () => {
@@ -37,5 +45,40 @@ describe('credential display helpers', () => {
     expect(relativeExpiry(3 * 86_400)).toBe('in 3d');
     expect(relativeExpiry(-7200)).toBe('expired 2h ago');
     expect(relativeExpiry(-86_400 * 2)).toBe('expired 2d ago');
+  });
+
+  it('builds a diagnostics summary without the raw account id or any secret', () => {
+    const text = diagnosticsText(
+      'Gemini',
+      account(
+        [
+          source({
+            source_id: 'a',
+            is_active: true,
+            origin_app: 'Gemini CLI',
+            machine_name: 'dev-01',
+            last_success_at: new Date().toISOString(),
+            shared_with: ['mgmt'],
+          }),
+          source({
+            source_id: 'b',
+            status: 'expired',
+            machine_name: 'mgmt',
+            machine_stale: true,
+            last_error: 'Authentication failed',
+          }),
+        ],
+        { active_source_id: 'a', status: 'valid', data_source: 'api', input_source: 'sidecar' },
+      ),
+    );
+    expect(text).toContain('Runway credentials — Gemini');
+    expect(text).toContain('Credentials (2):');
+    expect(text).toContain('Gemini CLI · oauth_creds.json on dev-01');
+    expect(text).toContain('same secret on mgmt');
+    expect(text).toContain('mgmt (offline)');
+    expect(text).toContain('last error: Authentication failed');
+    expect(text).toContain('(api / sidecar)');
+    expect(text).toContain('Account: a***@example.com');
+    expect(text).not.toContain('alice@example.com');
   });
 });

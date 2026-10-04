@@ -447,6 +447,21 @@ export const deleteCredentialSource = (provider: string, accountId: string, sour
     method: 'DELETE',
   });
 
+export interface RemoveCredentialSourcesResponse {
+  removed: string[];
+  skipped: { source_id: string; reason: 'managed_elsewhere' | 'not_found' }[];
+}
+
+export const removeCredentialSources = (
+  provider: string,
+  accountId: string,
+  sourceIds: string[],
+) =>
+  api<RemoveCredentialSourcesResponse>(
+    `/api/v1/system/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(accountId)}/remove`,
+    { method: 'POST', body: JSON.stringify({ source_ids: sourceIds }) },
+  );
+
 export const fetchAuditLog = (limit = 200) =>
   api<{ entries: AuditEntry[] }>(`/api/v1/system/audit-log${qs({ limit })}`);
 
