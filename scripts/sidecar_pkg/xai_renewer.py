@@ -14,6 +14,7 @@ and never logs token material.
 """
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -169,10 +170,9 @@ def request_refresh(refresh_token: str) -> dict[str, Any]:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         code = ""
-        try:
+        with contextlib.suppress(ValueError, AttributeError, OSError):
+            # The OAuth error code is the diagnosis; an unreadable body just leaves it blank.
             code = str(json.loads(exc.read()).get("error") or "")[:60]
-        except (ValueError, AttributeError, OSError):
-            pass
         # 408/429 are transient (retry later), not a dead refresh token.
         if exc.code in (400, 401, 403):
             raise RefreshRejectedError(f"HTTP {exc.code} {code}".strip()) from None
@@ -229,10 +229,9 @@ def write_back(login: Login, token_response: dict[str, Any]) -> str:
         os.chmod(tmp, mode)
         os.replace(tmp, target)
     except OSError:
-        try:
+        # Best-effort cleanup of our temp file; the write already failed, nothing else to do.
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         return "failed"
     return "written"
 
@@ -273,15 +272,13 @@ class XaiRenewer:
         return bool(self._due_logins())
 
     def renew(self) -> bool:
-        """Renew every due login; True when none failed (and at least one ran)."""
+        """Renew every due login; True unless one failed. Nothing due is not a failure."""
         with _RENEW_LOCK:
             return self._renew_due_logins()
 
     def _renew_due_logins(self) -> bool:
         ok = True
-        ran = False
         for login in self._due_logins():
-            ran = True
             try:
                 response = request_refresh(login.refresh)
             except RefreshRejectedError as exc:
@@ -310,4 +307,4 @@ class XaiRenewer:
                     "xAI keep-alive: could not write the renewed login to %s", login.path
                 )
                 ok = False
-        return ran and ok
+        return ok

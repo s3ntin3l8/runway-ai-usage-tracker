@@ -366,6 +366,11 @@ describe('failingReason / staleTitle', () => {
     expect(staleTitle(c)).toContain('login expired');
   });
 
+  it('keeps parentheses inside the reason', () => {
+    const c = withDetail('⚠ Collection failing (HTTP 401 (invalid_grant)) — 12% used');
+    expect(failingReason(c)).toBe('HTTP 401 (invalid_grant)');
+  });
+
   it('falls back when there is no reason', () => {
     const c = withDetail('⚠ Collection failing — 12% used');
     expect(failingReason(c)).toBeNull();

@@ -803,3 +803,17 @@ class TestIsConfigured:
             return_value=None,
         ):
             assert await c.is_configured() is False
+
+
+def test_every_error_message_fits_the_stale_reason_budget():
+    """smart_collector truncates the stale-card reason at 200 chars; a longer message would
+    clip the --keep-alive hint the renewal-pending copy exists to deliver."""
+    import asyncio
+
+    from app.services.collectors.xai import XaiCollector
+
+    for reason in ("invalid_api_key", "renewal_pending", "parse_error", "api_error", "unknown"):
+        collector = XaiCollector()
+        collector._last_error_reason = reason
+        (card,) = asyncio.run(collector._error_handler())
+        assert len(card["detail"]) <= 200, reason

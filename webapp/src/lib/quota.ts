@@ -89,7 +89,7 @@ export function cardStale(card: LimitCard): boolean {
   return card.stale === true || card.collection_failing === true;
 }
 
-const FAILING_REASON = /^⚠ Collection failing \(([^)]*)\) — /;
+const FAILING_REASON = /^⚠ Collection failing \((.+?)\) — /;
 
 /** Why collection is failing, from the backend's "⚠ Collection failing (<reason>) — " prefix. */
 export function failingReason(card: LimitCard): string | null {

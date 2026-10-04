@@ -1933,9 +1933,16 @@ class TestFailoverPrefersLiveAccessTokens:
 
 
 def test_keep_alive_providers_are_the_ones_with_a_sidecar_renewer():
-    from app.services.collector_manager import KEEP_ALIVE_PROVIDERS
+    """The server's keep-alive hint must cover exactly what the sidecar can renew."""
+    from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS
+    from scripts import sidecar
+    from scripts.sidecar_pkg import keep_alive
+    from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
-    assert KEEP_ALIVE_PROVIDERS == {"xai", "antigravity"}
+    thread = sidecar._make_keep_alive_thread()
+    renewer_providers = {r.name for r in thread._renewers} | {keep_alive.AGY_PROVIDER}
+    assert renewer_providers == {XaiRenewer.name, "antigravity"}
+    assert KEEP_ALIVE_PROVIDERS == renewer_providers
 
 
 class TestOutcomeReasons:

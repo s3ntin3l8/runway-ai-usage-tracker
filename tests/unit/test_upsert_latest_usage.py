@@ -724,3 +724,26 @@ def test_stale_reason_is_shown_and_replaced_not_stacked(session: Session):
     )
     # No reason keeps today's bare marker.
     assert mark(None).startswith("⚠ Collection failing — ")
+
+
+def test_reason_containing_parentheses_round_trips_and_is_replaced(session: Session):
+    upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+    session.commit()
+
+    def mark(reason):
+        mark_latest_usage_source_stale(
+            session,
+            provider_id="chatgpt",
+            source_id="server:chatgpt",
+            stale_after_seconds=0,
+            reason=reason,
+        )
+        session.commit()
+        return json.loads(session.exec(select(LatestUsage)).one().card_json)["detail"]
+
+    first = mark("HTTP 401 (invalid_grant) from provider")
+    assert first.startswith("⚠ Collection failing (HTTP 401 (invalid_grant) from provider) — ")
+    second = mark("timed out")
+    assert second.startswith("⚠ Collection failing (timed out) — ")
+    assert second.count("Collection failing") == 1
+    assert "invalid_grant" not in second

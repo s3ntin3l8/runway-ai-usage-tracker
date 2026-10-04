@@ -395,9 +395,13 @@ class TestHelpers:
         f.write_text(json.dumps({"openrouter": {}}))
         assert xai_renewer.write_back(login, {"access_token": "x"}) == "superseded"
 
-    def test_renew_with_nothing_due_is_a_noop_failure(self, tmp_path):
+    def test_renew_with_nothing_due_is_not_a_failure(self, tmp_path, monkeypatch):
+        # due() can be true and the CLI renew before renew() re-reads the file; the thread
+        # must not back off five minutes for a tick that did no work.
         f = _opencode(tmp_path / "a.json", time.time() + 3600)
-        assert XaiRenewer([(f, "opencode")]).renew() is False
+        calls = _respond(monkeypatch, {"access_token": "x"})
+        assert XaiRenewer([(f, "opencode")]).renew() is True
+        assert calls == []
 
     def test_superseded_write_counts_as_success(self, tmp_path, monkeypatch):
         f = _opencode(tmp_path / "a.json", time.time() - 10)

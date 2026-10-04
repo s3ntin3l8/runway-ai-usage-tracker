@@ -4910,7 +4910,8 @@ def main():
             "Daemon mode: renew the Antigravity (agy) access token with "
             "`agy models` whenever it lapses, and refresh the xAI (Grok) login in "
             "OpenCode's / the Grok CLI's auth file before it expires (opt-in; config "
-            '"keep_alive": true does the same)'
+            '"keep_alive": true is the same on/off switch for both renewers; it can also be '
+            "toggled per sidecar from the Fleet page)"
         ),
     )
     parser.add_argument(

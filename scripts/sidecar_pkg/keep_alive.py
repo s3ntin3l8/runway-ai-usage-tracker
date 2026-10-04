@@ -40,6 +40,10 @@ RETRY_TICK_SECONDS = 300
 LEAD_SECONDS = 0
 COMMAND_TIMEOUT_SECONDS = 120
 
+# The provider the built-in (agy) renewer keeps alive; other renewers carry their own `name`.
+# KEEP_ALIVE_PROVIDERS (app/services/refresh_policy.py) must equal the union (tested).
+AGY_PROVIDER = "antigravity"
+
 # Set by enable() when the daemon starts the thread; the sidecar's pre-expiry
 # warning stays quiet for operators who already opted in.
 _enabled = False
