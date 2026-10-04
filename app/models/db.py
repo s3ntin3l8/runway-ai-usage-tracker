@@ -27,7 +27,7 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     # Whether the build can self-update in place (frozen, non-Docker). None =
     # not reported (legacy/permissive); False = from-source/Docker (no update push).
     self_update_capable: bool | None = None
-    # Whether the sidecar runs with --keep-alive (renews agy/xAI logins itself).
+    # Whether the sidecar runs with --keep-alive (renews the KEEP_ALIVE_PROVIDERS logins itself).
     # None = not reported (older sidecar) — shown as "unknown", never as "off".
     keep_alive: bool | None = None
     # Operator's remote setting for it, delivered on every ingest response. None = no

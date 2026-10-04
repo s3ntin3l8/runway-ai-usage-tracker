@@ -512,7 +512,7 @@ export interface Sidecar {
   // Whether the build can self-update in place (frozen, non-Docker). null = not
   // reported; false = from-source/Docker (no update push offered).
   self_update_capable?: boolean | null;
-  // Whether the sidecar runs with --keep-alive (renews agy/xAI logins itself). null = not
+  // Whether the sidecar runs with --keep-alive (renews the logins in keepAlive.ts itself). null = not
   // reported by an older sidecar — treat as unknown, not off.
   keep_alive?: boolean | null;
   // The operator's remote keep-alive setting (null = no preference; the sidecar's own flag decides).

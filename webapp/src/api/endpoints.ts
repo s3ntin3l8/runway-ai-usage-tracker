@@ -235,7 +235,7 @@ export const setSidecarEnabled = (sidecarId: string, enabled: boolean) =>
     { method: 'POST' },
   );
 
-// Force a sidecar's keep-alive (agy / xAI login renewal) on or off; null defers to its own flag.
+// Force a sidecar's keep-alive (login renewal) on or off; null defers to its own flag.
 // Delivered on its next check-in.
 export const setSidecarKeepAlive = (sidecarId: string, enabled: boolean | null) =>
   api<{ status: string; keep_alive_desired: boolean | null }>(

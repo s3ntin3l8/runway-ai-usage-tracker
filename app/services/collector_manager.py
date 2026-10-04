@@ -98,8 +98,6 @@ class CollectorManager:
         self._credential_source_state: dict[
             tuple[str, str], dict[str, tuple[str, datetime | None]]
         ] = {}
-        # sidecar_id -> whether it reports --keep-alive (None = older sidecar, unknown).
-        self._sidecar_keep_alive: dict[str, bool | None] = {}
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
         self.last_collection_outcomes: list[dict[str, Any]] = []
@@ -133,18 +131,12 @@ class CollectorManager:
             global_poll_interval: int | None = None
             source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
             source_state: dict[tuple[str, str], dict[str, tuple[str, datetime | None]]] = {}
-            keep_alive_by_sidecar: dict[str, bool | None] = {}
             try:
                 from sqlmodel import Session
                 from sqlmodel import select as sqlselect
 
                 from app.core.db import engine
-                from app.models.db import (
-                    CredentialSource,
-                    ProviderConfig,
-                    SidecarRegistry,
-                    SystemConfig,
-                )
+                from app.models.db import CredentialSource, ProviderConfig, SystemConfig
 
                 with Session(engine) as _s:
                     for r in _s.exec(sqlselect(ProviderConfig)).all():
@@ -177,9 +169,6 @@ class CollectorManager:
                             row.source_id
                         ] = (row.health, row.next_retry_at)
 
-                    for sidecar_row in _s.exec(sqlselect(SidecarRegistry)).all():
-                        keep_alive_by_sidecar[sidecar_row.sidecar_id] = sidecar_row.keep_alive
-
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
                         global_poll_interval = sys_cfg.default_poll_interval_seconds
@@ -200,7 +189,6 @@ class CollectorManager:
             }
             self._credential_source_preferences = source_preferences
             self._credential_source_state = source_state
-            self._sidecar_keep_alive = keep_alive_by_sidecar
             await self.reconcile_token_cache_from_durable_tags()
 
             # 1. Ensure Default/Static collectors are present
@@ -1036,7 +1024,8 @@ class CollectorManager:
             # reconciling them away, and the server-credential stamping leaves rows alone.
             smart._set_collection_state(
                 "skipped",
-                f"login expired — {self._renewal_wait_reason(provider_id, renewal_candidate)}",
+                "login expired — "
+                + await self._renewal_wait_reason(provider_id, renewal_candidate),
             )
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
@@ -1215,11 +1204,35 @@ class CollectorManager:
             session.commit()
         return True
 
-    def _renewal_wait_reason(self, provider_id: str | None, candidate: dict[str, Any]) -> str:
-        """What a stale card should say about an expired login its machine must renew."""
+    @staticmethod
+    def _read_sidecar_keep_alive(sidecar_id: str) -> bool | None:
+        """Whether *sidecar_id* reports keep-alive on; None when unknown (old sidecar/no row)."""
+        if not sidecar_id:
+            return None
+        try:
+            from sqlmodel import Session
+
+            from app.core.db import engine
+            from app.models.db import SidecarRegistry
+
+            with Session(engine) as session:
+                row = session.get(SidecarRegistry, sidecar_id)
+                return row.keep_alive if row is not None else None
+        except Exception:
+            logger.debug("Could not read keep-alive for sidecar", exc_info=True)
+            return None
+
+    async def _renewal_wait_reason(self, provider_id: str | None, candidate: dict[str, Any]) -> str:
+        """What a stale card should say about an expired login its machine must renew.
+
+        Read at skip time (a rare path) rather than cached at sync, so a Fleet toggle shows
+        up on the very next poll instead of one collector sync later.
+        """
         if provider_id not in KEEP_ALIVE_PROVIDERS:
             return "waiting for its machine to renew it"
-        reported = self._sidecar_keep_alive.get(candidate.get("sidecar_id") or "")
+        reported = await asyncio.to_thread(
+            self._read_sidecar_keep_alive, candidate.get("sidecar_id") or ""
+        )
         if reported is True:
             return (
                 "its machine's keep-alive hasn't renewed it — check the sidecar log, "

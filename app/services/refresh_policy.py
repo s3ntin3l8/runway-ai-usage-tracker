@@ -19,7 +19,11 @@ ROTATING_REFRESH_PROVIDERS = frozenset({"anthropic", "chatgpt", "xai"})
 
 # Providers whose sidecar can renew a machine-owned login itself (``--keep-alive``):
 # agy via ``agy models``, xAI by refreshing and writing the token back to the CLI's file.
-KEEP_ALIVE_PROVIDERS = frozenset({"xai", "antigravity"})
+# The single source of truth for *which* logins that covers: the Fleet tooltip
+# (webapp/src/lib/keepAlive.ts) and the sidecar's ``--keep-alive`` help text must name the
+# same logins; tests/unit/test_keep_alive_copy_contract.py pins them together.
+KEEP_ALIVE_LABELS = {"xai": "xAI (Grok)", "antigravity": "Antigravity (agy)"}
+KEEP_ALIVE_PROVIDERS = frozenset(KEEP_ALIVE_LABELS)
 
 _NON_MACHINE_SOURCES = (None, "server", "config", "manual_config")
 
