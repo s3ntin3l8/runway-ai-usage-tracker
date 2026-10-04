@@ -28,7 +28,7 @@ def _recent_logs_json(lines: list[str]) -> str:
 
 
 # Sidecars that haven't checked in for this long are considered stale
-_STALE_THRESHOLD_MINUTES = 60
+STALE_THRESHOLD_MINUTES = 60
 
 
 class FleetRegistryService:
@@ -227,7 +227,7 @@ class FleetRegistryService:
         )
 
         last_seen_utc = row.last_seen.replace(tzinfo=UTC)
-        stale = last_seen_utc < datetime.now(UTC) - timedelta(minutes=_STALE_THRESHOLD_MINUTES)
+        stale = last_seen_utc < datetime.now(UTC) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
         latest_version = sidecar_version_checker.get_latest()
         latest_edge_sha = sidecar_version_checker.get_latest_edge_sha()
         latest_beta = sidecar_version_checker.get_latest_beta()
@@ -268,7 +268,7 @@ class FleetRegistryService:
             "collection_enabled": row.collection_enabled,
             "pending_update": row.pending_update,
             "stale": stale,
-            "stale_threshold_minutes": _STALE_THRESHOLD_MINUTES,
+            "stale_threshold_minutes": STALE_THRESHOLD_MINUTES,
             "recent_logs": json.loads(row.recent_logs) if row.recent_logs else [],
             "identity_sources": json.loads(row.identity_sources) if row.identity_sources else {},
         }

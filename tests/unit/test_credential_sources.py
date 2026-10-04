@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -18,7 +22,9 @@ from app.services.credential_sources import (
     account_sources,
     configured_account_ids,
     describe_origin,
+    describe_origin_full,
     effective_health,
+    login_hint,
     merge_source_provenance,
     phantom_accounts,
     prune_server_sources,
@@ -653,3 +659,103 @@ def test_reset_source_retry_clears_only_that_source():
         rows = {r.source_id: r for r in session.exec(select(CredentialSource))}
         assert (rows["src:a"].consecutive_failures, rows["src:a"].next_retry_at) == (0, None)
         assert rows["src:b"].consecutive_failures == 1 and rows["src:b"].next_retry_at is not None
+
+
+@pytest.mark.parametrize(
+    ("origin", "app", "label", "path"),
+    [
+        ("path:/home/bjoern/.codex/auth.json#fp", "Codex CLI", "auth.json", "~/.codex/auth.json"),
+        (
+            "path:/home/bjoern/.local/share/opencode/auth.json",
+            "OpenCode",
+            "auth.json",
+            "~/.local/share/opencode/auth.json",
+        ),
+        (
+            r"path:C:\Users\bjoer\.codex\auth.json",
+            "Codex CLI",
+            "auth.json",
+            r"~\.codex\auth.json",
+        ),
+        (
+            r"path:C:\Users\bjoer\AppData\Roaming\codex\auth.json",
+            "Codex CLI",
+            "auth.json",
+            r"~\AppData\Roaming\codex\auth.json",
+        ),
+        (
+            "path:/Users/b/Library/Application Support/claude/.credentials.json",
+            "Claude Code",
+            ".credentials.json",
+            "~/Library/Application Support/claude/.credentials.json",
+        ),
+        ("path:/srv/other/auth.json", None, "auth.json", "/srv/other/auth.json"),
+        ("file:///home/bob/.codex/auth.json", "Codex CLI", "auth.json", "~/.codex/auth.json"),
+        ("path:/mnt/c/Users/bob/.codex/auth.json", "Codex CLI", "auth.json", "~/.codex/auth.json"),
+        ("path:/var/home/bob/.codex/auth.json", "Codex CLI", "auth.json", "~/.codex/auth.json"),
+        ("path:/home/kimi-code/x/y.json", None, "y.json", "~/x/y.json"),
+        ("path:/data/state/quota.json", None, "quota.json", "/data/state/quota.json"),
+    ],
+)
+def test_describe_origin_full_names_the_owning_app(origin, app, label, path):
+    display = describe_origin_full(origin)
+    assert (display.kind, display.label, display.app, display.path) == ("file", label, app, path)
+
+
+def test_describe_origin_full_non_file_origins():
+    assert describe_origin_full("env:GITHUB_TOKEN").app is None
+    assert describe_origin_full("cookie:chatgpt/session").app == "Browser"
+    assert describe_origin_full("keychain:Claude Code-credentials").app == "Claude Code"
+    assert describe_origin_full("keychain:Claude Code-credentials").path is None
+
+
+def test_login_hint_known_and_unknown():
+    assert login_hint("Codex CLI") == "run `codex login`"
+    assert login_hint("Browser") is None
+    assert login_hint(None) is None
+
+
+_HOMES = {
+    "linux": ("/home/u", "/home/u/.config", "/home/u/.local/share"),
+    "macos": (
+        "/Users/u",
+        "/Users/u/Library/Application Support",
+        "/Users/u/Library/Application Support",
+    ),
+    "windows": (r"C:\Users\u", r"C:\Users\u\AppData\Roaming", r"C:\Users\u\AppData\Roaming"),
+}
+
+
+def _registry_file_paths() -> list[str]:
+    root = Path(__file__).resolve().parents[2]
+    registry_json = json.loads((root / "app/core/registry.json").read_text())
+    overlay = json.loads((root / "scripts/sidecar_registry_overlay.json").read_text())
+    rules = [r for p in registry_json["providers"].values() for r in p.get("rules", [])]
+    rules += [add["rule"] for p in overlay["providers"].values() for add in p.get("add_rules", [])]
+    paths: list[str] = []
+    for rule in rules:
+        if rule.get("type") in ("file", "xai_grok_cli_auth") or str(
+            rule.get("type", "")
+        ).startswith("file_json"):
+            # An overlay rule that the sidecar doesn't implement is dropped, so skip dropped types.
+            paths.extend(rule.get("paths", []))
+    return paths
+
+
+@pytest.mark.parametrize("platform", sorted(_HOMES))
+def test_every_registry_file_path_names_an_app_on_every_platform(platform):
+    home, config, data = _HOMES[platform]
+    sep = "\\" if platform == "windows" else "/"
+    unmatched = []
+    for raw in _registry_file_paths():
+        if raw.endswith("quota.json") and "antigravity" not in raw:
+            continue
+        expanded = re.sub(r"\{\{CONFIG_DIR:([^}]+)\}\}", lambda m: config + sep + m[1], raw)
+        expanded = re.sub(r"\{\{DATA_DIR:([^}]+)\}\}", lambda m: data + sep + m[1], expanded)
+        expanded = expanded.replace("~", home, 1) if expanded.startswith("~") else expanded
+        if sep == "\\":
+            expanded = expanded.replace("/", "\\")
+        display = describe_origin_full(f"path:{expanded}")
+        if display.app is None or display.path is None or not display.path.startswith("~"):
+            unmatched.append((raw, expanded, display))
+    assert not unmatched

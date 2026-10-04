@@ -591,6 +591,10 @@ export interface CredentialTag {
   // usage assigned to an Antigravity account); null = same provider.
   target_provider_id?: string | null;
   set_at: string | null;
+  /** "auth.json", "OPENROUTER_API_KEY", "Browser cookie" … */
+  origin_label?: string;
+  origin_app?: string | null;
+  origin_path?: string | null;
 }
 
 export interface CredentialTagList {
@@ -876,8 +880,16 @@ export interface CredentialSourceView {
   /** What the credential is: `file`, `env`, `cookie`, `keychain`, or `sidecar` for an unrecognised origin. */
   origin_type: string;
   label: string;
+  /** Tool that owns the file ("Codex CLI", "OpenCode", …); null when unknown. */
+  origin_app?: string | null;
+  /** File path with the home directory collapsed to `~`. */
+  origin_path?: string | null;
+  /** How to re-authenticate the owning tool ("run `codex login`"). */
+  login_hint?: string | null;
   machine_id?: string | null;
   machine_name?: string | null;
+  /** The machine has stopped checking in (the Fleet page's stale rule). */
+  machine_stale?: boolean;
   mapping: CredentialMapping;
   mapping_scope?: 'machine' | 'all_machines' | null;
   fingerprinted: boolean;
@@ -940,6 +952,7 @@ export interface CredentialMachineView {
   last_seen?: string | null;
   credential_count: number;
   unmapped_count: number;
+  stale?: boolean;
 }
 
 /** A credential a machine found but could not map to an account, whose provider is not
