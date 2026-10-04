@@ -7,6 +7,7 @@ import { Link } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle,
+  HeartPulse,
   Pause,
   Plus,
   Pencil,
@@ -24,6 +25,7 @@ import {
   fetchUntaggedCredentials,
   patchSidecar,
   setSidecarEnabled,
+  setSidecarKeepAlive,
   triggerSidecarUpdate,
 } from '@/api/endpoints';
 import type { Sidecar, UntaggedCredential } from '@/api/types';
@@ -292,6 +294,22 @@ function SidecarCard({
     onError: (err) => toast.error(err.message),
   });
 
+  // Reported state is what the sidecar runs now; a pending remote change shows once it checks in.
+  const keepAliveOn = sidecar.keep_alive === true;
+  const keepAliveTitle = keepAliveOn
+    ? 'Keep-alive is on: this sidecar renews its agy and xAI logins itself. Click to turn it off.'
+    : 'Turn keep-alive on: this sidecar will renew its agy and xAI logins itself, so they never lapse while the CLI is idle.';
+  const keepAlive = useMutation({
+    mutationFn: () => setSidecarKeepAlive(sidecar.sidecar_id, !keepAliveOn),
+    onSuccess: () => {
+      toast.success(
+        `Keep-alive ${keepAliveOn ? 'off' : 'on'} — applies on the sidecar's next check-in`,
+      );
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const logs = (sidecar.last_log_lines ?? []).filter(Boolean);
 
   return (
@@ -329,6 +347,18 @@ function SidecarCard({
               <Button
                 size="icon-sm"
                 variant="ghost"
+                aria-label={keepAliveOn ? 'Turn keep-alive off' : 'Turn keep-alive on'}
+                aria-pressed={keepAliveOn}
+                title={keepAliveTitle}
+                onClick={() => keepAlive.mutate()}
+                loading={keepAlive.isPending}
+                className={keepAliveOn ? 'text-ok' : undefined}
+              >
+                <HeartPulse className="size-3.5" />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
                 aria-label="Delete sidecar"
                 title="Delete sidecar"
                 onClick={onDelete}
@@ -339,9 +369,10 @@ function SidecarCard({
             </div>
           </div>
 
-          {(sidecar.tags?.length ?? 0) > 0 || paused || untaggedCount > 0 ? (
+          {(sidecar.tags?.length ?? 0) > 0 || paused || keepAliveOn || untaggedCount > 0 ? (
             <div className="mt-2.5 flex flex-wrap gap-1">
               {paused ? <Badge variant="warning">paused</Badge> : null}
+              {keepAliveOn ? <Badge variant="neutral">keep-alive</Badge> : null}
               {(sidecar.tags ?? []).map((tag) => (
                 <Badge key={tag} variant="neutral">
                   {tag}

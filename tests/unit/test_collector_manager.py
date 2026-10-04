@@ -1779,6 +1779,7 @@ class TestCollectorManagerCollection:
                 "account_id": "alice@example.com",
                 "source_id": "server:anthropic",
                 "state": "failed",
+                "reason": "collection timed out",
             }
         ]
 
@@ -1967,3 +1968,117 @@ class TestFailoverPrefersLiveAccessTokens:
         assert state["order"] == [opaque_id]
         assert smart.collect.await_count == 1
         assert health == {opaque_id: "healthy"}
+
+
+def test_keep_alive_providers_are_the_ones_with_a_sidecar_renewer():
+    """The server's keep-alive hint must cover exactly what the sidecar can renew."""
+    from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS
+    from scripts import sidecar
+    from scripts.sidecar_pkg import keep_alive
+    from scripts.sidecar_pkg.xai_renewer import XaiRenewer
+
+    thread = sidecar._make_keep_alive_thread()
+    renewer_providers = {r.name for r in thread._renewers} | {keep_alive.AGY_PROVIDER}
+    assert renewer_providers == {XaiRenewer.name, "antigravity"}
+    assert KEEP_ALIVE_PROVIDERS == renewer_providers
+
+
+class TestOutcomeReasons:
+    """Every outcome carries a reason: the stale card's explanation for any provider."""
+
+    async def _outcomes(self, manager, *, state, reason, raises=None):
+        smart = MagicMock()
+        smart.collector.PROVIDER_ID = "gemini"
+        smart.collector.account_id = "alice@example.com"
+        smart.last_collection_state = state
+        smart.last_collection_reason = reason
+        manager.smart_collectors = {"gemini:alice@example.com": smart}
+
+        async def collect(_key, _client):
+            if raises:
+                raise raises
+            return []
+
+        with (
+            patch.object(manager, "_sync_collectors", new_callable=AsyncMock),
+            patch.object(manager, "_get_client", new_callable=AsyncMock),
+            patch.object(manager, "_collect_with_semaphore", side_effect=collect),
+        ):
+            await manager._do_collect()
+        return manager.last_collection_outcomes
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("state", "reason"),
+        [
+            ("failed", "Token expired — run `agy`"),
+            ("failed", "provider rate limited"),
+            ("skipped", "login expired — waiting for its machine to renew it"),
+            ("skipped", "collector is not configured"),
+            ("complete", "fresh provider response"),
+        ],
+    )
+    async def test_reason_is_the_collectors_own(self, manager, state, reason):
+        (outcome,) = await self._outcomes(manager, state=state, reason=reason)
+        assert outcome["state"] == state
+        assert outcome["reason"] == reason
+
+    @pytest.mark.asyncio
+    async def test_an_exception_names_its_type(self, manager):
+        (outcome,) = await self._outcomes(
+            manager, state="complete", reason="x", raises=RuntimeError("boom")
+        )
+        assert outcome["state"] == "failed"
+        assert outcome["reason"] == "collection raised RuntimeError"
+        assert "boom" not in outcome["reason"]  # the message may carry secrets/PII
+
+
+class TestRenewalWaitReason:
+    """What a stale card says about an expired login its machine must renew."""
+
+    @pytest.mark.parametrize("provider", ["xai", "antigravity"])
+    @pytest.mark.parametrize("reported", [False, None])
+    def test_suggests_keep_alive_when_it_is_off_or_unknown(self, manager, provider, reported):
+        manager._sidecar_keep_alive = {"host-a": reported}
+        reason = manager._renewal_wait_reason(provider, {"sidecar_id": "host-a"})
+        assert "--keep-alive" in reason
+
+    def test_unknown_sidecar_is_treated_as_not_reporting(self, manager):
+        assert "--keep-alive" in manager._renewal_wait_reason("xai", {"sidecar_id": "ghost"})
+        assert "--keep-alive" in manager._renewal_wait_reason("xai", {})
+
+    def test_keep_alive_on_points_at_the_sidecar_not_the_flag(self, manager):
+        manager._sidecar_keep_alive = {"host-a": True}
+        reason = manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
+        assert "--keep-alive" not in reason
+        assert "hasn't renewed" in reason
+
+    @pytest.mark.parametrize("provider", ["anthropic", "chatgpt", None])
+    def test_other_providers_get_no_keep_alive_advice(self, manager, provider):
+        reason = manager._renewal_wait_reason(provider, {"sidecar_id": "host-a"})
+        assert "keep-alive" not in reason
+
+    @pytest.mark.asyncio
+    async def test_sync_loads_each_sidecars_keep_alive(self, manager, monkeypatch):
+        from sqlalchemy.pool import StaticPool
+        from sqlmodel import SQLModel, create_engine
+        from sqlmodel.orm.session import Session
+
+        from app.core import db as core_db
+        from app.models.db import SidecarRegistry
+
+        eng = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(eng)
+        monkeypatch.setattr(core_db, "engine", eng)
+        # The suite-wide autouse fixture mocks ``sqlmodel.Session``; this needs a real DB.
+        monkeypatch.setattr("sqlmodel.Session", Session)
+        with Session(eng) as s:
+            s.add(SidecarRegistry(sidecar_id="on-host", hostname="a", keep_alive=True))
+            s.add(SidecarRegistry(sidecar_id="old-host", hostname="b"))
+            s.commit()
+
+        await manager._sync_collectors(force=True)
+
+        assert manager._sidecar_keep_alive == {"on-host": True, "old-host": None}

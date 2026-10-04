@@ -8,8 +8,10 @@ import {
   chipLabel,
   clusterModelLabel,
   clusterPools,
+  failingReason,
   modelLabel,
   sameQuota,
+  staleTitle,
   statusForPct,
   tokenUsageTotal,
   windowLabel,
@@ -352,5 +354,26 @@ describe('tokenUsageTotal', () => {
   });
   it('returns 0 (not null) for a present-but-empty token_usage', () => {
     expect(tokenUsageTotal({})).toBe(0);
+  });
+});
+
+describe('failingReason / staleTitle', () => {
+  const withDetail = (detail: string) => card({ detail });
+
+  it('reads the reason from the backend prefix', () => {
+    const c = withDetail('⚠ Collection failing (login expired — waiting for its machine) — 12% used');
+    expect(failingReason(c)).toBe('login expired — waiting for its machine');
+    expect(staleTitle(c)).toContain('login expired');
+  });
+
+  it('keeps parentheses inside the reason', () => {
+    const c = withDetail('⚠ Collection failing (HTTP 401 (invalid_grant)) — 12% used');
+    expect(failingReason(c)).toBe('HTTP 401 (invalid_grant)');
+  });
+
+  it('falls back when there is no reason', () => {
+    const c = withDetail('⚠ Collection failing — 12% used');
+    expect(failingReason(c)).toBeNull();
+    expect(staleTitle(c)).toBe('Collection failing — showing cached data');
   });
 });

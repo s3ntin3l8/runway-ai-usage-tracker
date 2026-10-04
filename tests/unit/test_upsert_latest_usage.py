@@ -697,3 +697,53 @@ def test_model_specific_conflicting_window_type_is_deleted(session: Session):
     rows = session.exec(select(LatestUsage)).all()
     assert len(rows) == 1, f"Expected only the weekly row; found {len(rows)} rows"
     assert rows[0].window_type == "weekly"
+
+
+def test_stale_reason_is_shown_and_replaced_not_stacked(session: Session):
+    upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+    session.commit()
+
+    def mark(reason):
+        mark_latest_usage_source_stale(
+            session,
+            provider_id="chatgpt",
+            source_id="server:chatgpt",
+            stale_after_seconds=0,
+            reason=reason,
+        )
+        session.commit()
+        return json.loads(session.exec(select(LatestUsage)).one().card_json)["detail"]
+
+    first = mark("login expired")
+    assert first.startswith("⚠ Collection failing (login expired) — ")
+    second = mark("provider rate limited")
+    assert second.startswith("⚠ Collection failing (provider rate limited) — ")
+    assert second.count("Collection failing") == 1
+    assert second.removeprefix("⚠ Collection failing (provider rate limited) — ") == (
+        first.removeprefix("⚠ Collection failing (login expired) — ")
+    )
+    # No reason keeps today's bare marker.
+    assert mark(None).startswith("⚠ Collection failing — ")
+
+
+def test_reason_containing_parentheses_round_trips_and_is_replaced(session: Session):
+    upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+    session.commit()
+
+    def mark(reason):
+        mark_latest_usage_source_stale(
+            session,
+            provider_id="chatgpt",
+            source_id="server:chatgpt",
+            stale_after_seconds=0,
+            reason=reason,
+        )
+        session.commit()
+        return json.loads(session.exec(select(LatestUsage)).one().card_json)["detail"]
+
+    first = mark("HTTP 401 (invalid_grant) from provider")
+    assert first.startswith("⚠ Collection failing (HTTP 401 (invalid_grant) from provider) — ")
+    second = mark("timed out")
+    assert second.startswith("⚠ Collection failing (timed out) — ")
+    assert second.count("Collection failing") == 1
+    assert "invalid_grant" not in second

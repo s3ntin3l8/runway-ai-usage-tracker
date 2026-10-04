@@ -51,6 +51,7 @@ from app.services.credential_sources import (
 )
 from app.services.credential_tags import origin_candidates, pick_effective_tag
 from app.services.fleet_registry import STALE_THRESHOLD_MINUTES
+from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS
 from app.services.token_cache import token_cache
 from app.services.token_health import (
     credential_status,
@@ -394,6 +395,10 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             rollable and row.provider_id in _REFRESH_ENDPOINTS and not machine_renewed
         )
         refreshed_by = "machine" if machine_renewed else "server" if server_refreshable else None
+        keep_alive: str | None = None
+        if machine_renewed and row.provider_id in KEEP_ALIVE_PROVIDERS:
+            reported = getattr(machines.get(row.sidecar_id or ""), "keep_alive", None)
+            keep_alive = "unknown" if reported is None else "on" if reported else "off"
         # Only a machine-reported credential can be "waiting for an account": an env var or
         # pasted key on the ``default`` account is that deployment's real account.
         identity_pending = machine_sourced and row.account_id in ("default", row.source_id)
@@ -458,6 +463,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 token_types=token_types,
                 can_refresh=server_refreshable and bundle is not None,
                 refreshed_by=refreshed_by,
+                keep_alive=keep_alive,
                 rejected=rejected,
                 rollable=rollable,
                 removable=machine_sourced,

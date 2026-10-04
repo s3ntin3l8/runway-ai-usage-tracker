@@ -1649,3 +1649,9 @@ def test_real_account_ids_count_a_redirect_tag_under_its_target_provider(session
 
     assert "me@example.com" in real_account_ids(session, "antigravity")
     assert "me@example.com" not in real_account_ids(session, "gemini")
+
+
+def test_keep_alive_column_is_added_to_existing_sidecar_registries():
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert ("sidecar_registry", "keep_alive", "BOOLEAN") in _DEFERRED_COLUMNS

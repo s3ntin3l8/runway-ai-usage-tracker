@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from app.core.utils import HealthCalculator, error_card
+from app.core.utils import HealthCalculator, error_card, with_failing_prefix
 from app.services import auth_failures
 from app.services.collectors.base import BaseCollector
 
@@ -329,12 +329,15 @@ class SmartCollector:
                             Exception(result[0].get("detail") or "collector returned an error"),
                             now,
                         )
+                        # The card's own message is the only part that says *why*
+                        # (expired login, parse error, ...); it rides the outcome onto
+                        # the stale card.
+                        why = str(result[0].get("detail") or "").strip()[:200]
+                        reason = why or "provider returned an error card"
                         if self.last_result:
-                            self._set_collection_state("failed", "provider returned an error card")
+                            self._set_collection_state("failed", reason)
                             return self._tag_as_cached(self.last_result, now)
-                        self._set_collection_state(
-                            "failed", "provider returned an error card without cache"
-                        )
+                        self._set_collection_state("failed", reason)
                         return copy.deepcopy(result)
 
                     # Success: clear any 429 backoff
@@ -444,7 +447,10 @@ class SmartCollector:
             if is_stale:
                 card_copy["stale"] = True
                 card_copy["collection_failing"] = True
-                card_copy["detail"] = f"⚠ Collection failing — {card_copy['detail']}"
+                card_copy["detail"] = with_failing_prefix(
+                    card_copy["detail"],
+                    self.last_collection_reason if self.last_collection_state == "failed" else None,
+                )
                 # Pre-#293 caches baked health="critical" into last_result as the
                 # stale marker. Don't re-assert it at a percentage that doesn't
                 # warrant critical — the frontend stale-gate only helps when

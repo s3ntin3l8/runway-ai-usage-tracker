@@ -3003,3 +3003,53 @@ def test_hermes_account_extractor_dedup_and_state_file(monkeypatch, tmp_path):
     assert [e.event_id for e in events] == ["e1", "e2"]
     args, kwargs = mock_parser.call_args
     assert kwargs["state_file"] == custom_state_file
+
+
+def _expired_xai_jwt() -> str:
+    import base64 as _b64
+
+    def seg(obj):
+        return _b64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    return f"{seg({'alg': 'none'})}.{seg({'exp': int(time.time()) - 3600})}.sig"
+
+
+class TestXaiExpiredLoginWarning:
+    """An expired, rollable xAI login nudges the operator toward --keep-alive."""
+
+    def _collect(self, tmp_path, monkeypatch):
+        auth_path = tmp_path / "auth.json"
+        auth_path.write_text(
+            json.dumps({"xai": {"access": _expired_xai_jwt(), "refresh": "r", "expires": 1}})
+        )
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [auth_path])
+        sidecar.GenericCollector.collect_provider("xai", sidecar.__REGISTRY__["providers"]["xai"])
+
+    def test_warns_when_keep_alive_is_off(self, tmp_path, monkeypatch, caplog):
+        from scripts.sidecar_pkg import keep_alive
+
+        monkeypatch.setattr(keep_alive, "_enabled", False)
+        with caplog.at_level("WARNING"):
+            self._collect(tmp_path, monkeypatch)
+        assert "--keep-alive" in caplog.text
+
+    def test_quiet_when_keep_alive_is_on(self, tmp_path, monkeypatch, caplog):
+        from scripts.sidecar_pkg import keep_alive
+
+        monkeypatch.setattr(keep_alive, "_enabled", True)
+        with caplog.at_level("WARNING"):
+            self._collect(tmp_path, monkeypatch)
+        assert "--keep-alive" not in caplog.text
+
+
+def test_grok_scope_selection_is_shared_with_the_renewer():
+    from scripts.sidecar_pkg import xai_renewer
+
+    data = {
+        "https://auth.x.ai::a": {"key": "ka", "refresh_token": "ra"},
+        "https://auth.x.ai::b": {"key": "kb", "refresh_token": "rb", "email": "me@x.ai"},
+        "unrelated": {"key": "z"},
+    }
+    assert sidecar._grok_auth_scope_entry(data) is xai_renewer.grok_scope_entry(data)
+    assert sidecar._grok_auth_scope_entry(data)["key"] == "kb"
+    assert sidecar._grok_auth_scope_entry("nope") is None

@@ -235,6 +235,14 @@ export const setSidecarEnabled = (sidecarId: string, enabled: boolean) =>
     { method: 'POST' },
   );
 
+// Force a sidecar's keep-alive (agy / xAI login renewal) on or off; null defers to its own flag.
+// Delivered on its next check-in.
+export const setSidecarKeepAlive = (sidecarId: string, enabled: boolean | null) =>
+  api<{ status: string; keep_alive_desired: boolean | null }>(
+    `/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/keep-alive`,
+    { method: 'PUT', body: JSON.stringify({ enabled }) },
+  );
+
 // Push a one-shot self-update to a sidecar; it installs on its next heartbeat.
 export const triggerSidecarUpdate = (sidecarId: string) =>
   api<{ status: string; sidecar_id: string }>(

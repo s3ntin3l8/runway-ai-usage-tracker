@@ -1,4 +1,4 @@
-"""Optional keep-alive for the Antigravity (agy) login.
+"""Optional keep-alive for the Antigravity (agy) login (and, via ``renewers``, xAI).
 
 The agy access token lives one hour and only agy itself can renew it — the
 token file carries no OAuth client_id, so neither the sidecar nor the server
@@ -40,6 +40,10 @@ RETRY_TICK_SECONDS = 300
 LEAD_SECONDS = 0
 COMMAND_TIMEOUT_SECONDS = 120
 
+# The provider the built-in (agy) renewer keeps alive; other renewers carry their own `name`.
+# KEEP_ALIVE_PROVIDERS (app/services/refresh_policy.py) must equal the union (tested).
+AGY_PROVIDER = "antigravity"
+
 # Set by enable() when the daemon starts the thread; the sidecar's pre-expiry
 # warning stays quiet for operators who already opted in.
 _enabled = False
@@ -48,6 +52,11 @@ _enabled = False
 def enable() -> None:
     global _enabled
     _enabled = True
+
+
+def disable() -> None:
+    global _enabled
+    _enabled = False
 
 
 def is_enabled() -> bool:
@@ -149,8 +158,13 @@ class KeepAliveThread(threading.Thread):
         tick_seconds: float = TICK_SECONDS,
         retry_tick_seconds: float = RETRY_TICK_SECONDS,
         lead_seconds: int = LEAD_SECONDS,
+        renewers: list | None = None,
     ) -> None:
         super().__init__(name="AntigravityKeepAlive", daemon=True)
+        # Extra renewers (``name``, ``due()``, ``renew()``), e.g. XaiRenewer. Each
+        # backs off on its own, so one broken login never delays another.
+        self._renewers = list(renewers or [])
+        self._renewer_resume_at: dict[str, float] = {}
         self._token_path = token_path or DEFAULT_TOKEN_PATH
         self._command = command
         self._tick_seconds = tick_seconds
@@ -178,8 +192,24 @@ class KeepAliveThread(threading.Thread):
         self._command = [agy, "models"]
         return self._command
 
+    def _cycle_renewers(self) -> None:
+        now = time.monotonic()
+        for renewer in self._renewers:
+            if self._renewer_resume_at.get(renewer.name, 0.0) > now:
+                continue
+            try:
+                if renewer.due() and not renewer.renew():
+                    self._renewer_resume_at[renewer.name] = now + self._retry_tick_seconds
+            except Exception:
+                logger.warning("%s keep-alive tick failed", renewer.name, exc_info=True)
+                self._renewer_resume_at[renewer.name] = now + self._retry_tick_seconds
+
     def cycle_once(self) -> float:
-        """One tick; returns how long to wait before the next one.
+        self._cycle_renewers()
+        return self._cycle_agy()
+
+    def _cycle_agy(self) -> float:
+        """One agy tick; returns how long to wait before the next one.
 
         Not due → normal tick. Due → run the refresh, backing off after a
         failure (or when agy isn't installed) so a broken login isn't hammered —
@@ -208,3 +238,65 @@ class KeepAliveThread(threading.Thread):
                 wait = self._retry_tick_seconds
             if self._stop_event.wait(wait):
                 return
+
+
+class KeepAliveController:
+    """Starts and stops the keep-alive thread as its desired state changes.
+
+    The sidecar's own flag (``--keep-alive`` / config) is the *local* setting; the server
+    can override it per sidecar from the dashboard (``keep_alive_desired`` on every ingest
+    response). ``None`` from the server means "no preference" — the local flag decides.
+    The override is stateless: the server resends it every heartbeat, so nothing is
+    written to the sidecar's config and a restart picks it up again on the first check-in.
+    Inert until ``arm`` is called, so one-shot (non-daemon) runs never spawn a thread.
+    """
+
+    def __init__(self, make_thread) -> None:
+        self._make_thread = make_thread
+        self._lock = threading.Lock()
+        self._thread: KeepAliveThread | None = None
+        self._armed = False
+        self._local = False
+        self._remote: bool | None = None
+
+    @property
+    def effective(self) -> bool:
+        return self._remote if self._remote is not None else self._local
+
+    def arm(self, local: bool) -> None:
+        """Daemon start: take the local flag and begin controlling the thread."""
+        with self._lock:
+            self._armed = True
+            self._local = bool(local)
+            self._reconcile()
+
+    def set_remote(self, desired: bool | None) -> None:
+        """Apply the server's setting from an ingest response (no-op until armed)."""
+        with self._lock:
+            if not self._armed or desired == self._remote:
+                return
+            self._remote = desired if isinstance(desired, bool) else None
+            self._reconcile()
+
+    def stop(self) -> None:
+        with self._lock:
+            self._armed = False
+            self._stop_thread()
+
+    def _stop_thread(self) -> None:
+        if self._thread is not None:
+            self._thread.stop()
+            self._thread = None
+        disable()
+
+    def _reconcile(self) -> None:
+        if self.effective and self._thread is None:
+            self._thread = self._make_thread()
+            self._thread.start()
+            enable()
+            logger.info("Keep-alive enabled")
+        elif not self.effective and self._thread is not None:
+            self._stop_thread()
+            logger.info("Keep-alive disabled")
+        elif not self.effective:
+            disable()

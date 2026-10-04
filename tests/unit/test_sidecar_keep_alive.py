@@ -168,3 +168,104 @@ def test_run_refresh_success_is_logged_at_info(monkeypatch, caplog):
     assert any("renewed the agy login" in m for m in info)
     # stdout must never be echoed into the log
     assert not any("model list" in r.getMessage() for r in caplog.records)
+
+
+class _FakeThread:
+    def __init__(self):
+        self.started = 0
+        self.stopped = 0
+
+    def start(self):
+        self.started += 1
+
+    def stop(self):
+        self.stopped += 1
+
+
+class TestKeepAliveController:
+    def _controller(self, monkeypatch):
+        monkeypatch.setattr(keep_alive, "_enabled", False)
+        made: list[_FakeThread] = []
+
+        def make():
+            made.append(_FakeThread())
+            return made[-1]
+
+        return keep_alive.KeepAliveController(make), made
+
+    def test_inert_until_armed(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.set_remote(True)
+        assert made == [] and keep_alive.is_enabled() is False
+
+    def test_local_flag_starts_it(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(True)
+        assert len(made) == 1 and made[0].started == 1
+        assert keep_alive.is_enabled() is True and controller.effective is True
+
+    def test_local_off_starts_nothing(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        assert made == [] and keep_alive.is_enabled() is False
+
+    def test_remote_on_overrides_a_local_off(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        controller.set_remote(True)
+        assert len(made) == 1 and keep_alive.is_enabled() is True
+
+    def test_remote_off_overrides_a_local_on(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(True)
+        controller.set_remote(False)
+        assert made[0].stopped == 1 and keep_alive.is_enabled() is False
+
+    def test_remote_none_falls_back_to_the_local_flag(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(True)
+        controller.set_remote(False)
+        controller.set_remote(None)  # operator cleared the override
+        assert len(made) == 2 and made[1].started == 1
+        assert keep_alive.is_enabled() is True
+
+    def test_repeating_the_same_setting_is_a_noop(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        for _ in range(3):
+            controller.set_remote(True)
+        assert len(made) == 1 and made[0].started == 1
+
+    def test_garbage_from_the_server_counts_as_no_preference(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        controller.set_remote("yes")
+        assert made == [] and controller.effective is False
+
+    def test_stop_ends_the_thread_and_disarms(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(True)
+        controller.stop()
+        assert made[0].stopped == 1 and keep_alive.is_enabled() is False
+        controller.set_remote(True)  # disarmed: ignored
+        assert len(made) == 1
+
+
+def test_sidecar_applies_the_servers_setting_from_an_ingest_response(monkeypatch):
+    from scripts import sidecar
+
+    calls = []
+    monkeypatch.setattr(sidecar._KEEP_ALIVE, "set_remote", lambda v: calls.append(v))
+    runner = sidecar.DaemonRunner.__new__(sidecar.DaemonRunner)
+    runner._apply_ingest_instructions({"keep_alive_desired": True}, [], False, False, False)
+    runner._apply_ingest_instructions({"keep_alive_desired": None}, [], False, False, False)
+    runner._apply_ingest_instructions({}, [], False, False, False)  # absent: untouched
+    assert calls == [True, None]
+
+
+def test_sidecar_builds_its_keep_alive_thread_with_the_xai_renewer():
+    from scripts import sidecar
+    from scripts.sidecar_pkg.xai_renewer import XaiRenewer
+
+    thread = sidecar._make_keep_alive_thread()
+    assert [type(r) for r in thread._renewers] == [XaiRenewer]

@@ -115,6 +115,25 @@ describe('ProviderGrid', () => {
     expect(screen.getByText('Stale')).toBeInTheDocument();
   });
 
+  it('puts the failure reason in the Stale label tooltip', () => {
+    const items = buildRiskItems(
+      [
+        entry({
+          critical_gauge: card({
+            stale: true,
+            detail: '⚠ Collection failing (login expired) — 40% used',
+          }),
+        }),
+      ],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    expect(screen.getByText('Stale')).toHaveAttribute(
+      'title',
+      expect.stringContaining('login expired'),
+    );
+  });
+
   it('treats a scrubbed residual (flags + detail prefix) as stale for opacity and footer', () => {
     const items = buildRiskItems(
       [

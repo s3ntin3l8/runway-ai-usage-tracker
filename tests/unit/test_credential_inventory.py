@@ -832,3 +832,68 @@ async def test_sources_are_ordered_active_then_healthy_then_dead(engine, cache):
 
     assert [v.source_id for v in acct.sources][0] == "sidecar:active"
     assert [v.source_id for v in acct.sources][-1] == "sidecar:dead"
+
+
+async def _machine_login(session, cache, provider, host, *, keep_alive, tokens):
+    session.add(SidecarRegistry(sidecar_id=host, hostname=host, keep_alive=keep_alive))
+    session.commit()
+    _source(
+        session,
+        provider_id=provider,
+        account_id="default",
+        source_id=f"sidecar:{provider}",
+        sidecar_id=host,
+    )
+    await cache.store(provider, tokens, account_id="default", source_id=f"sidecar:{provider}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reported", "expected"), [(True, "on"), (False, "off"), (None, "unknown")]
+)
+async def test_machine_renewed_xai_login_shows_its_machines_keep_alive(
+    engine, cache, reported, expected
+):
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
+            "xai",
+            "host-a",
+            keep_alive=reported,
+            tokens={"xai_access": "a", "xai_refresh": "r"},
+        )
+    inv = await build_inventory()
+    (prov,) = [p for p in inv.providers if p.provider_id == "xai"]
+    (src,) = [s for a in prov.accounts for s in a.sources]
+    assert src.refreshed_by == "machine"
+    assert src.keep_alive == expected
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_is_not_applicable_to_other_providers(engine, cache):
+    with Session(engine) as s:
+        # anthropic is machine-renewed too, but its CLI has no sidecar keep-alive.
+        await _machine_login(
+            s,
+            cache,
+            "anthropic",
+            "host-a",
+            keep_alive=False,
+            tokens={"oauth_token": "a", "refresh_token": "r"},
+        )
+    inv = await build_inventory()
+    (prov,) = [p for p in inv.providers if p.provider_id == "anthropic"]
+    (src,) = [s for a in prov.accounts for s in a.sources]
+    assert src.refreshed_by == "machine"
+    assert src.keep_alive is None
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_is_not_applicable_without_a_refresh_token(engine, cache):
+    with Session(engine) as s:
+        await _machine_login(s, cache, "xai", "host-a", keep_alive=True, tokens={"xai_access": "a"})
+    inv = await build_inventory()
+    (prov,) = [p for p in inv.providers if p.provider_id == "xai"]
+    (src,) = [s for a in prov.accounts for s in a.sources]
+    assert src.keep_alive is None

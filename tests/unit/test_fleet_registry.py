@@ -338,3 +338,47 @@ class TestToDictUpdateAvailable:
         d = service.to_dict(row)
         assert d["stale"] is False
         assert d["update_available"] is True
+
+
+class TestKeepAliveReporting:
+    """Sidecars report whether --keep-alive is on; older ones report nothing (unknown, not off)."""
+
+    def test_persists_on_create_and_update(self, service, mock_session):
+        mock_session.get.return_value = None
+        service.upsert_sidecar("host-1", "10.0.0.1", mock_session, keep_alive=True)
+        assert mock_session.add.call_args[0][0].keep_alive is True
+
+        existing = SidecarRegistry(
+            sidecar_id="host-1",
+            last_seen=datetime(2026, 1, 1, tzinfo=UTC),
+            first_seen=datetime(2026, 1, 1, tzinfo=UTC),
+            keep_alive=True,
+        )
+        mock_session.get.return_value = existing
+        service.upsert_sidecar("host-1", "10.0.0.2", mock_session, keep_alive=False)
+        assert existing.keep_alive is False
+
+    def test_a_push_that_omits_it_keeps_the_last_report(self, service, mock_session):
+        # Event-only batches and legacy sidecars send None; that must not erase "on".
+        existing = SidecarRegistry(
+            sidecar_id="host-1",
+            last_seen=datetime(2026, 1, 1, tzinfo=UTC),
+            first_seen=datetime(2026, 1, 1, tzinfo=UTC),
+            keep_alive=True,
+        )
+        mock_session.get.return_value = existing
+        service.upsert_sidecar("host-1", "10.0.0.2", mock_session, keep_alive=None)
+        assert existing.keep_alive is True
+
+    def test_exposed_by_to_dict(self, service):
+        now = datetime.now(UTC)
+        for value in (True, False, None):
+            row = SidecarRegistry(sidecar_id="h", first_seen=now, last_seen=now, keep_alive=value)
+            assert service.to_dict(row)["keep_alive"] is value
+
+    def test_ingest_payload_accepts_it_and_defaults_to_unknown(self):
+        from app.models.schemas import IngestRequest
+
+        base = {"provider": "sidecar-x", "metrics": []}
+        assert IngestRequest(**base).keep_alive is None
+        assert IngestRequest(**base, keep_alive=True).keep_alive is True

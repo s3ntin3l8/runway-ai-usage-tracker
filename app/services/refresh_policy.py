@@ -9,10 +9,17 @@ from __future__ import annotations
 # Providers whose token endpoint rotates the refresh token: a refresh invalidates the
 # previous one. Refreshing a credential that a machine's own CLI also holds therefore
 # logs that CLI out, and the new token is never sent back to it. Google does not rotate
-# Gemini's, so server-side refresh is safe there. xAI is treated as rotating without
-# having been verified: wrongly blocking only pauses data until the CLI next runs,
-# while wrongly allowing logs the user out.
+# Gemini's, so server-side refresh is safe there. xAI does rotate: verified 2026-10-04
+# against auth.x.ai — every refresh returns a *new* refresh token (the previous one kept
+# working for at least a moment afterwards, so there is a reuse window, but the CLI's copy
+# is not the live one once anyone else refreshes). Refreshing without writing the result
+# back to the CLI's file would strand it, which is why only the sidecar keep-alive
+# (scripts/sidecar_pkg/xai_renewer.py, which writes back) renews a machine-owned xAI login.
 ROTATING_REFRESH_PROVIDERS = frozenset({"anthropic", "chatgpt", "xai"})
+
+# Providers whose sidecar can renew a machine-owned login itself (``--keep-alive``):
+# agy via ``agy models``, xAI by refreshing and writing the token back to the CLI's file.
+KEEP_ALIVE_PROVIDERS = frozenset({"xai", "antigravity"})
 
 _NON_MACHINE_SOURCES = (None, "server", "config", "manual_config")
 
