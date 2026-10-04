@@ -23,7 +23,7 @@ describe('GitHubLoginSection', () => {
     await userEvent.click(await screen.findByRole('button', { name: /connect via github/i }));
 
     expect(await screen.findByText('ABCD-1234')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /github.com\/login\/device/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'github.com/login/device' })).toHaveAttribute(
       'href',
       'https://github.com/login/device',
     );
