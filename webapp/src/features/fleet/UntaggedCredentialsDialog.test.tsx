@@ -373,6 +373,86 @@ describe('UntaggedCredentialsDialog', () => {
     ).toHaveAttribute('aria-checked', 'true');
   });
 
+  describe('scope is chosen per row', () => {
+    const two = [
+      { sidecar_id: 'laptop', provider_id: 'anthropic', credential_origin: 'path:/home/u/a.json' },
+      { sidecar_id: 'desktop', provider_id: 'anthropic', credential_origin: 'path:/home/u/b.json' },
+    ];
+
+    async function openTwoRows() {
+      vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+        items: two,
+        counts_by_sidecar: { laptop: 1, desktop: 1 },
+      });
+      vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
+      vi.mocked(api.tagCredential).mockResolvedValue({ status: 'ok' });
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+      const dialog = await screen.findByRole('dialog');
+      await within(dialog).findByText(/a\.json/);
+      return { user, dialog };
+    }
+
+    const scopeGroup = (dialog: HTMLElement, file: string) =>
+      within(dialog).getByRole('radiogroup', { name: new RegExp(file) });
+
+    it('choosing All machines on one row does not change another row', async () => {
+      const { user, dialog } = await openTwoRows();
+
+      await user.click(within(scopeGroup(dialog, 'a.json')).getByRole('radio', { name: /all machines/i }));
+
+      expect(
+        within(scopeGroup(dialog, 'a.json')).getByRole('radio', { name: /all machines/i }),
+      ).toHaveAttribute('aria-checked', 'true');
+      expect(
+        within(scopeGroup(dialog, 'b.json')).getByRole('radio', { name: /this machine/i }),
+      ).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('moving to another row drops the previous row\'s all-machines choice', async () => {
+      const { user, dialog } = await openTwoRows();
+
+      await user.click(within(scopeGroup(dialog, 'a.json')).getByRole('radio', { name: /all machines/i }));
+      await user.click(within(scopeGroup(dialog, 'b.json')).getByRole('radio', { name: /this machine/i }));
+      await user.click(within(scopeGroup(dialog, 'a.json')).getByRole('radio', { name: /this machine/i }));
+
+      expect(
+        within(scopeGroup(dialog, 'a.json')).getByRole('radio', { name: /this machine/i }),
+      ).toHaveAttribute('aria-checked', 'true');
+    });
+
+    it('warns that a broad rule on a plain path is not tied to the credential', async () => {
+      const { user, dialog } = await openTwoRows();
+      expect(within(dialog).queryByText(/isn't tied to the credential itself/i)).toBeNull();
+
+      await user.click(within(scopeGroup(dialog, 'a.json')).getByRole('radio', { name: /all machines/i }));
+
+      expect(within(dialog).getByText(/isn't tied to the credential itself/i)).toBeInTheDocument();
+    });
+
+    it('sends deployment only for the row that chose it, and resets afterwards', async () => {
+      const { user, dialog } = await openTwoRows();
+
+      await user.click(within(scopeGroup(dialog, 'a.json')).getByRole('radio', { name: /all machines/i }));
+      // Rows render in list order, so row A is the first.
+      await user.click(within(dialog).getAllByRole('combobox')[0]);
+      await user.click(await screen.findByText('Alice · alice@example.com'));
+      await user.click(within(dialog).getAllByRole('button', { name: /^tag$/i })[0]);
+
+      await waitFor(() =>
+        expect(api.tagCredential).toHaveBeenCalledWith(
+          expect.objectContaining({ credential_origin: 'path:/home/u/a.json', scope: 'deployment' }),
+        ),
+      );
+      // After a save the staged selection (account and scope) is cleared.
+      await waitFor(() =>
+        expect(
+          within(scopeGroup(dialog, 'b.json')).getByRole('radio', { name: /this machine/i }),
+        ).toHaveAttribute('aria-checked', 'true'),
+      );
+    });
+  });
+
   it('toasts an error and keeps the dialog open when the save fails', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [entry],
@@ -536,25 +616,26 @@ describe('stageToBody', () => {
     provider_id: 'anthropic',
     credential_origin: 'provider:anthropic',
     account_id: 'alice@example.com',
+    all_machines: false,
   };
 
   it('builds the body from the account staged for this row', async () => {
     const { stageToBody } = await import('./UntaggedCredentialsDialog');
-    expect(stageToBody(entry, staged, false)).toEqual({
+    expect(stageToBody(entry, staged)).toEqual({
       ...entry,
       account_id: 'alice@example.com',
       scope: 'sidecar',
     });
-    expect(stageToBody(entry, staged, true)?.scope).toBe('deployment');
+    expect(stageToBody(entry, { ...staged, all_machines: true })?.scope).toBe('deployment');
   });
 
   it('never stages an all-machines tag for a cookie or keychain origin', async () => {
     const { stageToBody, isMachineBoundOrigin } = await import('./UntaggedCredentialsDialog');
     for (const origin of ['cookie:anthropic/session', 'keychain:Claude Code-credentials']) {
       const e = { ...entry, credential_origin: origin };
-      const state = { ...staged, credential_origin: origin };
+      const state = { ...staged, credential_origin: origin, all_machines: true };
       expect(isMachineBoundOrigin(origin)).toBe(true);
-      expect(stageToBody(e, state, true)?.scope).toBe('sidecar');
+      expect(stageToBody(e, state)?.scope).toBe('sidecar');
     }
     expect(isMachineBoundOrigin('path:/shared/auth.json')).toBe(false);
   });
@@ -562,11 +643,11 @@ describe('stageToBody', () => {
   it("never saves another machine's staged pick onto this row", async () => {
     const { stageToBody } = await import('./UntaggedCredentialsDialog');
     const otherMachine = { ...entry, sidecar_id: 'desktop' };
-    expect(stageToBody(otherMachine, staged, false)).toBeNull();
+    expect(stageToBody(otherMachine, staged)).toBeNull();
   });
 
   it('returns null instead of guessing when nothing is staged', async () => {
     const { stageToBody } = await import('./UntaggedCredentialsDialog');
-    expect(stageToBody(entry, { ...staged, account_id: '' }, false)).toBeNull();
+    expect(stageToBody(entry, { ...staged, account_id: '' })).toBeNull();
   });
 });

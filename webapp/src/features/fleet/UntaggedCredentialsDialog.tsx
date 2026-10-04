@@ -72,6 +72,10 @@ interface DialogState {
   provider_id: string;
   credential_origin: string;
   account_id: string;
+  // Scope of the staged tag, per row: false = "This machine" (scope: 'sidecar', the
+  // server default); true = "All machines" (scope: 'deployment'). Staging a different
+  // row starts it back at "This machine", so one broad choice never carries over.
+  all_machines: boolean;
 }
 
 const INITIAL: DialogState = {
@@ -79,6 +83,7 @@ const INITIAL: DialogState = {
   provider_id: '',
   credential_origin: '',
   account_id: '',
+  all_machines: false,
 };
 
 export function UntaggedCredentialsDialog({
@@ -89,9 +94,6 @@ export function UntaggedCredentialsDialog({
   onClose,
 }: UntaggedCredentialsDialogProps) {
   const [state, setState] = useState<DialogState>(INITIAL);
-  // #319 scope: false = "This machine" (scope: 'sidecar', the server
-  // default); true = "All machines" (scope: 'deployment').
-  const [applyToAllMachines, setApplyToAllMachines] = useState(false);
 
   const untagged = useQuery({
     queryKey: ['fleet', 'untagged_credentials', sidecarId ?? 'all'],
@@ -108,13 +110,13 @@ export function UntaggedCredentialsDialog({
   // Reset the staged tag each time the dialog reopens or the row changes.
   useEffect(() => {
     if (!open) return;
-    setApplyToAllMachines(false);
     if (singleEntry) {
       setState({
         sidecar_id: singleEntry.sidecar_id,
         provider_id: singleEntry.provider_id,
         credential_origin: singleEntry.credential_origin,
         account_id: '',
+        all_machines: false,
       });
     } else {
       setState(INITIAL);
@@ -179,24 +181,25 @@ export function UntaggedCredentialsDialog({
     },
   });
 
-  const stage = (entry: UntaggedCredential, accountId: string) =>
-    setState({
-      sidecar_id: entry.sidecar_id,
-      provider_id: entry.provider_id,
-      credential_origin: entry.credential_origin,
-      account_id: accountId,
+  // Stage a change on one row. Switching to a different row drops the previous row's
+  // account and scope, so a pick or an "All machines" choice never lands on another row.
+  const stage = (
+    entry: UntaggedCredential,
+    patch: { accountId?: string; allMachines?: boolean },
+  ) =>
+    setState((prev) => {
+      const sameRow =
+        prev.sidecar_id === entry.sidecar_id &&
+        prev.provider_id === entry.provider_id &&
+        prev.credential_origin === entry.credential_origin;
+      return {
+        sidecar_id: entry.sidecar_id,
+        provider_id: entry.provider_id,
+        credential_origin: entry.credential_origin,
+        account_id: patch.accountId ?? (sameRow ? prev.account_id : ''),
+        all_machines: patch.allMachines ?? (sameRow ? prev.all_machines : false),
+      };
     });
-
-  // Browser cookies and keychain entries belong to one machine, so an "All machines" tag
-  // would follow an account switch on a host it was never made for (the server refuses it).
-  const machineBound = visibleEntries.some((e) => isMachineBoundOrigin(e.credential_origin));
-  const allMachines = applyToAllMachines && !machineBound;
-  // Don't let a stale "All machines" choice silently come back once the machine-bound
-  // entry that disabled it has been tagged and left the list.
-  useEffect(() => {
-    if (machineBound && applyToAllMachines) setApplyToAllMachines(false);
-  }, [machineBound, applyToAllMachines]);
-  const scopeLabel = allMachines ? 'All machines' : 'This machine';
 
   return (
     <ResponsiveDialog
@@ -220,55 +223,6 @@ export function UntaggedCredentialsDialog({
         </p>
       ) : (
         <div className="flex flex-col gap-3">
-          {/* #319 scope toggle — dialog-level; stageToBody reads the
-              current switch when the Tag button is clicked. */}
-          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2">
-            <div className="min-w-0">
-              <p className="text-[12px] font-medium">Scope</p>
-              <p className="text-[11px] text-fg-subtle">
-                {machineBound
-                  ? 'Browser and keychain credentials belong to one machine, so the tag applies only to the sidecar that reported it.'
-                  : allMachines
-                    ? 'Applies to every sidecar that reports this credential.'
-                    : 'Applies only to the sidecar that reported it.'}
-              </p>
-            </div>
-            <div
-              className="flex shrink-0 rounded-md border border-border bg-surface-1 p-0.5"
-              role="radiogroup"
-              aria-label="Tag scope"
-            >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={!allMachines}
-                className={`rounded px-2 py-1 text-[11px] font-medium transition-colors ${
-                  !allMachines
-                    ? 'bg-accent text-fg-inverse'
-                    : 'text-fg-muted hover:text-fg'
-                }`}
-                onClick={() => setApplyToAllMachines(false)}
-              >
-                This machine
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={allMachines}
-                disabled={machineBound}
-                title={machineBound ? 'Not available for browser or keychain credentials' : undefined}
-                className={`rounded px-2 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  allMachines
-                    ? 'bg-accent text-fg-inverse'
-                    : 'text-fg-muted hover:text-fg'
-                }`}
-                onClick={() => setApplyToAllMachines(true)}
-              >
-                All machines
-              </button>
-            </div>
-          </div>
-
           {visibleEntries.map((entry) => (
             <UntaggedRow
               key={`${entry.sidecar_id}/${entry.provider_id}/${entry.credential_origin}`}
@@ -276,10 +230,10 @@ export function UntaggedCredentialsDialog({
               machineName={machineNames.get(entry.sidecar_id)}
               accounts={accountsByProvider[entry.provider_id] ?? []}
               currentSelection={state}
-              scopeLabel={scopeLabel}
-              onSelect={(accountId) => stage(entry, accountId)}
+              onSelect={(accountId) => stage(entry, { accountId })}
+              onScope={(allMachines) => stage(entry, { allMachines })}
               onSave={() => {
-                const body = stageToBody(entry, state, allMachines);
+                const body = stageToBody(entry, state);
                 if (body) save.mutate(body);
               }}
               saving={save.isPending}
@@ -308,7 +262,6 @@ export function isMachineBoundOrigin(origin: string): boolean {
 export function stageToBody(
   entry: UntaggedCredential,
   state: DialogState,
-  applyToAllMachines: boolean,
 ): CredentialTagRequest | null {
   // Guard per entry as well as at the dialog level: this is exported and the request must
   // never carry an all-machines scope for a cookie or keychain origin, whoever calls it.
@@ -317,8 +270,8 @@ export function stageToBody(
   // staged *for this row* (same sidecar + provider + origin) — otherwise a
   // pick on machine A's row could be saved onto machine B's row for the
   // same origin. No fallback to "the first account": that could silently
-  // tag a disabled or unintended account. ``scope`` (#319) is the
-  // dialog-level switch's value at click time.
+  // tag a disabled or unintended account. ``scope`` (#319) is this row's
+  // own switch, staged with the account.
   const stagedForEntry =
     state.sidecar_id === entry.sidecar_id &&
     state.provider_id === entry.provider_id &&
@@ -329,7 +282,7 @@ export function stageToBody(
     provider_id: entry.provider_id,
     credential_origin: entry.credential_origin,
     account_id: state.account_id,
-    scope: applyToAllMachines && !isMachineBoundOrigin(entry.credential_origin) ? 'deployment' : 'sidecar',
+    scope: state.all_machines && !isMachineBoundOrigin(entry.credential_origin) ? 'deployment' : 'sidecar',
   };
 }
 
@@ -339,8 +292,8 @@ interface UntaggedRowProps {
   machineName?: string;
   accounts: ProviderAccount[];
   currentSelection: DialogState;
-  scopeLabel: string;
   onSelect: (accountId: string) => void;
+  onScope: (allMachines: boolean) => void;
   onSave: () => void;
   saving: boolean;
 }
@@ -350,8 +303,8 @@ function UntaggedRow({
   machineName,
   accounts,
   currentSelection,
-  scopeLabel,
   onSelect,
+  onScope,
   onSave,
   saving,
 }: UntaggedRowProps) {
@@ -364,6 +317,12 @@ function UntaggedRow({
     currentSelection.sidecar_id === entry.sidecar_id;
 
   const selectedAccountId = isActive ? currentSelection.account_id : '';
+  // Browser cookies and keychain entries belong to one machine, so an "All machines" tag
+  // would follow an account switch on a host it was never made for (the server refuses it).
+  const machineBound = isMachineBoundOrigin(entry.credential_origin);
+  const allMachines = isActive && currentSelection.all_machines && !machineBound;
+  // A key-scoped origin carries a `#fingerprint`; a plain path/env origin is shared as-is.
+  const isShared = allMachines && !entry.credential_origin.includes('#');
 
   // Filter out disabled accounts — tagging to a disabled row stores
   // a hint the server won't collect (the sidecar's
@@ -382,9 +341,7 @@ function UntaggedRow({
           </p>
           <p className="truncate text-[11px] text-fg-subtle">
             from <span className="font-mono">{machineName ?? entry.sidecar_id}</span>
-            {scopeLabel === 'All machines' && (
-              <span className="text-accent"> · applies to all machines</span>
-            )}
+            {allMachines && <span className="text-accent"> · applies to all machines</span>}
           </p>
           {entry.claimed_account_id && (
             <p className="text-[11px] text-fg-subtle">
@@ -488,6 +445,56 @@ function UntaggedRow({
           </Button>
         </div>
       )}
+
+      {enabledAccounts.length > 0 ? (
+        <div className="mt-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[11px] text-fg-subtle">
+              {machineBound
+                ? 'Browser and keychain credentials belong to one machine, so the tag applies only to the sidecar that reported it.'
+                : allMachines
+                  ? 'Applies to every sidecar that reports this credential.'
+                  : 'Applies only to the sidecar that reported it.'}
+            </p>
+            <div
+              className="flex shrink-0 rounded-md border border-border bg-surface-1 p-0.5"
+              role="radiogroup"
+              aria-label={`Tag scope for ${entry.credential_origin} on ${machineName ?? entry.sidecar_id}`}
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!allMachines}
+                className={`rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                  !allMachines ? 'bg-accent text-fg-inverse' : 'text-fg-muted hover:text-fg'
+                }`}
+                onClick={() => onScope(false)}
+              >
+                This machine
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={allMachines}
+                disabled={machineBound}
+                title={machineBound ? 'Not available for browser or keychain credentials' : undefined}
+                className={`rounded px-2 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  allMachines ? 'bg-accent text-fg-inverse' : 'text-fg-muted hover:text-fg'
+                }`}
+                onClick={() => onScope(true)}
+              >
+                All machines
+              </button>
+            </div>
+          </div>
+          {isShared ? (
+            <p className="mt-1 text-[11px] text-warning">
+              This rule would apply on every machine and isn&apos;t tied to the credential itself —
+              if the account behind it changes, data keeps landing on the old one.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </Card>
   );
 }
