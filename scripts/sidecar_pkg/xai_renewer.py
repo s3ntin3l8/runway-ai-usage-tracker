@@ -70,21 +70,34 @@ class Login:
     expires_ms: float | None  # the file's own expiry field, when it has one
 
 
-def _grok_entry(data: Any) -> dict[str, Any] | None:
-    # Same scope selection as ``_grok_auth_scope_entry`` in scripts/sidecar.py,
-    # restricted to entries that can actually be renewed.
+def grok_scope_entry(data: Any) -> dict[str, Any] | None:
+    """Select the Grok OAuth scope entry — the one source of truth for the sidecar's
+    credential card, its usage events *and* this renewer, so we renew the token that
+    is actually pushed."""
     if not isinstance(data, dict):
         return None
-    for key, value in data.items():
-        if (
-            isinstance(key, str)
-            and (key.startswith("https://auth.x.ai::") or key == "https://accounts.x.ai/sign-in")
-            and isinstance(value, dict)
-            and value.get("key")
-            and value.get("refresh_token")
-        ):
-            return value
-    return None
+    entries = [
+        value
+        for key, value in data.items()
+        if isinstance(key, str)
+        and (key.startswith("https://auth.x.ai::") or key == "https://accounts.x.ai/sign-in")
+        and isinstance(value, dict)
+    ]
+    usable_entries = [entry for entry in entries if entry.get("key")]
+    if usable_entries:
+        entries = usable_entries
+    # Prefer email across scopes, then user ID, so the credential card and
+    # usage events agree even if auth.json contains multiple OAuth clients.
+    return (
+        next((entry for entry in entries if entry.get("email")), None)
+        or next((entry for entry in entries if entry.get("user_id")), None)
+        or (entries[0] if entries else None)
+    )
+
+
+def _grok_entry(data: Any) -> dict[str, Any] | None:
+    entry = grok_scope_entry(data)
+    return entry if entry and entry.get("key") and entry.get("refresh_token") else None
 
 
 def read_login(path: Path, kind: str) -> Login | None:
@@ -159,7 +172,8 @@ def request_refresh(refresh_token: str) -> dict[str, Any]:
             code = str(json.loads(exc.read()).get("error") or "")[:60]
         except (ValueError, AttributeError, OSError):
             pass
-        if 400 <= exc.code < 500:
+        # 408/429 are transient (retry later), not a dead refresh token.
+        if exc.code in (400, 401, 403):
             raise RefreshRejectedError(f"HTTP {exc.code} {code}".strip()) from None
         raise OSError(f"HTTP {exc.code}") from None
     except ValueError as exc:
@@ -169,8 +183,9 @@ def request_refresh(refresh_token: str) -> dict[str, Any]:
     return data
 
 
-def write_back(login: Login, token_response: dict[str, Any]) -> bool:
-    """Write the renewed tokens into the file; False when the file moved on meanwhile.
+def write_back(login: Login, token_response: dict[str, Any]) -> str:
+    """Write the renewed tokens into the file: ``"written"``, ``"superseded"`` (the file
+    moved on meanwhile — nothing to do) or ``"failed"`` (could not read/write it).
 
     The file is re-read first: if its refresh token is no longer the one we
     exchanged, the CLI renewed concurrently and our result is stale — drop it.
@@ -180,7 +195,7 @@ def write_back(login: Login, token_response: dict[str, Any]) -> bool:
         data = json.loads(login.path.read_text(encoding="utf-8"))
         mode = login.path.stat().st_mode & 0o777
     except (OSError, ValueError):
-        return False
+        return "failed"
     if login.kind == "opencode":
         entry = data.get("xai") if isinstance(data, dict) else None
         current = entry.get("refresh") if isinstance(entry, dict) else None
@@ -188,7 +203,7 @@ def write_back(login: Login, token_response: dict[str, Any]) -> bool:
         entry = _grok_entry(data)
         current = entry.get("refresh_token") if entry else None
     if entry is None or current != login.refresh:
-        return False
+        return "superseded"
 
     new_access = str(token_response["access_token"])
     new_refresh = str(token_response.get("refresh_token") or login.refresh)
@@ -204,19 +219,21 @@ def write_back(login: Login, token_response: dict[str, Any]) -> bool:
         entry["key"] = new_access
         entry["refresh_token"] = new_refresh
 
-    fd, tmp = tempfile.mkstemp(dir=login.path.parent, prefix=".auth-", suffix=".tmp")
+    # Replace the real file, not a dotfile-manager symlink pointing at it.
+    target = Path(os.path.realpath(login.path))
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".auth-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         os.chmod(tmp, mode)
-        os.replace(tmp, login.path)
+        os.replace(tmp, target)
     except OSError:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        return False
-    return True
+        return "failed"
+    return "written"
 
 
 class XaiRenewer:
@@ -226,7 +243,7 @@ class XaiRenewer:
 
     def __init__(self, paths: list[tuple[Path, str]] | None = None) -> None:
         self._paths = paths
-        self._logged_out: set[Path] = set()
+        self._rejected: dict[Path, str] = {}  # path -> refresh token the endpoint refused
 
     def _targets(self) -> list[tuple[Path, str]]:
         if self._paths is not None:
@@ -236,9 +253,10 @@ class XaiRenewer:
     def _due_logins(self) -> list[Login]:
         logins = []
         for path, kind in self._targets():
-            if path in self._logged_out:
-                continue
             login = read_login(path, kind)
+            # A re-login (new refresh token) lifts the block; the same dead one stays blocked.
+            if login is not None and self._rejected.get(path) == login.refresh:
+                continue
             if login is not None and login_due(login):
                 logins.append(login)
         return logins
@@ -256,7 +274,7 @@ class XaiRenewer:
                 response = request_refresh(login.refresh)
             except RefreshRejectedError as exc:
                 # Logged out / revoked lineage: stop prodding it until the sidecar restarts.
-                self._logged_out.add(login.path)
+                self._rejected[login.path] = login.refresh
                 logger.warning(
                     "xAI keep-alive: refresh rejected for %s (%s) — log in again with the CLI",
                     login.path,
@@ -268,8 +286,16 @@ class XaiRenewer:
                 logger.warning("xAI keep-alive: refresh failed for %s: %s", login.path, exc)
                 ok = False
                 continue
-            if write_back(login, response):
+            outcome = write_back(login, response)
+            if outcome == "written":
                 logger.info("xAI keep-alive renewed the %s login in %s", login.kind, login.path)
-            else:
+            elif outcome == "superseded":
                 logger.info("xAI keep-alive: %s changed while renewing; left as is", login.path)
+            else:
+                # The refresh succeeded but could not be saved; if xAI rotated the refresh
+                # token the CLI's copy may now be dead. Back off rather than burn another.
+                logger.warning(
+                    "xAI keep-alive: could not write the renewed login to %s", login.path
+                )
+                ok = False
         return ran and ok

@@ -3671,25 +3671,9 @@ def _discover_opencode_db_path() -> Path | None:
 
 def _grok_auth_scope_entry(data: Any) -> dict[str, Any] | None:
     """Select the Grok OAuth scope entry used by both cards and events."""
-    if not isinstance(data, dict):
-        return None
-    entries = [
-        value
-        for key, value in data.items()
-        if isinstance(key, str)
-        and (key.startswith("https://auth.x.ai::") or key == "https://accounts.x.ai/sign-in")
-        and isinstance(value, dict)
-    ]
-    usable_entries = [entry for entry in entries if entry.get("key")]
-    if usable_entries:
-        entries = usable_entries
-    # Prefer email across scopes, then user ID, so the credential card and
-    # usage events agree even if auth.json contains multiple OAuth clients.
-    return (
-        next((entry for entry in entries if entry.get("email")), None)
-        or next((entry for entry in entries if entry.get("user_id")), None)
-        or (entries[0] if entries else None)
-    )
+    from scripts.sidecar_pkg.xai_renewer import grok_scope_entry
+
+    return grok_scope_entry(data)
 
 
 def _grok_account_identity(data: Any | None = None) -> str | None:

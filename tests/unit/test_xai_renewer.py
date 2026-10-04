@@ -197,3 +197,65 @@ class TestThreadIntegration:
 def test_grok_home_override(monkeypatch, tmp_path, env):
     monkeypatch.setenv("GROK_HOME", str(tmp_path))
     assert xai_renewer._grok_path() == Path(os.environ["GROK_HOME"]) / "auth.json"
+
+
+class TestReviewFixes:
+    def test_rate_limit_is_transient_not_a_logout(self, tmp_path, monkeypatch):
+        import urllib.error
+
+        f = _opencode(tmp_path / "a.json", time.time() - 10)
+
+        def boom(*a, **k):
+            raise urllib.error.HTTPError("u", 429, "slow down", {}, None)
+
+        monkeypatch.setattr(xai_renewer.urllib.request, "urlopen", boom)
+        renewer = XaiRenewer([(f, "opencode")])
+        assert renewer.renew() is False
+        assert renewer.due() is True  # not blocked
+
+    def test_relogin_lifts_a_rejection(self, tmp_path, monkeypatch):
+        f = _opencode(tmp_path / "a.json", time.time() - 10, refresh="dead")
+        _respond(monkeypatch, error=xai_renewer.RefreshRejectedError("HTTP 400 invalid_grant"))
+        renewer = XaiRenewer([(f, "opencode")])
+        renewer.renew()
+        assert renewer.due() is False
+        _opencode(f, time.time() - 10, refresh="fresh-login")
+        assert renewer.due() is True
+
+    def test_grok_uses_the_scope_the_sidecar_pushes(self, tmp_path, monkeypatch):
+        f = tmp_path / "auth.json"
+        f.write_text(
+            json.dumps(
+                {
+                    "https://auth.x.ai::a": {"key": _jwt(1), "refresh_token": "ra"},
+                    "https://auth.x.ai::b": {
+                        "key": _jwt(1),
+                        "refresh_token": "rb",
+                        "email": "me@x.ai",
+                    },
+                }
+            )
+        )
+        calls = _respond(monkeypatch, {"access_token": _jwt(time.time() + 3600)})
+        XaiRenewer([(f, "grok")]).renew()
+        assert calls == ["rb"]
+        data = json.loads(f.read_text())
+        assert data["https://auth.x.ai::a"]["refresh_token"] == "ra"
+
+    def test_failed_write_warns_and_backs_off(self, tmp_path, monkeypatch, caplog):
+        f = _opencode(tmp_path / "a.json", time.time() - 10)
+        _respond(monkeypatch, {"access_token": _jwt(time.time() + 3600), "refresh_token": "n"})
+        monkeypatch.setattr(xai_renewer.os, "replace", lambda *a: (_ for _ in ()).throw(OSError()))
+        with caplog.at_level(logging.WARNING):
+            assert XaiRenewer([(f, "opencode")]).renew() is False
+        assert "could not write" in caplog.text
+        assert not [p for p in tmp_path.iterdir() if p.name.startswith(".auth-")]
+
+    def test_symlinked_auth_file_stays_a_symlink(self, tmp_path, monkeypatch):
+        real = _opencode(tmp_path / "real.json", time.time() - 10)
+        link = tmp_path / "auth.json"
+        link.symlink_to(real)
+        _respond(monkeypatch, {"access_token": _jwt(time.time() + 3600), "refresh_token": "n"})
+        XaiRenewer([(link, "opencode")]).renew()
+        assert link.is_symlink()
+        assert json.loads(real.read_text())["xai"]["refresh"] == "n"
