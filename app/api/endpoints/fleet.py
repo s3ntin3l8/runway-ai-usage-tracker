@@ -1404,9 +1404,14 @@ async def list_credential_tags(
     Once an origin is tagged it never shows up as pending again, so this
     is the only way for the operator to see — and correct — an existing
     mapping. ``sidecar_id`` is ``None`` for deployment-wide ("All
-    machines") tags.
+    machines") tags. ``last_matched_at`` / ``stale`` say whether a machine still reports a
+    credential this rule resolves.
     """
     from app.services.credential_sources import describe_origin_full
+    from app.services.maintenance.stale_credential_rules import find_stale_rules, rule_usage
+
+    usage = rule_usage(session)
+    stale_ids = {rule.row_id for rule in find_stale_rules(session, usage=usage)}
 
     return {
         "items": [
@@ -1421,6 +1426,12 @@ async def list_credential_tags(
                 "set_by": t.set_by,
                 "target_provider_id": t.target_provider_id,
                 "set_at": t.set_at.isoformat() if t.set_at else None,
+                # Freshest machine-reported source this rule resolved (None = never), and
+                # whether the stale_credential_rules check would list it.
+                "last_matched_at": (
+                    usage[t.id].isoformat() if t.id is not None and t.id in usage else None
+                ),
+                "stale": t.id in stale_ids,
             }
             for t in CredentialTagRepo.list_all(session)
         ]

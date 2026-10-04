@@ -2523,6 +2523,53 @@ def test_listed_credential_tags_describe_their_origin(client: TestClient, sessio
     )
 
 
+def test_listed_credential_tags_report_whether_a_machine_still_matches_them(
+    client: TestClient, session: Session
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.db import CredentialSource, SidecarRegistry
+    from app.services.credential_tags import CredentialTagRepo
+
+    origin_used = "path:/home/u/.config/gh/hosts.yml"
+    origin_gone = "path:/home/u/gone.json"
+    session.add(SidecarRegistry(sidecar_id="alpha", last_seen=datetime.now(UTC)))
+    for origin in (origin_used, origin_gone):
+        CredentialTagRepo.set_tag(
+            session,
+            provider_id="github",
+            credential_origin=origin,
+            account_id="me",
+            sidecar_id="alpha",
+        )
+    session.commit()
+    for tag in CredentialTagRepo.list_all(session):
+        tag.set_at = datetime.now(UTC) - timedelta(days=30)
+        session.add(tag)
+    session.add(
+        CredentialSource(
+            provider_id="github",
+            account_id="me",
+            source_id="sidecar:alpha:hosts",
+            source_type="sidecar",
+            source_label="hosts.yml",
+            credential_origin=origin_used,
+            sidecar_id="alpha",
+        )
+    )
+    session.commit()
+
+    items = {
+        i["credential_origin"]: i
+        for i in client.get("/api/v1/fleet/credentials/tags").json()["items"]
+    }
+
+    assert items[origin_used]["stale"] is False
+    assert items[origin_used]["last_matched_at"] is not None
+    assert items[origin_gone]["stale"] is True
+    assert items[origin_gone]["last_matched_at"] is None
+
+
 def test_list_and_delete_credential_tags(client: TestClient, session: Session) -> None:
     from app.services.credential_tags import CredentialTagRepo
 

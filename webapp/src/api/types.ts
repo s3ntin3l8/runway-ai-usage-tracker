@@ -600,6 +600,10 @@ export interface CredentialTag {
   origin_label?: string;
   origin_app?: string | null;
   origin_path?: string | null;
+  /** Freshest machine-reported credential this rule resolved; null = never. */
+  last_matched_at?: string | null;
+  /** True when the `stale_credential_rules` check would list this rule. */
+  stale?: boolean;
 }
 
 export interface CredentialTagList {
