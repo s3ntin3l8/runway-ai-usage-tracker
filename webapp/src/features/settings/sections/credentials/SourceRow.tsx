@@ -104,9 +104,8 @@ export function SourceRow({
   const rowName = `${title} on ${where}${who ? ` (${who})` : ''}`;
   // A copied login only matters while another machine can still renew it: an offline peer
   // can't sign anyone out, and an offline machine's own row has bigger problems.
-  const livePeers = (source.shared_with ?? []).filter(
-    (name) => !(source.shared_with_stale ?? []).includes(name),
-  );
+  const offlinePeers = new Set(source.shared_with_stale);
+  const livePeers = (source.shared_with ?? []).filter((name) => !offlinePeers.has(name));
   const sharedLogin = source.rollable && !source.machine_stale && livePeers.length > 0;
   const detail = [
     source.origin_path,

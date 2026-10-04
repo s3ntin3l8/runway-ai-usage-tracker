@@ -161,8 +161,8 @@ export function diagnosticsText(providerName: string, account: CredentialAccount
     if (s.is_active) parts.push('active');
     if (!s.enabled) parts.push('disabled');
     if (s.shared_with?.length) {
-      const offline = s.shared_with_stale ?? [];
-      const peers = s.shared_with.map((n) => (offline.includes(n) ? `${n} (offline)` : n));
+      const offline = new Set(s.shared_with_stale);
+      const peers = s.shared_with.map((n) => (offline.has(n) ? `${n} (offline)` : n));
       parts.push(`same secret on ${peers.join(', ')}`);
     }
     if (s.last_error) parts.push(`last error: ${s.last_error}`);
