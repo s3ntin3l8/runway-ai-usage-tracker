@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func
@@ -43,12 +43,14 @@ from app.models.schemas import (
 from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
 from app.services.credential_sources import (
-    describe_origin,
+    describe_origin_full,
     effective_health,
     is_server_source_id,
+    login_hint,
     server_source_id,
 )
 from app.services.credential_tags import origin_candidates, pick_effective_tag
+from app.services.fleet_registry import STALE_THRESHOLD_MINUTES
 from app.services.token_cache import token_cache
 from app.services.token_health import (
     credential_status,
@@ -306,6 +308,15 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         pending_usage = len(session.exec(select(PendingUsageEvent)).all())
         data_path = _data_path(session)
 
+    stale_cutoff = datetime.now(UTC) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
+
+    def is_stale(sidecar_id: str | None) -> bool:
+        """Same rule as Fleet's ``stale``: no check-in within the stale threshold."""
+        sc = machines.get(sidecar_id) if sidecar_id else None
+        if sc is None or sc.last_seen is None:
+            return sc is not None
+        return sc.last_seen.replace(tzinfo=UTC) < stale_cutoff
+
     def machine_name(sidecar_id: str | None) -> str | None:
         if not sidecar_id:
             return None
@@ -384,7 +395,8 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         # pasted key on the ``default`` account is that deployment's real account.
         identity_pending = machine_sourced and row.account_id in ("default", row.source_id)
         mapping, scope = _mapping(row, _resolve_tag(tags, row), identity_pending)
-        origin_type, label = describe_origin(row.credential_origin)
+        described = describe_origin_full(row.credential_origin)
+        origin_type, label = described.kind, described.label
         if not machine_sourced:
             origin_type, label = row.source_type, row.source_label
         # Rejected = this source's last collection failed auth, or an in-memory rejection flag
@@ -425,8 +437,12 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 ),
                 origin_type=origin_type,
                 label=label,
+                origin_app=described.app if machine_sourced else None,
+                origin_path=described.path if machine_sourced else None,
+                login_hint=login_hint(described.app) if machine_sourced else None,
                 machine_id=row.sidecar_id,
                 machine_name=machine_name(row.sidecar_id),
+                machine_stale=machine_sourced and is_stale(row.sidecar_id),
                 mapping=mapping,
                 mapping_scope=scope,
                 fingerprinted="#" in (row.credential_origin or ""),
@@ -519,6 +535,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         active = max(succeeded, key=lambda v: v.last_success_at or "") if succeeded else None
         if active is not None:
             active.is_active = True
+        # Active first, then healthy ones, then dead ones; newest report first within a tier.
+        views.sort(key=lambda v: v.last_seen or "", reverse=True)
+        views.sort(key=lambda v: (not v.is_active, _STATUS_RANK.get(v.status, 2)))
         enabled = [v for v in views if v.enabled] or views
         best = min(enabled, key=lambda v: _STATUS_RANK.get(v.status, 2)).status
         data_source, input_source = data_path.get((provider_id, account_id), (None, None))
@@ -555,6 +574,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             last_seen=_iso(machines[sidecar_id].last_seen) if sidecar_id in machines else None,
             credential_count=counts.get(sidecar_id, 0),
             unmapped_count=pending_by_sidecar.get(sidecar_id, 0),
+            stale=is_stale(sidecar_id),
         )
         for sidecar_id in sorted(set(machines) | set(counts) | set(pending_by_sidecar))
     ]

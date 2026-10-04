@@ -93,7 +93,9 @@ export function CredentialsSection() {
           <NeedsMappingView pendingUsageEvents={data.pending_usage_events} />
         </TabsContent>
         <TabsContent value="rules">
-          <RulesView />
+          <RulesView
+            providerNames={Object.fromEntries(data.providers.map((p) => [p.provider_id, p.name]))}
+          />
         </TabsContent>
       </Tabs>
     </div>

@@ -1400,11 +1400,16 @@ async def list_credential_tags(
     mapping. ``sidecar_id`` is ``None`` for deployment-wide ("All
     machines") tags.
     """
+    from app.services.credential_sources import describe_origin_full
+
     return {
         "items": [
             {
                 "provider_id": t.provider_id,
                 "credential_origin": t.credential_origin,
+                "origin_label": (origin := describe_origin_full(t.credential_origin)).label,
+                "origin_app": origin.app,
+                "origin_path": origin.path,
                 "account_id": t.account_id,
                 "sidecar_id": t.sidecar_id,
                 "set_by": t.set_by,

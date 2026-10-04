@@ -31,21 +31,19 @@ describe('SourceRow', () => {
     expect(screen.getByText('oauth_creds.json')).toBeInTheDocument();
     expect(screen.getByText(/Workstation/)).toBeInTheDocument();
     expect(screen.getByText('Valid')).toBeInTheDocument();
-    expect(screen.getByText('Assigned by you')).toBeInTheDocument();
-    expect(screen.getByText('oauth_token')).toBeInTheDocument();
+    expect(screen.getByText(/OAuth · Assigned by you/)).toBeInTheDocument();
     expect(screen.getByText('in 3d')).toBeInTheDocument();
   });
 
   it('says a never-attempted credential has not been tried instead of implying it works', () => {
     renderRow({ source: source({ health: 'untried', last_success_at: null }) });
     expect(screen.getByText('not yet tried')).toBeInTheDocument();
-    expect(screen.queryByText(/collected/)).not.toBeInTheDocument();
   });
 
   it('marks the source behind the account data as active', () => {
     renderRow({ source: source({ is_active: true, last_success_at: new Date().toISOString() }) });
     expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByText(/collected just now/)).toBeInTheDocument();
+    expect(screen.getByText('just now')).toBeInTheDocument();
   });
 
   it('reports a stale source by when it was last reported, not its stored expiry', () => {
@@ -65,6 +63,47 @@ describe('SourceRow', () => {
     renderRow({ source: source({ status: 'invalid', last_error: 'Authentication failed' }) });
     expect(screen.getByText('Rejected')).toBeInTheDocument();
     expect(screen.getByText(/Last attempt: Authentication failed/)).toBeInTheDocument();
+  });
+
+  it('names the app that owns the file, not just the file name', () => {
+    renderRow({
+      source: source({
+        label: 'auth.json',
+        origin_app: 'Codex CLI',
+        origin_path: '~/.codex/auth.json',
+      }),
+    });
+    expect(screen.getByText('Codex CLI · auth.json')).toBeInTheDocument();
+  });
+
+  it('tells you how to re-authenticate a dead login on a live machine', () => {
+    renderRow({
+      source: source({
+        status: 'expired',
+        machine_name: 'mgmt',
+        login_hint: 'run `codex login`',
+        last_error: 'Authentication failed',
+      }),
+    });
+    expect(screen.getByText('To fix: run `codex login` on mgmt.')).toBeInTheDocument();
+  });
+
+  it('suggests removal instead of re-login when the machine is offline', () => {
+    renderRow({
+      source: source({
+        status: 'expired',
+        machine_stale: true,
+        login_hint: 'run `codex login`',
+      }),
+    });
+    expect(screen.getByText('offline')).toBeInTheDocument();
+    expect(screen.getByText(/remove this credential if the machine is retired/)).toBeInTheDocument();
+    expect(screen.queryByText(/To fix/)).not.toBeInTheDocument();
+  });
+
+  it('does not nag about re-login for a healthy credential', () => {
+    renderRow({ source: source({ login_hint: 'run `codex login`' }) });
+    expect(screen.queryByText(/To fix/)).not.toBeInTheDocument();
   });
 
   it('warns when an all-machines rule covers an origin with no fingerprint', () => {
@@ -91,8 +130,8 @@ describe('SourceRow', () => {
       }),
     });
     expect(screen.getByText('GITHUB_TOKEN')).toBeInTheDocument();
-    expect(screen.getByText('· Server')).toBeInTheDocument();
-    expect(screen.getByText('Server environment')).toBeInTheDocument();
+    expect(screen.getByText('Server')).toBeInTheDocument();
+    expect(screen.getByText(/Server environment/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /refresh/i })).not.toBeInTheDocument();
   });

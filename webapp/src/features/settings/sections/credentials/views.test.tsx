@@ -35,16 +35,42 @@ describe('ByProviderView', () => {
     expect(screen.getByText('Work')).toBeInTheDocument();
     expect(screen.getByText('3 credentials')).toBeInTheDocument();
     const list = screen.getByRole('list', { name: /Work credentials/i });
-    expect(within(list).getAllByRole('listitem')).toHaveLength(3);
+    // The unreported one is folded away until asked for.
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2);
     expect(within(list).getByText(/DEV-01/)).toBeInTheDocument();
     expect(within(list).getByText(/MacBook/)).toBeInTheDocument();
+    expect(within(list).queryByText(/mgmt/)).not.toBeInTheDocument();
+  });
+
+  it('folds inactive credentials behind a toggle and shows them on request', async () => {
+    renderWithProviders(<ByProviderView providers={multiMachineInventory().providers} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Show 1 inactive credential' }));
+
+    const list = screen.getByRole('list', { name: /Work credentials/i });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(3);
     expect(within(list).getByText(/mgmt/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Hide inactive credentials' }));
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+  });
+
+  it('shows every credential when none of them is healthy', () => {
+    const dead = [
+      source({ source_id: 'a', status: 'expired', machine_name: 'one' }),
+      source({ source_id: 'b', status: 'invalid', machine_name: 'two' }),
+    ];
+    renderWithProviders(
+      <ByProviderView
+        providers={[{ provider_id: 'gemini', name: 'Gemini', accounts: [account(dead)] }]}
+      />,
+    );
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /inactive/ })).not.toBeInTheDocument();
   });
 
   it('says where the account data comes from', () => {
     renderWithProviders(<ByProviderView providers={multiMachineInventory().providers} />);
     expect(
-      screen.getByText(/Data from oauth_creds\.json on DEV-01 · api \/ sidecar · collected just now/),
+      screen.getByText(/Data from oauth_creds\.json on DEV-01 · collected just now/),
     ).toBeInTheDocument();
   });
 
@@ -250,9 +276,53 @@ describe('RulesView', () => {
     });
     renderWithProviders(<RulesView />);
 
-    const list = await screen.findByRole('list', { name: 'Assignment rules' });
-    expect(await within(list).findByText('on Workstation')).toBeInTheDocument();
-    expect(within(list).getByText('on all machines')).toBeInTheDocument();
+    expect(await screen.findByText('on Workstation')).toBeInTheDocument();
+    expect(screen.getByText('on all machines')).toBeInTheDocument();
+  });
+
+  const codex = {
+    ...rule,
+    provider_id: 'chatgpt',
+    credential_origin: 'path:/home/u/.codex/auth.json#fp',
+    account_id: 'alice@example.com',
+    origin_label: 'auth.json',
+    origin_app: 'Codex CLI',
+    origin_path: '~/.codex/auth.json',
+  };
+
+  it('labels a rule by the app that owns the file and the provider by name', async () => {
+    vi.mocked(api.fetchCredentialTags).mockResolvedValue({ items: [codex] });
+    renderWithProviders(<RulesView providerNames={{ chatgpt: 'ChatGPT Codex' }} />);
+
+    expect(await screen.findByText('Codex CLI · auth.json')).toHaveAttribute(
+      'title',
+      '~/.codex/auth.json',
+    );
+    expect(screen.getByRole('heading', { name: /ChatGPT Codex/ })).toBeInTheDocument();
+  });
+
+  it('groups by machine and filters by scope and search', async () => {
+    vi.mocked(api.fetchCredentialTags).mockResolvedValue({
+      items: [codex, { ...rule, sidecar_id: null }],
+    });
+    renderWithProviders(<RulesView providerNames={{ chatgpt: 'ChatGPT Codex' }} />);
+    await screen.findByText('Codex CLI · auth.json');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Machine' }));
+    expect(screen.getByRole('heading', { name: /Workstation/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /All machines/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'All machines' }));
+    expect(screen.queryByText('Codex CLI · auth.json')).not.toBeInTheDocument();
+    expect(screen.getByText(/team@example.com/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'All' }));
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search rules' }), 'codex');
+    expect(screen.getByText('Codex CLI · auth.json')).toBeInTheDocument();
+    expect(screen.queryByText(/team@example.com/)).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search rules' }), 'zzz');
+    expect(screen.getByText(/No rules match these filters \(2 total\)/)).toBeInTheDocument();
   });
 
   it('explains an empty rule list', async () => {
