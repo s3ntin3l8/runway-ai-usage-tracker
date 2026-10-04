@@ -806,7 +806,6 @@ async def test_sources_are_ordered_active_then_healthy_then_dead(engine, cache):
     assert [v.source_id for v in acct.sources][-1] == "sidecar:dead"
 
 
-@pytest.mark.asyncio
 async def _machine_login(session, cache, provider, host, *, keep_alive, tokens):
     session.add(SidecarRegistry(sidecar_id=host, hostname=host, keep_alive=keep_alive))
     session.commit()
