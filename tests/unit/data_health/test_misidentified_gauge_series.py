@@ -516,6 +516,8 @@ def test_apply_defaults_to_merge_and_keeps_history(session):
     plan = _check().plan(session, "github::me@example.com", {})
     assert plan.confirmation_text is None
     assert plan.counts["snapshots_retagged"] == 1
+    assert plan.samples
+    assert any("me-login" in sample.label for sample in plan.samples)
 
     _check().apply(session, "github::me@example.com", {})
 

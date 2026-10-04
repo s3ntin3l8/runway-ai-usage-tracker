@@ -707,8 +707,9 @@ class CollectorManager:
             origins = [
                 origin
                 for origin in CredentialProvider.server_credential_origins(provider_id)
-                if not origin["managed"]
-                and any(effective.get(k) == "server" for k in origin["keys"])
+                # Runway's own files (the GitHub device-login token) count too: they are
+                # credentials the server uses, and evidence for the account they serve.
+                if origin["managed"] or any(effective.get(k) == "server" for k in origin["keys"])
             ]
             with Session(engine) as session:
                 for origin in origins:

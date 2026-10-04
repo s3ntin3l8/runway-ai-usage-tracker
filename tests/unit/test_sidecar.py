@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -1900,6 +1901,107 @@ class TestPostCredentialManifest:
 
         assert len(observations) == 1
         assert observations[0]["token_types"] == ["api_key", "oauth_token"]
+
+    def test_health_observation_skips_metadata_only_provider_origin(self):
+        """An exec rule that carried no credential key (e.g. git user.email) is not a credential."""
+        card = {
+            "remaining": "Token",
+            "unit": "oauth",
+            "metadata": {
+                "provider_id": "github",
+                "credential_origin": "provider:github",
+                "name": "me@example.com",
+            },
+        }
+
+        assert sidecar._credential_health_observations([card]) == []
+
+    def test_health_observation_keeps_provider_origin_with_a_token(self):
+        card = {
+            "remaining": "Token",
+            "unit": "api_key",
+            "metadata": {
+                "provider_id": "github",
+                "credential_origin": "provider:github",
+                "api_key": "opaque",  # pragma: allowlist secret
+            },
+        }
+
+        (observation,) = sidecar._credential_health_observations([card])
+
+        assert observation["token_types"] == ["api_key"]
+
+    def test_file_rule_spellings_of_one_file_yield_one_candidate(self, monkeypatch, tmp_path):
+        hosts = tmp_path / "hosts.yml"
+        hosts.write_text("github.com:\n  oauth_token: gho_abc\n")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path)
+        monkeypatch.setattr(
+            sidecar, "expand_file_rule_paths", lambda _paths: [hosts, alias / "hosts.yml"]
+        )
+        config = {
+            "name": "GitHub Copilot",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": ["ignored"],
+                    "format": "yaml",
+                    "mapping": {"github.com.oauth_token": "api_key"},
+                }
+            ],
+        }
+
+        cards, _ = sidecar.GenericCollector.collect_provider("github", config)
+
+        assert len([c for c in cards if c.get("remaining") == "Token"]) == 1
+
+    def test_two_env_vars_holding_one_token_are_one_credential(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "gho_same")
+        monkeypatch.setenv("GH_TOKEN", "gho_same")
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [])
+        config = {
+            "name": "GitHub Copilot",
+            "rules": [
+                {"type": "env", "variable": "GITHUB_TOKEN", "mapping": {"value": "api_key"}},
+                {"type": "env", "variable": "GH_TOKEN", "mapping": {"value": "api_key"}},
+            ],
+        }
+
+        cards, _ = sidecar.GenericCollector.collect_provider("github", config)
+
+        assert len([c for c in cards if c.get("remaining") == "Token"]) == 1
+
+    def test_exec_rule_echoing_an_already_found_token_is_not_a_second_credential(
+        self, monkeypatch, tmp_path
+    ):
+        hosts = tmp_path / "hosts.yml"
+        hosts.write_text("github.com:\n  oauth_token: gho_abc\n")
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [hosts])
+        monkeypatch.setattr(
+            sidecar.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="gho_abc\n", stderr=""),
+        )
+        config = {
+            "name": "GitHub Copilot",
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": ["ignored"],
+                    "format": "yaml",
+                    "mapping": {"github.com.oauth_token": "api_key"},
+                },
+                {
+                    "type": "exec",
+                    "command": ["gh", "auth", "token"],
+                    "mapping": {"value": "api_key"},
+                },
+            ],
+        }
+
+        cards, _ = sidecar.GenericCollector.collect_provider("github", config)
+
+        assert len([c for c in cards if c.get("remaining") == "Token"]) == 1
 
     def test_health_observation_accepts_epoch_zero_jwt_expiry(self):
         header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()

@@ -69,17 +69,18 @@
       ],
       "add_rules": [
         {
-          "reason": "git's user.email names the machine's committer; sidecar-only, not a credential.",
+          "reason": "gh >= 2.40 keeps its token in the OS keyring, so hosts.yml has no oauth_token; `gh auth token` is the only way to read it. Sidecar-only: the server never runs local commands.",
           "rule": {
             "type": "exec",
             "command": [
-              "git",
-              "config",
-              "--global",
-              "user.email"
+              "gh",
+              "auth",
+              "token",
+              "--hostname",
+              "github.com"
             ],
             "mapping": {
-              "value": "name"
+              "value": "api_key"
             }
           }
         }

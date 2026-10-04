@@ -37,6 +37,7 @@ import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Switch } from '@/components/ui/Switch';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
+import { GitHubLoginSection } from './GitHubLoginSection';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { displayAccountName, accountSubtitle, maskAccountId } from '@/lib/accountDisplay';
 
@@ -256,13 +257,13 @@ function ProviderAccountForm({
         </HelperText>
       </div>
 
-      {provider.provider_id === 'github' && account.account_id === 'default' ? (
+      {provider.provider_id === 'github' ? (
         <div className="flex flex-col gap-1.5">
-          <Label>GitHub login</Label>
-          <p className="text-[12px] text-fg-muted">
-            GitHub OAuth currently operates on the canonical account. Multi-account
-            GitHub is tracked in #289.
-          </p>
+          <Label>Sign in with GitHub</Label>
+          <GitHubLoginSection />
+          <HelperText>
+            Uses GitHub&apos;s device flow; Runway stores the token encrypted on the server.
+          </HelperText>
         </div>
       ) : null}
 

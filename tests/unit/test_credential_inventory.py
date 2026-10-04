@@ -623,6 +623,34 @@ async def test_scan_server_credentials_reads_env_and_flags_shadowing(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_scan_server_credentials_includes_runways_own_device_login_file(monkeypatch):
+    """The GitHub device-login token lives in Runway's config dir ("managed"); it is a real
+    credential the server uses and must be listed, never flagged as shadowed."""
+    from app.services.credential_provider import CredentialProvider
+
+    managed = {
+        "source_type": "file",
+        "label": "github_oauth.json",
+        "keys": ["api_key"],
+        "managed": True,
+        "cli_owned": False,
+        "exp": None,
+        "rollable": False,
+    }
+    monkeypatch.setattr(
+        CredentialProvider,
+        "server_credential_origins",
+        staticmethod(lambda provider_id: [managed] if provider_id == "github" else []),
+    )
+
+    found, _ = credential_inventory._scan_server_credentials()
+
+    (origin,) = found["github"]
+    assert origin["label"] == "github_oauth.json"
+    assert origin["shadowed"] is False
+
+
+@pytest.mark.asyncio
 async def test_a_config_source_without_its_config_is_hidden(engine, cache):
     """A `config:` row is only written beside its provider_configs row, so one
     whose config is gone (an account rename that didn't carry it) is a claim
