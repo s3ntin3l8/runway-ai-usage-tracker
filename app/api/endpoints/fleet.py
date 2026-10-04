@@ -2105,7 +2105,7 @@ async def set_sidecar_keep_alive(
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
-    """Turn the sidecar's keep-alive (agy / xAI login renewal) on or off remotely.
+    """Turn the sidecar's keep-alive (renewal of the logins in KEEP_ALIVE_PROVIDERS) on or off remotely.
 
     Delivered on the sidecar's next check-in; the sidecar applies it without a restart."""
     row = session.get(SidecarRegistry, sidecar_id)
