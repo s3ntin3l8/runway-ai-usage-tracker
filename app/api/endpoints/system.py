@@ -737,6 +737,49 @@ async def refresh_credential_source(
         raise HTTPException(status_code=502, detail="Upstream token refresh failed")
 
 
+_MANAGED_ELSEWHERE = (
+    "This credential is managed outside the cache (Settings → Providers "
+    "or the server environment); change it there."
+)
+
+
+async def _forget_source(
+    session: Session, provider: str, account_id: str, source_id: str
+) -> Literal["removed", "managed_elsewhere", "not_found"]:
+    """Drop one machine-reported credential's live bundle and durable row."""
+    row = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == provider,
+            CredentialSource.account_id == canonical_account_id(account_id),
+            CredentialSource.source_id == source_id,
+        )
+    ).first()
+    managed_elsewhere = is_server_source_id(source_id) or source_id.startswith("config:")
+    if managed_elsewhere or (row is not None and row.sidecar_id is None):
+        return "managed_elsewhere"
+    removed = await token_cache.remove_source(
+        provider, account_id, source_id, retire_matching_oauth=True
+    )
+    if row is None and not removed:
+        return "not_found"
+    if row is not None:
+        session.delete(row)
+        session.commit()
+    return "removed"
+
+
+def _clear_rejection_if_account_empty(session: Session, provider: str, account_id: str) -> None:
+    remaining = session.exec(
+        select(CredentialSource.source_id).where(
+            CredentialSource.provider_id == provider,
+            CredentialSource.account_id == canonical_account_id(account_id),
+        )
+    ).first()
+    if remaining is None:
+        # Nothing of this account is left to be rejected; don't keep it flagged invalid.
+        auth_failures.clear(provider, account_id)
+
+
 @router.delete("/credentials/{provider}/{account_id}/{source_id}")
 @limiter.limit("20/minute")
 async def delete_credential_source(
@@ -752,40 +795,46 @@ async def delete_credential_source(
     It comes back on the machine's next report if the credential is still there. Config
     (Settings → Providers) and server (env/file) credentials are managed elsewhere → 409.
     """
-    row = session.exec(
-        select(CredentialSource).where(
-            CredentialSource.provider_id == provider,
-            CredentialSource.account_id == canonical_account_id(account_id),
-            CredentialSource.source_id == source_id,
-        )
-    ).first()
-    managed_elsewhere = is_server_source_id(source_id) or source_id.startswith("config:")
-    if managed_elsewhere or (row is not None and row.sidecar_id is None):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "This credential is managed outside the cache (Settings → Providers "
-                "or the server environment); change it there."
-            ),
-        )
-    removed = await token_cache.remove_source(
-        provider, account_id, source_id, retire_matching_oauth=True
-    )
-    if row is None and not removed:
+    outcome = await _forget_source(session, provider, account_id, source_id)
+    if outcome == "managed_elsewhere":
+        raise HTTPException(status_code=409, detail=_MANAGED_ELSEWHERE)
+    if outcome == "not_found":
         raise HTTPException(status_code=404, detail="Credential source not found")
-    if row is not None:
-        session.delete(row)
-        session.commit()
-    remaining = session.exec(
-        select(CredentialSource.source_id).where(
-            CredentialSource.provider_id == provider,
-            CredentialSource.account_id == canonical_account_id(account_id),
-        )
-    ).first()
-    if remaining is None:
-        # Nothing of this account is left to be rejected; don't keep it flagged invalid.
-        auth_failures.clear(provider, account_id)
+    _clear_rejection_if_account_empty(session, provider, account_id)
     return {"ok": True}
+
+
+class _RemoveSourcesBody(BaseModel):
+    source_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+@router.post("/credentials/{provider}/{account_id}/remove")
+@limiter.limit("10/minute")
+async def remove_credential_sources(
+    request: Request,
+    provider: str,
+    account_id: str,
+    body: _RemoveSourcesBody,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Forget several machine-reported credentials of one account in one call.
+
+    Same semantics as the single delete, but a managed (config/server) or unknown source is
+    reported under ``skipped`` instead of failing the batch, and the per-item rate limit
+    doesn't apply — an account with many dead rows would otherwise hit it.
+    """
+    removed: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for source_id in dict.fromkeys(body.source_ids):
+        outcome = await _forget_source(session, provider, account_id, source_id)
+        if outcome == "removed":
+            removed.append(source_id)
+        else:
+            skipped.append({"source_id": source_id, "reason": outcome})
+    if removed:  # a batch that removed nothing must not touch the account's rejection flag
+        _clear_rejection_if_account_empty(session, provider, account_id)
+    return {"removed": removed, "skipped": skipped}
 
 
 # --- Webhook alert configuration ---

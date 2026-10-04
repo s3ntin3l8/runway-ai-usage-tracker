@@ -245,7 +245,7 @@ export function RulesView({ providerNames }: { providerNames?: Record<string, st
                         <Button
                           variant="danger-ghost"
                           size="icon-sm"
-                          aria-label={`Remove rule ${ruleKey(t)}`}
+                          aria-label={`Remove rule ${originTitle(t)} → ${maskAccountId(t.account_id)}, ${t.sidecar_id ? (names.get(t.sidecar_id) ?? t.sidecar_id) : 'all machines'}`}
                           onClick={() => setRemoving(t)}
                         >
                           <Trash2 className="size-3.5" aria-hidden />

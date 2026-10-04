@@ -1001,3 +1001,65 @@ async def test_a_live_login_with_a_blank_refresh_token_shows_no_keep_alive(engin
     src = await _only_source(provider)
     assert src.live is True
     assert src.keep_alive is None
+
+
+async def _stored(cache, provider, account, source_id, tokens):
+    await cache.store(provider, tokens, account_id=account, source_id=source_id)
+
+
+@pytest.mark.asyncio
+async def test_same_login_on_two_machines_is_flagged_without_exposing_it(engine, cache):
+    login = {"oauth_token": "acc-1", "refresh_token": "ref-SHARED"}  # pragma: allowlist secret
+    with Session(engine) as s:
+        _machine(s, "dev-01", "DEV-01")
+        _machine(s, "macbook", "MacBook")
+        _machine(s, "mgmt", "mgmt")
+        for host in ("dev-01", "macbook", "mgmt"):
+            _source(s, source_id=f"sidecar:{host}", sidecar_id=host)
+    await _stored(cache, "gemini", ALICE, "sidecar:dev-01", dict(login))
+    await _stored(cache, "gemini", ALICE, "sidecar:macbook", dict(login))
+    await _stored(
+        cache, "gemini", ALICE, "sidecar:mgmt", {"oauth_token": "acc-3", "refresh_token": "ref-OWN"}
+    )
+    inv = await build_inventory()
+    _, by_id = _sources(inv)
+
+    assert by_id["sidecar:dev-01"].shared_with == ["MacBook"]
+    assert by_id["sidecar:macbook"].shared_with == ["DEV-01"]
+    assert by_id["sidecar:mgmt"].shared_with == []
+    dumped = inv.model_dump_json()
+    assert "ref-SHARED" not in dumped and "ref-OWN" not in dumped
+
+
+@pytest.mark.asyncio
+async def test_one_machine_never_shares_with_itself(engine, cache):
+    with Session(engine) as s:
+        _machine(s, "dev-01")
+        _source(s, source_id="sidecar:a", sidecar_id="dev-01")
+        _source(s, source_id="sidecar:b", sidecar_id="dev-01")
+    for sid in ("sidecar:a", "sidecar:b"):
+        await _stored(
+            cache, "gemini", ALICE, sid, {"refresh_token": "ref-same"}
+        )  # pragma: allowlist secret
+    _, by_id = _sources(await build_inventory())
+    assert all(v.shared_with == [] for v in by_id.values())
+
+
+@pytest.mark.asyncio
+async def test_a_static_key_on_every_machine_is_listed_as_shared_but_not_rollable(engine, cache):
+    with Session(engine) as s:
+        for host in ("dev-01", "macbook"):
+            _machine(s, host, host)
+            _source(
+                s,
+                provider_id="openrouter",
+                account_id="default",
+                source_id=f"sidecar:{host}",
+                sidecar_id=host,
+            )
+    key = {"api_key": "sk-or-same"}  # pragma: allowlist secret
+    for host in ("dev-01", "macbook"):
+        await _stored(cache, "openrouter", "default", f"sidecar:{host}", dict(key))
+    _, by_id = _sources(await build_inventory(), provider="openrouter", account="default")
+    assert by_id["sidecar:dev-01"].shared_with == ["macbook"]
+    assert by_id["sidecar:dev-01"].rollable is False  # the UI keys the inline warning off this

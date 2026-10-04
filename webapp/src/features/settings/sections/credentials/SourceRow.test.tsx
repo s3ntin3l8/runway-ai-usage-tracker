@@ -129,6 +129,49 @@ describe('SourceRow', () => {
     expect(screen.queryByText(/To fix/)).not.toBeInTheDocument();
   });
 
+  it('warns about a login copied between machines, but not about a shared static key', () => {
+    const { unmount } = renderRow({
+      source: source({ rollable: true, shared_with: ['mgmt', 'macbook'] }),
+    });
+    expect(screen.getByText(/Same login also on mgmt, macbook/)).toBeInTheDocument();
+    unmount();
+
+    renderRow({ source: source({ rollable: false, shared_with: ['mgmt'] }) });
+    expect(screen.queryByText(/Same login/)).not.toBeInTheDocument();
+  });
+
+  it('shows the live re-test result, or says the row was not reached', () => {
+    const { unmount } = renderRow({
+      source: source(),
+      probed: true,
+      probe: { source_id: 'sidecar:a', outcome: 'auth_failed', probed: true, http_status: 401, duration_ms: 120 },
+    });
+    expect(screen.getByText('Rejected by the provider')).toBeInTheDocument();
+    expect(screen.getByText('HTTP 401')).toBeInTheDocument();
+    unmount();
+
+    renderRow({ source: source(), probed: true });
+    expect(screen.getByText('Not tested — no live credential.')).toBeInTheDocument();
+  });
+
+  it('gives each row\'s buttons a name that tells identical files apart', () => {
+    renderRow({
+      source: source({
+        label: 'auth.json',
+        origin_app: 'OpenCode',
+        machine_name: 'dev-01',
+        can_refresh: true,
+      }),
+      providerName: 'OpenRouter',
+    });
+    expect(
+      screen.getByRole('button', { name: 'Remove OpenCode · auth.json on dev-01 (OpenRouter)' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Refresh OpenCode · auth.json on dev-01 (OpenRouter)' }),
+    ).toBeInTheDocument();
+  });
+
   it('warns when an all-machines rule covers an origin with no fingerprint', () => {
     renderRow({ source: source({ mapping: 'operator', mapping_scope: 'all_machines' }) });
     expect(screen.getByText(/applies on every machine/i)).toBeInTheDocument();

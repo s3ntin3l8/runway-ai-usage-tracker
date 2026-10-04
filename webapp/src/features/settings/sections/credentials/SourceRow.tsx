@@ -6,12 +6,13 @@ import { useMutation } from '@tanstack/react-query';
 import { RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteCredentialSource, postCredentialSourceRefresh } from '@/api/endpoints';
-import type { CredentialSourceView } from '@/api/types';
+import type { CredentialSourceView, SourceProbeResult } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { timeAgo } from '@/lib/format';
+import { PROBE_LABEL, PROBE_VARIANT } from '@/lib/probeOutcome';
 import {
   MAPPING_HINT,
   MAPPING_LABEL,
@@ -31,6 +32,11 @@ interface SourceRowProps {
   context?: string;
   /** Show the Machine column; off when the list is already scoped to one machine. */
   showMachine?: boolean;
+  /** Provider display name, to tell otherwise identical rows apart in button labels. */
+  providerName?: string;
+  /** Set once a live re-test has run for the account; a row it didn't reach says so. */
+  probed?: boolean;
+  probe?: SourceProbeResult;
 }
 
 // Column templates live here as literals so Tailwind sees them; SourceList's header reuses them.
@@ -41,7 +47,14 @@ const GRID_WITHOUT_MACHINE = 'md:grid-cols-[6.5rem_minmax(0,1fr)_8.5rem_6rem_3.7
 export const sourceGrid = (showMachine: boolean) =>
   showMachine ? GRID_WITH_MACHINE : GRID_WITHOUT_MACHINE;
 
-export function SourceRow({ source, context, showMachine = true }: SourceRowProps) {
+export function SourceRow({
+  source,
+  context,
+  showMachine = true,
+  providerName,
+  probed = false,
+  probe,
+}: SourceRowProps) {
   const invalidate = useInvalidateCredentialViews();
   const [confirming, setConfirming] = useState(false);
 
@@ -85,6 +98,11 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
         : null;
 
   const title = originTitle(source);
+  // Several rows share a file name ("OpenCode · auth.json" serves many providers), so a
+  // button's name carries the machine and provider to stay unique.
+  const who = context ?? providerName;
+  const rowName = `${title} on ${where}${who ? ` (${who})` : ''}`;
+  const sharedLogin = source.rollable && (source.shared_with?.length ?? 0) > 0;
   const detail = [
     source.origin_path,
     source.token_types.length > 0 ? source.token_types.join(', ') : null,
@@ -200,7 +218,7 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={`Refresh ${source.label}`}
+            aria-label={`Refresh ${rowName}`}
             loading={refresh.isPending}
             onClick={() => refresh.mutate()}
           >
@@ -211,7 +229,7 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
           <Button
             variant="danger-ghost"
             size="icon-sm"
-            aria-label={`Remove ${source.label}`}
+            aria-label={`Remove ${rowName}`}
             onClick={() => setConfirming(true)}
           >
             <Trash2 className="size-3.5" aria-hidden />
@@ -223,7 +241,9 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
         !source.fingerprinted) ||
       source.unused_reason ||
       source.last_error ||
-      fixHint ? (
+      fixHint ||
+      sharedLogin ||
+      probed ? (
         <div className="w-full space-y-0.5 md:col-span-full">
           {source.mapping === 'operator' &&
           source.mapping_scope === 'all_machines' &&
@@ -240,12 +260,32 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
             <p className="text-[11px] text-critical">Last attempt: {source.last_error}</p>
           ) : null}
           {fixHint ? <p className="text-[11px] text-fg-muted">{fixHint}</p> : null}
+          {sharedLogin ? (
+            <p className="text-[11px] text-warning">
+              Same login also on {source.shared_with?.join(', ')} — whichever renews it first signs
+              the others out (unless these machines share a home directory). Sign in separately on
+              each.
+            </p>
+          ) : null}
+          {probe ? (
+            <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-fg-subtle">
+              Test:
+              <Badge variant={PROBE_VARIANT[probe.outcome] ?? 'neutral'}>
+                {PROBE_LABEL[probe.outcome] ?? probe.outcome}
+              </Badge>
+              {probe.http_status ? <span>HTTP {probe.http_status}</span> : null}
+              {probe.probed && probe.duration_ms != null ? <span>{probe.duration_ms} ms</span> : null}
+              {probe.message ? <span className="text-critical">{probe.message}</span> : null}
+            </p>
+          ) : probed ? (
+            <p className="text-[11px] text-fg-subtle">Not tested — no live credential.</p>
+          ) : null}
         </div>
       ) : null}
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
-        title={`Remove ${source.label}?`}
+        title={`Remove ${rowName}?`}
         description={`Forgets this credential from ${where}. It comes back on the machine's next report if the credential is still there.`}
         pending={remove.isPending}
         onConfirm={() => remove.mutate()}

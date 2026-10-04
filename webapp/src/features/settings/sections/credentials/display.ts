@@ -4,7 +4,14 @@
 //   mapping    = why the credential belongs to that account
 
 import type { BadgeProps } from '@/components/ui/Badge';
-import type { CredentialMapping, CredentialSourceView, CredentialUnusedReason } from '@/api/types';
+import type {
+  CredentialAccountView,
+  CredentialMapping,
+  CredentialSourceView,
+  CredentialUnusedReason,
+} from '@/api/types';
+import { maskAccountId } from '@/lib/accountDisplay';
+import { timeAgo } from '@/lib/format';
 
 export const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   valid: 'ok',
@@ -116,3 +123,46 @@ export const UNUSED_HINT: Record<CredentialUnusedReason, string> = {
   shadowed_by_config_key:
     'A key saved in Settings → Providers takes precedence, so this one is not read.',
 };
+
+/** For text that leaves the page: an email keeps its domain only ("a***@example.com"). */
+function redactAccountId(accountId: string): string {
+  const at = accountId.indexOf('@');
+  return at > 0 ? `${accountId[0]}***${accountId.slice(at)}` : maskAccountId(accountId);
+}
+
+/**
+ * A plain-text summary of one account's credentials for a bug report. The inventory holds no
+ * secrets and origin paths are already `~`-collapsed; the account email is redacted.
+ */
+export function diagnosticsText(providerName: string, account: CredentialAccountView): string {
+  const active = account.sources.find((s) => s.source_id === account.active_source_id);
+  const via = [account.data_source, account.input_source].filter(Boolean).join(' / ');
+  const lines = [
+    `Runway credentials — ${providerName}`,
+    `Account: ${account.identity_pending ? 'needs an account' : redactAccountId(account.account_id)}`,
+    `Status: ${STATUS_LABEL[account.status] ?? account.status}`,
+    `Data from: ${active ? originSummary(active) : 'no successful collection yet'}${via ? ` (${via})` : ''}`,
+    `Credentials (${account.sources.length}):`,
+  ];
+  for (const s of account.sources) {
+    const where =
+      s.origin_kind === 'machine'
+        ? `${s.machine_name ?? s.machine_id ?? 'machine'}${s.machine_stale ? ' (offline)' : ''}`
+        : s.origin_kind === 'server'
+          ? 'server'
+          : 'settings';
+    const parts = [
+      `${originTitle(s)} on ${where}`,
+      STATUS_LABEL[s.status] ?? s.status,
+      s.status === 'stale' ? `last reported ${timeAgo(s.last_seen)}` : relativeExpiry(s.expires_in_seconds),
+      s.last_success_at ? `collected ${timeAgo(s.last_success_at)}` : 'never collected',
+      MAPPING_LABEL[s.mapping],
+    ];
+    if (s.is_active) parts.push('active');
+    if (!s.enabled) parts.push('disabled');
+    if (s.shared_with?.length) parts.push(`same secret on ${s.shared_with.join(', ')}`);
+    if (s.last_error) parts.push(`last error: ${s.last_error}`);
+    lines.push(`- ${parts.join(' · ')}`);
+  }
+  return lines.join('\n');
+}

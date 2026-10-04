@@ -711,6 +711,8 @@ def test_describe_origin_full_non_file_origins():
 
 def test_login_hint_known_and_unknown():
     assert login_hint("Codex CLI") == "run `codex login`"
+    assert login_hint("Claude Code") == "run `claude`, then `/login`"  # no shell subcommand
+    assert login_hint("Gemini CLI") == "run `gemini`, then `/auth`"
     assert login_hint("Browser") is None
     assert login_hint(None) is None
 

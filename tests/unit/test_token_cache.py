@@ -1225,3 +1225,23 @@ async def test_get_account_source_candidates_sweeps_identity_slots(cache):
         ("alice@example.com", 0),
         ("bob@example.com", 5),
     ]
+
+
+@pytest.mark.asyncio
+async def test_retiring_a_dead_copy_keeps_the_oauth_token_another_source_still_holds(cache):
+    """The same login on two machines: removing one must not retire the live one's token."""
+    shared = {
+        "oauth_token": "same-access",
+        "refresh_token": "same-refresh",
+    }  # pragma: allowlist secret
+    await cache.store("gemini", dict(shared), account_id="a@example.com", source_id="sidecar:live")
+    await cache.store("gemini", dict(shared), account_id="a@example.com", source_id="sidecar:dead")
+
+    assert await cache.remove_source(
+        "gemini", "a@example.com", "sidecar:dead", retire_matching_oauth=True
+    )
+
+    assert (await cache.get("gemini", "a@example.com"))["oauth_token"] == "same-access"
+    assert [
+        c["source_id"] for c in await cache.get_source_candidates("gemini", "a@example.com")
+    ] == ["sidecar:live"]

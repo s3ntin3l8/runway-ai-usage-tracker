@@ -470,6 +470,8 @@ class CredentialSourceView(BaseModel):
     machine_id: str | None = None
     machine_name: str | None = None
     machine_stale: bool = False  # the machine has stopped checking in (Fleet's rule)
+    # Other machines holding the same secret (matched by fingerprint; never returned itself).
+    shared_with: list[str] = Field(default_factory=list)
     # Why this credential belongs to its account: local (identity read on the machine),
     # verified (server resolved it), claim (sidecar claimed it), operator (tag),
     # config, server, or pending.
