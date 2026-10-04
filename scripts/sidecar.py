@@ -4986,7 +4986,7 @@ def main():
     # new image does not mistake it for a second running sidecar.
     from scripts.sidecar_pkg.self_update import register_pre_exec_hook
 
-    register_pre_exec_hook(remove_pid_file)
+    register_pre_exec_hook(remove_pid_file, on_failure=write_pid_file)
 
     setup_signal_handlers()
     atexit.register(cleanup)
