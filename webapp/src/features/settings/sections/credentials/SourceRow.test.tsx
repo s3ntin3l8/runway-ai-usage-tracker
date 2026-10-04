@@ -35,6 +35,29 @@ describe('SourceRow', () => {
     expect(screen.getByText('in 3d')).toBeInTheDocument();
   });
 
+  it.each([
+    ['on', /keep-alive: on/],
+    ['off', /keep-alive: off/],
+    ['unknown', /keep-alive: unknown/],
+  ] as const)('shows the machine keep-alive state (%s) on a machine-renewed login', (state, text) => {
+    renderRow({ source: source({ refreshed_by: 'machine', keep_alive: state }) });
+    const note = screen.getByText(text);
+    expect(note).toBeInTheDocument();
+    if (state === 'on') {
+      expect(note).toHaveAttribute('title', expect.stringContaining('renews this login itself'));
+    } else {
+      expect(note).toHaveAttribute('title', expect.stringContaining('--keep-alive'));
+    }
+    if (state === 'unknown') {
+      expect(note).toHaveAttribute('title', expect.stringContaining('too old to report'));
+    }
+  });
+
+  it('shows no keep-alive note when it does not apply', () => {
+    renderRow({ source: source({ keep_alive: null }) });
+    expect(screen.queryByText(/keep-alive/)).not.toBeInTheDocument();
+  });
+
   it('says a never-attempted credential has not been tried instead of implying it works', () => {
     renderRow({ source: source({ health: 'untried', last_success_at: null }) });
     expect(screen.getByText('not yet tried')).toBeInTheDocument();

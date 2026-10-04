@@ -31,7 +31,7 @@ from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.xai import XaiCollector
 from app.services.collectors.zai import ZaiCollector
 from app.services.credential_sources import is_sidecar_source
-from app.services.refresh_policy import machine_owns_credential
+from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS, machine_owns_credential
 from app.services.smart_collector import SmartCollector
 from app.services.source_outcome import source_outcome
 from app.services.token_cache import token_cache
@@ -43,9 +43,6 @@ IDENTITY_VERIFIER_SUFFIX = ":identity-pending"
 # Pending sources verified per provider per cycle (oldest-due first), so a host reporting
 # many unidentifiable credentials cannot turn every cycle into a burst of upstream calls.
 MAX_VERIFICATIONS_PER_CYCLE = 5
-# Providers whose sidecar can renew a machine-owned login itself (``--keep-alive``).
-KEEP_ALIVE_PROVIDERS = frozenset({"xai", "antigravity"})
-
 # What ingest calls a push that carries no sidecar id; keys the retry state the same way.
 LOCAL_SIDECAR_ID = "local"
 
@@ -101,6 +98,8 @@ class CollectorManager:
         self._credential_source_state: dict[
             tuple[str, str], dict[str, tuple[str, datetime | None]]
         ] = {}
+        # sidecar_id -> whether it reports --keep-alive (None = older sidecar, unknown).
+        self._sidecar_keep_alive: dict[str, bool | None] = {}
         self._collect_lock = asyncio.Lock()
         self._collect_future: asyncio.Future | None = None
         self.last_collection_outcomes: list[dict[str, Any]] = []
@@ -134,12 +133,18 @@ class CollectorManager:
             global_poll_interval: int | None = None
             source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
             source_state: dict[tuple[str, str], dict[str, tuple[str, datetime | None]]] = {}
+            keep_alive_by_sidecar: dict[str, bool | None] = {}
             try:
                 from sqlmodel import Session
                 from sqlmodel import select as sqlselect
 
                 from app.core.db import engine
-                from app.models.db import CredentialSource, ProviderConfig, SystemConfig
+                from app.models.db import (
+                    CredentialSource,
+                    ProviderConfig,
+                    SidecarRegistry,
+                    SystemConfig,
+                )
 
                 with Session(engine) as _s:
                     for r in _s.exec(sqlselect(ProviderConfig)).all():
@@ -172,6 +177,9 @@ class CollectorManager:
                             row.source_id
                         ] = (row.health, row.next_retry_at)
 
+                    for sidecar_row in _s.exec(sqlselect(SidecarRegistry)).all():
+                        keep_alive_by_sidecar[sidecar_row.sidecar_id] = sidecar_row.keep_alive
+
                     sys_cfg = _s.exec(sqlselect(SystemConfig)).first()
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
                         global_poll_interval = sys_cfg.default_poll_interval_seconds
@@ -192,6 +200,7 @@ class CollectorManager:
             }
             self._credential_source_preferences = source_preferences
             self._credential_source_state = source_state
+            self._sidecar_keep_alive = keep_alive_by_sidecar
             await self.reconcile_token_cache_from_durable_tags()
 
             # 1. Ensure Default/Static collectors are present
@@ -894,6 +903,7 @@ class CollectorManager:
         successful_result: list[dict[str, Any]] | None = None
         last_kept_failure_result: list[dict[str, Any]] | None = None
         skipped_for_renewal = False
+        renewal_candidate: dict[str, Any] = {}
         attempted: list[dict[str, Any]] = []
         deadline = asyncio.get_running_loop().time() + 25.0
         await smart.reset()
@@ -916,6 +926,7 @@ class CollectorManager:
                     scrub_log(candidate["source_id"]),
                 )
                 skipped_for_renewal = True
+                renewal_candidate = candidate
                 continue
             cache_slot = candidate.get("account_slot") or account_id
             attempted.append(candidate)
@@ -1022,13 +1033,9 @@ class CollectorManager:
             # Nothing ran, so the collector still holds the previous poll's state (often
             # "complete"). Say "skipped" so the poller keeps the last good cards instead of
             # reconciling them away, and the server-credential stamping leaves rows alone.
-            hint = (
-                "; run the sidecar with --keep-alive to renew it automatically"
-                if provider_id in KEEP_ALIVE_PROVIDERS
-                else ""
-            )
             smart._set_collection_state(
-                "skipped", f"login expired — waiting for its machine to renew it{hint}"
+                "skipped",
+                f"login expired — {self._renewal_wait_reason(provider_id, renewal_candidate)}",
             )
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
@@ -1206,6 +1213,18 @@ class CollectorManager:
                 session.add(row)
             session.commit()
         return True
+
+    def _renewal_wait_reason(self, provider_id: str | None, candidate: dict[str, Any]) -> str:
+        """What a stale card should say about an expired login its machine must renew."""
+        if provider_id not in KEEP_ALIVE_PROVIDERS:
+            return "waiting for its machine to renew it"
+        reported = self._sidecar_keep_alive.get(candidate.get("sidecar_id") or "")
+        if reported is True:
+            return (
+                "its machine's keep-alive hasn't renewed it — check the sidecar log, "
+                "or log in again with the CLI"
+            )
+        return "waiting for its machine to renew it; run the sidecar with --keep-alive (or turn it on in Fleet) to automate"
 
     @staticmethod
     def _awaiting_machine_renewal(

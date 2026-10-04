@@ -823,6 +823,22 @@ DEFAULT_CONFIG = {
 
 REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
 
+
+def _make_keep_alive_thread():
+    from scripts.sidecar_pkg.keep_alive import KeepAliveThread
+    from scripts.sidecar_pkg.xai_renewer import XaiRenewer
+
+    return KeepAliveThread(renewers=[XaiRenewer()])
+
+
+def _keep_alive_controller():
+    from scripts.sidecar_pkg.keep_alive import KeepAliveController
+
+    return KeepAliveController(_make_keep_alive_thread)
+
+
+_KEEP_ALIVE = _keep_alive_controller()
+
 # Global state for daemon mode
 _daemon_running = False
 _pid_file_path: Path | None = None
@@ -4458,6 +4474,9 @@ class DaemonRunner:
                 self_update_capable: bool | None = self_update_supported()
             except Exception:
                 self_update_capable = None
+            from scripts.sidecar_pkg.keep_alive import is_enabled as keep_alive_enabled
+
+            keep_alive = keep_alive_enabled()
 
             # Try to flush queue first
             queue_flush(api_url, api_key, stop_event=self._stop_event, config=self._config)
@@ -4493,6 +4512,7 @@ class DaemonRunner:
                     "sidecar_version": sidecar_version,
                     "os_platform": os_platform,
                     "self_update_capable": self_update_capable if first_batch else None,
+                    "keep_alive": keep_alive if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
                     "completed_providers": completed_providers if first_batch else None,
                     "identity_sources": dict(_IDENTITY_REPORT) if first_batch else None,
@@ -4739,6 +4759,9 @@ class DaemonRunner:
                     logging.debug(f"Server update channel: {update_channel}")
                 _UPDATE_CHANNEL = update_channel
 
+            if "keep_alive_desired" in result:
+                _KEEP_ALIVE.set_remote(result.get("keep_alive_desired"))
+
             global _AUTO_UPDATE_SERVER
             server_auto = bool(result.get("sidecar_auto_update", False))
             if server_auto != _AUTO_UPDATE_SERVER:
@@ -4972,21 +4995,10 @@ def main():
         except Exception:
             logging.debug("Update-check thread not started", exc_info=True)
 
-        # Optional Antigravity keep-alive: the agy access token lives one hour
-        # and only agy can renew it. Off by default — opt in with --keep-alive
-        # (or config "keep_alive": true) on hosts that run agy.
-        keep_alive_thread = None
-        if args.keep_alive or config.get("keep_alive") is True:
-            from scripts.sidecar_pkg.keep_alive import KeepAliveThread, enable
-            from scripts.sidecar_pkg.xai_renewer import XaiRenewer
-
-            enable()
-            keep_alive_thread = KeepAliveThread(renewers=[XaiRenewer()])
-            keep_alive_thread.start()
-            logging.info(
-                "Keep-alive enabled (checks every minute: agy via `agy models`, "
-                "xAI via a token refresh written back to the CLI's auth file)"
-            )
+        # Optional keep-alive (agy + xAI login renewal). Off by default — opt in with
+        # --keep-alive (or config "keep_alive": true), or per sidecar from the dashboard
+        # (the server's `keep_alive_desired` on each ingest response overrides the local flag).
+        _KEEP_ALIVE.arm(bool(args.keep_alive or config.get("keep_alive") is True))
 
         try:
             # Block until signal handler sets _daemon_running = False
@@ -4995,8 +5007,7 @@ def main():
         finally:
             if update_thread is not None:
                 update_thread.stop()
-            if keep_alive_thread is not None:
-                keep_alive_thread.stop()
+            _KEEP_ALIVE.stop()
             runner.stop()
 
     logging.info("Sidecar stopping...")

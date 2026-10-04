@@ -26,6 +26,7 @@ export function source(o: Partial<CredentialSourceView> = {}): CredentialSourceV
     can_refresh: false,
     rollable: false,
     refreshed_by: null,
+    keep_alive: null,
     rejected: false,
     redundant: false,
     removable: true,

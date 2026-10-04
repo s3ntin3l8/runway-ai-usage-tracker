@@ -169,6 +169,19 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
         ) : source.rollable ? (
           <p className="text-[11px] text-fg-subtle">auto-refreshed</p>
         ) : null}
+        {source.keep_alive ? (
+          <p
+            className="text-[11px] text-fg-subtle"
+            title={
+              source.keep_alive === 'on'
+                ? 'The sidecar on this machine renews this login itself (--keep-alive).'
+                : 'Turn keep-alive on for this machine in Fleet (or start its sidecar with --keep-alive) so this login is renewed even when the CLI is idle.' +
+                  (source.keep_alive === 'unknown' ? ' This sidecar is too old to report it.' : '')
+            }
+          >
+            keep-alive: {source.keep_alive}
+          </p>
+        ) : null}
       </div>
       <div className="text-[12px] text-fg-muted">
         <span className="sr-only">Last collected: </span>

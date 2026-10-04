@@ -162,6 +162,8 @@ class IngestRequest(BaseModel):
     # Whether this build can self-update in place (frozen, non-Docker). None for
     # sidecars that don't report it yet → server stays permissive.
     self_update_capable: bool | None = None
+    # Whether the sidecar runs with --keep-alive. None from older sidecars → "unknown".
+    keep_alive: bool | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     # Providers with a complete local-card snapshot in this payload. None from
     # older sidecars means upsert-only; [] is a complete empty report.
@@ -485,6 +487,9 @@ class CredentialSourceView(BaseModel):
     # Who renews it: "server", or "machine" (a rotating provider's login owned by a
     # machine's CLI, which the server must not refresh); None when nothing does.
     refreshed_by: str | None = None
+    # Sidecar keep-alive on the machine that owns this login: "on" / "off" / "unknown"
+    # (older sidecar). None when it doesn't apply (not a machine-renewed agy/xAI login).
+    keep_alive: str | None = None
     # The provider rejected this credential (HTTP 401/403 at the last collection, or an
     # in-memory rejection flag matches its identity).
     rejected: bool = False

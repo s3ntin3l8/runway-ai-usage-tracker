@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -236,6 +237,13 @@ def write_back(login: Login, token_response: dict[str, Any]) -> str:
     return "written"
 
 
+# One renewal at a time, process-wide: a keep-alive toggled off and on quickly can leave the
+# old thread mid-refresh while its replacement starts. xAI rotates refresh tokens, so two
+# concurrent refreshes of the same token would race; serialised, the second finds the login
+# already renewed (no longer due) and does nothing.
+_RENEW_LOCK = threading.Lock()
+
+
 class XaiRenewer:
     """Renews the xAI login in OpenCode's / the Grok CLI's auth file."""
 
@@ -266,6 +274,10 @@ class XaiRenewer:
 
     def renew(self) -> bool:
         """Renew every due login; True when none failed (and at least one ran)."""
+        with _RENEW_LOCK:
+            return self._renew_due_logins()
+
+    def _renew_due_logins(self) -> bool:
         ok = True
         ran = False
         for login in self._due_logins():

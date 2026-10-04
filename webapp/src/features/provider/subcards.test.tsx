@@ -332,6 +332,28 @@ describe('QuotaWindowRow', () => {
     expect(screen.getByText('Stale')).toBeInTheDocument();
   });
 
+  it('explains why in the Stale badge tooltip when the backend gave a reason', () => {
+    const card = limitCard({
+      pct_used: 40,
+      stale: true,
+      detail: '⚠ Collection failing (login expired — waiting for its machine) — 40% used',
+    });
+    renderWithProviders(<QuotaWindowRow card={card} siblings={[card]} forecast={null} />);
+    expect(screen.getByText('Stale')).toHaveAttribute(
+      'title',
+      expect.stringContaining('login expired — waiting for its machine'),
+    );
+  });
+
+  it('keeps the generic Stale tooltip when there is no reason', () => {
+    const card = limitCard({ pct_used: 40, stale: true });
+    renderWithProviders(<QuotaWindowRow card={card} siblings={[card]} forecast={null} />);
+    expect(screen.getByText('Stale')).toHaveAttribute(
+      'title',
+      'Collection failing — showing cached data',
+    );
+  });
+
   it('shows a Stale badge when collection_failing is true without stale', () => {
     const card = limitCard({ pct_used: 40, collection_failing: true });
     renderWithProviders(

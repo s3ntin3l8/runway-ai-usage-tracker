@@ -151,6 +151,56 @@ describe('FleetPage', () => {
     expect(api.setSidecarEnabled).toHaveBeenCalledWith('laptop', false);
   });
 
+  describe('keep-alive toggle', () => {
+    it('turns keep-alive on for a sidecar that reports it off', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: false })] });
+      vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
+        status: 'ok',
+        keep_alive_desired: true,
+      });
+      renderWithProviders(<FleetPage />);
+
+      const btn = await screen.findByRole('button', { name: /turn keep-alive on/i });
+      expect(btn).toHaveAttribute('aria-pressed', 'false');
+      await userEvent.click(btn);
+      expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('laptop', true);
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('Keep-alive on')),
+      );
+    });
+
+    it('turns it off for a sidecar running it, and badges the card', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: true })] });
+      vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
+        status: 'ok',
+        keep_alive_desired: false,
+      });
+      renderWithProviders(<FleetPage />);
+
+      expect(await screen.findByText('keep-alive')).toBeInTheDocument();
+      const btn = screen.getByRole('button', { name: /turn keep-alive off/i });
+      expect(btn).toHaveAttribute('aria-pressed', 'true');
+      await userEvent.click(btn);
+      expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('laptop', false);
+    });
+
+    it('treats an older sidecar that does not report it as off, with no badge', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+      renderWithProviders(<FleetPage />);
+      expect(await screen.findByRole('button', { name: /turn keep-alive on/i })).toBeInTheDocument();
+      expect(screen.queryByText('keep-alive')).not.toBeInTheDocument();
+    });
+
+    it('toasts the error when the request fails', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: false })] });
+      vi.mocked(api.setSidecarKeepAlive).mockRejectedValue(new Error('keep-alive boom'));
+      renderWithProviders(<FleetPage />);
+
+      await userEvent.click(await screen.findByRole('button', { name: /turn keep-alive on/i }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('keep-alive boom'));
+    });
+  });
+
   it('marks a paused sidecar and offers resume', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({
       sidecars: [sidecar({ collection_enabled: false })],

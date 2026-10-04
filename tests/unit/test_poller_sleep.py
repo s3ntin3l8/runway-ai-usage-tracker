@@ -162,3 +162,54 @@ async def test_all_accounts_must_be_dormant_for_sleep():
         for _ in range(3):
             await p.poll_now()
     assert p._interval == 900  # NOT sleeping — acc2 is always changing
+
+
+@pytest.mark.asyncio
+async def test_failed_outcome_reason_reaches_the_stale_marker():
+    p = BackgroundPoller(interval_seconds=900)
+    outcome = {
+        "provider_id": "xai",
+        "account_id": "default",
+        "source_id": "server:xai",
+        "state": "skipped",
+        "reason": "login expired — waiting for its machine to renew it",
+    }
+    with (
+        patch("app.services.poller.manager") as mock_mgr,
+        patch("app.services.poller.Session") as mock_session,
+        patch("app.services.accumulator.mark_latest_usage_source_stale") as mark_stale,
+    ):
+        mock_mgr.collect_all = AsyncMock(return_value=[])
+        mock_mgr.last_collection_outcomes = [outcome]
+        db_session = mock_session.return_value.__enter__.return_value
+        db_session.exec.return_value.all.return_value = []
+
+        await p.poll_now()
+
+    kwargs = mark_stale.call_args.kwargs
+    assert kwargs["provider_id"] == "xai"
+    assert kwargs["reason"] == "login expired — waiting for its machine to renew it"
+
+
+@pytest.mark.asyncio
+async def test_outcome_without_a_reason_passes_none():
+    p = BackgroundPoller(interval_seconds=900)
+    outcome = {
+        "provider_id": "xai",
+        "account_id": "default",
+        "source_id": "server:xai",
+        "state": "failed",
+    }
+    with (
+        patch("app.services.poller.manager") as mock_mgr,
+        patch("app.services.poller.Session") as mock_session,
+        patch("app.services.accumulator.mark_latest_usage_source_stale") as mark_stale,
+    ):
+        mock_mgr.collect_all = AsyncMock(return_value=[])
+        mock_mgr.last_collection_outcomes = [outcome]
+        db_session = mock_session.return_value.__enter__.return_value
+        db_session.exec.return_value.all.return_value = []
+
+        await p.poll_now()
+
+    assert mark_stale.call_args.kwargs["reason"] is None

@@ -50,6 +50,11 @@ def enable() -> None:
     _enabled = True
 
 
+def disable() -> None:
+    global _enabled
+    _enabled = False
+
+
 def is_enabled() -> bool:
     return _enabled
 
@@ -229,3 +234,65 @@ class KeepAliveThread(threading.Thread):
                 wait = self._retry_tick_seconds
             if self._stop_event.wait(wait):
                 return
+
+
+class KeepAliveController:
+    """Starts and stops the keep-alive thread as its desired state changes.
+
+    The sidecar's own flag (``--keep-alive`` / config) is the *local* setting; the server
+    can override it per sidecar from the dashboard (``keep_alive_desired`` on every ingest
+    response). ``None`` from the server means "no preference" — the local flag decides.
+    The override is stateless: the server resends it every heartbeat, so nothing is
+    written to the sidecar's config and a restart picks it up again on the first check-in.
+    Inert until ``arm`` is called, so one-shot (non-daemon) runs never spawn a thread.
+    """
+
+    def __init__(self, make_thread) -> None:
+        self._make_thread = make_thread
+        self._lock = threading.Lock()
+        self._thread: KeepAliveThread | None = None
+        self._armed = False
+        self._local = False
+        self._remote: bool | None = None
+
+    @property
+    def effective(self) -> bool:
+        return self._remote if self._remote is not None else self._local
+
+    def arm(self, local: bool) -> None:
+        """Daemon start: take the local flag and begin controlling the thread."""
+        with self._lock:
+            self._armed = True
+            self._local = bool(local)
+            self._reconcile()
+
+    def set_remote(self, desired: bool | None) -> None:
+        """Apply the server's setting from an ingest response (no-op until armed)."""
+        with self._lock:
+            if not self._armed or desired == self._remote:
+                return
+            self._remote = desired if isinstance(desired, bool) else None
+            self._reconcile()
+
+    def stop(self) -> None:
+        with self._lock:
+            self._armed = False
+            self._stop_thread()
+
+    def _stop_thread(self) -> None:
+        if self._thread is not None:
+            self._thread.stop()
+            self._thread = None
+        disable()
+
+    def _reconcile(self) -> None:
+        if self.effective and self._thread is None:
+            self._thread = self._make_thread()
+            self._thread.start()
+            enable()
+            logger.info("Keep-alive enabled")
+        elif not self.effective and self._thread is not None:
+            self._stop_thread()
+            logger.info("Keep-alive disabled")
+        elif not self.effective:
+            disable()

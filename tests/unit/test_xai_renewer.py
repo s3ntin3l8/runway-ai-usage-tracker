@@ -259,3 +259,179 @@ class TestReviewFixes:
         XaiRenewer([(link, "opencode")]).renew()
         assert link.is_symlink()
         assert json.loads(real.read_text())["xai"]["refresh"] == "n"
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _http_error(code: int, body: bytes = b"{}"):
+    import io
+    import urllib.error
+
+    return urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(body))
+
+
+class TestRequestRefresh:
+    def _patch(self, monkeypatch, result):
+        seen = {}
+
+        def fake(req, timeout):
+            seen["req"] = req
+            if isinstance(result, Exception):
+                raise result
+            return _FakeResponse(result)
+
+        monkeypatch.setattr(xai_renewer.urllib.request, "urlopen", fake)
+        return seen
+
+    def test_posts_the_refresh_grant_with_the_cli_client(self, monkeypatch):
+        seen = self._patch(monkeypatch, b'{"access_token": "new", "refresh_token": "r2"}')
+        assert xai_renewer.request_refresh("old-refresh")["access_token"] == "new"
+        req = seen["req"]
+        assert req.full_url == xai_renewer.TOKEN_ENDPOINT
+        body = req.data.decode()
+        assert "grant_type=refresh_token" in body
+        assert "refresh_token=old-refresh" in body
+        assert f"client_id={xai_renewer.CLIENT_ID}" in body
+        assert req.get_method() == "POST"
+
+    @pytest.mark.parametrize("code", [400, 401, 403])
+    def test_definitive_rejections(self, monkeypatch, code):
+        self._patch(monkeypatch, _http_error(code, b'{"error": "invalid_grant"}'))
+        with pytest.raises(xai_renewer.RefreshRejectedError, match="invalid_grant"):
+            xai_renewer.request_refresh("r")
+
+    def test_unreadable_error_body_still_rejects(self, monkeypatch):
+        self._patch(monkeypatch, _http_error(400, b"<html>"))
+        with pytest.raises(xai_renewer.RefreshRejectedError, match="HTTP 400"):
+            xai_renewer.request_refresh("r")
+
+    @pytest.mark.parametrize("code", [408, 429, 500, 503])
+    def test_transient_errors_are_not_rejections(self, monkeypatch, code):
+        self._patch(monkeypatch, _http_error(code))
+        with pytest.raises(OSError) as exc:
+            xai_renewer.request_refresh("r")
+        assert not isinstance(exc.value, xai_renewer.RefreshRejectedError)
+
+    @pytest.mark.parametrize("body", [b"not json", b"[]", b'{"nope": 1}'])
+    def test_bad_responses_are_errors(self, monkeypatch, body):
+        self._patch(monkeypatch, body)
+        with pytest.raises(OSError):
+            xai_renewer.request_refresh("r")
+
+    def test_network_failure_propagates_as_oserror(self, monkeypatch):
+        self._patch(monkeypatch, OSError("down"))
+        with pytest.raises(OSError):
+            xai_renewer.request_refresh("r")
+
+
+class TestHelpers:
+    def test_jwt_expiry_normalises_milliseconds(self):
+        assert xai_renewer.jwt_expiry_epoch(_jwt(1_700_000_000)) == 1_700_000_000
+        ms = f"a.{base64.urlsafe_b64encode(json.dumps({'exp': 1_700_000_000_000}).encode()).decode()}.c"
+        assert xai_renewer.jwt_expiry_epoch(ms) == 1_700_000_000
+
+    @pytest.mark.parametrize("token", ["", "abc", "a.b.c", "a.e30.c"])
+    def test_jwt_expiry_unreadable(self, token):
+        assert xai_renewer.jwt_expiry_epoch(token) is None
+
+    def test_expiry_falls_back_to_the_files_field(self):
+        login = xai_renewer.Login(
+            path=Path("x"), kind="opencode", access="opaque", refresh="r", expires_ms=5000.0
+        )
+        assert xai_renewer.login_expiry(login) == 5.0
+        login.expires_ms = None
+        assert xai_renewer.login_expiry(login) is None
+        assert xai_renewer.login_due(login) is True  # unreadable counts as due
+
+    def test_read_login_rejects_bad_files(self, tmp_path):
+        missing = tmp_path / "nope.json"
+        junk = tmp_path / "junk.json"
+        junk.write_text("{not json")
+        no_xai = tmp_path / "no_xai.json"
+        no_xai.write_text(json.dumps({"openrouter": {}}))
+        bad_types = tmp_path / "bad.json"
+        bad_types.write_text(json.dumps({"xai": {"access": 1, "refresh": 2}}))
+        for path in (missing, junk, no_xai, bad_types):
+            assert xai_renewer.read_login(path, "opencode") is None
+        assert xai_renewer.read_login(no_xai, "grok") is None
+
+    def test_default_targets_cover_opencode_and_grok(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GROK_HOME", str(tmp_path))
+        targets = XaiRenewer()._targets()
+        assert (tmp_path / "auth.json", "grok") in targets
+        assert {kind for _, kind in targets} == {"opencode", "grok"}
+
+    def test_write_back_without_expiry_in_token_uses_expires_in(self, tmp_path):
+        f = _opencode(tmp_path / "a.json", time.time() - 10)
+        login = xai_renewer.read_login(f, "opencode")
+        outcome = xai_renewer.write_back(
+            login, {"access_token": "opaque-token", "expires_in": 3600}
+        )
+        assert outcome == "written"
+        expires = json.loads(f.read_text())["xai"]["expires"]
+        assert abs(expires / 1000 - (time.time() + 3600)) < 5
+
+    def test_write_back_reports_failure_when_the_file_vanished(self, tmp_path):
+        f = _opencode(tmp_path / "a.json", time.time() - 10)
+        login = xai_renewer.read_login(f, "opencode")
+        f.unlink()
+        assert xai_renewer.write_back(login, {"access_token": "x"}) == "failed"
+
+    def test_write_back_superseded_when_the_xai_entry_is_gone(self, tmp_path):
+        f = _opencode(tmp_path / "a.json", time.time() - 10)
+        login = xai_renewer.read_login(f, "opencode")
+        f.write_text(json.dumps({"openrouter": {}}))
+        assert xai_renewer.write_back(login, {"access_token": "x"}) == "superseded"
+
+    def test_renew_with_nothing_due_is_a_noop_failure(self, tmp_path):
+        f = _opencode(tmp_path / "a.json", time.time() + 3600)
+        assert XaiRenewer([(f, "opencode")]).renew() is False
+
+    def test_superseded_write_counts_as_success(self, tmp_path, monkeypatch):
+        f = _opencode(tmp_path / "a.json", time.time() - 10)
+        monkeypatch.setattr(xai_renewer, "request_refresh", lambda rt: {"access_token": "x"})
+        monkeypatch.setattr(xai_renewer, "write_back", lambda login, resp: "superseded")
+        assert XaiRenewer([(f, "opencode")]).renew() is True
+
+
+def test_concurrent_renewals_refresh_the_token_once(tmp_path, monkeypatch):
+    """A keep-alive toggled off/on can leave two threads renewing; xAI rotates refresh
+    tokens, so the second must find the login already renewed instead of refreshing again."""
+    import threading
+
+    f = _opencode(tmp_path / "a.json", time.time() - 10)
+    calls: list[str] = []
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_refresh(refresh_token):
+        calls.append(refresh_token)
+        started.set()
+        release.wait(5)
+        return {"access_token": _jwt(time.time() + 3600), "refresh_token": "r-new"}
+
+    monkeypatch.setattr(xai_renewer, "request_refresh", slow_refresh)
+    first, second = XaiRenewer([(f, "opencode")]), XaiRenewer([(f, "opencode")])
+    t1 = threading.Thread(target=first.renew)
+    t2 = threading.Thread(target=second.renew)
+    t1.start()
+    assert started.wait(5)
+    t2.start()  # blocks on the lock while t1 is mid-refresh
+    release.set()
+    t1.join(5)
+    t2.join(5)
+
+    assert calls == ["r-old"]
+    assert json.loads(f.read_text())["xai"]["refresh"] == "r-new"
