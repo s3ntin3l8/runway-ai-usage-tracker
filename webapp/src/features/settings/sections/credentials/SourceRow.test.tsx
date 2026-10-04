@@ -140,6 +140,32 @@ describe('SourceRow', () => {
     expect(screen.queryByText(/Same login/)).not.toBeInTheDocument();
   });
 
+  it('ignores a copy of the login on a machine that stopped checking in', () => {
+    const { unmount } = renderRow({
+      source: source({
+        rollable: true,
+        shared_with: ['mgmt', 'hermes-01'],
+        shared_with_stale: ['hermes-01'],
+      }),
+    });
+    // Only the live peer is named; the dead one can't sign anyone out.
+    expect(screen.getByText(/Same login also on mgmt —/)).toBeInTheDocument();
+    expect(screen.queryByText(/hermes-01/)).not.toBeInTheDocument();
+    unmount();
+
+    renderRow({
+      source: source({ rollable: true, shared_with: ['hermes-01'], shared_with_stale: ['hermes-01'] }),
+    });
+    expect(screen.queryByText(/Same login/)).not.toBeInTheDocument();
+  });
+
+  it('does not warn on the offline machine\'s own row', () => {
+    renderRow({
+      source: source({ rollable: true, machine_stale: true, shared_with: ['mgmt'] }),
+    });
+    expect(screen.queryByText(/Same login/)).not.toBeInTheDocument();
+  });
+
   it('shows the live re-test result, or says the row was not reached', () => {
     const { unmount } = renderRow({
       source: source(),

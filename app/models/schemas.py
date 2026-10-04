@@ -472,6 +472,9 @@ class CredentialSourceView(BaseModel):
     machine_stale: bool = False  # the machine has stopped checking in (Fleet's rule)
     # Other machines holding the same secret (matched by fingerprint; never returned itself).
     shared_with: list[str] = Field(default_factory=list)
+    # The subset of ``shared_with`` whose machine has stopped checking in: it can't renew
+    # anything, so it is no reason to warn about the login being copied.
+    shared_with_stale: list[str] = Field(default_factory=list)
     # Why this credential belongs to its account: local (identity read on the machine),
     # verified (server resolved it), claim (sidecar claimed it), operator (tag),
     # config, server, or pending.

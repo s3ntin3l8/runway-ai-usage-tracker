@@ -243,6 +243,10 @@ def _apply_server_expiry(
         view.refreshed_by = "machine"
 
 
+def _machine_label(view: CredentialSourceView) -> str:
+    return view.machine_name or view.machine_id or ""
+
+
 def _mark_shared(
     accounts: dict[tuple[str, str], list[CredentialSourceView]],
     fingerprints: dict[tuple[str, str], str],
@@ -251,7 +255,8 @@ def _mark_shared(
 
     One login copied between machines is a hazard (the first to renew a rotating refresh token
     signs the others out); one static key everywhere is normal, so the UI only warns inline for
-    rollable credentials. Machines sharing a home directory legitimately report one origin.
+    rollable credentials, and not for peers that have stopped checking in (``shared_with_stale``).
+    Machines sharing a home directory legitimately report one origin.
     """
     groups: dict[tuple[str, str], list[CredentialSourceView]] = {}
     for views in accounts.values():
@@ -263,13 +268,9 @@ def _mark_shared(
         if len({v.machine_id for v in group}) < 2:
             continue
         for view in group:
-            view.shared_with = sorted(
-                {
-                    other.machine_name or other.machine_id or ""
-                    for other in group
-                    if other.machine_id != view.machine_id
-                }
-            )
+            peers = [other for other in group if other.machine_id != view.machine_id]
+            view.shared_with = sorted({_machine_label(p) for p in peers})
+            view.shared_with_stale = sorted({_machine_label(p) for p in peers if p.machine_stale})
 
 
 def _mark_redundant(views: list[CredentialSourceView]) -> None:
