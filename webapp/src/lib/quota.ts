@@ -89,6 +89,22 @@ export function cardStale(card: LimitCard): boolean {
   return card.stale === true || card.collection_failing === true;
 }
 
+const FAILING_REASON = /^⚠ Collection failing \((.+?)\) — /;
+
+/** Why collection is failing, from the backend's "⚠ Collection failing (<reason>) — " prefix. */
+export function failingReason(card: LimitCard): string | null {
+  const match = FAILING_REASON.exec(card.detail ?? '');
+  return match ? match[1] : null;
+}
+
+/** Tooltip for a stale card: the reason when the backend gave one. */
+export function staleTitle(card: LimitCard): string {
+  const reason = failingReason(card);
+  return reason
+    ? `Collection failing — ${reason}. Showing cached data`
+    : 'Collection failing — showing cached data';
+}
+
 export function cardStatus(card: LimitCard): QuotaStatus {
   if (card.error_type) return 'critical';
   if (card.is_unlimited) return 'unlimited';

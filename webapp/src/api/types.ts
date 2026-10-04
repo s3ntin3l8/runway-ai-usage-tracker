@@ -512,6 +512,11 @@ export interface Sidecar {
   // Whether the build can self-update in place (frozen, non-Docker). null = not
   // reported; false = from-source/Docker (no update push offered).
   self_update_capable?: boolean | null;
+  // Whether the sidecar runs with --keep-alive (renews agy/xAI logins itself). null = not
+  // reported by an older sidecar — treat as unknown, not off.
+  keep_alive?: boolean | null;
+  // The operator's remote keep-alive setting (null = no preference; the sidecar's own flag decides).
+  keep_alive_desired?: boolean | null;
   // One-shot "Update now" push queued but not yet delivered (persisted
   // server-side; survives a server restart until the sidecar's next
   // successful ingest — see fleet_registry.set_pending_update/consume_pending_update).
@@ -901,6 +906,8 @@ export interface CredentialSourceView {
   can_refresh: boolean;
   rollable: boolean;
   refreshed_by: 'server' | 'machine' | null;
+  /** Sidecar keep-alive on the owning machine; null = not applicable to this credential. */
+  keep_alive?: 'on' | 'off' | 'unknown' | null;
   /** The provider rejected this credential (HTTP 401/403 at the last collection). */
   rejected: boolean;
   /** Expired and unrefreshable, but another healthy credential for the same account can stand

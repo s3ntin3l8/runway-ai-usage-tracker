@@ -190,3 +190,89 @@ def test_server_and_sidecar_resolve_to_same_row(session):
     assert merged["token_usage"]["total"] == 654000000, "token_usage from sidecar must be present"
     assert "web" in merged.get("data_source", ""), "web data_source must be preserved"
     assert "local" in merged.get("data_source", ""), "local data_source from sidecar must be merged"
+
+
+def _signed_ingest(client, payload: dict):
+    from app.core.config import settings
+
+    settings.INGEST_API_KEY = "test-key"
+    ts = str(time.time())
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    sig = hmac.new(b"test-key", ts.encode() + body, hashlib.sha256).hexdigest()
+    return client.post(
+        "/api/v1/fleet/ingest",
+        content=body,
+        headers={"X-Signature": sig, "X-Timestamp": ts},
+    )
+
+
+def _heartbeat(client, **extra):
+    return _signed_ingest(
+        client,
+        {"provider": "sidecar-t", "sidecar_id": "ka-host", "metrics": [], "deltas": [], **extra},
+    )
+
+
+def test_ingest_records_the_sidecars_reported_keep_alive(client, session):
+    from app.models.db import SidecarRegistry
+
+    assert _heartbeat(client, keep_alive=True).status_code == 200
+    assert session.get(SidecarRegistry, "ka-host").keep_alive is True
+
+    # An event-only batch / older sidecar omits it: the last report stands.
+    assert _heartbeat(client).status_code == 200
+    session.expire_all()
+    assert session.get(SidecarRegistry, "ka-host").keep_alive is True
+
+    assert _heartbeat(client, keep_alive=False).status_code == 200
+    session.expire_all()
+    assert session.get(SidecarRegistry, "ka-host").keep_alive is False
+
+
+def test_ingest_response_carries_the_remote_keep_alive_setting(client, session):
+    # No preference until the operator sets one: the sidecar's own flag decides.
+    assert _heartbeat(client).json()["keep_alive_desired"] is None
+
+    r = client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": True})
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok", "sidecar_id": "ka-host", "keep_alive_desired": True}
+    assert _heartbeat(client).json()["keep_alive_desired"] is True
+
+    client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": False})
+    assert _heartbeat(client).json()["keep_alive_desired"] is False
+
+    client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": None})
+    assert _heartbeat(client).json()["keep_alive_desired"] is None
+
+
+def test_remote_keep_alive_is_per_sidecar(client, session):
+    _heartbeat(client)
+    _signed_ingest(
+        client, {"provider": "sidecar-t", "sidecar_id": "other", "metrics": [], "deltas": []}
+    )
+    client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": True})
+    other = _signed_ingest(
+        client, {"provider": "sidecar-t", "sidecar_id": "other", "metrics": [], "deltas": []}
+    )
+    assert other.json()["keep_alive_desired"] is None
+
+
+def test_setting_keep_alive_on_an_unknown_sidecar_is_a_404(client):
+    r = client.put("/api/v1/fleet/sidecars/ghost/keep-alive", json={"enabled": True})
+    assert r.status_code == 404
+
+
+def test_setting_keep_alive_requires_a_boolean_or_null(client, session):
+    _heartbeat(client)
+    r = client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": "maybe"})
+    assert r.status_code == 422
+    assert client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={}).status_code == 422
+
+
+def test_sidecar_listing_exposes_both_keep_alive_fields(client, session):
+    _heartbeat(client, keep_alive=True)
+    client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": False})
+    sidecars = client.get("/api/v1/fleet/sidecars").json()["sidecars"]
+    entry = next(s for s in sidecars if s["sidecar_id"] == "ka-host")
+    assert entry["keep_alive"] is True
+    assert entry["keep_alive_desired"] is False

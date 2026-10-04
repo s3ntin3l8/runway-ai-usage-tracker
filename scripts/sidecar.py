@@ -823,6 +823,22 @@ DEFAULT_CONFIG = {
 
 REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
 
+
+def _make_keep_alive_thread():
+    from scripts.sidecar_pkg.keep_alive import KeepAliveThread
+    from scripts.sidecar_pkg.xai_renewer import XaiRenewer
+
+    return KeepAliveThread(renewers=[XaiRenewer()])
+
+
+def _keep_alive_controller():
+    from scripts.sidecar_pkg.keep_alive import KeepAliveController
+
+    return KeepAliveController(_make_keep_alive_thread)
+
+
+_KEEP_ALIVE = _keep_alive_controller()
+
 # Global state for daemon mode
 _daemon_running = False
 _pid_file_path: Path | None = None
@@ -3398,6 +3414,13 @@ class GenericCollector:
                     exp = payload.get("exp")
                     if exp is not None:
                         tokens["expiry_date"] = str(int(float(exp) * 1000))
+                        from scripts.sidecar_pkg.keep_alive import is_enabled
+
+                        if float(exp) <= time.time() and not is_enabled():
+                            logging.warning(
+                                f"  [{provider_id}] local login expired — it renews when the "
+                                "CLI next runs, or start the sidecar with --keep-alive"
+                            )
                 except (
                     ValueError,
                     KeyError,
@@ -3664,25 +3687,9 @@ def _discover_opencode_db_path() -> Path | None:
 
 def _grok_auth_scope_entry(data: Any) -> dict[str, Any] | None:
     """Select the Grok OAuth scope entry used by both cards and events."""
-    if not isinstance(data, dict):
-        return None
-    entries = [
-        value
-        for key, value in data.items()
-        if isinstance(key, str)
-        and (key.startswith("https://auth.x.ai::") or key == "https://accounts.x.ai/sign-in")
-        and isinstance(value, dict)
-    ]
-    usable_entries = [entry for entry in entries if entry.get("key")]
-    if usable_entries:
-        entries = usable_entries
-    # Prefer email across scopes, then user ID, so the credential card and
-    # usage events agree even if auth.json contains multiple OAuth clients.
-    return (
-        next((entry for entry in entries if entry.get("email")), None)
-        or next((entry for entry in entries if entry.get("user_id")), None)
-        or (entries[0] if entries else None)
-    )
+    from scripts.sidecar_pkg.xai_renewer import grok_scope_entry
+
+    return grok_scope_entry(data)
 
 
 def _grok_account_identity(data: Any | None = None) -> str | None:
@@ -4467,6 +4474,9 @@ class DaemonRunner:
                 self_update_capable: bool | None = self_update_supported()
             except Exception:
                 self_update_capable = None
+            from scripts.sidecar_pkg.keep_alive import is_enabled as keep_alive_enabled
+
+            keep_alive = keep_alive_enabled()
 
             # Try to flush queue first
             queue_flush(api_url, api_key, stop_event=self._stop_event, config=self._config)
@@ -4502,6 +4512,7 @@ class DaemonRunner:
                     "sidecar_version": sidecar_version,
                     "os_platform": os_platform,
                     "self_update_capable": self_update_capable if first_batch else None,
+                    "keep_alive": keep_alive if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
                     "completed_providers": completed_providers if first_batch else None,
                     "identity_sources": dict(_IDENTITY_REPORT) if first_batch else None,
@@ -4748,6 +4759,9 @@ class DaemonRunner:
                     logging.debug(f"Server update channel: {update_channel}")
                 _UPDATE_CHANNEL = update_channel
 
+            if "keep_alive_desired" in result:
+                _KEEP_ALIVE.set_remote(result.get("keep_alive_desired"))
+
             global _AUTO_UPDATE_SERVER
             server_auto = bool(result.get("sidecar_auto_update", False))
             if server_auto != _AUTO_UPDATE_SERVER:
@@ -4894,8 +4908,10 @@ def main():
         action="store_true",
         help=(
             "Daemon mode: renew the Antigravity (agy) access token with "
-            "`agy models` whenever it lapses (opt-in; config "
-            '"keep_alive": true does the same)'
+            "`agy models` whenever it lapses, and refresh the xAI (Grok) login in "
+            "OpenCode's / the Grok CLI's auth file before it expires (opt-in; config "
+            '"keep_alive": true is the same on/off switch for both renewers; it can also be '
+            "toggled per sidecar from the Fleet page)"
         ),
     )
     parser.add_argument(
@@ -4980,19 +4996,10 @@ def main():
         except Exception:
             logging.debug("Update-check thread not started", exc_info=True)
 
-        # Optional Antigravity keep-alive: the agy access token lives one hour
-        # and only agy can renew it. Off by default — opt in with --keep-alive
-        # (or config "keep_alive": true) on hosts that run agy.
-        keep_alive_thread = None
-        if args.keep_alive or config.get("keep_alive") is True:
-            from scripts.sidecar_pkg.keep_alive import KeepAliveThread, enable
-
-            enable()
-            keep_alive_thread = KeepAliveThread()
-            keep_alive_thread.start()
-            logging.info(
-                "Antigravity keep-alive enabled (checks every minute, renews via `agy models`)"
-            )
+        # Optional keep-alive (agy + xAI login renewal). Off by default — opt in with
+        # --keep-alive (or config "keep_alive": true), or per sidecar from the dashboard
+        # (the server's `keep_alive_desired` on each ingest response overrides the local flag).
+        _KEEP_ALIVE.arm(bool(args.keep_alive or config.get("keep_alive") is True))
 
         try:
             # Block until signal handler sets _daemon_running = False
@@ -5001,8 +5008,7 @@ def main():
         finally:
             if update_thread is not None:
                 update_thread.stop()
-            if keep_alive_thread is not None:
-                keep_alive_thread.stop()
+            _KEEP_ALIVE.stop()
             runner.stop()
 
     logging.info("Sidecar stopping...")

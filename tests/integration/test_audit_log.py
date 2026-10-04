@@ -147,3 +147,13 @@ def test_audit_log_endpoint_returns_recent_entries(client, session):
     # Schema check
     for e in entries:
         assert {"id", "ts", "actor", "source_ip", "action", "target_id"} <= e.keys()
+
+
+def test_keep_alive_change_writes_audit_row(client, session):
+    _add_sidecar(session, "ka-host")
+    r = client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": True})
+    assert r.status_code == 200
+
+    (row,) = _audit_rows(session)
+    assert row.action == "sidecar.keep_alive"
+    assert row.target_id == "ka-host"

@@ -133,6 +133,7 @@ class FleetRegistryService:
         sidecar_version: str | None = None,
         os_platform: str | None = None,
         self_update_capable: bool | None = None,
+        keep_alive: bool | None = None,
         collection_errors: int = 0,
         last_log_lines: list[str] | None = None,
         identity_sources: dict[str, dict[str, str]] | None = None,
@@ -149,6 +150,8 @@ class FleetRegistryService:
                 row.os_platform = os_platform
             if self_update_capable is not None:
                 row.self_update_capable = self_update_capable
+            if keep_alive is not None:
+                row.keep_alive = keep_alive
             if collection_errors > 0:
                 row.error_count += collection_errors
             if last_log_lines is not None:
@@ -164,6 +167,7 @@ class FleetRegistryService:
                 sidecar_version=sidecar_version,
                 os_platform=os_platform,
                 self_update_capable=self_update_capable,
+                keep_alive=keep_alive,
                 error_count=collection_errors,
                 recent_logs=_recent_logs_json(last_log_lines) if last_log_lines else None,
                 identity_sources=json.dumps(identity_sources) if identity_sources else None,
@@ -264,6 +268,8 @@ class FleetRegistryService:
             "update_available": update_available,
             "outdated": outdated,
             "self_update_capable": row.self_update_capable,
+            "keep_alive": row.keep_alive,
+            "keep_alive_desired": row.keep_alive_desired,
             "os_platform": row.os_platform,
             "collection_enabled": row.collection_enabled,
             "pending_update": row.pending_update,

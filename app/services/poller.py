@@ -240,6 +240,7 @@ class BackgroundPoller:
                         provider_id=provider_id,
                         source_id=source_id,
                         account_id=canonical_account_id,
+                        reason=outcome.get("reason") or None,
                     )
 
             # A dynamic collector can disappear during sync (for example when
@@ -258,6 +259,7 @@ class BackgroundPoller:
                         provider_id=provider_id,
                         source_id=f"server:{provider_id}",
                         account_id=account_id,
+                        reason="its collector is no longer active",
                     )
 
             session.commit()

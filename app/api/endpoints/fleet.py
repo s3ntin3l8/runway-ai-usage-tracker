@@ -358,6 +358,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 sidecar_version=payload.sidecar_version,
                 os_platform=payload.os_platform,
                 self_update_capable=payload.self_update_capable,
+                keep_alive=payload.keep_alive,
                 collection_errors=payload.collection_errors,
                 last_log_lines=payload.last_log_lines or [],
                 identity_sources=payload.identity_sources,
@@ -639,7 +640,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     trigger: bool = False
     sys_cfg = session.exec(select(SystemConfig)).first()
     collection_enabled = True
+    keep_alive_desired: bool | None = None
     if payload.sidecar_id:
+        desired_row = session.get(SidecarRegistry, payload.sidecar_id)
+        keep_alive_desired = desired_row.keep_alive_desired if desired_row else None
         # Honor per-sidecar pause: paused sidecars still check in but receive
         # no poll instructions, and their pending-trigger flag is preserved
         # so a resume can still deliver it.
@@ -698,6 +702,8 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "poll_providers": poll_providers,
         "trigger": trigger,
         "collection_enabled": collection_enabled,
+        # Operator's remote keep-alive setting; null leaves the sidecar's own flag in charge.
+        "keep_alive_desired": keep_alive_desired,
         "identities": _get_active_identities(
             session
         ),  # For sidecar identity propagation (legacy single-value)
@@ -2083,6 +2089,38 @@ def _set_sidecar_collection_enabled(
     session.refresh(row)
     logger.info(f"Sidecar '{scrub_log(sidecar_id)}' collection_enabled set to {enabled}")
     return row
+
+
+class SidecarKeepAliveRequest(BaseModel):
+    # true/false forces keep-alive on/off for that sidecar; null defers to its own flag.
+    enabled: bool | None
+
+
+@router.put("/sidecars/{sidecar_id}/keep-alive")
+@limiter.limit("10/minute")
+async def set_sidecar_keep_alive(
+    request: Request,
+    sidecar_id: str,
+    body: SidecarKeepAliveRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Turn the sidecar's keep-alive (agy / xAI login renewal) on or off remotely.
+
+    Delivered on the sidecar's next check-in; the sidecar applies it without a restart."""
+    row = session.get(SidecarRegistry, sidecar_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
+    row.keep_alive_desired = body.enabled
+    session.commit()
+    audit_log.record(
+        session,
+        request,
+        action="sidecar.keep_alive",
+        target_id=sidecar_id,
+        payload={"enabled": body.enabled},
+    )
+    return {"status": "ok", "sidecar_id": sidecar_id, "keep_alive_desired": body.enabled}
 
 
 @router.post("/sidecars/{sidecar_id}/pause")

@@ -50,6 +50,27 @@ describe('Banners collection failure', () => {
     expect(screen.getByText(/collection failing for ollama/i)).toBeInTheDocument();
   });
 
+  it('names the reason in the banner when the backend gave one', () => {
+    renderWithProviders(
+      <Banners
+        credentials={undefined}
+        anomalies={[]}
+        fleet={[
+          entry({
+            critical_gauge: card({
+              stale: true,
+              collection_failing: true,
+              detail: '⚠ Collection failing (login expired — waiting for its machine) — 12%',
+            }),
+          }),
+        ]}
+      />,
+    );
+    expect(
+      screen.getByText(/login expired — waiting for its machine/i),
+    ).toBeInTheDocument();
+  });
+
   it('renders a multi-provider summary when several entries fail', () => {
     renderWithProviders(
       <Banners

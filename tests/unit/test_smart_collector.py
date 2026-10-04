@@ -814,3 +814,85 @@ class TestSmartCollectorAuthFailureFlag:
         await smart.collect(mock_client)
 
         assert auth_failures.flagged_accounts("test_provider") == {"default"}
+
+
+class TestCollectionReason:
+    """Every failed/skipped outcome says why — the stale card shows it for any provider."""
+
+    @pytest.mark.asyncio
+    async def test_error_card_detail_becomes_the_reason(self, mock_collector, mock_client):
+        mock_collector.collect.return_value = [
+            {
+                "service_name": "T",
+                "remaining": "ERR",
+                "detail": "Token expired — run `agy`",
+                "data_source": "error",
+                "error_type": "auth_failed",
+            }
+        ]
+        smart = SmartCollector(mock_collector, "T", error_retry_delay=0)
+        await smart.collect(mock_client)
+        assert smart.last_collection_state == "failed"
+        assert smart.last_collection_reason == "Token expired — run `agy`"
+
+    @pytest.mark.asyncio
+    async def test_error_card_without_detail_falls_back_to_a_generic_reason(
+        self, mock_collector, mock_client
+    ):
+        mock_collector.collect.return_value = [
+            {"service_name": "T", "remaining": "ERR", "data_source": "error", "error_type": "x"}
+        ]
+        smart = SmartCollector(mock_collector, "T", error_retry_delay=0)
+        await smart.collect(mock_client)
+        assert smart.last_collection_reason == "provider returned an error card"
+
+    @pytest.mark.asyncio
+    async def test_long_detail_is_truncated(self, mock_collector, mock_client):
+        mock_collector.collect.return_value = [
+            {"service_name": "T", "remaining": "ERR", "detail": "x" * 500, "error_type": "e"}
+        ]
+        smart = SmartCollector(mock_collector, "T", error_retry_delay=0)
+        await smart.collect(mock_client)
+        assert len(smart.last_collection_reason) == 200
+
+    @pytest.mark.asyncio
+    async def test_raised_exception_has_a_reason(self, mock_collector, mock_client):
+        mock_collector.collect.side_effect = Exception("boom")
+        smart = SmartCollector(mock_collector, "T", error_retry_delay=0)
+        await smart.collect(mock_client)
+        assert smart.last_collection_state == "failed"
+        assert smart.last_collection_reason
+
+    @pytest.mark.asyncio
+    async def test_cache_served_stale_card_carries_the_reason(self, mock_collector, mock_client):
+        good = [{"service_name": "T", "remaining": "55%", "detail": "ok", "data_source": "api"}]
+        bad = [
+            {
+                "service_name": "T",
+                "remaining": "ERR",
+                "detail": "login expired",
+                "data_source": "error",
+                "error_type": "auth_failed",
+            }
+        ]
+        mock_collector.collect.side_effect = [good, bad]
+        smart = SmartCollector(mock_collector, "T", ttl=0.05, error_retry_delay=0)
+        smart.STALE_CEILING_SECONDS = 0
+        await smart.collect(mock_client)
+        await asyncio.sleep(0.1)
+        result = await smart.collect(mock_client)
+        assert result[0]["stale"] is True
+        assert result[0]["detail"].startswith("⚠ Collection failing (login expired) — ")
+
+    @pytest.mark.asyncio
+    async def test_cache_served_stale_card_never_reuses_a_non_failure_reason(
+        self, mock_collector, mock_client
+    ):
+        # A plain cache hit past the ceiling must not claim "fresh cache hit" as the failure.
+        good = [{"service_name": "T", "remaining": "55%", "detail": "ok", "data_source": "api"}]
+        mock_collector.collect.return_value = good
+        smart = SmartCollector(mock_collector, "T", ttl=60, error_retry_delay=0)
+        smart.STALE_CEILING_SECONDS = 0
+        await smart.collect(mock_client)
+        result = await smart.collect(mock_client)  # fresh cache hit, aged past the ceiling
+        assert "fresh cache hit" not in result[0]["detail"]

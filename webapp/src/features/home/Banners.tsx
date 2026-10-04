@@ -8,7 +8,7 @@ import { Link } from 'react-router';
 import { AlertTriangle, BellOff, HeartPulse, KeyRound, TrendingUp, Unlink, X } from 'lucide-react';
 import type { AnomalyEntry, CredentialInventory, DataHealthReport, FleetEntry } from '@/api/types';
 import { timeAgo } from '@/lib/format';
-import { cardStale } from '@/lib/quota';
+import { cardStale, failingReason } from '@/lib/quota';
 import { cn } from '@/lib/cn';
 import { credentialsNeedingAttention } from '@/lib/credentialAttention';
 
@@ -73,7 +73,9 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
     );
     const name = (staleCard?.service_name || e.provider_id) as string;
     const when = staleCard?.fetched_at || staleCard?.updated_at;
-    return when ? `${name} (last ok ${timeAgo(when)})` : name;
+    const reason = staleCard ? failingReason(staleCard) : null;
+    const label = when ? `${name} (last ok ${timeAgo(when)})` : name;
+    return reason ? `${label}: ${reason}` : label;
   };
 
   return (

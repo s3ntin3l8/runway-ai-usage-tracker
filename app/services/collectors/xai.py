@@ -91,6 +91,9 @@ class XaiCollector(BaseCollector):
 
     async def _get_xai_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Bearer OAuth path: ``/v1/billing`` + optional ``/v1/settings``."""
+        # A failure path that sets no reason (timeout, 5xx) must not inherit the
+        # previous poll's "session expired".
+        self._last_error_reason = "unknown"
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         access = await token_cache.get_token("xai", "xai_access", account_id=account_id)
         cache_data = await token_cache.get_with_metadata("xai", account_id=account_id)
@@ -455,7 +458,10 @@ class XaiCollector(BaseCollector):
             message = "xAI session expired — re-login with the Grok or OpenCode CLI"
             error_type = "auth_failed"
         elif reason == "renewal_pending":
-            message = "xAI token expired; it renews the next time the Grok CLI runs on its machine"
+            message = (
+                "xAI token expired; it renews when the Grok/OpenCode CLI next runs on its "
+                "machine, or automatically with sidecar --keep-alive"
+            )
             error_type = "unknown"
         elif reason == "parse_error":
             message = "xAI quota response could not be parsed."
