@@ -5070,7 +5070,7 @@ def main():
         except Exception:
             logging.debug("Update-check thread not started", exc_info=True)
 
-        # Optional keep-alive (agy + xAI login renewal). Off by default — opt in with
+        # Optional keep-alive (login renewal; see KEEP_ALIVE_LABELS in refresh_policy). Off by default — opt in with
         # --keep-alive (or config "keep_alive": true), or per sidecar from the dashboard
         # (the server's `keep_alive_desired` on each ingest response overrides the local flag).
         _KEEP_ALIVE.arm(bool(args.keep_alive or config.get("keep_alive") is True))

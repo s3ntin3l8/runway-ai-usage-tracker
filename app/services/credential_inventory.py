@@ -396,7 +396,16 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         )
         refreshed_by = "machine" if machine_renewed else "server" if server_refreshable else None
         keep_alive: str | None = None
-        if machine_renewed and row.provider_id in KEEP_ALIVE_PROVIDERS:
+        # Independent of rotation and of being live: agy is not a rotating provider, and an
+        # expired or withheld login (no live bundle) is exactly when the note matters. A login
+        # with no refresh credential (e.g. a pasted access token) has nothing to keep alive.
+        if (
+            machine_sourced
+            and row.provider_id in KEEP_ALIVE_PROVIDERS
+            # A live bundle is judged by its values (a blank refresh_token placeholder is not a
+            # credential, as for ``rollable``); an offline row only has its stored key names.
+            and has_refresh_credential(tokens if bundle is not None else token_types)
+        ):
             reported = getattr(machines.get(row.sidecar_id or ""), "keep_alive", None)
             keep_alive = "unknown" if reported is None else "on" if reported else "off"
         # Only a machine-reported credential can be "waiting for an account": an env var or

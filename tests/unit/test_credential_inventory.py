@@ -897,3 +897,107 @@ async def test_keep_alive_is_not_applicable_without_a_refresh_token(engine, cach
     (prov,) = [p for p in inv.providers if p.provider_id == "xai"]
     (src,) = [s for a in prov.accounts for s in a.sources]
     assert src.keep_alive is None
+
+
+async def _offline_login(session, provider, host, *, keep_alive, token_types):
+    """A machine-sourced credential with no live bundle (expired and withheld, or server restart)."""
+    import json
+
+    session.add(SidecarRegistry(sidecar_id=host, hostname=host, keep_alive=keep_alive))
+    session.commit()
+    _source(
+        session,
+        provider_id=provider,
+        account_id="default",
+        source_id=f"sidecar:{provider}",
+        sidecar_id=host,
+        token_types_json=json.dumps(token_types),
+    )
+
+
+async def _only_source(provider):
+    inv = await build_inventory()
+    (prov,) = [p for p in inv.providers if p.provider_id == provider]
+    (src,) = [s for a in prov.accounts for s in a.sources]
+    return src
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reported", "expected"), [(True, "on"), (False, "off"), (None, "unknown")]
+)
+async def test_agy_login_shows_keep_alive_even_though_agy_is_not_a_rotating_provider(
+    engine, cache, reported, expected
+):
+    """agy is renewed by its CLI, not rotated by the server, so the old machine_renewed gate
+    never showed the chip for it."""
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
+            "antigravity",
+            "host-a",
+            keep_alive=reported,
+            tokens={"oauth_token": "a", "refresh_token": "r"},
+        )
+    src = await _only_source("antigravity")
+    assert src.refreshed_by != "machine"
+    assert src.keep_alive == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["antigravity", "xai"])
+async def test_an_expired_withheld_login_still_shows_keep_alive(engine, cache, provider):
+    """No live bundle (the sidecar withholds an expired agy token): the note matters most here."""
+    refresh = "refresh_token" if provider == "antigravity" else "xai_refresh"
+    with Session(engine) as s:
+        await _offline_login(
+            s, provider, "host-a", keep_alive=False, token_types=["oauth_token", refresh]
+        )
+    src = await _only_source(provider)
+    assert src.live is False
+    assert src.keep_alive == "off"
+
+
+@pytest.mark.asyncio
+async def test_no_keep_alive_for_an_offline_login_without_a_refresh_credential(engine, cache):
+    with Session(engine) as s:
+        await _offline_login(s, "xai", "host-a", keep_alive=True, token_types=["xai_access"])
+    assert (await _only_source("xai")).keep_alive is None
+
+
+@pytest.mark.asyncio
+async def test_no_keep_alive_for_a_server_sourced_login(engine, cache):
+    with Session(engine) as s:
+        _source(
+            s,
+            provider_id="xai",
+            account_id="default",
+            source_id="server:xai",
+            sidecar_id=None,
+            source_type="env",
+            token_types_json='["xai_access", "xai_refresh"]',
+        )
+    assert (await _only_source("xai")).keep_alive is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["xai", "antigravity"])
+async def test_a_live_login_with_a_blank_refresh_token_shows_no_keep_alive(engine, cache, provider):
+    """A blank refresh placeholder is not a credential (same rule as ``rollable``): key
+    presence alone must not light the chip for a live bundle."""
+    access, refresh = (
+        ("xai_access", "xai_refresh")
+        if provider == "xai"
+        else (
+            "oauth_token",
+            "refresh_token",
+        )
+    )
+    with Session(engine) as s:
+        await _machine_login(
+            s, cache, provider, "host-a", keep_alive=False, tokens={access: "a", refresh: ""}
+        )
+    src = await _only_source(provider)
+    assert src.live is True
+    assert src.keep_alive is None
