@@ -2,15 +2,15 @@
 GitHub Copilot quota collector with tier-aware fallback.
 
 Collection Strategy:
-1. Primary: GitHub Copilot API endpoints (authenticated with GITHUB_TOKEN)
-   - Requires GITHUB_TOKEN environment variable
-   - Calls copilot_internal/v2/token for free/limited user quotas
-   - Calls copilot_internal/user for pro/enterprise quota snapshots
+1. Primary: GitHub Copilot API endpoint (authenticated with a GitHub token)
+   - Calls copilot_internal/user for plan, quota snapshots, and the free-tier
+     limited_user_quotas / monthly_quotas
    - Returns cards for: Completions, Chat, Premium Interactions, etc.
+   - copilot_internal/v2/token is deliberately NOT called: it only mints a
+     short-lived model-proxy token and carries no totals (see #519).
 
-2. Fallback: Standard GitHub API rate limits
-   - If Copilot-specific endpoints unavailable, falls back to /rate_limit
-   - Shows core API request quota as proxy for usage
+2. No fallback: if copilot_internal/user is unavailable the collector returns
+   no cards (or a rate-limited / error card) rather than a proxy metric.
 
 3. Error Handling:
    - Missing token: Returns empty list
@@ -142,51 +142,16 @@ class GitHubCollector(BaseCollector):
                 timeout=10.0,
             )
 
-            token_resp = None
             user_data = {}
 
             if user_resp.status_code == 200:
                 user_data = user_resp.json()
-                has_snapshots = bool(user_data.get("quota_snapshots"))
-                has_limited_info = (
-                    "limited_user_quotas" in user_data and "limited_user_reset_date" in user_data
-                )
-                if not (has_snapshots or has_limited_info):
-                    token_resp = await http_request_with_retry(
-                        client,
-                        "GET",
-                        "https://api.github.com/copilot_internal/v2/token",
-                        headers=headers,
-                        timeout=10.0,
-                    )
             elif user_resp.status_code == 429:
                 # Pass Retry-After to SmartCollector for centralized backoff
                 retry_after = user_resp.headers.get("Retry-After")
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
                 self._last_retry_after = wait_sec
                 logger.warning(f"GitHub API returned 429. Retry-After: {wait_sec}s")
-                return [
-                    error_card(
-                        "GitHub Copilot",
-                        "🐙",
-                        f"Rate Limited (429) - Try in {wait_sec / 60:.0f}m",
-                        error_type="rate_limited",
-                    )
-                ]
-            else:
-                token_resp = await http_request_with_retry(
-                    client,
-                    "GET",
-                    "https://api.github.com/copilot_internal/v2/token",
-                    headers=headers,
-                    timeout=10.0,
-                )
-
-            # Check token_resp for 429 too
-            if token_resp and token_resp.status_code == 429:
-                retry_after = token_resp.headers.get("Retry-After")
-                wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-                self._last_retry_after = wait_sec
                 return [
                     error_card(
                         "GitHub Copilot",
@@ -320,11 +285,10 @@ class GitHubCollector(BaseCollector):
                         "github", self.account_id, name=self.account_label
                     )
                 )
-            cards = self._parse_api_responses(user_resp, token_resp, user_data)
+            cards = self._parse_api_responses(user_resp, user_data)
             logger.info(
-                "GitHub collector: API calls complete — user_resp=%s token_resp=%s cards=%d",
+                "GitHub collector: API call complete — user_resp=%s cards=%d",
                 user_resp.status_code,
-                token_resp.status_code if token_resp else "skipped",
                 len(cards),
             )
             # Cache results (including empty/error cards) to avoid hammering API
@@ -376,29 +340,19 @@ class GitHubCollector(BaseCollector):
                 return tokens.get("api_key")
         return None
 
-    def _parse_api_responses(self, user_resp, token_resp, user_data) -> list[dict[str, Any]]:
-        """Consolidate the parsing logic from collect()."""
-        cards = []
+    def _parse_api_responses(self, user_resp, user_data) -> list[dict[str, Any]]:
+        """Turn the copilot_internal/user response into cards."""
+        cards: list[dict[str, Any]] = []
+        if user_resp.status_code != 200:
+            return cards
 
-        # Process Token Response
-        if token_resp and token_resp.status_code == 200:
-            token_data = token_resp.json()
-            if "limited_user_quotas" in token_data:
-                cards.extend(self._parse_limited_quotas(token_data, "[Free/Limited Tier]"))
+        if isinstance(user_data.get("limited_user_quotas"), dict):
+            cards.extend(self._parse_limited_quotas(user_data, "• Free Tier"))
 
-        # Process User Response
-        if user_resp.status_code == 200:
-            if "limited_user_quotas" in user_data:
-                # Avoid duplicates if v2/token also returned them
-                if not any(c["service_name"].startswith("Copilot") for c in cards):
-                    cards.extend(self._parse_limited_quotas(user_data, "• Free Tier"))
-
-            # Process snapshots
-            snapshots = user_data.get("quota_snapshots", [])
-            plan = user_data.get("copilot_plan", "Individual")
-            reset_date_utc = user_data.get("quota_reset_date_utc")
-            cards.extend(self._parse_quota_snapshots(snapshots, plan, reset_date_utc))
-
+        snapshots = user_data.get("quota_snapshots", [])
+        plan = user_data.get("copilot_plan", "Individual")
+        reset_date_utc = user_data.get("quota_reset_date_utc")
+        cards.extend(self._parse_quota_snapshots(snapshots, plan, reset_date_utc))
         return cards
 
     # Human-readable labels for known quota keys.  Keys not listed here fall
@@ -416,13 +370,18 @@ class GitHubCollector(BaseCollector):
         """Parse limited_user_quotas structure."""
         results = []
         quotas = data["limited_user_quotas"]
-        monthly = data.get("monthly_quotas", {})
+        monthly = data.get("monthly_quotas")
+        if not isinstance(monthly, dict):
+            monthly = {}
         reset_date = data.get("limited_user_reset_date")
         reset_at = None
-        if reset_date:
+        if isinstance(reset_date, int | float) and not isinstance(reset_date, bool):
+            # Some responses carry the reset as a Unix epoch (seconds).
+            reset_at = datetime.fromtimestamp(reset_date, UTC)
+        elif reset_date:
             try:
                 reset_at = parse_iso8601_utc(reset_date)
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, AttributeError) as e:
                 logger.debug(f"Could not parse GitHub reset date '{reset_date}': {e}")
 
         # Suppress identity suffix if label already carries the identity info.
@@ -439,13 +398,13 @@ class GitHubCollector(BaseCollector):
             if not isinstance(val, int | float):
                 continue
             display = self._QUOTA_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
-            monthly_val = monthly.get(key, 100)
-            used_val = monthly_val - val if isinstance(monthly_val, int) else 0
-            pct_used = (
-                (used_val / monthly_val * 100)
-                if isinstance(monthly_val, int | float) and monthly_val > 0
-                else 0
-            )
+            # Totals come only from monthly_quotas; never invent one.
+            monthly_val = monthly.get(key)
+            # One definition of "the total is known" for every field below, so the
+            # display text and the numeric fields can never disagree.
+            known_total = isinstance(monthly_val, int | float) and not isinstance(monthly_val, bool)
+            used_val = monthly_val - val if known_total else 0
+            pct_used = (used_val / monthly_val * 100) if known_total and monthly_val > 0 else 0
             pace = PaceCalculator.estimate_longevity(pct_used, reset_at)
             results.append(
                 {
@@ -453,17 +412,16 @@ class GitHubCollector(BaseCollector):
                     "variant": display,
                     "icon": "🐙",
                     "remaining": f"{val:,}",
-                    "unit": (f"/ {monthly_val:,}" if isinstance(monthly_val, int) else "remaining"),
+                    "unit": (f"/ {monthly_val:,.0f}" if known_total else "remaining"),
                     "reset": reset_at.isoformat() if reset_at else None,
                     "health": HealthCalculator.from_remaining(val, monthly_val)
-                    if isinstance(monthly_val, int | float)
+                    if known_total
                     else "warning",
                     "pace": pace,
-                    "detail": f"{val}/{monthly_val if isinstance(monthly_val, int) else '??'} requests left {detail_context}{identity_suffix}",
-                    "used_value": float(used_val),
-                    "limit_value": float(monthly_val)
-                    if isinstance(monthly_val, int | float)
-                    else 100.0,
+                    "detail": f"{val}/{f'{monthly_val:.0f}' if known_total else '??'} requests left {detail_context}{identity_suffix}",
+                    # Unknown total: leave both unset so nothing derives a (fake) 0% used.
+                    "used_value": float(used_val) if known_total else None,
+                    "limit_value": float(monthly_val) if known_total else None,
                     "is_unlimited": False,
                     "tier": "free",
                     "unit_type": "requests",

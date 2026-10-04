@@ -64,10 +64,28 @@
           "keys": [
             "github.com.user"
           ],
-          "reason": "gh's `user` is a login, not the account's canonical id. Mapping it to account_id recreated the dual-account split fixed in #440, so the sidecar sends the token only and lets the server identify it."
+          "reason": "A file's `user` is the login the editor/CLI recorded, not necessarily the account the token authenticates as. Mapping it to account_id would mark the source identity strong and skip the server's /user verification, and a case difference between sidecar and server would split one account in two (see #440, #515). The sidecar sends the token only and the server identifies it."
         }
       ],
       "add_rules": [
+        {
+          "reason": "Editor Copilot sign-ins (JetBrains, Neovim copilot.vim/lua, Xcode, Zed; VS Code uses encrypted SecretStorage and writes no file) store a GitHub App user token in apps.json (newer, keyed `<host>:<appId>`) or hosts.json (older). The app ids differ per client, hence the `|` chain. Only github.com entries: the collector always calls api.github.com. Sidecar-only; `user` is deliberately not mapped to account_id.",
+          "rule": {
+            "type": "file",
+            "format": "json",
+            "paths": [
+              "~/.config/github-copilot/apps.json",
+              "~/.config/github-copilot/hosts.json",
+              "{{CONFIG_DIR:github-copilot}}/apps.json",
+              "{{CONFIG_DIR:github-copilot}}/hosts.json",
+              "{{DATA_DIR:github-copilot}}/apps.json",
+              "{{DATA_DIR:github-copilot}}/hosts.json"
+            ],
+            "mapping": {
+              "github.com:Iv1.b507a08c87ecfe98.oauth_token|github.com:Iv23ctfURkiMfJ4xr5mv.oauth_token|github.com:Ov23liV9UpD7Rnfnskm3.oauth_token|github.com.oauth_token": "api_key"
+            }
+          }
+        },
         {
           "reason": "gh >= 2.40 keeps its token in the OS keyring, so hosts.yml has no oauth_token; `gh auth token` is the only way to read it. Sidecar-only: the server never runs local commands.",
           "rule": {

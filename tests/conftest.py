@@ -36,7 +36,6 @@ from tests.fixtures.mock_data import (
     CLAUDE_WEB_API_ORGS_RESPONSE,
     CLAUDE_WEB_API_USAGE_RESPONSE,
     GEMINI_QUOTA_RESPONSE,
-    GITHUB_COPILOT_RESPONSE,
     KIMI_RESPONSE,
     OPENCODE_GO_RESPONSE,
 )
@@ -182,12 +181,6 @@ def mock_claude_web_api_usage_response():
 def mock_gemini_quota_response():
     """Mock response from Gemini quota API."""
     return GEMINI_QUOTA_RESPONSE
-
-
-@pytest.fixture
-def mock_github_copilot_response():
-    """Mock response from GitHub Copilot API."""
-    return GITHUB_COPILOT_RESPONSE
 
 
 @pytest.fixture

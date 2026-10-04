@@ -121,16 +121,6 @@ GEMINI_QUOTA_RESPONSE = {
     ]
 }
 
-GITHUB_COPILOT_RESPONSE = {
-    "limited_user_quotas": {"completions": 45, "chat": 120},
-    "limited_user_reset_date": "2025-04-08T00:00:00Z",
-    "quota_snapshots": [
-        {"metric": "premium_interactions", "remaining": 450, "entitlement": 500},
-        {"metric": "chat", "remaining": 890, "entitlement": 1000},
-    ],
-    "copilot_plan": "Pro",
-}
-
 CHATGPT_USAGE_RESPONSE = {
     "plan_type": "free",
     "rate_limit": {

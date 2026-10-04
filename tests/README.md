@@ -81,7 +81,6 @@ Shared fixtures used across unit and integration tests:
 - **mock_*_response**: Pre-defined mock responses from various providers
   - `mock_anthropic_oauth_response`
   - `mock_gemini_quota_response`
-  - `mock_github_copilot_response`
   - `mock_chatgpt_usage_response`
   - `mock_opencode_go_response`
   - `mock_zai_response`
