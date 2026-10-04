@@ -4982,6 +4982,11 @@ def main():
 
     if not write_pid_file():
         sys.exit(1)
+    # A self-update re-execs with the same PID and no atexit; free the PID file first so the
+    # new image does not mistake it for a second running sidecar.
+    from scripts.sidecar_pkg.self_update import register_pre_exec_hook
+
+    register_pre_exec_hook(remove_pid_file, on_failure=write_pid_file)
 
     setup_signal_handlers()
     atexit.register(cleanup)

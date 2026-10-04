@@ -778,3 +778,139 @@ class TestWindowsSwapScript:
         assert args[0] == f'cmd.exe /d /s /c ""{install_dir / "runway-self-update.bat"}""'
         assert kwargs["executable"] == "cmd.exe"
         assert kwargs["creationflags"] & 0x08000000
+
+
+class TestPreExecHooks:
+    """execv keeps the PID and skips atexit: cleanup must run just before it."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_hooks(self, monkeypatch):
+        monkeypatch.setattr(self_update, "_PRE_EXEC_HOOKS", [])
+
+    def test_hooks_run_after_the_lock_release_and_before_exec(self, monkeypatch, tmp_path):
+        calls: list[str] = []
+        self_update.register_pre_exec_hook(lambda: calls.append("hook"))
+        monkeypatch.setattr(self_update, "_release_lock", lambda: calls.append("lock"))
+        monkeypatch.setattr(self_update.os, "execv", lambda path, argv: calls.append("exec"))
+        self_update._relaunch_posix("cli", tmp_path / "x")
+        assert calls == ["lock", "hook", "exec"]
+
+    def test_registration_is_idempotent(self):
+        def hook():
+            pass
+
+        self_update.register_pre_exec_hook(hook)
+        self_update.register_pre_exec_hook(hook)
+        assert [h for h, _ in self_update._PRE_EXEC_HOOKS] == [hook]
+
+    def test_a_failing_hook_does_not_block_the_exec_or_later_hooks(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        calls: list[str] = []
+
+        def boom():
+            raise RuntimeError("nope")
+
+        self_update.register_pre_exec_hook(boom)
+        self_update.register_pre_exec_hook(lambda: calls.append("second"))
+        monkeypatch.setattr(self_update, "_release_lock", lambda: None)
+        monkeypatch.setattr(self_update.os, "execv", lambda path, argv: calls.append("exec"))
+        self_update._relaunch_posix("cli", tmp_path / "x")
+        assert calls == ["second", "exec"]
+        assert "Pre-exec hook" in caplog.text
+
+    def test_the_tray_relaunch_does_not_run_cli_hooks(self, monkeypatch, tmp_path):
+        ran: list[str] = []
+        self_update.register_pre_exec_hook(lambda: ran.append("hook"))
+        monkeypatch.setattr(self_update, "_release_lock", lambda: None)
+        monkeypatch.setattr(self_update.subprocess, "Popen", lambda *a, **k: None)
+        monkeypatch.setattr(self_update.os, "_exit", lambda code: ran.append("exit"))
+        self_update._relaunch_posix("tray", tmp_path / "tray")
+        assert ran == ["exit"]
+
+    def test_the_sidecar_pid_file_is_gone_by_the_time_of_exec(self, monkeypatch, tmp_path):
+        """End to end: the real remove_pid_file hook leaves nothing for the new image to trip on."""
+        from scripts import sidecar
+
+        pid_file = tmp_path / "sidecar.pid"
+        monkeypatch.setattr(sidecar, "get_pid_file_path", lambda: pid_file)
+        assert sidecar.write_pid_file() is True
+        assert pid_file.exists()
+        self_update.register_pre_exec_hook(sidecar.remove_pid_file)
+
+        seen: dict[str, bool] = {}
+        monkeypatch.setattr(self_update, "_release_lock", lambda: None)
+        monkeypatch.setattr(
+            self_update.os, "execv", lambda path, argv: seen.update(pid_file=pid_file.exists())
+        )
+        self_update._relaunch_posix("cli", tmp_path / "x")
+
+        assert seen == {"pid_file": False}
+        # …and the re-exec'd image (same PID) can claim it again.
+        assert sidecar.write_pid_file() is True
+        sidecar.remove_pid_file()
+
+
+class TestExecFailureRestoresHooks:
+    """If execv fails the old image keeps running: it must get back what the hooks released."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_hooks(self, monkeypatch):
+        monkeypatch.setattr(self_update, "_PRE_EXEC_HOOKS", [])
+        monkeypatch.setattr(self_update, "_release_lock", lambda: None)
+
+    @staticmethod
+    def _failing_execv(msg):
+        def execv(path, argv):
+            raise OSError(msg)
+
+        return execv
+
+    def test_a_failed_execv_undoes_the_hooks_and_still_raises(self, monkeypatch, tmp_path):
+        calls: list[str] = []
+        self_update.register_pre_exec_hook(
+            lambda: calls.append("released"), on_failure=lambda: calls.append("restored")
+        )
+
+        def failing_execv(path, argv):
+            calls.append("exec")
+            raise OSError("Exec format error")
+
+        monkeypatch.setattr(self_update.os, "execv", failing_execv)
+        with pytest.raises(OSError, match="Exec format"):
+            self_update._relaunch_posix("cli", tmp_path / "x")
+        assert calls == ["released", "exec", "restored"]
+
+    def test_an_undo_is_optional_and_a_failing_undo_does_not_mask_the_error(
+        self, monkeypatch, tmp_path
+    ):
+        def bad_undo():
+            raise RuntimeError("undo broke")
+
+        self_update.register_pre_exec_hook(lambda: None)  # no undo
+        self_update.register_pre_exec_hook(lambda: None, on_failure=bad_undo)
+        monkeypatch.setattr(self_update.os, "execv", self._failing_execv("denied"))
+        with pytest.raises(OSError, match="denied"):
+            self_update._relaunch_posix("cli", tmp_path / "x")
+
+    def test_a_successful_execv_never_runs_the_undo(self, monkeypatch, tmp_path):
+        calls: list[str] = []
+        self_update.register_pre_exec_hook(lambda: None, on_failure=lambda: calls.append("undo"))
+        monkeypatch.setattr(self_update.os, "execv", lambda p, a: None)
+        self_update._relaunch_posix("cli", tmp_path / "x")
+        assert calls == []
+
+    def test_after_a_failed_execv_the_real_pid_file_is_back(self, monkeypatch, tmp_path):
+        from scripts import sidecar
+
+        pid_file = tmp_path / "sidecar.pid"
+        monkeypatch.setattr(sidecar, "get_pid_file_path", lambda: pid_file)
+        assert sidecar.write_pid_file() is True
+        self_update.register_pre_exec_hook(
+            sidecar.remove_pid_file, on_failure=sidecar.write_pid_file
+        )
+        monkeypatch.setattr(self_update.os, "execv", self._failing_execv("ENOEXEC"))
+        with pytest.raises(OSError):
+            self_update._relaunch_posix("cli", tmp_path / "x")
+        assert pid_file.exists()
+        sidecar.remove_pid_file()

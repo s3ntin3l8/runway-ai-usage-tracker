@@ -52,8 +52,8 @@ a = Analysis(
         "urllib.request",
         # Notify-only update check, shared by the CLI and the tray updater.
         "scripts.sidecar_pkg.update_check",
-        # Optional --keep-alive (agy token renewal) — imported from main() only
-        # when opted in, so PyInstaller's scan must be told about it.
+        # Optional --keep-alive (agy + xAI login renewal) — imported lazily, so
+        # PyInstaller's scan must be told about it.
         "scripts.sidecar_pkg.keep_alive",
         # One-time pairing (runway-sidecar://pair links, --pair).
         "scripts.sidecar_pkg.pairing",
@@ -61,6 +61,21 @@ a = Analysis(
         # certifi hiddenimport triggers PyInstaller's hook-certifi, which
         # ships cacert.pem so HTTPS verifies without a system CA store.
         "scripts.sidecar_pkg.tls",
+        # Every sidecar_pkg module scripts/sidecar.py imports inside a function body.
+        # Declared explicitly (guarded by tests/unit/test_sidecar_release_contract.py) so a
+        # lazily imported module can never be left out of a frozen build.
+        "scripts.sidecar_pkg.credentials",
+        "scripts.sidecar_pkg.event_extractors.anthropic",
+        "scripts.sidecar_pkg.event_extractors.antigravity",
+        "scripts.sidecar_pkg.event_extractors.chatgpt",
+        "scripts.sidecar_pkg.event_extractors.gemini",
+        "scripts.sidecar_pkg.event_extractors.hermes",
+        "scripts.sidecar_pkg.event_extractors.opencode",
+        "scripts.sidecar_pkg.event_extractors.xai",
+        "scripts.sidecar_pkg.event_watermark",
+        "scripts.sidecar_pkg.identity",
+        "scripts.sidecar_pkg.self_update",
+        "scripts.sidecar_pkg.xai_renewer",
         "certifi",
     ],
     hookspath=[],

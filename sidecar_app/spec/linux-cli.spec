@@ -49,6 +49,22 @@ a = Analysis(
         # certifi hiddenimport triggers PyInstaller's hook-certifi, which
         # ships cacert.pem so HTTPS verifies without a system CA store.
         "scripts.sidecar_pkg.tls",
+        # Every sidecar_pkg module scripts/sidecar.py imports inside a function body.
+        # Declared explicitly (guarded by tests/unit/test_sidecar_release_contract.py) so a
+        # lazily imported module can never be left out of a frozen build.
+        "scripts.sidecar_pkg.credentials",
+        "scripts.sidecar_pkg.event_extractors.anthropic",
+        "scripts.sidecar_pkg.event_extractors.antigravity",
+        "scripts.sidecar_pkg.event_extractors.chatgpt",
+        "scripts.sidecar_pkg.event_extractors.gemini",
+        "scripts.sidecar_pkg.event_extractors.hermes",
+        "scripts.sidecar_pkg.event_extractors.opencode",
+        "scripts.sidecar_pkg.event_extractors.xai",
+        "scripts.sidecar_pkg.event_watermark",
+        "scripts.sidecar_pkg.identity",
+        "scripts.sidecar_pkg.keep_alive",
+        "scripts.sidecar_pkg.self_update",
+        "scripts.sidecar_pkg.xai_renewer",
         "certifi",
         # Lazy imports inside the Linux browser-cookie decryption branch.
         "secretstorage",

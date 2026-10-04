@@ -368,6 +368,44 @@ def _lock_path() -> pathlib.Path:
     return _sidecar_dir() / _LOCK_NAME
 
 
+# Callbacks run right before ``os.execv`` replaces the process image. ``execv`` keeps the
+# PID, and nothing (atexit, finally) runs across it, so anything that must not outlive the
+# old image — the sidecar's PID file — has to be released here, or the re-exec'd daemon sees
+# its own PID in the file, reports "already running" and exits.
+_PRE_EXEC_HOOKS: list[tuple[Callable[[], None], Callable[[], None] | None]] = []
+
+
+def register_pre_exec_hook(
+    hook: Callable[[], None], on_failure: Callable[[], None] | None = None
+) -> None:
+    """Run ``hook`` just before a CLI self-update re-execs (best-effort, idempotent).
+
+    ``on_failure`` undoes it if ``execv`` itself fails: the old image is then still running
+    and must not be left without whatever ``hook`` released (e.g. its PID file).
+    """
+    if all(existing != hook for existing, _ in _PRE_EXEC_HOOKS):
+        _PRE_EXEC_HOOKS.append((hook, on_failure))
+
+
+def _call_best_effort(fn: Callable[[], None], what: str) -> None:
+    try:
+        fn()
+    except Exception:
+        # A failing cleanup must not abort the update that is about to relaunch.
+        logger.warning("%s %s failed", what, getattr(fn, "__name__", fn), exc_info=True)
+
+
+def _run_pre_exec_hooks() -> None:
+    for hook, _undo in list(_PRE_EXEC_HOOKS):
+        _call_best_effort(hook, "Pre-exec hook")
+
+
+def _undo_pre_exec_hooks() -> None:
+    for _hook, undo in list(_PRE_EXEC_HOOKS):
+        if undo is not None:
+            _call_best_effort(undo, "Pre-exec undo")
+
+
 def _release_lock() -> None:
     """Remove the single-flight lock file.
 
@@ -799,7 +837,14 @@ def _relaunch_posix(target: str, install: pathlib.Path) -> None:
         # Supervisor-agnostic in-place re-exec; preserves argv and PID lifecycle.
         logger.info("Re-executing %s", install)
         _release_lock()
-        os.execv(str(install), [str(install), *sys.argv[1:]])
+        _run_pre_exec_hooks()
+        try:
+            os.execv(str(install), [str(install), *sys.argv[1:]])
+        except OSError:
+            # execv failed (unreadable/ENOEXEC binary): this image keeps running, so hand back
+            # what the hooks released before the caller logs the failed update.
+            _undo_pre_exec_hooks()
+            raise
         return  # unreachable
     # Tray: never execv from inside the pystray loop — spawn detached and exit.
     if sys.platform == "darwin":
