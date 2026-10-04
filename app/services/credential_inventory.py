@@ -402,7 +402,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         if (
             machine_sourced
             and row.provider_id in KEEP_ALIVE_PROVIDERS
-            and has_refresh_credential(token_types)
+            # A live bundle is judged by its values (a blank refresh_token placeholder is not a
+            # credential, as for ``rollable``); an offline row only has its stored key names.
+            and has_refresh_credential(tokens if bundle is not None else token_types)
         ):
             reported = getattr(machines.get(row.sidecar_id or ""), "keep_alive", None)
             keep_alive = "unknown" if reported is None else "on" if reported else "off"

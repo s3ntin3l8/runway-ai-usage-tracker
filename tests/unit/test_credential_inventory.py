@@ -979,3 +979,25 @@ async def test_no_keep_alive_for_a_server_sourced_login(engine, cache):
             token_types_json='["xai_access", "xai_refresh"]',
         )
     assert (await _only_source("xai")).keep_alive is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["xai", "antigravity"])
+async def test_a_live_login_with_a_blank_refresh_token_shows_no_keep_alive(engine, cache, provider):
+    """A blank refresh placeholder is not a credential (same rule as ``rollable``): key
+    presence alone must not light the chip for a live bundle."""
+    access, refresh = (
+        ("xai_access", "xai_refresh")
+        if provider == "xai"
+        else (
+            "oauth_token",
+            "refresh_token",
+        )
+    )
+    with Session(engine) as s:
+        await _machine_login(
+            s, cache, provider, "host-a", keep_alive=False, tokens={access: "a", refresh: ""}
+        )
+    src = await _only_source(provider)
+    assert src.live is True
+    assert src.keep_alive is None
