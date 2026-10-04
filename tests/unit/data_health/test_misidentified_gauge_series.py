@@ -321,7 +321,11 @@ def test_apply_does_not_touch_sibling_accounts(session):
         session, provider_id="github", account_id="real-user", ts=now - timedelta(seconds=1)
     )
 
-    _check().apply(session, "github::ghost@example.com", {"same_account_confirmed": True})
+    _check().apply(
+        session,
+        "github::ghost@example.com",
+        {"action": "delete", "same_account_confirmed": True},
+    )
 
     # Sibling rows survive
     remaining_lu = session.exec(
@@ -462,3 +466,70 @@ def test_has_evidence_truth_table(session):
     pairs = {("github", "cached@example.com")}
     assert _has_evidence(session, "github", "cached@example.com", evidence_pairs=pairs) is True
     assert _has_evidence(session, "github", "not_cached@example.com", evidence_pairs=pairs) is False
+
+
+# ---------------------------------------------------------------------------
+# email-keyed duplicate of a login-keyed account (GitHub)
+# ---------------------------------------------------------------------------
+
+
+def _email_and_login_series(session):
+    now = datetime.now(UTC)
+    make_latest_usage(session, provider_id="github", account_id="me@example.com")
+    make_snapshot(session, provider_id="github", account_id="me@example.com", ts=now)
+    make_latest_usage(session, provider_id="github", account_id="me-login")
+    make_tag(
+        session, provider_id="github", credential_origin="provider:github", account_id="me-login"
+    )
+    make_snapshot(
+        session, provider_id="github", account_id="me-login", ts=now - timedelta(minutes=5)
+    )
+
+
+def test_detect_suggests_merge_into_sole_login_account(session):
+    _email_and_login_series(session)
+
+    group = _check().detect(session).groups[0]
+
+    assert group.key == "github::me@example.com"
+    assert group.detail["suggested_target"] == "me-login"
+    assert "duplicate of me-login" in group.label
+    assert [p.name for p in group.params] == ["action", "target"]
+
+
+def test_detect_no_merge_suggestion_for_non_login_keyed_provider(session):
+    make_latest_usage(session, provider_id="claude", account_id="me@example.com")
+    make_latest_usage(session, provider_id="claude", account_id="me-login")
+    make_tag(
+        session, provider_id="claude", credential_origin="provider:claude", account_id="me-login"
+    )
+
+    group = _check().detect(session).groups[0]
+
+    assert group.detail == {}
+    assert group.params == []
+
+
+def test_apply_defaults_to_merge_and_keeps_history(session):
+    _email_and_login_series(session)
+
+    plan = _check().plan(session, "github::me@example.com", {})
+    assert plan.confirmation_text is None
+    assert plan.counts["snapshots_retagged"] == 1
+
+    _check().apply(session, "github::me@example.com", {})
+
+    assert not session.exec(
+        select(LatestUsage).where(LatestUsage.account_id == "me@example.com")
+    ).all()
+    assert (
+        len(session.exec(select(QuotaSnapshot).where(QuotaSnapshot.account_id == "me-login")).all())
+        == 2
+    )
+
+
+def test_merge_rejects_target_outside_candidates(session):
+    _email_and_login_series(session)
+
+    with pytest.raises(ValueError, match="merge requires a target"):
+        _check().plan(session, "github::me@example.com", {"action": "merge", "target": "nope"})

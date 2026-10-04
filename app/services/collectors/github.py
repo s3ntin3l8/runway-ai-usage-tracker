@@ -196,27 +196,28 @@ class GitHubCollector(BaseCollector):
                     )
                 ]
 
-            # Try to discover identity — call the standard /user endpoint (not Copilot internal)
+            # Identity: the GitHub *login* is the account_id (stable, always
+            # returned by /user regardless of token scopes); the email is only a
+            # display label.  Both are cached per collector so /user isn't hit
+            # every cycle.
             identity = getattr(self, "_identity", None)
+            login: str | None = getattr(self, "_login", None)
 
-            # Use sidecar-provided label if it looks like an email — but only
-            # when the collector was explicitly spawned for that email account
-            # (account_id already matches the label).  A default collector must
-            # always hit the /user API; an email label leaked from another
-            # provider's token-cache metadata must not short-circuit identity
-            # resolution and cause cards to land under the wrong account_id.
-            if (
-                not identity
-                and self.account_label
-                and "@" in self.account_label
-                and self.account_id
+            # A collector spawned for an explicit account already has its
+            # account_id; if it also has a label there is nothing left to
+            # discover.  A default collector must always hit /user — a label
+            # leaked from another provider's token-cache metadata must not
+            # short-circuit identity resolution.
+            scoped_with_label = bool(
+                self.account_id
                 and self.account_id not in ("default", "")
-                and _label_matches_account_id(self.account_label, self.account_id)
-            ):
+                and self.account_label
+                and self.account_label.lower() != "default"
+            )
+            if scoped_with_label and not identity:
                 identity = self.account_label
 
-            login: str | None = None
-            if not identity:
+            if (not login or not identity) and not scoped_with_label:
                 try:
                     # Use clean headers for standard endpoints (avoid futuristic Copilot API version)
                     std_headers = {
@@ -234,9 +235,7 @@ class GitHubCollector(BaseCollector):
                     )
                     if user_std_resp.status_code == 200:
                         std_data = user_std_resp.json()
-                        # Capture login — always present regardless of token scopes;
-                        # used as stable account_id fallback when no email is found.
-                        login = std_data.get("login") or None
+                        login = std_data.get("login") or login
                         # Try email from main profile
                         identity = std_data.get("email")
 
@@ -253,35 +252,16 @@ class GitHubCollector(BaseCollector):
                                 emails = emails_resp.json()
                                 identity = IdentityExtractor.extract_best_email(emails)
 
-                        # Fallback to local git config user.email if still missing
+                        # No email anywhere: label with the login/display name.
+                        # (Deliberately no local `git config user.email` fallback —
+                        # that is the *server host's* identity, not the token's.)
                         if not identity:
-                            try:
-                                proc = await asyncio.create_subprocess_exec(
-                                    "git",
-                                    "config",
-                                    "--global",
-                                    "user.email",
-                                    stdout=asyncio.subprocess.PIPE,
-                                    stderr=asyncio.subprocess.PIPE,
-                                )
-                                stdout, _ = await proc.communicate()
-                                if proc.returncode == 0:
-                                    git_email = stdout.decode().strip()
-                                    if git_email:
-                                        identity = git_email
-                            except Exception as e:
-                                logger.debug(f"Failed to fetch git config user.email: {e}")
-
-                        # Final fallback if NO email found anywhere: prefer the stable
-                        # login over the display name so the card identity matches
-                        # account_id and stays consistent across token re-auths.
-                        if not identity:
-                            identity = std_data.get("login") or std_data.get("name")
+                            identity = login or std_data.get("name")
                 except Exception as e:
                     logger.debug(f"GitHub /user identity fetch failed: {e}")
 
-            # Fallback: local gh config (only if identity still None)
-            if not identity:
+            # Fallback: local gh config (only if /user gave us nothing)
+            if not login and not scoped_with_label:
                 gh_config_path = os.path.expanduser("~/.config/gh/hosts.yml")
 
                 def _read_gh_identity(path: str) -> str | None:
@@ -295,10 +275,13 @@ class GitHubCollector(BaseCollector):
                     return host_config.get("user") or next(iter(host_config.get("users", {})), None)
 
                 try:
-                    identity = await asyncio.to_thread(_read_gh_identity, gh_config_path)
+                    login = await asyncio.to_thread(_read_gh_identity, gh_config_path)
                 except Exception:
                     logger.debug("Failed to read GitHub identity from config", exc_info=True)
+                identity = identity or login
 
+            if login:
+                self._login = login
             if identity:
                 self._identity = identity
                 # Only update label if it's currently NOT set, empty string, or the placeholder 'Default'
@@ -322,14 +305,11 @@ class GitHubCollector(BaseCollector):
                 ):
                     self.account_label = identity
 
-            # Stable account_id: email when discoverable (identity contains "@"), else the
-            # GitHub login (always available regardless of token scopes).  The default
-            # collector starts with account_id=None so cards land under "default"; pin it
-            # to the authenticated user so the card carries a durable identity.
-            if not self.account_id or self.account_id == "default":
-                stable = identity if (identity and "@" in identity) else login
-                if stable:
-                    self.account_id = normalize_account_id(stable)
+            # The default collector starts with account_id=None so cards land under
+            # "default"; pin it to the authenticated login so the card carries a
+            # durable identity.  Never pin to an email.
+            if (not self.account_id or self.account_id == "default") and login:
+                self.account_id = normalize_account_id(login)
 
             if self.account_id:
                 # Update metadata in cache so it can be used for label fallbacks.

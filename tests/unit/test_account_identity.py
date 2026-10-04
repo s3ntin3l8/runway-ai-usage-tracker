@@ -355,3 +355,15 @@ class TestKeyedCredentialOrigin:
             assert fp is not None
             origin = keyed_credential_origin("path:/x/auth.json", fp)
             assert split_keyed_origin(origin) == ("path:/x/auth.json", fp)
+
+
+def test_resolve_account_id_github_login_not_overridden_by_email_label():
+    assert resolve_account_id("github", "me-login", "me@example.com") == "me-login"
+
+
+def test_resolve_account_id_github_default_still_uses_email_label():
+    assert resolve_account_id("github", "default", "me@example.com") == "me@example.com"
+
+
+def test_resolve_account_id_other_providers_email_label_still_wins():
+    assert resolve_account_id("claude", "acct-1", "me@example.com") == "me@example.com"
