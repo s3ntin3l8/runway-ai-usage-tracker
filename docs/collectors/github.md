@@ -28,6 +28,15 @@ The GitHub Copilot collector supports multiple authentication methods:
     *   **App/Sidecar**: Supported by both the main Runway app and the Sidecar.
     *   **Details**: See the [Credential Discovery section](#credential-discovery) below.
 
+## Account identity
+
+A GitHub account is keyed by its **login** (`/user` → `login`), never by email:
+the login is returned for every token type and never changes. The email (from
+`/user` or `/user/emails`) is only the display label. The server host's own
+`git config user.email` is deliberately *not* consulted — it identifies the host,
+not the token. `resolve_account_id` treats GitHub as login-keyed, so an email
+label cannot re-key an explicitly identified account.
+
 ## Data Sources
 
 ### Primary: GitHub Copilot Internal APIs

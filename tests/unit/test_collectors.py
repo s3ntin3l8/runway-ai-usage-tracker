@@ -1804,11 +1804,11 @@ class TestGitHubCollector:
         assert collector.account_label == "s3ntin3l8"
 
     @pytest.mark.asyncio
-    async def test_account_id_resolved_to_email_when_available(self, mock_http_client):
-        """account_id is set to the GitHub email when the token exposes it.
+    async def test_account_id_is_login_even_when_email_available(self, mock_http_client):
+        """account_id is the GitHub login; an exposed email is only the display label.
 
-        If a scoped token exposes an email address, it takes precedence over the
-        login — matching the house convention used by other providers.
+        Keying by email split one account into a login series and an email series
+        (Data Health "no supporting evidence"), so the login always wins.
         """
         collector = GitHubCollector()
 
@@ -1845,8 +1845,49 @@ class TestGitHubCollector:
         ):
             await collector._strategy_api(mock_http_client)
 
-        assert collector.account_id == "bjoern@example.com"
+        assert collector.account_id == "s3ntin3l8"
         assert collector.account_label == "bjoern@example.com"
+
+    @pytest.mark.asyncio
+    async def test_server_git_email_is_never_used_as_identity(self, mock_http_client):
+        """The server host's `git config user.email` must not become the account identity."""
+        collector = GitHubCollector()
+
+        def _resp(status: int, data) -> MagicMock:
+            r = MagicMock(spec=httpx.Response)
+            r.status_code = status
+            r.json.return_value = data
+            r.headers = {}
+            return r
+
+        copilot_user = _resp(
+            200,
+            {
+                "quota_snapshots": [
+                    {"metric": "chat", "used": 1, "included": 200, "quota_reset_at": 0}
+                ],
+                "copilot_plan": "Individual",
+            },
+        )
+        std_user = _resp(200, {"login": "s3ntin3l8", "email": None})
+        emails_list = _resp(200, [])
+
+        with (
+            patch.object(
+                collector, "_get_token", new_callable=AsyncMock, return_value="ghp_testtoken"
+            ),
+            patch(
+                "app.services.collectors.github.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[copilot_user, std_user, emails_list],
+            ),
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
+        ):
+            await collector._strategy_api(mock_http_client)
+
+        mock_exec.assert_not_awaited()
+        assert collector.account_id == "s3ntin3l8"
+        assert collector.account_label == "s3ntin3l8"
 
     @pytest.mark.asyncio
     async def test_default_collector_ignores_leaked_email_label(self, mock_http_client):

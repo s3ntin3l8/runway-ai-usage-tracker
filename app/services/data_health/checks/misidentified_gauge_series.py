@@ -18,6 +18,11 @@ time delay:
 
 An account satisfying all five criteria has provably never been a real account,
 and its gauge data (including contributions) can be deleted immediately.
+
+Exception — login-keyed providers (GitHub): an *email-shaped* series is almost
+always the real account re-keyed by its email label, not a phantom. When exactly
+one evidenced non-email account of the same provider has gauge data, the finding
+offers (and defaults to) a merge into it, which keeps the real history.
 """
 
 from __future__ import annotations
@@ -37,6 +42,7 @@ from app.models.db import (
     QuotaSnapshot,
     UsageEvent,
 )
+from app.services.account_identity import _LOGIN_KEYED_PROVIDERS, EMAIL_RE
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -45,9 +51,14 @@ from app.services.data_health.base import (
     FindingGroup,
     FixPlan,
     FixResult,
+    ParamSpec,
     Severity,
 )
-from app.services.maintenance.account_merge import delete_gauge_series
+from app.services.maintenance.account_merge import (
+    delete_gauge_series,
+    merge_gauge_series,
+    plan_merge_gauge_series,
+)
 
 _KEY_SEP = "::"
 
@@ -189,6 +200,26 @@ def _has_evidence(
     return False
 
 
+def _merge_candidates(
+    provider_id: str,
+    account_id: str,
+    gauge_pairs: set[tuple[str, str]],
+    evidence_pairs: set[tuple[str, str]],
+) -> list[str]:
+    """Evidenced, non-email accounts of a login-keyed provider that an email-keyed
+    series could belong to. Empty for any other provider/account shape."""
+    if provider_id not in _LOGIN_KEYED_PROVIDERS or not EMAIL_RE.match(account_id):
+        return []
+    return sorted(
+        acc
+        for prov, acc in gauge_pairs
+        if prov == provider_id
+        and acc not in (account_id, "default")
+        and not EMAIL_RE.match(acc)
+        and (prov, acc) in evidence_pairs
+    )
+
+
 def _count_latest(session: Session, provider_id: str, account_id: str) -> int:
     return session.execute(
         select(func.count())
@@ -276,12 +307,37 @@ class MisidentifiedGaugeSeriesCheck(Check):
 
             lu_count = lu_counts.get((provider_id, account_id), 0)
             qs_count = snap_counts.get((provider_id, account_id), 0)
+            candidates = _merge_candidates(provider_id, account_id, gauge_pairs, evidence_pairs)
+            suggested = candidates[0] if len(candidates) == 1 else None
             groups.append(
                 FindingGroup(
                     key=_key(provider_id, account_id),
-                    label=f"{provider_id}/{account_id}: gauge data with no supporting evidence",
+                    label=(
+                        f"{provider_id}/{account_id}: email-keyed duplicate of {suggested}"
+                        " (still being written — the collector re-keyed the account)"
+                        if suggested
+                        else f"{provider_id}/{account_id}: gauge data with no supporting evidence"
+                    ),
                     count=lu_count + qs_count,
                     fixable=True,
+                    params=[
+                        ParamSpec(
+                            name="action",
+                            label="Action",
+                            options=["merge", "delete"] if suggested else ["delete", "merge"],
+                        ),
+                        ParamSpec(
+                            name="target",
+                            label="Merge target (merge only)",
+                            required=False,
+                            options=candidates or None,
+                        ),
+                    ]
+                    if candidates
+                    else [],
+                    detail={"candidates": candidates, "suggested_target": suggested}
+                    if suggested
+                    else {},
                     samples=[
                         Finding(
                             label=f"{provider_id}/{account_id}",
@@ -302,12 +358,57 @@ class MisidentifiedGaugeSeriesCheck(Check):
             groups=groups,
         )
 
+    def _resolve_action(
+        self, session: Session, provider_id: str, account_id: str, params: dict[str, Any]
+    ) -> tuple[str, str | None]:
+        """Return ``(action, target)``. Defaults to merging when there is exactly
+        one plausible real account (keeps history); otherwise deleting."""
+        gauge_pairs = {
+            (row[0], row[1])
+            for row in session.execute(
+                select(LatestUsage.provider_id, LatestUsage.account_id).distinct()
+            )
+        } | {
+            (row[0], row[1])
+            for row in session.execute(
+                select(QuotaSnapshot.provider_id, QuotaSnapshot.account_id).distinct()
+            )
+        }
+        candidates = _merge_candidates(
+            provider_id, account_id, gauge_pairs, _fetch_evidence_pairs(session)
+        )
+        action = params.get("action") or ("merge" if len(candidates) == 1 else "delete")
+        if action == "merge":
+            target = params.get("target") or (candidates[0] if len(candidates) == 1 else None)
+            if not target or target not in candidates:
+                raise ValueError(f"merge requires a target in {candidates}")
+            return "merge", str(target)
+        if action == "delete":
+            return "delete", None
+        raise ValueError(f"unknown action {action!r}; expected 'delete' or 'merge'")
+
     def plan(self, session: Session, group_key: str, params: dict[str, Any]) -> FixPlan:
         provider_id, account_id = _parse_key(group_key)
         evidence_pairs = _fetch_evidence_pairs(session)
         if _has_evidence(session, provider_id, account_id, evidence_pairs=evidence_pairs):
             raise ValueError(
                 f"{provider_id}/{account_id} now has supporting evidence and is not misidentified"
+            )
+        action, target = self._resolve_action(session, provider_id, account_id, params)
+        if action == "merge" and target:
+            merge_plan = plan_merge_gauge_series(
+                session, provider_id=provider_id, source=account_id, target=target
+            )
+            return FixPlan(
+                check_id=self.id,
+                group_key=group_key,
+                summary=f"Merge {provider_id}/{account_id} into {target}",
+                counts={
+                    "merged": merge_plan.merged,
+                    "retagged": merge_plan.retagged,
+                    "snapshots_retagged": merge_plan.snapshots_retagged,
+                    "snapshots_collided": merge_plan.snapshots_collided,
+                },
             )
         confirmation_text = f"I confirm {provider_id}/{account_id} has no real usage history."
         return FixPlan(
@@ -332,6 +433,25 @@ class MisidentifiedGaugeSeriesCheck(Check):
         if _has_evidence(session, provider_id, account_id, evidence_pairs=evidence_pairs):
             raise ValueError(
                 f"{provider_id}/{account_id} now has supporting evidence and is not misidentified"
+            )
+        action, target = self._resolve_action(session, provider_id, account_id, params)
+        if action == "merge" and target:
+            merge_result = merge_gauge_series(
+                session, provider_id=provider_id, source=account_id, target=target
+            )
+            return (
+                FixResult(
+                    check_id=self.id,
+                    group_key=group_key,
+                    summary=f"Merged {provider_id}/{account_id} into {target}",
+                    counts={
+                        "merged": merge_result.merged,
+                        "retagged": merge_result.retagged,
+                        "snapshots_retagged": merge_result.snapshots_retagged,
+                        "snapshots_collided": merge_result.snapshots_collided,
+                    },
+                ),
+                [],
             )
         if params.get("same_account_confirmed") is not True:
             raise ValueError(
