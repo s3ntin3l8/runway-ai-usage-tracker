@@ -402,3 +402,16 @@ def test_server_credential_origins_classify_a_credential_without_returning_it(mo
     assert origin["exp"] == pytest.approx(exp, abs=1)
     assert origin["rollable"] is False
     assert token not in json.dumps(origin)
+
+
+def test_resolve_mapping_value_handles_colon_and_dot_keys_like_the_sidecar():
+    key = (
+        "github.com:Iv1.b507a08c87ecfe98.oauth_token|github.com:Iv23ctfURkiMfJ4xr5mv.oauth_token"
+        "|github.com.oauth_token"
+    )
+    data = {"github.com:Iv23ctfURkiMfJ4xr5mv": {"user": "me", "oauth_token": "ghu_abc"}}
+
+    assert CredentialProvider._resolve_mapping_value(data, key) == "ghu_abc"
+    assert (
+        CredentialProvider._resolve_mapping_value({"github.com": {"oauth_token": "x"}}, key) == "x"
+    )

@@ -2,19 +2,19 @@
 
 **File:** `app/services/collectors/github.py`
 
-GitHub Copilot quota collector with tier-aware multi-endpoint strategy.
+GitHub Copilot quota collector. One endpoint (`copilot_internal/user`) returns the plan and either quota snapshots (paid) or limited/monthly quotas (free).
 
 ## Overview
 
-- **Collection Strategy**: api (Copilot Internal) → api (GitHub Rate Limit fallback)
+- **Collection Strategy**: api (`copilot_internal/user`); no fallback endpoint
 - **Cards**: 2 cards (Completions, Chat) or 3 cards (Premium, Chat, Autocomplete)
-- **Authentication**: `GITHUB_TOKEN` (api) or `gh` CLI credentials (api)
+- **Authentication**: a GitHub OAuth token (device login, `gh`, or an editor sign-in) or a PAT; see [Credential Discovery](#credential-discovery)
 
 ## Setup Methods Quick Overview
 
 The GitHub Copilot collector supports multiple authentication methods:
 
-1.  **Personal Access Token (PAT)**: Provide a static GitHub Personal Access Token (PAT) with `copilot` scope.
+1.  **Token**: Provide a static GitHub token. An OAuth token (from `gh auth login` or the device login) works best; a classic PAT may be rejected by the Copilot endpoints.
     *   **Method**: Set the `GITHUB_TOKEN` environment variable.
     *   **Details**: Refer to the [Configuration section](#configuration) for `GITHUB_TOKEN` and the [Authentication section](#authentication) in the Overview.
 
@@ -39,17 +39,15 @@ label cannot re-key an explicitly identified account.
 
 ## Data Sources
 
-### Primary: GitHub Copilot Internal APIs
-**Endpoints:**
-- `api.github.com/copilot_internal/v2/token` (free/limited tier quotas)
-- `api.github.com/copilot_internal/user` (Pro/Enterprise snapshots)
+### GitHub Copilot internal API
+**Endpoint:** `api.github.com/copilot_internal/user` (plan, quota snapshots, and the free-tier `limited_user_quotas` / `monthly_quotas`)
 
-**Auth:** `Authorization: token <GITHUB_TOKEN>`
+**Auth:** `Authorization: token <token>`
 **Headers:** VS Code Copilot extension headers for reliability
 
-### Fallback: GitHub API Rate Limits
-**Endpoint:** `api.github.com/rate_limit`
-**Trigger:** When Copilot endpoints unavailable
+Identity comes from `api.github.com/user` (and `/user/emails` for the label).
+
+`copilot_internal/v2/token` is deliberately not called: it only mints a short-lived model-proxy token and carries no totals, so it added a secret to cache and redact for no data (#519).
 
 ## Output Format
 
@@ -107,29 +105,32 @@ GitHub credentials come from these sources. The first one found by the server (s
 | Sign in with GitHub (device flow) | server | Button in the GitHub account dialog. The token is stored encrypted at `<config dir>/github_oauth.json` and listed as a server credential; it counts as evidence for the account while the file exists, and Disconnect deletes it. Sidecars never ship this file. |
 | `gh` CLI `hosts.yml` | server and sidecar | `~/.config/gh/hosts.yml` (Linux/macOS) or `%APPDATA%\GitHub CLI\hosts.yml`; spellings of the same file are read once. |
 | `gh` CLI keyring | sidecar | `gh auth token`, for `gh` ≥ 2.40, which keeps the token in the OS keyring and leaves `hosts.yml` without one. Skipped when it returns a token already found above. |
+| Editor Copilot sign-in files | sidecar | `apps.json` / `hosts.json` under `~/.config/github-copilot` (or `%LOCALAPPDATA%\github-copilot`), written by JetBrains, Neovim (`copilot.vim`/`copilot.lua`), Xcode and Zed. `github.com` entries only; the file's `user` is not used as the account id. The same token in more than one file counts once. |
 | Windows Credential Manager `github.com` | sidecar | |
 
-Not detected: VS Code / JetBrains Copilot sign-in files, browser cookies.
+Not detected: the VS Code Copilot extension (its sign-in lives in VS Code's encrypted secret storage and is not readable), the Copilot CLI's keychain entry, browser cookies.
+
+If a machine's GitHub credential disappears, the sidecar log (`~/.config/runway/sidecar/sidecar.log`) says `file read but no credential keys found` once per file when a rule's file exists but holds no token (a logged-out `gh`, or a token moved to the keyring).
 
 **Custom Config Directory**:
 The default location for Runway's configuration files (including where GitHub OAuth tokens are saved) is platform-specific (e.g., `~/.config/runway` on Linux). You can override this location by setting the `RUNWAY_CONFIG_DIR` environment variable to an absolute path. This is particularly useful for Docker or custom multi-host deployments.
 
 ## Sidecar Support
 
-Sidecar uses lighter implementation with `/rate_limit` endpoint only. See [sidecar documentation](../sidecar.md).
+The sidecar only extracts and forwards GitHub credentials; it never calls the GitHub API. The server verifies the account with `/user`. See [sidecar documentation](../sidecar.md).
 
 ## Troubleshooting
 
 ### No Copilot data returned
 **Check:**
 1. `echo $GITHUB_TOKEN` - is it set?
-2. Token has `copilot` scope?
+2. Is the token an OAuth token for an account with Copilot (a classic PAT may be rejected)?
 3. User has active Copilot subscription?
 
 ### 401/403 errors
 **Fix:**
 1. Regenerate token at https://github.com/settings/tokens
-2. Ensure "Copilot" scope is granted
+2. Prefer `gh auth login` or the Sign in with GitHub button over a classic PAT
 3. Verify subscription at https://github.com/settings/copilot
 
 ## Related Files
@@ -137,7 +138,7 @@ Sidecar uses lighter implementation with `/rate_limit` endpoint only. See [sidec
 | File | Purpose |
 |------|---------|
 | `app/services/collectors/github.py` | Main collector |
-| `scripts/sidecar.py` | Sidecar (rate limit only) |
+| `scripts/sidecar.py` | Sidecar (credential extraction only) |
 
 ## References
 
