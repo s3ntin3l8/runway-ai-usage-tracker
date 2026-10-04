@@ -332,7 +332,11 @@ function UntaggedRow({
   const disabledCount = accounts.length - enabledAccounts.length;
 
   return (
-    <Card className="p-3">
+    <Card
+      className="p-3"
+      role="group"
+      aria-label={`${entry.credential_origin} on ${machineName ?? entry.sidecar_id}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">
@@ -498,6 +502,3 @@ function UntaggedRow({
     </Card>
   );
 }
-
-// Sentinel re-export so tests can import the helper if they need to.
-export { INITIAL as UNTAGGED_DIALOG_INITIAL };

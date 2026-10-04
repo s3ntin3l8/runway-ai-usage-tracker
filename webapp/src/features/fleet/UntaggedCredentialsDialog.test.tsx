@@ -434,10 +434,10 @@ describe('UntaggedCredentialsDialog', () => {
       const { user, dialog } = await openTwoRows();
 
       await user.click(within(scopeGroup(dialog, 'a.json')).getByRole('radio', { name: /all machines/i }));
-      // Rows render in list order, so row A is the first.
-      await user.click(within(dialog).getAllByRole('combobox')[0]);
+      const rowA = within(dialog).getByRole('group', { name: /a\.json on / });
+      await user.click(within(rowA).getByRole('combobox'));
       await user.click(await screen.findByText('Alice · alice@example.com'));
-      await user.click(within(dialog).getAllByRole('button', { name: /^tag$/i })[0]);
+      await user.click(within(rowA).getByRole('button', { name: /^tag$/i }));
 
       await waitFor(() =>
         expect(api.tagCredential).toHaveBeenCalledWith(
