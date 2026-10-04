@@ -368,3 +368,20 @@ def test_bulk_remove_rejects_an_empty_or_oversized_batch(client):
     assert client.post(url, json={"source_ids": []}, headers=_headers()).status_code == 422
     too_many = {"source_ids": [f"sidecar:{i}" for i in range(51)]}
     assert client.post(url, json=too_many, headers=_headers()).status_code == 422
+
+
+def test_bulk_remove_that_removes_nothing_leaves_the_rejection_flag_alone(client):
+    from app.services import auth_failures
+
+    auth_failures.reset()
+    auth_failures.mark("gemini", ALICE)
+
+    resp = client.post(
+        f"/api/v1/system/credentials/gemini/{ALICE}/remove",
+        json={"source_ids": ["server:gemini:env:KEY", "sidecar:nope"]},
+        headers=_headers(),
+    )
+
+    assert resp.json()["removed"] == []
+    assert ALICE in auth_failures.flagged_accounts("gemini")
+    auth_failures.reset()

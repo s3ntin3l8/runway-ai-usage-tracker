@@ -832,7 +832,8 @@ async def remove_credential_sources(
             removed.append(source_id)
         else:
             skipped.append({"source_id": source_id, "reason": outcome})
-    _clear_rejection_if_account_empty(session, provider, account_id)
+    if removed:  # a batch that removed nothing must not touch the account's rejection flag
+        _clear_rejection_if_account_empty(session, provider, account_id)
     return {"removed": removed, "skipped": skipped}
 
 
