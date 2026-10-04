@@ -46,7 +46,7 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("claude", "statusline.json"), "Claude Code"),
     (("gemini", "oauth_creds.json"), "Gemini CLI"),
     (("antigravity-cli", "antigravity-oauth-token"), "Antigravity CLI"),
-    (("state", "quota.json"), "Antigravity"),
+    (("antigravity", "state", "quota.json"), "Antigravity"),
     (("gh", "hosts.yml"), "GitHub CLI"),
     (("github cli", "hosts.yml"), "GitHub CLI"),
     (("runway", "github_oauth.json"), "Runway"),
@@ -54,7 +54,6 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("kimi", "config.json"), "Kimi CLI"),
     (("k2", "tokens.json"), "Kimi K2"),
 )
-_KIMI_DIR = "kimi-code"
 
 _LOGIN_HINTS = {
     "Codex CLI": "run `codex login`",
@@ -78,7 +77,7 @@ def _segments(path: str) -> list[str]:
 
 def _app_for_path(path: str) -> str | None:
     segs = [seg.lower().removeprefix(".") for seg in _segments(path)]
-    if _KIMI_DIR in segs:
+    if len(segs) >= 3 and segs[-3:-1] == ["kimi-code", "credentials"]:
         return "Kimi Code"
     for tail, app in _FILE_APPS:
         if len(segs) >= len(tail) and tuple(segs[-len(tail) :]) == tail:
@@ -87,6 +86,8 @@ def _app_for_path(path: str) -> str | None:
 
 
 _HOME_PREFIXES = (
+    re.compile(r"^/var/home/[^/]+(?=/|$)"),
+    re.compile(r"^/mnt/[a-z]/Users/[^/]+(?=/|$)", re.IGNORECASE),
     re.compile(r"^/home/[^/]+(?=/|$)"),
     re.compile(r"^/Users/[^/]+(?=/|$)"),
     re.compile(r"^/root(?=/|$)"),
@@ -108,6 +109,8 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
         return OriginDisplay("env", value.removeprefix("env:").split("#", 1)[0])
     if value.startswith(("path:", "file:")):
         raw = value.split(":", 1)[1].split("#", 1)[0]
+        raw = re.sub(r"^/{2,}(?:localhost)?(?=/)", "", raw)  # file:///home/u -> /home/u
+        raw = re.sub(r"^/(?=[A-Za-z]:)", "", raw)  # file:///C:/Users -> C:/Users
         segs = _segments(raw)
         return OriginDisplay(
             "file",

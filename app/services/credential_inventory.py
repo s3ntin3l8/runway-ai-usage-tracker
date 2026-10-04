@@ -50,7 +50,7 @@ from app.services.credential_sources import (
     server_source_id,
 )
 from app.services.credential_tags import origin_candidates, pick_effective_tag
-from app.services.fleet_registry import _STALE_THRESHOLD_MINUTES
+from app.services.fleet_registry import STALE_THRESHOLD_MINUTES
 from app.services.token_cache import token_cache
 from app.services.token_health import (
     credential_status,
@@ -308,7 +308,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         pending_usage = len(session.exec(select(PendingUsageEvent)).all())
         data_path = _data_path(session)
 
-    stale_cutoff = datetime.now(UTC) - timedelta(minutes=_STALE_THRESHOLD_MINUTES)
+    stale_cutoff = datetime.now(UTC) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
 
     def is_stale(sidecar_id: str | None) -> bool:
         """Same rule as Fleet's ``stale``: no check-in within the stale threshold."""

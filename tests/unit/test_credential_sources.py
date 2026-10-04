@@ -690,6 +690,11 @@ def test_reset_source_retry_clears_only_that_source():
             "~/Library/Application Support/claude/.credentials.json",
         ),
         ("path:/srv/other/auth.json", None, "auth.json", "/srv/other/auth.json"),
+        ("file:///home/bob/.codex/auth.json", "Codex CLI", "auth.json", "~/.codex/auth.json"),
+        ("path:/mnt/c/Users/bob/.codex/auth.json", "Codex CLI", "auth.json", "~/.codex/auth.json"),
+        ("path:/var/home/bob/.codex/auth.json", "Codex CLI", "auth.json", "~/.codex/auth.json"),
+        ("path:/home/kimi-code/x/y.json", None, "y.json", "~/x/y.json"),
+        ("path:/data/state/quota.json", None, "quota.json", "/data/state/quota.json"),
     ],
 )
 def test_describe_origin_full_names_the_owning_app(origin, app, label, path):

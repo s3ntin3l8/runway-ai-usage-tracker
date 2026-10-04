@@ -131,7 +131,9 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
             </div>
           }
         >
-          <p className="truncate text-[13px] font-medium">{title}</p>
+          <p tabIndex={0} className="truncate text-[13px] font-medium">
+            {title}
+          </p>
         </Tooltip>
         <p className="truncate text-[11px] text-fg-subtle">
           {[context, tokenSummary(source.token_types), MAPPING_LABEL[source.mapping]]
@@ -152,6 +154,7 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
       ) : null}
       <div className="text-[12px] text-fg-muted">
         <p>
+          <span className="sr-only">Expires: </span>
           {source.status === 'stale'
             ? `last reported ${timeAgo(source.last_seen)}`
             : relativeExpiry(source.expires_in_seconds)}
@@ -168,6 +171,7 @@ export function SourceRow({ source, context, showMachine = true }: SourceRowProp
         ) : null}
       </div>
       <div className="text-[12px] text-fg-muted">
+        <span className="sr-only">Last collected: </span>
         {source.last_success_at ? (
           timeAgo(source.last_success_at)
         ) : source.health === 'untried' ? (
