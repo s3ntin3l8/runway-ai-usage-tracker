@@ -216,3 +216,73 @@ class TestWinVersion:
         text = self.wv.render_version_info("2.12.0+edge.abc1234")
         assert "filevers=(2, 12, 0, 0)" in text
         assert "StringStruct('ProductVersion', '2.12.0+edge.abc1234')" in text
+
+
+# ---------------------------------------------------------------------------
+# Frozen builds: every lazily imported sidecar_pkg module must be declared
+# ---------------------------------------------------------------------------
+
+SPEC_DIR = ROOT / "sidecar_app" / "spec"
+SIDECAR_PKG_DIR = ROOT / "scripts" / "sidecar_pkg"
+
+
+def _lazy_sidecar_pkg_imports() -> set[str]:
+    """sidecar_pkg modules ``scripts/sidecar.py`` imports inside a function body.
+
+    The tray specs bundle sidecar.py as data (never scanned) and even the CLI spec's scan is
+    insurance, so each of these is declared in every spec's ``hiddenimports``. A module
+    imported only on an opt-in path (``keep_alive``, ``xai_renewer``) is the easy one to miss.
+    """
+    import ast
+
+    tree = ast.parse((ROOT / "scripts" / "sidecar.py").read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module == "scripts.sidecar_pkg":
+                    found.update(f"scripts.sidecar_pkg.{a.name}" for a in node.names)
+                elif node.module.startswith("scripts.sidecar_pkg."):
+                    found.add(node.module)
+            elif isinstance(node, ast.Import):
+                found.update(
+                    a.name for a in node.names if a.name.startswith("scripts.sidecar_pkg.")
+                )
+    return found
+
+
+def _spec_hidden_imports(spec: pathlib.Path) -> set[str]:
+    return set(re.findall(r'"(scripts\.sidecar_pkg[\w.]*)"', spec.read_text(encoding="utf-8")))
+
+
+SPECS = sorted(SPEC_DIR.glob("*.spec"))
+
+
+class TestSpecHiddenImports:
+    def test_there_are_specs_to_check(self):
+        assert {p.name for p in SPECS} >= {
+            "linux-cli.spec",
+            "linux.spec",
+            "macos.spec",
+            "windows.spec",
+        }
+
+    def test_the_scan_sees_the_keep_alive_modules(self):
+        lazy = _lazy_sidecar_pkg_imports()
+        assert {"scripts.sidecar_pkg.keep_alive", "scripts.sidecar_pkg.xai_renewer"} <= lazy
+
+    @pytest.mark.parametrize("spec", SPECS, ids=lambda p: p.name)
+    def test_every_lazy_import_is_declared(self, spec):
+        missing = sorted(_lazy_sidecar_pkg_imports() - _spec_hidden_imports(spec))
+        assert not missing, f"{spec.name} hiddenimports is missing: {missing}"
+
+    @pytest.mark.parametrize("spec", SPECS, ids=lambda p: p.name)
+    def test_no_declared_module_has_gone_missing(self, spec):
+        """A rename must update the spec: PyInstaller only warns about a stale hiddenimport."""
+        for name in _spec_hidden_imports(spec):
+            base = ROOT.joinpath(*name.split("."))
+            assert base.with_suffix(".py").exists() or (base / "__init__.py").exists(), (
+                f"{spec.name} declares {name}, which does not exist"
+            )

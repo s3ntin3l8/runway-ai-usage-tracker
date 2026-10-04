@@ -368,6 +368,30 @@ def _lock_path() -> pathlib.Path:
     return _sidecar_dir() / _LOCK_NAME
 
 
+# Callbacks run right before ``os.execv`` replaces the process image. ``execv`` keeps the
+# PID, and nothing (atexit, finally) runs across it, so anything that must not outlive the
+# old image — the sidecar's PID file — has to be released here, or the re-exec'd daemon sees
+# its own PID in the file, reports "already running" and exits.
+_PRE_EXEC_HOOKS: list[Callable[[], None]] = []
+
+
+def register_pre_exec_hook(hook: Callable[[], None]) -> None:
+    """Run ``hook`` just before a CLI self-update re-execs (best-effort, idempotent)."""
+    if hook not in _PRE_EXEC_HOOKS:
+        _PRE_EXEC_HOOKS.append(hook)
+
+
+def _run_pre_exec_hooks() -> None:
+    for hook in list(_PRE_EXEC_HOOKS):
+        try:
+            hook()
+        except Exception:
+            # A failing cleanup must not abort the update that is about to relaunch.
+            logger.warning(
+                "Pre-exec hook %s failed", getattr(hook, "__name__", hook), exc_info=True
+            )
+
+
 def _release_lock() -> None:
     """Remove the single-flight lock file.
 
@@ -799,6 +823,7 @@ def _relaunch_posix(target: str, install: pathlib.Path) -> None:
         # Supervisor-agnostic in-place re-exec; preserves argv and PID lifecycle.
         logger.info("Re-executing %s", install)
         _release_lock()
+        _run_pre_exec_hooks()
         os.execv(str(install), [str(install), *sys.argv[1:]])
         return  # unreachable
     # Tray: never execv from inside the pystray loop — spawn detached and exit.
