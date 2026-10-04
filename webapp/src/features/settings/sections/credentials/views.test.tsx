@@ -280,6 +280,27 @@ describe('RulesView', () => {
     expect(screen.getByText('on all machines')).toBeInTheDocument();
   });
 
+  it('marks a rule no machine matches any more, with when it last matched', async () => {
+    vi.mocked(api.fetchCredentialTags).mockResolvedValue({
+      items: [
+        { ...rule, credential_origin: 'path:/home/u/gone.json', stale: true, last_matched_at: null },
+        {
+          ...rule,
+          credential_origin: 'path:/home/u/old.json',
+          stale: true,
+          last_matched_at: '2026-09-01T10:00:00Z',
+        },
+        { ...rule, credential_origin: 'path:/home/u/live.json', stale: false },
+      ],
+    });
+    renderWithProviders(<RulesView />);
+
+    expect(await screen.findByText(/No credential has matched this rule/)).toBeInTheDocument();
+    expect(screen.getByText(/No credential seen since/)).toBeInTheDocument();
+    // Only the two stale rules are marked, and the marker points at the fix.
+    expect(screen.getAllByText(/Data Health can remove it/)).toHaveLength(2);
+  });
+
   const codex = {
     ...rule,
     provider_id: 'chatgpt',

@@ -233,6 +233,14 @@ export function RulesView({ providerNames }: { providerNames?: Record<string, st
                               ? `on ${names.get(t.sidecar_id) ?? t.sidecar_id}`
                               : 'on all machines'}
                           </p>
+                          {t.stale ? (
+                            <p className="text-[11px] text-warning">
+                              {t.last_matched_at
+                                ? `No credential seen since ${new Date(t.last_matched_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`
+                                : 'No credential has matched this rule'}
+                              {' — Data Health can remove it.'}
+                            </p>
+                          ) : null}
                         </div>
                         <Button
                           variant="danger-ghost"
