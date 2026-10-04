@@ -748,3 +748,59 @@ async def test_never_attempted_source_reads_untried_not_healthy(engine, cache):
     assert by_id["sidecar:legacy"].health == "auth_failed"
     # An unattempted row never outranks a working one as the active source.
     assert acct.active_source_id == "sidecar:ran"
+
+
+@pytest.mark.asyncio
+async def test_machine_source_names_its_owning_app_and_flags_an_offline_machine(engine, cache):
+    now = datetime.now(UTC)
+    with Session(engine) as s:
+        s.add(SidecarRegistry(sidecar_id="live", hostname="live", last_seen=now))
+        s.add(
+            SidecarRegistry(sidecar_id="gone", hostname="gone", last_seen=now - timedelta(days=97))
+        )
+        s.commit()
+        _source(
+            s,
+            provider_id="chatgpt",
+            source_id="sidecar:live",
+            sidecar_id="live",
+            credential_origin="path:/home/u/.codex/auth.json#abc",
+        )
+        _source(
+            s,
+            provider_id="chatgpt",
+            source_id="sidecar:gone",
+            sidecar_id="gone",
+            credential_origin="path:/home/u/.codex/auth.json#abc",
+        )
+    inv = await build_inventory()
+    _, by_id = _sources(inv, provider="chatgpt")
+
+    live, gone = by_id["sidecar:live"], by_id["sidecar:gone"]
+    assert (live.origin_app, live.origin_path) == ("Codex CLI", "~/.codex/auth.json")
+    assert live.login_hint == "run `codex login`"
+    assert (live.machine_stale, gone.machine_stale) == (False, True)
+    assert {m.machine_id: m.stale for m in inv.machines} == {"live": False, "gone": True}
+
+
+@pytest.mark.asyncio
+async def test_sources_are_ordered_active_then_healthy_then_dead(engine, cache):
+    now = datetime.now(UTC)
+    with Session(engine) as s:
+        _source(
+            s,
+            source_id="sidecar:dead",
+            sidecar_id="h1",
+            credential_expires_at=now - timedelta(days=3),
+        )
+        _source(
+            s,
+            source_id="sidecar:ok",
+            sidecar_id="h2",
+            credential_expires_at=now + timedelta(days=3),
+        )
+        _source(s, source_id="sidecar:active", sidecar_id="h3", last_success_at=now)
+    acct, _ = _sources(await build_inventory())
+
+    assert [v.source_id for v in acct.sources][0] == "sidecar:active"
+    assert [v.source_id for v in acct.sources][-1] == "sidecar:dead"

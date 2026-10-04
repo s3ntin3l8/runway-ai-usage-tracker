@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { displayAccountName } from '@/lib/accountDisplay';
 import { timeAgo } from '@/lib/format';
-import { SourceRow } from './SourceRow';
+import { SourceList } from './SourceList';
 
 export function ByMachineView({ inventory }: { inventory: CredentialInventory }) {
   // Index sources by machine, remembering their provider/account for the row context.
@@ -23,6 +23,9 @@ export function ByMachineView({ inventory }: { inventory: CredentialInventory })
     }
   }
 
+  const contexts = new Map<CredentialSourceView, string>();
+  for (const rows of byMachine.values()) for (const r of rows) contexts.set(r.source, r.context);
+
   return (
     <div className="space-y-3">
       {inventory.machines.map((m) => {
@@ -32,6 +35,7 @@ export function ByMachineView({ inventory }: { inventory: CredentialInventory })
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold">{m.name}</h3>
               <span className="text-[11px] text-fg-subtle">last seen {timeAgo(m.last_seen)}</span>
+              {m.stale ? <Badge variant="warning">offline</Badge> : null}
               {m.unmapped_count > 0 ? (
                 <Link to="?view=mapping" aria-label={`${m.name}: ${m.unmapped_count} need mapping`}>
                   <Badge variant="warning">{m.unmapped_count} need mapping</Badge>
@@ -41,15 +45,12 @@ export function ByMachineView({ inventory }: { inventory: CredentialInventory })
             {rows.length === 0 ? (
               <p className="mt-2 text-[12px] text-fg-muted">This machine reports no credentials.</p>
             ) : (
-              <ul className="mt-1 divide-y divide-edge" aria-label={`${m.name} credentials`}>
-                {rows.map(({ source, context }) => (
-                  <SourceRow
-                    key={`${source.provider_id}/${source.account_id}/${source.source_id}`}
-                    source={source}
-                    context={context}
-                  />
-                ))}
-              </ul>
+              <SourceList
+                sources={rows.map((r) => r.source)}
+                label={`${m.name} credentials`}
+                contextFor={(s) => contexts.get(s) ?? ''}
+                showMachine={false}
+              />
             )}
           </Card>
         );

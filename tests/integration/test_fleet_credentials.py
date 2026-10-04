@@ -2503,6 +2503,26 @@ def test_deployment_tag_replaces_machine_scoped_overrides(
     }
 
 
+def test_listed_credential_tags_describe_their_origin(client: TestClient, session: Session) -> None:
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="chatgpt",
+        credential_origin="path:/home/u/.codex/auth.json#abc",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+    )
+    session.commit()
+
+    (item,) = client.get("/api/v1/fleet/credentials/tags").json()["items"]
+    assert (item["origin_label"], item["origin_app"], item["origin_path"]) == (
+        "auth.json",
+        "Codex CLI",
+        "~/.codex/auth.json",
+    )
+
+
 def test_list_and_delete_credential_tags(client: TestClient, session: Session) -> None:
     from app.services.credential_tags import CredentialTagRepo
 

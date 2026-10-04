@@ -19,7 +19,9 @@ import {
   STATUS_LABEL,
   STATUS_VARIANT,
   UNUSED_HINT,
+  originTitle,
   relativeExpiry,
+  tokenSummary,
 } from './display';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 
@@ -27,9 +29,19 @@ interface SourceRowProps {
   source: CredentialSourceView;
   /** Show which provider/account the row belongs to (the By-machine view). */
   context?: string;
+  /** Show the Machine column; off when the list is already scoped to one machine. */
+  showMachine?: boolean;
 }
 
-export function SourceRow({ source, context }: SourceRowProps) {
+// Column templates live here as literals so Tailwind sees them; SourceList's header reuses them.
+const GRID_WITH_MACHINE =
+  'md:grid-cols-[6.5rem_minmax(0,1fr)_9.5rem_8.5rem_6rem_3.75rem]';
+const GRID_WITHOUT_MACHINE = 'md:grid-cols-[6.5rem_minmax(0,1fr)_8.5rem_6rem_3.75rem]';
+
+export const sourceGrid = (showMachine: boolean) =>
+  showMachine ? GRID_WITH_MACHINE : GRID_WITHOUT_MACHINE;
+
+export function SourceRow({ source, context, showMachine = true }: SourceRowProps) {
   const invalidate = useInvalidateCredentialViews();
   const [confirming, setConfirming] = useState(false);
 
@@ -61,74 +73,112 @@ export function SourceRow({ source, context }: SourceRowProps) {
         ? 'Server'
         : 'Settings';
 
+  const dead =
+    source.status === 'expired' || source.status === 'invalid' || source.status === 'failing';
+  // An offline machine can't be fixed by signing in again on it; it's probably retired.
+  const fixHint = !dead
+    ? null
+    : source.machine_stale
+      ? 'Machine offline — remove this credential if the machine is retired.'
+      : source.login_hint
+        ? `To fix: ${source.login_hint} on ${where}.`
+        : null;
+
+  const title = originTitle(source);
+  const detail = [
+    source.origin_path,
+    source.token_types.length > 0 ? source.token_types.join(', ') : null,
+  ].filter(Boolean);
+
   return (
-    <li className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 py-2.5">
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Tooltip content={STATUS_HINT[source.status] ?? ''}>
-            <Badge variant={STATUS_VARIANT[source.status] ?? 'neutral'}>
-              {STATUS_LABEL[source.status] ?? source.status}
-            </Badge>
-          </Tooltip>
-          {source.unused_reason ? (
-            <Tooltip content={UNUSED_HINT[source.unused_reason]}>
-              <Badge variant="warning">Not used</Badge>
-            </Tooltip>
-          ) : null}
-          {source.is_active ? (
-            <Tooltip content="This credential produced the account's most recent successful collection.">
-              <Badge variant="accent">Active</Badge>
-            </Tooltip>
-          ) : null}
-          <span className="text-[13px] font-medium">{source.label}</span>
-          <span className="text-[12px] text-fg-muted">· {where}</span>
-          {context ? <span className="text-[12px] text-fg-subtle">· {context}</span> : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-fg-subtle">
-          <Tooltip content={MAPPING_HINT[source.mapping]}>
-            <span>
-              {MAPPING_LABEL[source.mapping]}
-              {source.mapping_scope === 'all_machines' ? ' (all machines)' : ''}
-            </span>
-          </Tooltip>
-          {source.token_types.length > 0 ? <span>{source.token_types.join(', ')}</span> : null}
-          <span>
-            {source.status === 'stale'
-              ? `last reported ${timeAgo(source.last_seen)}`
-              : relativeExpiry(source.expires_in_seconds)}
-          </span>
-          {source.last_success_at ? (
-            <span>collected {timeAgo(source.last_success_at)}</span>
-          ) : source.health === 'untried' ? (
-            <span title="This credential is registered but has never been used for a collection.">
-              not yet tried
-            </span>
-          ) : null}
-          {source.refreshed_by === 'machine' ? (
-            <span title="This login belongs to the machine's CLI, which renews it. Refreshing it from here would sign that CLI out.">
-              renewed by its machine
-            </span>
-          ) : source.rollable ? (
-            <span>auto-refreshed</span>
-          ) : null}
-          {!source.enabled ? <span>disabled</span> : null}
-        </div>
-        {source.mapping === 'operator' &&
-        source.mapping_scope === 'all_machines' &&
-        !source.fingerprinted ? (
-          <p className="text-[11px] text-warning">
-            This rule applies on every machine and isn't tied to the credential itself — if the
-            account behind it changes, data keeps landing on the old one.
-          </p>
-        ) : null}
+    <li
+      className={`flex flex-wrap items-start gap-x-3 gap-y-1 py-2 md:grid md:items-center ${sourceGrid(showMachine)}`}
+    >
+      <div className="flex flex-wrap items-center gap-1">
+        <Tooltip content={STATUS_HINT[source.status] ?? ''}>
+          <Badge variant={STATUS_VARIANT[source.status] ?? 'neutral'}>
+            {STATUS_LABEL[source.status] ?? source.status}
+          </Badge>
+        </Tooltip>
         {source.unused_reason ? (
-          <p className="text-[11px] text-warning">{UNUSED_HINT[source.unused_reason]}</p>
+          <Tooltip content={UNUSED_HINT[source.unused_reason]}>
+            <Badge variant="warning">Not used</Badge>
+          </Tooltip>
         ) : null}
-        {source.last_error ? (
-          <p className="text-[11px] text-critical">Last attempt: {source.last_error}</p>
+        {source.is_active ? (
+          <Tooltip content="This credential produced the account's most recent successful collection.">
+            <Badge variant="accent">Active</Badge>
+          </Tooltip>
+        ) : null}
+        {!source.enabled ? <Badge variant="neutral">Disabled</Badge> : null}
+      </div>
+      <div className="min-w-0">
+        <Tooltip
+          content={
+            <div className="space-y-0.5">
+              <p className="font-medium">{title}</p>
+              {detail.map((d) => (
+                <p key={d} className="break-all font-mono text-[11px] text-fg-muted">
+                  {d}
+                </p>
+              ))}
+              <p>
+                {MAPPING_LABEL[source.mapping]}
+                {source.mapping_scope === 'all_machines' ? ' (all machines)' : ''}
+                {' — '}
+                {MAPPING_HINT[source.mapping]}
+              </p>
+            </div>
+          }
+        >
+          <p className="truncate text-[13px] font-medium">{title}</p>
+        </Tooltip>
+        <p className="truncate text-[11px] text-fg-subtle">
+          {[context, tokenSummary(source.token_types), MAPPING_LABEL[source.mapping]]
+            .filter(Boolean)
+            .join(' · ')}
+          {source.mapping_scope === 'all_machines' ? ' (all machines)' : ''}
+        </p>
+      </div>
+      {showMachine ? (
+        <div className="flex min-w-0 items-center gap-1 text-[12px] text-fg-muted">
+          <span className="truncate">{where}</span>
+          {source.machine_stale ? (
+            <Tooltip content={`This machine hasn't checked in; last report ${timeAgo(source.last_seen)}.`}>
+              <Badge variant="warning">offline</Badge>
+            </Tooltip>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="text-[12px] text-fg-muted">
+        <p>
+          {source.status === 'stale'
+            ? `last reported ${timeAgo(source.last_seen)}`
+            : relativeExpiry(source.expires_in_seconds)}
+        </p>
+        {source.refreshed_by === 'machine' ? (
+          <p
+            className="text-[11px] text-fg-subtle"
+            title="This login belongs to the machine's CLI, which renews it. Refreshing it from here would sign that CLI out."
+          >
+            renewed by its machine
+          </p>
+        ) : source.rollable ? (
+          <p className="text-[11px] text-fg-subtle">auto-refreshed</p>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="text-[12px] text-fg-muted">
+        {source.last_success_at ? (
+          timeAgo(source.last_success_at)
+        ) : source.health === 'untried' ? (
+          <span title="This credential is registered but has never been used for a collection.">
+            not yet tried
+          </span>
+        ) : (
+          'never'
+        )}
+      </div>
+      <div className="ml-auto flex shrink-0 items-center justify-end gap-1 md:ml-0">
         {source.can_refresh ? (
           <Button
             variant="ghost"
@@ -151,6 +201,30 @@ export function SourceRow({ source, context }: SourceRowProps) {
           </Button>
         ) : null}
       </div>
+      {(source.mapping === 'operator' &&
+        source.mapping_scope === 'all_machines' &&
+        !source.fingerprinted) ||
+      source.unused_reason ||
+      source.last_error ||
+      fixHint ? (
+        <div className="w-full space-y-0.5 md:col-span-full">
+          {source.mapping === 'operator' &&
+          source.mapping_scope === 'all_machines' &&
+          !source.fingerprinted ? (
+            <p className="text-[11px] text-warning">
+              This rule applies on every machine and isn't tied to the credential itself — if the
+              account behind it changes, data keeps landing on the old one.
+            </p>
+          ) : null}
+          {source.unused_reason ? (
+            <p className="text-[11px] text-warning">{UNUSED_HINT[source.unused_reason]}</p>
+          ) : null}
+          {source.last_error ? (
+            <p className="text-[11px] text-critical">Last attempt: {source.last_error}</p>
+          ) : null}
+          {fixHint ? <p className="text-[11px] text-fg-muted">{fixHint}</p> : null}
+        </div>
+      ) : null}
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,20 +24,110 @@ from app.services.account_identity import canonical_account_id
 from app.services.credential_tags import retry_backoff
 
 
-def describe_origin(origin: str | None) -> tuple[str, str]:
-    """Return a UI-safe source kind and label for a sidecar credential origin."""
+@dataclass(frozen=True)
+class OriginDisplay:
+    """UI-safe description of a credential origin (never a secret)."""
+
+    kind: str  # env | file | cookie | keychain | sidecar
+    label: str  # "auth.json", "OPENROUTER_API_KEY", "Browser cookie"
+    app: str | None = None  # the tool that owns the file: "Codex CLI", "OpenCode" ...
+    path: str | None = None  # display path with the home directory collapsed to "~"
+
+
+# Owning tool by the file's last one or two path segments. Segments are lowercased with one
+# leading "." stripped, so ``~/.codex/auth.json``, ``~/.config/codex/auth.json``,
+# ``AppData\Roaming\codex\auth.json`` and ``~/Library/Application Support/codex/auth.json``
+# all match ``codex/auth.json``. Paths come from app/core/registry.json and the sidecar overlay.
+_FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("codex", "auth.json"), "Codex CLI"),
+    (("opencode", "auth.json"), "OpenCode"),
+    (("claude", "credentials.json"), "Claude Code"),
+    (("claude", "oauth_creds.json"), "Claude Code"),
+    (("claude", "statusline.json"), "Claude Code"),
+    (("gemini", "oauth_creds.json"), "Gemini CLI"),
+    (("antigravity-cli", "antigravity-oauth-token"), "Antigravity CLI"),
+    (("state", "quota.json"), "Antigravity"),
+    (("gh", "hosts.yml"), "GitHub CLI"),
+    (("github cli", "hosts.yml"), "GitHub CLI"),
+    (("runway", "github_oauth.json"), "Runway"),
+    (("grok", "auth.json"), "Grok CLI"),
+    (("kimi", "config.json"), "Kimi CLI"),
+    (("k2", "tokens.json"), "Kimi K2"),
+)
+_KIMI_DIR = "kimi-code"
+
+_LOGIN_HINTS = {
+    "Codex CLI": "run `codex login`",
+    "OpenCode": "run `opencode auth login`",
+    "GitHub CLI": "run `gh auth login`",
+    "Claude Code": "sign in again in Claude Code",
+    "Gemini CLI": "sign in again in Gemini CLI",
+    "Grok CLI": "sign in again in the Grok CLI",
+    "Antigravity CLI": "sign in again in the Antigravity CLI",
+}
+
+
+def login_hint(app: str | None) -> str | None:
+    """How to re-authenticate the tool that owns a credential file, if we know."""
+    return _LOGIN_HINTS.get(app) if app else None
+
+
+def _segments(path: str) -> list[str]:
+    return [seg for seg in path.replace("\\", "/").split("/") if seg]
+
+
+def _app_for_path(path: str) -> str | None:
+    segs = [seg.lower().removeprefix(".") for seg in _segments(path)]
+    if _KIMI_DIR in segs:
+        return "Kimi Code"
+    for tail, app in _FILE_APPS:
+        if len(segs) >= len(tail) and tuple(segs[-len(tail) :]) == tail:
+            return app
+    return None
+
+
+_HOME_PREFIXES = (
+    re.compile(r"^/home/[^/]+(?=/|$)"),
+    re.compile(r"^/Users/[^/]+(?=/|$)"),
+    re.compile(r"^/root(?=/|$)"),
+    re.compile(r"^[A-Za-z]:[\\/]+Users[\\/]+[^\\/]+(?=[\\/]|$)", re.IGNORECASE),
+)
+
+
+def _collapse_home(path: str) -> str:
+    for pattern in _HOME_PREFIXES:
+        if pattern.match(path):
+            return pattern.sub("~", path, count=1)
+    return path
+
+
+def describe_origin_full(origin: str | None) -> OriginDisplay:
+    """Describe a sidecar credential origin: kind, label, owning app and a display path."""
     value = origin or "sidecar"
     if value.startswith("env:"):
-        return "env", value.removeprefix("env:")
-    if value.startswith("path:") or value.startswith("file:"):
-        return "file", os.path.basename(
-            value.split(":", 1)[1].split("#", 1)[0]
-        ) or "Credential file"
+        return OriginDisplay("env", value.removeprefix("env:").split("#", 1)[0])
+    if value.startswith(("path:", "file:")):
+        raw = value.split(":", 1)[1].split("#", 1)[0]
+        segs = _segments(raw)
+        return OriginDisplay(
+            "file",
+            segs[-1] if segs else "Credential file",
+            app=_app_for_path(raw),
+            path=_collapse_home(raw) if raw else None,
+        )
     if value.startswith("cookie:"):
-        return "cookie", "Browser cookie"
+        return OriginDisplay("cookie", "Browser cookie", app="Browser")
     if value.startswith("keychain:"):
-        return "keychain", "Keychain entry"
-    return "sidecar", "Sidecar credential"
+        service = value.split(":", 1)[1].split("#", 1)[0]
+        app = "Claude Code" if service.startswith("Claude Code") else None
+        return OriginDisplay("keychain", "Keychain entry", app=app)
+    return OriginDisplay("sidecar", "Sidecar credential")
+
+
+def describe_origin(origin: str | None) -> tuple[str, str]:
+    """Return a UI-safe source kind and label for a sidecar credential origin."""
+    display = describe_origin_full(origin)
+    return display.kind, display.label
 
 
 def pending_cache_slot(provider_id: str, source_id: str) -> str:

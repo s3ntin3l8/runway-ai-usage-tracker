@@ -1493,9 +1493,9 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             if item["source_id"] in known_ids:
                 continue
             origin = item.get("credential_origin") or ""
-            source_label = (
-                origin.removeprefix("path:").rsplit("/", 1)[-1] if origin else "Sidecar credential"
-            )
+            from app.services.credential_sources import describe_origin_full
+
+            source_label = describe_origin_full(origin).label
             summaries.append(
                 {
                     "source_id": item["source_id"],

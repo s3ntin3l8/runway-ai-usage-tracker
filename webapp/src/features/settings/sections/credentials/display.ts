@@ -59,11 +59,40 @@ export const MAPPING_HINT: Record<CredentialMapping, string> = {
   pending: 'No account is known yet. Assign one under "Needs mapping".',
 };
 
-/** "Browser cookie", "oauth_creds.json", "GITHUB_TOKEN" … plus the machine, if any. */
-export function originSummary(s: CredentialSourceView): string {
-  if (s.origin_kind === 'machine') return `${s.label} on ${s.machine_name ?? s.machine_id}`;
-  if (s.origin_kind === 'server') return `${s.label} (server)`;
+/** "Codex CLI · auth.json", "Browser cookie", "GITHUB_TOKEN" — what a credential is. */
+export function originTitle(s: CredentialSourceView): string {
+  if (s.origin_app && s.origin_type !== 'cookie') return `${s.origin_app} · ${s.label}`;
   return s.label;
+}
+
+/** "Codex CLI · auth.json on dev-01", "GITHUB_TOKEN (server)" — plus the machine, if any. */
+export function originSummary(s: CredentialSourceView): string {
+  if (s.origin_kind === 'machine') return `${originTitle(s)} on ${s.machine_name ?? s.machine_id}`;
+  if (s.origin_kind === 'server') return `${originTitle(s)} (server)`;
+  return originTitle(s);
+}
+
+/** "OAuth + refresh", "API key", "Cookie" — the raw token types stay in a tooltip. */
+export function tokenSummary(types: string[]): string {
+  if (types.length === 0) return '';
+  const has = (t: string) => types.includes(t);
+  if (has('oauth_token') || has('access_token')) {
+    return has('refresh_token') ? 'OAuth + refresh' : 'OAuth';
+  }
+  if (has('api_key')) return 'API key';
+  if (types.some((t) => t.includes('cookie') || t.includes('session'))) return 'Cookie';
+  return types.join(', ');
+}
+
+/** A credential that is not feeding data and needs attention (or removal), never the active one. */
+export function isInactive(s: CredentialSourceView): boolean {
+  return (
+    !s.is_active &&
+    (s.status === 'expired' ||
+      s.status === 'invalid' ||
+      s.status === 'failing' ||
+      s.status === 'stale')
+  );
 }
 
 /** "in 3d", "2h ago", "—" */

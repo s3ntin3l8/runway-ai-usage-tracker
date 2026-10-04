@@ -462,8 +462,12 @@ class CredentialSourceView(BaseModel):
     origin_kind: str
     origin_type: str  # file | env | cookie | keychain | sidecar (unrecognised origin) | config ...
     label: str  # file name, env var, "Browser cookie", "Manual configuration"
+    origin_app: str | None = None  # tool that owns the file: "Codex CLI", "OpenCode", ...
+    origin_path: str | None = None  # file path with the home directory collapsed to "~"
+    login_hint: str | None = None  # how to re-authenticate the owning tool
     machine_id: str | None = None
     machine_name: str | None = None
+    machine_stale: bool = False  # the machine has stopped checking in (Fleet's rule)
     # Why this credential belongs to its account: local (identity read on the machine),
     # verified (server resolved it), claim (sidecar claimed it), operator (tag),
     # config, server, or pending.
@@ -526,6 +530,7 @@ class CredentialMachineView(BaseModel):
     last_seen: str | None = None
     credential_count: int = 0
     unmapped_count: int = 0
+    stale: bool = False  # not seen within the Fleet stale threshold
 
 
 class BlockedCollectionView(BaseModel):
