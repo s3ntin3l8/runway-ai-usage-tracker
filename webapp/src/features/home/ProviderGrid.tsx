@@ -33,7 +33,7 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
 import { maskAccountId } from '@/lib/accountDisplay';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
-import { cardKind, cardPct, cardStale, cardStatus, chipLabel, tokenUsageTotal, windowLabel } from '@/lib/quota';
+import { cardKind, cardPct, cardStale, cardStatus, chipLabel, staleTitle, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
 import type { RiskItem } from './risk';
@@ -243,7 +243,7 @@ function SortableProviderCard({
           <span />
         )}
         {cardStale(gauge) ? (
-          <span className="text-warning" title="Collection failing — showing cached data">
+          <span className="text-warning" title={staleTitle(gauge)}>
             Stale
           </span>
         ) : (

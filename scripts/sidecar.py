@@ -3398,6 +3398,13 @@ class GenericCollector:
                     exp = payload.get("exp")
                     if exp is not None:
                         tokens["expiry_date"] = str(int(float(exp) * 1000))
+                        from scripts.sidecar_pkg.keep_alive import is_enabled
+
+                        if float(exp) <= time.time() and not is_enabled():
+                            logging.warning(
+                                f"  [{provider_id}] local login expired — it renews when the "
+                                "CLI next runs, or start the sidecar with --keep-alive"
+                            )
                 except (
                     ValueError,
                     KeyError,
@@ -4894,7 +4901,8 @@ def main():
         action="store_true",
         help=(
             "Daemon mode: renew the Antigravity (agy) access token with "
-            "`agy models` whenever it lapses (opt-in; config "
+            "`agy models` whenever it lapses, and refresh the xAI (Grok) login in "
+            "OpenCode's / the Grok CLI's auth file before it expires (opt-in; config "
             '"keep_alive": true does the same)'
         ),
     )
@@ -4986,12 +4994,14 @@ def main():
         keep_alive_thread = None
         if args.keep_alive or config.get("keep_alive") is True:
             from scripts.sidecar_pkg.keep_alive import KeepAliveThread, enable
+            from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
             enable()
-            keep_alive_thread = KeepAliveThread()
+            keep_alive_thread = KeepAliveThread(renewers=[XaiRenewer()])
             keep_alive_thread.start()
             logging.info(
-                "Antigravity keep-alive enabled (checks every minute, renews via `agy models`)"
+                "Keep-alive enabled (checks every minute: agy via `agy models`, "
+                "xAI via a token refresh written back to the CLI's auth file)"
             )
 
         try:

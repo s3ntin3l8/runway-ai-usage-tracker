@@ -43,6 +43,9 @@ IDENTITY_VERIFIER_SUFFIX = ":identity-pending"
 # Pending sources verified per provider per cycle (oldest-due first), so a host reporting
 # many unidentifiable credentials cannot turn every cycle into a burst of upstream calls.
 MAX_VERIFICATIONS_PER_CYCLE = 5
+# Providers whose sidecar can renew a machine-owned login itself (``--keep-alive``).
+KEEP_ALIVE_PROVIDERS = frozenset({"xai", "antigravity"})
+
 # What ingest calls a push that carries no sidecar id; keys the retry state the same way.
 LOCAL_SIDECAR_ID = "local"
 
@@ -589,6 +592,14 @@ class CollectorManager:
                         # (last_success_at / is_active), see ``_record_source_health``.
                         "source_id": f"server:{provider_id}",
                         "state": state,
+                        # Why a failed/skipped source goes stale; shown on the card.
+                        "reason": (
+                            "collection timed out"
+                            if isinstance(res, asyncio.CancelledError)
+                            else f"collection raised {type(res).__name__}"
+                            if failed
+                            else (smart.last_collection_reason if smart else "")
+                        ),
                     }
                 )
             if failed:
@@ -1011,7 +1022,14 @@ class CollectorManager:
             # Nothing ran, so the collector still holds the previous poll's state (often
             # "complete"). Say "skipped" so the poller keeps the last good cards instead of
             # reconciling them away, and the server-credential stamping leaves rows alone.
-            smart._set_collection_state("skipped", "waiting for a machine to renew its login")
+            hint = (
+                "; run the sidecar with --keep-alive to renew it automatically"
+                if provider_id in KEEP_ALIVE_PROVIDERS
+                else ""
+            )
+            smart._set_collection_state(
+                "skipped", f"login expired — waiting for its machine to renew it{hint}"
+            )
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
         )

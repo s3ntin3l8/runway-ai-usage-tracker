@@ -293,6 +293,17 @@ def error_card(
     return LimitCardBuilder.error(service, icon, message, error_type, provider_id)
 
 
+_FAILING_PREFIX = re.compile(r"^⚠ Collection failing(?: \([^)]*\))? — ")
+
+
+def with_failing_prefix(detail: str, reason: str | None) -> str:
+    """Prefix *detail* with the collection-failing marker, replacing any earlier one."""
+    base = _FAILING_PREFIX.sub("", detail)
+    reason = (reason or "").replace(")", "]").strip()
+    label = f"⚠ Collection failing ({reason})" if reason else "⚠ Collection failing"
+    return f"{label} — {base}"
+
+
 def is_error_card_dict(card: dict[str, Any] | None) -> bool:
     """Return True if the dictionary represents an error card."""
     if not card:

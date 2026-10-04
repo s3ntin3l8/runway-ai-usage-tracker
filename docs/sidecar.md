@@ -256,9 +256,9 @@ cat ~/.config/runway/sidecar/sidecar.pid
 kill $(cat ~/.config/runway/sidecar/sidecar.pid)
 ```
 
-### Antigravity keep-alive (opt-in)
+### Keep-alive for Antigravity and xAI (opt-in)
 
-The Antigravity (agy) access token lives one hour and only agy can renew it. On hosts with intermittent agy sessions, opt in so quota collection never lapses:
+Two logins are renewed only by their own CLI, so on hosts where that CLI runs intermittently the quota card lapses and goes stale. One opt-in flag keeps both alive:
 
 ```bash
 python3 scripts/sidecar.py --daemon --keep-alive
@@ -266,6 +266,8 @@ python3 scripts/sidecar.py --daemon --keep-alive
 ```
 
 The sidecar then checks `~/.gemini/antigravity-cli/antigravity-oauth-token` every minute and, once the token has lapsed, runs `agy models` — a metadata call that renews the access token in place (the refresh token is never rotated, no model call is made). Failures back off to one attempt every five minutes and are logged as warnings; the thread never takes the sidecar down. See [`docs/collectors/antigravity.md`](collectors/antigravity.md#token-lifetime--keep-alive) for the systemd-timer alternative and the pre-expiry warning behavior.
+
+**xAI (Grok).** The access token lives about six hours. The server never refreshes a login a sidecar pushed (xAI may rotate the refresh token, which would sign the CLI out), so with `--keep-alive` the sidecar renews it itself: shortly before expiry it refreshes the token at `auth.x.ai` and **writes the result back** to OpenCode's `auth.json` (`xai` entry) or `~/.grok/auth.json`, touching only the xAI entry, atomically and preserving file mode. If the CLI renewed concurrently, the sidecar's result is dropped. A rejected refresh token (`invalid_grant`) is logged once and not retried until the sidecar restarts — log in again with the CLI. Without `--keep-alive` the card goes stale after about an hour past expiry, and the stale card says why and points here.
 
 ### Systemd Service (Linux)
 

@@ -1741,6 +1741,7 @@ class TestCollectorManagerCollection:
                 "account_id": "alice@example.com",
                 "source_id": "server:anthropic",
                 "state": "failed",
+                "reason": "collection timed out",
             }
         ]
 
@@ -1929,3 +1930,9 @@ class TestFailoverPrefersLiveAccessTokens:
         assert state["order"] == [opaque_id]
         assert smart.collect.await_count == 1
         assert health == {opaque_id: "healthy"}
+
+
+def test_keep_alive_providers_are_the_ones_with_a_sidecar_renewer():
+    from app.services.collector_manager import KEEP_ALIVE_PROVIDERS
+
+    assert KEEP_ALIVE_PROVIDERS == {"xai", "antigravity"}

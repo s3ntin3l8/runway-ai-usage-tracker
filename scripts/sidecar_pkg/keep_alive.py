@@ -1,4 +1,4 @@
-"""Optional keep-alive for the Antigravity (agy) login.
+"""Optional keep-alive for the Antigravity (agy) login (and, via ``renewers``, xAI).
 
 The agy access token lives one hour and only agy itself can renew it — the
 token file carries no OAuth client_id, so neither the sidecar nor the server
@@ -149,8 +149,13 @@ class KeepAliveThread(threading.Thread):
         tick_seconds: float = TICK_SECONDS,
         retry_tick_seconds: float = RETRY_TICK_SECONDS,
         lead_seconds: int = LEAD_SECONDS,
+        renewers: list | None = None,
     ) -> None:
         super().__init__(name="AntigravityKeepAlive", daemon=True)
+        # Extra renewers (``name``, ``due()``, ``renew()``), e.g. XaiRenewer. Each
+        # backs off on its own, so one broken login never delays another.
+        self._renewers = list(renewers or [])
+        self._renewer_resume_at: dict[str, float] = {}
         self._token_path = token_path or DEFAULT_TOKEN_PATH
         self._command = command
         self._tick_seconds = tick_seconds
@@ -178,8 +183,24 @@ class KeepAliveThread(threading.Thread):
         self._command = [agy, "models"]
         return self._command
 
+    def _cycle_renewers(self) -> None:
+        now = time.monotonic()
+        for renewer in self._renewers:
+            if self._renewer_resume_at.get(renewer.name, 0.0) > now:
+                continue
+            try:
+                if renewer.due() and not renewer.renew():
+                    self._renewer_resume_at[renewer.name] = now + self._retry_tick_seconds
+            except Exception:
+                logger.warning("%s keep-alive tick failed", renewer.name, exc_info=True)
+                self._renewer_resume_at[renewer.name] = now + self._retry_tick_seconds
+
     def cycle_once(self) -> float:
-        """One tick; returns how long to wait before the next one.
+        self._cycle_renewers()
+        return self._cycle_agy()
+
+    def _cycle_agy(self) -> float:
+        """One agy tick; returns how long to wait before the next one.
 
         Not due → normal tick. Due → run the refresh, backing off after a
         failure (or when agy isn't installed) so a broken login isn't hammered —

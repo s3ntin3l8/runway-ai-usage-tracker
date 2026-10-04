@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, or_, select
 
 from app.core.date_utils import parse_iso8601_utc
-from app.core.utils import is_error_card_dict
+from app.core.utils import is_error_card_dict, with_failing_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -414,8 +414,12 @@ def mark_latest_usage_source_stale(
     source_id: str,
     account_id: str | None = None,
     stale_after_seconds: int = 3600,
+    reason: str | None = None,
 ) -> int:
     """Mark last-good source cards stale after sustained collection failure.
+
+    ``reason`` says why collection is failing; it is shown in the card's detail
+    prefix and replaced (never stacked) when a later failure has a new reason.
 
     ``account_id`` scopes the operation when a server account is no longer
     active, while ``None`` preserves the provider-wide failure behavior.
@@ -440,9 +444,7 @@ def mark_latest_usage_source_stale(
         data = json.loads(row.card_json or "{}")
         data["stale"] = True
         data["collection_failing"] = True
-        detail = data.get("detail") or ""
-        if "Collection failing" not in detail:
-            data["detail"] = f"⚠ Collection failing — {detail}"
+        data["detail"] = with_failing_prefix(data.get("detail") or "", reason)
         row.card_json = json.dumps(data)
         touched.add((row.account_id, row.window_type, row.variant, row.model_id))
     for touched_account_id, window_type, variant, model_id in touched:

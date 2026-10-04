@@ -112,6 +112,7 @@ async def test_accounts_missing_from_server_outcomes_are_aged_to_stale():
         provider_id="anthropic",
         source_id="server:anthropic",
         account_id="former-account",
+        reason="its collector is no longer active",
     )
 
 
