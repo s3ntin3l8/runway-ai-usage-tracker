@@ -695,6 +695,7 @@ async def refresh_credential_source(
     provider: str,
     account_id: str,
     source_id: str,
+    session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
     """Refresh one credential source's OAuth token, writing the result back into that
@@ -727,7 +728,6 @@ async def refresh_credential_source(
                 account_label=bundle.get("account_label"),
                 source=bundle.get("sidecar_id") or bundle.get("source"),
             )
-        return {"status": "refreshed"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -735,6 +735,14 @@ async def refresh_credential_source(
             f"Source refresh failed for {scrub_log(provider)}/{scrub_log(account_id)}: {e}"
         )
         raise HTTPException(status_code=502, detail="Upstream token refresh failed")
+    audit_log.record(
+        session,
+        request,
+        action="credential.source_refresh",
+        target_id=f"{provider}/{account_id}",
+        payload={"source_id": source_id},
+    )
+    return {"status": "refreshed"}
 
 
 _MANAGED_ELSEWHERE = (
@@ -801,6 +809,13 @@ async def delete_credential_source(
     if outcome == "not_found":
         raise HTTPException(status_code=404, detail="Credential source not found")
     _clear_rejection_if_account_empty(session, provider, account_id)
+    audit_log.record(
+        session,
+        request,
+        action="credential.source_delete",
+        target_id=f"{provider}/{account_id}",
+        payload={"source_id": source_id},
+    )
     return {"ok": True}
 
 
@@ -834,6 +849,13 @@ async def remove_credential_sources(
             skipped.append({"source_id": source_id, "reason": outcome})
     if removed:  # a batch that removed nothing must not touch the account's rejection flag
         _clear_rejection_if_account_empty(session, provider, account_id)
+        audit_log.record(
+            session,
+            request,
+            action="credential.sources_remove",
+            target_id=f"{provider}/{account_id}",
+            payload={"removed": removed, "skipped": skipped},
+        )
     return {"removed": removed, "skipped": skipped}
 
 

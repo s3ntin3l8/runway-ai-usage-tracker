@@ -491,6 +491,53 @@ describe('Banners remembered dismissals', () => {
     expect(screen.getByText(/unusual usage today/i)).toBeInTheDocument();
   });
 
+  it('re-shows a dismissed banner when the problem recovers and then returns', async () => {
+    const user = userEvent.setup();
+    const view = renderWithProviders(
+      <Banners credentials={undefined} anomalies={[]} fleet={[failingEntry('ollama')]} />,
+    );
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    expect(screen.queryByText(/collection failing/i)).not.toBeInTheDocument();
+
+    // Recovery: fleet loaded, nothing failing -> the stored dismissal is forgotten.
+    view.rerender(<Banners credentials={undefined} anomalies={[]} fleet={[entry()]} />);
+    expect(localStorage.getItem('runway:banner-dismissed:collection')).toBeNull();
+
+    // Relapse with the identical fingerprint.
+    view.rerender(
+      <Banners credentials={undefined} anomalies={[]} fleet={[failingEntry('ollama')]} />,
+    );
+    expect(screen.getByText(/collection failing for ollama/i)).toBeInTheDocument();
+  });
+
+  it('re-shows the no-channel banner after a webhook is added and later removed', async () => {
+    const user = userEvent.setup();
+    const resolved: DataHealthReport = {
+      scanning: false,
+      checks: [dataHealthCheck({ check_id: 'alert_channels', severity: 'warn', total_count: 0 })],
+    };
+    const view = renderWithProviders(
+      <Banners credentials={undefined} anomalies={[]} dataHealth={noChannel} />,
+    );
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    view.rerender(<Banners credentials={undefined} anomalies={[]} dataHealth={resolved} />);
+    expect(localStorage.getItem('runway:banner-dismissed:alert-channel')).toBeNull();
+    view.rerender(<Banners credentials={undefined} anomalies={[]} dataHealth={noChannel} />);
+    expect(screen.getByText(/delivery channel/i)).toBeInTheDocument();
+  });
+
+  it('does not clear a dismissal while the data is still loading', async () => {
+    const user = userEvent.setup();
+    const view = renderWithProviders(
+      <Banners credentials={undefined} anomalies={[]} dataHealth={noChannel} />,
+    );
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    view.rerender(<Banners credentials={undefined} anomalies={undefined} dataHealth={undefined} />);
+    expect(localStorage.getItem('runway:banner-dismissed:alert-channel')).toBe('no-channel');
+    view.rerender(<Banners credentials={undefined} anomalies={[]} dataHealth={noChannel} />);
+    expect(screen.queryByText(/delivery channel/i)).not.toBeInTheDocument();
+  });
+
   it('still dismisses for the session when localStorage throws', async () => {
     const user = userEvent.setup();
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {

@@ -30,7 +30,6 @@ Headers:
 
 import asyncio
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -224,26 +223,6 @@ class GitHubCollector(BaseCollector):
                             identity = login or std_data.get("name")
                 except Exception as e:
                     logger.debug(f"GitHub /user identity fetch failed: {e}")
-
-            # Fallback: local gh config (only if /user gave us nothing)
-            if not login and not scoped_with_label:
-                gh_config_path = os.path.expanduser("~/.config/gh/hosts.yml")
-
-                def _read_gh_identity(path: str) -> str | None:
-                    if not os.path.exists(path):
-                        return None
-                    import yaml
-
-                    with open(path) as f:
-                        config = yaml.safe_load(f) or {}
-                    host_config = config.get("github.com", {})
-                    return host_config.get("user") or next(iter(host_config.get("users", {})), None)
-
-                try:
-                    login = await asyncio.to_thread(_read_gh_identity, gh_config_path)
-                except Exception:
-                    logger.debug("Failed to read GitHub identity from config", exc_info=True)
-                identity = identity or login
 
             if login:
                 self._login = login

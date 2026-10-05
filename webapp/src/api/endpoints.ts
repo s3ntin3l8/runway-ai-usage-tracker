@@ -32,6 +32,7 @@ import type {
   PendingUsageEvent,
   PendingUsageFilter,
   PendingUsageAssignmentGroup,
+  PendingUsageAssignResult,
   PendingUsageMapping,
   PendingUsageSessionsResponse,
   ProviderConfig,
@@ -172,7 +173,13 @@ export const assignPendingUsageEvents = (
   accountId: string,
   targetProviderId?: string,
 ) =>
-  api<{ assigned: number; provider_id: string; target_provider_id?: string }>(
+  api<{
+    assigned: number;
+    provider_id: string;
+    target_provider_id?: string;
+    /** One entry per provider group the selected events were split into. */
+    mappings: PendingUsageAssignResult[];
+  }>(
     '/api/v1/fleet/events/pending/assign',
     {
       method: 'POST',

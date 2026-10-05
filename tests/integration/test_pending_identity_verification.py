@@ -316,31 +316,6 @@ async def test_an_expired_pending_claude_login_is_not_refreshed_into_the_default
     assert _outcome(engine, "anthropic", source_id)[0] == source_id
 
 
-@pytest.mark.asyncio
-async def test_a_pinned_claude_bundle_ignores_the_servers_own_config_hints(world, monkeypatch):
-    """``~/.claude.json`` describes the server host's login: it must not label (or tier) a
-    sidecar's bundle, but the unpinned default collector still reads it."""
-    from unittest.mock import MagicMock
-
-    from app.services.collectors.anthropic import AnthropicCollector
-
-    hints = MagicMock(return_value={"billing_tier": "max"})
-    monkeypatch.setattr(AnthropicCollector, "_get_local_config_hints", hints)
-    await _seed(world, "anthropic", "env:CLAUDE_CODE_OAUTH_TOKEN", {"oauth_token": CLAUDE_OAUTH})
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/oauth/usage":
-            return httpx.Response(200, json=CLAUDE_USAGE)
-        return httpx.Response(404)
-
-    await _verify("anthropic", handler)
-    hints.assert_not_called()
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        await AnthropicCollector(account_id="default")._get_claude_oauth(client, CLAUDE_OAUTH)
-    hints.assert_called()
-
-
 # --- ChatGPT -----------------------------------------------------------------------------
 
 
@@ -570,30 +545,20 @@ def test_a_chatgpt_env_access_token_is_identified_from_its_profile_claim(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_a_resolved_claude_holder_is_labelled_with_their_email_and_never_reads_the_servers_config(
-    world, monkeypatch
-):
-    """Resolving the holder must not unpin the call: the server host's own ``~/.claude.json``
-    describes another login, and the card is labelled with the holder, not an org admin."""
+async def test_a_resolved_claude_holder_is_labelled_with_their_email(world):
+    """Resolving the holder must not unpin the call, and the card is labelled with the
+    holder, not an org admin."""
     from app.services.collectors.anthropic import AnthropicCollector
 
     _, cache = world
     source_id = await _seed(
         world, "anthropic", "env:CLAUDE_CODE_OAUTH_TOKEN", {"oauth_token": CLAUDE_OAUTH}
     )
-    reads: list[int] = []
-    monkeypatch.setattr(
-        AnthropicCollector,
-        "_get_local_config_hints",
-        lambda self: reads.append(1) or {"tier": "Server Owner Max"},
-    )
     collector = AnthropicCollector(account_id="default")
     seen: list[httpx.Request] = []
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(_claude_oauth(seen))) as client:
         async with cache.using_source("anthropic", source_id, source_id):
-            cards = await collector._get_claude_oauth(client, CLAUDE_OAUTH)
+            await collector._get_claude_oauth(client, CLAUDE_OAUTH)
 
     assert collector.account_id == BOB and collector.account_label == BOB
-    assert reads == []
-    assert not any("Server Owner" in str(card) for card in cards)
