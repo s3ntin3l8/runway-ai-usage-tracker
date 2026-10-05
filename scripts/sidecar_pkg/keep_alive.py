@@ -260,6 +260,18 @@ class KeepAliveController:
         self._remote: bool | None = None
 
     @property
+    def armed(self) -> bool:
+        """True once a daemon start armed it; an unarmed controller cannot renew anything."""
+        return self._armed
+
+    def reported(self) -> bool | None:
+        """Keep-alive state to report on ingest: ``None`` (unknown) when never armed.
+
+        The tray app never arms the controller, so it must not claim keep-alive is off.
+        """
+        return is_enabled() if self._armed else None
+
+    @property
     def effective(self) -> bool:
         return self._remote if self._remote is not None else self._local
 

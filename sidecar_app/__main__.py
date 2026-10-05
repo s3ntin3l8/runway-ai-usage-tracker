@@ -35,6 +35,16 @@ _FALLBACK_CONFIG: dict = {
 }
 
 
+def _apply_login_dirs(config: dict) -> None:
+    """Pick up claude_config_dirs / codex_home like the CLI daemon does; never fatal."""
+    try:
+        from sidecar_app.daemon import _sidecar
+
+        _sidecar.configure_login_dirs(config)
+    except Exception:
+        logging.warning("Could not apply login-dir config", exc_info=True)
+
+
 def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoint, splits poorly
     # 0. Enable logging to file
     setup_logging(log_level="INFO", file_enabled=True)
@@ -74,6 +84,8 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
             config = dict(_FALLBACK_CONFIG)
         except Exception:
             config = dict(_FALLBACK_CONFIG)
+
+    _apply_login_dirs(config)
 
     # 3. Inject runtime metadata into config before handing to daemon
     config["sidecar_version"] = __version__
@@ -127,6 +139,7 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         new_url = new_config.get("api_url", "")
 
         config.update(new_config)
+        _apply_login_dirs(new_config)
         daemon._runner._config = new_config
 
         credentials_changed = (new_key != old_key) or (new_url != old_url)

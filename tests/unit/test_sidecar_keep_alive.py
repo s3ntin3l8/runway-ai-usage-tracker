@@ -193,6 +193,16 @@ class TestKeepAliveController:
 
         return keep_alive.KeepAliveController(make), made
 
+    def test_unarmed_reports_unknown_armed_reports_bool(self, monkeypatch):
+        controller, _ = self._controller(monkeypatch)
+        assert controller.reported() is None  # tray app: never armed
+        controller.arm(False)
+        assert controller.reported() is False
+        controller.set_remote(True)
+        assert controller.reported() is True
+        controller.stop()
+        assert controller.reported() is None
+
     def test_inert_until_armed(self, monkeypatch):
         controller, made = self._controller(monkeypatch)
         controller.set_remote(True)
