@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.4...v3.0.0-beta.5) (2026-10-05)
+
+
+### Features
+
+* **fleet:** show and clear a pending keep-alive override ([#564](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/564)) ([c052ca9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c052ca9a29d94f590e1fea1e81a1f995241646a8))
+
+
+### Bug Fixes
+
+* **audit:** record credential refresh, delete and bulk remove in the audit log ([#561](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/561)) ([981478a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/981478a340b8a9185cf6ad7cb00612ca51303706)), closes [#550](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/550)
+* failing-reason parsing and multi-provider assign response ([#563](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/563)) ([5edb961](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/5edb961d22d0d0cebefc13349a304a230d5ab1af))
+* **home:** re-show dismissed banners after the problem recovers and returns ([#559](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/559)) ([b81a85e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b81a85e047f0dfec16f1edb6b3bcb0f81e9ce049)), closes [#549](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/549)
+* **sidecar:** re-exec Linux self-update into a fresh PyInstaller runtime ([#565](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/565)) ([9703db0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9703db073791e27efa12efe532d69b1d2010e89a))
+
 ## [3.0.0-beta.4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.3...v3.0.0-beta.4) (2026-10-05)
 
 
