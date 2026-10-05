@@ -238,6 +238,28 @@ describe('FleetPage', () => {
       expect(btn).not.toHaveAttribute('data-pending');
       expect(screen.queryByText(/pending/i)).not.toBeInTheDocument();
       expect(screen.getByText('keep-alive')).toBeInTheDocument();
+      // The override is still set, so it stays clearable even though nothing is pending.
+      expect(
+        screen.getByRole('button', { name: /use sidecar's own keep-alive setting/i }),
+      ).toBeInTheDocument();
+    });
+
+    it('keeps the toggle and the clear action single-flight while one is in flight', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ keep_alive: false, keep_alive_desired: true })],
+      });
+      vi.mocked(api.setSidecarKeepAlive).mockReturnValue(new Promise(() => {}));
+      renderWithProviders(<FleetPage />);
+
+      await userEvent.click(await screen.findByRole('button', { name: /turn keep-alive off/i }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: /use sidecar's own keep-alive setting/i }),
+        ).toBeDisabled(),
+      );
+      expect(screen.getByRole('button', { name: /turn keep-alive off/i })).toBeDisabled();
+      expect(api.setSidecarKeepAlive).toHaveBeenCalledTimes(1);
     });
 
     it('clears an override back to the sidecar\'s own setting', async () => {

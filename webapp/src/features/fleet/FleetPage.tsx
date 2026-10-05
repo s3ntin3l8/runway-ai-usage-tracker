@@ -303,7 +303,9 @@ function SidecarCard({
   const keepAliveHasOverride = keepAliveDesired !== null;
   const keepAlivePending = keepAliveHasOverride && keepAliveDesired !== keepAliveReported;
   const keepAliveEffective = keepAliveDesired ?? keepAliveReported;
-  // An override can still be cleared when the sidecar reports nothing, but not set.
+  // A sidecar that reports no keep-alive state (older build, or offline) can't be toggled, but
+  // one with a queued override stays actionable: the override is delivered on its next
+  // check-in, and it can be reversed or cleared meanwhile. Hence `!keepAliveHasOverride`.
   const keepAliveUnknown = sidecar.keep_alive == null && !keepAliveHasOverride;
   const pendingText = `Requested ${keepAliveDesired ? 'on' : 'off'} — applies on next check-in`;
   const keepAliveTitle = keepAliveUnknown
@@ -331,6 +333,9 @@ function SidecarCard({
     },
     onError: (err) => toast.error(err.message),
   });
+
+  // Both buttons PUT the same endpoint, so keep them single-flight as a pair.
+  const keepAliveBusy = keepAlive.isPending || clearKeepAlive.isPending;
 
   const logs = (sidecar.last_log_lines ?? []).filter(Boolean);
 
@@ -378,7 +383,7 @@ function SidecarCard({
                 }
                 aria-pressed={keepAliveEffective}
                 title={keepAliveTitle}
-                disabled={keepAliveUnknown}
+                disabled={keepAliveUnknown || keepAliveBusy}
                 onClick={() => keepAlive.mutate()}
                 loading={keepAlive.isPending}
                 className={
@@ -394,6 +399,7 @@ function SidecarCard({
                   variant="ghost"
                   aria-label="Use sidecar's own keep-alive setting"
                   title="Clear the Runway override and use the sidecar's own keep-alive setting"
+                  disabled={keepAliveBusy}
                   onClick={() => clearKeepAlive.mutate()}
                   loading={clearKeepAlive.isPending}
                 >
