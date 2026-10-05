@@ -7,7 +7,7 @@ name: Hermes (review)
 #      an issue) any time you want another look -- including every follow-up
 #      after the initial auto-review.
 # Both call the same reusable workflow (s3ntin3l8/.github/.github/workflows/
-# hermes-review.yml@main) with a different `mode`, gated by github.event_name
+# hermes-review.yml@ci/hermes-claude-zizmor) with a different `mode`, gated by github.event_name
 # so each job only runs for its own trigger.
 #
 # IMPORTANT: do NOT add `synchronize` back. It re-triggers a fresh review on
@@ -77,7 +77,7 @@ jobs:
       pull-requests: write
       issues: write
       checks: write
-    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@ci/hermes-claude-zizmor
     with:
       mode: auto # review on trigger, no @mention needed
       mention-trigger: s3ntin3l8-hermes
@@ -96,7 +96,7 @@ jobs:
       pull-requests: write
       issues: write
       checks: write
-    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@ci/hermes-claude-zizmor
     with:
       mention-trigger: s3ntin3l8-hermes # mode: on-demand is the reusable workflow's default
     secrets: inherit # pragma: allowlist secret
