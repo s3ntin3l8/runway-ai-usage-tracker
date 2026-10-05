@@ -1402,8 +1402,6 @@ def test_fingerprint_hint_for_a_pasted_xai_jwt_uses_its_stable_claim(
     """#523: the sidecar keys xAI origins on the JWT's stable claim, so the
     server hint for a pasted JWT must hash that claim too — the bearer itself
     rotates every few hours and would never match again."""
-    import base64
-    import json
 
     def enc(obj: dict) -> str:
         return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
