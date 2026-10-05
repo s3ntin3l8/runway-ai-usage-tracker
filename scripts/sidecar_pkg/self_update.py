@@ -47,7 +47,7 @@ from contextlib import contextmanager
 from typing import Any
 from urllib import error, request
 
-from scripts.sidecar_pkg import asset_names
+from scripts.sidecar_pkg import asset_names, runtime_cleanup
 from scripts.sidecar_pkg.update_check import (
     _BETA_RELEASES_API_URL,
     _LATEST_URL,
@@ -839,7 +839,7 @@ def rollback(current_version: str, *, restart: bool = True) -> bool:
         return ok
 
 
-def _fresh_runtime_env() -> dict[str, str]:
+def _fresh_runtime_env(*, hand_off_runtime: bool = False) -> dict[str, str]:
     """Environment for a relaunched onefile build.
 
     The running PyInstaller child carries ``_PYI_*`` variables pointing at its own
@@ -847,11 +847,74 @@ def _fresh_runtime_env() -> dict[str, str]:
     run the OLD unpacked code, so the update installs but never takes effect.
     ``PYINSTALLER_RESET_ENVIRONMENT`` forces a fresh unpack (mirrors the Windows
     helper script); the ``_PYI_*`` keys are dropped as well for good measure.
+
+    With *hand_off_runtime* (an in-place ``execve``) the old ``_MEI`` dir is named in
+    ``RUNWAY_RETIRED_MEIPASS``: the old parent bootloader keeps waiting on the re-exec'd
+    image, so nothing else would ever delete it.
     """
     # A copy, so os.environ is untouched if execve fails and this image keeps running.
     env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    if hand_off_runtime:
+        runtime = runtime_cleanup.own_runtime_dir()
+        if runtime is not None:
+            env[runtime_cleanup.RETIRED_ENV] = str(runtime)
     return env
+
+
+# systemd exit codes that make ``Restart=`` respawn the unit (``always`` restarts on any exit).
+_EX_TEMPFAIL = 75
+_SYSTEMCTL_TIMEOUT_S = 5
+
+
+def _systemd_unit_from_cgroup(cgroup: str) -> tuple[str, bool] | None:
+    """``(unit name, is_user_manager)`` for the service a ``/proc/<pid>/cgroup`` dump is in."""
+    parts = [p for line in cgroup.splitlines() for p in line.rpartition(":")[2].split("/")]
+    services = [p for p in parts if p.endswith(".service")]
+    if not services:
+        return None
+    user_manager = any(p.startswith("user@") and p.endswith(".service") for p in parts)
+    return services[-1], user_manager
+
+
+def _systemd_restart_exit_code() -> int | None:
+    """Exit code that makes systemd restart us, or None if it is not our direct supervisor.
+
+    ``INVOCATION_ID`` alone proves nothing: every process inside any systemd service has it,
+    including one started from a shell in an unrelated service. The unit must have our onefile
+    parent bootloader as its MainPID, so that this process exiting really ends the unit, and a
+    ``Restart=`` policy that respawns it. Any doubt returns None and the caller falls back to
+    ``execve``.
+    """
+    if sys.platform != "linux" or not os.environ.get("INVOCATION_ID"):
+        return None
+    try:
+        found = _systemd_unit_from_cgroup(pathlib.Path("/proc/self/cgroup").read_text())
+        if found is None:
+            return None
+        unit, user_manager = found
+        proc = subprocess.run(  # noqa: S603
+            [
+                "systemctl",
+                *(["--user"] if user_manager else []),
+                "show",
+                "-p",
+                "MainPID",
+                "-p",
+                "Restart",
+                unit,
+            ],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=_SYSTEMCTL_TIMEOUT_S,
+            check=False,
+        )
+        props = dict(line.partition("=")[::2] for line in proc.stdout.splitlines())
+        if proc.returncode != 0 or int(props.get("MainPID", "0")) != os.getppid():
+            return None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return {"always": 0, "on-failure": _EX_TEMPFAIL}.get(props.get("Restart", ""))
 
 
 def _relaunch_posix(
@@ -862,21 +925,41 @@ def _relaunch_posix(
     # os._exit never run the _single_flight finally, so the lock would leak and
     # wedge every future update.
     if target == "cli":
-        # Supervisor-agnostic in-place re-exec; preserves argv and PID lifecycle.
-        logger.info("Re-executing %s", install)
+        exit_code = _systemd_restart_exit_code()
         _release_lock()
         _run_pre_exec_hooks()
         if cleanup is not None:
             _call_best_effort(cleanup, "Pre-relaunch cleanup")
+        if exit_code is not None:
+            # systemd runs us as bootloader -> python. Exiting lets the bootloader remove this
+            # runtime dir, and systemd respawns a clean two-level tree. An in-place execve
+            # would instead leave the old bootloader waiting on the new one, holding the old
+            # ~100 MB runtime dir (and an extra process) until the next restart.
+            logger.info(
+                "Update installed; exiting (%d) for systemd to restart %s", exit_code, install
+            )
+            logging.shutdown()
+            os._exit(exit_code)
+            return  # unreachable
+        # No such supervisor: re-exec in place. The Python process gets a NEW pid (the
+        # exec'd image is a fresh bootloader that spawns it), and the old parent bootloader
+        # lingers idle until the next restart, so only its runtime dir is reclaimed.
+        logger.info("Re-executing %s", install)
         try:
-            os.execve(str(install), [str(install), *sys.argv[1:]], _fresh_runtime_env())
+            os.execve(
+                str(install),
+                [str(install), *sys.argv[1:]],
+                _fresh_runtime_env(hand_off_runtime=True),
+            )
         except OSError:
             # execve failed (unreadable/ENOEXEC binary): this image keeps running, so hand back
             # what the hooks released before the caller logs the failed update.
             _undo_pre_exec_hooks()
             raise
         return  # unreachable
-    # Tray: never exec from inside the pystray loop — spawn detached and exit.
+    # Tray: never exec from inside the pystray loop — spawn detached and exit. Deliberately no
+    # RUNWAY_RETIRED_MEIPASS hand-off or systemd exit here: the old bootloader removes its own
+    # runtime dir when this process exits, so nothing is left to reclaim.
     if cleanup is not None:
         _call_best_effort(cleanup, "Pre-relaunch cleanup")
     # `open` hands its caller's environment to the launched app, so scrub on macOS too.
@@ -901,6 +984,49 @@ def _rm(path: pathlib.Path) -> None:
         except OSError:
             # Already absent or not removable; safe to ignore for a cleanup helper.
             pass
+
+
+# A rollback swaps in milliseconds; older than this means it was interrupted.
+_ROLLBACK_MAX_AGE_S = 600
+
+
+def recover_stranded_rollback(now: float | None = None) -> int:
+    """Undo a ``rollback()`` that was killed between its two renames.
+
+    ``rollback()`` moves ``<install>.previous`` to ``<install>.rollback`` before the swap.
+    A kill in between strands the backup there, and ``rollback_available()`` then reports
+    nothing to roll back to. Put it back (or drop the duplicate); return bytes freed.
+    """
+    if not _is_frozen():
+        return 0
+    install = _install_path()
+    stranded = install.with_name(install.name + ".rollback")
+    if not stranded.exists():
+        return 0
+    cutoff = (time.time() if now is None else now) - _ROLLBACK_MAX_AGE_S
+    # ctime, not mtime: the rename updates it, mtime is that of the original backup.
+    if stranded.lstat().st_ctime > cutoff:
+        return 0
+    previous = _previous_path(install)
+    if not previous.exists():
+        os.rename(stranded, previous)
+        logger.info("Restored the rollback backup stranded at %s", stranded)
+        return 0
+    freed = runtime_cleanup.dir_size(stranded) if stranded.is_dir() else stranded.stat().st_size
+    _rm(stranded)
+    return freed
+
+
+def reclaim_stale_state() -> None:
+    """Startup hook: sweep dead builds' temp dirs, then finish an interrupted rollback."""
+    runtime_cleanup.startup_cleanup()
+    try:
+        freed = recover_stranded_rollback()
+    except Exception:
+        logger.debug("Stranded-rollback recovery failed", exc_info=True)
+        return
+    if freed:
+        logger.info("Reclaimed %.1f MB of a stale rollback backup", freed / 1_000_000)
 
 
 # ---------------------------------------------------------------------------

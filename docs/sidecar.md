@@ -147,6 +147,8 @@ You can install the update without leaving the app:
 - On Windows, installs made with the setup.exe also get their *Apps & Features* version refreshed after each self-update or rollback.
 - Self-update always downloads the portable `.zip` / `.tar.gz` payload, never the `.dmg` / `-setup.exe`, and swaps it in place. It works on every platform and all release channels.
 - If the install path isn't writable (e.g. `/Applications` for a non-admin macOS account, or `/usr/local/bin`), the update is skipped with a log message and you install the new DMG / setup.exe via **Check for Updates…**. The Windows installer's per-user location is always writable.
+- **Restart under systemd:** the headless CLI restarts itself after an update. When its systemd unit has `Restart=always` (or `on-failure`) and the CLI is the unit's main process, it exits and lets systemd start it again (`RestartSec` applies), which leaves a clean process tree and frees the old runtime. Without that supervisor (or with `Restart=no`) it re-executes in place instead, and the previous bootloader process stays idle until the next restart.
+- **Temp files:** a packaged Linux/Windows build unpacks into a `_MEI*` directory under its temp dir (`TMPDIR`, e.g. `/opt/runway-sidecar/tmp` in the example unit) and removes it on a clean exit. A killed process cannot, so at startup the sidecar deletes `_MEI*` directories whose recorded owner process is gone (only ones it marked itself), `runway-update-*` download folders older than an hour, and finishes a rollback that was interrupted. Directories left by builds from before this check are not marked and are never touched; delete them by hand once.
 
 ---
 

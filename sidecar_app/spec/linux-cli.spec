@@ -63,6 +63,7 @@ a = Analysis(
         "scripts.sidecar_pkg.event_watermark",
         "scripts.sidecar_pkg.identity",
         "scripts.sidecar_pkg.keep_alive",
+        "scripts.sidecar_pkg.runtime_cleanup",
         "scripts.sidecar_pkg.self_update",
         "scripts.sidecar_pkg.xai_renewer",
         "certifi",
