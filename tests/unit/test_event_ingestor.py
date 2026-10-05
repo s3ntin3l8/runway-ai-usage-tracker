@@ -410,3 +410,67 @@ def test_partial_batch_failure_rolls_back_all_rollups(monkeypatch):
     rollups = s.exec(select(UsagePeriodRollup)).all()
     assert events == [], f"expected zero events, found {len(events)}"
     assert rollups == [], f"expected zero rollups, found {len(rollups)}"
+
+
+def _gemini_redirect_session():
+    s = _seeded_session()
+    s.add(
+        CredentialTag(
+            provider_id="gemini",
+            credential_origin="provider:gemini",
+            account_id="me@example.com",
+            sidecar_id="host-a",
+            set_by="operator",
+            target_provider_id="antigravity",
+        )
+    )
+    s.commit()
+    return s
+
+
+def _hermes_gemini_push(event_id: str, **kw) -> UsageEventPush:
+    return _make_push(
+        event_id=event_id,
+        provider_id="gemini",
+        account_id="default",
+        account_source="default",
+        model_id="gemini-3-pro-preview",
+        tokens_input=1000,
+        tokens_output=500,
+        **kw,
+    )
+
+
+def test_hermes_gemini_event_redirected_to_antigravity_is_normalized_and_priced():
+    from app.services.data_health.checks.unpriced_models import UnpricedModelsCheck
+
+    s = _gemini_redirect_session()
+    EventIngestor(s).ingest(
+        [_hermes_gemini_push("hermes|p|s|gemini-3-pro-preview|main|c1s1")], sidecar_id="host-a"
+    )
+
+    ev = s.exec(select(UsageEvent)).one()
+    assert (ev.provider_id, ev.model_id) == ("antigravity", "pro-3")
+    assert ev.cost_usd > 0
+    assert UnpricedModelsCheck().detect(s).total_count == 0
+
+
+def test_non_hermes_gemini_event_keeps_its_model_when_redirected():
+    s = _gemini_redirect_session()
+    EventIngestor(s).ingest(
+        [_hermes_gemini_push("cli-1").model_copy(update={"model_id": "pro-3.1-preview"})],
+        sidecar_id="host-a",
+    )
+
+    ev = s.exec(select(UsageEvent)).one()
+    assert (ev.provider_id, ev.model_id) == ("antigravity", "pro-3.1-preview")
+
+
+def test_non_redirected_hermes_gemini_event_keeps_raw_model():
+    s = _seeded_session()
+    push = _hermes_gemini_push("hermes|p|s|gemini-3-pro-preview|main|c1s1").model_copy(
+        update={"account_id": "me@example.com", "account_source": "tag"}
+    )
+    EventIngestor(s).ingest([push], sidecar_id="host-a")
+    ev = s.exec(select(UsageEvent)).one()
+    assert (ev.provider_id, ev.model_id) == ("gemini", "gemini-3-pro-preview")
