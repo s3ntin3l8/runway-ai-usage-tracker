@@ -534,11 +534,6 @@ class CredentialProvider:
         return CredentialProvider.get_credentials("github")
 
     @staticmethod
-    def get_github_token() -> str:
-        """Get GitHub token using registry rules."""
-        return CredentialProvider.get_github_data().get("api_key", "")
-
-    @staticmethod
     def get_gemini_credentials_path() -> str | None:
         """Search for Gemini credentials file using registry rules."""
         provider_config = registry.get_provider("gemini")
