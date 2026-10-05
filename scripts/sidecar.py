@@ -196,6 +196,7 @@ __REGISTRY__: dict[str, Any] = {
                         "~/.claude/.credentials.json",
                         "{{CONFIG_DIR:claude}}/.credentials.json",
                         "{{CONFIG_DIR:claude}}/oauth_creds.json",
+                        "{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/.credentials.json",
                     ],
                     "format": "json",
                     "mapping": {
@@ -236,6 +237,7 @@ __REGISTRY__: dict[str, Any] = {
                     "paths": [
                         "~/.claude/statusline.json",
                         "{{CONFIG_DIR:claude}}/statusline.json",
+                        "{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/statusline.json",
                     ],
                 },
             ],
@@ -458,6 +460,7 @@ __REGISTRY__: dict[str, Any] = {
                     "paths": [
                         "~/.codex/auth.json",
                         "{{CONFIG_DIR:codex}}/auth.json",
+                        "{{ENV_DIRS:CODEX_HOME}}/auth.json",
                     ],
                     "format": "json",
                     "mapping": {
@@ -1845,6 +1848,57 @@ def resolve_path(path_str: str) -> Path:
     return Path(path_str)
 
 
+# CLIs that relocate their whole state dir via an env var. A sidecar running as a
+# service does not inherit the user's shell env, so each also has a local config
+# key (comma-separated string or list) that is searched in addition to the env var.
+_LOGIN_DIR_CONFIG_KEYS = {"CLAUDE_CONFIG_DIR": "claude_config_dirs", "CODEX_HOME": "codex_home"}
+_LOGIN_DIR_EXTRAS: dict[str, list[str]] = {}
+
+
+def _split_dirs(value: Any) -> list[str]:
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, list | tuple):
+        return []
+    return [v.strip() for v in value if isinstance(v, str) and v.strip()]
+
+
+def configure_login_dirs(config: dict[str, Any]) -> None:
+    """Pick up the per-CLI extra login dirs from the sidecar's local config."""
+    _LOGIN_DIR_EXTRAS.clear()
+    for env_name, key in _LOGIN_DIR_CONFIG_KEYS.items():
+        dirs = _split_dirs(config.get(key))
+        if dirs:
+            _LOGIN_DIR_EXTRAS[env_name] = dirs
+
+
+def custom_login_dirs(env_name: str) -> list[Path]:
+    """Directories named by ``env_name`` and the matching sidecar config key.
+
+    Order: env var first, then config; deduplicated. Not filtered against the
+    standard ``~/.claude`` / ``~/.codex`` locations — ``expand_file_rule_paths``
+    drops files it has already returned.
+    """
+    dirs: list[Path] = []
+    for raw in [*_split_dirs(os.getenv(env_name, "")), *_LOGIN_DIR_EXTRAS.get(env_name, [])]:
+        p = Path(os.path.expanduser(raw))
+        if p not in dirs:
+            dirs.append(p)
+    return dirs
+
+
+def resolve_paths(path_str: str) -> list[Path]:
+    """Like ``resolve_path``, but ``{{ENV_DIRS:VAR}}`` fans out to one path per
+    directory in ``custom_login_dirs(VAR)`` (none when unset)."""
+    match = re.search(r"{{ENV_DIRS:([^}]+)}}", path_str)
+    if not match:
+        return [resolve_path(path_str)]
+    return [
+        resolve_path(path_str.replace(match.group(0), str(d)))
+        for d in custom_login_dirs(match.group(1))
+    ]
+
+
 def has_unexpired_token(path: Path) -> bool:
     """Best-effort freshness probe: True when the file's JSON carries an
     '*expires*' key with a numeric epoch value still in the future (+60s
@@ -1881,20 +1935,22 @@ def expand_file_rule_paths(paths: list) -> list:
     """
     import glob as glob_module
 
-    out = []
+    out: list[Path] = []
     for path_str in paths:
-        resolved = resolve_path(path_str)
-        if any(c in str(resolved) for c in "*?["):
-            try:
-                matches = sorted(
-                    (Path(p) for p in glob_module.glob(str(resolved)) if Path(p).is_file()),
-                    key=lambda p: (has_unexpired_token(p), p.stat().st_mtime),
-                )
-                out.extend(matches)
-            except OSError:
-                logging.debug("File rule glob failed for %s", resolved, exc_info=True)
-        elif resolved.exists():
-            out.append(resolved)
+        for resolved in resolve_paths(path_str):
+            if resolved in out:  # e.g. CLAUDE_CONFIG_DIR=~/.claude
+                continue
+            if any(c in str(resolved) for c in "*?["):
+                try:
+                    matches = sorted(
+                        (Path(p) for p in glob_module.glob(str(resolved)) if Path(p).is_file()),
+                        key=lambda p: (has_unexpired_token(p), p.stat().st_mtime),
+                    )
+                    out.extend(matches)
+                except OSError:
+                    logging.debug("File rule glob failed for %s", resolved, exc_info=True)
+            elif resolved.exists():
+                out.append(resolved)
     return out
 
 
@@ -2289,7 +2345,13 @@ def get_windows_credential(target: str) -> str | None:
 
 def discover_anthropic_email() -> str:
     """Attempt to discover account email from credentials file."""
+    custom = [
+        str(d / name)
+        for d in custom_login_dirs("CLAUDE_CONFIG_DIR")
+        for name in (".credentials.json", ".claude.json")
+    ]
     for creds_path in [
+        *custom,
         os.path.expanduser("~/.claude/.credentials.json"),
         os.path.expanduser("~/.config/claude/.credentials.json"),
         os.path.expanduser("~/.claude.json"),
@@ -2308,17 +2370,27 @@ def discover_anthropic_email() -> str:
 
 
 def discover_anthropic_oauth_email(credentials_path: Path) -> str:
-    """Read the account paired with Claude Code's standard credentials file.
+    """Read the account paired with Claude Code's credentials file.
 
     Claude Code keeps ``claudeAiOauth`` in ``~/.claude/.credentials.json`` and
-    ``oauthAccount`` in ``~/.claude.json``. Other credential files may belong
-    to a different login, so only pair the standard file with that metadata.
+    ``oauthAccount`` in ``~/.claude.json``; under ``CLAUDE_CONFIG_DIR=<dir>``
+    both move into ``<dir>`` (``<dir>/.credentials.json`` + ``<dir>/.claude.json``).
+    Other credential files may belong to a different login, so only pair a file
+    with the metadata that sits with it in one of those layouts.
     """
-    standard_credentials_path = Path(os.path.expanduser("~/.claude/.credentials.json")).resolve()
-    if credentials_path.resolve() != standard_credentials_path:
+    resolved = credentials_path.resolve()
+    metadata_path: Path | None = None
+    if resolved == Path(os.path.expanduser("~/.claude/.credentials.json")).resolve():
+        metadata_path = Path(os.path.expanduser("~/.claude.json"))
+    else:
+        for d in custom_login_dirs("CLAUDE_CONFIG_DIR"):
+            if resolved == (d / ".credentials.json").resolve():
+                metadata_path = d / ".claude.json"
+                break
+    if metadata_path is None:
         return ""
     try:
-        with Path(os.path.expanduser("~/.claude.json")).open(encoding="utf-8") as file:
+        with metadata_path.open(encoding="utf-8") as file:
             account = json.load(file).get("oauthAccount", {})
         email = account.get("emailAddress") or account.get("email")
         return email if isinstance(email, str) and "@" in email else ""
@@ -2381,8 +2453,9 @@ def _discover_antigravity_db_paths() -> list[Path]:
 
 
 def _codex_account_email() -> str:
-    """Read email from ~/.codex/auth.json id_token; returns 'default' if unavailable."""
+    """Read email from ~/.codex/auth.json (or $CODEX_HOME) id_token; 'default' if unavailable."""
     candidate_paths = [
+        *(str(d / "auth.json") for d in custom_login_dirs("CODEX_HOME")),
         os.path.expanduser("~/.codex/auth.json"),
     ]
     for cred_path in candidate_paths:
@@ -3396,8 +3469,7 @@ class GenericCollector:
 
             # 8. Specialized: Claude Statusline
             elif rule_type == "file_json_statusline":
-                for path_str in rule.get("paths", []):
-                    path = resolve_path(path_str)
+                for path in expand_file_rule_paths(rule.get("paths", [])):
                     if path.exists():
                         try:
                             # Freshness check (5 minutes)
@@ -3734,15 +3806,10 @@ class GenericCollector:
 def _discover_anthropic_log_paths() -> list[Path]:
     """Return all .jsonl files under ~/.claude/projects (and CLAUDE_CONFIG_DIR)."""
     dirs: list[str] = []
-    config_env = os.getenv("CLAUDE_CONFIG_DIR", "")
-    if config_env:
-        for p in config_env.split(","):
-            p = p.strip()
-            if not p:
-                continue
-            proj = os.path.join(p, "projects") if not p.endswith("/projects") else p
-            if os.path.isdir(proj) and proj not in dirs:
-                dirs.append(proj)
+    for p in custom_login_dirs("CLAUDE_CONFIG_DIR"):
+        proj = str(p if p.name == "projects" else p / "projects")
+        if os.path.isdir(proj) and proj not in dirs:
+            dirs.append(proj)
     for candidate in [
         os.path.expanduser("~/.claude/projects"),
         os.path.expanduser("~/.config/claude/projects"),
@@ -3758,6 +3825,7 @@ def _discover_anthropic_log_paths() -> list[Path]:
 def _discover_codex_log_paths() -> list[Path]:
     """Return all .jsonl files under the Codex session directories."""
     candidate_dirs = [
+        *(str(d / "sessions") for d in custom_login_dirs("CODEX_HOME")),
         os.path.expanduser("~/.codex/sessions"),
         os.path.expanduser("~/.config/codex/sessions"),
     ]
@@ -5079,6 +5147,7 @@ def main():
 
     # Tri-state local override: explicit true/false wins over the server flag;
     # absent (None) defers to the server's fleet-wide setting.
+    configure_login_dirs(config)
     global _AUTO_UPDATE_LOCAL
     local_auto = config.get("auto_update")
     _AUTO_UPDATE_LOCAL = None if local_auto is None else bool(local_auto)

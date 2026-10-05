@@ -217,9 +217,13 @@ The default location for Runway's (and Sidecar's) configuration files is platfor
   "log_level": "INFO",
   "log_file_enabled": true,
   "auto_update": false,
-  "keep_alive": false
+  "keep_alive": false,
+  "claude_config_dirs": [],
+  "codex_home": []
 }
 ```
+
+**Logins in a custom directory.** Claude Code relocates its whole state (`.credentials.json`, `.claude.json`, `projects/`) when `CLAUDE_CONFIG_DIR` is set, and Codex does the same with `CODEX_HOME` (`auth.json`, `sessions/`). The sidecar searches those directories **in addition to** `~/.claude` / `~/.codex`: the env var (comma-separated) plus the `claude_config_dirs` / `codex_home` config keys (a list or a comma-separated string). Use the config keys when the sidecar runs as a service (systemd, launchd, Task Scheduler), because a service does not inherit your shell's environment. Each Claude directory's `.credentials.json` is paired with the `.claude.json` beside it for the account email.
 
 The sidecar's polling cadence is server-controlled (via the `poll_providers` field returned from `/api/v1/fleet/ingest`); there is no local `interval_seconds` or `providers` config. Configure per-provider intervals and enable/disable in the Runway dashboard's fleet settings.
 
