@@ -4594,7 +4594,8 @@ class TestHttpTimeouts:
         mock_http_client.get = AsyncMock(return_value=mock_resp)
 
         with patch("app.services.collectors.github.credential_provider") as mock_cp:
-            mock_cp.get_github_token.return_value = "ghp_test123"
+            fake_token = "ghp_test123"  # pragma: allowlist secret
+            mock_cp.get_github_data.return_value = {"api_key": fake_token}
             await collector.collect(mock_http_client)
 
         for i, call in enumerate(mock_http_client.get.call_args_list):

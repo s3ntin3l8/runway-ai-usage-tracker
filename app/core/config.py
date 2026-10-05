@@ -78,7 +78,6 @@ class Settings(BaseSettings):
 
     # GitHub OAuth
     GITHUB_CLIENT_ID: str = "Iv1.b507a08c87ecfe98"
-    GITHUB_TOKEN: str = ""
 
     # Provider tokens
     CHATGPT_OAUTH_TOKEN: str = ""

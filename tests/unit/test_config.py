@@ -59,7 +59,6 @@ class TestSettings:
         """Test that settings correctly load from environment variables."""
         test_vars = {
             "CLAUDE_CODE_OAUTH_TOKEN": "test_claude_token",
-            "GITHUB_TOKEN": "test_github_token",
             "GEMINI_OAUTH_PATH": "/fake/gemini/creds.json",
         }
 
@@ -72,7 +71,6 @@ class TestSettings:
             importlib.reload(config)
 
             assert config.settings.CLAUDE_CODE_OAUTH_TOKEN == "test_claude_token"
-            assert config.settings.GITHUB_TOKEN == "test_github_token"
             assert config.settings.GEMINI_OAUTH_PATH == "/fake/gemini/creds.json"
 
     def test_settings_defaults(self):
@@ -113,13 +111,6 @@ class TestConfigEnvironmentVariables:
         """Test CLAUDE_CODE_OAUTH_TOKEN is properly loaded."""
         test_token = "sk-ant-test-token-12345"
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": test_token}):
-            # Token would be loaded from environment
-            pass
-
-    def test_github_token_from_env(self):
-        """Test GITHUB_TOKEN is properly loaded."""
-        test_token = "ghp_test_token_123456"
-        with patch.dict(os.environ, {"GITHUB_TOKEN": test_token}):
             # Token would be loaded from environment
             pass
 
