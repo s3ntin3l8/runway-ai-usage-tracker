@@ -42,7 +42,7 @@ from app.models.db import (
     QuotaSnapshot,
     UsageEvent,
 )
-from app.services.account_identity import _LOGIN_KEYED_PROVIDERS, EMAIL_RE
+from app.services.account_identity import EMAIL_RE, LOGIN_KEYED_PROVIDERS
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -208,7 +208,7 @@ def _merge_candidates(
 ) -> list[str]:
     """Evidenced, non-email accounts of a login-keyed provider that an email-keyed
     series could belong to. Empty for any other provider/account shape."""
-    if provider_id not in _LOGIN_KEYED_PROVIDERS or not EMAIL_RE.match(account_id):
+    if provider_id not in LOGIN_KEYED_PROVIDERS or not EMAIL_RE.match(account_id):
         return []
     return sorted(
         acc
