@@ -384,7 +384,18 @@ __REGISTRY__: dict[str, Any] = {
                         "{{DATA_DIR:github-copilot}}/hosts.json",
                     ],
                     "mapping": {
-                        "github.com:Iv1.b507a08c87ecfe98.oauth_token|github.com:Iv23ctfURkiMfJ4xr5mv.oauth_token|github.com:Ov23liV9UpD7Rnfnskm3.oauth_token|github.com.oauth_token": "api_key",
+                        "github.com:Iv1.b507a08c87ecfe98.oauth_token|github.com:Iv23ctfURkiMfJ4xr5mv.oauth_token|github.com:Ov23liV9UpD7Rnfnskm3.oauth_token|github.com.oauth_token|github.com:*.oauth_token": "api_key",
+                    },
+                },
+                {
+                    "type": "file",
+                    "format": "jsonc",
+                    "keyless_ok": True,
+                    "paths": [
+                        "~/.copilot/config.json",
+                    ],
+                    "mapping": {
+                        "authTokens.https://github.com:*.token|copilotTokens.https://github.com:*|copilot_tokens.https://github.com:*": "api_key",
                     },
                 },
                 {
@@ -2985,6 +2996,45 @@ def parse_simple_yaml(text: str) -> dict[str, Any]:
     return root
 
 
+def _key_glob(pattern: str) -> "re.Pattern[str]":
+    """Compile a mapping-key glob. ``*`` is the only special character and matches zero or
+    more characters (dots and colons included) within ONE dict key. Same rule as
+    ``CredentialProvider._key_glob`` on the server; ``?`` and ``[`` stay literal."""
+    return re.compile(".*".join(re.escape(piece) for piece in pattern.split("*")))
+
+
+def _strip_jsonc(text: str) -> str:
+    """Drop ``//`` and ``/* */`` comments from JSONC, leaving string contents alone (a key
+    like ``https://github.com:login`` contains ``//``)."""
+    out: list[str] = []
+    i, n, in_string = 0, len(text), False
+    while i < n:
+        c = text[i]
+        if in_string:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_string = False
+            i += 1
+        elif c == '"':
+            in_string = True
+            out.append(c)
+            i += 1
+        elif c == "/" and text[i + 1 : i + 2] == "/":
+            while i < n and text[i] not in "\r\n":
+                i += 1
+        elif c == "/" and text[i + 1 : i + 2] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 _KEYLESS_FILES_LOGGED: set[tuple[str, str]] = set()
 
 
@@ -3021,16 +3071,26 @@ class GenericCollector:
             return current
 
         # A key may itself contain dots (gh's ``github.com`` host), so try the
-        # longest matching prefix at each level, like the server's resolver.
+        # longest matching prefix at each level, like the server's resolver. A prefix
+        # containing ``*`` is a glob over that level's keys (sorted, so a rewritten file
+        # can't change which entry wins); a glob returns the first truthy match.
         parts = key_path.split(".")
         if not isinstance(data, dict):
             return None
         for i in range(len(parts), 0, -1):
-            prefix = ".".join(parts[:i])
-            if prefix in data:
-                if i == len(parts):
-                    return data[prefix]
-                found = GenericCollector.get_nested(data[prefix], ".".join(parts[i:]))
+            head = ".".join(parts[:i])
+            rest = ".".join(parts[i:])
+            last = i == len(parts)
+            if "*" in head:
+                pattern = _key_glob(head)
+                for key in sorted(k for k in data if isinstance(k, str) and pattern.fullmatch(k)):
+                    found = data[key] if last else GenericCollector.get_nested(data[key], rest)
+                    if found:
+                        return found
+            elif head in data:
+                if last:
+                    return data[head]
+                found = GenericCollector.get_nested(data[head], rest)
                 if found is not None:
                     return found
         return None
@@ -3112,9 +3172,13 @@ class GenericCollector:
                     seen_files.add(real)
                     try:
                         fmt = rule.get("format", "json")
-                        with open(path) as f:
+                        # JSONC (the Copilot CLI's config.json carries // header lines)
+                        # may start with a BOM on Windows.
+                        with open(path, encoding="utf-8-sig" if fmt == "jsonc" else None) as f:
                             if fmt == "yaml":
                                 data = parse_simple_yaml(f.read())
+                            elif fmt == "jsonc":
+                                data = json.loads(_strip_jsonc(f.read()))
                             else:
                                 data = json.load(f)
 
@@ -3166,10 +3230,11 @@ class GenericCollector:
                                 )
                             )
                             logging.info(f"  [{provider_id}] token file matched: {path}")
-                        elif not candidate_tokens:
+                        elif not candidate_tokens and not rule.get("keyless_ok"):
                             # A readable file with none of the mapped keys fails silently
                             # (a logged-out CLI, a moved token). Say so once per file;
-                            # key names only, never values.
+                            # key names only, never values. ``keyless_ok`` rules point at
+                            # files that normally hold no token (e.g. keychain users).
                             _log_keyless_file_once(provider_id, str(path))
                     except Exception as e:
                         logging.debug(f"Error reading file {path}: {e}")

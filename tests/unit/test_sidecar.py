@@ -2025,6 +2025,98 @@ class TestPostCredentialManifest:
         assert len(lines) == 1
         assert str(apps) in lines[0]
 
+    def _copilot_cli_config(self):
+        (rule,) = [
+            r
+            for r in sidecar.__REGISTRY__["providers"]["github"]["rules"]
+            if r["type"] == "file" and r.get("format") == "jsonc"
+        ]
+        return {"name": "GitHub Copilot", "rules": [rule]}
+
+    def _collect_cli_file(self, monkeypatch, tmp_path, text: str, *, bom: bool = False):
+        path = tmp_path / "config.json"
+        path.write_bytes((b"\xef\xbb\xbf" if bom else b"") + text.encode("utf-8"))
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [path])
+        cards, _ = sidecar.GenericCollector.collect_provider("github", self._copilot_cli_config())
+        return [c for c in cards if c.get("remaining") == "Token"]
+
+    CLI_AUTH_TOKENS = (
+        "// User settings belong in settings.json.\n"
+        "// This file is managed automatically.\n"
+        "{\n"
+        '  "lastLoggedInUser": {"host": "https://github.com", "login": "me"}, // who\n'
+        '  "authTokens": {\n'
+        '    "https://github.com:me": {"token": "gho_clitoken"}, /* current */\n'
+        '    "https://corp.ghe.com:me": {"token": "gho_enterprise"}\n'
+        "  }\n"
+        "}\n"
+    )
+
+    def test_copilot_cli_config_with_comments_yields_the_github_com_token_only(
+        self, monkeypatch, tmp_path
+    ):
+        (card,) = self._collect_cli_file(monkeypatch, tmp_path, self.CLI_AUTH_TOKENS)
+
+        assert card["metadata"]["api_key"] == "gho_clitoken"  # pragma: allowlist secret
+        assert "gho_enterprise" not in json.dumps(card)
+        # The login in the key is never captured: the server verifies identity via /user.
+        assert not card.get("account_id")
+        assert card["metadata"]["identity_pending"] is True
+
+    def test_copilot_cli_config_with_a_byte_order_mark_is_read(self, monkeypatch, tmp_path):
+        (card,) = self._collect_cli_file(monkeypatch, tmp_path, self.CLI_AUTH_TOKENS, bom=True)
+
+        assert card["metadata"]["api_key"] == "gho_clitoken"  # pragma: allowlist secret
+
+    def test_copilot_cli_older_string_token_shape_is_read(self, monkeypatch, tmp_path):
+        text = (
+            '{"copilotTokens": {"https://github.com:me": "gho_old", "https://x.ghe.com:me": "no"}}'
+        )
+
+        (card,) = self._collect_cli_file(monkeypatch, tmp_path, text)
+
+        assert card["metadata"]["api_key"] == "gho_old"  # pragma: allowlist secret
+
+    def test_copilot_cli_config_without_a_token_yields_nothing_and_does_not_log(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        import logging
+
+        monkeypatch.setattr(sidecar, "_KEYLESS_FILES_LOGGED", set())
+        text = "// managed\n" + '{"trustedFolders": [], "authTokens": {}}'
+
+        with caplog.at_level(logging.INFO):
+            cards = self._collect_cli_file(monkeypatch, tmp_path, text)
+
+        assert cards == []
+        # Machines with a working keychain have exactly this file, so it must stay quiet.
+        assert not [r for r in caplog.records if "no credential keys" in r.getMessage()]
+
+    def test_the_editor_rule_catches_an_unknown_client_id_last(self, monkeypatch, tmp_path):
+        apps = tmp_path / "apps.json"
+        apps.write_text(
+            json.dumps(
+                {
+                    "github.com:BrandNewClient": {"oauth_token": "ghu_new"},
+                    "github.com:Iv23ctfURkiMfJ4xr5mv": {"oauth_token": "ghu_known"},
+                }
+            )
+        )
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [apps])
+
+        cards, _ = sidecar.GenericCollector.collect_provider("github", self._copilot_config())
+
+        (card,) = [c for c in cards if c.get("remaining") == "Token"]
+        assert card["metadata"]["api_key"] == "ghu_known"  # pragma: allowlist secret
+
+    def test_strip_jsonc_leaves_string_contents_alone(self):
+        text = '// c\n{"u": "https://github.com:me", /* x */ "q": "a \\" // b"}'
+
+        assert json.loads(sidecar._strip_jsonc(text)) == {
+            "u": "https://github.com:me",
+            "q": 'a " // b',
+        }
+
     def test_two_env_vars_holding_one_token_are_one_credential(self, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "gho_same")
         monkeypatch.setenv("GH_TOKEN", "gho_same")

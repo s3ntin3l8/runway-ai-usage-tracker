@@ -695,6 +695,18 @@ def test_reset_source_retry_clears_only_that_source():
         ("path:/var/home/bob/.codex/auth.json", "Codex CLI", "auth.json", "~/.codex/auth.json"),
         ("path:/home/kimi-code/x/y.json", None, "y.json", "~/x/y.json"),
         ("path:/data/state/quota.json", None, "quota.json", "/data/state/quota.json"),
+        (
+            "path:/home/bob/.copilot/config.json",
+            "Copilot CLI",
+            "config.json",
+            "~/.copilot/config.json",
+        ),
+        (
+            r"path:C:\Users\bob\.copilot\config.json",
+            "Copilot CLI",
+            "config.json",
+            r"~\.copilot\config.json",
+        ),
     ],
 )
 def test_describe_origin_full_names_the_owning_app(origin, app, label, path):
