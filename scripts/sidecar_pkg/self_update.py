@@ -563,8 +563,8 @@ def apply_update(
     *current_version*) for ``rollback()``. *new_version* refreshes the Windows
     installer's Apps & Features entry. Returns True on a successful swap. On a
     non-writable install path it logs and returns False without leaving
-    partial state. *cleanup* runs just before a POSIX relaunch replaces the process
-    (``execve`` skips the caller's ``finally``, so it would otherwise never run).
+    partial state. *cleanup* (POSIX only) runs iff a relaunch actually replaces this
+    process, i.e. exactly when the caller's ``finally`` will be skipped.
     """
     install = _install_path()
     staged = _find_staged(staged_dir, install)
@@ -847,6 +847,7 @@ def _fresh_runtime_env() -> dict[str, str]:
     ``PYINSTALLER_RESET_ENVIRONMENT`` forces a fresh unpack (mirrors the Windows
     helper script); the ``_PYI_*`` keys are dropped as well for good measure.
     """
+    # A copy, so os.environ is untouched if execve fails and this image keeps running.
     env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     return env
@@ -865,7 +866,7 @@ def _relaunch_posix(
         _release_lock()
         _run_pre_exec_hooks()
         if cleanup is not None:
-            _call_best_effort(cleanup, "Pre-exec cleanup")
+            _call_best_effort(cleanup, "Pre-relaunch cleanup")
         try:
             os.execve(str(install), [str(install), *sys.argv[1:]], _fresh_runtime_env())
         except OSError:
@@ -876,8 +877,10 @@ def _relaunch_posix(
         return  # unreachable
     # Tray: never exec from inside the pystray loop — spawn detached and exit.
     if cleanup is not None:
-        _call_best_effort(cleanup, "Pre-exit cleanup")
+        _call_best_effort(cleanup, "Pre-relaunch cleanup")
     if sys.platform == "darwin":
+        # `open -n` launches via LaunchServices, which does not hand this process's
+        # environment (and so its _PYI_* vars) to the new app: no scrub needed here.
         subprocess.Popen(["open", "-n", str(install)], close_fds=True)  # noqa: S603 S607
     else:
         subprocess.Popen(  # noqa: S603

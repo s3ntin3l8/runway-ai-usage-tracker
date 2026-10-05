@@ -895,6 +895,17 @@ class TestFreshRuntimeOnRelaunch:
         self_update._relaunch_posix("cli", tmp_path / "x", cleanup=lambda: shutil.rmtree(download))
         assert gone_at_exec == [True]
 
+    def test_a_failing_cleanup_does_not_block_the_exec(self, monkeypatch, tmp_path, caplog):
+        calls: list[str] = []
+        monkeypatch.setattr(self_update.os, "execve", lambda p, a, e: calls.append("exec"))
+
+        def boom():
+            raise OSError("rmtree failed")
+
+        self_update._relaunch_posix("cli", tmp_path / "x", cleanup=boom)
+        assert calls == ["exec"]
+        assert "Pre-relaunch cleanup" in caplog.text
+
 
 class TestExecFailureRestoresHooks:
     """If execv fails the old image keeps running: it must get back what the hooks released."""
