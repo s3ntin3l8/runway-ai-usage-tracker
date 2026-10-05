@@ -359,6 +359,11 @@ class KimiCodingCollector(BaseCollector):
         The device id is a deterministic uuid5 of the account, so it is stable
         across restarts without any filesystem read (the server never touches
         ~/.kimi-code).
+
+        Tradeoff, deliberate until #557 lands: the header used to carry the CLI's real
+        ``~/.kimi-code/device_id`` when the server shared a host with it. Every account now
+        sends a server-derived id instead, so if Kimi keys rate-limit or fraud signals on
+        the device id, a CLI-credential account may look like a fresh device after upgrade.
         """
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         return {

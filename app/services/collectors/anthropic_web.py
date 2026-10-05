@@ -1,10 +1,12 @@
 """
-Anthropic (Claude) Web API collector and Statusline bridge.
+Anthropic (Claude) Web API collector.
 
 Handles:
-- Statusline JSON bridge (fast local path)
 - Web API collection via Chrome sessionKey cookie
-- Response parsing for both sources
+- Response parsing
+
+The statusline.json bridge is a sidecar rule (``file_json_statusline``); the server
+never reads it.
 """
 
 import asyncio
@@ -35,7 +37,7 @@ _pending_tasks: set[asyncio.Task] = set()
 
 class AnthropicWebMixin:
     """
-    Mixin providing Statusline and Web API collection for Anthropic (Claude).
+    Mixin providing Web API collection for Anthropic (Claude).
     Intended to be composed into AnthropicCollector.
     """
 
