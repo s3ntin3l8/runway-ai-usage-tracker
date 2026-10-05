@@ -1,24 +1,23 @@
 """
-Anthropic (Claude) Web API collector and Statusline bridge.
+Anthropic (Claude) Web API collector.
 
 Handles:
-- Statusline JSON bridge (fast local path)
 - Web API collection via Chrome sessionKey cookie
-- Response parsing for both sources
+- Response parsing
+
+The statusline.json bridge is a sidecar rule (``file_json_statusline``); the server
+never reads it.
 """
 
 import asyncio
 import json
 import logging
-import os
 import re
-import time
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
-from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
 from app.services.collectors._anthropic_common import (
@@ -38,164 +37,11 @@ _pending_tasks: set[asyncio.Task] = set()
 
 class AnthropicWebMixin:
     """
-    Mixin providing Statusline and Web API collection for Anthropic (Claude).
+    Mixin providing Web API collection for Anthropic (Claude).
     Intended to be composed into AnthropicCollector.
     """
 
     _name_map = ANTHROPIC_WINDOW_NAME_MAP
-
-    # ─────────────────────────────── Statusline (fast path) ──────────────────
-
-    async def _strategy_statusline(self) -> list[dict[str, Any]]:
-        """
-        Choice #1: Read the local Claude statusline file (Fast Path).
-        Returns metrics if the file exists and is fresh (< 5 mins old).
-        """
-        # Try multiple potential paths
-        home = os.path.expanduser("~")
-        paths = [
-            settings.CLAUDE_STATUSLINE_PATH,
-            os.path.join(home, ".claude", "statusline.json"),
-            os.path.join(home, "Library", "Application Support", "Claude", "statusline.json"),
-        ]
-
-        def _read_fresh(candidates: list[str]) -> dict[str, Any] | None:
-            # Bundled so the polling loop pays one off-loop hop, not three.
-            for candidate in candidates:
-                if not candidate or not os.path.exists(candidate):
-                    continue
-                if (time.time() - os.path.getmtime(candidate)) > 300:
-                    continue
-                with open(candidate) as f:
-                    return json.load(f)
-            return None
-
-        try:
-            data = await asyncio.to_thread(_read_fresh, paths)
-            if data is None:
-                return []
-
-            # Extract identity from local credentials to ensure account_label is set
-            identity_str = ""
-            creds = None
-            if hasattr(self, "_get_credentials") and hasattr(self, "_extract_identity_from_oauth"):
-                creds = await self._get_credentials()
-                identity_str = self._extract_identity_from_oauth(creds)
-
-            identity_suffix = f" | {identity_str}" if identity_str else ""
-
-            local_hints: dict[str, Any] | None = None
-            if hasattr(self, "_get_local_config_hints"):
-                local_hints = await asyncio.to_thread(self._get_local_config_hints)
-            return self._parse_statusline_response(
-                data, identity_suffix, creds, local_hints=local_hints
-            )
-        except Exception as e:
-            logger.debug(f"Failed to read Claude statusline: {e}")
-            return []
-
-    def _parse_statusline_response(
-        self,
-        data: dict[str, Any],
-        identity_suffix: str = "",
-        creds: dict | None = None,
-        local_hints: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Parse statusline.json into standardized quota cards.
-
-        `local_hints` is optional so sync test callers keep working; the async
-        production path pre-fetches via `asyncio.to_thread` to avoid blocking.
-        """
-        results = []
-        now = datetime.now(UTC)
-
-        # Extract identity from suffix (strip " | ")
-        identity_str = identity_suffix.lstrip(" |") if identity_suffix else ""
-
-        tier = None
-        if creds:
-            raw_tier = creds.get("claudeAiOauth", {}).get("rateLimitTier")
-            if raw_tier:
-                # Match pro/max/team/free followed by optional multiplier like 5x or 20x
-                match = re.search(r"(pro|max|team|free)[\s_]*(\d+x)?", raw_tier.lower())
-                if match:
-                    base = match.group(1).capitalize()
-                    mult = match.group(2)
-                    tier = f"{base} {mult}" if mult else base
-                else:
-                    tier_map = {
-                        "tier_0": "Free",
-                        "tier_1": "Pro",
-                        "tier_2": "Max",
-                        "tier_3": "Team",
-                        "tier_4": "Enterprise",
-                        "tier_5": "Enterprise",
-                    }
-                    tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
-        if not tier:
-            if local_hints is None and hasattr(self, "_get_local_config_hints"):
-                local_hints = self._get_local_config_hints()
-            local_tier = (local_hints or {}).get("billing_tier") or (local_hints or {}).get("tier")
-            if local_tier:
-                tier = str(local_tier).capitalize()
-
-        # 1. Rate Limits
-        limits = data.get("rate_limits", {})
-        for key, info in limits.items():
-            pct_used = float(info.get("used_percentage", 0.0))
-            reset_ts = info.get("resets_at")
-            reset_at = datetime.fromtimestamp(reset_ts, tz=UTC) if reset_ts else None
-
-            w_type = classify_anthropic_window_type(key)
-
-            results.append(
-                {
-                    "service_name": "Claude",
-                    "icon": "🟠",
-                    "remaining": f"{(100 - pct_used):.1f}%",
-                    "unit": "capacity",
-                    "reset": human_delta(reset_at),
-                    "health": HealthCalculator.from_percentage(pct_used),
-                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% used [Statusline]{identity_suffix}",
-                    "used_value": pct_used,
-                    "limit_value": 100.0,
-                    "unit_type": "percent",
-                    "window_type": w_type,
-                    "model_id": anthropic_model_id_for(key),
-                    "reset_at": reset_at.isoformat() if reset_at else None,
-                    "data_source": self.DATA_SOURCE_LOCAL,
-                    "input_source": "server",
-                    "tier": tier,
-                    "account_label": identity_str,
-                    "updated_at": now.isoformat(),
-                }
-            )
-
-        cost = data.get("cost", {})
-        if cost and cost.get("total_cost_usd", 0) > 0:
-            total_cost = cost.get("total_cost_usd")
-            results.append(
-                {
-                    "service_name": "Claude",
-                    "variant": "Cost",
-                    "icon": "💰",
-                    "remaining": f"${total_cost:.2f}",
-                    "unit": "USD",
-                    "reset": "This Session",
-                    "health": "good",
-                    "pace": "Stable",
-                    "detail": f"+{cost.get('total_lines_added', 0)} / -{cost.get('total_lines_deleted', 0)} lines [Statusline]{identity_suffix}",
-                    "window_type": "session",
-                    "model_id": None,
-                    "data_source": self.DATA_SOURCE_LOCAL,
-                    "tier": tier,
-                    "account_label": identity_str,
-                    "updated_at": now.isoformat(),
-                }
-            )
-
-        return results
 
     # ─────────────────────────────── Web API (cookie path) ───────────────────
 

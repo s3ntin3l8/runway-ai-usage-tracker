@@ -658,6 +658,14 @@ export interface PendingUsageAssignmentGroup {
   target_provider_id?: string;
 }
 
+/** One provider group of an /events/pending/assign response. */
+export interface PendingUsageAssignResult {
+  provider_id: string | null;
+  target_provider_id: string;
+  account_id: string;
+  assigned: number;
+}
+
 export interface PendingUsageMapping {
   provider_id: string;
   sidecar_id: string;

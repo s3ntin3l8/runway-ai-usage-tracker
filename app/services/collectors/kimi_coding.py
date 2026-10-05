@@ -68,6 +68,9 @@ from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
+# Namespace for the deterministic X-Msh-Device-Id (see _kimi_code_identity_headers).
+_DEVICE_ID_NAMESPACE = uuid.UUID("6f1c1e0a-5b8e-4f4e-9a57-3d1f0c2b7a11")
+
 # GOODS_VERSION_V1 membership-level -> display name (CodexBar parity). V2 goods
 # carry real titles and are taken verbatim from GetSubscription instead.
 _MEMBERSHIP_LEVEL_NAMES_V1 = {
@@ -115,7 +118,6 @@ class KimiCodingCollector(BaseCollector):
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(account_id=account_id, account_label=account_label)
-        self._ephemeral_device_id: str | None = None
         # Set when a CLI credential file exists but its access token is past
         # expires_at — surfaces a re-login hint instead of a silent no-card.
         self._stale_cli_token = False
@@ -270,11 +272,12 @@ class KimiCodingCollector(BaseCollector):
         """
         Read-only access token from the Kimi Code CLI credential file.
 
-        Local topology: parsed server-side from ~/.kimi-code/credentials/kimi-code*.json
-        (globbed — kimi-cli writes a per-install kimi-code-env-<hash>.json)
-        via the registry file rule. Multi-host: pushed by the sidecar into the
-        token cache. The refresh token is never used (CodexBar parity — the
-        official CLI owns the refresh flow; when the token lapses, re-login).
+        Source: ~/.kimi-code/credentials/kimi-code*.json (globbed — kimi-cli writes
+        a per-install kimi-code-env-<hash>.json), as parsed by the sidecar and
+        pushed into the token cache, or via the registry file rule in
+        credential_provider. This collector itself never reads the CLI's files
+        or its device_id. The refresh token is never used (CodexBar parity — the official
+        CLI owns the refresh flow; when the token lapses, re-login).
         """
         candidates: list[tuple[str, Any, str]] = []
         self._stale_cli_token = False
@@ -351,27 +354,22 @@ class KimiCodingCollector(BaseCollector):
         return None
 
     def _kimi_code_identity_headers(self) -> dict[str, str]:
-        """X-Msh-* identity headers for CLI-credential calls (CodexBar parity)."""
-        device_id = self._read_cli_device_id() or self._ephemeral_device_id
-        if not device_id:
-            device_id = uuid.uuid4().hex
-            self._ephemeral_device_id = device_id
+        """X-Msh-* identity headers for CLI-credential calls (CodexBar parity).
+
+        The device id is a deterministic uuid5 of the account, so it is stable
+        across restarts without any filesystem read (the server never touches
+        ~/.kimi-code).
+
+        Tradeoff, deliberate until #557 lands: the header used to carry the CLI's real
+        ``~/.kimi-code/device_id`` when the server shared a host with it. Every account now
+        sends a server-derived id instead, so if Kimi keys rate-limit or fraud signals on
+        the device id, a CLI-credential account may look like a fresh device after upgrade.
+        """
+        account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         return {
             "X-Msh-Platform": "kimi_code_cli",
-            "X-Msh-Device-Id": device_id,
+            "X-Msh-Device-Id": uuid.uuid5(_DEVICE_ID_NAMESPACE, f"kimi_coding:{account_id}").hex,
         }
-
-    @staticmethod
-    def _read_cli_device_id() -> str | None:
-        """Read-only: use the official CLI's device_id if present, else None."""
-        from pathlib import Path
-
-        path = Path.home() / ".kimi-code" / "device_id"
-        try:
-            value = path.read_text(encoding="utf-8").strip()
-            return value or None
-        except OSError:
-            return None
 
     # ------------------------------------------------------------------
     # api strategy — GET {base}/coding/v1/usages

@@ -103,3 +103,6 @@ artifacts/
 .wt/
 
 coverage/
+
+# memray profiling output
+memray*.bin

@@ -1900,6 +1900,19 @@ async def assign_pending_usage_events(
     # Only echoed when events were actually re-homed to another provider.
     if first_rows and first_target != account_config_provider_id(first_rows[0].provider_id):
         result["target_provider_id"] = first_target
+    # Every validated group as {provider_id, target_provider_id, account_id, assigned}: a
+    # subset of the batch endpoint's mapping shape (no sidecar_id, since a group already
+    # coalesces by config provider). The top-level fields above describe only the first
+    # group (back-compat).
+    result["mappings"] = [
+        {
+            "provider_id": rows[0].provider_id,
+            "target_provider_id": target,
+            "account_id": account,
+            "assigned": len(rows),
+        }
+        for target, account, rows in validated
+    ]
     return result
 
 

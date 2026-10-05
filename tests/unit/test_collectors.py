@@ -78,28 +78,6 @@ class TestCredentialAccountSlotLookup:
 class TestAnthropicCollector:
     """Test suite for Anthropic (Claude) collector."""
 
-    def test_statusline_keeps_quota_windows_without_context_token_card(self):
-        collector = AnthropicCollector()
-
-        cards = collector._parse_statusline_response(
-            {
-                "rate_limits": {
-                    "five_hour": {"used_percentage": 25, "resets_at": 1_800_000_000},
-                    "seven_day": {"used_percentage": 40, "resets_at": 1_800_000_000},
-                },
-                "context_window": {
-                    "total_input_tokens": 900,
-                    "total_output_tokens": 100,
-                    "max_tokens": 200_000,
-                },
-            },
-            local_hints={},
-        )
-
-        assert len(cards) == 2
-        assert {card["window_type"] for card in cards} == {"session", "weekly"}
-        assert all(card.get("variant") != "Tokens" for card in cards)
-
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="browser-cookie / local fallback moved to sidecar")
     async def test_collect_oauth_success(self, mock_http_client, mock_anthropic_oauth_response):
@@ -3349,7 +3327,16 @@ class TestKimiCodingCollector:
         headers = call.kwargs["headers"]
         assert headers["Authorization"] == "Bearer cli_access_token_123"
         assert headers["X-Msh-Platform"] == "kimi_code_cli"
-        assert "X-Msh-Device-Id" in headers
+        # Deterministic uuid5 per account: no read of ~/.kimi-code/device_id.
+        device_id = headers["X-Msh-Device-Id"]
+        assert device_id == KimiCodingCollector()._kimi_code_identity_headers()["X-Msh-Device-Id"]
+        assert len(device_id) == 32
+        assert (
+            device_id
+            != KimiCodingCollector(account_id="other")._kimi_code_identity_headers()[
+                "X-Msh-Device-Id"
+            ]
+        )
         assert len(result) == 2  # vestigial monthly "code" pool suppressed
 
     @pytest.mark.asyncio
