@@ -747,3 +747,29 @@ def test_reason_containing_parentheses_round_trips_and_is_replaced(session: Sess
     assert second.startswith("⚠ Collection failing (timed out) — ")
     assert second.count("Collection failing") == 1
     assert "invalid_grant" not in second
+
+
+def test_reason_containing_separator_is_sanitized_and_round_trips(session: Session):
+    upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
+    session.commit()
+    base = json.loads(session.exec(select(LatestUsage)).one().card_json)["detail"]
+
+    def mark(reason):
+        mark_latest_usage_source_stale(
+            session,
+            provider_id="chatgpt",
+            source_id="server:chatgpt",
+            stale_after_seconds=0,
+            reason=reason,
+        )
+        session.commit()
+        return json.loads(session.exec(select(LatestUsage)).one().card_json)["detail"]
+
+    first = mark("refresh failed (HTTP 401) — re-login required")
+    assert first == f"⚠ Collection failing (refresh failed (HTTP 401) - re-login required) — {base}"
+    # Re-marking replaces the whole prefix; nothing of the old reason leaks into the base.
+    second = mark("timed out")
+    assert second == f"⚠ Collection failing (timed out) — {base}"
+    third = mark("refresh failed (HTTP 401) — re-login required")
+    assert third == first
+    assert third.count("Collection failing") == 1

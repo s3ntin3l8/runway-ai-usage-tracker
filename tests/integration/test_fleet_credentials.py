@@ -3779,6 +3779,17 @@ def test_mixed_provider_assignment_keeps_each_events_own_provider(
     )
 
     assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["assigned"] == 2
+    # Back-compat fields describe the first group; ``mappings`` covers every group.
+    assert body["provider_id"] in {"gemini", "xai"}
+    assert {
+        (m["provider_id"], m["target_provider_id"], m["account_id"], m["assigned"])
+        for m in body["mappings"]
+    } == {
+        ("gemini", "gemini", "me@example.com", 1),
+        ("xai", "xai", "me@example.com", 1),
+    }
     stored = {(e.provider_id, e.account_id) for e in session.exec(select(UsageEvent))}
     assert stored == {("gemini", "me@example.com"), ("xai", "me@example.com")}
     assert all(t.target_provider_id is None for t in session.exec(select(CredentialTag)))
