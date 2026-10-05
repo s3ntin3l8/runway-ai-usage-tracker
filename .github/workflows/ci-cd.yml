@@ -19,7 +19,7 @@ jobs:
     secrets: inherit
 
   test-frontend:
-    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@ci/ci-node-zizmor
     with:
       node-version: '22'
       working-directory: 'webapp'
