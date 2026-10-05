@@ -20,6 +20,7 @@ from app.models.schemas import UsageEventPush
 from app.services.account_identity import canonical_account_id, is_redirect_source_provider
 from app.services.credential_tags import CredentialTagRepo
 from app.services.maintenance.event_cost import resolve_event_cost
+from app.services.model_normalization import normalize_ag_model
 from app.services.period_rollups import update_rollups_for_event
 from app.services.project_label import derive_project
 
@@ -43,15 +44,26 @@ _REFRESHED_FIELDS = tuple(
 )
 
 
+def _is_hermes_event(push: UsageEventPush) -> bool:
+    return push.event_id.startswith("hermes|")
+
+
 def redirect_push(push: UsageEventPush, target_provider_id: str, account_id: str) -> UsageEventPush:
-    """Re-home an event onto an account of a related provider (operator tag)."""
-    return push.model_copy(
-        update={
-            "provider_id": target_provider_id,
-            "account_id": account_id,
-            "account_source": "tag",
-        }
-    )
+    """Re-home an event onto an account of a related provider (operator tag).
+
+    Hermes reports raw Gemini ids (``gemini-3-pro-preview``) that match no
+    seeded row once the event is stored under Antigravity, so re-bucket them
+    with the target provider's normalizer. Gemini-CLI events arrive already
+    normalized and keep their model id.
+    """
+    update: dict[str, str | None] = {
+        "provider_id": target_provider_id,
+        "account_id": account_id,
+        "account_source": "tag",
+    }
+    if target_provider_id == "antigravity" and push.model_id and _is_hermes_event(push):
+        update["model_id"] = normalize_ag_model(push.model_id, "", {})
+    return push.model_copy(update=update)
 
 
 class EventIngestor:

@@ -160,8 +160,8 @@ def test_seeded_minors_match_pricing_seed():
     """
     import re
 
+    from app.services.model_normalization import _SEEDED_MINORS
     from app.services.pricing_seed import PRICING_SEED
-    from scripts.sidecar_pkg.event_extractors.antigravity import _SEEDED_MINORS
 
     seed_by_family: dict[str, set[str]] = {}
     for row in PRICING_SEED:
