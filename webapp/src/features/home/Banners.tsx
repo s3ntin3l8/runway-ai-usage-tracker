@@ -3,7 +3,7 @@
 // against a fingerprint of the banner's condition: it stays hidden across reloads,
 // restarts and updates, and comes back only when the condition changes.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { AlertTriangle, BellOff, HeartPulse, KeyRound, TrendingUp, Unlink, X } from 'lucide-react';
 import type { AnomalyEntry, CredentialInventory, DataHealthReport, FleetEntry } from '@/api/types';
@@ -67,6 +67,33 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
     dataHealth: fingerprintOf(dataHealthErrors.map((c) => c.check_id)),
   };
 
+  // One map drives both rendering and clearing so the two cannot drift apart. `loaded` guards
+  // the first render (data still undefined), which must not read as "problem resolved".
+  const healthLoaded = dataHealth !== undefined && !dataHealth.scanning;
+  const kinds: Record<string, { active: boolean; loaded: boolean }> = {
+    collection: { active: failing.length > 0, loaded: fleet !== undefined },
+    unmapped: { active: blocked.length > 0, loaded: credentials !== undefined },
+    credentials: { active: unhealthy.length > 0, loaded: credentials !== undefined },
+    anomalies: { active: spikes.length > 0, loaded: anomalies !== undefined },
+    'alert-channel': { active: noAlertChannel, loaded: healthLoaded },
+    'data-health': { active: dataHealthErrors.length > 0, loaded: healthLoaded },
+  };
+  // A recovered problem forgets its dismissal, so a relapse with the same fingerprint
+  // re-shows the banner instead of staying hidden forever.
+  const resolvedKey = Object.entries(kinds)
+    .filter(([, k]) => k.loaded && !k.active)
+    .map(([kind]) => kind)
+    .join(',');
+  useEffect(() => {
+    for (const kind of resolvedKey ? resolvedKey.split(',') : []) {
+      try {
+        localStorage.removeItem(DISMISS_PREFIX + kind);
+      } catch {
+        // localStorage unavailable: the session-local fallback already covers it.
+      }
+    }
+  }, [resolvedKey]);
+
   const failingLabel = (e: FleetEntry): string => {
     const staleCard = [e.critical_gauge, ...(e.secondary_limits ?? [])].find(
       (card) => card != null && cardStale(card),
@@ -80,7 +107,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
 
   return (
     <>
-      {failing.length > 0 ? (
+      {kinds.collection.active ? (
         <Banner
           tone="critical"
           icon={<AlertTriangle className="size-4 shrink-0" aria-hidden />}
@@ -100,7 +127,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
           </span>
         </Banner>
       ) : null}
-      {blocked.length > 0 ? (
+      {kinds.unmapped.active ? (
         <Banner
           tone="critical"
           icon={<Unlink className="size-4 shrink-0" aria-hidden />}
@@ -135,7 +162,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
           </span>
         </Banner>
       ) : null}
-      {unhealthy.length > 0 ? (
+      {kinds.credentials.active ? (
         <Banner
           tone="critical"
           icon={<KeyRound className="size-4 shrink-0" aria-hidden />}
@@ -158,7 +185,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
           </span>
         </Banner>
       ) : null}
-      {spikes.length > 0 ? (
+      {kinds.anomalies.active ? (
         <Banner
           tone="warning"
           icon={<TrendingUp className="size-4 shrink-0" aria-hidden />}
@@ -175,7 +202,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
           </span>
         </Banner>
       ) : null}
-      {noAlertChannel ? (
+      {kinds['alert-channel'].active ? (
         <Banner
           tone="warning"
           icon={<BellOff className="size-4 shrink-0" aria-hidden />}
@@ -191,7 +218,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
           </span>
         </Banner>
       ) : null}
-      {dataHealthErrors.length > 0 ? (
+      {kinds['data-health'].active ? (
         <Banner
           tone="warning"
           icon={<HeartPulse className="size-4 shrink-0" aria-hidden />}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -11,11 +12,15 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import CredentialSource
+from app.models.db import AuditLog, CredentialSource
 from app.services import credential_inventory
 from app.services.token_cache import TokenCache
 
 ALICE = "alice@example.com"
+
+
+def _audit(session: Session) -> list[AuditLog]:
+    return list(session.exec(select(AuditLog).order_by(AuditLog.ts)).all())
 
 
 @pytest.fixture(name="session")
@@ -101,6 +106,11 @@ async def test_refresh_writes_back_into_the_source_bundle(client, session, cache
     (bundle,) = await cache.get_source_candidates("gemini", ALICE)
     assert bundle["tokens"]["oauth_token"] == "new"
     assert bundle["tokens"]["refresh_token"] == "rt2"
+    (row,) = _audit(session)
+    assert row.action == "credential.source_refresh"
+    assert row.target_id == f"gemini/{ALICE}"
+    assert json.loads(row.payload_json) == {"source_id": "sidecar:a"}
+    assert "rt2" not in (row.payload_json or "")
 
 
 @pytest.mark.asyncio
@@ -115,6 +125,7 @@ async def test_refresh_unknown_source_404_and_no_refresh_token_400(client, sessi
         f"/api/v1/system/credentials/gemini/{ALICE}/sidecar:a/refresh", headers=_headers()
     )
     assert no_rt.status_code == 400
+    assert _audit(session) == []  # failed refreshes are not audited
 
 
 @pytest.mark.asyncio
@@ -129,6 +140,10 @@ async def test_delete_removes_bundle_and_durable_row_for_machine_source(client, 
     assert await cache.get_source_candidates("gemini", ALICE) == []
     remaining = {r.source_id for r in session.exec(select(CredentialSource)).all()}
     assert remaining == {"sidecar:b"}  # the other machine's credential is untouched
+    (row,) = _audit(session)
+    assert row.action == "credential.source_delete"
+    assert row.target_id == f"gemini/{ALICE}"
+    assert json.loads(row.payload_json) == {"source_id": "sidecar:a"}
 
 
 def test_delete_refuses_config_and_server_sources(client, session):
@@ -337,6 +352,22 @@ async def test_bulk_remove_forgets_machine_sources_and_skips_managed_ones(client
         "config:gemini:alice",
     }
     assert await cache.get_source_candidates("gemini", ALICE) == []
+    (row,) = _audit(session)
+    assert row.action == "credential.sources_remove"
+    assert row.target_id == f"gemini/{ALICE}"
+    assert json.loads(row.payload_json) == {"removed": body["removed"], "skipped": body["skipped"]}
+
+
+@pytest.mark.asyncio
+async def test_bulk_remove_that_removes_nothing_writes_no_audit_row(client, session, cache):
+    resp = client.post(
+        f"/api/v1/system/credentials/gemini/{ALICE}/remove",
+        json={"source_ids": ["sidecar:nope"]},
+        headers=_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["removed"] == []
+    assert _audit(session) == []
 
 
 @pytest.mark.asyncio
