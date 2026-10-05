@@ -215,9 +215,18 @@ def _server_may_read(rule: dict[str, Any]) -> bool:
     ``exists``/``glob`` call ever touches the host home.
     """
     paths = rule.get("paths") or []
-    return bool(paths) and all(
+    allowed = bool(paths) and all(
         isinstance(p, str) and p.startswith(_SERVER_READABLE_PREFIX) for p in paths
     )
+    if not allowed:
+        # Sidecar-only by design, or a malformed rule (no/empty ``paths``): say which, so a
+        # broken rule is not mistaken for an intentional skip.
+        logger.debug(
+            "Server skips file rule %s: %s",
+            rule.get("id") or rule.get("provider") or "<unnamed>",
+            "no paths declared" if not paths else "paths outside the Runway config dir",
+        )
+    return allowed
 
 
 # dict value-equality is intentional; the `sources` attribute is non-compared metadata.

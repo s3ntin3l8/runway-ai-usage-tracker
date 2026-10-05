@@ -162,7 +162,8 @@ def test_runways_own_github_oauth_file_is_still_read(tmp_path, monkeypatch):
     assert origin["managed"] is True
 
 
-_FORBIDDEN_CALLS = {"expanduser", "home"}  # os.path.expanduser / Path.home
+# os.path.expanduser / Path.home / os.getenv (a HOME read could flow into a non-``open`` sink)
+_FORBIDDEN_CALLS = {"expanduser", "home", "getenv"}
 _FORBIDDEN_MODULES = {"subprocess"}
 
 
@@ -175,6 +176,8 @@ def _violations(path: Path) -> list[str]:
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
             if name in _FORBIDDEN_CALLS or name.startswith("create_subprocess"):
                 found.append(f"{path.name}:{node.lineno} calls {name}()")
+        elif isinstance(node, ast.Attribute) and node.attr == "environ":
+            found.append(f"{path.name}:{node.lineno} reads os.environ")
         elif isinstance(node, ast.Import):
             found += [
                 f"{path.name}:{node.lineno} imports {a.name}"
@@ -206,5 +209,20 @@ def test_the_static_guard_catches_what_it_is_meant_to(tmp_path):
     bad.write_text(
         "import os, subprocess\nfrom pathlib import Path\n"
         "a = os.path.expanduser('~')\nb = Path.home()\nc = '~/.gemini/x'\n"
+        "d = os.getenv('HOME')\ne = os.environ['HOME']\n"
     )
-    assert len(_violations(bad)) == 5  # import, 2 calls, 2 "~" literals
+    # import, expanduser/home/getenv calls, one "~" literal, one os.environ read
+    assert len(_violations(bad)) == 7
+
+
+def test_a_rule_the_server_skips_says_why(caplog):
+    """A malformed rule must not look like an intentional sidecar-only skip."""
+    with caplog.at_level("DEBUG", logger=cp.logger.name):
+        assert not _server_may_read({"type": "file", "id": "broken"})
+        assert not _server_may_read({"type": "file", "id": "gem", "paths": ["~/.gemini/x"]})
+        assert _server_may_read(
+            {"type": "file", "paths": ["{{CONFIG_DIR:runway}}/github_oauth.json"]}
+        )
+    reasons = [r.getMessage() for r in caplog.records]
+    assert any("broken" in m and "no paths declared" in m for m in reasons)
+    assert any("gem" in m and "outside the Runway config dir" in m for m in reasons)

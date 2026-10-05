@@ -143,10 +143,14 @@ class OAuthBaseCollector(BaseCollector):
                     # Update cache so token health stays current after refresh. Keyed by
                     # the provider id: ``provider_name`` is the display name ("Gemini")
                     # and would write an orphan entry no collector reads.
+                    if self.PROVIDER_ID == "unknown":
+                        # A collector that forgot PROVIDER_ID would otherwise write a
+                        # well-formed entry under a guessed key and look healthy forever.
+                        raise RuntimeError(
+                            f"{type(self).__name__} must define PROVIDER_ID to cache a refreshed token"
+                        )
                     await self._store_sidecar_token(
-                        self.PROVIDER_ID
-                        if self.PROVIDER_ID != "unknown"
-                        else self.provider_name.lower(),
+                        self.PROVIDER_ID,
                         access,
                         new_creds.get("refresh_token"),
                         new_creds.get("expiry_date"),

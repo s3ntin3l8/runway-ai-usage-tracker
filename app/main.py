@@ -130,8 +130,9 @@ async def lifespan(app: FastAPI):
                 "reach the server only via sidecars, env vars and Settings",
                 _removed,
             )
-    except Exception as _e:
-        logger.warning(f"Startup server file-source sweep failed: {_e}")
+    except Exception:
+        # Not fatal, but loud: until it succeeds the stale ``server:*:file:*`` rows stay.
+        logger.exception("Startup server file-source sweep failed")
 
     # Pre-populate in-memory registry so the first /limits request is instant
     try:
