@@ -368,7 +368,7 @@ def _lock_path() -> pathlib.Path:
     return _sidecar_dir() / _LOCK_NAME
 
 
-# Callbacks run right before ``os.execv`` replaces the process image. ``execv`` keeps the
+# Callbacks run right before ``os.execve`` replaces the process image. ``execve`` keeps the
 # PID, and nothing (atexit, finally) runs across it, so anything that must not outlive the
 # old image — the sidecar's PID file — has to be released here, or the re-exec'd daemon sees
 # its own PID in the file, reports "already running" and exits.
@@ -380,7 +380,7 @@ def register_pre_exec_hook(
 ) -> None:
     """Run ``hook`` just before a CLI self-update re-execs (best-effort, idempotent).
 
-    ``on_failure`` undoes it if ``execv`` itself fails: the old image is then still running
+    ``on_failure`` undoes it if ``execve`` itself fails: the old image is then still running
     and must not be left without whatever ``hook`` released (e.g. its PID file).
     """
     if all(existing != hook for existing, _ in _PRE_EXEC_HOOKS):
@@ -409,7 +409,7 @@ def _undo_pre_exec_hooks() -> None:
 def _release_lock() -> None:
     """Remove the single-flight lock file.
 
-    A successful update ends in ``os.execv`` / ``os._exit`` (see the relaunch
+    A successful update ends in ``os.execve`` / ``os._exit`` (see the relaunch
     helpers), which replace the process image and so never run the
     ``_single_flight`` context manager's ``finally``. Without an explicit
     release here every successful update would orphan the lock and wedge all
@@ -563,8 +563,9 @@ def apply_update(
     *current_version*) for ``rollback()``. *new_version* refreshes the Windows
     installer's Apps & Features entry. Returns True on a successful swap. On a
     non-writable install path it logs and returns False without leaving
-    partial state. *cleanup* (POSIX only) runs iff a relaunch actually replaces this
-    process, i.e. exactly when the caller's ``finally`` will be skipped.
+    partial state. *cleanup* (POSIX only) runs iff a relaunch actually replaces the
+    running image, directly via ``execve`` or indirectly via ``os._exit`` after
+    spawning the new one, i.e. exactly when the caller's ``finally`` is skipped.
     """
     install = _install_path()
     staged = _find_staged(staged_dir, install)

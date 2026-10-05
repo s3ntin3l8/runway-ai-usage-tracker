@@ -782,7 +782,7 @@ class TestWindowsSwapScript:
 
 
 class TestPreExecHooks:
-    """execv keeps the PID and skips atexit: cleanup must run just before it."""
+    """execve keeps the PID and skips atexit: cleanup must run just before it."""
 
     @pytest.fixture(autouse=True)
     def _clean_hooks(self, monkeypatch):
@@ -919,7 +919,7 @@ class TestFreshRuntimeOnRelaunch:
 
 
 class TestExecFailureRestoresHooks:
-    """If execv fails the old image keeps running: it must get back what the hooks released."""
+    """If execve fails the old image keeps running: it must get back what the hooks released."""
 
     @pytest.fixture(autouse=True)
     def _clean_hooks(self, monkeypatch):
@@ -933,7 +933,7 @@ class TestExecFailureRestoresHooks:
 
         return execve
 
-    def test_a_failed_execv_undoes_the_hooks_and_still_raises(self, monkeypatch, tmp_path):
+    def test_a_failed_execve_undoes_the_hooks_and_still_raises(self, monkeypatch, tmp_path):
         calls: list[str] = []
         self_update.register_pre_exec_hook(
             lambda: calls.append("released"), on_failure=lambda: calls.append("restored")
@@ -960,7 +960,7 @@ class TestExecFailureRestoresHooks:
         with pytest.raises(OSError, match="denied"):
             self_update._relaunch_posix("cli", tmp_path / "x")
 
-    def test_a_successful_execv_never_runs_the_undo(self, monkeypatch, tmp_path):
+    def test_a_successful_execve_never_runs_the_undo(self, monkeypatch, tmp_path):
         calls: list[str] = []
         self_update.register_pre_exec_hook(lambda: None, on_failure=lambda: calls.append("undo"))
         monkeypatch.setattr(self_update.os, "execve", lambda p, a, e: None)
