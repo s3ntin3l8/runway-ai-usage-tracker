@@ -32,6 +32,13 @@ from scripts.sidecar_pkg.self_update import (
     verify_sha256,
 )
 
+
+@pytest.fixture(autouse=True)
+def _no_real_systemd_probe(monkeypatch):
+    """The dev box running the tests is itself under systemd: never let a relaunch test probe it."""
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # resolve_asset_name
 # ---------------------------------------------------------------------------
@@ -916,6 +923,158 @@ class TestFreshRuntimeOnRelaunch:
         self_update._relaunch_posix("cli", tmp_path / "x", cleanup=boom)
         assert calls == ["exec"]
         assert "Pre-relaunch cleanup" in caplog.text
+
+
+class TestRetiredRuntimeHandOff:
+    def test_execve_env_names_the_runtime_being_abandoned(self, monkeypatch, tmp_path):
+        runtime = tmp_path / "_MEIabc123"
+        runtime.mkdir()
+        monkeypatch.setattr(self_update.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(self_update.sys, "_MEIPASS", str(runtime), raising=False)
+        monkeypatch.setattr(self_update, "_release_lock", lambda: None)
+        seen: dict = {}
+        monkeypatch.setattr(self_update.os, "execve", lambda p, a, e: seen.update(env=e))
+        self_update._relaunch_posix("cli", tmp_path / "x")
+        assert seen["env"]["RUNWAY_RETIRED_MEIPASS"] == str(runtime)
+
+    def test_the_tray_spawn_does_not_hand_off_a_runtime(self, monkeypatch, tmp_path):
+        runtime = tmp_path / "_MEIabc123"
+        runtime.mkdir()
+        monkeypatch.setattr(self_update.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(self_update.sys, "_MEIPASS", str(runtime), raising=False)
+        monkeypatch.setattr(self_update.sys, "platform", "linux")
+        monkeypatch.setattr(self_update, "_release_lock", lambda: None)
+        seen: dict = {}
+        monkeypatch.setattr(self_update.subprocess, "Popen", lambda *a, **k: seen.update(k))
+        monkeypatch.setattr(self_update.os, "_exit", lambda code: None)
+        self_update._relaunch_posix("tray", tmp_path / "tray")
+        assert "RUNWAY_RETIRED_MEIPASS" not in seen["env"]
+
+
+SERVICE_CGROUP = "0::/system.slice/runway-sidecar.service\n"
+USER_CGROUP = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/runway.service\n"
+
+
+class TestSystemdSupervision:
+    """Exit for systemd only when it is demonstrably our direct supervisor."""
+
+    @pytest.fixture
+    def probe(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(self_update.sys, "platform", "linux")
+        monkeypatch.setenv("INVOCATION_ID", "abc")
+        monkeypatch.setattr(self_update.os, "getppid", lambda: 4242)
+        cgroup = tmp_path / "cgroup"
+        cgroup.write_text(SERVICE_CGROUP)
+        real_path = self_update.pathlib.Path
+        monkeypatch.setattr(
+            self_update.pathlib,
+            "Path",
+            lambda p: cgroup if str(p) == "/proc/self/cgroup" else real_path(p),
+        )
+        calls: list[list[str]] = []
+
+        def configure(*, main_pid="4242", restart="always", returncode=0, raises=None, cg=None):
+            if cg is not None:
+                cgroup.write_text(cg)
+
+            def run(cmd, **kwargs):
+                calls.append(cmd)
+                assert kwargs["timeout"] == self_update._SYSTEMCTL_TIMEOUT_S
+                if raises:
+                    raise raises
+                out = f"MainPID={main_pid}\nRestart={restart}\n"
+                return self_update.subprocess.CompletedProcess(cmd, returncode, out, "")
+
+            monkeypatch.setattr(self_update.subprocess, "run", run)
+            return calls
+
+        return configure
+
+    def test_restart_always_exits_zero(self, probe):
+        probe(restart="always")
+        assert self_update._systemd_restart_exit_code() == 0
+
+    def test_restart_on_failure_exits_nonzero(self, probe):
+        probe(restart="on-failure")
+        assert self_update._systemd_restart_exit_code() == 75
+
+    def test_a_policy_that_does_not_respawn_falls_back(self, probe):
+        probe(restart="no")
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_invocation_id_without_matching_main_pid_falls_back(self, probe):
+        """Started from a shell inside some other service: exiting would just kill us."""
+        probe(main_pid="999", restart="always")
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_no_invocation_id_never_probes(self, probe, monkeypatch):
+        calls = probe()
+        monkeypatch.delenv("INVOCATION_ID")
+        assert self_update._systemd_restart_exit_code() is None
+        assert calls == []
+
+    @pytest.mark.parametrize(
+        "raises",
+        [
+            OSError("no systemctl"),
+            self_update.subprocess.TimeoutExpired("systemctl", 5),
+        ],
+    )
+    def test_a_failing_probe_falls_back(self, probe, raises):
+        probe(raises=raises)
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_a_failing_systemctl_falls_back(self, probe):
+        probe(returncode=1)
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_a_non_service_cgroup_falls_back(self, probe):
+        calls = probe(cg="0::/user.slice/session-3.scope\n")
+        assert self_update._systemd_restart_exit_code() is None
+        assert calls == []
+
+    def test_a_user_manager_service_is_queried_with_user(self, probe):
+        calls = probe(cg=USER_CGROUP)
+        assert self_update._systemd_restart_exit_code() == 0
+        assert calls[0][:3] == ["systemctl", "--user", "show"]
+        assert calls[0][-1] == "runway.service"
+
+    def test_a_system_service_is_not_queried_with_user(self, probe):
+        calls = probe()
+        self_update._systemd_restart_exit_code()
+        assert calls[0][:2] == ["systemctl", "show"]
+        assert calls[0][-1] == "runway-sidecar.service"
+
+    def test_non_linux_never_probes(self, probe, monkeypatch):
+        calls = probe()
+        monkeypatch.setattr(self_update.sys, "platform", "darwin")
+        assert self_update._systemd_restart_exit_code() is None
+        assert calls == []
+
+
+class TestSupervisedRelaunch:
+    def test_exits_for_systemd_after_lock_hooks_and_cleanup(self, monkeypatch, tmp_path):
+        calls: list = []
+        monkeypatch.setattr(self_update, "_PRE_EXEC_HOOKS", [])
+        self_update.register_pre_exec_hook(lambda: calls.append("hook"))
+        monkeypatch.setattr(self_update, "_systemd_restart_exit_code", lambda: 0)
+        monkeypatch.setattr(self_update, "_release_lock", lambda: calls.append("lock"))
+        monkeypatch.setattr(self_update.os, "_exit", lambda code: calls.append(("exit", code)))
+        monkeypatch.setattr(self_update.os, "execve", lambda *a: calls.append("execve"))
+        self_update._relaunch_posix("cli", tmp_path / "x", cleanup=lambda: calls.append("clean"))
+        assert calls[:3] == ["lock", "hook", "clean"]
+        assert ("exit", 0) in calls
+        assert "execve" not in calls
+
+    def test_falls_back_to_execve_without_a_supervisor(self, monkeypatch, tmp_path):
+        calls: list = []
+        monkeypatch.setattr(self_update, "_PRE_EXEC_HOOKS", [])
+        monkeypatch.setattr(self_update, "_systemd_restart_exit_code", lambda: None)
+        monkeypatch.setattr(self_update, "_release_lock", lambda: None)
+        monkeypatch.setattr(self_update.os, "_exit", lambda code: calls.append("exit"))
+        monkeypatch.setattr(self_update.os, "execve", lambda *a: calls.append("execve"))
+        self_update._relaunch_posix("cli", tmp_path / "x")
+        assert calls == ["execve"]
 
 
 class TestExecFailureRestoresHooks:

@@ -1171,24 +1171,9 @@ def setup_logging(log_level: str, file_enabled: bool) -> None:
 
 def _pid_is_alive(pid: int) -> bool:
     """Return True if a process with `pid` is currently running."""
-    if sys.platform == "win32":
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(1, False, pid)
-        if handle:
-            kernel32.CloseHandle(handle)
-            return True
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we don't own it; treat as alive so we don't
-        # clobber another user's sidecar.
-        return True
-    except OSError:
-        return False
-    return True
+    from scripts.sidecar_pkg.runtime_cleanup import pid_is_alive
+
+    return pid_is_alive(pid)
 
 
 def write_pid_file() -> bool:
@@ -1218,8 +1203,8 @@ def write_pid_file() -> bool:
                     return False
                 continue
             if old_pid == os.getpid():
-                # Our own PID: a self-update re-exec keeps the PID (os.execv),
-                # so the file left by the pre-exec image is ours, not a rival's.
+                # Our own PID: a recycled PID or a re-exec that kept it. The pre-exec hook
+                # normally removes the file first, so this is the belt-and-braces case.
                 try:
                     _pid_file_path.write_bytes(pid_bytes)
                 except OSError:
@@ -5097,6 +5082,12 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
 
 
 def main():
+    # Before anything can spawn a subprocess: the self-update hand-off variable must not leak
+    # into children, and the abandoned runtime dir is dead weight.
+    from scripts.sidecar_pkg.runtime_cleanup import release_retired_runtime
+
+    release_retired_runtime()
+
     parser = argparse.ArgumentParser(description="Runway Sidecar")
     parser.add_argument("--config", help="Path to config.json")
     parser.add_argument("--run-once", action="store_true", help="Run once and exit")
@@ -5172,8 +5163,11 @@ def main():
 
     if not write_pid_file():
         sys.exit(1)
-    # A self-update re-execs with the same PID and no atexit; free the PID file first so the
-    # new image does not mistake it for a second running sidecar.
+    from scripts.sidecar_pkg.runtime_cleanup import startup_cleanup
+
+    startup_cleanup()
+    # A self-update re-execs without running atexit; free the PID file first so the new
+    # image does not mistake it for a second running sidecar.
     from scripts.sidecar_pkg.self_update import register_pre_exec_hook
 
     register_pre_exec_hook(remove_pid_file, on_failure=write_pid_file)
