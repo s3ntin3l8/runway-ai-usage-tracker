@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.5...v3.0.0-beta.6) (2026-10-05)
+
+
+### Bug Fixes
+
+* **sidecar:** reclaim stale PyInstaller runtime dirs and avoid nested re-exec ([#570](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/570)) ([cf2dc55](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cf2dc551d4a598f7fcdff98f92f2eb1d48349915))
+
 ## [3.0.0-beta.5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.4...v3.0.0-beta.5) (2026-10-05)
 
 
