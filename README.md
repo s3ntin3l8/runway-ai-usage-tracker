@@ -25,25 +25,25 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 </tr>
 <tr>
 <td width="50%"><a href="assets/screenshots/history.png"><img src="assets/screenshots/history.png" alt="History view with multi-series chart, forecast overlay, and burn-rate stats" /></a></td>
-<td width="50%"><a href="assets/screenshots/settings.png"><img src="assets/screenshots/settings.png" alt="Settings panel with provider config, token health, alerts, audit log" /></a></td>
+<td width="50%"><a href="assets/screenshots/settings.png"><img src="assets/screenshots/settings.png" alt="Settings panel with provider config, credentials, alerts, audit log" /></a></td>
 </tr>
 <tr>
 <td align="center"><sub><b>History</b> — % used / tokens / cost across windows with forecast overlay <br/><a href="assets/screenshots/history-light.png">(light)</a></sub></td>
-<td align="center"><sub><b>Settings</b> — provider toggles, poll intervals, token health, alerts, audit log, version <br/><a href="assets/screenshots/settings-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Settings</b> — provider toggles, poll intervals, credentials, alerts, audit log, data health, version <br/><a href="assets/screenshots/settings-light.png">(light)</a></sub></td>
 </tr>
 <tr>
 <td width="50%"><a href="assets/screenshots/fleet.png"><img src="assets/screenshots/fleet.png" alt="Fleet view showing sidecar registry" /></a></td>
 <td width="50%"><a href="assets/screenshots/dashboard-light.png"><img src="assets/screenshots/dashboard-light.png" alt="Dashboard in light theme" /></a></td>
 </tr>
 <tr>
-<td align="center"><sub><b>Fleet</b> — sidecar registry with version, OS, ingest count, pause/resume <br/><a href="assets/screenshots/fleet-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Fleet</b> — sidecar registry with version, OS, ingest count, pause/resume, keep-alive, and untagged credentials to map <br/><a href="assets/screenshots/fleet-light.png">(light)</a></sub></td>
 <td align="center"><sub><b>Light theme</b> — the dashboard following your OS preference or Settings → Display</sub></td>
 </tr>
 </table>
 
 ## Key Features
 
-- **14 Collectors, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
+- **15 Providers, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
 - **3-Tier Fallback**: APIs → Web scraping → Local files. If one fails, the next takes over
 - **Event-Sourced History**: One immutable row per assistant message in `usage_events` — rollups, windows, and cost are all derived views over the same authoritative log
 - **Smart Caching**: Configurable poll interval (default 15 min; per-provider or global override via Settings) plus a smart-sleep mode that stretches to ~2 hours after 45 min of no quota change
@@ -55,10 +55,12 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 - **Global Insights**: A top-level `/insights` page with cross-provider lifetime totals, cache-hit ratio, busiest day/hour, and Top Models / Projects / Tools rankings
 - **Project & Tool Tracking**: Events capture working directory, project, git branch, and tool names — surfaced as a Sessions project column, sortable session columns (duration / messages / tokens / cost), and the Insights rankings
 - **Provider Sections**: Dashboard cards grouped by provider with context filter pills (Source / Account / Window)
-- **Fleet Management**: Persistent registry of all sidecars with custom names, tags, version reporting, pause/resume controls, and activity tracking
-- **Token Health**: Settings panel shows OAuth/cookie expiry status with one-click refresh for supported providers
+- **Fleet Management**: Persistent registry of all sidecars with custom names, tags, version reporting, pause/resume controls, per-sidecar keep-alive toggle, activity tracking, and a banner for untagged credentials a sidecar found but you have not yet mapped to an account
+- **Credentials**: Settings → Credentials shows where each account's credentials and data come from, with per-source provenance (which machine, env var, file or cookie), expiry status, and refresh or remove actions per source
+- **Keep-alive**: Opt-in per sidecar (`--keep-alive`, or toggle it on Fleet) — the sidecar renews xAI (Grok) and Antigravity (agy) logins itself so they do not lapse while the CLI is idle (not supported by the tray app)
+- **Data Health**: Settings → Data health runs read-only checks over the database (generic account IDs, legacy provider IDs, orphaned credential rows, rollup drift, unpriced models, and more) and offers an in-app fix — preview first, then apply
 - **Sidecar Ingestion**: Push metrics and per-message events from external hosts via `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP rate limit)
-- **Webhook Alerts**: Per-provider/per-account threshold alerts to Discord or Slack
+- **Webhook Alerts**: Per-provider/per-account threshold alerts, plus credential alerts when a login expires or is rejected, to Discord or Slack
 - **Audit Log**: Append-only record of admin mutations, viewable from the Settings panel
 - **Build Info**: Settings → About reports the running server version alongside host, encryption, and auth status
 - **Session Auth**: Admin login via an HttpOnly `SameSite=Strict` session cookie with "log out everywhere" revocation; scripts can still use the `X-Admin-Key` header
