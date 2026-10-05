@@ -2,9 +2,9 @@
 // the pause/resume/rename/delete controls. Also hosts the
 // silent-listener "Untagged credentials" banner + per-card badge (PR #288).
 
-import { useState } from "react";
-import { Link } from "react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from 'react';
+import { Link } from 'react-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle,
   HeartPulse,
@@ -16,8 +16,8 @@ import {
   Server,
   Trash2,
   TriangleAlert,
-} from "lucide-react";
-import { toast } from "sonner";
+} from 'lucide-react';
+import { toast } from 'sonner';
 import {
   checkForUpdates,
   deleteSidecar,
@@ -27,23 +27,23 @@ import {
   setSidecarEnabled,
   setSidecarKeepAlive,
   triggerSidecarUpdate,
-} from "@/api/endpoints";
-import type { Sidecar, UntaggedCredential } from "@/api/types";
-import { PageHeader } from "@/components/layout/PageHeader";
-import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Input, Label } from "@/components/ui/Input";
-import { ResponsiveDialog } from "@/components/ui/ResponsiveDialog";
-import { Skeleton } from "@/components/ui/Skeleton";
-import { StatusDot } from "@/components/ui/StatusDot";
-import { timeAgo } from "@/lib/format";
-import { keepAliveLoginsText } from "@/lib/keepAlive";
-import { AddSidecarCard } from "./AddSidecarCard";
-import { UntaggedCredentialsDialog } from "./UntaggedCredentialsDialog";
-import { buildSidecarNameMap } from "./queries";
-import { PendingUsageEventsCard } from "./PendingUsageEventsCard";
+} from '@/api/endpoints';
+import type { Sidecar, UntaggedCredential } from '@/api/types';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input, Label } from '@/components/ui/Input';
+import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { StatusDot } from '@/components/ui/StatusDot';
+import { timeAgo } from '@/lib/format';
+import { keepAliveLoginsText } from '@/lib/keepAlive';
+import { AddSidecarCard } from './AddSidecarCard';
+import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
+import { buildSidecarNameMap } from './queries';
+import { PendingUsageEventsCard } from './PendingUsageEventsCard';
 
 // Liveness is computed server-side (fleet_registry.to_dict's `stale` field,
 // gated on stale_threshold_minutes) so there's one source of truth — a
@@ -61,7 +61,7 @@ function isOnline(s: Sidecar): boolean {
 export function FleetPage() {
   const queryClient = useQueryClient();
   const sidecars = useQuery({
-    queryKey: ["fleet", "sidecars"],
+    queryKey: ['fleet', 'sidecars'],
     queryFn: fetchSidecars,
     refetchInterval: 60_000,
   });
@@ -69,7 +69,7 @@ export function FleetPage() {
   // cadence as the sidecar list so the banner and per-card badge stay
   // current without forcing a fresh sidecar heartbeat on the wire.
   const untagged = useQuery({
-    queryKey: ["fleet", "untagged_credentials", "all"],
+    queryKey: ['fleet', 'untagged_credentials', 'all'],
     queryFn: () => fetchUntaggedCredentials(),
     refetchInterval: 60_000,
   });
@@ -80,23 +80,21 @@ export function FleetPage() {
   const [showAdd, setShowAdd] = useState(false);
   // Silent-listener dialog selection. `undefined` means no single credential
   // is selected; `null` opens all pending credentials; an entry opens that row.
-  const [tagDialogEntry, setTagDialogEntry] = useState<
-    UntaggedCredential | null | undefined
-  >(undefined);
+  const [tagDialogEntry, setTagDialogEntry] = useState<UntaggedCredential | null | undefined>(
+    undefined,
+  );
   // Set when the resolver should list every untagged credential of one sidecar.
   const [tagDialogSidecar, setTagDialogSidecar] = useState<string | null>(null);
 
-  const updatable = (sidecars.data?.sidecars ?? []).filter(
-    (s) => s.update_available,
-  );
+  const updatable = (sidecars.data?.sidecars ?? []).filter((s) => s.update_available);
 
   // Force a GitHub release poll, then refresh both the sidecar badges and the
   // server-update banner (both read the same server-side cache).
   const check = useMutation({
     mutationFn: checkForUpdates,
     onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ["fleet", "sidecars"] });
-      queryClient.invalidateQueries({ queryKey: ["system", "settings"] });
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+      queryClient.invalidateQueries({ queryKey: ['system', 'settings'] });
       toast.success(
         res.update_available
           ? `Runway v${res.latest_version} is available`
@@ -113,17 +111,13 @@ export function FleetPage() {
       const results = await Promise.allSettled(
         updatable.map((s) => triggerSidecarUpdate(s.sidecar_id)),
       );
-      const updated_count = results.filter(
-        (r) => r.status === "fulfilled",
-      ).length;
+      const updated_count = results.filter((r) => r.status === 'fulfilled').length;
       return { updated_count, failed_count: results.length - updated_count };
     },
     onSuccess: ({ updated_count, failed_count }) => {
-      queryClient.invalidateQueries({ queryKey: ["fleet", "sidecars"] });
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
       if (failed_count === 0) {
-        toast.success(
-          `${updated_count} sidecar${updated_count === 1 ? "" : "s"} queued for update`,
-        );
+        toast.success(`${updated_count} sidecar${updated_count === 1 ? '' : 's'} queued for update`);
       } else {
         toast.error(`Updated ${updated_count}, failed ${failed_count}`);
       }
@@ -146,7 +140,7 @@ export function FleetPage() {
             {(sidecars.data?.sidecars.length ?? 0) > 0 ? (
               <Button
                 size="sm"
-                variant={showAdd ? "primary" : "secondary"}
+                variant={showAdd ? 'primary' : 'secondary'}
                 aria-expanded={showAdd}
                 onClick={() => setShowAdd((v) => !v)}
               >
@@ -216,9 +210,7 @@ export function FleetPage() {
                 <SidecarCard
                   key={s.sidecar_id}
                   sidecar={s}
-                  untaggedCount={
-                    untagged.data?.counts_by_sidecar[s.sidecar_id] ?? 0
-                  }
+                  untaggedCount={untagged.data?.counts_by_sidecar[s.sidecar_id] ?? 0}
                   onEdit={() => setEditing(s)}
                   onDelete={() => setDeleting(s)}
                   onUpdate={() => setUpdating(s)}
@@ -233,14 +225,8 @@ export function FleetPage() {
         )}
       </div>
       <EditSidecarDialog sidecar={editing} onClose={() => setEditing(null)} />
-      <DeleteSidecarDialog
-        sidecar={deleting}
-        onClose={() => setDeleting(null)}
-      />
-      <UpdateSidecarDialog
-        sidecar={updating}
-        onClose={() => setUpdating(null)}
-      />
+      <DeleteSidecarDialog sidecar={deleting} onClose={() => setDeleting(null)} />
+      <UpdateSidecarDialog sidecar={updating} onClose={() => setUpdating(null)} />
       <UntaggedCredentialsDialog
         open={tagDialogEntry !== undefined || tagDialogSidecar !== null}
         singleEntry={tagDialogEntry ?? undefined}
@@ -256,15 +242,13 @@ export function FleetPage() {
           if (!open) setConfirmUpdateAll(false);
         }}
         title="Push update to all?"
-        description={`${updatable.length} sidecar${updatable.length === 1 ? "" : "s"} with a pending update`}
+        description={`${updatable.length} sidecar${updatable.length === 1 ? '' : 's'} with a pending update`}
       >
         <p className="text-sm text-fg-muted">
-          Queues the latest build for{" "}
-          {updatable
-            .map((s) => s.custom_name || s.hostname || s.sidecar_id)
-            .join(", ")}
-          . Each downloads, verifies, and installs the update on its next
-          check-in, then restarts itself. Collection resumes automatically.
+          Queues the latest build for{' '}
+          {updatable.map((s) => s.custom_name || s.hostname || s.sidecar_id).join(', ')}. Each
+          downloads, verifies, and installs the update on its next check-in, then restarts itself.
+          Collection resumes automatically.
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <Button onClick={() => setConfirmUpdateAll(false)}>Cancel</Button>
@@ -305,8 +289,8 @@ function SidecarCard({
   const toggle = useMutation({
     mutationFn: () => setSidecarEnabled(sidecar.sidecar_id, paused),
     onSuccess: () => {
-      toast.success(paused ? "Sidecar resumed" : "Sidecar paused");
-      queryClient.invalidateQueries({ queryKey: ["fleet", "sidecars"] });
+      toast.success(paused ? 'Sidecar resumed' : 'Sidecar paused');
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -315,17 +299,17 @@ function SidecarCard({
   const keepAliveOn = sidecar.keep_alive === true;
   const keepAliveUnknown = sidecar.keep_alive == null;
   const keepAliveTitle = keepAliveUnknown
-    ? "This sidecar does not report keep-alive. Update it, or note that the tray app does not support keep-alive."
+    ? 'This sidecar does not report keep-alive. Update it, or note that the tray app does not support keep-alive.'
     : keepAliveOn
-      ? `Keep-alive is on: this sidecar renews its ${keepAliveLoginsText()} logins itself. Click to turn it off.`
-      : `Turn keep-alive on: this sidecar will renew its ${keepAliveLoginsText()} logins itself, so they never lapse while the CLI is idle.`;
+    ? `Keep-alive is on: this sidecar renews its ${keepAliveLoginsText()} logins itself. Click to turn it off.`
+    : `Turn keep-alive on: this sidecar will renew its ${keepAliveLoginsText()} logins itself, so they never lapse while the CLI is idle.`;
   const keepAlive = useMutation({
     mutationFn: () => setSidecarKeepAlive(sidecar.sidecar_id, !keepAliveOn),
     onSuccess: () => {
       toast.success(
-        `Keep-alive ${keepAliveOn ? "off" : "on"} — applies on the sidecar's next check-in`,
+        `Keep-alive ${keepAliveOn ? 'off' : 'on'} — applies on the sidecar's next check-in`,
       );
-      queryClient.invalidateQueries({ queryKey: ["fleet", "sidecars"] });
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -338,8 +322,8 @@ function SidecarCard({
           share one left edge. */}
       <div className="flex items-start gap-2.5">
         <StatusDot
-          status={paused ? "unknown" : online ? "ok" : "warning"}
-          label={paused ? "paused" : online ? "online" : "stale"}
+          status={paused ? 'unknown' : online ? 'ok' : 'warning'}
+          label={paused ? 'paused' : online ? 'online' : 'stale'}
           className="mt-1.5"
         />
         <div className="min-w-0 flex-1">
@@ -349,39 +333,37 @@ function SidecarCard({
                 {sidecar.custom_name || sidecar.hostname || sidecar.sidecar_id}
               </p>
               <p className="truncate text-[11px] text-fg-subtle">
-                {sidecar.hostname && sidecar.custom_name
-                  ? `${sidecar.hostname} · `
-                  : ""}
-                {sidecar.os_platform ?? "—"}
+                {sidecar.hostname && sidecar.custom_name ? `${sidecar.hostname} · ` : ''}
+                {sidecar.os_platform ?? '—'}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label={paused ? "Resume collection" : "Pause collection"}
-                title={paused ? "Resume collection" : "Pause collection"}
+                aria-label={paused ? 'Resume collection' : 'Pause collection'}
+                title={paused ? 'Resume collection' : 'Pause collection'}
                 onClick={() => toggle.mutate()}
                 loading={toggle.isPending}
               >
-                {paused ? (
-                  <Play className="size-3.5" />
-                ) : (
-                  <Pause className="size-3.5" />
-                )}
+                {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
               </Button>
               <Button
                 size="icon-sm"
                 variant="ghost"
                 aria-label={
-                  keepAliveOn ? "Turn keep-alive off" : "Turn keep-alive on"
+                  keepAliveUnknown
+                    ? 'Keep-alive unsupported by this sidecar'
+                    : keepAliveOn
+                      ? 'Turn keep-alive off'
+                      : 'Turn keep-alive on'
                 }
                 aria-pressed={keepAliveOn}
                 title={keepAliveTitle}
                 disabled={keepAliveUnknown}
                 onClick={() => keepAlive.mutate()}
                 loading={keepAlive.isPending}
-                className={keepAliveOn ? "text-ok" : undefined}
+                className={keepAliveOn ? 'text-ok' : undefined}
               >
                 <HeartPulse className="size-3.5" />
               </Button>
@@ -398,10 +380,7 @@ function SidecarCard({
             </div>
           </div>
 
-          {(sidecar.tags?.length ?? 0) > 0 ||
-          paused ||
-          keepAliveOn ||
-          untaggedCount > 0 ? (
+          {(sidecar.tags?.length ?? 0) > 0 || paused || keepAliveOn || untaggedCount > 0 ? (
             <div className="mt-2.5 flex flex-wrap gap-1">
               {paused ? <Badge variant="warning">paused</Badge> : null}
               {keepAliveOn ? <Badge variant="neutral">keep-alive</Badge> : null}
@@ -416,10 +395,10 @@ function SidecarCard({
                   onClick={onResolveUntagged}
                   className="rounded-md border border-warning/40 bg-warning-muted px-2 py-0.5 text-[11px] font-medium text-warning hover:border-warning"
                   aria-label={`${untaggedCount} untagged credential${
-                    untaggedCount === 1 ? "" : "s"
+                    untaggedCount === 1 ? '' : 's'
                   } — click to resolve`}
                   title={`${untaggedCount} credential${
-                    untaggedCount === 1 ? "" : "s"
+                    untaggedCount === 1 ? '' : 's'
                   } waiting for an operator tag`}
                 >
                   Untagged: {untaggedCount}
@@ -432,30 +411,19 @@ function SidecarCard({
             <div className="col-span-3 min-w-0">
               <dt className="text-fg-subtle">Version</dt>
               <dd className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                <span className="font-mono tabular">
-                  v{sidecar.sidecar_version ?? "?"}
-                </span>
-                {sidecar.channel === "beta" || sidecar.channel === "edge" ? (
+                <span className="font-mono tabular">v{sidecar.sidecar_version ?? '?'}</span>
+                {sidecar.channel === 'beta' || sidecar.channel === 'edge' ? (
                   <Badge
                     variant="accent"
                     className="uppercase tracking-wide"
-                    title={
-                      sidecar.channel === "beta"
-                        ? "Numbered prerelease channel"
-                        : "Rolling prerelease channel"
-                    }
+                    title={sidecar.channel === 'beta' ? 'Numbered prerelease channel' : 'Rolling prerelease channel'}
                   >
                     {sidecar.channel}
                   </Badge>
                 ) : null}
-                {sidecar.update_available ? (
-                  <Badge variant="warning">update</Badge>
-                ) : null}
+                {sidecar.update_available ? <Badge variant="warning">update</Badge> : null}
                 {!sidecar.update_available && sidecar.outdated ? (
-                  <Badge
-                    variant="neutral"
-                    title="A newer build exists; it installs once the sidecar is back online"
-                  >
+                  <Badge variant="neutral" title="A newer build exists; it installs once the sidecar is back online">
                     outdated
                   </Badge>
                 ) : null}
@@ -463,30 +431,22 @@ function SidecarCard({
             </div>
             <div>
               <dt className="text-fg-subtle">Last seen</dt>
-              <dd className="mt-0.5 font-mono tabular">
-                {timeAgo(sidecar.last_seen)}
-              </dd>
+              <dd className="mt-0.5 font-mono tabular">{timeAgo(sidecar.last_seen)}</dd>
             </div>
             <div>
               <dt className="text-fg-subtle">Pushes</dt>
-              <dd className="mt-0.5 font-mono tabular">
-                {sidecar.ingest_count ?? 0}
-              </dd>
+              <dd className="mt-0.5 font-mono tabular">{sidecar.ingest_count ?? 0}</dd>
             </div>
             <div>
               <dt className="text-fg-subtle">Errors</dt>
-              <dd
-                className={`mt-0.5 font-mono tabular ${(sidecar.error_count ?? 0) > 0 ? "text-warning" : ""}`}
-              >
+              <dd className={`mt-0.5 font-mono tabular ${(sidecar.error_count ?? 0) > 0 ? 'text-warning' : ''}`}>
                 {sidecar.error_count ?? 0}
               </dd>
             </div>
           </dl>
 
           <div className="mt-3 flex items-center justify-between gap-2 text-[11px]">
-            <span className="text-fg-subtle">
-              Credentials & account identities
-            </span>
+            <span className="text-fg-subtle">Credentials & account identities</span>
             <Link
               to={`/settings/credentials?view=machine#machine-${encodeURIComponent(sidecar.sidecar_id)}`}
               className="font-medium text-accent hover:underline"
@@ -501,11 +461,7 @@ function SidecarCard({
               Rename / tags
             </Button>
             {logs.length > 0 ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setShowLogs(true)}
-              >
+              <Button size="sm" variant="ghost" onClick={() => setShowLogs(true)}>
                 Logs
               </Button>
             ) : null}
@@ -526,20 +482,14 @@ function SidecarCard({
         width="max-w-2xl"
       >
         <pre className="max-h-96 overflow-auto rounded-sm bg-surface-2 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
-          {logs.join("\n")}
+          {logs.join('\n')}
         </pre>
       </ResponsiveDialog>
     </Card>
   );
 }
 
-function EditSidecarDialog({
-  sidecar,
-  onClose,
-}: {
-  sidecar: Sidecar | null;
-  onClose: () => void;
-}) {
+function EditSidecarDialog({ sidecar, onClose }: { sidecar: Sidecar | null; onClose: () => void }) {
   const queryClient = useQueryClient();
   // Remount the form whenever a different sidecar opens
   return (
@@ -556,7 +506,7 @@ function EditSidecarDialog({
           key={sidecar.sidecar_id}
           sidecar={sidecar}
           onSaved={() => {
-            queryClient.invalidateQueries({ queryKey: ["fleet", "sidecars"] });
+            queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
             onClose();
           }}
         />
@@ -565,27 +515,21 @@ function EditSidecarDialog({
   );
 }
 
-function EditSidecarForm({
-  sidecar,
-  onSaved,
-}: {
-  sidecar: Sidecar;
-  onSaved: () => void;
-}) {
-  const [name, setName] = useState(sidecar.custom_name ?? "");
-  const [tags, setTags] = useState((sidecar.tags ?? []).join(", "));
+function EditSidecarForm({ sidecar, onSaved }: { sidecar: Sidecar; onSaved: () => void }) {
+  const [name, setName] = useState(sidecar.custom_name ?? '');
+  const [tags, setTags] = useState((sidecar.tags ?? []).join(', '));
 
   const save = useMutation({
     mutationFn: () =>
       patchSidecar(sidecar.sidecar_id, {
         custom_name: name.trim(),
         tags: tags
-          .split(",")
+          .split(',')
           .map((t) => t.trim())
           .filter(Boolean),
       }),
     onSuccess: () => {
-      toast.success("Sidecar updated");
+      toast.success('Sidecar updated');
       onSaved();
     },
     onError: (err) => toast.error(err.message),
@@ -617,12 +561,7 @@ function EditSidecarForm({
           placeholder="work, laptop"
         />
       </div>
-      <Button
-        type="submit"
-        variant="primary"
-        className="mt-1"
-        loading={save.isPending}
-      >
+      <Button type="submit" variant="primary" className="mt-1" loading={save.isPending}>
         Save
       </Button>
     </form>
@@ -640,8 +579,8 @@ function DeleteSidecarDialog({
   const del = useMutation({
     mutationFn: (id: string) => deleteSidecar(id),
     onSuccess: () => {
-      toast.success("Sidecar removed");
-      queryClient.invalidateQueries({ queryKey: ["fleet", "sidecars"] });
+      toast.success('Sidecar removed');
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
       onClose();
     },
     onError: (err) => toast.error(err.message),
@@ -654,13 +593,11 @@ function DeleteSidecarDialog({
         if (!open) onClose();
       }}
       title="Remove sidecar?"
-      description={
-        sidecar?.custom_name || sidecar?.hostname || sidecar?.sidecar_id
-      }
+      description={sidecar?.custom_name || sidecar?.hostname || sidecar?.sidecar_id}
     >
       <p className="text-sm text-fg-muted">
-        The registry entry is removed; collected usage events stay. The sidecar
-        re-registers if it keeps running and checks in again.
+        The registry entry is removed; collected usage events stay. The sidecar re-registers if it
+        keeps running and checks in again.
       </p>
       <div className="mt-4 flex justify-end gap-2">
         <Button onClick={onClose}>Cancel</Button>
@@ -686,9 +623,7 @@ function UpdateSidecarDialog({
   const update = useMutation({
     mutationFn: (id: string) => triggerSidecarUpdate(id),
     onSuccess: () => {
-      toast.success(
-        "Update pushed — the sidecar installs it on its next check-in",
-      );
+      toast.success('Update pushed — the sidecar installs it on its next check-in');
       onClose();
     },
     onError: (err) => toast.error(err.message),
@@ -701,14 +636,11 @@ function UpdateSidecarDialog({
         if (!open) onClose();
       }}
       title="Push update?"
-      description={
-        sidecar?.custom_name || sidecar?.hostname || sidecar?.sidecar_id
-      }
+      description={sidecar?.custom_name || sidecar?.hostname || sidecar?.sidecar_id}
     >
       <p className="text-sm text-fg-muted">
-        Queues the latest build for this sidecar. It downloads, verifies, and
-        installs the update on its next check-in, then restarts itself.
-        Collection resumes automatically.
+        Queues the latest build for this sidecar. It downloads, verifies, and installs the
+        update on its next check-in, then restarts itself. Collection resumes automatically.
       </p>
       <div className="mt-4 flex justify-end gap-2">
         <Button onClick={onClose}>Cancel</Button>
@@ -759,8 +691,7 @@ function UntaggedBanner({
             </span>
           </p>
           <p className="mt-0.5 text-[11px] text-fg-muted">
-            Sidecars are blocking these from upload until you map each to a
-            configured provider row.
+            Sidecars are blocking these from upload until you map each to a configured provider row.
           </p>
 
           {Object.keys(counts).length > 0 ? (
@@ -773,14 +704,11 @@ function UntaggedBanner({
                       onClick={() => onResolveSidecar(sidecarId)}
                       className="rounded-md border border-warning/40 bg-surface-1 px-2 py-0.5 text-[11px] font-medium text-fg hover:border-warning"
                       aria-label={`${count} untagged credential${
-                        count === 1 ? "" : "s"
+                        count === 1 ? '' : 's'
                       } on sidecar ${sidecarId} — click to resolve`}
                       title={`${names.get(sidecarId) ?? sidecarId}: ${count} pending`}
                     >
-                      <span className="font-mono">
-                        {names.get(sidecarId) ?? sidecarId}
-                      </span>{" "}
-                      · {count}
+                      <span className="font-mono">{names.get(sidecarId) ?? sidecarId}</span> · {count}
                     </button>
                   </li>
                 );
