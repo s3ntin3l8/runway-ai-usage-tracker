@@ -13,6 +13,7 @@ import {
   Pencil,
   Play,
   RefreshCw,
+  RotateCcw,
   Server,
   Trash2,
   TriangleAlert,
@@ -295,20 +296,37 @@ function SidecarCard({
     onError: (err) => toast.error(err.message),
   });
 
-  // Reported state is what the sidecar runs now; a pending remote change shows once it checks in.
-  const keepAliveOn = sidecar.keep_alive === true;
-  const keepAliveUnknown = sidecar.keep_alive == null;
+  // `keep_alive` is what the sidecar runs now; `keep_alive_desired` is a server-side override
+  // it picks up on its next check-in. The toggle acts on the effective value (override first).
+  const keepAliveReported = sidecar.keep_alive === true;
+  const keepAliveDesired = sidecar.keep_alive_desired ?? null;
+  const keepAliveHasOverride = keepAliveDesired !== null;
+  const keepAlivePending = keepAliveHasOverride && keepAliveDesired !== keepAliveReported;
+  const keepAliveEffective = keepAliveDesired ?? keepAliveReported;
+  // An override can still be cleared when the sidecar reports nothing, but not set.
+  const keepAliveUnknown = sidecar.keep_alive == null && !keepAliveHasOverride;
+  const pendingText = `Requested ${keepAliveDesired ? 'on' : 'off'} — applies on next check-in`;
   const keepAliveTitle = keepAliveUnknown
     ? 'This sidecar does not report keep-alive. Update it, or note that the tray app does not support keep-alive.'
-    : keepAliveOn
+    : keepAlivePending
+    ? `${pendingText}. Click to request ${keepAliveDesired ? 'off' : 'on'} instead.`
+    : keepAliveEffective
     ? `Keep-alive is on: this sidecar renews its ${keepAliveLoginsText()} logins itself. Click to turn it off.`
     : `Turn keep-alive on: this sidecar will renew its ${keepAliveLoginsText()} logins itself, so they never lapse while the CLI is idle.`;
   const keepAlive = useMutation({
-    mutationFn: () => setSidecarKeepAlive(sidecar.sidecar_id, !keepAliveOn),
+    mutationFn: () => setSidecarKeepAlive(sidecar.sidecar_id, !keepAliveEffective),
     onSuccess: () => {
       toast.success(
-        `Keep-alive ${keepAliveOn ? 'off' : 'on'} — applies on the sidecar's next check-in`,
+        `Keep-alive ${keepAliveEffective ? 'off' : 'on'} — applies on the sidecar's next check-in`,
       );
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const clearKeepAlive = useMutation({
+    mutationFn: () => setSidecarKeepAlive(sidecar.sidecar_id, null),
+    onSuccess: () => {
+      toast.success("Keep-alive override cleared — the sidecar's own setting applies");
       queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
     },
     onError: (err) => toast.error(err.message),
@@ -354,19 +372,34 @@ function SidecarCard({
                 aria-label={
                   keepAliveUnknown
                     ? 'Keep-alive unsupported by this sidecar'
-                    : keepAliveOn
+                    : keepAliveEffective
                       ? 'Turn keep-alive off'
                       : 'Turn keep-alive on'
                 }
-                aria-pressed={keepAliveOn}
+                aria-pressed={keepAliveEffective}
                 title={keepAliveTitle}
                 disabled={keepAliveUnknown}
                 onClick={() => keepAlive.mutate()}
                 loading={keepAlive.isPending}
-                className={keepAliveOn ? 'text-ok' : undefined}
+                className={
+                  keepAlivePending ? 'text-warning' : keepAliveEffective ? 'text-ok' : undefined
+                }
+                data-pending={keepAlivePending ? 'true' : undefined}
               >
                 <HeartPulse className="size-3.5" />
               </Button>
+              {keepAliveHasOverride ? (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Use sidecar's own keep-alive setting"
+                  title="Clear the Runway override and use the sidecar's own keep-alive setting"
+                  onClick={() => clearKeepAlive.mutate()}
+                  loading={clearKeepAlive.isPending}
+                >
+                  <RotateCcw className="size-3.5" />
+                </Button>
+              ) : null}
               <Button
                 size="icon-sm"
                 variant="ghost"
@@ -380,10 +413,16 @@ function SidecarCard({
             </div>
           </div>
 
-          {(sidecar.tags?.length ?? 0) > 0 || paused || keepAliveOn || untaggedCount > 0 ? (
+          {(sidecar.tags?.length ?? 0) > 0 || paused || keepAliveReported || keepAlivePending || untaggedCount > 0 ? (
             <div className="mt-2.5 flex flex-wrap gap-1">
               {paused ? <Badge variant="warning">paused</Badge> : null}
-              {keepAliveOn ? <Badge variant="neutral">keep-alive</Badge> : null}
+              {keepAlivePending ? (
+                <Badge variant="warning" title={pendingText}>
+                  keep-alive {keepAliveDesired ? 'on' : 'off'} pending
+                </Badge>
+              ) : keepAliveReported ? (
+                <Badge variant="neutral">keep-alive</Badge>
+              ) : null}
               {(sidecar.tags ?? []).map((tag) => (
                 <Badge key={tag} variant="neutral">
                   {tag}
