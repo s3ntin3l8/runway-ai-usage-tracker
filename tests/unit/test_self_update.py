@@ -885,6 +885,17 @@ class TestFreshRuntimeOnRelaunch:
         self_update._relaunch_posix("tray", tmp_path / "tray")
         self._assert_fresh(seen["env"])
 
+    def test_macos_open_spawn_gets_a_scrubbed_env(self, monkeypatch, tmp_path):
+        seen: dict = {}
+        monkeypatch.setattr(self_update.sys, "platform", "darwin")
+        monkeypatch.setattr(
+            self_update.subprocess, "Popen", lambda *a, **k: seen.update(k, argv=a[0])
+        )
+        monkeypatch.setattr(self_update.os, "_exit", lambda code: None)
+        self_update._relaunch_posix("tray", tmp_path / "tray")
+        assert seen["argv"][:2] == ["open", "-n"]
+        self._assert_fresh(seen["env"])
+
     def test_cleanup_runs_before_exec(self, monkeypatch, tmp_path):
         download = tmp_path / "runway-update-x"
         download.mkdir()

@@ -878,16 +878,13 @@ def _relaunch_posix(
     # Tray: never exec from inside the pystray loop — spawn detached and exit.
     if cleanup is not None:
         _call_best_effort(cleanup, "Pre-relaunch cleanup")
+    # `open` hands its caller's environment to the launched app, so scrub on macOS too.
+    env = _fresh_runtime_env()
     if sys.platform == "darwin":
-        # `open -n` launches via LaunchServices, which does not hand this process's
-        # environment (and so its _PYI_* vars) to the new app: no scrub needed here.
-        subprocess.Popen(["open", "-n", str(install)], close_fds=True)  # noqa: S603 S607
+        subprocess.Popen(["open", "-n", str(install)], close_fds=True, env=env)  # noqa: S603 S607
     else:
         subprocess.Popen(  # noqa: S603
-            [str(install)],
-            start_new_session=True,
-            close_fds=True,
-            env=_fresh_runtime_env(),
+            [str(install)], start_new_session=True, close_fds=True, env=env
         )
     logger.info("Relaunched %s; exiting old process", install)
     _release_lock()
