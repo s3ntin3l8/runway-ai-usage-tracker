@@ -299,7 +299,9 @@ _FAILING_PREFIX = re.compile(r"^⚠ Collection failing(?: \(.*?\))? — ")
 def with_failing_prefix(detail: str, reason: str | None) -> str:
     """Prefix *detail* with the collection-failing marker, replacing any earlier one."""
     base = _FAILING_PREFIX.sub("", detail)
-    reason = (reason or "").strip()
+    # The strip regexes (here and in webapp/src/lib/quota.ts) end the reason at
+    # the first ") — ", so keep the separator out of the reason itself.
+    reason = (reason or "").replace(" — ", " - ").strip()
     label = f"⚠ Collection failing ({reason})" if reason else "⚠ Collection failing"
     return f"{label} — {base}"
 

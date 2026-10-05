@@ -371,6 +371,15 @@ describe('failingReason / staleTitle', () => {
     expect(failingReason(c)).toBe('HTTP 401 (invalid_grant)');
   });
 
+  it('extracts the full sanitized reason when it contains a closing paren', () => {
+    // The backend rewrites " — " inside a reason to " - ", so the lazy match stops at the
+    // real separator even for "(HTTP 401)" followed by more text.
+    const c = withDetail(
+      '⚠ Collection failing (refresh failed (HTTP 401) - re-login required) — 12% used (5h) — resets soon',
+    );
+    expect(failingReason(c)).toBe('refresh failed (HTTP 401) - re-login required');
+  });
+
   it('falls back when there is no reason', () => {
     const c = withDetail('⚠ Collection failing — 12% used');
     expect(failingReason(c)).toBeNull();

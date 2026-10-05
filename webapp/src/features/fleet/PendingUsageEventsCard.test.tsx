@@ -57,7 +57,7 @@ describe('PendingUsageEventsCard', () => {
         },
       ],
     });
-    vi.mocked(api.assignPendingUsageEvents).mockResolvedValue({ assigned: 2, provider_id: 'xai' });
+    vi.mocked(api.assignPendingUsageEvents).mockResolvedValue({ assigned: 2, provider_id: 'xai', mappings: [] });
     vi.mocked(api.assignPendingUsageEventsBatch).mockResolvedValue({
       assigned: 3,
       providers: ['xai'],
@@ -157,6 +157,7 @@ describe('PendingUsageEventsCard', () => {
         assigned: 2,
         provider_id: 'gemini',
         target_provider_id: 'antigravity',
+        mappings: [],
       });
     });
 
@@ -416,7 +417,7 @@ describe('PendingUsageEventsCard', () => {
           offset: 0,
       limit: 100,
     });
-    vi.mocked(api.assignPendingUsageEvents).mockResolvedValue({ assigned: 1, provider_id: 'xai' });
+    vi.mocked(api.assignPendingUsageEvents).mockResolvedValue({ assigned: 1, provider_id: 'xai', mappings: [] });
     renderWithProviders(<PendingUsageEventsCard />);
 
     expect(await screen.findByText(/No session ID · event 44/)).toBeInTheDocument();
