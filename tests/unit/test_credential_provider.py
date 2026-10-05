@@ -107,7 +107,7 @@ def test_github_token_env():
         patch.dict(os.environ, {"GITHUB_TOKEN": "env_token"}),
         patch("os.path.exists", return_value=False),
     ):
-        token = CredentialProvider.get_github_token()
+        token = CredentialProvider.get_github_data().get("api_key", "")
         assert token == "env_token"
 
 
@@ -119,7 +119,7 @@ def test_github_token_runway_json():
         patch("os.path.exists", side_effect=lambda p: "github_oauth.json" in str(p)),
         patch("builtins.open", mock_open(read_data=mock_data)),
     ):
-        token = CredentialProvider.get_github_token()
+        token = CredentialProvider.get_github_data().get("api_key", "")
         assert token == "runway_token"
 
 
@@ -142,7 +142,7 @@ def test_github_token_gh_cli():
             MagicMock(safe_load=yaml.safe_load),
         ),
     ):
-        token = CredentialProvider.get_github_token()
+        token = CredentialProvider.get_github_data().get("api_key", "")
         assert token == "gho_cli_token"
 
 
