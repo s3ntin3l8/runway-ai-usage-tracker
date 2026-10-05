@@ -4695,9 +4695,8 @@ class DaemonRunner:
                 self_update_capable: bool | None = self_update_supported()
             except Exception:
                 self_update_capable = None
-            from scripts.sidecar_pkg.keep_alive import is_enabled as keep_alive_enabled
-
-            keep_alive = keep_alive_enabled()
+            # None (unknown) for a sidecar that never armed keep-alive (the tray app).
+            keep_alive = _KEEP_ALIVE.reported()
 
             # Try to flush queue first
             queue_flush(api_url, api_key, stop_event=self._stop_event, config=self._config)

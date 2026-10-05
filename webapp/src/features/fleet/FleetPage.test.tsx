@@ -184,11 +184,21 @@ describe('FleetPage', () => {
       expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('laptop', false);
     });
 
-    it('treats an older sidecar that does not report it as off, with no badge', async () => {
+    it('treats a sidecar that does not report it as unknown: disabled, with no badge', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
       renderWithProviders(<FleetPage />);
-      expect(await screen.findByRole('button', { name: /turn keep-alive on/i })).toBeInTheDocument();
+      const btn = await screen.findByRole('button', { name: /keep-alive unsupported/i });
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', expect.stringMatching(/does not report keep-alive/i));
+      await userEvent.click(btn);
+      expect(api.setSidecarKeepAlive).not.toHaveBeenCalled();
       expect(screen.queryByText('keep-alive')).not.toBeInTheDocument();
+    });
+
+    it('keeps the toggle enabled when the sidecar reports keep-alive off', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: false })] });
+      renderWithProviders(<FleetPage />);
+      expect(await screen.findByRole('button', { name: /turn keep-alive on/i })).toBeEnabled();
     });
 
     it('toasts the error when the request fails', async () => {

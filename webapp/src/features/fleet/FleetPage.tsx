@@ -297,7 +297,10 @@ function SidecarCard({
 
   // Reported state is what the sidecar runs now; a pending remote change shows once it checks in.
   const keepAliveOn = sidecar.keep_alive === true;
-  const keepAliveTitle = keepAliveOn
+  const keepAliveUnknown = sidecar.keep_alive == null;
+  const keepAliveTitle = keepAliveUnknown
+    ? 'This sidecar does not report keep-alive. Update it, or note that the tray app does not support keep-alive.'
+    : keepAliveOn
     ? `Keep-alive is on: this sidecar renews its ${keepAliveLoginsText()} logins itself. Click to turn it off.`
     : `Turn keep-alive on: this sidecar will renew its ${keepAliveLoginsText()} logins itself, so they never lapse while the CLI is idle.`;
   const keepAlive = useMutation({
@@ -348,9 +351,16 @@ function SidecarCard({
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label={keepAliveOn ? 'Turn keep-alive off' : 'Turn keep-alive on'}
+                aria-label={
+                  keepAliveUnknown
+                    ? 'Keep-alive unsupported by this sidecar'
+                    : keepAliveOn
+                      ? 'Turn keep-alive off'
+                      : 'Turn keep-alive on'
+                }
                 aria-pressed={keepAliveOn}
                 title={keepAliveTitle}
+                disabled={keepAliveUnknown}
                 onClick={() => keepAlive.mutate()}
                 loading={keepAlive.isPending}
                 className={keepAliveOn ? 'text-ok' : undefined}
