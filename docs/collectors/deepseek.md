@@ -142,7 +142,7 @@ is fetched server-side. See [sidecar documentation](../sidecar.md).
 ### Events show under a different account than the balance card
 **Cause:** The opencode account email and the balance card's account_id don't
 match yet.
-**Fix:** Label the account in Settings → Untagged Credentials; the
+**Fix:** Label the account in Fleet → Untagged Credentials; the
 `account_tag_hints` flow then retargets future events (same as OpenRouter).
 
 ## Related Files

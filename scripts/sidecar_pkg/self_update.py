@@ -368,7 +368,7 @@ def _lock_path() -> pathlib.Path:
     return _sidecar_dir() / _LOCK_NAME
 
 
-# Callbacks run right before ``os.execv`` replaces the process image. ``execv`` keeps the
+# Callbacks run right before ``os.execve`` replaces the process image. ``execve`` keeps the
 # PID, and nothing (atexit, finally) runs across it, so anything that must not outlive the
 # old image — the sidecar's PID file — has to be released here, or the re-exec'd daemon sees
 # its own PID in the file, reports "already running" and exits.
@@ -380,7 +380,7 @@ def register_pre_exec_hook(
 ) -> None:
     """Run ``hook`` just before a CLI self-update re-execs (best-effort, idempotent).
 
-    ``on_failure`` undoes it if ``execv`` itself fails: the old image is then still running
+    ``on_failure`` undoes it if ``execve`` itself fails: the old image is then still running
     and must not be left without whatever ``hook`` released (e.g. its PID file).
     """
     if all(existing != hook for existing, _ in _PRE_EXEC_HOOKS):
@@ -409,7 +409,7 @@ def _undo_pre_exec_hooks() -> None:
 def _release_lock() -> None:
     """Remove the single-flight lock file.
 
-    A successful update ends in ``os.execv`` / ``os._exit`` (see the relaunch
+    A successful update ends in ``os.execve`` / ``os._exit`` (see the relaunch
     helpers), which replace the process image and so never run the
     ``_single_flight`` context manager's ``finally``. Without an explicit
     release here every successful update would orphan the lock and wedge all
@@ -555,6 +555,7 @@ def apply_update(
     restart: bool,
     current_version: str | None = None,
     new_version: str | None = None,
+    cleanup: Callable[[], None] | None = None,
 ) -> bool:
     """Swap the running install with the staged copy and optionally relaunch.
 
@@ -562,7 +563,9 @@ def apply_update(
     *current_version*) for ``rollback()``. *new_version* refreshes the Windows
     installer's Apps & Features entry. Returns True on a successful swap. On a
     non-writable install path it logs and returns False without leaving
-    partial state.
+    partial state. *cleanup* (POSIX only) runs iff a relaunch actually replaces the
+    running image, directly via ``execve`` or indirectly via ``os._exit`` after
+    spawning the new one, i.e. exactly when the caller's ``finally`` is skipped.
     """
     install = _install_path()
     staged = _find_staged(staged_dir, install)
@@ -579,7 +582,14 @@ def apply_update(
         _write_previous_version(install, current_version)
         return _apply_windows(install, new_exe, restart=restart, display_version=new_version)
 
-    return _swap_posix(target, install, staged, restart=restart, backup_version=current_version)
+    return _swap_posix(
+        target,
+        install,
+        staged,
+        restart=restart,
+        backup_version=current_version,
+        cleanup=cleanup,
+    )
 
 
 def _swap_posix(
@@ -589,6 +599,7 @@ def _swap_posix(
     *,
     restart: bool,
     backup_version: str | None,
+    cleanup: Callable[[], None] | None = None,
 ) -> bool:
     """POSIX (Linux + macOS) swap: move the running file/bundle to ``.previous``
     and *incoming* into place. A running file's open inode survives the move."""
@@ -636,7 +647,7 @@ def _swap_posix(
     _rm(install.with_name(install.name + ".old"))
     logger.info("Installed %s (previous kept at %s)", install, previous)
     if restart:
-        _relaunch_posix(target, install)
+        _relaunch_posix(target, install, cleanup=cleanup)
     return True
 
 
@@ -828,9 +839,26 @@ def rollback(current_version: str, *, restart: bool = True) -> bool:
         return ok
 
 
-def _relaunch_posix(target: str, install: pathlib.Path) -> None:
+def _fresh_runtime_env() -> dict[str, str]:
+    """Environment for a relaunched onefile build.
+
+    The running PyInstaller child carries ``_PYI_*`` variables pointing at its own
+    extracted ``_MEI`` dir. Inherited by the new binary, they make its bootloader
+    run the OLD unpacked code, so the update installs but never takes effect.
+    ``PYINSTALLER_RESET_ENVIRONMENT`` forces a fresh unpack (mirrors the Windows
+    helper script); the ``_PYI_*`` keys are dropped as well for good measure.
+    """
+    # A copy, so os.environ is untouched if execve fails and this image keeps running.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
+def _relaunch_posix(
+    target: str, install: pathlib.Path, *, cleanup: Callable[[], None] | None = None
+) -> None:
     """Restart into the freshly-installed binary."""
-    # Release the single-flight lock before any process replacement — os.execv /
+    # Release the single-flight lock before any process replacement — os.execve /
     # os._exit never run the _single_flight finally, so the lock would leak and
     # wedge every future update.
     if target == "cli":
@@ -838,19 +866,27 @@ def _relaunch_posix(target: str, install: pathlib.Path) -> None:
         logger.info("Re-executing %s", install)
         _release_lock()
         _run_pre_exec_hooks()
+        if cleanup is not None:
+            _call_best_effort(cleanup, "Pre-relaunch cleanup")
         try:
-            os.execv(str(install), [str(install), *sys.argv[1:]])
+            os.execve(str(install), [str(install), *sys.argv[1:]], _fresh_runtime_env())
         except OSError:
-            # execv failed (unreadable/ENOEXEC binary): this image keeps running, so hand back
+            # execve failed (unreadable/ENOEXEC binary): this image keeps running, so hand back
             # what the hooks released before the caller logs the failed update.
             _undo_pre_exec_hooks()
             raise
         return  # unreachable
-    # Tray: never execv from inside the pystray loop — spawn detached and exit.
+    # Tray: never exec from inside the pystray loop — spawn detached and exit.
+    if cleanup is not None:
+        _call_best_effort(cleanup, "Pre-relaunch cleanup")
+    # `open` hands its caller's environment to the launched app, so scrub on macOS too.
+    env = _fresh_runtime_env()
     if sys.platform == "darwin":
-        subprocess.Popen(["open", "-n", str(install)], close_fds=True)  # noqa: S603 S607
+        subprocess.Popen(["open", "-n", str(install)], close_fds=True, env=env)  # noqa: S603 S607
     else:
-        subprocess.Popen([str(install)], start_new_session=True, close_fds=True)  # noqa: S603
+        subprocess.Popen(  # noqa: S603
+            [str(install)], start_new_session=True, close_fds=True, env=env
+        )
     logger.info("Relaunched %s; exiting old process", install)
     _release_lock()
     os._exit(0)
@@ -939,6 +975,7 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
                 restart=restart,
                 current_version=version,
                 new_version=latest_tag.lstrip("vV") or None,
+                cleanup=lambda: shutil.rmtree(tmp, ignore_errors=True),
             )
         except (
             error.URLError,

@@ -106,7 +106,7 @@ def canonical_account_id(raw: str | None) -> str:
 # Providers whose account_id is a stable login handle. An email *label* is only
 # a display name there and must never re-key an explicitly identified account
 # (it split one GitHub account into a login series and an email series).
-_LOGIN_KEYED_PROVIDERS = frozenset({"github"})
+LOGIN_KEYED_PROVIDERS = frozenset({"github"})
 
 
 def resolve_account_id(
@@ -122,7 +122,7 @@ def resolve_account_id(
         label = label.split(" @ ")[0].strip()
 
     raw = canonical_account_id(raw_account_id)
-    if provider_id in _LOGIN_KEYED_PROVIDERS and raw != "default":
+    if provider_id in LOGIN_KEYED_PROVIDERS and raw != "default":
         return raw
 
     if label and _EMAIL_RE.match(label):
