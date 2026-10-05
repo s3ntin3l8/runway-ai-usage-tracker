@@ -68,6 +68,21 @@ default-keyed config) block the checks downstream of them until fixed. See
 does. Worth a look right after upgrading, especially if you've run
 previous versions long enough to accumulate account or provider-id drift.
 
+## GitHub accounts, Copilot token fallback, and `GITHUB_TOKEN`
+
+- **GitHub accounts are keyed by login** (#515), not email. After upgrading,
+  open Settings → Data Health and run the `misidentified_gauge_series` fixer
+  to merge series that were previously keyed by email.
+- **The Copilot v2/token fallback was removed** (#530). Classic personal
+  access tokens may now be rejected by the Copilot endpoints; sign in with
+  GitHub or use `gh auth login` for an OAuth token.
+- **The `GITHUB_TOKEN` setting was removed from the app settings.** The
+  GitHub collector now reads `GITHUB_TOKEN` / `GH_TOKEN` only from the real
+  process environment, so a value that lives only in `.env` is no longer
+  read by the app itself. Export it in the process environment instead (the
+  bundled Docker Compose files pass `.env` to the container via `env_file:`,
+  so Compose deployments are unaffected).
+
 ## Credential-health alerts are on by default
 
 Existing Discord/Slack webhooks configured before this release will start

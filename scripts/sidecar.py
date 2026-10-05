@@ -1217,6 +1217,14 @@ def write_pid_file() -> bool:
                 except OSError:
                     return False
                 continue
+            if old_pid == os.getpid():
+                # Our own PID: a self-update re-exec keeps the PID (os.execv),
+                # so the file left by the pre-exec image is ours, not a rival's.
+                try:
+                    _pid_file_path.write_bytes(pid_bytes)
+                except OSError:
+                    return False
+                break
             if _pid_is_alive(old_pid):
                 logging.error(f"Sidecar already running (PID: {old_pid})")
                 return False

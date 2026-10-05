@@ -1721,11 +1721,34 @@ class TestSingleInstanceLock:
     def test_second_acquire_fails_while_holder_alive(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
         try:
-            assert sidecar.write_pid_file() is True  # first instance claims it
-            # Second instance: current process is alive and holds the file → refused.
+            # First instance (a different live PID) claims it.
+            with monkeypatch.context() as m:
+                m.setattr(sidecar.os, "getpid", lambda: os.getppid())
+                assert sidecar.write_pid_file() is True
+            # Second instance: the holder is alive and is not us → refused.
             assert sidecar.write_pid_file() is False
         finally:
             sidecar.remove_pid_file()
+
+    def test_own_pid_in_file_is_taken_over(self, tmp_path, monkeypatch):
+        """A self-update re-exec keeps the PID, so a file holding it is ours (#546)."""
+        monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
+        pid_file = tmp_path / "sidecar.pid"
+        pid_file.write_text(str(os.getpid()))
+        try:
+            assert sidecar.write_pid_file() is True
+            assert pid_file.read_text().strip() == str(os.getpid())
+        finally:
+            sidecar.remove_pid_file()
+
+    def test_other_live_pid_is_refused(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
+        pid_file = tmp_path / "sidecar.pid"
+        other = os.getpid() + 1
+        pid_file.write_text(str(other))
+        monkeypatch.setattr(sidecar, "_pid_is_alive", lambda pid: True)
+        assert sidecar.write_pid_file() is False
+        assert pid_file.read_text().strip() == str(other)
 
     def test_stale_pid_is_reclaimed(self, tmp_path, monkeypatch):
         """A pid file left by a dead process must not block a new instance."""
