@@ -1723,7 +1723,7 @@ class TestSingleInstanceLock:
         try:
             # First instance (a different live PID) claims it.
             with monkeypatch.context() as m:
-                m.setattr(sidecar.os, "getpid", lambda: os.getppid())
+                m.setattr(sidecar.os, "getpid", os.getppid)
                 assert sidecar.write_pid_file() is True
             # Second instance: the holder is alive and is not us → refused.
             assert sidecar.write_pid_file() is False
@@ -1744,7 +1744,7 @@ class TestSingleInstanceLock:
     def test_other_live_pid_is_refused(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
         pid_file = tmp_path / "sidecar.pid"
-        other = os.getpid() + 1
+        other = 999999  # never our PID; liveness is patched below
         pid_file.write_text(str(other))
         monkeypatch.setattr(sidecar, "_pid_is_alive", lambda pid: True)
         assert sidecar.write_pid_file() is False
