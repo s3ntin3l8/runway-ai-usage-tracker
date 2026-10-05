@@ -262,6 +262,20 @@ that data between the `INJECTED REGISTRY` markers in `scripts/sidecar.py`.
   `registry.json`, so a sidecar-only rule must go in the overlay, not there.
 - Use `service_name` for keychain rules. Single-cookie providers (kimi_coding,
   ollama) map their cookie to `session_cookie`.
+- **Mapping keys** (`mapping` in a `file` rule) are dotted paths into the parsed
+  file. A key may itself contain dots (gh's `github.com`), so the longest
+  matching prefix is tried first and shorter ones are retried. `a|b` tries
+  alternatives left to right (first truthy wins). A `*` in a prefix is a glob over
+  that level's keys: it matches any characters, dots and colons included, within
+  one key (`github.com:*.oauth_token`); matches are tried in sorted order and the
+  first truthy value wins. Never end a wildcard path on an object: the value is
+  shipped as the credential. The sidecar (`GenericCollector.get_nested`) and the
+  server (`CredentialProvider._resolve_mapping_value`) implement this twice;
+  `tests/unit/test_mapping_resolver_parity.py` runs one table against both.
+- A `file` rule's `format` is `json` (default), `yaml`, or `jsonc` (JSON with
+  `//` and `/* */` comments, read BOM-tolerant). `keyless_ok: true` silences the
+  "file read but no credential keys found" log for a file that normally holds no
+  token.
 
 ### Standard definitions
 

@@ -695,6 +695,18 @@ def test_reset_source_retry_clears_only_that_source():
         ("path:/var/home/bob/.codex/auth.json", "Codex CLI", "auth.json", "~/.codex/auth.json"),
         ("path:/home/kimi-code/x/y.json", None, "y.json", "~/x/y.json"),
         ("path:/data/state/quota.json", None, "quota.json", "/data/state/quota.json"),
+        (
+            "path:/home/bob/.copilot/config.json",
+            "Copilot CLI",
+            "config.json",
+            "~/.copilot/config.json",
+        ),
+        (
+            r"path:C:\Users\bob\.copilot\config.json",
+            "Copilot CLI",
+            "config.json",
+            r"~\.copilot\config.json",
+        ),
     ],
 )
 def test_describe_origin_full_names_the_owning_app(origin, app, label, path):
@@ -752,6 +764,8 @@ def test_every_registry_file_path_names_an_app_on_every_platform(platform):
     for raw in _registry_file_paths():
         if raw.endswith("quota.json") and "antigravity" not in raw:
             continue
+        if "{{ENV_DIRS:" in raw:  # user-chosen dir; see test_custom_dir_credentials_*
+            continue
         expanded = re.sub(r"\{\{CONFIG_DIR:([^}]+)\}\}", lambda m: config + sep + m[1], raw)
         expanded = re.sub(r"\{\{DATA_DIR:([^}]+)\}\}", lambda m: data + sep + m[1], expanded)
         expanded = expanded.replace("~", home, 1) if expanded.startswith("~") else expanded
@@ -761,3 +775,14 @@ def test_every_registry_file_path_names_an_app_on_every_platform(platform):
         if display.app is None or display.path is None or not display.path.startswith("~"):
             unmatched.append((raw, expanded, display))
     assert not unmatched
+
+
+def test_custom_dir_claude_credentials_still_name_claude_code():
+    display = describe_origin_full("path:/home/alice/work-claude/.credentials.json")
+    assert display.app == "Claude Code"
+    assert display.path == "~/work-claude/.credentials.json"
+
+
+def test_custom_dir_auth_json_is_not_guessed():
+    # Shared filename (Codex / OpenCode / Grok): don't mislabel it.
+    assert describe_origin_full("path:/home/alice/elsewhere/auth.json").app is None

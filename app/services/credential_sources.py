@@ -52,9 +52,13 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("runway", "github_oauth.json"), "Runway"),
     (("github-copilot", "apps.json"), "Copilot editor sign-in"),
     (("github-copilot", "hosts.json"), "Copilot editor sign-in"),
+    (("copilot", "config.json"), "Copilot CLI"),
     (("grok", "auth.json"), "Grok CLI"),
     (("kimi", "config.json"), "Kimi CLI"),
     (("k2", "tokens.json"), "Kimi K2"),
+    # Last resort, for a login under a user-chosen dir (``CLAUDE_CONFIG_DIR=/data/work``).
+    # Only filenames no other tool uses; ``auth.json`` is shared (Codex/OpenCode/Grok).
+    (("credentials.json",), "Claude Code"),
 )
 
 _LOGIN_HINTS = {
@@ -62,6 +66,7 @@ _LOGIN_HINTS = {
     "OpenCode": "run `opencode auth login`",
     "GitHub CLI": "run `gh auth login`",
     "Copilot editor sign-in": "sign in again to Copilot in your editor",
+    "Copilot CLI": "run `copilot login`",
     "Claude Code": "run `claude`, then `/login`",
     "Gemini CLI": "run `gemini`, then `/auth`",
     "Grok CLI": "sign in again in the Grok CLI",

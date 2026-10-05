@@ -105,10 +105,11 @@ GitHub credentials come from these sources. The first one found by the server (s
 | Sign in with GitHub (device flow) | server | Button in the GitHub account dialog. The token is stored encrypted at `<config dir>/github_oauth.json` and listed as a server credential; it counts as evidence for the account while the file exists, and Disconnect deletes it. Sidecars never ship this file. |
 | `gh` CLI `hosts.yml` | server and sidecar | `~/.config/gh/hosts.yml` (Linux/macOS) or `%APPDATA%\GitHub CLI\hosts.yml`; spellings of the same file are read once. |
 | `gh` CLI keyring | sidecar | `gh auth token`, for `gh` ≥ 2.40, which keeps the token in the OS keyring and leaves `hosts.yml` without one. Skipped when it returns a token already found above. |
-| Editor Copilot sign-in files | sidecar | `apps.json` / `hosts.json` under `~/.config/github-copilot` (or `%LOCALAPPDATA%\github-copilot`), written by JetBrains, Neovim (`copilot.vim`/`copilot.lua`), Xcode and Zed. `github.com` entries only; the file's `user` is not used as the account id. The same token in more than one file counts once. |
+| Editor Copilot sign-in files | sidecar | `apps.json` / `hosts.json` under `~/.config/github-copilot` (or `%LOCALAPPDATA%\github-copilot`), written by JetBrains, Neovim (`copilot.vim`/`copilot.lua`), Xcode and Zed. `github.com` entries only; the file's `user` is not used as the account id. The three known client ids are tried first, then any other `github.com:<client id>` entry. With several entries the first by sorted key is used. The same token in more than one file counts once. |
+| Copilot CLI plaintext token | sidecar | `~/.copilot/config.json` (JSON with `//` comments), `authTokens` / `copilotTokens` entries for `https://github.com:<login>`. The CLI keeps its token in the OS keychain when it can, so this file only holds a token on a machine without one (typically headless Linux); elsewhere it is read and found empty without logging. The login in the key is not used as the account id. `COPILOT_HOME` is not honoured. |
 | Windows Credential Manager `github.com` | sidecar | |
 
-Not detected: the VS Code Copilot extension (its sign-in lives in VS Code's encrypted secret storage and is not readable), the Copilot CLI's keychain entry, browser cookies.
+Not detected: the VS Code Copilot extension (its sign-in lives in VS Code's encrypted secret storage and is not readable), the Copilot CLI's keychain entry, GitHub Enterprise Cloud (`*.ghe.com`) sign-ins, browser cookies.
 
 If a machine's GitHub credential disappears, the sidecar log (`~/.config/runway/sidecar/sidecar.log`) says `file read but no credential keys found` once per file when a rule's file exists but holds no token (a logged-out `gh`, or a token moved to the keyring).
 

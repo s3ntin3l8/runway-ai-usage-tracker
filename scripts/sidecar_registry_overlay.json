@@ -69,7 +69,7 @@
       ],
       "add_rules": [
         {
-          "reason": "Editor Copilot sign-ins (JetBrains, Neovim copilot.vim/lua, Xcode, Zed; VS Code uses encrypted SecretStorage and writes no file) store a GitHub App user token in apps.json (newer, keyed `<host>:<appId>`) or hosts.json (older). The app ids differ per client, hence the `|` chain. Only github.com entries: the collector always calls api.github.com. Sidecar-only; `user` is deliberately not mapped to account_id.",
+          "reason": "Editor Copilot sign-ins (JetBrains, Neovim copilot.vim/lua, Xcode, Zed; VS Code uses encrypted SecretStorage and writes no file) store a GitHub App user token in apps.json (newer, keyed `<host>:<appId>`) or hosts.json (older). The app ids differ per client, hence the `|` chain; the final `github.com:*` alternative catches a client id we don't know yet (known ids win; with several entries the first by sorted key is used). Only github.com entries: the collector always calls api.github.com. Sidecar-only; `user` is deliberately not mapped to account_id.",
           "rule": {
             "type": "file",
             "format": "json",
@@ -82,7 +82,21 @@
               "{{DATA_DIR:github-copilot}}/hosts.json"
             ],
             "mapping": {
-              "github.com:Iv1.b507a08c87ecfe98.oauth_token|github.com:Iv23ctfURkiMfJ4xr5mv.oauth_token|github.com:Ov23liV9UpD7Rnfnskm3.oauth_token|github.com.oauth_token": "api_key"
+              "github.com:Iv1.b507a08c87ecfe98.oauth_token|github.com:Iv23ctfURkiMfJ4xr5mv.oauth_token|github.com:Ov23liV9UpD7Rnfnskm3.oauth_token|github.com.oauth_token|github.com:*.oauth_token": "api_key"
+            }
+          }
+        },
+        {
+          "reason": "The GitHub Copilot CLI keeps its gho_ token in the OS keychain (service copilot-cli); only without a keychain (headless Linux) does it store the token in plaintext in ~/.copilot/config.json, keyed `<host>:<login>`: authTokens[...].token (CLI >= 1.0.88) or copilotTokens[...] as a string (older; copilot_tokens is a speculative spelling kept last). The file has // comment lines, hence jsonc, and holds no token on machines with a working keychain, hence keyless_ok. github.com entries only: the collector calls api.github.com. Sidecar-only; the login inside the key is never captured (the wildcard extracts the token only), so account_id stays unset and the server verifies via /user. Never add an alternative that resolves to a dict: the file branch ships any truthy value as api_key.",
+          "rule": {
+            "type": "file",
+            "format": "jsonc",
+            "keyless_ok": true,
+            "paths": [
+              "~/.copilot/config.json"
+            ],
+            "mapping": {
+              "authTokens.https://github.com:*.token|copilotTokens.https://github.com:*|copilot_tokens.https://github.com:*": "api_key"
             }
           }
         },

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -476,8 +477,22 @@ class CredentialProvider:
             return None
 
     @staticmethod
+    def _key_glob(pattern: str) -> "re.Pattern[str]":
+        """Compile a mapping-key glob. ``*`` is the only special character and matches zero
+        or more characters (dots and colons included) within ONE dict key. Same rule as
+        ``_key_glob`` in the sidecar; ``?`` and ``[`` stay literal."""
+        return re.compile(".*".join(re.escape(piece) for piece in pattern.split("*")))
+
+    @staticmethod
     def _resolve_mapping_value(data: Any, key_path_str: str) -> Any:
-        """Resolve dotted paths, including ``|``-separated fallback paths."""
+        """Resolve dotted paths, including ``|``-separated fallback paths.
+
+        Must stay behaviourally identical to the sidecar's ``GenericCollector.get_nested``
+        (``tests/unit/test_mapping_resolver_parity.py`` runs one table against both). A key
+        may itself contain dots, so the longest matching prefix is tried first and shorter
+        ones are retried when the rest of the path doesn't resolve. A prefix containing ``*``
+        is a glob over that level's keys (sorted, first truthy match wins).
+        """
         if not data or not isinstance(data, dict):
             return None
 
@@ -488,19 +503,27 @@ class CredentialProvider:
                     return value
             return None
 
-        # Try full key first
-        if key_path_str in data:
-            return data[key_path_str]
-
-        # Split and try to find the longest prefix that is a key
         parts = key_path_str.split(".")
         for i in range(len(parts), 0, -1):
-            prefix = ".".join(parts[:i])
-            if prefix in data:
-                val = data[prefix]
-                if i == len(parts):
-                    return val
-                return CredentialProvider._resolve_mapping_value(val, ".".join(parts[i:]))
+            head = ".".join(parts[:i])
+            rest = ".".join(parts[i:])
+            last = i == len(parts)
+            if "*" in head:
+                pattern = CredentialProvider._key_glob(head)
+                for key in sorted(k for k in data if isinstance(k, str) and pattern.fullmatch(k)):
+                    found = (
+                        data[key]
+                        if last
+                        else CredentialProvider._resolve_mapping_value(data[key], rest)
+                    )
+                    if found:
+                        return found
+            elif head in data:
+                if last:
+                    return data[head]
+                found = CredentialProvider._resolve_mapping_value(data[head], rest)
+                if found is not None:
+                    return found
 
         # Default fallback to standard nested
         return CredentialProvider._get_nested(data, parts)
@@ -509,11 +532,6 @@ class CredentialProvider:
     def get_github_data() -> "CredentialMap":
         """Get full GitHub OAuth data using registry rules."""
         return CredentialProvider.get_credentials("github")
-
-    @staticmethod
-    def get_github_token() -> str:
-        """Get GitHub token using registry rules."""
-        return CredentialProvider.get_github_data().get("api_key", "")
 
     @staticmethod
     def get_gemini_credentials_path() -> str | None:
