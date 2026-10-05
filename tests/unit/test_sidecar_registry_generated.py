@@ -118,6 +118,50 @@ def test_every_baked_rule_type_is_one_the_sidecar_can_run():
     assert used <= implemented, f"sidecar silently skips: {sorted(used - implemented)}"
 
 
+def test_every_baked_file_rule_format_is_one_the_sidecar_can_read():
+    """An unknown format would fall through to json.load and fail at debug level only."""
+    used = {
+        r.get("format", "json")
+        for p in sidecar.__REGISTRY__["providers"].values()
+        for r in p["rules"]
+        if r["type"] == "file"
+    }
+    assert used <= {"json", "yaml", "jsonc"}, sorted(used)
+
+
+def test_github_copilot_cli_token_file_is_sidecar_only_and_never_maps_the_login():
+    def cli_rules(providers):
+        return [
+            r
+            for r in providers["github"]["rules"]
+            if r["type"] == "file" and r["format"] == "jsonc"
+        ]
+
+    (rule,) = cli_rules(sidecar.__REGISTRY__["providers"])
+    assert rule["paths"] == ["~/.copilot/config.json"]
+    assert rule.get("keyless_ok") is True
+    assert set(rule["mapping"].values()) == {"api_key"}
+    for alternative in next(iter(rule["mapping"])).split("|"):
+        # github.com only (the collector calls api.github.com), and every alternative
+        # must end in a scalar: a dict value would ship as the api_key.
+        assert alternative.split(".", 1)[1].startswith("https://github.com:*"), alternative
+        assert alternative.endswith(("*.token", "https://github.com:*")), alternative
+    assert "ghe.com" not in json.dumps(rule)
+    assert cli_rules(REGISTRY["providers"]) == []
+
+
+def test_the_copilot_editor_rule_ends_with_an_any_app_id_catch_all():
+    (rule,) = [
+        r
+        for r in sidecar.__REGISTRY__["providers"]["github"]["rules"]
+        if r["type"] == "file" and any("github-copilot" in p for p in r["paths"])
+    ]
+    alternatives = next(iter(rule["mapping"])).split("|")
+    assert alternatives[-1] == "github.com:*.oauth_token"
+    # Known client ids stay ahead of the catch-all so they win.
+    assert any("Iv1.b507a08c87ecfe98" in a for a in alternatives[:-1])
+
+
 def test_keychain_rules_use_the_field_the_sidecar_reads():
     for pid, provider in sidecar.__REGISTRY__["providers"].items():
         for rule in provider["rules"]:

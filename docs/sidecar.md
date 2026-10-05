@@ -337,7 +337,7 @@ launchctl start com.runway.sidecar
 | Provider | Data Source | Required Environment |
 |----------|-------------|---------------------|
 | **Claude** | OAuth / cookie / file | `CLAUDE_CODE_OAUTH_TOKEN`, `~/.claude/.credentials.json` (identity in `~/.claude.json`), `~/.config/claude/oauth_creds.json`, macOS keychain, `sessionKey` cookie, or `~/.claude/statusline.json` |
-| **GitHub Copilot** | API token, OAuth | `GITHUB_TOKEN` (from .env or OAuth flow), `gh` CLI (`~/.config/gh/hosts.yml`, or the keyring via `gh auth token`), editor Copilot sign-ins (`apps.json` / `hosts.json` under `~/.config/github-copilot`), or Windows Credential Manager |
+| **GitHub Copilot** | API token, OAuth | `GITHUB_TOKEN` (from .env or OAuth flow), `gh` CLI (`~/.config/gh/hosts.yml`, or the keyring via `gh auth token`), editor Copilot sign-ins (`apps.json` / `hosts.json` under `~/.config/github-copilot`), the Copilot CLI's plaintext token file (`~/.copilot/config.json`, headless Linux), or Windows Credential Manager |
 | **Gemini** | OAuth | `~/.gemini/oauth_creds.json` |
 | **ChatGPT** | OAuth / cookie | `CHATGPT_OAUTH_TOKEN`, `~/.codex/auth.json`, or Chrome cookie |
 | **OpenCode** | API key / browser cookie / local events | `OPENCODE_API_KEY`, `~/.local/share/opencode/auth.json`, Chrome cookie, or SQLite event database |
