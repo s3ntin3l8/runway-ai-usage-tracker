@@ -471,6 +471,30 @@ def prune_server_sources(session: Session, provider_id: str, keep_source_ids: se
     return removed
 
 
+# File labels the server may still own: Runway's own UI-written GitHub OAuth token.
+_RUNWAY_MANAGED_FILE_LABELS = frozenset({"github_oauth.json"})
+
+
+def prune_unmanaged_server_file_sources(session: Session) -> int:
+    """Delete ``server:<provider>:file:<label>`` rows for files the server no longer reads.
+
+    The server used to scan CLI login files in its own host's home (``oauth_creds.json``,
+    ``.credentials.json``, ``hosts.yml`` ...) and register each as a source row. It reads
+    none of them now (sidecars own those), so without this sweep a stale row would keep
+    showing "valid" for users who run no sidecar. Env (``server:*:env:*``), config and
+    sidecar rows, and Runway's own ``github_oauth.json``, are kept. Idempotent.
+    """
+    removed = 0
+    for row in session.exec(
+        select(CredentialSource).where(col(CredentialSource.source_id).like("server:%"))
+    ).all():
+        parts = row.source_id.split(":", 3)
+        if len(parts) == 4 and parts[2] == "file" and parts[3] not in _RUNWAY_MANAGED_FILE_LABELS:
+            session.delete(row)
+            removed += 1
+    return removed
+
+
 HEALTH_DETAILS = {
     "untried": "Not yet tried",
     "auth_failed": "Authentication failed",

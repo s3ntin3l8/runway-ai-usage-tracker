@@ -59,7 +59,7 @@ live in `app/models/db.py`.
 | `quota_snapshots` | Append-only time-series of `pct_used`/`reset_at` observations. Written on every `upsert_latest_usage` call when `pct_used` is non-null. Backs the `%` history chart and the Theil-Sen forecast. |
 | `provider_pricing` | Time-versioned per-(provider, model) prices used by `app/services/cost_calculator.py` so historical cost stays stable across price changes. |
 | `provider_configs` | Per-provider user config — API keys, session cookies (Fernet-encrypted), account labels, poll intervals, per-strategy enable toggles. Unique on `(provider_id, account_id)`. |
-| `credential_sources` | One row per credential *source* — a secret found in one place: a sidecar's file/env/cookie (`sidecar_id` set), a key pasted in Settings → Providers (`config:`), or an env var / file on the server host (`server:`, no origin). Holds the operator's `enabled`/`priority` failover order — a bundle whose access token has already expired is attempted after every live one, so priority orders usable credentials rather than dead ones; a source whose last attempt was rejected (`auth_failed`) rests between retries on the 15 min → 6 h doubling schedule (`next_retry_at`; once the rest is over it is simply tried in its normal place, reset by a success or by a changed secret at ingest), except that the last credential standing is always tried; `consecutive_failures`/`failing_since` track the current failure streak, and a streak of three or more `unavailable` attempts lasting over an hour makes the source read `failing` unless a sibling has collected since — the credential's non-secret expiry/token types, `health` (reported as `untried` until a first collection attempt is recorded — a registered but never-used credential must not read as working), and collection provenance (`last_attempt_at`, `last_success_at`, `last_error`) stamped by the failover loop, and the `verified_subject` last seen behind a cookie source (account-switch detection) — the "active source" for an account is the one with the latest success. Backs `GET /system/credentials`. Unique on `(provider_id, account_id, source_id)`, so an account rename has to carry these rows with it (`config_rekey` does; rows an older build stranded are removed by `orphan_credential_sources`). |
+| `credential_sources` | One row per credential *source* — a secret found in one place: a sidecar's file/env/cookie (`sidecar_id` set), a key pasted in Settings → Providers (`config:`), or an env var on the server host, or Runway's own `github_oauth.json` (`server:`, no origin; the server reads no other credential file, and a startup sweep drops `server:*:file:*` rows left by older builds). Holds the operator's `enabled`/`priority` failover order — a bundle whose access token has already expired is attempted after every live one, so priority orders usable credentials rather than dead ones; a source whose last attempt was rejected (`auth_failed`) rests between retries on the 15 min → 6 h doubling schedule (`next_retry_at`; once the rest is over it is simply tried in its normal place, reset by a success or by a changed secret at ingest), except that the last credential standing is always tried; `consecutive_failures`/`failing_since` track the current failure streak, and a streak of three or more `unavailable` attempts lasting over an hour makes the source read `failing` unless a sibling has collected since — the credential's non-secret expiry/token types, `health` (reported as `untried` until a first collection attempt is recorded — a registered but never-used credential must not read as working), and collection provenance (`last_attempt_at`, `last_success_at`, `last_error`) stamped by the failover loop, and the `verified_subject` last seen behind a cookie source (account-switch detection) — the "active source" for an account is the one with the latest success. Backs `GET /system/credentials`. Unique on `(provider_id, account_id, source_id)`, so an account rename has to carry these rows with it (`config_rekey` does; rows an older build stranded are removed by `orphan_credential_sources`). |
 | `provider_account_labels` | Operator display-name override for a discovered `(provider, account)`. |
 | `credential_tags` | Operator mapping from a host-side credential origin (`path:...`/`env:...`, never the value) to a server account, optionally scoped to one sidecar or deployment-wide. Unresolved origins sit in `pending_credential_tags` until tagged in the Fleet UI. Origins are fingerprinted per credential, so a CLI re-login re-keys them; when the base location is unchanged and exactly one account was ever tagged there, the manifest carries that binding to the new origin (`set_by=rotation`) instead of reopening a pending row and withholding the token (#474). `target_provider_id` (nullable) marks a tag whose account belongs to a related provider (Gemini usage assigned to an Antigravity account): the ingestor re-homes matching events to that provider, so they land on the `(antigravity, account)` series. |
 | `pending_credential_tags` | Credential origins a sidecar has reported but no operator tag exists yet (`reason = token_withheld` marks one whose token stayed on the machine, so its provider cannot collect until an account is assigned — the inventory's `blocked_collection` and the Home banner; an older sidecar sends no reason and the server infers it for providers it cannot verify by source) — powers the "Untagged credentials" surface (`GET /fleet/credentials/tags/pending`). |
@@ -164,8 +164,8 @@ token (the token's own holder; a token without the `user:profile` scope is refus
 ChatGPT reads the
 email from the usage endpoint after exchanging the cookie. Anthropic files its pending bundles
 under their source id rather than `default`, so the verifier looks across every cache slot
-(`TokenCache.get_pending_sources`). A pinned run never reads the server host's own login (it
-belongs to another account), and a source that works but cannot name its account stays pending
+(`TokenCache.get_pending_sources`). A pinned run reads only its own bundle (never the
+server's env or Settings credential for another account), and a source that works but cannot name its account stays pending
 without blocking the others. Anything unverifiable stays "Needs mapping" for the operator, and
 is retried with exponential backoff (`pending_credential_tags.next_verify_at`: 15 minutes
 doubling to 6 hours; five sources per provider per cycle, oldest-due first). A new secret for
@@ -230,15 +230,13 @@ Google does not rotate Gemini's.
   refresh secret) and the provider rotates: the server **never** refreshes it. The
   machine's CLI renews it and the sidecar re-pushes. The inventory shows
   `refreshed_by: "machine"`, there is no Refresh action, and the endpoints answer 409.
-- **A CLI's own login file on the server host** (`~/.claude/.credentials.json`,
-  `~/.codex/auth.json`, anything outside Runway's config dir): the CLI renews it, so
-  the server never rotates it, whether or not a sidecar also pushes it. The inventory
-  shows `refreshed_by: "machine"`; on a headless host with no CLI running its access
-  token simply expires (the usual 3-day alert applies). Put the credential into
-  Runway's own config dir or an env var to have the server refresh it.
-- **Server-owned** (pasted key, env var, a login file inside Runway's config dir) and
-  **Gemini** everywhere: the server refreshes it (`TokenAutoRefresher`, collectors,
-  the Refresh action).
+- **Server-owned** (pasted key, env var, Runway's own `github_oauth.json`) and
+  **Gemini** everywhere (Google does not rotate its refresh token, so the server may
+  refresh a sidecar-pushed Gemini bundle into the token cache): the server refreshes it
+  (`TokenAutoRefresher`, collectors, the Refresh action).
+- The server reads no CLI login file from its own host (`~/.claude/.credentials.json`,
+  `~/.codex/auth.json`, ...); only sidecars do. A rotating provider's CLI login therefore
+  always arrives as a machine-owned bundle, and the sidecar keep-alive renews it.
 - A machine-renewed login that stays expired for more than 3 days raises the usual
   credential alert (an idle CLI is normal for a day or two, not for a week).
 - While a machine's access token is expired and its CLI is idle, collection skips that
@@ -249,7 +247,10 @@ Google does not rotate Gemini's.
 
 Where each provider's credentials live (env vars, files, keychain entries,
 browser cookies) is declared once in `app/core/registry.json`. The server
-evaluates the `env` and `file` rules itself; the sidecar, a single file with no
+evaluates the `env` rules itself, and only the `file` rules under Runway's own config dir
+(`{{CONFIG_DIR:runway}}`, i.e. `github_oauth.json`: `CredentialProvider._server_may_read`,
+applied to the raw paths before any `~` expansion or glob, so the server never touches the
+host home). Every other `file` rule is sidecar-only; the sidecar, a single file with no
 access to the server's registry, runs all of them from a **generated copy** of
 that data between the `INJECTED REGISTRY` markers in `scripts/sidecar.py`.
 
@@ -258,8 +259,8 @@ that data between the `INJECTED REGISTRY` markers in `scripts/sidecar.py`.
   fails on any difference.
 - Differences that are intentional (a rule only the sidecar should run, a field
   the sidecar must not send) live in `scripts/sidecar_registry_overlay.json`,
-  each with a reason. The server scans every `env`/`file` rule in
-  `registry.json`, so a sidecar-only rule must go in the overlay, not there.
+  each with a reason. The server scans every `env` rule in `registry.json` (and the
+  Runway-owned file rules), so a rule the server must not even list goes in the overlay.
 - Use `service_name` for keychain rules. Single-cookie providers (kimi_coding,
   ollama) map their cookie to `session_cookie`.
 - **Mapping keys** (`mapping` in a `file` rule) are dotted paths into the parsed
@@ -286,7 +287,7 @@ that data between the `INJECTED REGISTRY` markers in `scripts/sidecar.py`.
 
 **`input_source` (origin of credentials):**
 - **`config`** — entered via the Runway Dashboard UI (stored in DB).
-- **`server`** — discovered by the local machine (ENV, local files, browser scraping).
+- **`server`** — found by the server process itself: environment variables, or Runway's own `github_oauth.json`. Never a CLI login file, local detection or browser scraping (those run in the sidecar).
 - **`sidecar`** — discovered by a remote agent and pushed to the server.
 
 Collection pipeline: server quota collection → merge with sidecar-ingested

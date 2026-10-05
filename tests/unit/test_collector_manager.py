@@ -1098,7 +1098,6 @@ class TestCollectorManagerInitialization:
                         "label": "github_oauth.json",
                         "keys": ["api_key"],
                         "managed": True,
-                        "cli_owned": False,
                     }
                 ]
             ),

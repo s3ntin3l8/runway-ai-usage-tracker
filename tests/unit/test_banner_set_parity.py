@@ -139,7 +139,6 @@ async def test_a_rejected_server_credential_is_invalid_and_flagged_in_both_views
         "label": "GITHUB_TOKEN",
         "keys": ["api_key"],
         "managed": False,
-        "cli_owned": False,
         "shadowed": False,
         "exp": None,
         "rollable": False,

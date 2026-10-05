@@ -35,7 +35,7 @@ Each card carries `pct_used = round((1 − remainingFraction) × 100, 4)`, `rese
 ```json
 {"auth_method": "consumer", "token": {"access_token": "…", "refresh_token": "…", "expiry": "ISO8601"}}
 ```
-The **access token lives one hour** and only agy can renew it: the file carries no OAuth `client_id`, so neither the server nor the sidecar can refresh it (`_execute_refresh` is a no-op; a 401 just re-reads the cache in case another host pushed a live token — it never logs a refresh, see `REFRESHABLE = False`). Runway reads the file fresh on every poll; in multi-host topology the sidecar ships the token via the credential registry rule, and a sidecar whose local token has **lapsed does not push it at all**, so one machine's dead session cannot poison the shared cache entry another machine keeps fresh.
+The **access token lives one hour** and only agy can renew it: the file carries no OAuth `client_id`, so neither the server nor the sidecar can refresh it (`_execute_refresh` is a no-op; a 401 just re-reads the cache in case another host pushed a live token — it never logs a refresh, see `REFRESHABLE = False`). The server never reads the file: the sidecar reads it on every push and ships the token via the credential registry rule, and a sidecar whose local token has **lapsed does not push it at all**, so one machine's dead session cannot poison the shared cache entry another machine keeps fresh.
 
 ### Token lifetime & keep-alive
 
@@ -140,9 +140,7 @@ Antigravity events use `provider_id="antigravity"` pricing rows (independent of 
 
 ## Setup
 
-No configuration needed when running the sidecar on the same host as `agy`. The sidecar discovers `~/.gemini/antigravity-cli/antigravity-oauth-token` automatically. Run `agy` at least once to create the token file.
-
-For multi-host (server + remote sidecar), the sidecar ships the OAuth token to the server via the credential registry rule; the server reads it from the token cache.
+Run the sidecar on the host where `agy` is logged in (same host as the server or a remote one): it discovers `~/.gemini/antigravity-cli/antigravity-oauth-token` automatically and ships the OAuth token to the server, which reads it only from its token cache. Run `agy` at least once to create the token file. A server with no sidecar has no Antigravity credential (`make dev` alone does not see it; use `make dev-all`).
 
 On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` / `"keep_alive": true`) or install the systemd timer — see [Token lifetime & keep-alive](#token-lifetime--keep-alive). Without one of these, the token renews only when agy next runs.
 
@@ -165,8 +163,7 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 |---|---|
 | `app/services/collectors/antigravity.py` | Server collector entry point |
 | `app/services/collectors/antigravity_api.py` | `retrieveUserQuotaSummary` API mixin |
-| `app/services/collectors/antigravity_oauth.py` | OAuth token read/cache mixin |
-| `app/core/config.py` | `ANTIGRAVITY_OAUTH_PATH` setting |
+| `app/services/collectors/antigravity_oauth.py` | OAuth token cache-read mixin |
 | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Conversation DB parser |
 | `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
 | `scripts/sidecar_pkg/keep_alive.py` | Optional `--keep-alive` thread (`agy models` renewal) |

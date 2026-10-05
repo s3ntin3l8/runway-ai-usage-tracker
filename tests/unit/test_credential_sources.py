@@ -28,6 +28,7 @@ from app.services.credential_sources import (
     merge_source_provenance,
     phantom_accounts,
     prune_server_sources,
+    prune_unmanaged_server_file_sources,
     real_account_ids,
     record_source_result,
     register_server_source,
@@ -340,6 +341,49 @@ def test_prune_server_sources_removes_only_vanished_server_rows():
         ("github", "server:github:env:KEEP"),
         ("openrouter", "server:openrouter:env:GONE"),
         ("github", "sidecar:x"),
+    }
+
+
+def test_sweep_drops_stale_server_file_rows_and_keeps_everything_else():
+    """The server no longer reads CLI login files, so the rows it registered for them go."""
+    with _mem_session() as session:
+        for provider, source_type, label in (
+            ("gemini", "file", "oauth_creds.json"),
+            ("anthropic", "file", ".credentials.json"),
+            ("github", "file", "hosts.yml"),
+            ("github", "file", "github_oauth.json"),  # Runway's own file: kept
+            ("github", "env", "GITHUB_TOKEN"),
+            ("openrouter", "env", "OPENROUTER_API_KEY"),
+        ):
+            register_server_source(
+                session,
+                provider_id=provider,
+                account_id="a",
+                source_type=source_type,
+                label=label,
+            )
+        # A sidecar-reported file row (same label as a CLI file) is not a server row.
+        touch_source(
+            session,
+            provider_id="gemini",
+            account_id="a",
+            source_id="sidecar:host-a:x",
+            source_type="file",
+            source_label="oauth_creds.json",
+            sidecar_id="host-a",
+        )
+        removed = prune_unmanaged_server_file_sources(session)
+        session.commit()
+        left = {r.source_id for r in session.exec(select(CredentialSource)).all()}
+        assert prune_unmanaged_server_file_sources(session) == 0  # idempotent
+
+    assert removed == 3
+    assert "server:gemini:file:oauth_creds.json" not in left
+    assert left == {
+        "server:github:file:github_oauth.json",
+        "server:github:env:GITHUB_TOKEN",
+        "server:openrouter:env:OPENROUTER_API_KEY",
+        "sidecar:host-a:x",
     }
 
 

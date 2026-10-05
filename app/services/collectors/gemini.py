@@ -11,7 +11,6 @@ from typing import Any
 
 import httpx
 
-from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import error_card
 from app.services.collectors.base import BaseCollector
@@ -19,7 +18,6 @@ from app.services.collectors.gemini_api import GeminiApiMixin
 
 # Mixins
 from app.services.collectors.gemini_oauth import GeminiOAuthMixin
-from app.services.credential_provider import credential_provider
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +42,8 @@ class GeminiCollector(
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
-        # Find credentials via centralized provider
-        credentials_path = credential_provider.get_gemini_credentials_path()
-        if not credentials_path:
-            credentials_path = settings.GEMINI_OAUTH_PATH
-
         super().__init__(
             provider_name="Gemini",
-            credentials_path=credentials_path,
             account_id=account_id,
             account_label=account_label,
         )
@@ -94,8 +86,7 @@ class GeminiCollector(
 
     async def _error_handler(self) -> list[dict[str, Any]]:
         """Return final error card context when the API strategy fails."""
-        creds = await self._get_credentials()
-        if not creds:
+        if not await self._get_current_token():
             return [
                 error_card(
                     "Gemini",

@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Any
 
 import httpx
 
@@ -12,125 +13,68 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiOAuthMixin(OAuthBaseCollector):
-    """Mixin for Gemini OAuth token management."""
+    """Mixin for Gemini OAuth token management.
+
+    The token cache is the only source: a sidecar-pushed bundle (the sidecar reads
+    ``~/.gemini/oauth_creds.json``), an env var or a Settings-pasted credential. The server
+    never reads the Gemini CLI's login file. Gemini does not rotate refresh tokens, so
+    the server may refresh a pushed bundle itself (``ROTATING_REFRESH_PROVIDERS``).
+    """
+
+    async def _cached_gemini(self) -> tuple[dict[str, str], dict[str, Any]] | None:
+        return await token_cache.get_with_metadata("gemini", account_id=self.account_id)
 
     async def _get_current_token(self) -> str | None:
-        """Get the current access token.
-
-        Priority rules:
-        - Local-mode collectors (account_id is None): try the local credentials
-          file first so the correct Google account is always used. Mirror into
-          the cache afterward so the token health tab can display it. Only fall
-          back to the cache if the local file provides no token.
-        - Sidecar-mode collectors (account_id is set): keep the existing cache-first
-          behaviour; there is no local file to consult.
-        """
-        if self.account_id:
-            # Sidecar mode: the cache is the only source of truth.
-            cache_data = await token_cache.get_with_metadata("gemini", account_id=self.account_id)
-            if cache_data:
-                tokens, metadata = cache_data
-                source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
-                    "config" if source in ("config", "manual_config") else "sidecar"
-                )
-                # Inherit account identity from cache metadata (extracted from the
-                # sidecar-shipped id_token) so emitted cards carry the correct
-                # email and resolve to the canonical account_id instead of
-                # falling back to "default".
-                cached_label = metadata.get("account_label")
-                if cached_label and (not self.account_label or self.account_label == "Default"):
-                    self.account_label = cached_label
-                return tokens.get("oauth_token")
+        """Get the current access token from the token cache."""
+        cache_data = await self._cached_gemini()
+        if not cache_data:
             return None
-
-        # Local mode: prefer the local credentials file to avoid picking up a
-        # sidecar token that belongs to a different Google account.
-        creds = await self._get_credentials()
-        if creds:
-            token = creds.get("access_token")
-            if token:
-                self._current_input_source = "server"
-
-                # Extract identity (email) from id_token if present
-                id_token = creds.get("id_token")
-                email = None
-                if id_token:
-                    email = IdentityExtractor.get_email_from_jwt(id_token)
-                    if email and (not self.account_label or self.account_label == "Default"):
-                        self.account_label = email
-
-                # Mirror into token cache so the Tokens health tab can see it.
-                token_data: dict[str, str] = {"oauth_token": token}
-                if creds.get("refresh_token"):
-                    token_data["refresh_token"] = creds["refresh_token"]
-                if id_token:
-                    token_data["id_token"] = id_token
-                if creds.get("expiry_date") is not None:
-                    token_data["expiry_date"] = str(creds["expiry_date"])
-
-                await token_cache.store(
-                    "gemini",
-                    token_data,
-                    account_id=None,
-                    account_label=email,
-                    source="server",
-                )
-                return token
-
-        # Credentials file absent or scraping disabled — fall back to cache.
-        cache_data = await token_cache.get_with_metadata("gemini", account_id=None)
-        if cache_data:
-            tokens, metadata = cache_data
-            source = metadata.get("source") or "sidecar"
-            self._current_input_source = (
-                "config" if source in ("config", "manual_config") else "sidecar"
-            )
-            # Inherit account identity from cache metadata so cards emitted
-            # from this path carry the correct email and resolve to the right
-            # canonical account_id instead of falling back to "default".
-            cached_label = metadata.get("account_label")
-            if cached_label and (not self.account_label or self.account_label == "Default"):
-                self.account_label = cached_label
-            return tokens.get("oauth_token")
-        return None
+        tokens, metadata = cache_data
+        source = metadata.get("source") or "sidecar"
+        self._current_input_source = (
+            "config" if source in ("config", "manual_config") else "sidecar"
+        )
+        # Inherit account identity from cache metadata (extracted from the
+        # sidecar-shipped id_token) so emitted cards carry the correct
+        # email and resolve to the canonical account_id instead of
+        # falling back to "default".
+        cached_label = metadata.get("account_label")
+        if cached_label and (not self.account_label or self.account_label == "Default"):
+            self.account_label = cached_label
+        return tokens.get("oauth_token")
 
     async def _is_token_expired(self) -> bool:
-        """Check if Gemini token is expired.
+        """Whether the cached Gemini access token is past its known expiry.
 
-        For sidecar-mode collectors (account_id set), there is no local
-        credentials file to derive expiry from. The token cache already enforces
-        a 30-minute TTL, so we treat sidecar tokens as always valid here and
-        avoid triggering a spurious refresh that cannot succeed without a local
-        refresh_token.
+        Expiry comes from the cached ``expiry_date`` (epoch ms) or the token's own ``exp``
+        (``IdentityExtractor.exp_from_tokens``, without the id_token fallback). No expiry signal means "assume valid":
+        absence of a signal is not evidence of expiry, and the cache TTL still applies.
         """
-        if self.account_id:
-            # Sidecar mode: defer freshness enforcement to the cache TTL.
+        cache_data = await self._cached_gemini()
+        if not cache_data:
             return False
-
-        try:
-            creds = await self._get_credentials()
-            if creds:
-                expiry_ms = creds.get("expiry_date")
-                if expiry_ms:  # Missing or zero → no expiry info, assume still valid
-                    return expiry_ms < (time.time() * 1000)
-                return False
-        except Exception as e:
-            logger.debug(f"Could not check Gemini token expiration: {e}")
-        return True
+        # A refresh returns no fresh id_token, so its exp can be permanently stale: ignore it.
+        tokens = {k: v for k, v in cache_data[0].items() if k != "id_token"}
+        exp = IdentityExtractor.exp_from_tokens(tokens)
+        return exp is not None and exp < time.time()
 
     async def _execute_refresh(self, client: httpx.AsyncClient) -> dict | None:
-        """Execute the HTTP request to refresh the token for Gemini."""
-        creds = await self._get_credentials()
-        if not creds:
+        """Refresh the cached Gemini bundle's access token.
+
+        The new tokens are returned; ``_get_valid_token`` writes them back to the cache
+        and any pinned source bundle via ``_store_sidecar_token``.
+        """
+        cache_data = await self._cached_gemini()
+        if not cache_data:
             return None
+        creds = cache_data[0]
 
         refresh_token = creds.get("refresh_token")
         if not refresh_token:
-            logger.warning("No refresh token in Gemini credentials")
+            logger.warning("No refresh token in cached Gemini credentials")
             return None
 
-        # Auto-discover client_id: env var → creds file → id_token aud claim →
+        # Auto-discover client_id: env var → bundle → id_token aud claim →
         # well-known Gemini CLI client_id (last-resort, matches CLI defaults).
         from app.services.token_refresher import _GEMINI_CLI_CLIENT_SECRET, _PROVIDER_CLIENT_IDS
 
@@ -138,7 +82,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
         if not client_id:
             client_id = creds.get("client_id") or creds.get("clientId")
 
-        if not client_id and "id_token" in creds:
+        if not client_id and creds.get("id_token"):
             token_client_id = IdentityExtractor.get_client_id_from_jwt(creds["id_token"])
             if token_client_id:
                 client_id = token_client_id
@@ -174,24 +118,12 @@ class GeminiOAuthMixin(OAuthBaseCollector):
 
             if resp.status_code == 200:
                 new_data = resp.json()
-                creds["access_token"] = new_data["access_token"]
-                # Expiry is in seconds in response, convert to ms
-                creds["expiry_date"] = int(time.time() * 1000) + (new_data["expires_in"] * 1000)
-
-                # Persist back to the on-disk credentials file so the next
-                # collector tick doesn't re-read a stale access_token and
-                # overwrite the freshly-refreshed cache entry.
-                self._persist_credentials(creds)
-
-                # Update sidecar cache
-                await self._store_sidecar_token(
-                    "gemini",
-                    new_data["access_token"],
-                    creds.get("refresh_token"),
-                    creds.get("expiry_date"),
-                )
-
-                return creds
+                # Expiry is in seconds in the response; the cache carries epoch ms.
+                return {
+                    "access_token": new_data["access_token"],
+                    "refresh_token": refresh_token,
+                    "expiry_date": int(time.time() * 1000) + (new_data["expires_in"] * 1000),
+                }
             logger.warning(
                 f"Gemini token refresh failed with status {resp.status_code}: {resp.text[:100]}"
             )

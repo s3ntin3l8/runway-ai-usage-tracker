@@ -1,12 +1,9 @@
 import asyncio
-import json
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from app.core.utils import safe_write_json
 from app.services.collectors.base import BaseCollector
 from app.services.token_cache import token_cache
 
@@ -16,8 +13,9 @@ logger = logging.getLogger(__name__)
 class OAuthBaseCollector(BaseCollector):
     """
     Base class for collectors that use OAuth with refresh tokens.
-    Handles token expiration, locking, and persistence logic.
-    Supports multi-account isolation.
+    Handles token expiration, locking, and cache write-back. Tokens come only from the
+    token cache (sidecar pushes, env vars, Settings): the server reads no CLI credential
+    files. Supports multi-account isolation.
     """
 
     # Rate-limit backoff for the OAuth token endpoint itself
@@ -36,37 +34,14 @@ class OAuthBaseCollector(BaseCollector):
     def __init__(
         self,
         provider_name: str,
-        credentials_path: str,
         account_id: str | None = None,
         account_label: str | None = None,
     ):
         super().__init__(account_id=account_id, account_label=account_label)
         self.provider_name = provider_name
-        self._credentials_path = credentials_path
         self._token_lock = asyncio.Lock()
         self._refresh_429_fail_count = 0
         self._last_refresh_429_backoff_until: datetime | None = None
-
-    async def _get_credentials(self) -> dict | None:
-        """Load credentials from file or cache."""
-        try:
-            if await asyncio.to_thread(os.path.exists, self._credentials_path):
-
-                def read_json(path):
-                    with open(path) as f:
-                        return json.load(f)
-
-                return await asyncio.to_thread(read_json, self._credentials_path)
-        except Exception as e:
-            logger.warning(f"Could not load {self.provider_name} credentials: {e}")
-        return None
-
-    def _persist_credentials(self, creds: dict):
-        """Persist refreshed credentials to file."""
-        try:
-            safe_write_json(self._credentials_path, creds)
-        except Exception as e:
-            logger.error(f"Failed to persist {self.provider_name} credentials: {e}")
 
     # ── Token-endpoint rate-limit backoff (mirrors onWatch behaviour) ──────────
 
@@ -163,12 +138,15 @@ class OAuthBaseCollector(BaseCollector):
                     self.account_id or "default",
                 )
             if new_creds:
-                self._persist_credentials(new_creds)
                 access = new_creds.get("access_token")
                 if access:
-                    # Update cache so token health stays current after refresh
+                    # Update cache so token health stays current after refresh. Keyed by
+                    # the provider id: ``provider_name`` is the display name ("Gemini")
+                    # and would write an orphan entry no collector reads.
                     await self._store_sidecar_token(
-                        self.provider_name,
+                        self.PROVIDER_ID
+                        if self.PROVIDER_ID != "unknown"
+                        else self.provider_name.lower(),
                         access,
                         new_creds.get("refresh_token"),
                         new_creds.get("expiry_date"),
@@ -190,7 +168,21 @@ class OAuthBaseCollector(BaseCollector):
         refresh_token: str | None = None,
         expiry_date: str | int | None = None,
     ):
-        """Update sidecar token cache with newly refreshed tokens."""
+        """Update the token cache with newly refreshed tokens.
+
+        When this collector is pinned to a source bundle the refresh is also written into
+        that bundle (``apply_refresh_to_sources``): collectors read pinned bundles, so
+        without it the bundle would keep the pre-refresh tokens.
+        """
+        selected = token_cache.selected_source(provider)
+        if selected is not None:
+            previous = token_cache.current_source_tokens(provider, selected[0]) or {}
+            refreshed = {"oauth_token": access_token}
+            if refresh_token:
+                refreshed["refresh_token"] = refresh_token
+            if expiry_date is not None:
+                refreshed["expiry_date"] = str(expiry_date)
+            await token_cache.apply_refresh_to_sources(provider, selected[0], previous, refreshed)
         data = {"oauth_token": access_token}
         if refresh_token:
             data["refresh_token"] = refresh_token

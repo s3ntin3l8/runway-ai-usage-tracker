@@ -630,7 +630,7 @@ class CollectorManager:
             self._record_source_health(provider_id, account_id, health_updates)
             if not health_updates and key.endswith(":default"):
                 # No cache-backed source was tried, so the default collector used
-                # credentials the server host found itself (env var / local file).
+                # credentials the server host found itself (env var).
                 # A cache hit or skipped collection never exercised the credential, so it
                 # must not be stamped as a fresh success (or an attempt): register the row,
                 # but only record an outcome when the credential was actually used.

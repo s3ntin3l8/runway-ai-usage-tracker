@@ -180,37 +180,11 @@ class Settings(BaseSettings):
     CLAUDE_PRO_LIMIT: int = 2000000
     CLAUDE_FREE_LIMIT: int = 500000
 
-    # Path settings — defaults computed at class load, overrideable via env var
-    CLAUDE_PROJECTS_DIR: str = Field(
-        default_factory=lambda: os.path.join(get_platform_config_dir("claude"), "projects")
-    )
-    CLAUDE_STATUSLINE_PATH: str = Field(
-        default_factory=lambda: os.path.join(get_platform_config_dir("claude"), "statusline.json")
-    )
-    GEMINI_SESSIONS_DIR: str = Field(
-        default_factory=lambda: os.path.join(get_platform_data_dir("gemini"), "tmp", "sessions")
-    )
-    # Gemini CLI hardcodes ~/.gemini/oauth_creds.json on every platform
-    # (not XDG-compliant — see github.com/google-gemini/gemini-cli
-    # packages/core/src/utils/paths.ts: GEMINI_DIR = '.gemini').
-    GEMINI_OAUTH_PATH: str = Field(
-        default_factory=lambda: os.path.join(os.path.expanduser("~"), ".gemini", "oauth_creds.json")
-    )
-    ANTHROPIC_OAUTH_PATH: str = Field(
-        default_factory=lambda: os.path.join(get_platform_config_dir("claude"), "oauth_creds.json")
-    )
-    # agy hardcodes ~/.gemini/antigravity-cli/antigravity-oauth-token (not XDG-compliant).
-    ANTIGRAVITY_OAUTH_PATH: str = Field(
-        default_factory=lambda: os.path.join(
-            os.path.expanduser("~"), ".gemini", "antigravity-cli", "antigravity-oauth-token"
-        )
-    )
+    # Path settings — the server reads no credential files except Runway's own. Sidecars
+    # own every CLI login / session dir; the former CLAUDE_*/GEMINI_*/CHATGPT_*/
+    # ANTIGRAVITY_* path settings were removed (a leftover env var is ignored).
     GITHUB_OAUTH_PATH: str = Field(
         default_factory=lambda: os.path.join(get_platform_config_dir("runway"), "github_oauth.json")
-    )
-    CHATGPT_AUTH_PATH: str = Field(default_factory=lambda: os.path.expanduser("~/.codex/auth.json"))
-    CHATGPT_SESSIONS_DIR: str = Field(
-        default_factory=lambda: os.path.join(get_platform_config_dir("codex"), "sessions")
     )
 
     @computed_field  # type: ignore[prop-decorator]

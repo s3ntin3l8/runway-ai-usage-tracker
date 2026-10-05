@@ -17,13 +17,13 @@ The Claude collector supports multiple authentication and data collection method
 
 1.  **OAuth Token (Preferred)**:
     *   **Method 1**: Set the `CLAUDE_CODE_OAUTH_TOKEN` environment variable.
-    *   **Method 2 (Auto-discovered)**: Log in via the `claude` CLI. Standard Claude Code stores the token in `~/.claude/.credentials.json` and account identity in `~/.claude.json`. The sidecar pairs those files for identity discovery; custom credential files must contain their own `oauthAccount` identity or they remain available for assignment in Fleet. Other installations may use `~/.config/claude/oauth_creds.json` or macOS Keychain.
+    *   **Method 2 (Auto-discovered by the sidecar)**: Log in via the `claude` CLI and run the sidecar on that machine; the server never reads these files from its own host (`make dev` alone does not see them; use `make dev-all`). Standard Claude Code stores the token in `~/.claude/.credentials.json` and account identity in `~/.claude.json`. The sidecar pairs those files for identity discovery; custom credential files must contain their own `oauthAccount` identity or they remain available for assignment in Fleet. Other installations may use `~/.config/claude/oauth_creds.json` or macOS Keychain.
     *   When the discovered email matches an enabled Claude account, Runway records the host-specific origin mapping as `identity_claim` in Fleet's Credential Mappings. Unmatched credentials remain pending for operator assignment.
     *   **Method 3 (Auto-discovered, macOS only)**: OAuth token stored in macOS Keychain.
     *   **Details**: See [Primary: Hybrid (Statusline + OAuth API)](#primary-hybrid-statusline--oauth-api) and [Configuration section](#configuration).
 
 2.  **Statusline File**:
-    *   **Method**: This is a fast local data source, often present when the `claude` CLI is running. Runway reads `~/.claude/statusline.json` (or platform equivalent).
+    *   **Method**: This is a fast local data source, often present when the `claude` CLI is running. The sidecar reads `~/.claude/statusline.json` (or platform equivalent); the server does not.
     *   **Details**: See [Primary: Hybrid (Statusline + OAuth API)](#primary-hybrid-statusline--oauth-api).
 
 3.  **Manual Cookie Entry**: Used for Web API fallback if OAuth token is unavailable.
@@ -63,7 +63,7 @@ This is the preferred method, providing the most reliable and comprehensive data
 - **Statusline**: Reads `~/.claude/statusline.json` for Session and Weekly quota windows (Fast Path).
 - **CLI PTY**: Executes `claude -s read-only` to parse CLI output.
 - **Local Logs**: Scans `~/.claude/projects/**/*.jsonl` for token usage and emits per-message events.
-**Behavior:** The sidecar pushes parsed quota windows and per-message events from local logs to `/api/v1/fleet/ingest`. Neither the sidecar nor the server's local statusline path emits the context-window token count as a separate card; per-message token usage remains available from event history. On the server, `EventIngestor` merges local event data with any `api`/`web` results for the same `(provider_id, account_id, window_type, variant, model_id)` tuple — token breakdown and session counts come from events, while the headline `%` typically comes from `api`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
+**Behavior:** The sidecar pushes parsed quota windows and per-message events from local logs to `/api/v1/fleet/ingest`. The sidecar does not emit the context-window token count as a separate card; per-message token usage remains available from event history. On the server, `EventIngestor` merges local event data with any `api`/`web` results for the same `(provider_id, account_id, window_type, variant, model_id)` tuple — token breakdown and session counts come from events, while the headline `%` typically comes from `api`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
 
 ## Output Format
 
@@ -94,11 +94,11 @@ This is the preferred method, providing the most reliable and comprehensive data
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Optional | OAuth token for API access (auto-discovered from Claude Code credentials or macOS Keychain if not set) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Optional | OAuth token for API access (the sidecar discovers Claude Code credentials or the macOS Keychain login if this is not set) |
 
-**Auto-Discovery:**
+**Auto-Discovery (sidecar only):**
 - Credentials files: `~/.claude/.credentials.json` (paired with `~/.claude.json` for `oauthAccount.emailAddress`) or the Claude config directory's `oauth_creds.json` (normally `~/.config/claude/oauth_creds.json` on Linux); macOS Keychain is also supported.
-- Projects directory: `~/.config/claude/projects/` (auto-discovered for local logs)
+- Projects directory: `~/.config/claude/projects/` (the sidecar discovers it for local logs)
 
 ## Sidecar Support
 

@@ -45,7 +45,7 @@ The `input_source` label identifies **where** the credentials/data came from.
 | Label | Description |
 | :--- | :--- |
 | **`config`** | Entered by the user directly into the Runway Settings UI (stored in DB). |
-| **`server`** | Discovered by the local server (Environment variables, `.env` file, or local config discovery like `~/.config/gh`). |
+| **`server`** | Found by the server process itself (environment variables, `.env` file, or Runway's own `github_oauth.json`). CLI logins such as `~/.config/gh` are read by the sidecar, not the server. |
 | **`sidecar`** | Forwarded from a remote sidecar (remote host logs, browser cookies, IDE/file introspection). |
 
 ---

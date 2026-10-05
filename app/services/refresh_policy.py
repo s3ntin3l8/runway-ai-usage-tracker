@@ -55,10 +55,6 @@ def machine_owns_credential(
     entry's ``source`` is just whichever push came last. A sidecar as the merged source is
     treated as ownership on its own (conservative: it can only pause a refresh, never rotate
     a CLI's token).
-
-    A CLI's login file on the server host is a separate rule: ``CredentialProvider.
-    is_cli_owned_file`` (the collector declines to refresh it), since a merged ``"server"``
-    source cannot tell that file from an env var (see docs/architecture.md).
     """
     if provider not in ROTATING_REFRESH_PROVIDERS:
         return False

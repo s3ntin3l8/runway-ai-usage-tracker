@@ -175,7 +175,8 @@ async def test_a_pinned_claude_cookie_is_not_verified_as_the_servers_own_cli_log
     """The server host's ``~/.claude`` login belongs to another account: a pinned bundle must
     be identified by its own credential only."""
     engine, cache = world
-    cli = tmp_path / ".credentials.json"
+    cli = tmp_path / ".claude" / ".credentials.json"
+    cli.parent.mkdir()
     cli.write_text(
         json.dumps(
             {
@@ -184,10 +185,9 @@ async def test_a_pinned_claude_cookie_is_not_verified_as_the_servers_own_cli_log
             }
         )
     )
-    monkeypatch.setattr(
-        "app.services.credential_provider.CredentialProvider.get_anthropic_credentials_path",
-        staticmethod(lambda: str(cli)),
-    )
+    # Even a planted login in the server host's home is never consulted.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     source_id = await _seed(
         world, "anthropic", "cookie:anthropic/session", {"cookie_sessionKey": CLAUDE_COOKIE}
     )

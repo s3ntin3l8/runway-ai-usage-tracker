@@ -59,7 +59,6 @@ class TestSettings:
         """Test that settings correctly load from environment variables."""
         test_vars = {
             "CLAUDE_CODE_OAUTH_TOKEN": "test_claude_token",
-            "GEMINI_OAUTH_PATH": "/fake/gemini/creds.json",
         }
 
         with patch.dict(os.environ, test_vars, clear=False):
@@ -71,22 +70,35 @@ class TestSettings:
             importlib.reload(config)
 
             assert config.settings.CLAUDE_CODE_OAUTH_TOKEN == "test_claude_token"
-            assert config.settings.GEMINI_OAUTH_PATH == "/fake/gemini/creds.json"
 
-    def test_settings_defaults(self):
-        """Test that default values are applied for optional settings."""
-        from app.core import config
+    def test_removed_credential_path_settings_are_gone_and_their_env_vars_ignored(
+        self, _restore_config_module
+    ):
+        """The server reads no CLI credential files, so those path settings no longer exist.
 
-        # Settings should have sensible defaults
-        assert config.settings.CLAUDE_PROJECTS_DIR is not None
-        assert config.settings.CHATGPT_SESSIONS_DIR is not None
+        A leftover env var from an older deployment must be ignored (``extra="ignore"``),
+        not crash startup. Runway's own GitHub OAuth file path stays.
+        """
+        removed = {
+            "GEMINI_OAUTH_PATH": "/fake/gemini/creds.json",
+            "ANTHROPIC_OAUTH_PATH": "/fake/claude/creds.json",
+            "ANTIGRAVITY_OAUTH_PATH": "/fake/agy/token",
+            "CHATGPT_AUTH_PATH": "/fake/codex/auth.json",
+            "CLAUDE_STATUSLINE_PATH": "/fake/statusline.json",
+            "CLAUDE_PROJECTS_DIR": "/fake/projects",
+            "GEMINI_SESSIONS_DIR": "/fake/gemini/sessions",
+            "CHATGPT_SESSIONS_DIR": "/fake/codex/sessions",
+        }
+        with patch.dict(os.environ, removed, clear=False):
+            import importlib
 
-    def test_settings_path_expansion(self):
-        """Test that ~ paths are properly expanded."""
-        from app.core import config
+            from app.core import config
 
-        # Paths should not contain ~ after loading
-        assert "~" not in config.settings.CLAUDE_PROJECTS_DIR
+            importlib.reload(config)
+
+            for name in removed:
+                assert not hasattr(config.settings, name)
+            assert config.settings.GITHUB_OAUTH_PATH.endswith("github_oauth.json")
 
     def test_settings_validation(self):
         """Test that invalid settings raise validation errors."""
@@ -113,22 +125,6 @@ class TestConfigEnvironmentVariables:
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": test_token}):
             # Token would be loaded from environment
             pass
-
-    def test_gemini_credentials_path_from_env(self):
-        """Test GEMINI_OAUTH_PATH is properly configured."""
-        test_path = "/custom/path/to/gemini/credentials.json"
-        with patch.dict(os.environ, {"GEMINI_OAUTH_PATH": test_path}):
-            # Path would be loaded from environment
-            pass
-
-    def test_optional_settings_with_defaults(self):
-        """Test that optional settings use defaults when not provided."""
-        with patch.dict(os.environ, {}, clear=True):
-            from app.core.config import settings
-
-            # Optional settings should have defaults
-            assert settings.CLAUDE_PROJECTS_DIR
-            assert settings.CHATGPT_SESSIONS_DIR
 
 
 class TestConfigEnvFileLoading:

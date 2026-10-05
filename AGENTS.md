@@ -68,7 +68,9 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
 `make help` lists them all; the ones you'll reach for:
 
 - `make dev` / `make dev-all` — server with hot reload; or server + Vite
-  (:5173) + sidecar together.
+  (:5173) + sidecar together. `make dev` alone no longer sees your local CLI
+  logins (the server reads no credential files); use `make dev-all` to collect
+  from them.
 - `make test` — pytest; a single file: `pytest tests/path/to/test_file.py`.
 - `make lint` / `make format` — ruff + mypy + pip-audit; auto-fix formatting.
 - `make web-test` / `make web` — frontend vitest; production SPA build into
@@ -93,6 +95,11 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   cookies, and IDE/file introspection all run in the sidecar. The server
   container has no native desktop UI or keychains — credentials arrive via
   ENV vars or sidecar payloads.
+- **The server reads no credential files except its own `github_oauth.json`;
+  credentials arrive via sidecar, env var or Settings.** File rules in
+  `registry.json` are evaluated by the sidecar only (`_server_may_read` gates the
+  server, before any `~` expansion), and collectors never touch the host home.
+  `tests/unit/test_server_reads_no_credential_files.py` enforces it.
 - **Dev and prod never share a data dir.** SQLite is single-writer; `make dev*`
   defaults `RUNWAY_CONFIG_DIR` to the gitignored `./data`.
 - **Schema changes are forward-safe (no Alembic).** New columns are added by

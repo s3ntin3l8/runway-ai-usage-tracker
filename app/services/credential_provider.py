@@ -201,6 +201,25 @@ def _expand_rule_paths(paths: list) -> list:
     return out
 
 
+_SERVER_READABLE_PREFIX = "{{CONFIG_DIR:runway}}"
+
+
+def _server_may_read(rule: dict[str, Any]) -> bool:
+    """Whether the server itself may evaluate this registry file rule.
+
+    The server reads no credential files except Runway's own (the GitHub OAuth token
+    the UI flow writes into ``{{CONFIG_DIR:runway}}``). Every other file rule
+    (``~/.gemini``, ``~/.claude``, ``~/.config/gh``, opencode, codex, ...) is a
+    sidecar concern: the server may run in Docker with no host home at all. Applied to
+    the RAW rule paths, before ``_expand_rule_paths`` expands ``~`` or globs, so no
+    ``exists``/``glob`` call ever touches the host home.
+    """
+    paths = rule.get("paths") or []
+    return bool(paths) and all(
+        isinstance(p, str) and p.startswith(_SERVER_READABLE_PREFIX) for p in paths
+    )
+
+
 # dict value-equality is intentional; the `sources` attribute is non-compared metadata.
 class CredentialMap(dict):
     """A dictionary that tracks the source (config or server) for each key."""
@@ -331,7 +350,7 @@ class CredentialProvider:
                             sources[target_key] = "server"
 
             # 2. Local Files (JSON/YAML)
-            elif rule_type == "file":
+            elif rule_type == "file" and _server_may_read(rule):
                 for path in _expand_rule_paths(rule.get("paths", [])):
                     try:
                         fmt = rule.get("format", "json")
@@ -382,28 +401,14 @@ class CredentialProvider:
         }
 
     @staticmethod
-    def is_cli_owned_file(provider_id: str, path: str) -> bool:
-        """A rotating provider's login file that a CLI on this host renews.
-
-        Anything outside Runway's own config dir (``~/.claude/.credentials.json``,
-        ``~/.codex/auth.json``) belongs to the CLI that wrote it; the server must not
-        rotate its refresh token (the CLI is signed out and never learns the new one).
-        Files inside Runway's config dir are Runway's own and stay server-refreshed.
-        """
-        from app.services.refresh_policy import ROTATING_REFRESH_PROVIDERS
-
-        if provider_id not in ROTATING_REFRESH_PROVIDERS:
-            return False
-        return not _inside_runway_config_dir(path)
-
-    @staticmethod
     def server_credential_origins(provider_id: str) -> list[dict[str, Any]]:
         """Where the *server host itself* finds credentials for ``provider_id``.
 
-        One entry per env var / file rule that currently yields a value:
+        One entry per env var / Runway-owned file rule that currently yields a value (file
+        rules outside Runway's config dir are sidecar-only and never evaluated here):
         ``{"source_type": "env"|"file", "label": <VAR|basename>, "keys": [targets],
         "managed": <file inside Runway's own config dir>, "exp": <epoch seconds or None>,
-        "rollable": <holds a refresh credential>, "cli_owned": <a CLI on this host renews it>}``. ``exp`` and ``rollable`` are derived
+        "rollable": <holds a refresh credential>}``. ``exp`` and ``rollable`` are derived
         from the values here so callers can classify the credential; the values themselves
         are never returned. Blocking file reads; call through ``asyncio.to_thread`` from
         async code.
@@ -423,11 +428,10 @@ class CredentialProvider:
                             "label": variable,
                             "keys": [target],
                             "managed": False,
-                            "cli_owned": False,
                             **CredentialProvider._classify_values({target: env_value}),
                         }
                     )
-            elif rule_type == "file":
+            elif rule_type == "file" and _server_may_read(rule):
                 for path in _expand_rule_paths(rule.get("paths", [])):
                     try:
                         with open(path) as f:
@@ -450,9 +454,6 @@ class CredentialProvider:
                                 "label": os.path.basename(str(path)),
                                 "keys": keys,
                                 "managed": _inside_runway_config_dir(path),
-                                "cli_owned": CredentialProvider.is_cli_owned_file(
-                                    provider_id, str(path)
-                                ),
                                 **CredentialProvider._classify_values(
                                     {k: v for k, v in resolved.items() if v}
                                 ),
@@ -532,42 +533,6 @@ class CredentialProvider:
     def get_github_data() -> "CredentialMap":
         """Get full GitHub OAuth data using registry rules."""
         return CredentialProvider.get_credentials("github")
-
-    @staticmethod
-    def get_gemini_credentials_path() -> str | None:
-        """Search for Gemini credentials file using registry rules."""
-        provider_config = registry.get_provider("gemini")
-        for rule in provider_config.get("rules", []):
-            if rule.get("type") == "file":
-                for path_str in rule.get("paths", []):
-                    path = registry.resolve_path(path_str)
-                    if os.path.exists(path):
-                        return path
-        return None
-
-    @staticmethod
-    def get_anthropic_credentials_path() -> str | None:
-        """Search for Anthropic credentials file using registry rules."""
-        provider_config = registry.get_provider("anthropic")
-        for rule in provider_config.get("rules", []):
-            if rule.get("type") == "file":
-                for path_str in rule.get("paths", []):
-                    path = registry.resolve_path(path_str)
-                    if os.path.exists(path):
-                        return path
-        return None
-
-    @staticmethod
-    def get_chatgpt_credentials_path() -> str | None:
-        """Search for ChatGPT credentials file using registry rules."""
-        provider_config = registry.get_provider("chatgpt")
-        for rule in provider_config.get("rules", []):
-            if rule.get("type") == "file":
-                for path_str in rule.get("paths", []):
-                    path = registry.resolve_path(path_str)
-                    if os.path.exists(path):
-                        return path
-        return None
 
     @staticmethod
     def get_chatgpt_data() -> "CredentialMap":

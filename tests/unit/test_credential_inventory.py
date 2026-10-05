@@ -633,7 +633,6 @@ async def test_scan_server_credentials_includes_runways_own_device_login_file(mo
         "label": "github_oauth.json",
         "keys": ["api_key"],
         "managed": True,
-        "cli_owned": False,
         "exp": None,
         "rollable": False,
     }
