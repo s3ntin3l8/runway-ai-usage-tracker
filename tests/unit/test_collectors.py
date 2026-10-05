@@ -97,7 +97,6 @@ class TestAnthropicCollector:
             ),
             patch("app.services.collectors.anthropic.settings") as mock_settings,
         ):
-            mock_settings.CLAUDE_PROJECTS_DIR = "/home/user/.claude/projects"
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
 
@@ -134,14 +133,8 @@ class TestAnthropicCollector:
         collector = AnthropicCollector(account_id="acc_a")
 
         with (
-            patch.object(
-                collector,
-                "_get_credentials",
-                new_callable=AsyncMock,
-                return_value={"claudeAiOauth": {}},
-            ),
             patch(
-                "app.services.collectors.oauth_base.token_cache.get_token",
+                "app.services.collectors.anthropic_oauth.token_cache.get_token",
                 new_callable=AsyncMock,
                 return_value="refresh_a",
             ) as mock_get_token,
@@ -179,7 +172,6 @@ class TestAnthropicCollector:
         ):
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
-            mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
 
             with (
                 patch(
@@ -327,25 +319,23 @@ class TestAnthropicCollector:
                 return_value="expired_token",
             ):
                 with patch("app.services.collectors.anthropic.settings") as mock_settings:
-                    mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
                     mock_settings.CLAUDE_PRO_LIMIT = 2000000
                     mock_settings.CLAUDE_FREE_LIMIT = 500000
 
                     # Return False for expiration check so we hit the reactive path (401 response)
                     with patch.object(collector, "_is_token_expired", return_value=False):
-                        # Mock refresh token availability
-                        with patch.object(
-                            collector,
-                            "_get_credentials",
-                            return_value={"claudeAiOauth": {"refreshToken": "valid_refresh_token"}},
+                        # Mock refresh token availability (from the token cache)
+                        with patch(
+                            "app.services.collectors.anthropic_oauth.token_cache.get_token",
+                            new_callable=AsyncMock,
+                            return_value="valid_refresh_token",
                         ):
-                            with patch.object(collector, "_persist_credentials", return_value=None):
-                                with patch(
-                                    "app.services.token_cache.token_cache.store",
-                                    return_value=None,
-                                ):
-                                    # First request gets 401, then reactive refresh happens, then second request succeeds
-                                    result = await collector.collect(mock_http_client)
+                            with patch(
+                                "app.services.token_cache.token_cache.store",
+                                return_value=None,
+                            ):
+                                # First request gets 401, then reactive refresh happens, then second request succeeds
+                                result = await collector.collect(mock_http_client)
 
         # Should return successful OAuth results (not error cards)
         assert isinstance(result, list)
@@ -402,7 +392,6 @@ class TestAnthropicCollector:
         ):
             mock_settings.CLAUDE_PRO_LIMIT = 2000000
             mock_settings.CLAUDE_FREE_LIMIT = 500000
-            mock_settings.CLAUDE_PROJECTS_DIR = "/fake/path"
 
             with (
                 patch(
@@ -1025,36 +1014,25 @@ class TestAnthropicCollector:
         called_fn = mock_asyncio.to_thread.call_args[0][0]
         assert callable(called_fn), "asyncio.to_thread must be called with a callable"
 
-    def test_tier_mapping_from_creds(self):
-        """Test that user plan is correctly inferred from rate_limit_tier in credentials."""
+    def test_tier_comes_from_organization_info_then_the_usage_response(self):
+        """The plan is inferred from the organization info, then the usage response.
+
+        The server reads no credentials file, so there is no ``rateLimitTier`` fallback.
+        """
         collector = AnthropicCollector()
         name_map = {"five_hour": "Session Window"}
         data = {"five_hour": {"utilization": 10.0}}
 
-        # Test Tier 1 -> Pro
-        creds_pro = {"claudeAiOauth": {"rateLimitTier": "tier_1"}}
-        result = collector._parse_oauth_response(data, name_map, creds_pro)
-        assert result[0]["tier"] == "Pro"
-
-        # Test Tier 2 -> Max
-        creds_max = {"claudeAiOauth": {"rateLimitTier": "tier_2"}}
-        result = collector._parse_oauth_response(data, name_map, creds_max)
+        result = collector._parse_oauth_response(data, name_map, {"tier": "Max"})
         assert result[0]["tier"] == "Max"
 
-        # Test Tier 3 -> Team
-        creds_team = {"claudeAiOauth": {"rateLimitTier": "tier_3"}}
-        result = collector._parse_oauth_response(data, name_map, creds_team)
-        assert result[0]["tier"] == "Team"
-
-        # Test Tier 0 -> Free
-        creds_free = {"claudeAiOauth": {"rateLimitTier": "tier_0"}}
-        result = collector._parse_oauth_response(data, name_map, creds_free)
-        assert result[0]["tier"] == "Free"
-
-        # Fallback to API plan
         data_with_plan = {"account": {"plan": "plus"}, "five_hour": {"utilization": 10.0}}
         result = collector._parse_oauth_response(data_with_plan, name_map, None)
         assert result[0]["tier"] == "Plus"
+
+        # The org info outranks the usage response.
+        result = collector._parse_oauth_response(data_with_plan, name_map, {"tier": "Team"})
+        assert result[0]["tier"] == "Team"
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="local strategy moved to sidecar")
@@ -1153,7 +1131,6 @@ class TestAnthropicCollector:
 
         with (
             patch.object(collector, "_get_config_dirs", return_value=[str(tmp_path / "projects")]),
-            patch.object(collector, "_credentials_path", str(tmp_path / "no_creds.json")),
         ):
             result = collector._get_claude_local_enhanced_sync()
 
@@ -1265,7 +1242,6 @@ class TestAnthropicCollector:
 
         with (
             patch.object(collector, "_get_config_dirs", return_value=[str(tmp_path / "projects")]),
-            patch.object(collector, "_credentials_path", str(tmp_path / "no_creds.json")),
         ):
             result = collector._get_claude_local_enhanced_sync()
 
@@ -1332,7 +1308,6 @@ class TestAnthropicCollector:
 
         with (
             patch.object(collector, "_get_config_dirs", return_value=[str(tmp_path / "projects")]),
-            patch.object(collector, "_credentials_path", str(tmp_path / "no_creds.json")),
         ):
             result = collector._get_claude_local_enhanced_sync()
 
@@ -1404,6 +1379,16 @@ class TestAnthropicCollector:
         assert result[0]["detail"] == "original detail"
 
 
+async def _gemini_cache_with(tokens: dict[str, str] | None = None):
+    """A fresh TokenCache holding a sidecar-pushed Gemini bundle (the only credential source)."""
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    if tokens is not None:
+        await cache.store("gemini", tokens, account_id=None, source="sidecar")
+    return cache
+
+
 class TestGeminiCollector:
     """Test suite for Google Gemini collector."""
 
@@ -1437,23 +1422,9 @@ class TestGeminiCollector:
 
         mock_http_client.request = mock_request
 
-        with patch("app.services.collectors.gemini.settings") as mock_settings:
-            mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
-            mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
-
-            with (
-                patch(
-                    "builtins.open",
-                    mock_open(
-                        read_data=json.dumps(
-                            {"access_token": "token", "expiry_date": 9999999999999}
-                        )
-                    ),
-                ),
-                patch("app.services.collectors.oauth_base.os.path.exists", return_value=True),
-                patch("app.services.collectors.gemini_oauth.time.time", return_value=1000),
-            ):
-                result = await collector.collect(mock_http_client)
+        cache = await _gemini_cache_with({"oauth_token": "token", "expiry_date": "9999999999999"})
+        with patch("app.services.collectors.gemini_oauth.token_cache", cache):
+            result = await collector.collect(mock_http_client)
 
         assert isinstance(result, list)
         assert len(result) >= 1
@@ -1503,22 +1474,9 @@ class TestGeminiCollector:
 
         mock_http_client.request = mock_request
 
-        with patch("app.services.collectors.gemini_oauth.settings") as mock_settings:
-            mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
-            mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
-
-            with (
-                patch(
-                    "builtins.open",
-                    mock_open(
-                        read_data=json.dumps(
-                            {"access_token": "token", "expiry_date": 9999999999999}
-                        )
-                    ),
-                ),
-                patch("app.services.collectors.oauth_base.os.path.exists", return_value=True),
-            ):
-                result = await collector.collect(mock_http_client)
+        cache = await _gemini_cache_with({"oauth_token": "token", "expiry_date": "9999999999999"})
+        with patch("app.services.collectors.gemini_oauth.token_cache", cache):
+            result = await collector.collect(mock_http_client)
 
         assert len(result) == 1
         card = result[0]
@@ -1533,15 +1491,12 @@ class TestGeminiCollector:
 
     @pytest.mark.asyncio
     async def test_collect_missing_credentials(self, mock_http_client):
-        """Test graceful handling when credentials file missing."""
+        """Test graceful handling when no sidecar/config bundle is cached."""
         collector = GeminiCollector()
 
-        with patch("app.services.collectors.gemini_oauth.settings") as mock_settings:
-            mock_settings.GEMINI_OAUTH_PATH = "/fake/missing.json"
-            mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
-
-            with patch("app.services.collectors.oauth_base.os.path.exists", return_value=False):
-                result = await collector.collect(mock_http_client)
+        cache = await _gemini_cache_with(None)
+        with patch("app.services.collectors.gemini_oauth.token_cache", cache):
+            result = await collector.collect(mock_http_client)
 
         # Should return empty list or fallback to logs
         assert isinstance(result, list)
@@ -1591,22 +1546,9 @@ class TestGeminiCollector:
 
         mock_http_client.request = mock_request
 
-        with patch("app.services.collectors.gemini_oauth.settings") as mock_settings:
-            mock_settings.GEMINI_OAUTH_PATH = "/fake/creds.json"
-            mock_settings.GEMINI_SESSIONS_DIR = "/fake/sessions"
-
-            with (
-                patch(
-                    "builtins.open",
-                    mock_open(
-                        read_data=json.dumps(
-                            {"access_token": "token", "expiry_date": 9999999999999}
-                        )
-                    ),
-                ),
-                patch("app.services.collectors.oauth_base.os.path.exists", return_value=True),
-            ):
-                result = await collector.collect(mock_http_client)
+        cache = await _gemini_cache_with({"oauth_token": "token", "expiry_date": "9999999999999"})
+        with patch("app.services.collectors.gemini_oauth.token_cache", cache):
+            result = await collector.collect(mock_http_client)
 
         # Exactly one Pro card; the GA bucket (with quotaLimit) wins
         pro_cards = [c for c in result if c.get("model_id") == "pro"]
@@ -2090,8 +2032,6 @@ class TestChatGPTCollector:
         mock_http_client.get.return_value = mock_response
 
         with patch("app.services.collectors.chatgpt_oauth.settings") as mock_settings:
-            mock_settings.CHATGPT_SESSIONS_DIR = "/fake/sessions"
-
             with patch("builtins.open", side_effect=FileNotFoundError):
                 result = await collector.collect(mock_http_client)
 

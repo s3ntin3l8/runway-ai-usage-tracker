@@ -24,8 +24,8 @@ The GitHub Copilot collector supports multiple authentication methods:
     *   **Details**: See the [GitHub OAuth Setup section](#github-oauth-setup) below.
 
 3.  **`gh` CLI Credential Discovery**: Automatically discover credentials from the `gh` CLI's configuration.
-    *   **Method**: Log in via `gh auth login`, and Runway will read the `oauth_token` from `~/.config/gh/hosts.yml` (or Windows equivalent).
-    *   **App/Sidecar**: Supported by both the main Runway app and the Sidecar.
+    *   **Method**: Log in via `gh auth login`, and the sidecar reads the `oauth_token` from `~/.config/gh/hosts.yml` (or Windows equivalent) or the keyring and pushes it. The server never reads `hosts.yml` from its own host.
+    *   **App/Sidecar**: Sidecar only (`make dev` alone does not see it; use `make dev-all`).
     *   **Details**: See the [Credential Discovery section](#credential-discovery) below.
 
 ## Account identity
@@ -33,7 +33,7 @@ The GitHub Copilot collector supports multiple authentication methods:
 A GitHub account is keyed by its **login** (`/user` → `login`), never by email:
 the login is returned for every token type and never changes. The email (from
 `/user` or `/user/emails`) is only the display label. The server host's own
-`git config user.email` is deliberately *not* consulted — it identifies the host,
+`git config user.email` and `gh` login are deliberately *not* consulted — it identifies the host,
 not the token. `resolve_account_id` treats GitHub as login-keyed, so an email
 label cannot re-key an explicitly identified account.
 
@@ -96,14 +96,14 @@ Runway uses the public GitHub OAuth Client ID (`Iv1.b507a08c87ecfe98`) to enable
 
 ## Credential Discovery
 
-GitHub credentials come from these sources. The first one found by the server (settings key, then env, then files) is used by the collector; every machine-reported one is kept as its own row in Settings → Credentials.
+GitHub credentials come from these sources. The first one found by the server (settings key, then env, then Runway's own `github_oauth.json`) is used by the collector; every machine-reported one is kept as its own row in Settings → Credentials.
 
 | Source | Detected by | Notes |
 |---|---|---|
 | Settings key | server | A token pasted in the provider dialog. |
 | `GITHUB_TOKEN` / `GH_TOKEN` | server and sidecar | Environment variable. |
 | Sign in with GitHub (device flow) | server | Button in the GitHub account dialog. The token is stored encrypted at `<config dir>/github_oauth.json` and listed as a server credential; it counts as evidence for the account while the file exists, and Disconnect deletes it. Sidecars never ship this file. |
-| `gh` CLI `hosts.yml` | server and sidecar | `~/.config/gh/hosts.yml` (Linux/macOS) or `%APPDATA%\GitHub CLI\hosts.yml`; spellings of the same file are read once. |
+| `gh` CLI `hosts.yml` | sidecar | `~/.config/gh/hosts.yml` (Linux/macOS) or `%APPDATA%\GitHub CLI\hosts.yml`; spellings of the same file are read once. |
 | `gh` CLI keyring | sidecar | `gh auth token`, for `gh` ≥ 2.40, which keeps the token in the OS keyring and leaves `hosts.yml` without one. Skipped when it returns a token already found above. |
 | Editor Copilot sign-in files | sidecar | `apps.json` / `hosts.json` under `~/.config/github-copilot` (or `%LOCALAPPDATA%\github-copilot`), written by JetBrains, Neovim (`copilot.vim`/`copilot.lua`), Xcode and Zed. `github.com` entries only; the file's `user` is not used as the account id. The three known client ids are tried first, then any other `github.com:<client id>` entry. With several entries the first by sorted key is used. The same token in more than one file counts once. |
 | Copilot CLI plaintext token | sidecar | `~/.copilot/config.json` (JSON with `//` comments), `authTokens` / `copilotTokens` entries for `https://github.com:<login>`. The CLI keeps its token in the OS keychain when it can, so this file only holds a token on a machine without one (typically headless Linux); elsewhere it is read and found empty without logging. The login in the key is not used as the account id. `COPILOT_HOME` is not honoured. |

@@ -3,20 +3,20 @@
 **File:** `app/services/collectors/gemini.py` (server-side: `api` against Google Cloud Code)
 **Sidecar:** `scripts/sidecar.py` + `sidecar_app/` (local enrichment: session logs)
 
-Google Gemini CLI quota collector. The server-side `api` strategy hits Google Cloud Code endpoints with an auto-refreshed OAuth token; the `local` enrichment strategy that reads `~/.gemini/tmp/*/chats/session-*.json` executes inside the sidecar and ships per-message events to the server.
+Google Gemini CLI quota collector. The server-side `api` strategy hits Google Cloud Code endpoints with an OAuth bundle the sidecar pushed (the server refreshes it into its token cache); the `local` enrichment strategy that reads `~/.gemini/tmp/*/chats/session-*.json` executes inside the sidecar and ships per-message events to the server.
 
 ## Overview
 
 - **Collection Strategy**: api (Google Cloud Code) + local enrichment (session logs, via sidecar)
 - **Cards**: 1-7 cards (one per model family: Flash, Pro, Flash Lite, etc.)
-- **Authentication**: OAuth credentials (api). Local session logs are discovered by the sidecar.
+- **Authentication**: OAuth credentials pushed by the sidecar, or an access token pasted in Settings → Providers (api). The server never reads `~/.gemini/oauth_creds.json` itself. Local session logs are discovered by the sidecar.
 
 ## Setup Methods Quick Overview
 
 The Gemini collector supports the following authentication methods:
 
 1.  **OAuth Credentials (Preferred)**:
-    *   **Method**: Log in via the Gemini CLI, which stores credentials in `~/.gemini/oauth_creds.json`. Runway will automatically discover and use these.
+    *   **Method**: Log in via the Gemini CLI, which stores credentials in `~/.gemini/oauth_creds.json`, and run the [sidecar](../sidecar.md) on that machine. The sidecar reads the file and pushes the bundle; the server never reads it from its own host (`make dev` alone does not see it, use `make dev-all`).
     *   **Details**: See [Primary: Google Cloud Code API](#primary-google-cloud-code-api).
 
 2.  **Custom OAuth Client ID/Secret**: Required if token auto-refresh fails.
@@ -29,7 +29,7 @@ The Gemini collector supports the following authentication methods:
 **Endpoints:**
 - `cloudcode-pa.googleapis.com/...:loadCodeAssist` (project discovery)
 - `cloudcode-pa.googleapis.com/...:retrieveUserQuota` (quotas)
-**Auth:** OAuth token (auto-refreshed via Google).
+**Auth:** the cached OAuth bundle (sidecar push or Settings). Google does not rotate Gemini's refresh token, so the server refreshes an expired access token itself and writes it back to its token cache (not to the CLI's file).
 **Behavior:** Primary source for model-specific quotas (Flash, Pro, etc.).
 
 ### Enrichment: local (Session Logs) — sidecar-only
@@ -74,7 +74,7 @@ The Gemini collector supports the following authentication methods:
 
 ## Sidecar Support
 
-Sidecar extracts OAuth token from `~/.gemini/oauth_creds.json`. See [sidecar documentation](../sidecar.md).
+Sidecar extracts the OAuth bundle from `~/.gemini/oauth_creds.json` — the only way a CLI login reaches the server. See [sidecar documentation](../sidecar.md).
 
 ## Troubleshooting
 

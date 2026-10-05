@@ -175,8 +175,8 @@ The sidecar only needs outbound HTTP — no inbound ports.
 | Provider | Sidecar required? | Notes |
 |----------|:-----------------:|-------|
 | **Claude** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CLAUDE_CODE_OAUTH_TOKEN` works server-only |
-| **Gemini** | No (OAuth on server) | Sidecar adds local-log enrichment |
-| **GitHub Copilot** | No | `GITHUB_TOKEN` API works everywhere |
+| **Gemini** | ⚠️ Yes | The server reads no `~/.gemini` login; the sidecar pushes the OAuth bundle (the server then refreshes it) and adds local-log enrichment |
+| **GitHub Copilot** | Optional | `GITHUB_TOKEN` or the UI GitHub login works server-only; `gh` CLI logins (`hosts.yml`, keyring) are read by the sidecar |
 | **ChatGPT** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CHATGPT_OAUTH_TOKEN` works server-only |
 | **OpenRouter** | No | `OPENROUTER_API_KEY` works everywhere |
 | **DeepSeek** | No | `DEEPSEEK_API_KEY` works everywhere |
@@ -189,6 +189,8 @@ The sidecar only needs outbound HTTP — no inbound ports.
 | **Kimi K2** | No | API key works everywhere |
 | **xAI (Grok)** | Optional | A pasted bearer in Settings works server-only; sidecar adds auto-discovery from OpenCode/Grok CLI credentials |
 | **Antigravity** | ⚠️ Yes for remote-host credentials and events | Server queries the Cloud Code Assist API for quota; a sidecar sends the agy OAuth token from another host and extracts local conversation events |
+
+**The server reads no credential files** except Runway's own `github_oauth.json` (written by the UI GitHub login). CLI logins (`~/.gemini`, `~/.claude`, `~/.codex`, `~/.config/gh`, opencode, agy) reach the server only through a sidecar; otherwise use an env var or Settings → Providers.
 
 **Legend:** ⚠️ Yes = sidecar required for full coverage. "No" means the server-side API path is enough, though a sidecar adds enrichment (token breakdowns, session counts, per-message events).
 

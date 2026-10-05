@@ -18,7 +18,6 @@ from app.core.utils import IdentityExtractor, has_refresh_credential
 from app.services.token_cache import server_may_refresh, token_cache
 from app.services.token_refresher import (
     _REFRESH_ENDPOINTS,
-    persist_to_local_file,
     refresh_oauth_token,
 )
 
@@ -118,7 +117,6 @@ class TokenAutoRefresher:
                     source=meta.get("source"),
                 )
                 await token_cache.apply_refresh_to_sources(provider, account_id, tokens, new_tokens)
-                persist_to_local_file(provider, new_tokens, meta.get("source"))
                 refreshed += 1
                 logger.info(
                     f"Auto-refreshed {provider}/{account_id} ({seconds_left:.0f}s before expiry)"

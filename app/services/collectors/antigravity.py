@@ -10,7 +10,6 @@ from typing import Any
 
 import httpx
 
-from app.core.config import settings
 from app.core.utils import error_card
 from app.services.collectors.antigravity_api import AntigravityApiMixin
 from app.services.collectors.antigravity_oauth import AntigravityOAuthMixin
@@ -37,7 +36,6 @@ class AntigravityCollector(
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         super().__init__(
             provider_name="Antigravity",
-            credentials_path=settings.ANTIGRAVITY_OAUTH_PATH,
             account_id=account_id,
             account_label=account_label,
         )
@@ -55,13 +53,12 @@ class AntigravityCollector(
         return await self._collect_via_api(client)
 
     async def _error_handler(self) -> list[dict[str, Any]]:
-        creds = await self._get_credentials()
-        if not creds:
+        if not await self._get_current_token():
             return [
                 error_card(
                     "Antigravity",
                     "🛸",
-                    "No credentials found — run `agy` at least once",
+                    "No credentials found — run the sidecar on a machine where `agy` is logged in",
                     error_type="missing_config",
                 )
             ]

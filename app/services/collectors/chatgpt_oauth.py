@@ -37,9 +37,9 @@ class ChatGPTWebOAuthMixin:
                 "input_source": self._current_input_source,
             }
 
-        # Priority 1 & 2: Env var or auth.json (Centralized in CredentialProvider)
-        # A collector pinned to a source bundle reads only that bundle: the server host's own
-        # login belongs to whichever account is signed in there, not to the bundle.
+        # Priority 1 & 2: Env var or Settings (Centralized in CredentialProvider)
+        # A collector pinned to a source bundle reads only that bundle, never the env /
+        # Settings credential of another account.
         auth_data = (
             credential_provider.get_chatgpt_data()
             if pinned is None
@@ -50,9 +50,9 @@ class ChatGPTWebOAuthMixin:
         refresh_token = auth_data.get("refresh_token")
 
         if token:
-            # No refresh here: ChatGPT rotates refresh tokens, and a Codex CLI file on this
-            # host is renewed by that CLI (see refresh_policy). Other server-owned logins
-            # are the auto-refresher's.
+            # No refresh here: ChatGPT rotates refresh tokens, a machine's login is renewed
+            # by that machine's CLI (see refresh_policy), and other server-owned logins are
+            # the auto-refresher's.
             input_source = getattr(auth_data, "sources", {}).get("access_token", "server")
             self._current_input_source = input_source
             return {

@@ -1,5 +1,5 @@
 {
-  "_comment": "Intentional differences between the sidecar's baked registry and app/core/registry.json. The generator (scripts/gen_sidecar_registry.py) merges this over registry.json; every entry needs a reason. The server evaluates every env/file rule in registry.json (credential scan, Token Health, inventory, provider list), so anything the sidecar alone should do lives here, not there. `notes` are comments carried into the generated block (JSON can't hold them), matched to a rule by `match`; `paths_contain` is a substring of one of its paths.",
+  "_comment": "Intentional differences between the sidecar's baked registry and app/core/registry.json. The generator (scripts/gen_sidecar_registry.py) merges this over registry.json; every entry needs a reason. The server evaluates every env rule in registry.json (credential scan, Token Health, inventory, provider list) but only the file rules under Runway's own config dir (`{{CONFIG_DIR:runway}}`, i.e. github_oauth.json); every other file rule is sidecar-only (CredentialProvider._server_may_read), so the server reads no CLI login files from its host. Anything the sidecar alone should do and the server must not even list lives here, not there. `notes` are comments carried into the generated block (JSON can't hold them), matched to a rule by `match`; `paths_contain` is a substring of one of its paths.",
   "providers": {
     "anthropic": {
       "drop_rules": [
@@ -34,7 +34,7 @@
       ],
       "add_rules": [
         {
-          "reason": "The sidecar reads the CLI's OAuth token file. Not in registry.json because the server would then scan it on its own host and register a server credential for it.",
+          "reason": "The sidecar reads the CLI's OAuth token file. Not in registry.json because the provider has no server-side file rule: only sidecars read CLI login files, and the server takes this credential from the sidecar's push.",
           "rule": {
             "type": "file",
             "paths": [

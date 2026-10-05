@@ -1,9 +1,8 @@
 import json
 import os
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import mock_open, patch
 
 import pytest
-import yaml
 
 from app.services.credential_provider import CredentialProvider
 
@@ -123,44 +122,21 @@ def test_github_token_runway_json():
         assert token == "runway_token"
 
 
-def test_github_token_gh_cli():
-    """Test discovering GitHub token from gh CLI's hosts.yml."""
-    mock_yaml = "github.com:\n  oauth_token: gho_cli_token\n  user: test"
+def test_github_token_gh_cli_file_is_not_read_by_the_server(tmp_path, monkeypatch):
+    """gh's hosts.yml is a sidecar concern: the server never evaluates that file rule."""
+    hosts = tmp_path / ".config" / "gh" / "hosts.yml"
+    hosts.parent.mkdir(parents=True)
+    hosts.write_text("github.com:\n  oauth_token: gho_cli_token\n  user: test")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
+    monkeypatch.setenv("GITHUB_TOKEN", "")
+    monkeypatch.setenv("GH_TOKEN", "")
 
-    # Need to patch os.path.exists for both Runway path (return False) and gh path (return True)
-    def exists_side_effect(path):
-        if "hosts.yml" in str(path):
-            return True
-        return False
+    creds = CredentialProvider.get_github_data()
 
-    with (
-        patch.dict(os.environ, {"GITHUB_TOKEN": ""}),
-        patch("os.path.exists", side_effect=exists_side_effect),
-        patch("builtins.open", mock_open(read_data=mock_yaml)),
-        patch(
-            "app.services.credential_provider.yaml",
-            MagicMock(safe_load=yaml.safe_load),
-        ),
-    ):
-        token = CredentialProvider.get_github_data().get("api_key", "")
-        assert token == "gho_cli_token"
-
-
-def test_gemini_path_discovery():
-    """Test discovering Gemini credentials path."""
-
-    def exists_side_effect(path):
-        if ".gemini/oauth_creds.json" in str(path):
-            return True
-        return False
-
-    with (
-        patch("os.path.exists", side_effect=exists_side_effect),
-        patch("os.path.expanduser", side_effect=lambda p: p.replace("~", "/home/user")),
-    ):
-        path = CredentialProvider.get_gemini_credentials_path()
-        assert path is not None
-        assert ".gemini/oauth_creds.json" in str(path)
+    assert "api_key" not in creds
+    assert not any(v == "gho_cli_token" for v in creds.values())
 
 
 def test_claude_token_env():
@@ -172,64 +148,29 @@ def test_claude_token_env():
         assert token == "claude_env_token"
 
 
-def test_claude_token_file():
-    """Test discovering Claude token from .credentials.json."""
-    mock_data = json.dumps(
+def test_claude_cli_credential_files_are_not_read_by_the_server(tmp_path, monkeypatch):
+    """~/.claude/.credentials.json and the claude config dir's oauth_creds.json are
+    sidecar-only: the server's own host never contributes a Claude login."""
+    payload = json.dumps(
         {
-            "claudeAiOauth": {
-                "accessToken": "claude_file_token",
-                "refreshToken": "claude_refresh_token",
-            }
+            "claudeAiOauth": {"accessToken": "claude_file_token", "refreshToken": "r"},
+            "oauthAccount": {"emailAddress": "claude@example.com"},
         }
     )
-    with (
-        patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}),
-        patch("os.path.exists", side_effect=lambda p: ".credentials.json" in str(p)),
-        patch(
-            "app.services.credential_provider.open",
-            mock_open(read_data=mock_data),
-            create=True,
-        ),
-    ):
-        # Clear cache for test
-        CredentialProvider._claude_token_cache = None
-        token = CredentialProvider.get_claude_token()
-        assert token == "claude_file_token"
+    for rel in (".claude/.credentials.json", ".config/claude/oauth_creds.json"):
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(payload)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+    CredentialProvider._claude_token_cache = None
 
-
-def test_claude_oauth_creds_file_is_discovered():
-    """Read Claude CLI credentials from its documented config-directory file."""
-    mock_data = json.dumps(
-        {
-            "claudeAiOauth": {
-                "accessToken": "claude_oauth_creds_token",
-                "refreshToken": "claude_oauth_creds_refresh",
-            },
-            "oauthAccount": {
-                "emailAddress": "claude@example.com",
-                "email": "Claude CLI",
-            },
-        }
-    )
-
-    with (
-        patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}),
-        patch(
-            "os.path.exists",
-            side_effect=lambda path: str(path).endswith("/claude/oauth_creds.json"),
-        ),
-        patch(
-            "app.services.credential_provider.open",
-            mock_open(read_data=mock_data),
-            create=True,
-        ),
-    ):
-        credentials = CredentialProvider.get_credentials("anthropic")
-
-    assert credentials["oauth_token"] == "claude_oauth_creds_token"
-    assert credentials["refresh_token"] == "claude_oauth_creds_refresh"
-    assert credentials["account_id"] == "claude@example.com"
-    assert credentials["account_label"] == "Claude CLI"
+    assert CredentialProvider.get_claude_token() == ""
+    credentials = CredentialProvider.get_credentials("anthropic")
+    assert "oauth_token" not in credentials
+    assert "account_id" not in credentials
 
 
 def test_mapping_value_pipe_syntax_falls_back_and_prefers_first_value():
@@ -329,49 +270,79 @@ _OPENCODE_AUTH_JSON_PROVIDERS = [
 
 
 @pytest.mark.parametrize(("provider_id", "env_var", "service_key"), _OPENCODE_AUTH_JSON_PROVIDERS)
-def test_opencode_auth_json_file_rule_extracts_nested_api_key(
+def test_opencode_auth_json_file_rule_yields_nothing_on_the_server(
     provider_id, env_var, service_key, tmp_path, monkeypatch
 ):
-    """The opencode auth.json file rule maps `<service>.key` -> api_key (#351).
-
-    ``_resolve_mapping_value`` must descend into auth.json's nested
-    ``{"<service>": {"key": ...}}`` shape the way it already does for
-    ``ollama-cloud.key`` — the server-side half of the registry parity fix.
-    """
-    auth_path = tmp_path / "auth.json"
+    """The opencode auth.json rule (#351) is sidecar-only now: even a valid file in the
+    server host's home contributes no credential and no ``file`` origin."""
+    auth_path = tmp_path / ".local" / "share" / "opencode" / "auth.json"
+    auth_path.parent.mkdir(parents=True)
     auth_path.write_text(json.dumps({service_key: {"key": "sk-live-from-auth"}}))
-
-    monkeypatch.setattr(
-        "app.services.credential_provider._expand_rule_paths", lambda _paths: [str(auth_path)]
-    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     monkeypatch.setenv(env_var, "")
 
     creds = CredentialProvider.get_credentials(provider_id)
 
-    assert creds["api_key"] == "sk-live-from-auth"  # pragma: allowlist secret
-    assert creds.sources["api_key"] == "server"  # pragma: allowlist secret
+    assert "api_key" not in creds
+    assert not [
+        o
+        for o in CredentialProvider.server_credential_origins(provider_id)
+        if o["source_type"] == "file"
+    ]
 
 
 @pytest.mark.parametrize(("provider_id", "env_var", "service_key"), _OPENCODE_AUTH_JSON_PROVIDERS)
-def test_opencode_auth_json_env_rule_beats_file_rule(
+def test_opencode_auth_json_env_rule_still_works(
     provider_id, env_var, service_key, monkeypatch, tmp_path
 ):
-    """Rule order mirrors the sidecar: a set env var wins over the file lookup.
-
-    Parametrized across all three siblings so the env-before-file placement
-    that keeps ``get_credentials`` first-wins is pinned for each of them.
-    """
-    auth_path = tmp_path / "auth.json"
+    """The env var is still a server credential, with or without an auth.json beside it."""
+    auth_path = tmp_path / ".local" / "share" / "opencode" / "auth.json"
+    auth_path.parent.mkdir(parents=True)
     auth_path.write_text(json.dumps({service_key: {"key": "sk-from-file"}}))
-
-    monkeypatch.setattr(
-        "app.services.credential_provider._expand_rule_paths", lambda _paths: [str(auth_path)]
-    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     monkeypatch.setenv(env_var, "sk-from-env")
 
     creds = CredentialProvider.get_credentials(provider_id)
 
     assert creds["api_key"] == "sk-from-env"  # pragma: allowlist secret
+    # pragma: allowlist nextline secret
+    assert creds.sources["api_key"] == "server"
+
+
+def test_a_file_rule_outside_runways_config_dir_is_never_evaluated(monkeypatch):
+    """``_server_may_read`` gates the RAW paths, before any ``~`` expansion or glob."""
+    from app.services import credential_provider as cp
+
+    assert cp._server_may_read({"paths": ["{{CONFIG_DIR:runway}}/github_oauth.json"]})
+    assert not cp._server_may_read({"paths": ["~/.gemini/oauth_creds.json"]})
+    assert not cp._server_may_read({"paths": ["{{CONFIG_DIR:gemini}}/oauth_creds.json"]})
+    # One foreign path poisons the rule: the whole rule stays off the server.
+    assert not cp._server_may_read(
+        {"paths": ["{{CONFIG_DIR:runway}}/a.json", "~/.config/gh/hosts.yml"]}
+    )
+    assert not cp._server_may_read({"paths": []})
+
+    def boom(_paths):
+        raise AssertionError("_expand_rule_paths must not run for a sidecar-only rule")
+
+    monkeypatch.setattr(cp, "_expand_rule_paths", boom)
+    monkeypatch.setattr(
+        cp.registry,
+        "get_provider",
+        lambda _pid: {
+            "rules": [
+                {
+                    "type": "file",
+                    "paths": ["~/.gemini/oauth_creds.json"],
+                    "mapping": {"access_token": "oauth_token"},
+                }
+            ]
+        },
+    )
+    assert CredentialProvider.get_credentials("gemini") == {}
+    assert CredentialProvider.server_credential_origins("gemini") == []
 
 
 def test_server_credential_origins_classify_a_credential_without_returning_it(monkeypatch):

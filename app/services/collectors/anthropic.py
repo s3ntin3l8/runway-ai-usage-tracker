@@ -18,7 +18,6 @@ from app.core.utils import IdentityExtractor
 # Mixins
 from app.services.collectors.anthropic_oauth import AnthropicOAuthMixin
 from app.services.collectors.anthropic_web import AnthropicWebMixin
-from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -44,14 +43,8 @@ class AnthropicCollector(
 
     def __init__(self, account_id: str | None = None, account_label: str | None = None):
         """Initialize orchestrator."""
-        # Find credentials via centralized provider
-        credentials_path = credential_provider.get_anthropic_credentials_path()
-        if not credentials_path:
-            credentials_path = settings.ANTHROPIC_OAUTH_PATH
-
         super().__init__(
             provider_name="Anthropic",
-            credentials_path=credentials_path,
             account_id=account_id,
             account_label=account_label,
         )
@@ -79,8 +72,7 @@ class AnthropicCollector(
         return False
 
     async def _get_current_token(self) -> str | None:
-        """Fetch current access token from sidecar cache or credentials file."""
-        # 1. Check sidecar cache first (fastest, supports multi-account)
+        """Fetch the current access token from the token cache (sidecar push or config)."""
         cache_data = await token_cache.get_with_metadata("anthropic", account_id=self.account_id)
         if cache_data:
             tokens, metadata = cache_data
@@ -92,32 +84,6 @@ class AnthropicCollector(
                     "config" if source in ("config", "manual_config") else "sidecar"
                 )
                 return token
-
-        # 2. Fallback to reading the local credentials file
-        if not self.account_id:
-            creds = await self._get_credentials()
-            if creds:
-                oauth = creds.get("claudeAiOauth", {})
-                token = oauth.get("accessToken")
-                if token:
-                    self._current_input_source = "server"
-                    # Mirror into token cache so the Tokens health tab can see it
-                    token_data: dict[str, str] = {"oauth_token": token}
-                    # A CLI's own login file is renewed by that CLI: keeping its refresh
-                    # token out of the cache means the auto-refresher never rotates it.
-                    if oauth.get("refreshToken") and not credential_provider.is_cli_owned_file(
-                        "anthropic", self._credentials_path
-                    ):
-                        token_data["refresh_token"] = oauth["refreshToken"]
-                    label = creds.get("oauthAccount", {}).get("emailAddress")
-                    await token_cache.store(
-                        "anthropic",
-                        token_data,
-                        account_id=None,
-                        account_label=label,
-                        source="server",
-                    )
-                return token
         return None
 
     def _pinned_bundle_expiry(self) -> float | None:
@@ -128,53 +94,20 @@ class AnthropicCollector(
         return IdentityExtractor.exp_from_tokens(tokens) if tokens else None
 
     async def _is_token_expired(self) -> bool:
-        """Check if Claude token is expired."""
+        """Check if the pinned source bundle's token is expired.
+
+        Only a pinned bundle's expiry is enforced here; an unpinned cached token is
+        tried as-is (a 401 re-reads the cache), same as before the file mode was removed.
+        """
         pinned = self._pinned_bundle_expiry()
-        if pinned is not None:
-            return datetime.now(UTC).timestamp() > pinned
-        try:
-            # Fallback to credentials file
-            creds = await self._get_credentials()
-            if creds:
-                expires_at = creds.get("claudeAiOauth", {}).get("expiresAt")
-                if expires_at:
-                    # Some formats use ms, some iso strings
-                    if isinstance(expires_at, int | float):
-                        if expires_at > 1e12:  # ms
-                            expires_at /= 1000
-                        return datetime.now(UTC).timestamp() > expires_at
-                    if isinstance(expires_at, str):
-                        exp_dt = parse_iso8601_utc(expires_at)
-                        return datetime.now(UTC) > exp_dt
-            return False
-        except Exception as e:
-            logger.debug(f"Could not check Anthropic token expiration: {e}")
-            return False
+        return pinned is not None and datetime.now(UTC).timestamp() > pinned
 
     async def _is_token_expiring_soon(self) -> bool:
-        """Check if Claude token expires within the proactive refresh threshold."""
-        threshold = self.TOKEN_REFRESH_THRESHOLD_SECONDS
+        """Check if the pinned bundle's token expires within the proactive refresh threshold."""
         pinned = self._pinned_bundle_expiry()
-        if pinned is not None:
-            return pinned - datetime.now(UTC).timestamp() < threshold
-        try:
-            creds = await self._get_credentials()
-            if creds:
-                expires_at = creds.get("claudeAiOauth", {}).get("expiresAt")
-                if expires_at:
-                    if isinstance(expires_at, int | float):
-                        if expires_at > 1e12:  # ms
-                            expires_at /= 1000
-                        remaining = expires_at - datetime.now(UTC).timestamp()
-                        return remaining < threshold
-                    if isinstance(expires_at, str):
-                        exp_dt = parse_iso8601_utc(expires_at)
-                        remaining = (exp_dt - datetime.now(UTC)).total_seconds()
-                        return remaining < threshold
+        if pinned is None:
             return False
-        except Exception as e:
-            logger.debug(f"Could not check Anthropic token expiring soon: {e}")
-            return False
+        return pinned - datetime.now(UTC).timestamp() < self.TOKEN_REFRESH_THRESHOLD_SECONDS
 
     def _is_error_result(self, results: list[dict[str, Any]]) -> bool:
         """Anthropic specific error check."""

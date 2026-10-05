@@ -8,13 +8,12 @@ import httpx
 
 from app.core.config import settings
 from app.core.log_redaction import redact_secrets
-from app.core.utils import IdentityExtractor, safe_write_json, scrub_log
+from app.core.utils import IdentityExtractor, scrub_log
 from app.services.refresh_policy import ROTATING_REFRESH_PROVIDERS, machine_owns_credential
 
 __all__ = [
     "ROTATING_REFRESH_PROVIDERS",
     "machine_owns_credential",
-    "persist_to_local_file",
     "refresh_oauth_token",
 ]
 
@@ -177,51 +176,3 @@ def _describe_failure_body(raw: str) -> str:
     if not isinstance(redacted, str):
         redacted = json.dumps(redacted, ensure_ascii=False)
     return scrub_log(redacted)[:300]
-
-
-def persist_to_local_file(provider: str, new_tokens: dict[str, str], source: str | None) -> None:
-    """Write refreshed tokens back to the on-disk credentials file when the
-    cached entry was sourced locally (source='server').
-
-    Without this, the local collector's next `_get_current_token` reads the
-    stale file and clobbers the just-refreshed cache entry — which is exactly
-    why the Token Health row would flicker back to "expired" after a successful
-    manual refresh or auto-refresh.
-    """
-    if source != "server":
-        return
-    if provider != "gemini":
-        # Anthropic's local file format is more involved — not handled yet.
-        return
-
-    path = settings.GEMINI_OAUTH_PATH
-    try:
-        with open(path) as f:
-            creds = json.load(f)
-    except FileNotFoundError:
-        return
-    except Exception as e:
-        logger.warning(f"Skipping local gemini persist (read failed): {e}")
-        return
-
-    if "oauth_token" in new_tokens:
-        creds["access_token"] = new_tokens["oauth_token"]
-    if "refresh_token" in new_tokens:
-        creds["refresh_token"] = new_tokens["refresh_token"]
-    if "id_token" in new_tokens:
-        creds["id_token"] = new_tokens["id_token"]
-        # The id_token's exp matches the access_token's lifetime for Google,
-        # so we can derive the gcloud-style expiry_date (milliseconds) from it.
-        payload = IdentityExtractor.extract_jwt_payload(new_tokens["id_token"])
-        exp = payload.get("exp")
-        if exp is not None:
-            try:
-                creds["expiry_date"] = int(float(exp) * 1000)
-            except (TypeError, ValueError):
-                logger.debug("Could not parse JWT exp claim as number")
-
-    try:
-        safe_write_json(path, creds)
-        logger.debug(f"Persisted refreshed gemini credentials to {path}")
-    except Exception as e:
-        logger.warning(f"Could not persist gemini credentials to {path}: {e}")

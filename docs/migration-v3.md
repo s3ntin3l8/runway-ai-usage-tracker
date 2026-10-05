@@ -52,6 +52,34 @@ after upgrading.
 - Nothing forces the queue empty. Events sit there safely (excluded from
   totals) for as long as you leave them.
 
+## The server no longer reads CLI login files
+
+Credentials now reach the server **only** from sidecars, env vars and Settings →
+Providers. The server reads no credential file from its own host: not
+`~/.gemini/oauth_creds.json`, `~/.claude/.credentials.json`, `~/.codex/auth.json`,
+`~/.config/gh/hosts.yml`, the opencode `auth.json`, nor the agy token. The one
+exception is Runway's own `github_oauth.json` in its config dir, written by the
+UI's "Sign in with GitHub" flow. (The server may run in Docker with only its
+config dir mounted; CLI logins live in a user's home, which is the sidecar's job.)
+
+- **If you ran a single-host server with no sidecar** and relied on it finding
+  your CLI logins: run the sidecar on that machine (`make dev-all` in a dev
+  checkout), or set an env var / paste the credential in Settings → Providers.
+- **Gemini** is now a sidecar provider (`docs/deployment.md`). The server still
+  refreshes a sidecar-pushed Gemini token itself, into its own token cache; it never
+  writes back to `~/.gemini`.
+- **Ignored settings.** These env vars were removed and are now ignored (a leftover
+  `.env` entry does not break startup): `GEMINI_OAUTH_PATH`, `ANTHROPIC_OAUTH_PATH`,
+  `ANTIGRAVITY_OAUTH_PATH`, `CHATGPT_AUTH_PATH`, `CLAUDE_STATUSLINE_PATH`,
+  `CLAUDE_PROJECTS_DIR`, `GEMINI_SESSIONS_DIR` and `CHATGPT_SESSIONS_DIR`. Delete
+  them from your `.env` / compose file.
+- **Stale rows.** On first boot the server deletes the `server:<provider>:file:<label>`
+  credential-source rows it registered for those files (env-var rows and
+  `github_oauth.json` stay). Credentials a sidecar reports are unaffected.
+- **Anthropic tier.** The plan/tier label no longer falls back to the
+  `claudeAiOauth.subscriptionType` / `rateLimitTier` of a server-side
+  `.credentials.json`; it comes from the API's organization info and usage response.
+
 ## Open Settings → Data health after upgrading
 
 v3.0.0 ships an in-app **Data health** page (Settings → Data health) that

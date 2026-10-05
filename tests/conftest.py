@@ -80,7 +80,6 @@ def isolate_token_health_state():
     auth_failures.reset()
     with (
         patch("app.services.token_health._collect_server_credentials", return_value={}),
-        patch("app.services.token_health._collect_cli_owned_keys", return_value={}),
     ):
         yield
     auth_failures.reset()

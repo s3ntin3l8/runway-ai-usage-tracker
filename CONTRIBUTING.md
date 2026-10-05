@@ -7,7 +7,9 @@ make install    # venv + Python deps + webapp deps + git hooks (pre-commit & pre
 ```
 
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
-see the [Quick Start](README.md#quick-start) and
+note that `make dev` alone no longer sees your local CLI logins (Gemini, Claude,
+Codex, `gh`, opencode, ...): the server reads no credential files, so use
+`make dev-all` to collect from them. See the [Quick Start](README.md#quick-start) and
 [Development Shortcuts](README.md#development-shortcuts) in `README.md`.
 
 ## Before opening a PR

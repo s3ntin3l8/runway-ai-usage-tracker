@@ -20,7 +20,7 @@ The ChatGPT collector supports multiple authentication and data collection metho
     *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
 
 2.  **Codex CLI Cache (`~/.codex/auth.json`)**:
-    *   **Method**: Log in using the `codex` CLI (`codex auth login`). Runway will automatically discover the token from `~/.codex/auth.json`.
+    *   **Method**: Log in using the `codex` CLI (`codex auth login`) and run the sidecar on that machine: the sidecar discovers `~/.codex/auth.json` and pushes the token. The server never reads that file from its own host.
     *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
 
 3.  **Codex CLI RPC**:

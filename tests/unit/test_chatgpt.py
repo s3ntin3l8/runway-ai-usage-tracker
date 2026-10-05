@@ -133,17 +133,23 @@ class TestChatGPTCollectorDetailed:
             assert auth["input_source"] == "server"
 
     @pytest.mark.asyncio
-    async def test_auth_priority_file(self, mock_http_client):
-        """Priority 2: ~/.codex/auth.json should be used if no env var."""
+    async def test_auth_priority_ignores_codex_auth_json_on_the_server(
+        self, mock_http_client, tmp_path
+    ):
+        """``~/.codex/auth.json`` is the sidecar's: the server never reads it."""
+        codex = tmp_path / ".codex"
+        codex.mkdir()
+        (codex / "auth.json").write_text(json.dumps({"tokens": {"access_token": "file_token"}}))
         collector = ChatGPTCollector()
-        mock_auth = json.dumps({"tokens": {"access_token": "file_token"}})
 
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("os.path.exists", return_value=True):
-                with patch("builtins.open", mock_open(read_data=mock_auth)):
-                    auth = await collector._get_auth_data(mock_http_client)
-                    assert auth["token"] == "file_token"
-                    assert auth["source"] == "api"
+        with patch.dict(
+            "os.environ",
+            {"HOME": str(tmp_path), "RUNWAY_CONFIG_DIR": str(tmp_path / "rw")},
+            clear=True,
+        ):
+            auth = await collector._get_auth_data(mock_http_client)
+
+        assert not auth or auth.get("token") != "file_token"
 
     @pytest.mark.asyncio
     async def test_auth_priority_3_identity_mismatch_falls_back_to_matching_account(

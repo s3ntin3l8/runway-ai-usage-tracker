@@ -238,9 +238,6 @@ def _apply_server_expiry(
     view.expires_in_seconds = int(exp - now) if exp is not None else None
     view.can_refresh = False  # the server's own credential has no source bundle to refresh
     view.rejected = rejected
-    # A rotating provider's login in a CLI's own file is renewed by that CLI.
-    if origin.get("cli_owned") and rollable:
-        view.refreshed_by = "machine"
 
 
 def _machine_label(view: CredentialSourceView) -> str:

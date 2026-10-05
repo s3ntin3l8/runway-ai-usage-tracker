@@ -113,6 +113,27 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logger.warning(f"Startup orphan error row cleanup failed: {_e}")
 
+    # The server no longer reads CLI login files from its host: drop the credential-source
+    # rows it registered for them while it did (idempotent; sidecar/env/config rows stay).
+    try:
+        from sqlmodel import Session as _Session
+
+        from app.core.db import engine as _engine
+        from app.services.credential_sources import prune_unmanaged_server_file_sources
+
+        with _Session(_engine) as _s:
+            _removed = prune_unmanaged_server_file_sources(_s)
+            _s.commit()
+        if _removed:
+            logger.info(
+                "Removed %d stale server-side credential file source(s); credentials now "
+                "reach the server only via sidecars, env vars and Settings",
+                _removed,
+            )
+    except Exception:
+        # Not fatal, but loud: until it succeeds the stale ``server:*:file:*`` rows stay.
+        logger.exception("Startup server file-source sweep failed")
+
     # Pre-populate in-memory registry so the first /limits request is instant
     try:
         logger.info("Pre-populating card registry on startup (timeout 15s)...")

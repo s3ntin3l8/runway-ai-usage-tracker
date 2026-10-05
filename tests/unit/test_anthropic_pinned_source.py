@@ -1,5 +1,5 @@
-"""A collector pinned to a source bundle must not mix in the server host's own
-Claude credentials file (it belongs to whichever account is logged in there)."""
+"""A collector pinned to a source bundle reads only that bundle, and the server has no
+Claude credentials-file mode that could be mixed in."""
 
 import base64
 import json
@@ -33,70 +33,22 @@ def cache(monkeypatch) -> TokenCache:
     return fresh
 
 
-@pytest.fixture
-def server_file(tmp_path):
-    """The server host's own login: a *different* account than the sidecar's."""
-    path = tmp_path / ".credentials.json"
-    path.write_text(
-        json.dumps(
-            {
-                "claudeAiOauth": {
-                    "accessToken": "server-access",
-                    "refreshToken": "server-refresh",
-                    "expiresAt": int((time.time() + 3600) * 1000),
-                },
-                "oauthAccount": {"emailAddress": "alice@example.com"},
-            }
-        )
-    )
-    return path
-
-
-def _collector(server_file) -> AnthropicCollector:
-    collector = AnthropicCollector(account_id=ACCOUNT)
-    collector._credentials_path = str(server_file)
-    return collector
+def _collector() -> AnthropicCollector:
+    return AnthropicCollector(account_id=ACCOUNT)
 
 
 @pytest.mark.asyncio
-async def test_pinned_collector_ignores_server_credentials_file(cache, server_file):
-    await cache.store(
-        "anthropic",
-        {"oauth_token": "bob-access", "refresh_token": "bob-refresh"},
-        account_id=ACCOUNT,
-        source_id=SOURCE,
-    )
-    collector = _collector(server_file)
-
-    # Unpinned (a pure server deployment): the host's file is used, as before.
-    assert (await collector._get_credentials())["oauthAccount"]["emailAddress"] == (
-        "alice@example.com"
-    )
-
-    async with cache.using_source("anthropic", ACCOUNT, SOURCE):
-        assert await collector._get_credentials() is None
+async def test_collector_reads_no_credentials_file(cache, tmp_path, monkeypatch):
+    """The collector has no file mode: no ``_get_credentials``/``_persist_credentials``."""
+    collector = _collector()
+    assert not hasattr(collector, "_get_credentials")
+    assert not hasattr(collector, "_persist_credentials")
+    assert not hasattr(collector, "_credentials_path")
 
 
 @pytest.mark.asyncio
-async def test_pinned_collector_never_overwrites_server_file(cache, server_file):
-    await cache.store(
-        "anthropic", {"oauth_token": "bob-access"}, account_id=ACCOUNT, source_id=SOURCE
-    )
-    collector = _collector(server_file)
-    before = server_file.read_text()
-
-    async with cache.using_source("anthropic", ACCOUNT, SOURCE):
-        collector._persist_credentials({"claudeAiOauth": {"accessToken": "bob-new"}})
-    assert server_file.read_text() == before
-
-    # Unpinned persistence still works.
-    collector._persist_credentials({"claudeAiOauth": {"accessToken": "server-new"}})
-    assert "server-new" in server_file.read_text()
-
-
-@pytest.mark.asyncio
-async def test_pinned_expiry_comes_from_the_bundle_not_the_server_file(cache, server_file):
-    # The server file's token is fresh for an hour; Bob's bundle expired a minute ago.
+async def test_pinned_expiry_comes_from_the_bundle(cache):
+    # Bob's bundle expired a minute ago.
     expired = _jwt({"exp": time.time() - 60})
     await cache.store(
         "anthropic",
@@ -104,23 +56,23 @@ async def test_pinned_expiry_comes_from_the_bundle_not_the_server_file(cache, se
         account_id=ACCOUNT,
         source_id=SOURCE,
     )
-    collector = _collector(server_file)
+    collector = _collector()
 
-    assert await collector._is_token_expired() is False  # unpinned → the server file
+    assert await collector._is_token_expired() is False  # unpinned → tried as-is
     async with cache.using_source("anthropic", ACCOUNT, SOURCE):
         assert await collector._is_token_expired() is True
         assert await collector._is_token_expiring_soon() is True
 
 
 @pytest.mark.asyncio
-async def test_refresh_result_is_written_into_the_pinned_bundle(cache, server_file):
+async def test_refresh_result_is_written_into_the_pinned_bundle(cache):
     await cache.store(
         "anthropic",
         {"oauth_token": "bob-old", "refresh_token": "bob-rt1"},
         account_id=ACCOUNT,
         source_id=SOURCE,
     )
-    collector = _collector(server_file)
+    collector = _collector()
 
     async with cache.using_source("anthropic", ACCOUNT, SOURCE):
         await collector._store_sidecar_token("anthropic", "bob-new", "bob-rt2")

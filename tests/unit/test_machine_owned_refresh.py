@@ -437,7 +437,7 @@ def anthropic_cache(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_anthropic_collector_does_not_exchange_a_machines_refresh_token(
-    anthropic_cache, monkeypatch, tmp_path
+    anthropic_cache, monkeypatch
 ):
     from app.services.collectors.anthropic import AnthropicCollector
 
@@ -449,27 +449,12 @@ async def test_the_anthropic_collector_does_not_exchange_a_machines_refresh_toke
     post = AsyncMock()
     monkeypatch.setattr("app.services.collectors.anthropic_oauth.http_request_with_retry", post)
     collector = AnthropicCollector(account_id=ALICE)
-    collector._credentials_path = str(tmp_path / "missing.json")
 
     async with anthropic_cache.using_source("anthropic", ALICE, "sidecar:dev-01:anthropic"):
         refreshed = await collector._execute_refresh(MagicMock())
 
     assert refreshed is None
     post.assert_not_awaited()
-
-
-def _claude_file(path, *, expires_in: float = -60) -> None:
-    path.write_text(
-        json.dumps(
-            {
-                "claudeAiOauth": {
-                    "accessToken": "server-access",
-                    "refreshToken": "server-rt",
-                    "expiresAt": int((time.time() + expires_in) * 1000),
-                }
-            }
-        )
-    )
 
 
 def _token_endpoint(monkeypatch, status: int = 200) -> AsyncMock:
@@ -481,71 +466,11 @@ def _token_endpoint(monkeypatch, status: int = 200) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("expires_in", [-60, 120, 7200], ids=["expired", "near-expiry", "fresh"])
-async def test_the_anthropic_collector_leaves_a_cli_file_login_to_its_cli(
-    anthropic_cache, monkeypatch, tmp_path, expires_in
-):
-    """``~/.claude/.credentials.json`` is Claude Code's: rotating it signs that CLI out, so
-    neither expiry, the proactive window nor a 429's forced refresh may rotate it (#458)."""
+async def test_a_config_refresh_token_is_refreshed_by_the_server(anthropic_cache, monkeypatch):
+    """The gate keys on where the refresh token came from: a config (Settings) refresh
+    token is the server's to refresh, even with no machine bundle for the account."""
     from app.services.collectors.anthropic import AnthropicCollector
 
-    monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _app: tmp_path / "rw"
-    )
-    creds = tmp_path / ".credentials.json"
-    _claude_file(creds, expires_in=expires_in)
-    post = _token_endpoint(monkeypatch)
-    collector = AnthropicCollector()
-    collector._credentials_path = str(creds)
-
-    assert await collector._execute_refresh(MagicMock()) is None
-
-    post.assert_not_awaited()
-    assert json.loads(creds.read_text())["claudeAiOauth"]["refreshToken"] == "server-rt"
-
-
-@pytest.mark.asyncio
-async def test_the_anthropic_collector_still_refreshes_a_login_in_runways_own_config_dir(
-    anthropic_cache, monkeypatch, tmp_path
-):
-    """A login Runway itself holds (inside its config dir, the only Docker mount) has no CLI
-    to renew it, so the server stays its refresher."""
-    from app.services.collectors.anthropic import AnthropicCollector
-
-    monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _app: tmp_path
-    )
-    creds = tmp_path / ".credentials.json"
-    _claude_file(creds)
-    post = _token_endpoint(monkeypatch)
-    collector = AnthropicCollector()
-    collector._credentials_path = str(creds)
-
-    refreshed = await collector._execute_refresh(MagicMock())
-
-    assert refreshed is not None and refreshed["access_token"] == "new"
-    post.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_a_config_refresh_token_is_not_blocked_by_an_unrelated_cli_file(
-    anthropic_cache, monkeypatch, tmp_path
-):
-    """The gate keys on where the refresh token came from, not on a CLI file merely existing."""
-    from app.services.collectors.anthropic import AnthropicCollector
-
-    monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _app: tmp_path / "rw"
-    )
-    creds = tmp_path / ".credentials.json"
-    creds.write_text(
-        json.dumps(
-            {
-                "oauthAccount": {"emailAddress": "cli@example.com"},
-                "claudeAiOauth": {"accessToken": "cli-access"},  # no refresh token
-            }
-        )
-    )
     await anthropic_cache.store(
         "anthropic",
         {"oauth_token": "o", "refresh_token": "config-rt"},
@@ -554,148 +479,11 @@ async def test_a_config_refresh_token_is_not_blocked_by_an_unrelated_cli_file(
     )
     post = _token_endpoint(monkeypatch)
     collector = AnthropicCollector(account_id="bob@example.com")
-    collector._credentials_path = str(creds)
 
     refreshed = await collector._execute_refresh(MagicMock())
 
     assert refreshed is not None
     post.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("in_config_dir", "mirrored"), [(False, False), (True, True)])
-async def test_the_cache_mirror_keeps_a_cli_files_refresh_token_from_the_auto_refresher(
-    anthropic_cache, monkeypatch, tmp_path, in_config_dir, mirrored
-):
-    """The collector mirrors the server's own login into the cache, where the auto-refresher
-    rotates anything holding a refresh token. A CLI's file must not be offered to it."""
-    from app.services.collectors.anthropic import AnthropicCollector
-
-    monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir",
-        lambda _app: tmp_path / ("cfg" if in_config_dir else "rw"),
-    )
-    creds = tmp_path / "cfg" / ".credentials.json"
-    creds.parent.mkdir()
-    _claude_file(creds, expires_in=3600)
-    collector = AnthropicCollector()
-    collector._credentials_path = str(creds)
-
-    assert await collector._get_current_token() == "server-access"
-
-    tokens = await anthropic_cache.get("anthropic", account_id=None) or {}
-    assert ("refresh_token" in tokens) is mirrored
-
-
-def test_a_sibling_of_runways_config_dir_is_not_inside_it(monkeypatch, tmp_path):
-    from app.services.credential_provider import CredentialProvider
-
-    monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _app: tmp_path / "runway"
-    )
-    assert CredentialProvider.is_cli_owned_file(
-        "anthropic", str(tmp_path / "runway-old" / "x.json")
-    )
-    assert not CredentialProvider.is_cli_owned_file(
-        "anthropic", str(tmp_path / "runway" / "x.json")
-    )
-
-
-@pytest.mark.parametrize(
-    ("provider", "path", "expected"),
-    [
-        ("anthropic", "/home/u/.claude/.credentials.json", True),
-        ("chatgpt", "/home/u/.codex/auth.json", True),
-        ("gemini", "/home/u/.gemini/oauth_creds.json", False),  # Google doesn't rotate
-    ],
-)
-def test_a_rotating_providers_cli_file_is_cli_owned(provider, path, expected):
-    from app.services.credential_provider import CredentialProvider
-
-    assert CredentialProvider.is_cli_owned_file(provider, path) is expected
-
-
-def test_a_file_in_runways_config_dir_is_not_cli_owned(monkeypatch, tmp_path):
-    from app.services.credential_provider import CredentialProvider
-
-    monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _app: tmp_path
-    )
-    assert not CredentialProvider.is_cli_owned_file("anthropic", str(tmp_path / "x.json"))
-
-
-def test_server_origins_flag_only_cli_files_as_cli_owned(monkeypatch, tmp_path):
-    from app.services.credential_provider import CredentialProvider
-
-    cli = tmp_path / "cli" / ".credentials.json"
-    cli.parent.mkdir()
-    _claude_file(cli)
-    monkeypatch.setattr(
-        "app.services.credential_provider._expand_rule_paths", lambda paths: [str(cli)]
-    )
-    monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _app: tmp_path / "rw"
-    )
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-env")
-
-    origins = CredentialProvider.server_credential_origins("anthropic")
-
-    assert {(o["source_type"], o["cli_owned"]) for o in origins} == {("file", True), ("env", False)}
-
-
-@pytest.mark.asyncio
-async def test_a_cli_file_login_reads_renewed_by_its_machine_in_token_health(monkeypatch):
-    from app.services import token_health
-    from app.services.token_health import TokenHealthService
-
-    exp_tokens = {"oauth_token": _jwt({"exp": time.time() - 60}), "refresh_token": "rt"}
-    monkeypatch.setattr(
-        token_health, "_collect_server_credentials", lambda: {"anthropic": exp_tokens}
-    )
-    monkeypatch.setattr(
-        token_health,
-        "_collect_cli_owned_keys",
-        lambda: {"anthropic": {"oauth_token", "refresh_token"}},
-    )
-
-    rows = await TokenHealthService().get_health()
-    row = next(r for r in rows if r["provider"] == "anthropic" and r["account_id"] == "server")
-    assert row["machine_renewed"] is True
-
-    monkeypatch.setattr(token_health, "_collect_cli_owned_keys", lambda: {})
-    rows = await TokenHealthService().get_health()
-    row = next(r for r in rows if r["provider"] == "anthropic" and r["account_id"] == "server")
-    assert row["machine_renewed"] is False
-
-
-def test_the_inventory_marks_a_cli_file_server_row_renewed_by_its_machine():
-    from datetime import UTC, datetime
-
-    from app.models.schemas import CredentialSourceView
-    from app.services.credential_inventory import _apply_server_expiry
-
-    def view() -> CredentialSourceView:
-        return CredentialSourceView(
-            source_id="server:anthropic:file:.credentials.json",
-            provider_id="anthropic",
-            account_id="default",
-            origin_kind="server",
-            origin_type="file",
-            label=".credentials.json",
-            mapping="server",
-            status="unknown",
-            token_types=["oauth_token", "refresh_token"],
-        )
-
-    base = {"keys": ["oauth_token", "refresh_token"], "exp": None, "rollable": True}
-    now = datetime.now(UTC).timestamp()
-    owned = view()
-    _apply_server_expiry(owned, {**base, "cli_owned": True}, now, rejected=False)
-    plain = view()
-    _apply_server_expiry(plain, {**base, "cli_owned": False}, now, rejected=False)
-
-    assert owned.refreshed_by == "machine"
-    assert plain.refreshed_by is None
 
 
 # --- alerts: an idle CLI is quiet for a while, not forever ----------------------------------

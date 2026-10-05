@@ -231,7 +231,7 @@ class KimiCodingCollector(BaseCollector):
 
         Priority: DB API key (config) > KIMI_CODE_API_KEY env > token-cache
         ``api_key`` slot (dashboard-paste mirror / opencode CLI discovery) >
-        Kimi Code CLI access token (local file or sidecar-pushed), which must
+        Kimi Code CLI access token (sidecar-pushed), which must
         be fresh (expires_at > now + 60s). Returns (token, input_source, is_cli).
         """
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"

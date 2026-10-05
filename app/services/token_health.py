@@ -307,28 +307,8 @@ def _collect_server_credentials() -> dict[str, dict[str, Any]]:
     return _scan_server_credentials()
 
 
-def _collect_cli_owned_keys() -> dict[str, set[str]]:
-    """Seam: per provider, the credential keys served by a CLI's own login file.
-
-    A rotating provider's login in ``~/.claude`` / ``~/.codex`` is renewed by that CLI, not
-    by the server (see ``refresh_policy``). A key an env var also supplies is not listed:
-    that value is the server's to manage. Blocking file reads; call via ``asyncio.to_thread``.
-    """
-    owned: dict[str, set[str]] = {}
-    for provider_id in registry.get_all_providers():
-        try:
-            origins = CredentialProvider.server_credential_origins(provider_id)
-        except Exception:
-            continue
-        env_keys = {k for o in origins if o["source_type"] == "env" for k in o["keys"]}
-        keys = {k for o in origins if o.get("cli_owned") for k in o["keys"]} - env_keys
-        if keys:
-            owned[provider_id] = keys
-    return owned
-
-
 def _scan_server_credentials() -> dict[str, dict[str, Any]]:
-    """Credentials the *server itself* discovered (env vars / local files) per provider.
+    """Credentials the *server itself* discovered (env vars, Runway-owned files) per provider.
 
     Blocking (file + DB reads); call through ``asyncio.to_thread``.
     """
@@ -656,11 +636,10 @@ class TokenHealthService:
         except Exception as e:
             logger.warning(f"Could not load ProviderConfig credentials for token health: {e}")
 
-        # Credentials the server discovered itself (env vars, local files).
+        # Credentials the server discovered itself (env vars, Runway-owned files).
         # They never enter token_cache, so this is the only place they show up.
         try:
             server_creds = await asyncio.to_thread(_collect_server_credentials)
-            cli_owned = await asyncio.to_thread(_collect_cli_owned_keys) if server_creds else {}
             for provider, creds in server_creds.items():
                 fresh = {
                     k: v for k, v in creds.items() if f"{provider}:{v}" not in seen_token_values
@@ -683,10 +662,6 @@ class TokenHealthService:
                             exp=IdentityExtractor.exp_from_tokens(family),
                             can_refresh=False,
                             rollable=has_refresh_credential(family),
-                            # The CLI that wrote its login file renews it; the server must
-                            # not (and the alert gets the usual grace for an idle CLI).
-                            machine_renewed=has_refresh_credential(family)
-                            and bool(set(family) & cli_owned.get(provider, set())),
                         )
                     )
         except Exception as e:

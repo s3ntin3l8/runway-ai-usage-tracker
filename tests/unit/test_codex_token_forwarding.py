@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from app.services import credential_provider
 from app.services.credential_provider import CredentialProvider
 
 REGISTRY_JSON = Path(__file__).resolve().parents[2] / "app" / "core" / "registry.json"
@@ -56,10 +55,12 @@ def test_sidecar_baked_registry_matches_registry_json_for_codex_tokens():
 
 
 @pytest.mark.asyncio
-async def test_server_extracts_refresh_and_id_token_from_codex_auth(tmp_path, monkeypatch):
-    """End-to-end: registry-driven extraction returns all three token fields."""
-    auth = tmp_path / "auth.json"
-    auth.write_text(
+async def test_server_does_not_read_codex_auth_json(tmp_path, monkeypatch):
+    """Extraction from ``~/.codex/auth.json`` is the sidecar's job (the baked registry
+    above); the server's own host file is never evaluated."""
+    codex = tmp_path / ".codex"
+    codex.mkdir()
+    (codex / "auth.json").write_text(
         json.dumps(
             {
                 "tokens": {
@@ -71,16 +72,13 @@ async def test_server_extracts_refresh_and_id_token_from_codex_auth(tmp_path, mo
             }
         )
     )
-
-    # Redirect the codex path to our temp file; everything else "doesn't exist".
-    def fake_resolve(path_str: str) -> str:
-        return str(auth) if "codex" in path_str else "/nonexistent/never.json"
-
-    monkeypatch.setattr(credential_provider.registry, "resolve_path", fake_resolve)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_HOME", str(codex))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     monkeypatch.delenv("CHATGPT_OAUTH_TOKEN", raising=False)
 
     creds = CredentialProvider.get_credentials("chatgpt")
 
-    assert creds.get("oauth_token") == "AT-access"
-    assert creds.get("refresh_token") == "RT-refresh"
-    assert creds.get("id_token") == "IDT-identity"
+    assert "oauth_token" not in creds
+    assert "refresh_token" not in creds
+    assert "id_token" not in creds

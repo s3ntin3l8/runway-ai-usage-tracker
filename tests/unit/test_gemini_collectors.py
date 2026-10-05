@@ -445,3 +445,110 @@ class TestGeminiEnrichment:
         # Flash should NOT be enriched with pro's data
         assert "in: 200 out: 100" not in by_model["flash"]["detail"]
         assert "token_usage" not in by_model["flash"]
+
+
+# --- the default (no account_id) collector works from the cached bundle alone (#551) ---------
+
+
+def _expired_gemini_bundle() -> dict[str, str]:
+    return {
+        "oauth_token": "ya29.stale",
+        "refresh_token": "1//rt",
+        "expiry_date": str(int((datetime.now(UTC) - timedelta(minutes=5)).timestamp() * 1000)),
+    }
+
+
+@pytest.mark.asyncio
+async def test_default_gemini_collector_reads_only_the_cached_bundle(tmp_path, monkeypatch):
+    """No file mode: a planted ``~/.gemini/oauth_creds.json`` is ignored, the sidecar-pushed
+    bundle in the token cache is the credential, and its label is adopted."""
+    from app.services.token_cache import TokenCache
+
+    home = tmp_path / "home"
+    (home / ".gemini").mkdir(parents=True)
+    (home / ".gemini" / "oauth_creds.json").write_text(
+        json.dumps({"access_token": "FILE-TOKEN", "expiry_date": 9999999999999})
+    )
+    monkeypatch.setenv("HOME", str(home))
+    cache = TokenCache()
+    await cache.store(
+        "gemini",
+        {"oauth_token": "ya29.cached", "expiry_date": "9999999999999"},
+        account_id=None,
+        account_label="me@example.com",
+        source="sidecar",
+    )
+    monkeypatch.setattr("app.services.collectors.gemini_oauth.token_cache", cache)
+    collector = GeminiCollector()
+
+    assert await collector.is_configured() is True
+    assert await collector._get_current_token() == "ya29.cached"
+    assert await collector._is_token_expired() is False
+    assert collector.account_label == "me@example.com"
+    assert collector._current_input_source == "sidecar"
+
+
+@pytest.mark.asyncio
+async def test_default_gemini_collector_without_a_bundle_is_unconfigured(monkeypatch):
+    from app.services.token_cache import TokenCache
+
+    monkeypatch.setattr("app.services.collectors.gemini_oauth.token_cache", TokenCache())
+    collector = GeminiCollector()
+
+    assert await collector.is_configured() is False
+    # No bundle is "nothing to check", not "expired" (that would force a pointless refresh).
+    assert await collector._is_token_expired() is False
+    (card,) = await collector._error_handler()
+    assert card["error_type"] == "missing_config"
+
+
+@pytest.mark.asyncio
+async def test_default_gemini_collector_refreshes_the_cached_bundle(monkeypatch):
+    """An expired sidecar-pushed bundle is refreshed with ITS refresh token (Google doesn't
+    rotate it) and the new access token lands back in the cache."""
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    await cache.store("gemini", _expired_gemini_bundle(), account_id=None, source="sidecar")
+    for module in (
+        "app.services.collectors.gemini_oauth.token_cache",
+        "app.services.collectors.oauth_base.token_cache",
+    ):
+        monkeypatch.setattr(module, cache)
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"access_token": "ya29.fresh", "expires_in": 3600}
+    post = AsyncMock(return_value=resp)
+    monkeypatch.setattr("app.services.collectors.gemini_oauth.http_request_with_retry", post)
+    collector = GeminiCollector()
+
+    assert await collector._is_token_expired() is True
+    # An API 401 is what forces the refresh (an expired token is otherwise tried as-is).
+    token = await collector._get_valid_token(MagicMock(), force_refresh=True)
+
+    assert token == "ya29.fresh"
+    assert post.await_args.kwargs["data"]["refresh_token"] == "1//rt"
+    cached = await cache.get_with_metadata("gemini", account_id=None)
+    assert cached is not None
+    assert cached[0]["oauth_token"] == "ya29.fresh"
+    assert cached[0]["refresh_token"] == "1//rt"
+    assert await collector._is_token_expired() is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_gemini_refresh_returns_nothing_not_the_expired_token(monkeypatch):
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    await cache.store("gemini", _expired_gemini_bundle(), account_id=None, source="sidecar")
+    for module in (
+        "app.services.collectors.gemini_oauth.token_cache",
+        "app.services.collectors.oauth_base.token_cache",
+    ):
+        monkeypatch.setattr(module, cache)
+    resp = MagicMock(status_code=400, text="invalid_grant")
+    monkeypatch.setattr(
+        "app.services.collectors.gemini_oauth.http_request_with_retry",
+        AsyncMock(return_value=resp),
+    )
+
+    assert await GeminiCollector()._get_valid_token(MagicMock(), force_refresh=True) is None
