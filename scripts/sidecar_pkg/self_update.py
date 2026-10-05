@@ -957,7 +957,9 @@ def _relaunch_posix(
             _undo_pre_exec_hooks()
             raise
         return  # unreachable
-    # Tray: never exec from inside the pystray loop — spawn detached and exit.
+    # Tray: never exec from inside the pystray loop — spawn detached and exit. Deliberately no
+    # RUNWAY_RETIRED_MEIPASS hand-off or systemd exit here: the old bootloader removes its own
+    # runtime dir when this process exits, so nothing is left to reclaim.
     if cleanup is not None:
         _call_best_effort(cleanup, "Pre-relaunch cleanup")
     # `open` hands its caller's environment to the launched app, so scrub on macOS too.
