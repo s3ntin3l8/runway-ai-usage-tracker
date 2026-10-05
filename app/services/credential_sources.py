@@ -56,6 +56,9 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("grok", "auth.json"), "Grok CLI"),
     (("kimi", "config.json"), "Kimi CLI"),
     (("k2", "tokens.json"), "Kimi K2"),
+    # Last resort, for a login under a user-chosen dir (``CLAUDE_CONFIG_DIR=/data/work``).
+    # Only filenames no other tool uses; ``auth.json`` is shared (Codex/OpenCode/Grok).
+    (("credentials.json",), "Claude Code"),
 )
 
 _LOGIN_HINTS = {

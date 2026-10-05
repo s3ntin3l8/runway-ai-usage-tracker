@@ -3231,3 +3231,111 @@ def test_grok_scope_selection_is_shared_with_the_renewer():
     assert sidecar._grok_auth_scope_entry(data) is xai_renewer.grok_scope_entry(data)
     assert sidecar._grok_auth_scope_entry(data)["key"] == "kb"
     assert sidecar._grok_auth_scope_entry("nope") is None
+
+
+class TestCustomLoginDirs:
+    """CLAUDE_CONFIG_DIR / CODEX_HOME relocate a CLI's whole state dir (#525)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("CODEX_HOME", raising=False)
+        monkeypatch.setattr(sidecar, "_LOGIN_DIR_EXTRAS", {})
+
+    @staticmethod
+    def _claude_login(directory: Path, email: str) -> Path:
+        directory.mkdir(parents=True)
+        creds = directory / ".credentials.json"
+        creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok"}}))
+        (directory / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": email}})
+        )
+        return creds
+
+    def test_unset_env_adds_no_paths(self):
+        assert sidecar.custom_login_dirs("CLAUDE_CONFIG_DIR") == []
+        assert sidecar.resolve_paths("{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/.credentials.json") == []
+        assert sidecar.resolve_paths("~/.claude/x.json") == [
+            sidecar.resolve_path("~/.claude/x.json")
+        ]
+
+    def test_env_dir_is_discovered_and_paired_with_its_own_claude_json(self, monkeypatch, tmp_path):
+        creds = self._claude_login(tmp_path / "work", "work@example.com")
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "work"))
+
+        found = sidecar.expand_file_rule_paths(["{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/.credentials.json"])
+
+        assert found == [creds]
+        assert sidecar.discover_anthropic_oauth_email(creds) == "work@example.com"
+        assert sidecar.discover_anthropic_email() == "work@example.com"
+
+    def test_multiple_dirs_pair_to_distinct_accounts(self, monkeypatch, tmp_path):
+        a = self._claude_login(tmp_path / "a", "a@example.com")
+        b = self._claude_login(tmp_path / "b", "b@example.com")
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", f"{tmp_path / 'a'}, {tmp_path / 'b'}")
+
+        assert sidecar.discover_anthropic_oauth_email(a) == "a@example.com"
+        assert sidecar.discover_anthropic_oauth_email(b) == "b@example.com"
+
+    def test_unrelated_credentials_file_is_not_paired(self, tmp_path):
+        stray = self._claude_login(tmp_path / "stray", "stray@example.com")
+        assert sidecar.discover_anthropic_oauth_email(stray) == ""
+
+    def test_config_key_covers_service_without_env(self, tmp_path):
+        creds = self._claude_login(tmp_path / "svc", "svc@example.com")
+        sidecar.configure_login_dirs({"claude_config_dirs": [str(tmp_path / "svc")]})
+
+        assert sidecar.expand_file_rule_paths(
+            ["{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/.credentials.json"]
+        ) == [creds]
+        assert sidecar.discover_anthropic_oauth_email(creds) == "svc@example.com"
+
+    def test_codex_home_login_email_and_sessions(self, monkeypatch, tmp_path):
+        home = tmp_path / "codex"
+        (home / "sessions" / "2026").mkdir(parents=True)
+        payload = base64.urlsafe_b64encode(
+            json.dumps({"email": "cx@example.com"}).encode()
+        ).decode()
+        (home / "auth.json").write_text(json.dumps({"tokens": {"id_token": f"h.{payload}.s"}}))
+        log = home / "sessions" / "2026" / "rollout.jsonl"
+        log.write_text("{}\n")
+        monkeypatch.setenv("CODEX_HOME", str(home))
+
+        assert sidecar.expand_file_rule_paths(["{{ENV_DIRS:CODEX_HOME}}/auth.json"]) == [
+            home / "auth.json"
+        ]
+        assert sidecar._codex_account_email() == "cx@example.com"
+        assert log in sidecar._discover_codex_log_paths()
+
+    def test_claude_log_paths_accept_dir_or_projects_dir(self, monkeypatch, tmp_path):
+        log = tmp_path / "cfg" / "projects" / "p" / "s.jsonl"
+        log.parent.mkdir(parents=True)
+        log.write_text("{}\n")
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+        assert sidecar._discover_anthropic_log_paths() == [log]
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg" / "projects"))
+        assert sidecar._discover_anthropic_log_paths() == [log]
+
+    def test_both_registries_list_the_env_dir_paths(self):
+        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
+            claude = [p for r in providers["anthropic"]["rules"] for p in r.get("paths", [])]
+            codex = [p for r in providers["chatgpt"]["rules"] for p in r.get("paths", [])]
+            assert "{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/.credentials.json" in claude
+            assert "{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/statusline.json" in claude
+            assert "{{ENV_DIRS:CODEX_HOME}}/auth.json" in codex
+
+    def test_env_dir_equal_to_standard_dir_is_not_listed_twice(self, monkeypatch):
+        creds = self._claude_login(Path(os.path.expanduser("~/.claude")), "me@example.com")
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
+
+        found = sidecar.expand_file_rule_paths(
+            ["~/.claude/.credentials.json", "{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/.credentials.json"]
+        )
+
+        assert found == [creds]

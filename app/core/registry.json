@@ -18,7 +18,8 @@
           "paths": [
             "~/.claude/.credentials.json",
             "{{CONFIG_DIR:claude}}/.credentials.json",
-            "{{CONFIG_DIR:claude}}/oauth_creds.json"
+            "{{CONFIG_DIR:claude}}/oauth_creds.json",
+            "{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/.credentials.json"
           ],
           "format": "json",
           "mapping": {
@@ -51,7 +52,8 @@
           "type": "file_json_statusline",
           "paths": [
             "~/.claude/statusline.json",
-            "{{CONFIG_DIR:claude}}/statusline.json"
+            "{{CONFIG_DIR:claude}}/statusline.json",
+            "{{ENV_DIRS:CLAUDE_CONFIG_DIR}}/statusline.json"
           ]
         },
         {
@@ -204,7 +206,8 @@
           "type": "file",
           "paths": [
             "~/.codex/auth.json",
-            "{{CONFIG_DIR:codex}}/auth.json"
+            "{{CONFIG_DIR:codex}}/auth.json",
+            "{{ENV_DIRS:CODEX_HOME}}/auth.json"
           ],
           "format": "json",
           "mapping": {
