@@ -2893,25 +2893,29 @@ def credential_origin_for_provider(provider_id: str) -> str:
 # whose rules map every source's bearer to ``xai_access`` — fingerprint
 # ``api_key`` there and no suffix would be derivable at all.
 #
-# xai then takes the *first* field it finds, and that order matters: the
-# access JWT expires in about six hours (measured ``iat → exp`` on a fresh
-# login's token, 2026-10) and it rotates several times a day — Runway
-# refreshes it via ``auth.x.ai/oauth2/token`` when a candidate ships a
-# refresh token, and the Grok / OpenCode CLI refreshes it too from its own
-# session (``app/services/collectors/xai.py``). Fingerprinting it would
-# mint a new origin — and strand the operator tag on the old one — on
-# every refresh. File and CLI candidates ship the refresh token
-# (``xai.refresh`` / ``refresh_token``), so they key on that; only the
-# access-only ``GROK_OAUTH_TOKEN`` env candidate falls back to
-# ``xai_access``, because it has nothing else to identify it by.
+# xai is keyed on a *stable claim of the access JWT* (``principal_id`` /
+# ``sub``, see ``jwt_stable_subject``), not on either token: the access JWT
+# expires in about six hours and rotates several times a day, and xAI issues a
+# new refresh token on every refresh (#512) — whether Runway's keep-alive, the
+# Grok / OpenCode CLI, or the server does it. Fingerprinting either token
+# would mint a new origin, and strand the operator tag on the old one, on
+# every renewal (#523). The claim is identical across all of them.
 #
-# Consequence worth knowing before touching tier 1b: a pasted bearer is an
-# *access* token (``provider_configs.api_key``), so the server's
-# ``provider:xai#<fp>`` hint answers for the env candidate but never for a
-# refresh-keyed file/CLI origin. Those get tagged, and the tag then outlives
-# every access refresh.
+# Only when the bearer is not a JWT (or carries neither claim) does xai fall
+# back to the refresh token and then the access token, in that order.
+#
+# The server's ``provider:xai#<fp>`` hint for a pasted bearer fingerprints the
+# same claim (``_fingerprinted_credential_hints``), so it now answers file/CLI
+# origins as well as the env candidate.
 _FINGERPRINT_KEY_FIELDS: dict[str, tuple[str, ...]] = {
     "xai": ("xai_refresh", "xai_access"),
+}
+
+# Providers whose bearer is a JWT carrying a claim that outlives token
+# rotation, mapped to the candidate field holding it. Tried before
+# ``_FINGERPRINT_KEY_FIELDS``.
+_STABLE_SUBJECT_FIELDS: dict[str, str] = {
+    "xai": "xai_access",
 }
 
 
@@ -2933,6 +2937,7 @@ def fingerprinted_credential_origin(
     from scripts.sidecar_pkg.identity import (
         FINGERPRINTED_ORIGIN_PROVIDERS,
         credential_fingerprint,
+        jwt_stable_subject,
         keyed_credential_origin,
     )
 
@@ -2940,10 +2945,16 @@ def fingerprinted_credential_origin(
         return base_origin
 
     fingerprint: str | None = None
-    for key_field in _FINGERPRINT_KEY_FIELDS.get(provider_id, ("api_key",)):
-        fingerprint = credential_fingerprint(str(candidate_tokens.get(key_field) or ""))
-        if fingerprint:
-            break
+    subject_field = _STABLE_SUBJECT_FIELDS.get(provider_id)
+    if subject_field:
+        fingerprint = credential_fingerprint(
+            jwt_stable_subject(str(candidate_tokens.get(subject_field) or ""))
+        )
+    if not fingerprint:
+        for key_field in _FINGERPRINT_KEY_FIELDS.get(provider_id, ("api_key",)):
+            fingerprint = credential_fingerprint(str(candidate_tokens.get(key_field) or ""))
+            if fingerprint:
+                break
     if not fingerprint:
         return base_origin
     return keyed_credential_origin(base_origin, fingerprint)
