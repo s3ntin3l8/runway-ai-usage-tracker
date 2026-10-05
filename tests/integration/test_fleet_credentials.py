@@ -1375,13 +1375,11 @@ def test_fingerprint_hint_ships_for_stored_sibling_key(
 
 
 def test_fingerprint_hint_ships_for_stored_xai_key(client: TestClient, session: Session) -> None:
-    """xai is the awkward sibling: no candidate carries ``api_key``, and its
-    *origin* prefers the refresh token when the candidate has one (the
-    access JWT rotates weekly). The hint built here is server-side and
-    hashes whatever was pasted — an access bearer — so it lines up with the
-    ``GROK_OAUTH_TOKEN`` candidate and never with a refresh-keyed file or
-    CLI origin, whose fingerprint on the card is the refresh token. What
-    matters for #349 is that a stored xai row answers under
+    """xai is the awkward sibling: no candidate carries ``api_key``. A pasted
+    bearer that is not a JWT has no stable claim, so the server hashes it
+    as-is and the hint lines up with the ``GROK_OAUTH_TOKEN`` candidate
+    only (a JWT is keyed on its claim instead, see the test below, #523).
+    What matters for #349 is that a stored xai row answers under
     ``provider:xai#<fp>`` like every other keyed provider, instead of
     dropping out of the hint map."""
     _add_provider_config(
@@ -1396,6 +1394,27 @@ def test_fingerprint_hint_ships_for_stored_xai_key(client: TestClient, session: 
     assert r.json()["account_tag_hints"]["xai"][_hint_key("xai", XAI_BEARER)] == (
         "grok@example.com"
     )
+
+
+def test_fingerprint_hint_for_a_pasted_xai_jwt_uses_its_stable_claim(
+    client: TestClient, session: Session
+) -> None:
+    """#523: the sidecar keys xAI origins on the JWT's stable claim, so the
+    server hint for a pasted JWT must hash that claim too — the bearer itself
+    rotates every few hours and would never match again."""
+
+    def enc(obj: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    bearer = f"{enc({'alg': 'none'})}.{enc({'principal_id': 'user-123', 'jti': 'x'})}.sig"
+    _add_provider_config(session, provider_id="xai", account_id="grok@example.com", api_key=bearer)
+
+    r = client.get("/api/v1/fleet/config")
+
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]["xai"]
+    assert hints[_hint_key("xai", "user-123")] == "grok@example.com"
+    assert _hint_key("xai", bearer) not in hints
 
 
 def test_sibling_fingerprint_hints_land_in_separate_provider_buckets(
@@ -2882,6 +2901,139 @@ def test_ingest_retires_the_plain_origin_row_a_keyed_origin_supersedes(
     assert sidecar_source_id("laptop", keyed) in ids
     assert sidecar_source_id("laptop", plain) not in ids, "superseded row is retired"
     assert sidecar_source_id("desktop", plain) in ids, "another machine's row is untouched"
+
+
+def test_ingest_retires_earlier_fingerprints_of_a_rotating_xai_login(
+    client: TestClient, session: Session
+):
+    """#523: xAI re-keys on every refresh, so a new ``base#<fp>`` means the old one is
+    dead — its row, cached bundle and rotation tag must go, but nothing of another
+    machine's, and never the operator's own tag."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.db import CredentialTag
+    from app.services.collector_manager import manager
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    base = "path:/home/alice/.local/share/opencode/auth.json"
+    old, older, new = (f"{base}#{fp}" for fp in ("aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"))
+    for sidecar, origin in (("laptop", old), ("laptop", older), ("desktop", old)):
+        row = touch_source(
+            session,
+            provider_id="xai",
+            account_id="grok@example.com",
+            source_id=sidecar_source_id(sidecar, origin),
+            source_type="file",
+            source_label="auth.json",
+            credential_origin=origin,
+            sidecar_id=sidecar,
+        )
+        if (sidecar, origin) == ("laptop", old):
+            row.enabled = False
+            row.priority = 4
+        # ``old`` is the most recently seen of this machine's rows, so the successor inherits it.
+        row.last_seen = datetime.now(UTC) - timedelta(days=0 if origin == old else 2)
+        session.add(row)
+    for origin, set_by in ((old, "operator"), (older, "rotation")):
+        session.add(
+            CredentialTag(
+                provider_id="xai",
+                credential_origin=origin,
+                account_id="grok@example.com",
+                sidecar_id="laptop",
+                set_by=set_by,
+            )
+        )
+    session.commit()
+
+    resp = _ingest(client, "laptop", [_token_card("xai", new, "xai-token", "grok@example.com")])
+
+    assert resp.status_code == 200, resp.text
+    session.expire_all()
+    rows = {r.source_id: r for r in session.exec(select(CredentialSource)).all()}
+    assert set(rows) == {
+        sidecar_source_id("laptop", new),
+        sidecar_source_id("desktop", old),
+    }, "earlier fingerprints on this machine are retired, another machine's is untouched"
+    successor = rows[sidecar_source_id("laptop", new)]
+    assert (successor.enabled, successor.priority) == (False, 4)
+    prefs = manager._credential_source_preferences[("xai", "grok@example.com")]
+    assert sidecar_source_id("laptop", old) not in prefs
+    assert sidecar_source_id("laptop", older) not in prefs
+    tags = {(t.set_by, t.credential_origin) for t in session.exec(select(CredentialTag)).all()}
+    assert tags == {("operator", old)}, "rotation tags go, the operator's tag stays"
+
+
+def test_xai_successor_inherits_from_the_newest_of_several_stale_rows(
+    client: TestClient, session: Session
+):
+    """A deployment hit by #523 holds one stale row per past rotation; the operator's
+    current enabled/priority live on the most recent, not on whichever the DB lists first."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    base = "path:/home/alice/.local/share/opencode/auth.json"
+    now = datetime.now(UTC)
+    # (fingerprint, age, enabled, priority) — the newest was disabled and ordered by the operator.
+    for fp, age, enabled, priority in (
+        ("aaaaaaaaaaaa", 3, True, 0),
+        ("bbbbbbbbbbbb", 1, False, 9),
+        ("dddddddddddd", 2, True, 0),
+    ):
+        origin = f"{base}#{fp}"
+        row = touch_source(
+            session,
+            provider_id="xai",
+            account_id="grok@example.com",
+            source_id=sidecar_source_id("laptop", origin),
+            source_type="file",
+            source_label="auth.json",
+            credential_origin=origin,
+            sidecar_id="laptop",
+        )
+        row.enabled, row.priority, row.last_seen = enabled, priority, now - timedelta(days=age)
+        session.add(row)
+    session.commit()
+    new = f"{base}#cccccccccccc"
+
+    resp = _ingest(client, "laptop", [_token_card("xai", new, "xai-token", "grok@example.com")])
+
+    assert resp.status_code == 200, resp.text
+    session.expire_all()
+    successor = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.source_id == sidecar_source_id("laptop", new)
+        )
+    ).one()
+    assert (successor.enabled, successor.priority) == (False, 9)
+
+
+def test_ingest_keeps_other_fingerprints_for_a_provider_that_does_not_rekey(
+    client: TestClient, session: Session
+):
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    base = "env:ZAI_API_KEY"
+    other = f"{base}#aaaaaaaaaaaa"
+    touch_source(
+        session,
+        provider_id="zai",
+        account_id="alice@example.com",
+        source_id=sidecar_source_id("laptop", other),
+        source_type="env",
+        source_label="ZAI_API_KEY",
+        credential_origin=other,
+        sidecar_id="laptop",
+    )
+    session.commit()
+    new = f"{base}#bbbbbbbbbbbb"
+
+    resp = _ingest(client, "laptop", [_token_card("zai", new, "k", "alice@example.com")])
+
+    assert resp.status_code == 200, resp.text
+    ids = {r.source_id for r in session.exec(select(CredentialSource)).all()}
+    assert ids == {sidecar_source_id("laptop", other), sidecar_source_id("laptop", new)}
 
 
 def test_ingest_leaves_a_plain_origin_row_alone_when_the_origin_stays_plain(

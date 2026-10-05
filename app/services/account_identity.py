@@ -1,4 +1,6 @@
+import base64
 import hashlib
+import json
 import re
 
 _IPV4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -227,6 +229,37 @@ def credential_fingerprint(value: str | None) -> str | None:
         b"runway-credential-fp-v1",
         1,
     ).hex()[:FINGERPRINT_LEN]
+
+
+# Claims of an xAI access JWT that identify the login and survive a refresh,
+# in preference order. ``jti``/``iat``/``exp`` change on every refresh; these
+# do not (#523). ``team_id`` is left out: a team can hold several logins.
+STABLE_JWT_CLAIMS: tuple[str, ...] = ("principal_id", "sub")
+
+
+def jwt_stable_subject(token: str | None) -> str | None:
+    """First non-empty :data:`STABLE_JWT_CLAIMS` value of a JWT's payload.
+
+    The payload is decoded without verifying the signature — it only shapes
+    an origin key, nothing trusts it. A non-JWT, a malformed payload, or one
+    with none of the claims → ``None``, so callers fall back to another key.
+
+    Mirrored in ``scripts/sidecar_pkg/identity.py`` — keep the two in sync.
+    """
+    parts = (token or "").strip().removeprefix("Bearer ").split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for claim in STABLE_JWT_CLAIMS:
+        value = payload.get(claim)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def keyed_credential_origin(base_origin: str, fingerprint: str) -> str:

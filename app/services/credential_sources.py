@@ -192,6 +192,62 @@ def retire_unkeyed_origin(
     return rows
 
 
+# Providers whose one login at a given path/env var re-keys itself: the credential
+# behind ``base`` is replaced, never joined by a sibling, so a different
+# ``base#<fp>`` from the same machine means the old fingerprint is dead. xAI rotates
+# its refresh token on every refresh (#523); a provider holding several distinct
+# keys under one path must not be listed — they would delete each other every cycle.
+SUPERSEDING_KEYED_PROVIDERS: frozenset[str] = frozenset({"xai"})
+
+
+def retire_superseded_keyed_origins(
+    session: Session, *, provider_id: str, sidecar_id: str, origin: str
+) -> list[CredentialSource]:
+    """Delete the rows (and rotation tags) of earlier ``base#<old fp>`` origins.
+
+    For a provider in :data:`SUPERSEDING_KEYED_PROVIDERS`, a key-scoped *origin* replaces
+    every other ``base#<fp>`` the same machine reported before it: the old fingerprint
+    belongs to a credential that no longer exists, so its source row would sit there
+    stale and its ``rotation`` tag (written by the rotation carry, #474) would pile up.
+    Operator tags are left alone — the stale-rules check surfaces those. Returns the
+    deleted source rows so the caller can drop their cached bundles.
+    """
+    from app.services.account_identity import split_keyed_origin
+
+    if provider_id not in SUPERSEDING_KEYED_PROVIDERS:
+        return []
+    base, fingerprint = split_keyed_origin(origin)
+    if fingerprint is None:
+        return []
+    prefix = f"{base}#"
+
+    def superseded(candidate: str | None) -> bool:
+        return bool(candidate) and candidate != origin and str(candidate).startswith(prefix)
+
+    rows = [
+        row
+        for row in session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == provider_id,
+                CredentialSource.sidecar_id == sidecar_id,
+            )
+        ).all()
+        if superseded(row.credential_origin)
+    ]
+    for row in rows:
+        session.delete(row)
+    for tag in session.exec(
+        select(CredentialTag).where(
+            CredentialTag.provider_id == provider_id,
+            CredentialTag.sidecar_id == sidecar_id,
+            CredentialTag.set_by == "rotation",
+        )
+    ).all():
+        if superseded(tag.credential_origin):
+            session.delete(tag)
+    return rows
+
+
 def sidecar_source_id(sidecar_id: str, origin: str | None) -> str:
     """Stable source identity, scoped to the machine that reported it."""
     digest = hashlib.sha256(f"{sidecar_id}\0{origin or 'legacy'}".encode()).hexdigest()[:24]

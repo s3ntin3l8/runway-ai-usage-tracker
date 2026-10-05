@@ -24,6 +24,7 @@ These tests pin the extension:
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -263,15 +264,14 @@ class TestKeyedOrigins:
 class TestXaiRefreshPreference:
     """xai is the sibling whose key rotates under Runway's feet.
 
-    Its access JWT expires in about six hours (measured ``iat → exp`` on a
-    fresh login's token, 2026-10) and both sides rotate it: Runway via
-    ``auth.x.ai/oauth2/token`` when the candidate ships a refresh token,
-    and the Grok / OpenCode CLI from its own session, outside Runway's
-    knowledge. Fingerprinting that field would therefore mint a new origin
-    on every refresh, several times a day, and strand whatever tag the
-    operator wrote. The refresh token wins whenever the candidate carries
-    one, and the access-only ``GROK_OAUTH_TOKEN`` candidate falls back to
-    its bearer because it has nothing else to identify it by.
+    Its access JWT expires in about six hours and xAI issues a new refresh
+    token on every refresh (#512), whether Runway, the keep-alive or the
+    Grok / OpenCode CLI does it. A real JWT is therefore keyed on its stable
+    claim (``TestXaiStableClaim`` below, #523). These tests cover the
+    fallback for a bearer that is *not* a JWT: the refresh token wins when
+    the candidate carries one, and the access-only ``GROK_OAUTH_TOKEN``
+    candidate falls back to its bearer because it has nothing else to
+    identify it by.
     """
 
     ACCESS_OLD = "xai-access-jwt-old"  # pragma: allowlist secret
@@ -505,3 +505,89 @@ class TestNonKeyCandidatesStayPlain:
                 "reason": "token_withheld",
             }
         ]
+
+
+def _jwt(**claims: Any) -> str:
+    """An unsigned three-part token with *claims* as its payload."""
+
+    def b64(obj: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    return f"{b64({'alg': 'none'})}.{b64(claims)}.sig"
+
+
+class TestXaiStableClaim:
+    """#523: a refresh rotates the access JWT *and* the refresh token. The
+    origin must follow the login's stable claim, not either token."""
+
+    LOGIN = {"principal_id": "user-123", "sub": "user-123", "team_id": "team-9"}
+
+    def _origin(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]
+    ) -> str:
+        auth = tmp_path / "auth.json"
+        auth.write_text(json.dumps(payload), encoding="utf-8")
+        monkeypatch.setattr(sc, "expand_file_rule_paths", lambda _paths: [auth])
+        _, blocked = _collect("xai", [_opencode_auth_rule("xai")])
+        assert len(blocked) == 1, blocked
+        return blocked[0]["credential_origin"]
+
+    def test_origin_survives_a_refresh_that_rotates_both_tokens(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        before = self._origin(
+            tmp_path,
+            monkeypatch,
+            {"xai": {"access": _jwt(jti="a", exp=1, **self.LOGIN), "refresh": "refresh-one"}},
+        )
+        after = self._origin(
+            tmp_path,
+            monkeypatch,
+            {"xai": {"access": _jwt(jti="b", exp=2, **self.LOGIN), "refresh": "refresh-two"}},
+        )
+
+        assert after == before
+        assert before.endswith(f"#{credential_fingerprint('user-123')}")
+
+    def test_different_logins_get_different_origins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        one = self._origin(
+            tmp_path, monkeypatch, {"xai": {"access": _jwt(principal_id="user-1"), "refresh": "r"}}
+        )
+        two = self._origin(
+            tmp_path, monkeypatch, {"xai": {"access": _jwt(principal_id="user-2"), "refresh": "r"}}
+        )
+
+        assert one != two
+
+    def test_sub_is_used_when_principal_id_is_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        origin = self._origin(
+            tmp_path, monkeypatch, {"xai": {"access": _jwt(sub="subject-7"), "refresh": "r"}}
+        )
+
+        assert origin.endswith(f"#{credential_fingerprint('subject-7')}")
+
+    def test_jwt_without_a_stable_claim_falls_back_to_the_refresh_token(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        origin = self._origin(
+            tmp_path,
+            monkeypatch,
+            {"xai": {"access": _jwt(team_id="team-9"), "refresh": "refresh-one"}},
+        )
+
+        assert origin.endswith(f"#{credential_fingerprint('refresh-one')}")
+
+    def test_access_only_jwt_is_keyed_on_the_claim_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``GROK_OAUTH_TOKEN`` carries no refresh token, but its JWT still
+        names the login — so it stops rotating as well."""
+        origin = self._origin(
+            tmp_path, monkeypatch, {"xai": {"access": _jwt(principal_id="user-123")}}
+        )
+
+        assert origin.endswith(f"#{credential_fingerprint('user-123')}")

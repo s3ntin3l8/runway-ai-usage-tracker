@@ -13,10 +13,11 @@ from sqlmodel.pool import StaticPool
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from app.models.db import CredentialSource  # noqa: E402
+from app.models.db import CredentialSource, CredentialTag  # noqa: E402
 from app.services.account_identity import keyed_credential_origin  # noqa: E402
 from app.services.credential_sources import (  # noqa: E402
     is_machine_bound_origin,
+    retire_superseded_keyed_origins,
     retire_unkeyed_origin,
     sidecar_source_id,
 )
@@ -223,6 +224,72 @@ def test_retire_unkeyed_origin_ignores_a_plain_origin(session):
     assert (
         retire_unkeyed_origin(
             session, provider_id="zai", sidecar_id="laptop", origin="env:ZAI_API_KEY"
+        )
+        == []
+    )
+
+
+def _xai_tag(session, origin, set_by="rotation", sidecar_id="laptop", provider="xai"):
+    session.add(
+        CredentialTag(
+            provider_id=provider,
+            credential_origin=origin,
+            account_id="a@example.com",
+            sidecar_id=sidecar_id,
+            set_by=set_by,
+        )
+    )
+    session.commit()
+
+
+def test_retire_superseded_keyed_origins_drops_old_fingerprints_of_a_rotating_provider(session):
+    base = "path:/home/u/.local/share/opencode/auth.json"
+    old1, old2 = f"{base}#aaaaaaaaaaaa", f"{base}#bbbbbbbbbbbb"
+    new = f"{base}#cccccccccccc"
+    for origin in (old1, old2, new):
+        _row(session, origin, provider="xai")
+        _xai_tag(session, origin)
+    _row(session, old1, sidecar_id="desktop", provider="xai")  # another machine
+    _row(session, f"{base}-other#dddddddddddd", provider="xai")  # a different file
+    _xai_tag(session, f"{base}#eeeeeeeeeeee", set_by="operator")  # the operator's own tag
+
+    retired = retire_superseded_keyed_origins(
+        session, provider_id="xai", sidecar_id="laptop", origin=new
+    )
+    session.commit()
+
+    assert {r.credential_origin for r in retired} == {old1, old2}
+    left = {(r.sidecar_id, r.credential_origin) for r in session.exec(select(CredentialSource))}
+    assert left == {
+        ("laptop", new),
+        ("desktop", old1),
+        ("laptop", f"{base}-other#dddddddddddd"),
+    }
+    tags = {(t.set_by, t.credential_origin) for t in session.exec(select(CredentialTag))}
+    assert tags == {("rotation", new), ("operator", f"{base}#eeeeeeeeeeee")}
+
+
+def test_retire_superseded_keyed_origins_leaves_other_providers_alone(session):
+    """A provider holding several distinct keys under one path would delete them
+    from each other every cycle; only providers that re-key a single login opt in."""
+    base = "path:/home/u/.local/share/opencode/auth.json"
+    _row(session, f"{base}#aaaaaaaaaaaa", provider="zai")
+
+    assert (
+        retire_superseded_keyed_origins(
+            session, provider_id="zai", sidecar_id="laptop", origin=f"{base}#bbbbbbbbbbbb"
+        )
+        == []
+    )
+    assert len(session.exec(select(CredentialSource)).all()) == 1
+
+
+def test_retire_superseded_keyed_origins_ignores_a_plain_origin(session):
+    _row(session, "path:/a/auth.json#aaaaaaaaaaaa", provider="xai")
+
+    assert (
+        retire_superseded_keyed_origins(
+            session, provider_id="xai", sidecar_id="laptop", origin="path:/a/auth.json"
         )
         == []
     )

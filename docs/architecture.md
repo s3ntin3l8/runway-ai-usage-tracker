@@ -184,6 +184,17 @@ tag can't silently follow it. A tag written against the plain origin still appli
 key-scoped one (the tag repo, the inventory and the sidecar's own hint lookup all fall back to
 it), and the superseded plain-origin row is retired when its key-scoped successor first reports.
 
+**xAI** is the exception to "a rotated key is a new origin": it issues a new refresh token on
+every refresh (keep-alive, the Grok/OpenCode CLI and the server all trigger one), so neither
+token can identify the login. The sidecar fingerprints a stable claim of the access JWT instead
+(`principal_id`, else `sub`; `jwt_stable_subject`), falling back to the refresh token and then
+the access token only for a bearer that isn't a JWT. The server's `provider:xai#<fp>` hint for a
+pasted bearer hashes the same claim. Logins keyed by older sidecars are cleaned up at ingest:
+when an xAI origin first reports, the same machine's earlier `base#<fp>` source rows, their
+cached bundles and their `rotation` tags are deleted (`retire_superseded_keyed_origins`;
+operator tags are kept). Providers that can hold several distinct keys under one path are not
+in that set, or they would delete each other every cycle (#523).
+
 Cookies, keychain entries and OAuth bundles stay unfingerprinted on purpose: their secret
 changes with every login or refresh, so a fingerprint would orphan the tag each time. A tag on
 a **cookie or keychain** origin therefore can't be deployment-wide (422); on a **path** or

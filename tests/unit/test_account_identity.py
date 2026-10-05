@@ -307,6 +307,37 @@ class TestCredentialFingerprint:
         ):
             assert split_keyed_origin(origin) == sidecar_identity.split_keyed_origin(origin)
 
+    def test_jwt_stable_subject_agrees_between_server_and_sidecar(self):
+        import base64
+        import json
+
+        from app.services.account_identity import STABLE_JWT_CLAIMS, jwt_stable_subject
+        from scripts.sidecar_pkg import identity as sidecar_identity
+
+        def jwt(**claims):
+            enc = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")  # noqa: E731
+            return f"{enc({'alg': 'none'})}.{enc(claims)}.sig"
+
+        assert STABLE_JWT_CLAIMS == sidecar_identity.STABLE_JWT_CLAIMS
+        samples = [
+            jwt(principal_id="p-1", sub="s-1"),
+            "Bearer " + jwt(sub="s-1"),
+            jwt(team_id="t-1"),
+            jwt(principal_id="  "),
+            jwt(principal_id=5),
+            "not-a-jwt",
+            "a.b.c",
+            "a.e30.c",  # payload decodes to {}
+            "a.W10.c",  # payload decodes to [] — not an object
+            None,
+            "",
+        ]
+        for token in samples:
+            assert jwt_stable_subject(token) == sidecar_identity.jwt_stable_subject(token)
+        assert jwt_stable_subject(jwt(principal_id="p-1", sub="s-1")) == "p-1"
+        assert jwt_stable_subject(jwt(sub="s-1")) == "s-1"
+        assert jwt_stable_subject("a.W10.c") is None
+
 
 class TestKeyedCredentialOrigin:
     def test_appends_fingerprint(self):

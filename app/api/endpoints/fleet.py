@@ -38,6 +38,7 @@ from app.services.account_identity import (
     allowed_assignment_provider_ids,
     canonical_account_id,
     credential_fingerprint,
+    jwt_stable_subject,
     keyed_credential_origin,
     normalize_sidecar_id,
     resolve_account_id,
@@ -387,6 +388,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             describe_origin,
             pending_cache_slot,
             reset_source_retry,
+            retire_superseded_keyed_origins,
             retire_unkeyed_origin,
             sidecar_source_id,
             touch_source,
@@ -501,6 +503,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             retired_rows = retire_unkeyed_origin(
                 session, provider_id=p_id, sidecar_id=sidecar_id, origin=origin
             )
+            # xAI re-keys on every refresh: earlier ``base#<old fp>`` rows are dead too (#523).
+            retired_rows += retire_superseded_keyed_origins(
+                session, provider_id=p_id, sidecar_id=sidecar_id, origin=origin
+            )
+            # Several stale rows can pile up there; the newest one carries the operator's
+            # current choices, so it is the one the successor inherits from.
+            retired_rows.sort(key=lambda row: row.last_seen, reverse=True)
             if retired_rows:
                 from app.services.collector_manager import manager
 
@@ -508,8 +517,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     # The keyed row is new this cycle: it inherits the operator's choices
                     # (enabled, failover priority) from the row it replaces instead of
                     # silently re-enabling a source they turned off. A machine reports one
-                    # key per plain origin, so there is normally a single retired row; prefer
-                    # the one filed under the resolved account if a future provider has more.
+                    # key per plain origin, so there is normally a single retired row; xAI can
+                    # leave many (one per rotation), newest first. Prefer the one filed under
+                    # the resolved account.
                     inherited = next(
                         (row for row in retired_rows if row.account_id == actual_acc_id),
                         retired_rows[0],
@@ -762,7 +772,10 @@ def _fingerprinted_credential_hints(
         except Exception:  # pragma: no cover — undecryptable stored key
             logger.debug("fingerprint hint: cannot decrypt %s key", row.provider_id, exc_info=True)
             continue
-        fingerprint = credential_fingerprint(api_key)
+        # xAI's pasted bearer is a JWT that rotates; the sidecar keys xAI
+        # origins on its stable claim (#523), so the hint must too.
+        subject = jwt_stable_subject(api_key) if row.provider_id == "xai" else None
+        fingerprint = credential_fingerprint(subject or api_key)
         if not fingerprint:
             continue
         hint_key = keyed_credential_origin(
