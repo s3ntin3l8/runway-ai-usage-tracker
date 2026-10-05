@@ -12,6 +12,7 @@ incident this guards against) rather than merely failing an update.
 import hashlib
 import io
 import os
+import pathlib
 import shutil
 import stat
 import sys
@@ -1075,6 +1076,74 @@ class TestSupervisedRelaunch:
         monkeypatch.setattr(self_update.os, "execve", lambda *a: calls.append("execve"))
         self_update._relaunch_posix("cli", tmp_path / "x")
         assert calls == ["execve"]
+
+
+class TestRecoverStrandedRollback:
+    @pytest.fixture
+    def install(self, monkeypatch, tmp_path):
+        exe = tmp_path / "runway-sidecar-cli"
+        exe.write_bytes(b"current")
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: True)
+        monkeypatch.setattr(self_update, "_install_path", lambda: exe)
+        return exe
+
+    @staticmethod
+    def _age(path: pathlib.Path) -> float:
+        # ctime cannot be set; judge "old enough" by moving the clock instead.
+        return path.lstat().st_ctime + 3600
+
+    def test_restores_the_backup_when_previous_is_missing(self, install):
+        stranded = install.with_name(install.name + ".rollback")
+        stranded.write_bytes(b"backup")
+        self_update.recover_stranded_rollback(now=self._age(stranded))
+        assert not stranded.exists()
+        assert install.with_name(install.name + ".previous").read_bytes() == b"backup"
+
+    def test_drops_the_duplicate_when_previous_exists(self, install):
+        stranded = install.with_name(install.name + ".rollback")
+        stranded.write_bytes(b"dup")
+        previous = install.with_name(install.name + ".previous")
+        previous.write_bytes(b"keep")
+        assert self_update.recover_stranded_rollback(now=self._age(stranded)) == 3
+        assert not stranded.exists()
+        assert previous.read_bytes() == b"keep"
+
+    def test_leaves_a_rollback_that_may_still_be_running(self, install):
+        stranded = install.with_name(install.name + ".rollback")
+        stranded.write_bytes(b"backup")
+        self_update.recover_stranded_rollback()
+        assert stranded.exists()
+
+    def test_noop_when_nothing_is_stranded(self, install):
+        assert self_update.recover_stranded_rollback() == 0
+
+    def test_noop_when_not_frozen(self, install, monkeypatch):
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: False)
+        stranded = install.with_name(install.name + ".rollback")
+        stranded.write_bytes(b"backup")
+        self_update.recover_stranded_rollback(now=self._age(stranded))
+        assert stranded.exists()
+
+
+class TestReclaimStaleState:
+    def test_runs_the_sweep_and_the_rollback_recovery(self, monkeypatch):
+        calls: list[str] = []
+        monkeypatch.setattr(
+            self_update.runtime_cleanup, "startup_cleanup", lambda: calls.append("sweep")
+        )
+        monkeypatch.setattr(
+            self_update, "recover_stranded_rollback", lambda: calls.append("rollback") or 0
+        )
+        self_update.reclaim_stale_state()
+        assert calls == ["sweep", "rollback"]
+
+    def test_a_failing_rollback_recovery_never_raises(self, monkeypatch):
+        def boom() -> int:
+            raise OSError("nope")
+
+        monkeypatch.setattr(self_update.runtime_cleanup, "startup_cleanup", lambda: None)
+        monkeypatch.setattr(self_update, "recover_stranded_rollback", boom)
+        self_update.reclaim_stale_state()
 
 
 class TestExecFailureRestoresHooks:

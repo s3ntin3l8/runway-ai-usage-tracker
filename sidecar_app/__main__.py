@@ -46,7 +46,8 @@ def _apply_login_dirs(config: dict) -> None:
 
 
 def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoint, splits poorly
-    from scripts.sidecar_pkg.runtime_cleanup import release_retired_runtime, startup_cleanup
+    from scripts.sidecar_pkg.runtime_cleanup import release_retired_runtime
+    from scripts.sidecar_pkg.self_update import reclaim_stale_state
 
     release_retired_runtime()
     # 0. Enable logging to file
@@ -69,7 +70,7 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         logging.warning("Another Runway sidecar is already running; this instance will exit.")
         return
     atexit.register(_sidecar.remove_pid_file)
-    startup_cleanup()
+    reclaim_stale_state()
 
     # 1. Find config path
     config_path = get_config_path()

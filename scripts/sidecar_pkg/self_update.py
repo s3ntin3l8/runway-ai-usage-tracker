@@ -986,6 +986,49 @@ def _rm(path: pathlib.Path) -> None:
             pass
 
 
+# A rollback swaps in milliseconds; older than this means it was interrupted.
+_ROLLBACK_MAX_AGE_S = 600
+
+
+def recover_stranded_rollback(now: float | None = None) -> int:
+    """Undo a ``rollback()`` that was killed between its two renames.
+
+    ``rollback()`` moves ``<install>.previous`` to ``<install>.rollback`` before the swap.
+    A kill in between strands the backup there, and ``rollback_available()`` then reports
+    nothing to roll back to. Put it back (or drop the duplicate); return bytes freed.
+    """
+    if not _is_frozen():
+        return 0
+    install = _install_path()
+    stranded = install.with_name(install.name + ".rollback")
+    if not stranded.exists():
+        return 0
+    cutoff = (time.time() if now is None else now) - _ROLLBACK_MAX_AGE_S
+    # ctime, not mtime: the rename updates it, mtime is that of the original backup.
+    if stranded.lstat().st_ctime > cutoff:
+        return 0
+    previous = _previous_path(install)
+    if not previous.exists():
+        os.rename(stranded, previous)
+        logger.info("Restored the rollback backup stranded at %s", stranded)
+        return 0
+    freed = runtime_cleanup.dir_size(stranded) if stranded.is_dir() else stranded.stat().st_size
+    _rm(stranded)
+    return freed
+
+
+def reclaim_stale_state() -> None:
+    """Startup hook: sweep dead builds' temp dirs, then finish an interrupted rollback."""
+    runtime_cleanup.startup_cleanup()
+    try:
+        freed = recover_stranded_rollback()
+    except Exception:
+        logger.debug("Stranded-rollback recovery failed", exc_info=True)
+        return
+    if freed:
+        logger.info("Reclaimed %.1f MB of a stale rollback backup", freed / 1_000_000)
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------

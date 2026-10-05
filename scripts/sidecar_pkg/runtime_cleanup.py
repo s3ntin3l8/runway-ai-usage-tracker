@@ -29,8 +29,6 @@ _MEI_PREFIX = "_MEI"
 _UPDATE_DIR_PREFIX = "runway-update-"
 # A live update downloads + extracts in seconds; anything this old was orphaned.
 _UPDATE_DIR_MAX_AGE_S = 3600
-# A rollback swaps in milliseconds; older than this means it was interrupted.
-_ROLLBACK_MAX_AGE_S = 600
 
 
 def pid_is_alive(pid: int) -> bool:
@@ -70,7 +68,7 @@ def own_runtime_dir() -> pathlib.Path | None:
     return path if path.name.startswith(_MEI_PREFIX) else None
 
 
-def _size(path: pathlib.Path) -> int:
+def dir_size(path: pathlib.Path) -> int:
     total = 0
     for root, _dirs, files in os.walk(path):
         for name in files:
@@ -83,7 +81,7 @@ def _size(path: pathlib.Path) -> int:
 
 def _remove(path: pathlib.Path) -> int:
     """Delete ``path`` (best-effort) and return the bytes it held."""
-    freed = _size(path) if path.is_dir() and not path.is_symlink() else 0
+    freed = dir_size(path) if path.is_dir() and not path.is_symlink() else 0
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path, ignore_errors=True)
     else:
@@ -179,40 +177,15 @@ def sweep_stale_update_dirs(now: float | None = None) -> int:
     return freed
 
 
-def recover_stranded_rollback(now: float | None = None) -> int:
-    """Undo a ``rollback()`` that was killed between its two renames.
-
-    ``rollback()`` moves ``<install>.previous`` to ``<install>.rollback`` before the swap.
-    A kill in between strands the backup there, and ``rollback_available()`` then reports
-    nothing to roll back to. Put it back (or drop the duplicate); return bytes freed.
-    """
-    from scripts.sidecar_pkg import self_update
-
-    if not self_update._is_frozen():
-        return 0
-    install = self_update._install_path()
-    stranded = install.with_name(install.name + ".rollback")
-    if not stranded.exists():
-        return 0
-    cutoff = (time.time() if now is None else now) - _ROLLBACK_MAX_AGE_S
-    # ctime, not mtime: the rename updates it, mtime is that of the original backup.
-    if stranded.lstat().st_ctime > cutoff:
-        return 0
-    previous = self_update._previous_path(install)
-    if not previous.exists():
-        os.rename(stranded, previous)
-        logger.info("Restored the rollback backup stranded at %s", stranded)
-        return 0
-    freed = _size(stranded) if stranded.is_dir() else stranded.stat().st_size
-    self_update._rm(stranded)
-    return freed
-
-
 def startup_cleanup() -> None:
-    """Claim our runtime dir, then reclaim everything dead builds left behind."""
+    """Claim our runtime dir, then reclaim the temp dirs dead builds left behind.
+
+    A rollback stranded mid-swap is recovered by ``self_update.recover_stranded_rollback``
+    (it needs the install paths, and ``self_update`` already imports this module).
+    """
     freed = 0
     claim_runtime_dir()
-    for step in (sweep_stale_runtime_dirs, sweep_stale_update_dirs, recover_stranded_rollback):
+    for step in (sweep_stale_runtime_dirs, sweep_stale_update_dirs):
         try:
             freed += step()
         except Exception:

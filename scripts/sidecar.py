@@ -5163,9 +5163,9 @@ def main():
 
     if not write_pid_file():
         sys.exit(1)
-    from scripts.sidecar_pkg.runtime_cleanup import startup_cleanup
+    from scripts.sidecar_pkg.self_update import reclaim_stale_state
 
-    startup_cleanup()
+    reclaim_stale_state()
     # A self-update re-execs without running atexit; free the PID file first so the new
     # image does not mistake it for a second running sidecar.
     from scripts.sidecar_pkg.self_update import register_pre_exec_hook

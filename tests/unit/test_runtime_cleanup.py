@@ -189,62 +189,10 @@ class TestSweepStaleUpdateDirs:
         assert other.exists()
 
 
-class TestRecoverStrandedRollback:
-    @pytest.fixture
-    def install(self, monkeypatch, tmp_path):
-        from scripts.sidecar_pkg import self_update
-
-        exe = tmp_path / "runway-sidecar-cli"
-        exe.write_bytes(b"current")
-        monkeypatch.setattr(self_update, "_is_frozen", lambda: True)
-        monkeypatch.setattr(self_update, "_install_path", lambda: exe)
-        return exe
-
-    @staticmethod
-    def _age(path: pathlib.Path) -> float:
-        # ctime cannot be set; judge "old enough" by moving the clock instead.
-        return path.lstat().st_ctime + 3600
-
-    def test_restores_the_backup_when_previous_is_missing(self, install):
-        stranded = install.with_name(install.name + ".rollback")
-        stranded.write_bytes(b"backup")
-        rc.recover_stranded_rollback(now=self._age(stranded))
-        assert not stranded.exists()
-        assert install.with_name(install.name + ".previous").read_bytes() == b"backup"
-
-    def test_drops_the_duplicate_when_previous_exists(self, install):
-        stranded = install.with_name(install.name + ".rollback")
-        stranded.write_bytes(b"dup")
-        previous = install.with_name(install.name + ".previous")
-        previous.write_bytes(b"keep")
-        assert rc.recover_stranded_rollback(now=self._age(stranded)) == 3
-        assert not stranded.exists()
-        assert previous.read_bytes() == b"keep"
-
-    def test_leaves_a_rollback_that_may_still_be_running(self, install):
-        stranded = install.with_name(install.name + ".rollback")
-        stranded.write_bytes(b"backup")
-        rc.recover_stranded_rollback()
-        assert stranded.exists()
-
-    def test_noop_when_nothing_is_stranded(self, install):
-        assert rc.recover_stranded_rollback() == 0
-
-    def test_noop_when_not_frozen(self, install, monkeypatch):
-        from scripts.sidecar_pkg import self_update
-
-        monkeypatch.setattr(self_update, "_is_frozen", lambda: False)
-        stranded = install.with_name(install.name + ".rollback")
-        stranded.write_bytes(b"backup")
-        rc.recover_stranded_rollback(now=self._age(stranded))
-        assert stranded.exists()
-
-
 class TestStartupCleanup:
     def test_never_raises_and_reports_what_it_freed(self, frozen, monkeypatch, caplog):
         _make_dir(frozen.parent, "_MEIdead", owner=_dead_pid())
         monkeypatch.setattr(rc, "sweep_stale_update_dirs", lambda: 0)
-        monkeypatch.setattr(rc, "recover_stranded_rollback", lambda: 0)
         with caplog.at_level("INFO"):
             rc.startup_cleanup()
         assert "Reclaimed" in caplog.text
@@ -257,7 +205,5 @@ class TestStartupCleanup:
             raise OSError("nope")
 
         monkeypatch.setattr(rc, "sweep_stale_update_dirs", boom)
-        # `startup_cleanup` iterates a tuple of names it resolved at call time.
-        monkeypatch.setattr(rc, "recover_stranded_rollback", boom)
         rc.startup_cleanup()
         assert not stale.exists()
