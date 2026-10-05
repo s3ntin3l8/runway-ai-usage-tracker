@@ -12,6 +12,7 @@ incident this guards against) rather than merely failing an update.
 import hashlib
 import io
 import os
+import shutil
 import stat
 import sys
 import tarfile
@@ -301,7 +302,7 @@ class TestSingleFlightLockHygiene:
     """The lock must not leak across re-exec, and a leaked lock must self-heal."""
 
     def test_release_lock_removes_file_and_is_idempotent(self, monkeypatch, tmp_path):
-        # A successful update re-execs via os.execv/os._exit, bypassing the
+        # A successful update re-execs via os.execve/os._exit, bypassing the
         # context-manager finally — _release_lock is the explicit cleanup.
         monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path)
         lock = tmp_path / self_update._LOCK_NAME
@@ -791,7 +792,7 @@ class TestPreExecHooks:
         calls: list[str] = []
         self_update.register_pre_exec_hook(lambda: calls.append("hook"))
         monkeypatch.setattr(self_update, "_release_lock", lambda: calls.append("lock"))
-        monkeypatch.setattr(self_update.os, "execv", lambda path, argv: calls.append("exec"))
+        monkeypatch.setattr(self_update.os, "execve", lambda path, argv, env: calls.append("exec"))
         self_update._relaunch_posix("cli", tmp_path / "x")
         assert calls == ["lock", "hook", "exec"]
 
@@ -814,7 +815,7 @@ class TestPreExecHooks:
         self_update.register_pre_exec_hook(boom)
         self_update.register_pre_exec_hook(lambda: calls.append("second"))
         monkeypatch.setattr(self_update, "_release_lock", lambda: None)
-        monkeypatch.setattr(self_update.os, "execv", lambda path, argv: calls.append("exec"))
+        monkeypatch.setattr(self_update.os, "execve", lambda path, argv, env: calls.append("exec"))
         self_update._relaunch_posix("cli", tmp_path / "x")
         assert calls == ["second", "exec"]
         assert "Pre-exec hook" in caplog.text
@@ -841,7 +842,9 @@ class TestPreExecHooks:
         seen: dict[str, bool] = {}
         monkeypatch.setattr(self_update, "_release_lock", lambda: None)
         monkeypatch.setattr(
-            self_update.os, "execv", lambda path, argv: seen.update(pid_file=pid_file.exists())
+            self_update.os,
+            "execve",
+            lambda path, argv, env: seen.update(pid_file=pid_file.exists()),
         )
         self_update._relaunch_posix("cli", tmp_path / "x")
 
@@ -849,6 +852,48 @@ class TestPreExecHooks:
         # …and the re-exec'd image (same PID) can claim it again.
         assert sidecar.write_pid_file() is True
         sidecar.remove_pid_file()
+
+
+class TestFreshRuntimeOnRelaunch:
+    """A relaunched onefile build must unpack its own runtime, not reuse the old _MEI dir."""
+
+    @pytest.fixture(autouse=True)
+    def _env(self, monkeypatch):
+        monkeypatch.setattr(self_update, "_PRE_EXEC_HOOKS", [])
+        monkeypatch.setattr(self_update, "_release_lock", lambda: None)
+        monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "/opt/x/tmp/_MEIold")
+        monkeypatch.setenv("_PYI_ARCHIVE_FILE", "/opt/x/runway-sidecar-cli")
+        monkeypatch.setenv("KEEP_ME", "1")
+
+    @staticmethod
+    def _assert_fresh(env):
+        assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+        assert not [k for k in env if k.startswith("_PYI_")]
+        assert env["KEEP_ME"] == "1"
+
+    def test_cli_exec_gets_a_scrubbed_env(self, monkeypatch, tmp_path):
+        seen: dict = {}
+        monkeypatch.setattr(self_update.os, "execve", lambda path, argv, env: seen.update(env=env))
+        self_update._relaunch_posix("cli", tmp_path / "x")
+        self._assert_fresh(seen["env"])
+
+    def test_linux_tray_spawn_gets_a_scrubbed_env(self, monkeypatch, tmp_path):
+        seen: dict = {}
+        monkeypatch.setattr(self_update.sys, "platform", "linux")
+        monkeypatch.setattr(self_update.subprocess, "Popen", lambda *a, **k: seen.update(k))
+        monkeypatch.setattr(self_update.os, "_exit", lambda code: None)
+        self_update._relaunch_posix("tray", tmp_path / "tray")
+        self._assert_fresh(seen["env"])
+
+    def test_cleanup_runs_before_exec(self, monkeypatch, tmp_path):
+        download = tmp_path / "runway-update-x"
+        download.mkdir()
+        gone_at_exec: list[bool] = []
+        monkeypatch.setattr(
+            self_update.os, "execve", lambda p, a, e: gone_at_exec.append(not download.exists())
+        )
+        self_update._relaunch_posix("cli", tmp_path / "x", cleanup=lambda: shutil.rmtree(download))
+        assert gone_at_exec == [True]
 
 
 class TestExecFailureRestoresHooks:
@@ -861,10 +906,10 @@ class TestExecFailureRestoresHooks:
 
     @staticmethod
     def _failing_execv(msg):
-        def execv(path, argv):
+        def execve(path, argv, env):
             raise OSError(msg)
 
-        return execv
+        return execve
 
     def test_a_failed_execv_undoes_the_hooks_and_still_raises(self, monkeypatch, tmp_path):
         calls: list[str] = []
@@ -872,11 +917,11 @@ class TestExecFailureRestoresHooks:
             lambda: calls.append("released"), on_failure=lambda: calls.append("restored")
         )
 
-        def failing_execv(path, argv):
+        def failing_execv(path, argv, env):
             calls.append("exec")
             raise OSError("Exec format error")
 
-        monkeypatch.setattr(self_update.os, "execv", failing_execv)
+        monkeypatch.setattr(self_update.os, "execve", failing_execv)
         with pytest.raises(OSError, match="Exec format"):
             self_update._relaunch_posix("cli", tmp_path / "x")
         assert calls == ["released", "exec", "restored"]
@@ -889,14 +934,14 @@ class TestExecFailureRestoresHooks:
 
         self_update.register_pre_exec_hook(lambda: None)  # no undo
         self_update.register_pre_exec_hook(lambda: None, on_failure=bad_undo)
-        monkeypatch.setattr(self_update.os, "execv", self._failing_execv("denied"))
+        monkeypatch.setattr(self_update.os, "execve", self._failing_execv("denied"))
         with pytest.raises(OSError, match="denied"):
             self_update._relaunch_posix("cli", tmp_path / "x")
 
     def test_a_successful_execv_never_runs_the_undo(self, monkeypatch, tmp_path):
         calls: list[str] = []
         self_update.register_pre_exec_hook(lambda: None, on_failure=lambda: calls.append("undo"))
-        monkeypatch.setattr(self_update.os, "execv", lambda p, a: None)
+        monkeypatch.setattr(self_update.os, "execve", lambda p, a, e: None)
         self_update._relaunch_posix("cli", tmp_path / "x")
         assert calls == []
 
@@ -909,7 +954,7 @@ class TestExecFailureRestoresHooks:
         self_update.register_pre_exec_hook(
             sidecar.remove_pid_file, on_failure=sidecar.write_pid_file
         )
-        monkeypatch.setattr(self_update.os, "execv", self._failing_execv("ENOEXEC"))
+        monkeypatch.setattr(self_update.os, "execve", self._failing_execv("ENOEXEC"))
         with pytest.raises(OSError):
             self_update._relaunch_posix("cli", tmp_path / "x")
         assert pid_file.exists()
