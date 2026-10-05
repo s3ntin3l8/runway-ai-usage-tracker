@@ -1,7 +1,4 @@
-import asyncio
-import json
 import logging
-import os
 import re
 import time
 from datetime import UTC, datetime
@@ -360,15 +357,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             except (httpx.HTTPError, ValueError, KeyError) as e:
                 logger.debug(f"Failed to fetch Anthropic organization info: {e}")
 
-        # The server host's own config describes its own login, not a pinned source bundle.
-        local_hints = (
-            {}
-            if token_cache.is_source_selected("anthropic", self.account_id)
-            else await asyncio.to_thread(self._get_local_config_hints)
-        )
-        cards = self._parse_oauth_response(
-            data, name_map, creds, api_account_info, local_hints=local_hints
-        )
+        cards = self._parse_oauth_response(data, name_map, creds, api_account_info)
         if holder:
             self.account_id = self.account_label = holder
         return cards
@@ -408,42 +397,17 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             return f"org: {org}"
         return ""
 
-    def _get_local_config_hints(self) -> dict[str, Any]:
-        """Read supplementary billing hints from ~/.claude.json if available.
-
-        Sync — async callers (`_get_claude_oauth`, `_strategy_statusline`) must
-        load via `asyncio.to_thread(...)` and pass the result through the
-        `local_hints` parameter on the parse helpers so the event loop never
-        blocks on disk.
-        """
-        path = os.path.expanduser("~/.claude.json")
-        try:
-            if os.path.exists(path):
-                with open(path) as f:
-                    return json.load(f)
-        except Exception:
-            logger.debug("Failed to load ~/.claude.json", exc_info=True)
-        return {}
-
     def _parse_oauth_response(  # noqa: PLR0915 — known-debt: provider response shape, splits poorly
         self,
         data: dict[str, Any],
         name_map: dict[str, str],
         creds: dict | None = None,
         api_account_info: dict | None = None,
-        local_hints: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Parse OAuth API response into standardized quota cards.
-
-        `local_hints` is optional so existing sync test callers keep working;
-        production callers should pre-fetch via `asyncio.to_thread` to keep the
-        event loop unblocked.
-        """
+        """Parse OAuth API response into standardized quota cards."""
         results = []
-        if local_hints is None:
-            local_hints = self._get_local_config_hints()
 
-        # Infer plan/tier: Credentials > API Info > Local Config
+        # Infer plan/tier: Credentials > API Info
         tier = api_account_info.get("tier") if api_account_info else None
         if not tier and creds:
             oauth = creds.get("claudeAiOauth", {})
@@ -471,11 +435,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     }
                     tier = tier_map.get(raw_tier.lower(), raw_tier.capitalize())
 
-        if not tier:
-            local_tier = local_hints.get("billing_tier") or local_hints.get("tier")
-            if local_tier:
-                tier = str(local_tier).capitalize()
-
         # Final fallback from data (if API ever includes it)
         if not tier:
             account = data.get("account", {})
@@ -492,9 +451,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
         if not identity_str and creds:
             identity_str = self._extract_identity_from_oauth(creds)
-
-        if not identity_str and local_hints:
-            identity_str = self._extract_identity_from_oauth(local_hints)
 
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
