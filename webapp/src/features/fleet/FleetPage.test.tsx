@@ -151,81 +151,119 @@ describe('FleetPage', () => {
     expect(api.setSidecarEnabled).toHaveBeenCalledWith('laptop', false);
   });
 
-  describe('keep-alive toggle', () => {
-    it('turns keep-alive on for a sidecar that reports it off', async () => {
-      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: false })] });
+  describe('keep-alive switch', () => {
+    const keepAliveSwitch = () => screen.findByRole('switch', { name: /keep logins alive/i });
+    const resolveOk = (desired: boolean | null) =>
       vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
         status: 'ok',
-        keep_alive_desired: true,
+        keep_alive_desired: desired,
       });
+
+    it('is a labeled switch with a visible description and status, not an icon button', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: false })] });
       renderWithProviders(<FleetPage />);
 
-      const btn = await screen.findByRole('button', { name: /turn keep-alive on/i });
-      expect(btn).toHaveAttribute('aria-pressed', 'false');
-      await userEvent.click(btn);
+      const sw = await keepAliveSwitch();
+      expect(sw).toHaveAttribute('aria-checked', 'false');
+      expect(screen.getByText('Keep logins alive')).toBeInTheDocument();
+      expect(screen.getByText(/Antigravity \(agy\) and xAI \(Grok\) logins itself/)).toBeVisible();
+      expect(screen.getByText('Off.')).toBeVisible();
+      expect(screen.queryByRole('button', { name: /turn keep-alive/i })).not.toBeInTheDocument();
+    });
+
+    it('keeps the header to pause and delete (no keep-alive or reset icon buttons)', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ keep_alive: false, keep_alive_desired: true })],
+      });
+      renderWithProviders(<FleetPage />);
+      await keepAliveSwitch();
+      expect(screen.getByRole('button', { name: /pause collection/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /delete sidecar/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /use sidecar's own keep-alive/i })).toBeNull();
+    });
+
+    it('turns keep-alive on, sending the explicit value', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: false })] });
+      resolveOk(true);
+      renderWithProviders(<FleetPage />);
+
+      await userEvent.click(await keepAliveSwitch());
       expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('laptop', true);
       await waitFor(() =>
-        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('Keep-alive on')),
+        expect(toast.success).toHaveBeenCalledWith(
+          "Keep-alive on — applies on the sidecar's next check-in",
+        ),
       );
     });
 
     it('turns it off for a sidecar running it, and badges the card', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: true })] });
-      vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
-        status: 'ok',
-        keep_alive_desired: false,
-      });
+      resolveOk(false);
       renderWithProviders(<FleetPage />);
 
-      expect(await screen.findByText('keep-alive')).toBeInTheDocument();
-      const btn = screen.getByRole('button', { name: /turn keep-alive off/i });
-      expect(btn).toHaveAttribute('aria-pressed', 'true');
-      await userEvent.click(btn);
+      const sw = await keepAliveSwitch();
+      expect(sw).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByText('keep-alive')).toBeInTheDocument();
+      expect(screen.getByText(/On — this sidecar renews its logins itself/)).toBeVisible();
+      await userEvent.click(sw);
       expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('laptop', false);
     });
 
-    it('treats a sidecar that does not report it as unknown: disabled, with no badge', async () => {
+    it('is disabled with an explanation for a sidecar that does not report keep-alive', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
       renderWithProviders(<FleetPage />);
-      const btn = await screen.findByRole('button', { name: /keep-alive unsupported/i });
-      expect(btn).toBeDisabled();
-      expect(btn).toHaveAttribute('title', expect.stringMatching(/does not report keep-alive/i));
-      await userEvent.click(btn);
+
+      const sw = await keepAliveSwitch();
+      expect(sw).toBeDisabled();
+      expect(screen.getByText(/doesn't report keep-alive \(tray app or older build\)/)).toBeVisible();
+      await userEvent.click(sw);
       expect(api.setSidecarKeepAlive).not.toHaveBeenCalled();
       expect(screen.queryByText('keep-alive')).not.toBeInTheDocument();
     });
 
-    it('keeps the toggle enabled when the sidecar reports keep-alive off', async () => {
-      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: false })] });
-      renderWithProviders(<FleetPage />);
-      expect(await screen.findByRole('button', { name: /turn keep-alive on/i })).toBeEnabled();
-    });
-
-    it('shows a pending override on the button and badge', async () => {
+    it('shows a pending request in the status line and the badge', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({
         sidecars: [sidecar({ keep_alive: false, keep_alive_desired: true })],
       });
       renderWithProviders(<FleetPage />);
 
-      const btn = await screen.findByRole('button', { name: /turn keep-alive off/i });
-      expect(btn).toHaveAttribute('aria-pressed', 'true');
-      expect(btn).toHaveAttribute('data-pending', 'true');
-      expect(btn).toHaveAttribute('title', expect.stringMatching(/requested on.*next check-in/i));
+      const sw = await keepAliveSwitch();
+      expect(sw).toHaveAttribute('aria-checked', 'true');
+      expect(sw).toHaveAttribute('data-pending', 'true');
+      expect(screen.getByText(/Requested on — applies on next check-in/)).toBeVisible();
       expect(screen.getByText('keep-alive on pending')).toBeInTheDocument();
     });
 
-    it('flips the effective value, not the reported one, when an override is pending', async () => {
+    it('shows a requested-off that a never-reporting sidecar has not confirmed (the invisible case)', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({
-        sidecars: [sidecar({ keep_alive: false, keep_alive_desired: true })],
-      });
-      vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
-        status: 'ok',
-        keep_alive_desired: false,
+        sidecars: [sidecar({ keep_alive: null, keep_alive_desired: false })],
       });
       renderWithProviders(<FleetPage />);
 
-      await userEvent.click(await screen.findByRole('button', { name: /turn keep-alive off/i }));
-      expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('laptop', false);
+      const sw = await keepAliveSwitch();
+      expect(sw).toBeEnabled(); // an override is queued, so it stays actionable
+      expect(sw).toHaveAttribute('aria-checked', 'false');
+      expect(
+        screen.getByText(/Requested off — waiting for the sidecar to confirm/),
+      ).toBeVisible();
+      expect(screen.getByText(/tray app and older builds don't support keep-alive/)).toBeVisible();
+      expect(screen.getByText('keep-alive off pending')).toBeInTheDocument();
+    });
+
+    it('says a change applies when an offline sidecar reconnects', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ keep_alive: false, stale: true })],
+      });
+      resolveOk(true);
+      renderWithProviders(<FleetPage />);
+
+      expect(await screen.findByText(/Sidecar is offline — it applies when it reconnects/)).toBeVisible();
+      await userEvent.click(await keepAliveSwitch());
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(
+          'Keep-alive on — applies when the sidecar reconnects',
+        ),
+      );
     });
 
     it('is not pending once the sidecar reports the requested value', async () => {
@@ -234,46 +272,41 @@ describe('FleetPage', () => {
       });
       renderWithProviders(<FleetPage />);
 
-      const btn = await screen.findByRole('button', { name: /turn keep-alive off/i });
-      expect(btn).not.toHaveAttribute('data-pending');
+      const sw = await keepAliveSwitch();
+      expect(sw).not.toHaveAttribute('data-pending');
       expect(screen.queryByText(/pending/i)).not.toBeInTheDocument();
       expect(screen.getByText('keep-alive')).toBeInTheDocument();
-      // The override is still set, so it stays clearable even though nothing is pending.
+      // The override is still set, so the way back to the sidecar's own setting stays visible.
       expect(
-        screen.getByRole('button', { name: /use sidecar's own keep-alive setting/i }),
+        screen.getByRole('button', { name: /use the sidecar's own setting/i }),
       ).toBeInTheDocument();
     });
 
-    it('keeps the toggle and the clear action single-flight while one is in flight', async () => {
+    it('keeps the switch and the clear action single-flight while one is in flight', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({
         sidecars: [sidecar({ keep_alive: false, keep_alive_desired: true })],
       });
       vi.mocked(api.setSidecarKeepAlive).mockReturnValue(new Promise(() => {}));
       renderWithProviders(<FleetPage />);
 
-      await userEvent.click(await screen.findByRole('button', { name: /turn keep-alive off/i }));
+      await userEvent.click(await keepAliveSwitch());
 
       await waitFor(() =>
-        expect(
-          screen.getByRole('button', { name: /use sidecar's own keep-alive setting/i }),
-        ).toBeDisabled(),
+        expect(screen.getByRole('button', { name: /use the sidecar's own setting/i })).toBeDisabled(),
       );
-      expect(screen.getByRole('button', { name: /turn keep-alive off/i })).toBeDisabled();
+      expect(screen.getByRole('switch', { name: /keep logins alive/i })).toBeDisabled();
       expect(api.setSidecarKeepAlive).toHaveBeenCalledTimes(1);
     });
 
-    it('clears an override back to the sidecar\'s own setting', async () => {
+    it("clears an override back to the sidecar's own setting", async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({
         sidecars: [sidecar({ keep_alive: false, keep_alive_desired: true })],
       });
-      vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
-        status: 'ok',
-        keep_alive_desired: null,
-      });
+      resolveOk(null);
       renderWithProviders(<FleetPage />);
 
       await userEvent.click(
-        await screen.findByRole('button', { name: /use sidecar's own keep-alive setting/i }),
+        await screen.findByRole('button', { name: /use the sidecar's own setting/i }),
       );
       expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('laptop', null);
       await waitFor(() =>
@@ -281,12 +314,12 @@ describe('FleetPage', () => {
       );
     });
 
-    it('offers no clear action without an override', async () => {
+    it('offers no way back without an override', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: true })] });
       renderWithProviders(<FleetPage />);
-      await screen.findByRole('button', { name: /turn keep-alive off/i });
+      await keepAliveSwitch();
       expect(
-        screen.queryByRole('button', { name: /use sidecar's own keep-alive setting/i }),
+        screen.queryByRole('button', { name: /use the sidecar's own setting/i }),
       ).not.toBeInTheDocument();
     });
 
@@ -295,8 +328,24 @@ describe('FleetPage', () => {
       vi.mocked(api.setSidecarKeepAlive).mockRejectedValue(new Error('keep-alive boom'));
       renderWithProviders(<FleetPage />);
 
-      await userEvent.click(await screen.findByRole('button', { name: /turn keep-alive on/i }));
+      await userEvent.click(await keepAliveSwitch());
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('keep-alive boom'));
+    });
+
+    it('gives each card an id so other pages can deep-link to it, and scrolls there', async () => {
+      const scrollIntoView = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar(), sidecar({ sidecar_id: 'desktop', hostname: 'desktop' })],
+      });
+      renderWithProviders(<FleetPage />, { route: '/fleet#sidecar-desktop' });
+
+      await screen.findAllByRole('switch', { name: /keep logins alive/i });
+      const card = document.getElementById('sidecar-desktop');
+      expect(card).not.toBeNull();
+      expect(document.getElementById('sidecar-laptop')).not.toBeNull();
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+      expect(scrollIntoView.mock.contexts[0]).toBe(card);
     });
   });
 

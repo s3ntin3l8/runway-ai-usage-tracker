@@ -2037,10 +2037,21 @@ class TestRenewalWaitReason:
 
     @pytest.fixture
     def reported(self, manager, monkeypatch):
-        """Pretend each sidecar reports the given keep-alive state."""
-        state: dict[str, bool | None] = {}
+        """Pretend each sidecar reports the given keep-alive state: sidecar_id -> reported.
+
+        ``reported.desired[sidecar_id]`` sets the server-side override (default: none).
+        """
+
+        class State(dict):
+            desired: dict[str, bool | None]
+
+        state = State()
+        state.desired = {}
         monkeypatch.setattr(
-            manager, "_read_sidecar_keep_alive", lambda sid: state.get(sid), raising=False
+            manager,
+            "_read_sidecar_keep_alive",
+            lambda sid: (state.get(sid), state.desired.get(sid)),
+            raising=False,
         )
         return state
 
@@ -2064,6 +2075,31 @@ class TestRenewalWaitReason:
         reported["host-a"] = True
         reason = await manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
         assert "--keep-alive" not in reason
+        assert "hasn't renewed" in reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [False, None])
+    async def test_a_pending_request_is_not_re_advised(self, manager, reported, value):
+        """Already switched on in Fleet but the sidecar hasn't checked in yet: don't tell the
+        operator to turn it on again."""
+        reported["host-a"] = value
+        reported.desired["host-a"] = True
+        reason = await manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
+        assert "--keep-alive" not in reason
+        assert "next check-in" in reason and "switched on" in reason
+
+    @pytest.mark.asyncio
+    async def test_a_request_to_turn_it_off_still_advises_turning_it_on(self, manager, reported):
+        reported["host-a"] = False
+        reported.desired["host-a"] = False
+        reason = await manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
+        assert "--keep-alive" in reason and "Fleet" in reason
+
+    @pytest.mark.asyncio
+    async def test_running_keep_alive_wins_over_a_pending_off_request(self, manager, reported):
+        reported["host-a"] = True
+        reported.desired["host-a"] = False
+        reason = await manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
         assert "hasn't renewed" in reason
 
     @pytest.mark.asyncio
@@ -2104,10 +2140,19 @@ class TestRenewalWaitReason:
 
         assert "hasn't renewed" in await manager._renewal_wait_reason("xai", candidate)
 
+        with Session(eng) as s:
+            row = s.get(SidecarRegistry, "host-a")
+            row.keep_alive = False
+            row.keep_alive_desired = True
+            s.add(row)
+            s.commit()
+
+        assert "switched on" in await manager._renewal_wait_reason("xai", candidate)
+
     def test_a_database_error_reads_as_unknown(self, manager, monkeypatch):
         def broken_session(*_a, **_k):
             raise RuntimeError("db down")
 
         monkeypatch.setattr("sqlmodel.Session", broken_session)
-        assert manager._read_sidecar_keep_alive("host-a") is None
-        assert manager._read_sidecar_keep_alive("") is None
+        assert manager._read_sidecar_keep_alive("host-a") == (None, None)
+        assert manager._read_sidecar_keep_alive("") == (None, None)
