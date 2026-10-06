@@ -347,6 +347,24 @@ describe('FleetPage', () => {
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
       expect(scrollIntoView.mock.contexts[0]).toBe(card);
     });
+
+    it('scrolls to the linked card once, not again on every poll', async () => {
+      const scrollIntoView = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+      const { client } = renderWithProviders(<FleetPage />, { route: '/fleet#sidecar-laptop' });
+      await screen.findByRole('switch', { name: /keep logins alive/i });
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+
+      // The 60 s poll returns a fresh array (new last_seen): the page must not snap back.
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ last_seen: new Date(Date.now() + 60_000).toISOString() })],
+      });
+      await client.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+      await waitFor(() => expect(api.fetchSidecars).toHaveBeenCalledTimes(2));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('marks a paused sidecar and offers resume', async () => {

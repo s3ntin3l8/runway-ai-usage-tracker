@@ -2,7 +2,7 @@
 // the pause/resume/rename/delete controls. Also hosts the
 // silent-listener "Untagged credentials" banner + per-card badge (PR #288).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -90,10 +90,14 @@ export function FleetPage() {
 
   // Deep links from other pages (`/fleet#sidecar-<id>`, e.g. the Credentials keep-alive note)
   // land on the sidecar's card once the list has loaded.
+  // Scroll once per hash: the list refetches every minute and gets a new identity each time, so
+  // keying on it would pull the page back to the card while the user is reading elsewhere.
   const { hash } = useLocation();
-  const loadedSidecars = sidecars.data?.sidecars;
+  const sidecarsLoaded = sidecars.data !== undefined;
+  const scrolledHash = useRef<string | null>(null);
   useEffect(() => {
-    if (!hash || !loadedSidecars) return;
+    if (!hash || !sidecarsLoaded || scrolledHash.current === hash) return;
+    scrolledHash.current = hash;
     let id = hash.slice(1);
     try {
       id = decodeURIComponent(id);
@@ -101,7 +105,7 @@ export function FleetPage() {
       // A malformed escape: fall back to the raw fragment.
     }
     document.getElementById(id)?.scrollIntoView?.({ block: 'center' });
-  }, [hash, loadedSidecars]);
+  }, [hash, sidecarsLoaded]);
 
   // Force a GitHub release poll, then refresh both the sidecar badges and the
   // server-update banner (both read the same server-side cache).
