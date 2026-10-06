@@ -1086,3 +1086,50 @@ async def test_a_peer_that_stopped_checking_in_is_listed_but_marked_stale(engine
     # The offline machine's own row sees two live peers, so nothing of its peers is stale.
     assert by_id["sidecar:hermes-01"].shared_with == ["dev-01", "macbook"]
     assert by_id["sidecar:hermes-01"].shared_with_stale == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reported", "desired"), [(False, True), (True, False), (None, True), (False, None)]
+)
+async def test_the_servers_keep_alive_override_is_exposed_next_to_the_reported_state(
+    engine, cache, reported, desired
+):
+    """The UI compares ``keep_alive`` (what runs) with ``keep_alive_desired`` (the override) to
+    show a pending request."""
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
+            "xai",
+            "host-a",
+            keep_alive=reported,
+            tokens={"xai_access": "a", "xai_refresh": "r"},
+        )
+        row = s.get(SidecarRegistry, "host-a")
+        row.keep_alive_desired = desired
+        s.add(row)
+        s.commit()
+    src = await _only_source("xai")
+    assert src.keep_alive_desired is desired
+    assert src.keep_alive == ("unknown" if reported is None else "on" if reported else "off")
+
+
+@pytest.mark.asyncio
+async def test_no_override_is_reported_for_a_login_keep_alive_does_not_apply_to(engine, cache):
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
+            "anthropic",
+            "host-a",
+            keep_alive=False,
+            tokens={"oauth_token": "a", "refresh_token": "r"},
+        )
+        row = s.get(SidecarRegistry, "host-a")
+        row.keep_alive_desired = True
+        s.add(row)
+        s.commit()
+    src = await _only_source("anthropic")
+    assert src.keep_alive is None
+    assert src.keep_alive_desired is None

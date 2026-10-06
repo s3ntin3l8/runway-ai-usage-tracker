@@ -2,18 +2,16 @@
 // the pause/resume/rename/delete controls. Also hosts the
 // silent-listener "Untagged credentials" banner + per-card badge (PR #288).
 
-import { useState } from 'react';
-import { Link } from 'react-router';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle,
-  HeartPulse,
   Pause,
   Plus,
   Pencil,
   Play,
   RefreshCw,
-  RotateCcw,
   Server,
   Trash2,
   TriangleAlert,
@@ -38,9 +36,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Switch } from '@/components/ui/Switch';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
-import { keepAliveLoginsText } from '@/lib/keepAlive';
+import { keepAliveLoginsText, keepAliveState } from '@/lib/keepAlive';
 import { AddSidecarCard } from './AddSidecarCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 import { buildSidecarNameMap } from './queries';
@@ -88,6 +87,25 @@ export function FleetPage() {
   const [tagDialogSidecar, setTagDialogSidecar] = useState<string | null>(null);
 
   const updatable = (sidecars.data?.sidecars ?? []).filter((s) => s.update_available);
+
+  // Deep links from other pages (`/fleet#sidecar-<id>`, e.g. the Credentials keep-alive note)
+  // land on the sidecar's card once the list has loaded.
+  // Scroll once per hash: the list refetches every minute and gets a new identity each time, so
+  // keying on it would pull the page back to the card while the user is reading elsewhere.
+  const { hash } = useLocation();
+  const sidecarsLoaded = sidecars.data !== undefined;
+  const scrolledHash = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hash || !sidecarsLoaded || scrolledHash.current === hash) return;
+    scrolledHash.current = hash;
+    let id = hash.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      // A malformed escape: fall back to the raw fragment.
+    }
+    document.getElementById(id)?.scrollIntoView?.({ block: 'center' });
+  }, [hash, sidecarsLoaded]);
 
   // Force a GitHub release poll, then refresh both the sidecar badges and the
   // server-update banner (both read the same server-side cache).
@@ -296,31 +314,19 @@ function SidecarCard({
     onError: (err) => toast.error(err.message),
   });
 
-  // `keep_alive` is what the sidecar runs now; `keep_alive_desired` is a server-side override
-  // it picks up on its next check-in. The toggle acts on the effective value (override first).
+  // `keep_alive` is what the sidecar runs now; `keep_alive_desired` is a server-side override it
+  // picks up on its next check-in. keepAliveState() is the one reading, shared with Credentials.
+  const ka = keepAliveState({
+    reported: sidecar.keep_alive ?? null,
+    desired: sidecar.keep_alive_desired ?? null,
+    offline: !online,
+  });
   const keepAliveReported = sidecar.keep_alive === true;
-  const keepAliveDesired = sidecar.keep_alive_desired ?? null;
-  const keepAliveHasOverride = keepAliveDesired !== null;
-  const keepAlivePending = keepAliveHasOverride && keepAliveDesired !== keepAliveReported;
-  const keepAliveEffective = keepAliveDesired ?? keepAliveReported;
-  // A sidecar that reports no keep-alive state (older build, or offline) can't be toggled, but
-  // one with a queued override stays actionable: the override is delivered on its next
-  // check-in, and it can be reversed or cleared meanwhile. Hence `!keepAliveHasOverride`.
-  const keepAliveUnknown = sidecar.keep_alive == null && !keepAliveHasOverride;
-  const pendingText = `Requested ${keepAliveDesired ? 'on' : 'off'} — applies on next check-in`;
-  const keepAliveTitle = keepAliveUnknown
-    ? 'This sidecar does not report keep-alive. Update it, or note that the tray app does not support keep-alive.'
-    : keepAlivePending
-    ? `${pendingText}. Click to request ${keepAliveDesired ? 'off' : 'on'} instead.`
-    : keepAliveEffective
-    ? `Keep-alive is on: this sidecar renews its ${keepAliveLoginsText()} logins itself. Click to turn it off.`
-    : `Turn keep-alive on: this sidecar will renew its ${keepAliveLoginsText()} logins itself, so they never lapse while the CLI is idle.`;
+  const keepAliveWhen = online ? "applies on the sidecar's next check-in" : 'applies when the sidecar reconnects';
   const keepAlive = useMutation({
-    mutationFn: () => setSidecarKeepAlive(sidecar.sidecar_id, !keepAliveEffective),
-    onSuccess: () => {
-      toast.success(
-        `Keep-alive ${keepAliveEffective ? 'off' : 'on'} — applies on the sidecar's next check-in`,
-      );
+    mutationFn: (next: boolean) => setSidecarKeepAlive(sidecar.sidecar_id, next),
+    onSuccess: (_data, next) => {
+      toast.success(`Keep-alive ${next ? 'on' : 'off'} — ${keepAliveWhen}`);
       queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
     },
     onError: (err) => toast.error(err.message),
@@ -334,13 +340,14 @@ function SidecarCard({
     onError: (err) => toast.error(err.message),
   });
 
-  // Both buttons PUT the same endpoint, so keep them single-flight as a pair.
+  // Both PUT the same endpoint, so keep them single-flight as a pair.
   const keepAliveBusy = keepAlive.isPending || clearKeepAlive.isPending;
+  const keepAliveId = `keep-alive-${sidecar.sidecar_id}`;
 
   const logs = (sidecar.last_log_lines ?? []).filter(Boolean);
 
   return (
-    <Card className="p-4">
+    <Card id={`sidecar-${sidecar.sidecar_id}`} className="scroll-mt-20 p-4">
       {/* Status dot is a leading rail so the title, metrics, and footer all
           share one left edge. */}
       <div className="flex items-start gap-2.5">
@@ -374,41 +381,6 @@ function SidecarCard({
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label={
-                  keepAliveUnknown
-                    ? 'Keep-alive unsupported by this sidecar'
-                    : keepAliveEffective
-                      ? 'Turn keep-alive off'
-                      : 'Turn keep-alive on'
-                }
-                aria-pressed={keepAliveEffective}
-                title={keepAliveTitle}
-                disabled={keepAliveUnknown || keepAliveBusy}
-                onClick={() => keepAlive.mutate()}
-                loading={keepAlive.isPending}
-                className={
-                  keepAlivePending ? 'text-warning' : keepAliveEffective ? 'text-ok' : undefined
-                }
-                data-pending={keepAlivePending ? 'true' : undefined}
-              >
-                <HeartPulse className="size-3.5" />
-              </Button>
-              {keepAliveHasOverride ? (
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label="Use sidecar's own keep-alive setting"
-                  title="Clear the Runway override and use the sidecar's own keep-alive setting"
-                  disabled={keepAliveBusy}
-                  onClick={() => clearKeepAlive.mutate()}
-                  loading={clearKeepAlive.isPending}
-                >
-                  <RotateCcw className="size-3.5" />
-                </Button>
-              ) : null}
-              <Button
-                size="icon-sm"
-                variant="ghost"
                 aria-label="Delete sidecar"
                 title="Delete sidecar"
                 onClick={onDelete}
@@ -419,12 +391,12 @@ function SidecarCard({
             </div>
           </div>
 
-          {(sidecar.tags?.length ?? 0) > 0 || paused || keepAliveReported || keepAlivePending || untaggedCount > 0 ? (
+          {(sidecar.tags?.length ?? 0) > 0 || paused || keepAliveReported || ka.pending || untaggedCount > 0 ? (
             <div className="mt-2.5 flex flex-wrap gap-1">
               {paused ? <Badge variant="warning">paused</Badge> : null}
-              {keepAlivePending ? (
-                <Badge variant="warning" title={pendingText}>
-                  keep-alive {keepAliveDesired ? 'on' : 'off'} pending
+              {ka.pending ? (
+                <Badge variant="warning" title={ka.status}>
+                  keep-alive {ka.effective ? 'on' : 'off'} pending
                 </Badge>
               ) : keepAliveReported ? (
                 <Badge variant="neutral">keep-alive</Badge>
@@ -451,6 +423,47 @@ function SidecarCard({
               ) : null}
             </div>
           ) : null}
+
+          <div className="mt-3 rounded-md border border-edge bg-surface-2 p-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <label htmlFor={keepAliveId} className="text-[12px] font-medium">
+                  Keep logins alive
+                </label>
+                <p className="mt-0.5 text-[11px] text-fg-subtle">
+                  Renews this sidecar&apos;s {keepAliveLoginsText()} logins itself so they
+                  don&apos;t lapse while the CLI is idle.
+                </p>
+              </div>
+              <Switch
+                id={keepAliveId}
+                checked={ka.effective}
+                disabled={ka.unsupported || keepAliveBusy}
+                onCheckedChange={(next) => keepAlive.mutate(next)}
+                aria-describedby={`${keepAliveId}-status`}
+                data-pending={ka.pending ? 'true' : undefined}
+              />
+            </div>
+            <p
+              id={`${keepAliveId}-status`}
+              className={`mt-1.5 text-[11px] ${ka.pending ? 'text-warning' : 'text-fg-muted'}`}
+            >
+              {ka.status}
+            </p>
+            {ka.hasOverride ? (
+              <p className="mt-1 text-[11px] text-fg-subtle">
+                A Runway override is in charge of this sidecar.{' '}
+                <button
+                  type="button"
+                  className="font-medium text-accent hover:underline disabled:opacity-50"
+                  disabled={keepAliveBusy}
+                  onClick={() => clearKeepAlive.mutate()}
+                >
+                  Use the sidecar&apos;s own setting
+                </button>
+              </p>
+            ) : null}
+          </div>
 
           <dl className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
             <div className="col-span-3 min-w-0">

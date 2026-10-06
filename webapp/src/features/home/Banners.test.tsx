@@ -71,6 +71,51 @@ describe('Banners collection failure', () => {
     ).toBeInTheDocument();
   });
 
+  it('links to Fleet instead of generic settings when the reason is about keep-alive', () => {
+    renderWithProviders(
+      <Banners
+        credentials={undefined}
+        anomalies={[]}
+        fleet={[
+          entry({
+            critical_gauge: card({
+              stale: true,
+              collection_failing: true,
+              detail:
+                '⚠ Collection failing (login expired — waiting for its machine to renew it; run the sidecar with --keep-alive (or turn it on in Fleet) to automate) — 12% used',
+            }),
+          }),
+        ]}
+      />,
+    );
+    const link = screen.getByRole('link', { name: /open fleet/i });
+    expect(link).toHaveAttribute('href', '/fleet');
+    expect(screen.queryByRole('link', { name: /check settings/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps the generic settings link for other collection failures', () => {
+    renderWithProviders(
+      <Banners
+        credentials={undefined}
+        anomalies={[]}
+        fleet={[
+          entry({
+            critical_gauge: card({
+              stale: true,
+              collection_failing: true,
+              detail: '⚠ Collection failing (provider rate limited) — 12% used',
+            }),
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByRole('link', { name: /check settings/i })).toHaveAttribute(
+      'href',
+      '/settings',
+    );
+    expect(screen.queryByRole('link', { name: /open fleet/i })).not.toBeInTheDocument();
+  });
+
   it('renders a multi-provider summary when several entries fail', () => {
     renderWithProviders(
       <Banners

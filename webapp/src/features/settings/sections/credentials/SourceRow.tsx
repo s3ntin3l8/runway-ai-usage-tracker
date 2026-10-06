@@ -2,16 +2,22 @@
 // healthy, and — for the source behind the account's data — that it is the active one.
 
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { useMutation } from '@tanstack/react-query';
 import { RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { deleteCredentialSource, postCredentialSourceRefresh } from '@/api/endpoints';
+import {
+  deleteCredentialSource,
+  postCredentialSourceRefresh,
+  setSidecarKeepAlive,
+} from '@/api/endpoints';
 import type { CredentialSourceView, SourceProbeResult } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { timeAgo } from '@/lib/format';
+import { keepAliveState } from '@/lib/keepAlive';
 import { PROBE_LABEL, PROBE_VARIANT } from '@/lib/probeOutcome';
 import {
   MAPPING_HINT,
@@ -66,6 +72,31 @@ export function SourceRow({
       invalidate();
     },
     onError: (err: Error) => toast.error(`Refresh failed: ${err.message}`),
+  });
+
+  // Keep-alive for the machine that owns this login. The same reading as the Fleet card, so the
+  // two never disagree; "Turn on" is the same override request the Fleet switch sends.
+  const keepAliveOffline = source.machine_stale === true;
+  const ka = keepAliveState({
+    reported: source.keep_alive === 'on' ? true : source.keep_alive === 'off' ? false : null,
+    desired: source.keep_alive_desired ?? null,
+    offline: keepAliveOffline,
+  });
+  const canTurnOnKeepAlive =
+    Boolean(source.machine_id) && !ka.effective && !ka.pending && !ka.unsupported;
+  const turnOnKeepAlive = useMutation({
+    mutationFn: () => setSidecarKeepAlive(source.machine_id as string, true),
+    onSuccess: () => {
+      toast.success(
+        `Keep-alive on — ${
+          keepAliveOffline
+            ? 'applies when the sidecar reconnects'
+            : "applies on the sidecar's next check-in"
+        }`,
+      );
+      invalidate(); // also refreshes the Fleet cards (['fleet'])
+    },
+    onError: (err: Error) => toast.error(`Could not turn keep-alive on: ${err.message}`),
   });
 
   const remove = useMutation({
@@ -192,16 +223,33 @@ export function SourceRow({
           <p className="text-[11px] text-fg-subtle">auto-refreshed</p>
         ) : null}
         {source.keep_alive ? (
-          <p
-            className="text-[11px] text-fg-subtle"
-            title={
-              source.keep_alive === 'on'
-                ? 'The sidecar on this machine renews this login itself (--keep-alive).'
-                : 'Turn keep-alive on for this machine in Fleet (or start its sidecar with --keep-alive) so this login is renewed even when the CLI is idle.' +
-                  (source.keep_alive === 'unknown' ? ' This sidecar is too old to report it.' : '')
-            }
-          >
-            keep-alive: {source.keep_alive}
+          <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-fg-subtle">
+            <span title={ka.status}>
+              keep-alive: {ka.shortStatus}
+              {keepAliveOffline && (ka.pending || canTurnOnKeepAlive)
+                ? ' — machine offline, applies when it reconnects'
+                : ''}
+            </span>
+            {canTurnOnKeepAlive ? (
+              <button
+                type="button"
+                className="font-medium text-accent hover:underline disabled:opacity-50"
+                disabled={turnOnKeepAlive.isPending}
+                onClick={() => turnOnKeepAlive.mutate()}
+                aria-label={`Turn on keep-alive for ${source.machine_name ?? source.machine_id}`}
+              >
+                Turn on
+              </button>
+            ) : null}
+            {source.machine_id ? (
+              <Link
+                to={`/fleet#sidecar-${encodeURIComponent(source.machine_id)}`}
+                className="font-medium text-accent hover:underline"
+                aria-label={`Open ${source.machine_name ?? source.machine_id} in Fleet`}
+              >
+                Fleet
+              </Link>
+            ) : null}
           </p>
         ) : null}
       </div>

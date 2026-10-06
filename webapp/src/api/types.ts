@@ -924,6 +924,9 @@ export interface CredentialSourceView {
   refreshed_by: 'server' | 'machine' | null;
   /** Sidecar keep-alive on the owning machine; null = not applicable to this credential. */
   keep_alive?: 'on' | 'off' | 'unknown' | null;
+  /** The operator's server-side keep-alive override for that sidecar (null = none); compare with
+   * `keep_alive` (what it runs) to show a pending request. */
+  keep_alive_desired?: boolean | null;
   /** The provider rejected this credential (HTTP 401/403 at the last collection). */
   rejected: boolean;
   /** Expired and unrefreshable, but another healthy credential for the same account can stand

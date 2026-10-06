@@ -9,6 +9,7 @@ import {
   clusterModelLabel,
   clusterPools,
   failingReason,
+  reasonMentionsKeepAlive,
   modelLabel,
   sameQuota,
   staleTitle,
@@ -384,5 +385,30 @@ describe('failingReason / staleTitle', () => {
     const c = withDetail('⚠ Collection failing — 12% used');
     expect(failingReason(c)).toBeNull();
     expect(staleTitle(c)).toBe('Collection failing — showing cached data');
+  });
+});
+
+
+describe('reasonMentionsKeepAlive', () => {
+  it('recognises the backend wording that points at keep-alive', () => {
+    expect(
+      reasonMentionsKeepAlive(
+        'waiting for its machine to renew it; run the sidecar with --keep-alive (or turn it on in Fleet) to automate',
+      ),
+    ).toBe(true);
+    expect(
+      reasonMentionsKeepAlive(
+        "keep-alive is switched on for its machine and applies on the sidecar's next check-in",
+      ),
+    ).toBe(true);
+    expect(reasonMentionsKeepAlive("its machine's Keep-Alive hasn't renewed it")).toBe(true);
+  });
+
+  it('is false for other failures and for no reason', () => {
+    expect(reasonMentionsKeepAlive('provider rate limited')).toBe(false);
+    expect(reasonMentionsKeepAlive('waiting for its machine to renew it')).toBe(false);
+    expect(reasonMentionsKeepAlive(null)).toBe(false);
+    expect(reasonMentionsKeepAlive(undefined)).toBe(false);
+    expect(reasonMentionsKeepAlive('')).toBe(false);
   });
 });

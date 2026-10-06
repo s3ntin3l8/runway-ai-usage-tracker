@@ -1205,10 +1205,10 @@ class CollectorManager:
         return True
 
     @staticmethod
-    def _read_sidecar_keep_alive(sidecar_id: str) -> bool | None:
-        """Whether *sidecar_id* reports keep-alive on; None when unknown (old sidecar/no row)."""
+    def _read_sidecar_keep_alive(sidecar_id: str) -> tuple[bool | None, bool | None]:
+        """``(reported, desired)`` keep-alive for *sidecar_id*; None = unknown / no override."""
         if not sidecar_id:
-            return None
+            return None, None
         try:
             from sqlmodel import Session
 
@@ -1217,10 +1217,12 @@ class CollectorManager:
 
             with Session(engine) as session:
                 row = session.get(SidecarRegistry, sidecar_id)
-                return row.keep_alive if row is not None else None
+                if row is None:
+                    return None, None
+                return row.keep_alive, row.keep_alive_desired
         except Exception:
             logger.debug("Could not read keep-alive for sidecar", exc_info=True)
-            return None
+            return None, None
 
     async def _renewal_wait_reason(self, provider_id: str | None, candidate: dict[str, Any]) -> str:
         """What a stale card should say about an expired login its machine must renew.
@@ -1230,7 +1232,7 @@ class CollectorManager:
         """
         if provider_id not in KEEP_ALIVE_PROVIDERS:
             return "waiting for its machine to renew it"
-        reported = await asyncio.to_thread(
+        reported, desired = await asyncio.to_thread(
             self._read_sidecar_keep_alive, candidate.get("sidecar_id") or ""
         )
         if reported is True:
@@ -1238,7 +1240,16 @@ class CollectorManager:
                 "its machine's keep-alive hasn't renewed it — check the sidecar log, "
                 "or log in again with the CLI"
             )
-        return "waiting for its machine to renew it; run the sidecar with --keep-alive (or turn it on in Fleet) to automate"
+        if desired is True:
+            # Already switched on in Fleet; the sidecar just hasn't checked in since.
+            return (
+                "keep-alive is switched on for its machine and applies on the sidecar's "
+                "next check-in"
+            )
+        return (
+            "waiting for its machine to renew it; run the sidecar with --keep-alive "
+            "(or turn it on in Fleet) to automate"
+        )
 
     @staticmethod
     def _awaiting_machine_renewal(

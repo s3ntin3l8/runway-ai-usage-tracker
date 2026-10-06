@@ -496,6 +496,10 @@ class CredentialSourceView(BaseModel):
     # (older sidecar). None when it doesn't apply (not a machine-sourced login of a KEEP_ALIVE_PROVIDERS provider
     # that carries a refresh credential).
     keep_alive: str | None = None
+    # The operator's server-side override for that sidecar's keep-alive (``keep_alive`` above
+    # is what it actually runs): True/False = requested on/off, None = no override. Present on
+    # the same rows as ``keep_alive``; the UI compares the two to show a pending request.
+    keep_alive_desired: bool | None = None
     # The provider rejected this credential (HTTP 401/403 at the last collection, or an
     # in-memory rejection flag matches its identity).
     rejected: bool = False

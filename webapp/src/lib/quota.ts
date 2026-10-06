@@ -97,6 +97,15 @@ export function failingReason(card: LimitCard): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * Whether a failure reason points at keep-alive (the backend's "…run the sidecar with --keep-alive
+ * (or turn it on in Fleet)…" / "keep-alive is switched on…" wording), so a banner can link
+ * straight to the Fleet page where it is switched.
+ */
+export function reasonMentionsKeepAlive(reason: string | null | undefined): boolean {
+  return /keep-alive/i.test(reason ?? '');
+}
+
 /** Tooltip for a stale card: the reason when the backend gave one. */
 export function staleTitle(card: LimitCard): string {
   const reason = failingReason(card);

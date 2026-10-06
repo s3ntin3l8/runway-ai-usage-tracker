@@ -35,27 +35,111 @@ describe('SourceRow', () => {
     expect(screen.getByText('in 3d')).toBeInTheDocument();
   });
 
-  it.each([
-    ['on', /keep-alive: on/],
-    ['off', /keep-alive: off/],
-    ['unknown', /keep-alive: unknown/],
-  ] as const)('shows the machine keep-alive state (%s) on a machine-renewed login', (state, text) => {
-    renderRow({ source: source({ refreshed_by: 'machine', keep_alive: state }) });
-    const note = screen.getByText(text);
-    expect(note).toBeInTheDocument();
-    if (state === 'on') {
-      expect(note).toHaveAttribute('title', expect.stringContaining('renews this login itself'));
-    } else {
-      expect(note).toHaveAttribute('title', expect.stringContaining('--keep-alive'));
-    }
-    if (state === 'unknown') {
-      expect(note).toHaveAttribute('title', expect.stringContaining('too old to report'));
-    }
-  });
+  describe('keep-alive note', () => {
+    const note = () => screen.getByText(/^keep-alive:/);
 
-  it('shows no keep-alive note when it does not apply', () => {
-    renderRow({ source: source({ keep_alive: null }) });
-    expect(screen.queryByText(/keep-alive/)).not.toBeInTheDocument();
+    it('shows "on" with no action, plus a link to the sidecar in Fleet', () => {
+      renderRow({ source: source({ refreshed_by: 'machine', keep_alive: 'on' }) });
+      expect(note()).toHaveTextContent('keep-alive: on');
+      expect(screen.queryByRole('button', { name: /turn on keep-alive/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /open workstation in fleet/i })).toHaveAttribute(
+        'href',
+        '/fleet#sidecar-host-a',
+      );
+    });
+
+    it('offers a Turn on button when it is off, and turns it on for that machine', async () => {
+      vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
+        status: 'ok',
+        keep_alive_desired: true,
+      });
+      const { client } = renderRow({ source: source({ keep_alive: 'off' }) });
+      const invalidate = vi.spyOn(client, 'invalidateQueries');
+      expect(note()).toHaveTextContent('keep-alive: off');
+
+      await userEvent.click(screen.getByRole('button', { name: /turn on keep-alive for workstation/i }));
+
+      expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('host-a', true);
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(
+          "Keep-alive on — applies on the sidecar's next check-in",
+        ),
+      );
+      // The shared hook refreshes the credentials views and the Fleet cards.
+      await waitFor(() =>
+        expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['fleet'] })),
+      );
+    });
+
+    it('keeps the full sentence in the tooltip while the row text stays compact', () => {
+      renderRow({ source: source({ keep_alive: 'off', keep_alive_desired: true }) });
+      expect(note()).toHaveAttribute(
+        'title',
+        expect.stringMatching(/Requested on — applies on next check-in/),
+      );
+    });
+
+    it('still offers Turn on when an override says off and the sidecar agrees (nothing pending)', () => {
+      renderRow({ source: source({ keep_alive: 'off', keep_alive_desired: false }) });
+      expect(screen.getByRole('button', { name: /turn on keep-alive/i })).toBeInTheDocument();
+    });
+
+    it('shows a pending request instead of the button', () => {
+      renderRow({ source: source({ keep_alive: 'off', keep_alive_desired: true }) });
+      expect(note()).toHaveTextContent('keep-alive: requested on — pending');
+      expect(screen.queryByRole('button', { name: /turn on keep-alive/i })).not.toBeInTheDocument();
+    });
+
+    it('is honest that a sidecar that never reports has not confirmed a request', () => {
+      renderRow({ source: source({ keep_alive: 'unknown', keep_alive_desired: false }) });
+      expect(note()).toHaveTextContent('keep-alive: requested off — unconfirmed');
+      expect(screen.queryByRole('button', { name: /turn on keep-alive/i })).not.toBeInTheDocument();
+    });
+
+    it('says keep-alive is unavailable on an older sidecar, with no button but still a Fleet link', () => {
+      renderRow({ source: source({ keep_alive: 'unknown' }) });
+      expect(note()).toHaveTextContent('keep-alive: unavailable — update sidecar');
+      expect(screen.queryByRole('button', { name: /turn on keep-alive/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /in fleet/i })).toBeInTheDocument();
+    });
+
+    it('tells the user a change on an offline machine applies when it reconnects', async () => {
+      vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
+        status: 'ok',
+        keep_alive_desired: true,
+      });
+      renderRow({ source: source({ keep_alive: 'off', machine_stale: true }) });
+      expect(note()).toHaveTextContent('machine offline, applies when it reconnects');
+
+      await userEvent.click(screen.getByRole('button', { name: /turn on keep-alive/i }));
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(
+          'Keep-alive on — applies when the sidecar reconnects',
+        ),
+      );
+    });
+
+    it('toasts the error and keeps the button when the request fails', async () => {
+      vi.mocked(api.setSidecarKeepAlive).mockRejectedValue(new Error('nope'));
+      renderRow({ source: source({ keep_alive: 'off' }) });
+      await userEvent.click(screen.getByRole('button', { name: /turn on keep-alive/i }));
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith('Could not turn keep-alive on: nope'),
+      );
+      expect(screen.getByRole('button', { name: /turn on keep-alive/i })).toBeEnabled();
+    });
+
+    it('shows nothing when keep-alive does not apply to the login', () => {
+      renderRow({ source: source({ keep_alive: null }) });
+      expect(screen.queryByText(/keep-alive/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /in fleet/i })).not.toBeInTheDocument();
+    });
+
+    it('has no Turn on or Fleet link for a row without a machine', () => {
+      renderRow({ source: source({ keep_alive: 'off', machine_id: null, machine_name: null }) });
+      expect(screen.queryByRole('button', { name: /turn on keep-alive/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /in fleet/i })).not.toBeInTheDocument();
+    });
   });
 
   it('says a never-attempted credential has not been tried instead of implying it works', () => {

@@ -8,7 +8,7 @@ import { Link } from 'react-router';
 import { AlertTriangle, BellOff, HeartPulse, KeyRound, TrendingUp, Unlink, X } from 'lucide-react';
 import type { AnomalyEntry, CredentialInventory, DataHealthReport, FleetEntry } from '@/api/types';
 import { timeAgo } from '@/lib/format';
-import { cardStale, failingReason } from '@/lib/quota';
+import { cardStale, failingReason, reasonMentionsKeepAlive } from '@/lib/quota';
 import { cn } from '@/lib/cn';
 import { credentialsNeedingAttention } from '@/lib/credentialAttention';
 
@@ -94,10 +94,18 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
     }
   }, [resolvedKey]);
 
-  const failingLabel = (e: FleetEntry): string => {
-    const staleCard = [e.critical_gauge, ...(e.secondary_limits ?? [])].find(
+  // A failing card whose reason is about keep-alive is fixed in Fleet, not in generic settings.
+  const staleCardOf = (e: FleetEntry) =>
+    [e.critical_gauge, ...(e.secondary_limits ?? [])].find(
       (card) => card != null && cardStale(card),
     );
+  const failingKeepAlive = failing.some((e) => {
+    const card = staleCardOf(e);
+    return card ? reasonMentionsKeepAlive(failingReason(card)) : false;
+  });
+
+  const failingLabel = (e: FleetEntry): string => {
+    const staleCard = staleCardOf(e);
     const name = (staleCard?.service_name || e.provider_id) as string;
     const when = staleCard?.fetched_at || staleCard?.updated_at;
     const reason = staleCard ? failingReason(staleCard) : null;
@@ -121,9 +129,15 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
                   .slice(0, 3)
                   .map(failingLabel)
                   .join(', ')}${failing.length > 3 ? ` and ${failing.length - 3} more` : ''}.`}{' '}
-            <Link to="/settings" className="font-medium underline underline-offset-2">
-              Check settings
-            </Link>
+            {failingKeepAlive ? (
+              <Link to="/fleet" className="font-medium underline underline-offset-2">
+                Open Fleet
+              </Link>
+            ) : (
+              <Link to="/settings" className="font-medium underline underline-offset-2">
+                Check settings
+              </Link>
+            )}
           </span>
         </Banner>
       ) : null}
