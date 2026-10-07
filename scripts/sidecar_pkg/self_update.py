@@ -877,14 +877,46 @@ def _systemd_unit_from_cgroup(cgroup: str) -> tuple[str, bool] | None:
     return services[-1], user_manager
 
 
+# Far above any realistic nesting (one level per update). Its real job is to bound a cyclic or
+# runaway ppid walk, so don't raise it to "support" deeper chains.
+_MAX_BOOTLOADER_DEPTH = 64
+
+
+def _bootloader_chain_reaches(main_pid: int) -> bool:
+    """True if ``main_pid`` is our parent, or an ancestor reached only through our own copies.
+
+    An in-place ``execve`` update leaves the old onefile bootloader waiting on the new one, so a
+    host that updated that way runs ``MainPID -> stale bootloader -> ... -> python``. Every stale
+    level was re-exec'd with our exact argv, so those levels share ``/proc/self/cmdline``. Walking
+    through anything else (a shell, a wrapper) could mean exiting does not end the unit, so that
+    stops the walk. Any doubt returns False.
+    """
+    if main_pid <= 1:
+        return False
+    try:
+        own_cmdline = pathlib.Path("/proc/self/cmdline").read_bytes()
+        pid = os.getppid()
+        for _ in range(_MAX_BOOTLOADER_DEPTH):
+            if pid == main_pid:
+                return True
+            if pid <= 1 or pathlib.Path(f"/proc/{pid}/cmdline").read_bytes() != own_cmdline:
+                return False
+            # ``/proc/<pid>/stat`` is ``pid (comm) state ppid ...``; comm may hold spaces/parens.
+            pid = int(pathlib.Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[1])
+    except (OSError, ValueError, IndexError):
+        return False
+    return False
+
+
 def _systemd_restart_exit_code() -> int | None:
     """Exit code that makes systemd restart us, or None if it is not our direct supervisor.
 
     ``INVOCATION_ID`` alone proves nothing: every process inside any systemd service has it,
     including one started from a shell in an unrelated service. The unit must have our onefile
-    parent bootloader as its MainPID, so that this process exiting really ends the unit, and a
-    ``Restart=`` policy that respawns it. Any doubt returns None and the caller falls back to
-    ``execve``.
+    parent bootloader as its MainPID (or an ancestor of it that only stale copies of that
+    bootloader separate us from, see ``_bootloader_chain_reaches``), so that this process exiting
+    really ends the unit, and a ``Restart=`` policy that respawns it. Any doubt returns None and
+    the caller falls back to ``execve``.
     """
     if sys.platform != "linux" or not os.environ.get("INVOCATION_ID"):
         return None
@@ -910,7 +942,7 @@ def _systemd_restart_exit_code() -> int | None:
             check=False,
         )
         props = dict(line.partition("=")[::2] for line in proc.stdout.splitlines())
-        if proc.returncode != 0 or int(props.get("MainPID", "0")) != os.getppid():
+        if proc.returncode != 0 or not _bootloader_chain_reaches(int(props.get("MainPID", "0"))):
             return None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
@@ -934,7 +966,8 @@ def _relaunch_posix(
             # systemd runs us as bootloader -> python. Exiting lets the bootloader remove this
             # runtime dir, and systemd respawns a clean two-level tree. An in-place execve
             # would instead leave the old bootloader waiting on the new one, holding the old
-            # ~100 MB runtime dir (and an extra process) until the next restart.
+            # ~100 MB runtime dir (and an extra process) until the next restart. A chain nested
+            # by an earlier execve update unwinds the same way: each bootloader exits in turn.
             logger.info(
                 "Update installed; exiting (%d) for systemd to restart %s", exit_code, install
             )
