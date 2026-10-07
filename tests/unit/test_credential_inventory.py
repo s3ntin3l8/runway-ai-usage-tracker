@@ -872,19 +872,18 @@ async def test_machine_renewed_xai_login_shows_its_machines_keep_alive(
 @pytest.mark.asyncio
 async def test_keep_alive_is_not_applicable_to_other_providers(engine, cache):
     with Session(engine) as s:
-        # chatgpt is machine-renewed too, but its CLI has no sidecar keep-alive.
+        # gemini carries a refresh credential too, but no sidecar keep-alive renews it.
         await _machine_login(
             s,
             cache,
-            "chatgpt",
+            "gemini",
             "host-a",
             keep_alive=False,
             tokens={"oauth_token": "a", "refresh_token": "r"},
         )
     inv = await build_inventory()
-    (prov,) = [p for p in inv.providers if p.provider_id == "chatgpt"]
+    (prov,) = [p for p in inv.providers if p.provider_id == "gemini"]
     (src,) = [s for a in prov.accounts for s in a.sources]
-    assert src.refreshed_by == "machine"
     assert src.keep_alive is None
 
 
@@ -1121,7 +1120,7 @@ async def test_no_override_is_reported_for_a_login_keep_alive_does_not_apply_to(
         await _machine_login(
             s,
             cache,
-            "chatgpt",
+            "gemini",
             "host-a",
             keep_alive=False,
             tokens={"oauth_token": "a", "refresh_token": "r"},
@@ -1130,7 +1129,7 @@ async def test_no_override_is_reported_for_a_login_keep_alive_does_not_apply_to(
         row.keep_alive_desired = True
         s.add(row)
         s.commit()
-    src = await _only_source("chatgpt")
+    src = await _only_source("gemini")
     assert src.keep_alive is None
     assert src.keep_alive_desired is None
 

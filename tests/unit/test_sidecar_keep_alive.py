@@ -273,16 +273,41 @@ def test_sidecar_applies_the_servers_setting_from_an_ingest_response(monkeypatch
     assert calls == [True, None]
 
 
-def test_sidecar_builds_its_keep_alive_thread_with_the_xai_and_claude_renewers():
+def test_sidecar_builds_its_keep_alive_thread_with_the_xai_claude_and_codex_renewers():
     from scripts import sidecar
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
+    from scripts.sidecar_pkg.codex_renewer import CodexRenewer
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     thread = sidecar._make_keep_alive_thread()
-    assert [type(r) for r in thread._renewers] == [XaiRenewer, AnthropicRenewer]
-    # The Claude renewer is handed the sidecar's own discovery, re-evaluated on every tick.
-    claude = thread._renewers[1]
-    assert claude._targets is sidecar._claude_login_paths
+    assert [type(r) for r in thread._renewers] == [XaiRenewer, AnthropicRenewer, CodexRenewer]
+    # The Claude and Codex renewers are handed the sidecar's own discovery, re-evaluated on
+    # every tick.
+    assert thread._renewers[1]._targets is sidecar._claude_login_paths
+    assert thread._renewers[2]._targets is sidecar._codex_login_paths
+
+
+def test_codex_login_paths_follow_the_chatgpt_file_rule(tmp_path, monkeypatch):
+    """~/.codex plus every extra login dir (CODEX_HOME / codex_home), re-read on each call."""
+    from scripts import sidecar
+
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    default = home / ".codex" / "auth.json"
+    default.write_text("{}")
+    extra_dir = tmp_path / "work-codex"
+    extra_dir.mkdir()
+    extra = extra_dir / "auth.json"
+    extra.write_text("{}")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("CODEX_HOME", str(extra_dir))
+
+    paths = {p.resolve() for p in sidecar._codex_login_paths()}
+    assert default.resolve() in paths and extra.resolve() in paths
+
+    monkeypatch.delenv("CODEX_HOME")
+    assert extra.resolve() not in {p.resolve() for p in sidecar._codex_login_paths()}
 
 
 def test_claude_login_paths_follow_the_claude_file_rule(tmp_path, monkeypatch):

@@ -57,7 +57,7 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 - **Provider Sections**: Dashboard cards grouped by provider with context filter pills (Source / Account / Window)
 - **Fleet Management**: Persistent registry of all sidecars with custom names, tags, version reporting, pause/resume controls, per-sidecar keep-alive toggle, activity tracking, and a banner for untagged credentials a sidecar found but you have not yet mapped to an account
 - **Credentials**: Settings → Credentials shows where each account's credentials and data come from, with per-source provenance (which machine, env var, file or cookie), expiry status, and refresh or remove actions per source
-- **Keep-alive**: Opt-in per sidecar (`--keep-alive`, or toggle it on Fleet) — the sidecar renews xAI (Grok), Claude Code and Antigravity (agy) logins itself so they do not lapse while the CLI is idle (not supported by the tray app)
+- **Keep-alive**: Opt-in per sidecar (`--keep-alive`, or toggle it on Fleet) — the sidecar renews xAI (Grok), Claude Code, Codex (ChatGPT) and Antigravity (agy) logins itself so they do not lapse while the CLI is idle (not supported by the tray app)
 - **Data Health**: Settings → Data health runs read-only checks over the database (generic account IDs, legacy provider IDs, orphaned credential rows, rollup drift, unpriced models, and more) and offers an in-app fix — preview first, then apply
 - **Sidecar Ingestion**: Push metrics and per-message events from external hosts via `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP rate limit)
 - **Webhook Alerts**: Per-provider/per-account threshold alerts, plus credential alerts when a login expires or is rejected, to Discord or Slack

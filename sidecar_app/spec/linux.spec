@@ -74,6 +74,7 @@ a = Analysis(
         "scripts.sidecar_pkg.self_update",
         "scripts.sidecar_pkg.xai_renewer",
         "scripts.sidecar_pkg.anthropic_renewer",
+        "scripts.sidecar_pkg.codex_renewer",
         "scripts.sidecar_pkg.oauth_renewal",
         "scripts.sidecar_pkg.asset_names",
         "scripts.sidecar_pkg.canonical_providers",
