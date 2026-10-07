@@ -952,6 +952,7 @@ class TestRetiredRuntimeHandOff:
         assert "RUNWAY_RETIRED_MEIPASS" not in seen["env"]
 
 
+OWN_CMDLINE = b"/opt/runway-sidecar/runway-sidecar-cli\0--daemon\0"
 SERVICE_CGROUP = "0::/system.slice/runway-sidecar.service\n"
 USER_CGROUP = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/runway.service\n"
 
@@ -967,12 +968,24 @@ class TestSystemdSupervision:
         cgroup = tmp_path / "cgroup"
         cgroup.write_text(SERVICE_CGROUP)
         real_path = self_update.pathlib.Path
-        monkeypatch.setattr(
-            self_update.pathlib,
-            "Path",
-            lambda p: cgroup if str(p) == "/proc/self/cgroup" else real_path(p),
-        )
+        proc_root = tmp_path / "proc"
+        (proc_root / "self").mkdir(parents=True)
+        (proc_root / "self" / "cmdline").write_bytes(OWN_CMDLINE)
+
+        def fake_path(p):
+            if str(p) == "/proc/self/cgroup":
+                return cgroup
+            if str(p).startswith("/proc/"):
+                return real_path(proc_root / str(p)[len("/proc/") :])
+            return real_path(p)
+
+        monkeypatch.setattr(self_update.pathlib, "Path", fake_path)
         calls: list[list[str]] = []
+
+        def add_proc(pid, ppid, cmdline=OWN_CMDLINE, comm="runway-sidecar-cli"):
+            (proc_root / str(pid)).mkdir(exist_ok=True)
+            (proc_root / str(pid) / "cmdline").write_bytes(cmdline)
+            (proc_root / str(pid) / "stat").write_text(f"{pid} ({comm}) S {ppid} 1 1 0 -1\n")
 
         def configure(*, main_pid="4242", restart="always", returncode=0, raises=None, cg=None):
             if cg is not None:
@@ -989,6 +1002,7 @@ class TestSystemdSupervision:
             monkeypatch.setattr(self_update.subprocess, "run", run)
             return calls
 
+        configure.proc = add_proc  # type: ignore[attr-defined]
         return configure
 
     def test_restart_always_exits_zero(self, probe):
@@ -1006,6 +1020,46 @@ class TestSystemdSupervision:
     def test_invocation_id_without_matching_main_pid_falls_back(self, probe):
         """Started from a shell inside some other service: exiting would just kill us."""
         probe(main_pid="999", restart="always")
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_a_chain_nested_by_earlier_execve_updates_exits(self, probe):
+        """MainPID -> stale bootloader -> us: what every pre-#570 update left behind."""
+        probe(main_pid="4000")
+        probe.proc(4242, 4100)
+        probe.proc(4100, 4000)
+        assert self_update._systemd_restart_exit_code() == 0
+
+    def test_a_comm_with_parentheses_does_not_break_the_walk(self, probe):
+        probe(main_pid="4000")
+        probe.proc(4242, 4000, comm="a) S 1 (b")
+        assert self_update._systemd_restart_exit_code() == 0
+
+    def test_a_foreign_process_in_the_chain_falls_back(self, probe):
+        """A wrapper between us and MainPID: our exit might not end the unit."""
+        probe(main_pid="4000")
+        probe.proc(4242, 4000, cmdline=b"/bin/sh\0-c\0wrapper\0")
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_a_chain_that_never_reaches_main_pid_falls_back(self, probe):
+        probe(main_pid="4000")
+        probe.proc(4242, 1)
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_an_unreadable_proc_entry_falls_back(self, probe):
+        probe(main_pid="4000")
+        probe.proc(4242, 4100)  # 4100 has no /proc entry
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_a_cyclic_chain_is_capped(self, probe):
+        probe(main_pid="4000")
+        probe.proc(4242, 4100)
+        probe.proc(4100, 4242)
+        assert self_update._systemd_restart_exit_code() is None
+
+    def test_a_malformed_stat_falls_back(self, probe):
+        probe(main_pid="4000")
+        probe.proc(4242, 4000)
+        (self_update.pathlib.Path("/proc/4242/stat")).write_text("garbage")
         assert self_update._systemd_restart_exit_code() is None
 
     def test_no_invocation_id_never_probes(self, probe, monkeypatch):
