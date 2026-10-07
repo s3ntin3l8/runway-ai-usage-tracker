@@ -205,11 +205,13 @@ class TestRequestRefresh:
         assert headers["user-agent"] == ar.USER_AGENT
         assert set(headers) == {"content-type", "user-agent"}
 
-    def test_falls_back_to_the_base_scopes_when_the_file_has_none(self, monkeypatch):
+    def test_omits_scope_when_the_file_has_none(self, monkeypatch):
+        """No scope sent -> the endpoint grants the login's default set (verified live); an
+        explicit list could be rejected for a login that was granted fewer."""
         seen = self._patch(monkeypatch, b'{"access_token": "n"}')
         ar.request_refresh("r")
-        assert json.loads(seen["req"].data)["scope"] == " ".join(ar.DEFAULT_SCOPES)
-        assert "user:plugins" not in ar.DEFAULT_SCOPES  # never ask for a scope not granted
+        assert "scope" not in json.loads(seen["req"].data)
+        assert not hasattr(ar, "DEFAULT_SCOPES")
 
     @pytest.mark.parametrize("code", [400, 401, 403])
     def test_a_dead_or_used_token_is_a_rejection(self, monkeypatch, code):
@@ -367,7 +369,7 @@ class TestRenew:
         f = _creds(tmp_path / ".credentials.json", -10, scopes=[])
         calls = _respond(monkeypatch)
         _renewer(f).renew()
-        assert calls == [("r-old", ())]  # empty -> request_refresh falls back to DEFAULT_SCOPES
+        assert calls == [("r-old", ())]  # no scopes known -> request_refresh sends none
 
     def test_each_login_is_renewed_independently(self, tmp_path, monkeypatch):
         a = _creds(tmp_path / "a" / ".credentials.json", -10, refresh="ra")

@@ -10,9 +10,10 @@ token shortly before it lapses and **writes the result back into Claude Code's o
 Verified against a throwaway login (issue #576): Claude Code accepts a file we rewrote, and a
 *running* session re-reads it rather than clobbering it with stale in-memory tokens.
 
-The request is exactly Claude Code's own: a JSON body that includes ``scope`` and no other header
-than ``Content-Type``. The shape matters — the form-encoded body with extra ``User-Agent`` /
-``anthropic-beta`` headers that the server used before was answered with 429 every time.
+The request is Claude Code's own: a JSON body (with the login's ``scope`` when the file has one)
+and no header but ``Content-Type`` (plus a neutral ``User-Agent``). The shape matters — the
+form-encoded body with extra ``User-Agent`` / ``anthropic-beta`` headers that the server used
+before was answered with 429 every time.
 
 ``AnthropicRenewer`` plugs into ``KeepAliveThread`` (``--keep-alive`` / ``"keep_alive": true``).
 It only touches ``claudeAiOauth`` (the sibling ``mcpOAuth`` block, which Claude Code also writes,
@@ -43,16 +44,6 @@ logger = logging.getLogger(__name__)
 TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token"
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"  # pragma: allowlist secret
 USER_AGENT = "runway-sidecar"
-
-# Only used when a login's file carries no ``scopes`` (older logins): the base set Claude Code
-# always requests. Requesting a scope the login was never granted is rejected, so no extras here.
-DEFAULT_SCOPES = (
-    "user:profile",
-    "user:inference",
-    "user:sessions:claude_code",
-    "user:mcp_servers",
-    "user:file_upload",
-)
 
 # Renew shortly before the token lapses so a push never carries a dead token and a running
 # Claude Code normally still finds it fresh.
@@ -121,14 +112,17 @@ def request_refresh(refresh_token: str, scopes: tuple[str, ...] = ()) -> dict[st
     Raises ``RefreshRejectedError`` on 400/401/403 (a dead or already-used token) and ``OSError``
     for anything transient (408/429/5xx, a bad body) — callers back off, never hammer.
     """
-    body = json.dumps(
-        {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": CLIENT_ID,
-            "scope": " ".join(scopes or DEFAULT_SCOPES),
-        }
-    ).encode()
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CLIENT_ID,
+    }
+    if scopes:
+        # The login's own scopes, as Claude Code sends them. With none known, send none: the
+        # endpoint then grants the login's default set, while an explicit list can be rejected
+        # for a login that was granted fewer.
+        payload["scope"] = " ".join(scopes)
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(  # noqa: S310 - fixed https endpoint
         TOKEN_ENDPOINT,
         data=body,

@@ -1,10 +1,10 @@
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
-from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import (
     HealthCalculator,
@@ -73,22 +73,19 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             logger.info("Not refreshing a Claude login that a machine's CLI owns")
             return None
 
-        client_id = settings.CLAUDE_OAUTH_CLIENT_ID
+        from app.services.token_refresher import _anthropic_refresh_request
+
+        # Same shape as Claude Code's own request (and as ``refresh_oauth_token``): anything else
+        # is throttled with a 429. Refresh tokens are single-use, so never retry blindly.
+        body, headers = _anthropic_refresh_request(refresh_token, {})
 
         try:
             resp = await http_request_with_retry(
                 client,
                 "POST",
                 "https://platform.claude.com/v1/oauth/token",
-                json={
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                    "client_id": client_id,
-                },
-                headers={
-                    "User-Agent": "claude-code/2.1.69",
-                    "anthropic-beta": "oauth-2025-04-20",
-                },
+                json=body,
+                headers=headers,
                 timeout=10,
                 retry_on_429=False,
             )
@@ -96,9 +93,24 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if resp.status_code == 200:
                 new_data = resp.json()
                 new_refresh = new_data.get("refresh_token", refresh_token)
-                await self._store_sidecar_token("anthropic", new_data["access_token"], new_refresh)
+                # Return the new expiry along with the tokens: the base class stores them (once).
+                # The access token is opaque (no JWT ``exp``), so without ``expiry_date`` the
+                # merged cache entry keeps the *old* one and a freshly refreshed token still
+                # reads as expired.
+                expires_in = new_data.get("expires_in")
+                expiry_ms: int | None = (
+                    int(time.time() * 1000 + expires_in * 1000)
+                    if isinstance(expires_in, int | float) and expires_in > 0
+                    else None
+                )
                 self._clear_refresh_429_backoff()
-                return {"access_token": new_data["access_token"], "refresh_token": new_refresh}
+                result: dict = {
+                    "access_token": new_data["access_token"],
+                    "refresh_token": new_refresh,
+                }
+                if expiry_ms is not None:
+                    result["expiry_date"] = str(expiry_ms)
+                return result
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
                 try:
