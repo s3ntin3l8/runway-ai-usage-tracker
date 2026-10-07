@@ -10,7 +10,6 @@ import pytest
 
 from app.services.token_refresher import (
     _PROVIDER_CLIENT_IDS,
-    ANTHROPIC_OAUTH_SCOPES,
     ANTHROPIC_REFRESH_USER_AGENT,
     refresh_oauth_token,
 )
@@ -52,10 +51,11 @@ class TestRefreshOAuthTokenUnknownProvider:
 
 class TestRefreshOAuthTokenAnthropic:
     async def test_sends_claude_codes_own_request_shape(self):
-        """JSON body incl. ``scope`` and no header but Content-Type (+ a neutral User-Agent).
+        """A JSON body and no header but Content-Type (+ a neutral User-Agent).
 
-        The form body without ``scope`` plus ``claude-code/2.1.69`` / ``anthropic-beta`` that
-        this module used to send was answered with HTTP 429 every time (issue #577)."""
+        The form body plus ``claude-code/2.1.69`` / ``anthropic-beta`` that this module used to
+        send was answered with HTTP 429 every time (issue #577); ``scope`` turned out not to
+        matter, so it is only sent when known (see the next tests)."""
         resp = _make_mock_response(200, {"access_token": "new_access", "token_type": "Bearer"})
         ctx = _make_async_client(resp)
 
@@ -72,7 +72,6 @@ class TestRefreshOAuthTokenAnthropic:
             "grant_type": "refresh_token",
             "refresh_token": "old_refresh",
             "client_id": "my_client_id",
-            "scope": " ".join(ANTHROPIC_OAUTH_SCOPES),
         }
         assert kwargs["headers"] == {
             "Content-Type": "application/json",
@@ -88,6 +87,25 @@ class TestRefreshOAuthTokenAnthropic:
 
         sent = ctx.__aenter__.return_value.post.call_args.kwargs["json"]
         assert sent["client_id"] == "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+    async def test_omits_scope_when_the_login_s_scope_is_unknown(self):
+        """An explicit list can be rejected for a login granted fewer scopes; with none sent the
+        endpoint grants the login's default set (verified live)."""
+        ctx = _make_async_client(_make_mock_response(200, {"access_token": "t"}))
+
+        with patch("httpx.AsyncClient", return_value=ctx):
+            await refresh_oauth_token("anthropic", {"refresh_token": "rt"})
+
+        assert "scope" not in ctx.__aenter__.return_value.post.call_args.kwargs["json"]
+
+    @pytest.mark.parametrize("bad", [["user:profile"], 5, "", "   ", None])
+    async def test_ignores_a_stored_scope_that_is_not_a_usable_string(self, bad):
+        ctx = _make_async_client(_make_mock_response(200, {"access_token": "t"}))
+
+        with patch("httpx.AsyncClient", return_value=ctx):
+            await refresh_oauth_token("anthropic", {"refresh_token": "rt", "scope": bad})
+
+        assert "scope" not in ctx.__aenter__.return_value.post.call_args.kwargs["json"]
 
     async def test_requests_the_stored_scope_when_the_bundle_has_one(self):
         ctx = _make_async_client(_make_mock_response(200, {"access_token": "t"}))
@@ -123,11 +141,10 @@ class TestRefreshOAuthTokenAnthropic:
         assert "json" not in kwargs
         assert kwargs["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
 
-    def test_the_scope_list_matches_the_sidecar_renewers(self):
-        """The sidecar cannot import ``app``, so the two lists are kept equal by a test."""
+    def test_the_client_id_matches_the_sidecar_renewer(self):
+        """The sidecar cannot import ``app``, so the constants are kept equal by a test."""
         from scripts.sidecar_pkg import anthropic_renewer
 
-        assert tuple(ANTHROPIC_OAUTH_SCOPES) == tuple(anthropic_renewer.DEFAULT_SCOPES)
         assert _PROVIDER_CLIENT_IDS["anthropic"] == anthropic_renewer.CLIENT_ID
 
     async def test_sets_oauth_token_from_access_token(self):

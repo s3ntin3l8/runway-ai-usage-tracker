@@ -41,18 +41,6 @@ _PROVIDER_CLIENT_IDS: dict[str, str] = {
 _GEMINI_CLI_CLIENT_SECRET = "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"
 
 
-# The scopes Claude Code always requests on a refresh. Anthropic's token endpoint is picky about
-# the *shape* of a refresh request (see ``_anthropic_refresh_request``); a login that was granted
-# more (e.g. ``user:plugins``) keeps them — a refresh may request a subset. The sidecar's renewer
-# (scripts/sidecar_pkg/anthropic_renewer.py) mirrors this list and reads the login's own scopes
-# from its credentials file; tests/unit keep the two equal.
-ANTHROPIC_OAUTH_SCOPES = (
-    "user:profile",
-    "user:inference",
-    "user:sessions:claude_code",
-    "user:mcp_servers",
-    "user:file_upload",
-)
 # Neutral on purpose: Claude Code sends no User-Agent / anthropic-beta of its own here.
 ANTHROPIC_REFRESH_USER_AGENT = "runway-ai-usage-tracker"
 
@@ -62,19 +50,23 @@ def _anthropic_refresh_request(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """``(json_body, headers)`` for an Anthropic refresh, shaped exactly like Claude Code's own.
 
-    Verified against the live endpoint (issue #576/#577): a JSON body that includes ``scope``,
-    with ``Content-Type`` as the only header besides a neutral User-Agent, is accepted; the
-    form-encoded body without ``scope`` plus ``User-Agent: claude-code/2.1.69`` and
-    ``anthropic-beta`` that this module used to send was answered with HTTP 429 every time.
-    Refresh tokens are strictly single-use, so a rejected or lost response cannot be retried.
+    Verified against the live endpoint (issue #576/#577): a **JSON** body with ``Content-Type``
+    as the only header besides a neutral User-Agent is accepted; the form-encoded body plus
+    ``User-Agent: claude-code/2.1.69`` and ``anthropic-beta`` that this module used to send was
+    answered with HTTP 429 every time. ``scope`` is *not* what the endpoint cares about: it is
+    sent only when the login's own scope is known (Claude Code sends the scopes it was granted),
+    and omitted otherwise — the endpoint then grants the login's default set, whereas an
+    explicit list can be rejected for a login that was granted fewer. Refresh tokens are strictly
+    single-use, so a rejected or lost response cannot be retried.
     """
-    scope = tokens.get("scope") or " ".join(ANTHROPIC_OAUTH_SCOPES)
     body = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
         "client_id": tokens.get("client_id") or settings.CLAUDE_OAUTH_CLIENT_ID,
-        "scope": scope,
     }
+    scope = tokens.get("scope")
+    if isinstance(scope, str) and scope.split():
+        body["scope"] = " ".join(scope.split())
     headers = {
         "Content-Type": "application/json",
         "User-Agent": ANTHROPIC_REFRESH_USER_AGENT,

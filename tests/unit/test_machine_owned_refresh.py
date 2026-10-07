@@ -493,7 +493,7 @@ async def test_the_servers_own_claude_refresh_uses_claude_codes_request_shape(
     """JSON body incl. ``scope``, no ``anthropic-beta``: any other shape is answered with 429
     (issue #577), so a server-held Claude login could never be refreshed."""
     from app.services.collectors.anthropic import AnthropicCollector
-    from app.services.token_refresher import ANTHROPIC_OAUTH_SCOPES, ANTHROPIC_REFRESH_USER_AGENT
+    from app.services.token_refresher import ANTHROPIC_REFRESH_USER_AGENT
 
     await anthropic_cache.store(
         "anthropic",
@@ -510,7 +510,6 @@ async def test_the_servers_own_claude_refresh_uses_claude_codes_request_shape(
         "grant_type": "refresh_token",
         "refresh_token": "config-rt",
         "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-        "scope": " ".join(ANTHROPIC_OAUTH_SCOPES),
     }
     assert kwargs["headers"] == {
         "User-Agent": ANTHROPIC_REFRESH_USER_AGENT,
