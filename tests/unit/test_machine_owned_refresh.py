@@ -486,6 +486,94 @@ async def test_a_config_refresh_token_is_refreshed_by_the_server(anthropic_cache
     post.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_the_servers_own_claude_refresh_uses_claude_codes_request_shape(
+    anthropic_cache, monkeypatch
+):
+    """JSON body incl. ``scope``, no ``anthropic-beta``: any other shape is answered with 429
+    (issue #577), so a server-held Claude login could never be refreshed."""
+    from app.services.collectors.anthropic import AnthropicCollector
+    from app.services.token_refresher import ANTHROPIC_OAUTH_SCOPES, ANTHROPIC_REFRESH_USER_AGENT
+
+    await anthropic_cache.store(
+        "anthropic",
+        {"oauth_token": "o", "refresh_token": "config-rt"},
+        account_id="bob@example.com",
+        source="config",
+    )
+    post = _token_endpoint(monkeypatch)
+
+    await AnthropicCollector(account_id="bob@example.com")._execute_refresh(MagicMock())
+
+    kwargs = post.await_args.kwargs
+    assert kwargs["json"] == {
+        "grant_type": "refresh_token",
+        "refresh_token": "config-rt",
+        "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        "scope": " ".join(ANTHROPIC_OAUTH_SCOPES),
+    }
+    assert kwargs["headers"] == {
+        "User-Agent": ANTHROPIC_REFRESH_USER_AGENT,
+        "Content-Type": "application/json",
+    }
+    assert post.await_args.args[1] == "POST"
+    assert post.await_args.args[2] == "https://platform.claude.com/v1/oauth/token"
+
+
+@pytest.mark.asyncio
+async def test_a_server_refreshed_claude_token_gets_its_new_expiry(anthropic_cache, monkeypatch):
+    """The access token is opaque, so without ``expiry_date`` the merged entry kept the OLD one
+    and a freshly refreshed token still read as expired."""
+    import time
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    stale = str(int((time.time() - 3600) * 1000))
+    await anthropic_cache.store(
+        "anthropic",
+        {"oauth_token": "o", "refresh_token": "config-rt", "expiry_date": stale},
+        account_id="bob@example.com",
+        source="config",
+    )
+    _token_endpoint(monkeypatch)  # answers expires_in=3600
+
+    refreshed = await AnthropicCollector(account_id="bob@example.com")._execute_refresh(MagicMock())
+
+    assert refreshed is not None and int(refreshed["expiry_date"]) > time.time() * 1000
+    stored = await anthropic_cache.get_token(
+        "anthropic", "expiry_date", account_id="bob@example.com"
+    )
+    assert stored is not None and int(stored) > time.time() * 1000 + 3_000_000
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_response_without_expires_in_still_stores_the_tokens(
+    anthropic_cache, monkeypatch
+):
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    await anthropic_cache.store(
+        "anthropic",
+        {"oauth_token": "o", "refresh_token": "config-rt"},
+        account_id="bob@example.com",
+        source="config",
+    )
+    resp = MagicMock(status_code=200, headers={})
+    resp.json.return_value = {"access_token": "new", "refresh_token": "rt2"}
+    monkeypatch.setattr(
+        "app.services.collectors.anthropic_oauth.http_request_with_retry",
+        AsyncMock(return_value=resp),
+    )
+
+    refreshed = await AnthropicCollector(account_id="bob@example.com")._execute_refresh(MagicMock())
+
+    assert refreshed == {"access_token": "new", "refresh_token": "rt2"}
+    assert (
+        await anthropic_cache.get_token("anthropic", "refresh_token", account_id="bob@example.com")
+        == "rt2"
+    )
+
+
 # --- alerts: an idle CLI is quiet for a while, not forever ----------------------------------
 
 

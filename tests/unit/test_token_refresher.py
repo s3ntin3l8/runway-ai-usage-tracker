@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.services.token_refresher import refresh_oauth_token
+from app.services.token_refresher import (
+    _PROVIDER_CLIENT_IDS,
+    ANTHROPIC_OAUTH_SCOPES,
+    ANTHROPIC_REFRESH_USER_AGENT,
+    refresh_oauth_token,
+)
 
 
 def _make_mock_response(status_code: int, body: dict) -> MagicMock:
@@ -46,64 +51,84 @@ class TestRefreshOAuthTokenUnknownProvider:
 
 
 class TestRefreshOAuthTokenAnthropic:
-    async def test_sends_correct_payload_with_client_id(self):
-        body = {"access_token": "new_access", "token_type": "Bearer"}
-        resp = _make_mock_response(200, body)
+    async def test_sends_claude_codes_own_request_shape(self):
+        """JSON body incl. ``scope`` and no header but Content-Type (+ a neutral User-Agent).
+
+        The form body without ``scope`` plus ``claude-code/2.1.69`` / ``anthropic-beta`` that
+        this module used to send was answered with HTTP 429 every time (issue #577)."""
+        resp = _make_mock_response(200, {"access_token": "new_access", "token_type": "Bearer"})
         ctx = _make_async_client(resp)
 
-        tokens = {
+        with patch("httpx.AsyncClient", return_value=ctx):
+            result = await refresh_oauth_token(
+                "anthropic", {"refresh_token": "old_refresh", "client_id": "my_client_id"}
+            )
+
+        post = ctx.__aenter__.return_value.post
+        assert post.call_args.args[0] == "https://platform.claude.com/v1/oauth/token"
+        kwargs = post.call_args.kwargs
+        assert "data" not in kwargs  # not form-encoded
+        assert kwargs["json"] == {
+            "grant_type": "refresh_token",
             "refresh_token": "old_refresh",
             "client_id": "my_client_id",
+            "scope": " ".join(ANTHROPIC_OAUTH_SCOPES),
         }
-
-        with patch("httpx.AsyncClient", return_value=ctx):
-            result = await refresh_oauth_token("anthropic", tokens)
-
-        call_kwargs = ctx.__aenter__.return_value.post.call_args
-        assert call_kwargs is not None
-        data = (
-            call_kwargs.kwargs.get("data") or call_kwargs.args[1]
-            if len(call_kwargs.args) > 1
-            else call_kwargs.kwargs["data"]
-        )
-        # Access via keyword arg 'data'
-        sent_data = call_kwargs.kwargs["data"]
-        assert sent_data["grant_type"] == "refresh_token"
-        assert sent_data["refresh_token"] == "old_refresh"
-        assert sent_data["client_id"] == "my_client_id"
-
-        sent_headers = call_kwargs.kwargs["headers"]
-        assert sent_headers["User-Agent"] == "claude-code/2.1.69"
-        assert sent_headers["anthropic-beta"] == "oauth-2025-04-20"
-
+        assert kwargs["headers"] == {
+            "Content-Type": "application/json",
+            "User-Agent": ANTHROPIC_REFRESH_USER_AGENT,
+        }
         assert result["oauth_token"] == "new_access"
 
-    async def test_sends_correct_payload_without_client_id(self):
-        body = {"access_token": "new_access"}
-        resp = _make_mock_response(200, body)
-        ctx = _make_async_client(resp)
-
-        tokens = {"refresh_token": "old_refresh"}
+    async def test_falls_back_to_the_configured_client_id(self):
+        ctx = _make_async_client(_make_mock_response(200, {"access_token": "new_access"}))
 
         with patch("httpx.AsyncClient", return_value=ctx):
-            result = await refresh_oauth_token("anthropic", tokens)
+            await refresh_oauth_token("anthropic", {"refresh_token": "old_refresh"})
 
-        sent_data = ctx.__aenter__.return_value.post.call_args.kwargs["data"]
-        assert "client_id" in sent_data  # Falls back to settings
-        assert sent_data["grant_type"] == "refresh_token"
-        assert result["oauth_token"] == "new_access"
+        sent = ctx.__aenter__.return_value.post.call_args.kwargs["json"]
+        assert sent["client_id"] == "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
-    async def test_has_anthropic_specific_headers(self):
-        body = {"access_token": "tok"}
-        resp = _make_mock_response(200, body)
-        ctx = _make_async_client(resp)
+    async def test_requests_the_stored_scope_when_the_bundle_has_one(self):
+        ctx = _make_async_client(_make_mock_response(200, {"access_token": "t"}))
+
+        with patch("httpx.AsyncClient", return_value=ctx):
+            await refresh_oauth_token(
+                "anthropic", {"refresh_token": "rt", "scope": "user:profile user:inference"}
+            )
+
+        sent = ctx.__aenter__.return_value.post.call_args.kwargs["json"]
+        assert sent["scope"] == "user:profile user:inference"
+
+    async def test_sends_none_of_the_headers_that_get_throttled(self):
+        ctx = _make_async_client(_make_mock_response(200, {"access_token": "tok"}))
 
         with patch("httpx.AsyncClient", return_value=ctx):
             await refresh_oauth_token("anthropic", {"refresh_token": "rt"})
 
         headers = ctx.__aenter__.return_value.post.call_args.kwargs["headers"]
-        assert "User-Agent" in headers
-        assert "anthropic-beta" in headers
+        assert "anthropic-beta" not in headers
+        assert "claude-code" not in headers["User-Agent"]
+        assert "Accept" not in headers
+
+    @pytest.mark.parametrize("provider", ["gemini", "chatgpt", "xai"])
+    async def test_other_providers_still_send_a_form_body(self, provider):
+        ctx = _make_async_client(_make_mock_response(200, {"access_token": "tok"}))
+
+        with patch("httpx.AsyncClient", return_value=ctx):
+            await refresh_oauth_token(provider, {"refresh_token": "rt"})
+
+        kwargs = ctx.__aenter__.return_value.post.call_args.kwargs
+        assert kwargs["data"]["grant_type"] == "refresh_token"
+        assert "json" not in kwargs
+        assert kwargs["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+
+    def test_the_scope_list_matches_the_sidecar_renewers(self):
+        """The sidecar cannot import ``app``, so the two lists are kept equal by a test."""
+        from scripts.sidecar_pkg import anthropic_renewer
+
+        assert tuple(ANTHROPIC_OAUTH_SCOPES) == tuple(anthropic_renewer.DEFAULT_SCOPES)
+        assert _PROVIDER_CLIENT_IDS["anthropic"] == anthropic_renewer.CLIENT_ID
 
     async def test_sets_oauth_token_from_access_token(self):
         body = {"access_token": "brand_new_token"}

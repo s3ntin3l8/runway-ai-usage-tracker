@@ -41,6 +41,47 @@ _PROVIDER_CLIENT_IDS: dict[str, str] = {
 _GEMINI_CLI_CLIENT_SECRET = "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"
 
 
+# The scopes Claude Code always requests on a refresh. Anthropic's token endpoint is picky about
+# the *shape* of a refresh request (see ``_anthropic_refresh_request``); a login that was granted
+# more (e.g. ``user:plugins``) keeps them — a refresh may request a subset. The sidecar's renewer
+# (scripts/sidecar_pkg/anthropic_renewer.py) mirrors this list and reads the login's own scopes
+# from its credentials file; tests/unit keep the two equal.
+ANTHROPIC_OAUTH_SCOPES = (
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+)
+# Neutral on purpose: Claude Code sends no User-Agent / anthropic-beta of its own here.
+ANTHROPIC_REFRESH_USER_AGENT = "runway-ai-usage-tracker"
+
+
+def _anthropic_refresh_request(
+    refresh_token: str, tokens: dict[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """``(json_body, headers)`` for an Anthropic refresh, shaped exactly like Claude Code's own.
+
+    Verified against the live endpoint (issue #576/#577): a JSON body that includes ``scope``,
+    with ``Content-Type`` as the only header besides a neutral User-Agent, is accepted; the
+    form-encoded body without ``scope`` plus ``User-Agent: claude-code/2.1.69`` and
+    ``anthropic-beta`` that this module used to send was answered with HTTP 429 every time.
+    Refresh tokens are strictly single-use, so a rejected or lost response cannot be retried.
+    """
+    scope = tokens.get("scope") or " ".join(ANTHROPIC_OAUTH_SCOPES)
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": tokens.get("client_id") or settings.CLAUDE_OAUTH_CLIENT_ID,
+        "scope": scope,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": ANTHROPIC_REFRESH_USER_AGENT,
+    }
+    return body, headers
+
+
 async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str, str]:
     """
     Attempt to exchange a refresh_token for new access credentials.
@@ -70,9 +111,9 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     }
 
     # Provider-specific extra params
+    json_body: dict[str, str] | None = None
     if provider == "anthropic":
-        client_id = tokens.get("client_id") or settings.CLAUDE_OAUTH_CLIENT_ID
-        payload["client_id"] = client_id
+        json_body, anthropic_headers = _anthropic_refresh_request(refresh_val, tokens)
     elif provider == "gemini":
         gem_client_id: str | None = tokens.get("client_id") or settings.GEMINI_OAUTH_CLIENT_ID
         # Gemini CLI tokens carry the client_id as the JWT `aud` claim, then
@@ -100,18 +141,14 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
     }
-    if provider == "anthropic":
-        headers["User-Agent"] = "claude-code/2.1.69"
-        headers["anthropic-beta"] = "oauth-2025-04-20"
-    elif provider == "xai":
+    if provider == "xai":
         headers["User-Agent"] = "opencode/1.0"
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            endpoint,
-            data=payload,
-            headers=headers,
-        )
+        if json_body is not None:
+            resp = await client.post(endpoint, json=json_body, headers=anthropic_headers)
+        else:
+            resp = await client.post(endpoint, data=payload, headers=headers)
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError:
