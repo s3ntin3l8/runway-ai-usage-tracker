@@ -523,3 +523,51 @@ class TestKeepAliveThread:
         thread.cycle_once()
         assert "anthropic" in thread._renewer_resume_at  # backed off after the failure
         assert Other.runs == 2  # the healthy renewer is unaffected
+
+
+class TestLostTokenSafety:
+    """The old refresh token is spent the moment the endpoint answers: never lose the new one."""
+
+    def test_a_failed_save_is_retried_without_spending_another_token(self, tmp_path, monkeypatch):
+        f = _creds(tmp_path / ".credentials.json", -10)
+        calls = _respond(monkeypatch)
+        real = ar.atomic_replace_json
+        monkeypatch.setattr(ar, "atomic_replace_json", lambda *a, **k: False)
+        r = _renewer(f)
+        assert r.renew() is False  # exchanged, but could not save
+        assert len(calls) == 1 and _read(f)["claudeAiOauth"]["refreshToken"] == "r-old"
+
+        monkeypatch.setattr(ar, "atomic_replace_json", real)  # the disk recovered
+        assert r.renew() is True
+        assert len(calls) == 1  # no second exchange: the stored response was saved
+        assert _read(f)["claudeAiOauth"]["refreshToken"] == "r-new"
+        assert r._unsaved == {}
+
+    def test_a_stored_response_is_never_saved_over_a_newer_login(self, tmp_path, monkeypatch):
+        f = _creds(tmp_path / ".credentials.json", -10)
+        calls = _respond(monkeypatch)
+        monkeypatch.setattr(ar, "atomic_replace_json", lambda *a, **k: False)
+        r = _renewer(f)
+        r.renew()
+        assert len(r._unsaved) == 1
+        # Claude Code refreshed itself meanwhile: the file holds a newer login, not due yet.
+        _creds(f, 8 * 3600, refresh="r-cli")
+        assert r.due() is False
+        assert _read(f)["claudeAiOauth"]["refreshToken"] == "r-cli"
+        # Much later it is due again: the stale response is discarded and a fresh exchange is
+        # made from the CLI's own token, never the old stored one.
+        monkeypatch.undo()
+        calls = _respond(monkeypatch)
+        _creds(f, -10, refresh="r-cli")
+        assert r.renew() is True
+        assert calls == [("r-cli", tuple(SCOPES))]
+        assert r._unsaved == {}
+
+    @pytest.mark.parametrize("bad", ["soon", None, -5, 0])
+    def test_an_unusable_expires_in_cannot_cost_us_the_new_tokens(self, tmp_path, bad):
+        f = _creds(tmp_path / ".credentials.json", -10)
+        assert ar.write_back(ar.read_login(f), _response(expires_in=bad)) == "written"
+        oauth = _read(f)["claudeAiOauth"]
+        assert oauth["refreshToken"] == "r-new"
+        left = oauth["expiresAt"] / 1000 - time.time()
+        assert 0 < left <= ar.FALLBACK_EXPIRES_IN + 5

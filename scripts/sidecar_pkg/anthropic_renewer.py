@@ -176,7 +176,10 @@ def write_back(login: Login, response: dict[str, Any]) -> str:
     # The old token is spent the moment the endpoint answered: always keep the new one.
     oauth["refreshToken"] = str(response.get("refresh_token") or login.refresh)
     expires_in = response.get("expires_in")
-    oauth["expiresAt"] = int((now + float(expires_in or FALLBACK_EXPIRES_IN)) * 1000)
+    if not isinstance(expires_in, int | float) or expires_in <= 0:
+        # Never let an odd value cost us the new tokens: the old refresh token is already spent.
+        expires_in = FALLBACK_EXPIRES_IN
+    oauth["expiresAt"] = int((now + float(expires_in)) * 1000)
     refresh_expires_in = response.get("refresh_token_expires_in")
     if isinstance(refresh_expires_in, int | float) and refresh_expires_in > 0:
         oauth["refreshTokenExpiresAt"] = int((now + float(refresh_expires_in)) * 1000)
@@ -202,6 +205,10 @@ class AnthropicRenewer:
         # A callable, evaluated on every tick: login dirs change on config reload.
         self._targets = targets
         self._rejected: dict[Path, str] = {}  # path -> refresh token the endpoint refused
+        # path -> (the refresh token we spent, the response we could not save yet). The exchange
+        # already happened and that token is gone, so the response is the only valid login left:
+        # keep it and retry the *save* next tick instead of exchanging again.
+        self._unsaved: dict[Path, tuple[str, dict[str, Any]]] = {}
 
     def _due_logins(self) -> list[Login]:
         logins: list[Login] = []
@@ -232,6 +239,20 @@ class AnthropicRenewer:
     def _renew_due_logins(self) -> bool:
         ok = True
         for login in self._due_logins():
+            pending = self._unsaved.get(login.path)
+            if pending is not None and pending[0] == login.refresh:
+                response = pending[1]  # only the save failed last time: don't spend another token
+                outcome = write_back(login, response)
+                if outcome == "failed":
+                    ok = False
+                    continue
+                self._unsaved.pop(login.path, None)
+                if outcome == "written":
+                    logger.info(
+                        "Claude Code keep-alive: saved the renewed login to %s (retry)", login.path
+                    )
+                continue
+            self._unsaved.pop(login.path, None)  # the file moved on: the stored response is stale
             try:
                 response = request_refresh(login.refresh, login.scopes)
             except RefreshRejectedError as exc:
@@ -265,9 +286,13 @@ class AnthropicRenewer:
                 )
             else:
                 # The refresh succeeded but could not be saved, and the old token is now spent:
-                # Claude Code's copy is dead. Back off rather than make it worse.
+                # Claude Code's copy is dead until we save this response. Keep it and retry.
+                self._unsaved[login.path] = (login.refresh, response)
                 logger.warning(
-                    "Claude Code keep-alive: could not write the renewed login to %s", login.path
+                    "Claude Code keep-alive: could not write the renewed login to %s; "
+                    "will retry saving it",
+                    login.path,
                 )
                 ok = False
+            continue
         return ok
