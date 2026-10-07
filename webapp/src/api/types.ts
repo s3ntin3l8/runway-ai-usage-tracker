@@ -741,6 +741,8 @@ export interface AppConfig {
   // Fleet-wide opt-in: when true, sidecars self-install available updates
   // (a sidecar's explicit local config overrides this).
   sidecar_auto_update?: boolean | null;
+  /** Fleet-wide default: keep-alive on for every sidecar without its own override. */
+  sidecar_keep_alive_default?: boolean | null;
 }
 
 export interface CollectionStrategy {

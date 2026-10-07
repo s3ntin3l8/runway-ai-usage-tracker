@@ -245,6 +245,24 @@ def test_ingest_response_carries_the_remote_keep_alive_setting(client, session):
     assert _heartbeat(client).json()["keep_alive_desired"] is None
 
 
+def test_ingest_response_carries_the_fleet_keep_alive_default(client, session):
+    # Off until the operator turns it on in Settings → System; independent of the per-sidecar
+    # override, which the response still carries separately.
+    assert _heartbeat(client).json()["keep_alive_fleet_default"] is False
+
+    client.put("/api/v1/system/app-config", json={"sidecar_keep_alive_default": True})
+    body = _heartbeat(client).json()
+    assert body["keep_alive_fleet_default"] is True
+    assert body["keep_alive_desired"] is None
+
+    client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": False})
+    body = _heartbeat(client).json()
+    assert body["keep_alive_fleet_default"] is True and body["keep_alive_desired"] is False
+
+    client.put("/api/v1/system/app-config", json={"sidecar_keep_alive_default": False})
+    assert _heartbeat(client).json()["keep_alive_fleet_default"] is False
+
+
 def test_remote_keep_alive_is_per_sidecar(client, session):
     _heartbeat(client)
     _signed_ingest(

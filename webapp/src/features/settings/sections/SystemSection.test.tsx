@@ -52,7 +52,31 @@ describe('SystemSection', () => {
       browser_preference: 'firefox',
       sidecar_update_channel: 'stable',
       sidecar_auto_update: false,
+      sidecar_keep_alive_default: false,
     });
+  });
+
+  it('turns the fleet-wide keep-alive default on and saves it', async () => {
+    vi.mocked(api.fetchAppConfig).mockResolvedValue(appConfig());
+    vi.mocked(api.putAppConfig).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<SystemSection />);
+
+    const toggle = await screen.findByLabelText(/keep logins alive on all sidecars/i);
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(vi.mocked(api.putAppConfig).mock.calls[0][0]).toMatchObject({
+      sidecar_keep_alive_default: true,
+    });
+  });
+
+  it('shows the keep-alive default as on when the server has it on', async () => {
+    vi.mocked(api.fetchAppConfig).mockResolvedValue(
+      appConfig({ sidecar_keep_alive_default: true }),
+    );
+    renderWithProviders(<SystemSection />);
+    expect(await screen.findByLabelText(/keep logins alive on all sidecars/i)).toBeChecked();
   });
 
   it('changes the sidecar update channel and includes it in the save', async () => {

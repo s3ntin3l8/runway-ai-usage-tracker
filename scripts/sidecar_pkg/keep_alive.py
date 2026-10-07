@@ -246,6 +246,9 @@ class KeepAliveController:
     The sidecar's own flag (``--keep-alive`` / config) is the *local* setting; the server
     can override it per sidecar from the dashboard (``keep_alive_desired`` on every ingest
     response). ``None`` from the server means "no preference" — the local flag decides.
+    The server's fleet-wide default (``keep_alive_fleet_default``) sits below that: when no
+    per-sidecar override is set, keep-alive runs if the local flag **or** the fleet default is
+    on — the default only ever turns it on, it never switches off a sidecar whose own flag is.
     The override is stateless: the server resends it every heartbeat, so nothing is
     written to the sidecar's config and a restart picks it up again on the first check-in.
     Inert until ``arm`` is called, so one-shot (non-daemon) runs never spawn a thread.
@@ -258,6 +261,7 @@ class KeepAliveController:
         self._armed = False
         self._local = False
         self._remote: bool | None = None
+        self._fleet = False
 
     @property
     def armed(self) -> bool:
@@ -273,7 +277,9 @@ class KeepAliveController:
 
     @property
     def effective(self) -> bool:
-        return self._remote if self._remote is not None else self._local
+        if self._remote is not None:
+            return self._remote
+        return self._local or self._fleet
 
     def arm(self, local: bool) -> None:
         """Daemon start: take the local flag and begin controlling the thread."""
@@ -288,6 +294,15 @@ class KeepAliveController:
             if not self._armed or desired == self._remote:
                 return
             self._remote = desired if isinstance(desired, bool) else None
+            self._reconcile()
+
+    def set_fleet_default(self, enabled: object) -> None:
+        """Apply the server's fleet-wide default from an ingest response (no-op until armed)."""
+        with self._lock:
+            value = enabled is True
+            if not self._armed or value == self._fleet:
+                return
+            self._fleet = value
             self._reconcile()
 
     def stop(self) -> None:

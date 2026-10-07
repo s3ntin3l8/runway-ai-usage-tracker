@@ -2096,6 +2096,35 @@ class TestRenewalWaitReason:
         assert "next check-in" in reason and "switched on" in reason
 
     @pytest.mark.asyncio
+    async def test_the_fleet_default_counts_as_switched_on(self, manager, reported, monkeypatch):
+        """Turned on fleet-wide but this sidecar still reports off: it applies on its next
+        check-in, so don't tell the operator to turn it on again."""
+        monkeypatch.setattr(manager, "_read_keep_alive_fleet_default", lambda: True)
+        reported["host-a"] = False
+        reason = await manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
+        assert "--keep-alive" not in reason and "next check-in" in reason
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_off_override_beats_the_fleet_default(
+        self, manager, reported, monkeypatch
+    ):
+        monkeypatch.setattr(manager, "_read_keep_alive_fleet_default", lambda: True)
+        reported["host-a"] = False
+        reported.desired["host-a"] = False
+        reason = await manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
+        assert "--keep-alive" in reason and "Fleet" in reason
+
+    @pytest.mark.asyncio
+    async def test_the_fleet_default_cannot_help_a_sidecar_that_never_reports(
+        self, manager, reported, monkeypatch
+    ):
+        """The tray app / an older sidecar doesn't run keep-alive at all."""
+        monkeypatch.setattr(manager, "_read_keep_alive_fleet_default", lambda: True)
+        reported["host-a"] = None
+        reason = await manager._renewal_wait_reason("xai", {"sidecar_id": "host-a"})
+        assert "--keep-alive" in reason
+
+    @pytest.mark.asyncio
     async def test_a_request_to_turn_it_off_still_advises_turning_it_on(self, manager, reported):
         reported["host-a"] = False
         reported.desired["host-a"] = False

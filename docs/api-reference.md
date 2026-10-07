@@ -51,7 +51,7 @@ component fields. Cache-specific metrics remain cache-inclusive by definition.
 | `PATCH` | `/api/v1/fleet/sidecars/{id}` | Update custom name or tags (admin) |
 | `DELETE` | `/api/v1/fleet/sidecars/{id}` | Remove sidecar from registry (admin) |
 | `POST` | `/api/v1/fleet/sidecars/{id}/pause` | Pause collection on a sidecar (admin) |
-| `PUT` | `/api/v1/fleet/sidecars/{id}/keep-alive` | Turn a sidecar's keep-alive (renewal of the agy, Claude Code, Codex and xAI logins) on or off remotely — body `{"enabled": true\|false\|null}`, `null` defers to the sidecar's own flag. Delivered as `keep_alive_desired` on its next ingest response; the sidecar applies it without a restart (admin) |
+| `PUT` | `/api/v1/fleet/sidecars/{id}/keep-alive` | Turn a sidecar's keep-alive (renewal of the agy, Claude Code, Codex and xAI logins) on or off remotely — body `{"enabled": true\|false\|null}`, `null` defers to the sidecar's own flag and the fleet-wide default (`sidecar_keep_alive_default` in app-config). Delivered as `keep_alive_desired` on its next ingest response; the sidecar applies it without a restart (admin) |
 | `POST` | `/api/v1/fleet/sidecars/{id}/resume` | Resume collection on a sidecar (admin) |
 | `POST` | `/api/v1/fleet/sidecars/{id}/update` | Queue a one-shot self-update for the sidecar; applies on its next heartbeat (admin) |
 | `GET` | `/api/v1/fleet/config` | Active collection config the sidecar should poll; unsigned/non-loopback callers get only the `enabled`/`strategies` view, no account data |
@@ -92,7 +92,7 @@ The grouped pending-events response reports `total_events` across the full queue
 | `GET`/`PUT`/`DELETE` | `/api/v1/system/provider-config[s]/{...}` | Per-provider config CRUD (admin write); DELETE soft-archives and clears any matching `credential_tags` hints |
 | `PATCH` | `/api/v1/system/provider-config/{provider_id}/{account_id}/credential-sources` | Set enabled state and zero-based order for every known source on this account (admin); duplicate priorities are allowed and ties sort by `source_id`; optional `all_machines` applies each listed source preference to matching sidecar origins across hosts; values are never returned |
 | `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it |
-| `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write) |
+| `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write); includes `sidecar_update_channel`, `sidecar_auto_update` and `sidecar_keep_alive_default` (fleet-wide keep-alive default: on for every sidecar without its own override; omitted fields in a `PUT` keep their stored value) |
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout |
 | `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` (public) |
 

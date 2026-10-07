@@ -52,4 +52,36 @@ describe('keepAliveState', () => {
     }
     expect(st(null, null, true).status).not.toMatch(/offline/);
   });
+
+  describe('fleet default', () => {
+    const fd = (reported: boolean | null, desired: boolean | null) =>
+      keepAliveState({ reported, desired, offline: false, fleetDefault: true });
+
+    it('turns keep-alive on for a sidecar that reports it off and has no override (pending)', () => {
+      expect(fd(false, null)).toMatchObject({ effective: true, pending: true, hasOverride: false });
+      expect(fd(false, null).status).toBe('On by the fleet default — applies on next check-in.');
+      expect(fd(false, null).shortStatus).toBe('on (fleet default) — pending');
+    });
+
+    it('says so once the sidecar confirms it', () => {
+      expect(fd(true, null)).toMatchObject({ effective: true, pending: false });
+      expect(fd(true, null).status).toMatch(/\(fleet default\)$/);
+    });
+
+    it('never overrides an explicit Fleet override', () => {
+      expect(fd(true, false)).toMatchObject({ effective: false, hasOverride: true });
+      expect(fd(false, false)).toMatchObject({ effective: false, pending: false });
+    });
+
+    it('does not claim support for a sidecar that never reports keep-alive', () => {
+      expect(fd(null, null)).toMatchObject({ unsupported: true, effective: false });
+    });
+
+    it('is ignored when off', () => {
+      expect(keepAliveState({ reported: false, desired: null, offline: false })).toMatchObject({
+        effective: false,
+        pending: false,
+      });
+    });
+  });
 });

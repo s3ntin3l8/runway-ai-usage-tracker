@@ -42,6 +42,9 @@ describe('FleetPage', () => {
       counts_by_sidecar: {},
     });
     vi.mocked(api.fetchProviderConfigs).mockReset().mockResolvedValue({ providers: [] });
+    vi.mocked(api.fetchAppConfig).mockReset().mockResolvedValue({
+      env_timezone: 'UTC',
+    });
   });
 
   it('shows the empty state when no sidecars are registered', async () => {
@@ -169,6 +172,19 @@ describe('FleetPage', () => {
       expect(screen.getByText(/Antigravity \(agy\), Claude Code, Codex \(ChatGPT\) and xAI \(Grok\) logins itself/)).toBeVisible();
       expect(screen.getByText('Off.')).toBeVisible();
       expect(screen.queryByRole('button', { name: /turn keep-alive/i })).not.toBeInTheDocument();
+    });
+
+    it('shows a sidecar as on by the fleet default, pending until it confirms', async () => {
+      vi.mocked(api.fetchAppConfig).mockResolvedValue({
+        env_timezone: 'UTC',
+        sidecar_keep_alive_default: true,
+      });
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: false })] });
+      renderWithProviders(<FleetPage />);
+
+      // The fleet default arrives with the (separately cached) app config.
+      expect(await screen.findByText(/On by the fleet default/)).toBeVisible();
+      expect(await keepAliveSwitch()).toHaveAttribute('aria-checked', 'true');
     });
 
     it('keeps the header to pause and delete (no keep-alive or reset icon buttons)', async () => {
