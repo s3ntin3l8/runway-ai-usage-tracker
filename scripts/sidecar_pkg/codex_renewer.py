@@ -4,7 +4,7 @@ The Codex access token is a JWT that lives ten days and only the Codex CLI renew
 next runs (about nine days after the last refresh). A CLI idle for longer than that is left with
 a dead login. The provider rotates the refresh token on every refresh, so the server never
 refreshes a login a sidecar pushed (``ROTATING_REFRESH_PROVIDERS`` in
-``app/services/refresh_policy.py``). This renewer refreshes the token a day before it lapses and
+``app/services/refresh_policy.py``). This renewer refreshes the token once it is within a day of lapsing (or its expiry is unreadable) and
 **writes the result back into Codex's own file**.
 
 Verified against a throwaway login (issue #524): the endpoint accepts an early refresh, Codex
@@ -54,6 +54,12 @@ LEAD_SECONDS = 24 * 3600
 REQUEST_TIMEOUT_SECONDS = 15
 # A file written this recently was just written by Codex itself (or another renewer): leave it be.
 RECENT_WRITE_SECONDS = 30
+
+
+def _key(path: Path) -> Path:
+    """Identity of a login file for the renewer's memos: the same file reached through two paths
+    (``~/.codex`` and a ``CODEX_HOME`` pointing at it) is one login."""
+    return Path(os.path.realpath(path))
 
 
 @dataclass
@@ -195,7 +201,7 @@ class CodexRenewer:
             if login is None:
                 continue
             # A re-login (new refresh token) lifts the block; the same dead one stays blocked.
-            if self._rejected.get(login.path) == login.refresh:
+            if self._rejected.get(_key(login.path)) == login.refresh:
                 continue
             if login_due(login) and not recently_written(login.path):
                 logins.append(login)
@@ -212,19 +218,21 @@ class CodexRenewer:
     def _renew_due_logins(self) -> bool:
         ok = True
         for login in self._due_logins():
-            pending = self._unsaved.get(login.path)
+            pending = self._unsaved.get(_key(login.path))
             if pending is not None and pending[0] == login.refresh:
                 outcome = write_back(login, pending[1])  # don't spend another token
                 if outcome == "failed":
                     ok = False
                     continue
-                self._unsaved.pop(login.path, None)
+                self._unsaved.pop(_key(login.path), None)
                 if outcome == "written":
                     logger.info(
                         "Codex keep-alive: saved the renewed login to %s (retry)", login.path
                     )
                 continue
-            self._unsaved.pop(login.path, None)  # the file moved on: the stored response is stale
+            self._unsaved.pop(
+                _key(login.path), None
+            )  # the file moved on: the stored response is stale
             try:
                 response = request_refresh(login.refresh)
             except RefreshRejectedError as exc:
@@ -234,7 +242,7 @@ class CodexRenewer:
                 if current is not None and current.refresh != login.refresh:
                     logger.info("Codex keep-alive: %s was renewed by Codex first", login.path)
                     continue
-                self._rejected[login.path] = login.refresh
+                self._rejected[_key(login.path)] = login.refresh
                 logger.warning(
                     "Codex keep-alive: refresh rejected for %s (%s) — log in again with "
                     "`codex login`",
@@ -254,7 +262,7 @@ class CodexRenewer:
                 logger.info("Codex keep-alive: %s changed while renewing; left as is", login.path)
             else:
                 # The refresh succeeded but could not be saved: keep the response and retry.
-                self._unsaved[login.path] = (login.refresh, response)
+                self._unsaved[_key(login.path)] = (login.refresh, response)
                 logger.warning(
                     "Codex keep-alive: could not write the renewed login to %s; "
                     "will retry saving it",

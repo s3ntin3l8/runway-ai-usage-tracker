@@ -337,6 +337,21 @@ class TestRenew:
         _renewer(real, link).renew()
         assert len(calls) == 1
 
+    def test_a_dead_login_stays_blocked_whichever_path_reaches_it(self, tmp_path, monkeypatch):
+        """The rejection memo is keyed on the resolved file, so ``~/.codex`` and a ``CODEX_HOME``
+        pointing at the same ``auth.json`` are one login, in either order."""
+        real = _auth(tmp_path / "real" / "auth.json", -10)
+        link = tmp_path / "link.json"
+        link.symlink_to(real)
+        current = [real]
+        r = CodexRenewer(lambda: list(current))
+        calls = _respond(monkeypatch, error=RefreshRejectedError("HTTP 400 refresh_token_expired"))
+        r.renew()
+        current[:] = [link]  # the same file, reached the other way
+        assert r.due() is False
+        r.renew()
+        assert len(calls) == 1
+
     def test_targets_are_re_evaluated_on_every_tick(self, tmp_path, monkeypatch):
         first = _auth(tmp_path / "one" / "auth.json", 6 * DAY)
         second = _auth(tmp_path / "two" / "auth.json", -10)
