@@ -52,7 +52,7 @@ a = Analysis(
         "urllib.request",
         # Notify-only update check, shared by the CLI and the tray updater.
         "scripts.sidecar_pkg.update_check",
-        # Optional --keep-alive (agy + xAI login renewal) — imported lazily, so
+        # Optional --keep-alive (agy + xAI + Claude Code login renewal) — imported lazily, so
         # PyInstaller's scan must be told about it.
         "scripts.sidecar_pkg.keep_alive",
         # One-time pairing (runway-sidecar://pair links, --pair).
@@ -77,6 +77,10 @@ a = Analysis(
         "scripts.sidecar_pkg.runtime_cleanup",
         "scripts.sidecar_pkg.self_update",
         "scripts.sidecar_pkg.xai_renewer",
+        "scripts.sidecar_pkg.anthropic_renewer",
+        "scripts.sidecar_pkg.oauth_renewal",
+        "scripts.sidecar_pkg.asset_names",
+        "scripts.sidecar_pkg.canonical_providers",
         "certifi",
     ],
     hookspath=[],

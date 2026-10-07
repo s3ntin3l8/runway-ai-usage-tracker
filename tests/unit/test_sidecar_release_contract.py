@@ -253,6 +253,43 @@ def _lazy_sidecar_pkg_imports() -> set[str]:
     return found
 
 
+def _module_file(name: str) -> pathlib.Path:
+    return ROOT.joinpath(*name.split(".")).with_suffix(".py")
+
+
+def _sidecar_pkg_imports_of(module: str) -> set[str]:
+    """``scripts.sidecar_pkg.*`` modules that *module* imports (at any depth)."""
+    import ast
+
+    tree = ast.parse(_module_file(module).read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module == "scripts.sidecar_pkg":
+                found.update(f"scripts.sidecar_pkg.{a.name}" for a in node.names)
+            elif node.module.startswith("scripts.sidecar_pkg."):
+                found.add(node.module)
+        elif isinstance(node, ast.Import):
+            found.update(a.name for a in node.names if a.name.startswith("scripts.sidecar_pkg."))
+    return {m for m in found if _module_file(m).exists()}
+
+
+def _required_hidden_imports() -> set[str]:
+    """The lazy imports of sidecar.py plus everything those modules import in turn.
+
+    A helper imported only by a lazily imported renewer (``oauth_renewal``) is never seen by a
+    scan of sidecar.py alone, and the tray specs bundle sidecar.py as data.
+    """
+    required = set(_lazy_sidecar_pkg_imports())
+    queue = list(required)
+    while queue:
+        for dep in _sidecar_pkg_imports_of(queue.pop()):
+            if dep not in required:
+                required.add(dep)
+                queue.append(dep)
+    return required
+
+
 def _spec_hidden_imports(spec: pathlib.Path) -> set[str]:
     return set(re.findall(r'"(scripts\.sidecar_pkg[\w.]*)"', spec.read_text(encoding="utf-8")))
 
@@ -271,11 +308,19 @@ class TestSpecHiddenImports:
 
     def test_the_scan_sees_the_keep_alive_modules(self):
         lazy = _lazy_sidecar_pkg_imports()
-        assert {"scripts.sidecar_pkg.keep_alive", "scripts.sidecar_pkg.xai_renewer"} <= lazy
+        assert {
+            "scripts.sidecar_pkg.keep_alive",
+            "scripts.sidecar_pkg.xai_renewer",
+            "scripts.sidecar_pkg.anthropic_renewer",
+        } <= lazy
+
+    def test_helpers_only_the_renewers_import_are_required_too(self):
+        assert "scripts.sidecar_pkg.oauth_renewal" not in _lazy_sidecar_pkg_imports()
+        assert "scripts.sidecar_pkg.oauth_renewal" in _required_hidden_imports()
 
     @pytest.mark.parametrize("spec", SPECS, ids=lambda p: p.name)
     def test_every_lazy_import_is_declared(self, spec):
-        missing = sorted(_lazy_sidecar_pkg_imports() - _spec_hidden_imports(spec))
+        missing = sorted(_required_hidden_imports() - _spec_hidden_imports(spec))
         assert not missing, f"{spec.name} hiddenimports is missing: {missing}"
 
     @pytest.mark.parametrize("spec", SPECS, ids=lambda p: p.name)

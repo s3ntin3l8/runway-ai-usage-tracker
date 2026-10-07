@@ -15,14 +15,23 @@ from __future__ import annotations
 # is not the live one once anyone else refreshes). Refreshing without writing the result
 # back to the CLI's file would strand it, which is why only the sidecar keep-alive
 # (scripts/sidecar_pkg/xai_renewer.py, which writes back) renews a machine-owned xAI login.
+# Anthropic rotates too, and strictly: every refresh returns a new refresh token, each one is
+# single-use (the rotated-away token answers ``invalid_grant`` straight away, but the newest
+# keeps working), verified 2026-10-07 — scripts/sidecar_pkg/anthropic_renewer.py renews and
+# writes back a machine-owned Claude Code login.
 ROTATING_REFRESH_PROVIDERS = frozenset({"anthropic", "chatgpt", "xai"})
 
 # Providers whose sidecar can renew a machine-owned login itself (``--keep-alive``):
-# agy via ``agy models``, xAI by refreshing and writing the token back to the CLI's file.
+# agy via ``agy models``; xAI and Claude Code by refreshing and writing the token back to the
+# CLI's own credentials file.
 # The single source of truth for *which* logins that covers: the Fleet tooltip
 # (webapp/src/lib/keepAlive.ts) and the sidecar's ``--keep-alive`` help text must name the
 # same logins; tests/unit/test_keep_alive_copy_contract.py pins them together.
-KEEP_ALIVE_LABELS = {"xai": "xAI (Grok)", "antigravity": "Antigravity (agy)"}
+KEEP_ALIVE_LABELS = {
+    "xai": "xAI (Grok)",
+    "antigravity": "Antigravity (agy)",
+    "anthropic": "Claude Code",
+}
 KEEP_ALIVE_PROVIDERS = frozenset(KEEP_ALIVE_LABELS)
 
 _NON_MACHINE_SOURCES = (None, "server", "config", "manual_config")

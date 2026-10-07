@@ -45,7 +45,7 @@ This is the preferred method, providing the most reliable and comprehensive data
 
 **Endpoints:** `https://api.anthropic.com/api/oauth/usage`
 **Auth:** Bearer token from env, credentials file, or macOS Keychain.
-**Key Discovery:** Automatically refreshes tokens if a refresh token is available.
+**Key Discovery:** A login the server holds itself (config/env) is refreshed by the server. A login on a machine's own `~/.claude` is **never** refreshed by the server (Anthropic's refresh tokens are single-use, so that would sign Claude Code out); with the sidecar's `--keep-alive` the sidecar renews it and writes it back to Claude Code's credentials file — see [Keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-and-xai-opt-in).
 
 ### Tier 2: web (Session Cookies)
 **Endpoints:** `claude.ai/api/organizations/.../usage`
@@ -118,7 +118,7 @@ The sidecar extracts the token and expiry from `~/.claude/.credentials.json`, an
 
 ### "401 Unauthorized"
 **Cause:** Token expired
-**Fix:** Automatic refresh should handle this. If refresh fails with `invalid_grant`, run `claude login`.
+**Fix:** On a sidecar machine, start the sidecar with `--keep-alive` (or turn it on in Fleet) so the login is renewed before it lapses; otherwise it renews the next time Claude Code runs. If a refresh is rejected with `invalid_grant` and Claude Code did not renew it, run `claude auth login`.
 
 ### Cookie decryption fails on macOS
 **Fix:** Grant keychain access: `security add-generic-password -s "Chrome Safe Storage" -w`

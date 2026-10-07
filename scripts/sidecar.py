@@ -861,11 +861,24 @@ DEFAULT_CONFIG = {
 REQUIRED_CONFIG_FIELDS = ["api_url", "api_key"]
 
 
+def _claude_login_paths() -> list[Path]:
+    """Every Claude Code credentials file the sidecar pushes, evaluated on each keep-alive tick.
+
+    The same paths as the Claude file rule (``~/.claude``, the platform config dir and every
+    ``CLAUDE_CONFIG_DIR`` / ``claude_config_dirs`` entry), so the renewer keeps exactly the logins
+    the server is shown. A callable, because the login dirs change on a config reload.
+    """
+    rules = __REGISTRY__["providers"].get("anthropic", {}).get("rules", [])
+    paths = [p for rule in rules if rule.get("type") == "file" for p in rule.get("paths", [])]
+    return expand_file_rule_paths(paths)
+
+
 def _make_keep_alive_thread():
+    from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
     from scripts.sidecar_pkg.keep_alive import KeepAliveThread
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
-    return KeepAliveThread(renewers=[XaiRenewer()])
+    return KeepAliveThread(renewers=[XaiRenewer(), AnthropicRenewer(_claude_login_paths)])
 
 
 def _keep_alive_controller():
@@ -3634,6 +3647,25 @@ class GenericCollector:
                     TypeError,
                 ) as exc:
                     logging.debug("Failed to extract JWT expiry from xai_access: %s", exc)
+            if (
+                provider_id == "anthropic"
+                and tokens
+                and tokens.get("refresh_token")
+                and tokens.get("expiry_date")
+            ):
+                # Nudge only; never withhold the token (the server's identity verification and
+                # its renewal-wait reason rely on the refresh token still being pushed).
+                from scripts.sidecar_pkg.keep_alive import is_enabled
+
+                try:
+                    expired = float(tokens["expiry_date"]) / 1000 <= time.time()
+                except (TypeError, ValueError):
+                    expired = False
+                if expired and not is_enabled():
+                    logging.warning(
+                        f"  [{provider_id}] local login expired — it renews when Claude Code "
+                        "next runs, or start the sidecar with --keep-alive"
+                    )
             if tokens and tokens.get("account_id"):
                 from scripts.sidecar_pkg.identity import canonical_account_id
 
@@ -5119,9 +5151,9 @@ def main():
         action="store_true",
         help=(
             "Daemon mode: renew the Antigravity (agy) access token with "
-            "`agy models` whenever it lapses, and refresh the xAI (Grok) login in "
-            "OpenCode's / the Grok CLI's auth file before it expires (opt-in; config "
-            '"keep_alive": true is the same on/off switch for both renewers; it can also be '
+            "`agy models` whenever it lapses, and refresh the xAI (Grok) and Claude Code "
+            "logins in their CLIs' own credential files before they expire (opt-in; config "
+            '"keep_alive": true is the same on/off switch for all renewers; it can also be '
             "toggled per sidecar from the Fleet page)"
         ),
     )
