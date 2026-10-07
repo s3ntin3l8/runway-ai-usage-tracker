@@ -877,6 +877,8 @@ def _systemd_unit_from_cgroup(cgroup: str) -> tuple[str, bool] | None:
     return services[-1], user_manager
 
 
+# Far above any realistic nesting (one level per update). Its real job is to bound a cyclic or
+# runaway ppid walk, so don't raise it to "support" deeper chains.
 _MAX_BOOTLOADER_DEPTH = 64
 
 
