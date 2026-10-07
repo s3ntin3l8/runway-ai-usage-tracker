@@ -546,6 +546,34 @@ async def test_a_server_refreshed_claude_token_gets_its_new_expiry(anthropic_cac
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["soon", None, 0, -1])
+async def test_an_unusable_expires_in_never_costs_the_new_tokens(anthropic_cache, monkeypatch, bad):
+    """The old refresh token is spent once the endpoint answers: store the new ones regardless."""
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    await anthropic_cache.store(
+        "anthropic",
+        {"oauth_token": "o", "refresh_token": "config-rt"},
+        account_id="bob@example.com",
+        source="config",
+    )
+    resp = MagicMock(status_code=200, headers={})
+    resp.json.return_value = {"access_token": "new", "refresh_token": "rt2", "expires_in": bad}
+    monkeypatch.setattr(
+        "app.services.collectors.anthropic_oauth.http_request_with_retry",
+        AsyncMock(return_value=resp),
+    )
+
+    refreshed = await AnthropicCollector(account_id="bob@example.com")._execute_refresh(MagicMock())
+
+    assert refreshed == {"access_token": "new", "refresh_token": "rt2"}
+    assert (
+        await anthropic_cache.get_token("anthropic", "refresh_token", account_id="bob@example.com")
+        == "rt2"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_refresh_response_without_expires_in_still_stores_the_tokens(
     anthropic_cache, monkeypatch
 ):
