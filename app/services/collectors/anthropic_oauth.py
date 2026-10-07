@@ -192,41 +192,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             ]
 
         if resp.status_code == 429:
-            logger.info(
-                "Anthropic API returned 429. Attempting aggressive recovery via token rotation..."
-            )
-            # Skip bypass if the token endpoint itself is in backoff — hammering it
-            # will only burn refresh tokens and escalate the rate limit.
-            if self._is_refresh_backoff_active():
-                logger.warning("Token refresh endpoint in backoff, skipping aggressive recovery")
-            else:
-                # Attempt to get a fresh token (even if not expired)
-                try:
-                    new_token = await self._get_valid_token(client, force_refresh=True)
-                except httpx.HTTPError:
-                    new_token = None
-                if new_token and new_token != token:
-                    logger.info("Successfully cycled Anthropic token. Retrying usage request...")
-                    headers["Authorization"] = f"Bearer {new_token}"
-                    try:
-                        resp = await http_request_with_retry(
-                            client, "GET", url, headers=headers, timeout=15.0
-                        )
-                    except httpx.HTTPError as e:
-                        logger.warning(f"Aggressive recovery request failed: {e}")
-                    else:
-                        if resp.status_code == 200:
-                            logger.info("Aggressive recovery successful: Usage data retrieved.")
-                        else:
-                            logger.warning(
-                                f"Aggressive recovery failed: Retry returned {resp.status_code}"
-                            )
-                else:
-                    logger.warning("Aggressive recovery failed: Could not obtain a fresh token.")
-
-        # Re-check status after potential retry
-        if resp.status_code == 429:
-            # Fallback: set retry-after for SmartCollector backoff
+            # A usage-endpoint 429 is a rate limit, not an expired token. Refresh tokens
+            # are single-use (a refresh rotates them), so never spend one as a remedy:
+            # back off via SmartCollector and let the token refresh near/after expiry.
             retry_after = resp.headers.get("Retry-After")
             # Ensure a minimum floor of 300s even if header says 0 to avoid hammering
             wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300

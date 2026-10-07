@@ -217,6 +217,22 @@ class TestAnthropicCollector:
             assert result2[0].get("error_type") == "rate_limited"
 
     @pytest.mark.asyncio
+    async def test_usage_429_never_spends_a_refresh_token(self, mock_http_client):
+        """A usage-endpoint 429 is a rate limit, not an expired token: refresh tokens are
+        single-use, so the collector must not force a refresh as a "remedy"."""
+        collector = AnthropicCollector()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 429
+        resp.headers = {}
+        mock_http_client.request.return_value = resp
+
+        with patch.object(collector, "_get_valid_token") as get_token:
+            result = await collector._get_claude_oauth(mock_http_client, "test_token")
+
+        get_token.assert_not_called()
+        assert result[0].get("error_type") == "rate_limited"
+
+    @pytest.mark.asyncio
     async def test_collect_anthropic_with_paid_usage(self, mock_http_client):
         """Test Claude collection with prepaid balance and overage spend limits."""
         collector = AnthropicCollector()
