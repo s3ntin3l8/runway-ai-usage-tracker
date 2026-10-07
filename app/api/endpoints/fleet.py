@@ -723,6 +723,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "sidecar_update_channel": (sys_cfg.sidecar_update_channel if sys_cfg else None) or "stable",
         # Fleet-wide opt-in auto-update flag; a sidecar's explicit local config wins.
         "sidecar_auto_update": (sys_cfg.sidecar_auto_update if sys_cfg else None) or False,
+        # Fleet-wide keep-alive default: on for sidecars without their own override. It only
+        # ever turns keep-alive on (the sidecar ORs it with its local flag).
+        "keep_alive_fleet_default": (sys_cfg.sidecar_keep_alive_default if sys_cfg else None)
+        or False,
         # One-shot: self-update immediately on this heartbeat (admin pushed it).
         "update_now": update_now,
     }

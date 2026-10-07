@@ -5037,6 +5037,8 @@ class DaemonRunner:
 
             if "keep_alive_desired" in result:
                 _KEEP_ALIVE.set_remote(result.get("keep_alive_desired"))
+            if "keep_alive_fleet_default" in result:
+                _KEEP_ALIVE.set_fleet_default(result.get("keep_alive_fleet_default"))
 
             global _AUTO_UPDATE_SERVER
             server_auto = bool(result.get("sidecar_auto_update", False))

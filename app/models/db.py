@@ -282,6 +282,10 @@ class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]
     # Pushed via the /fleet/ingest response; a sidecar's explicit local
     # `auto_update` config overrides this. None/False = off.
     sidecar_auto_update: bool | None = None
+    # Fleet-wide keep-alive default: when true, every sidecar renews its CLI logins unless its
+    # own Fleet override says otherwise. It can only turn keep-alive on — it never switches off
+    # a sidecar whose local flag is on. Pushed via the /fleet/ingest response. None/False = off.
+    sidecar_keep_alive_default: bool | None = None
     # Fernet key that signs browser session cookies, generated on first use
     # and stored encrypted-at-rest with DB_ENCRYPTION_KEY. Kept separate from
     # DB_ENCRYPTION_KEY so rotating it ("log out everywhere") invalidates all

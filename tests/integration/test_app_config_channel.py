@@ -70,6 +70,21 @@ def test_default_auto_update_is_off(client: TestClient):
     assert r.json()["sidecar_auto_update"] is False
 
 
+def test_default_keep_alive_default_is_off(client: TestClient):
+    assert client.get("/api/v1/system/app-config").json()["sidecar_keep_alive_default"] is False
+
+
+def test_set_keep_alive_default_roundtrip_and_unset_preserves_it(client: TestClient):
+    r = client.put("/api/v1/system/app-config", json={"sidecar_keep_alive_default": True})
+    assert r.status_code == 200
+    assert client.get("/api/v1/system/app-config").json()["sidecar_keep_alive_default"] is True
+    # Omitting the field in a PUT must not clobber the stored value.
+    client.put("/api/v1/system/app-config", json={"sidecar_update_channel": "edge"})
+    assert client.get("/api/v1/system/app-config").json()["sidecar_keep_alive_default"] is True
+    client.put("/api/v1/system/app-config", json={"sidecar_keep_alive_default": False})
+    assert client.get("/api/v1/system/app-config").json()["sidecar_keep_alive_default"] is False
+
+
 def test_setting_user_timezone_clears_response_cache(client: TestClient):
     """resolve_user_tz() and every period-boundary-dependent response
     (/fleet, /global-stats, /top-*, /forecast) cache their output — a tz

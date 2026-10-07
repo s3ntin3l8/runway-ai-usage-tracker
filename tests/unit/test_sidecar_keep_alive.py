@@ -252,6 +252,48 @@ class TestKeepAliveController:
         controller.set_remote("yes")
         assert made == [] and controller.effective is False
 
+    def test_fleet_default_starts_a_sidecar_whose_local_flag_is_off(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        controller.set_fleet_default(True)
+        assert len(made) == 1 and made[0].started == 1
+        assert controller.effective is True and keep_alive.is_enabled() is True
+
+    def test_fleet_default_off_never_stops_a_sidecar_whose_local_flag_is_on(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(True)
+        controller.set_fleet_default(True)
+        controller.set_fleet_default(False)  # the default can only turn keep-alive on
+        assert len(made) == 1 and made[0].stopped == 0
+        assert controller.effective is True
+
+    def test_turning_the_fleet_default_off_stops_a_sidecar_that_only_had_the_default(
+        self, monkeypatch
+    ):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        controller.set_fleet_default(True)
+        controller.set_fleet_default(False)
+        assert made[0].stopped == 1 and keep_alive.is_enabled() is False
+
+    def test_a_per_sidecar_override_beats_the_fleet_default(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        controller.set_fleet_default(True)
+        controller.set_remote(False)  # this sidecar opted out in Fleet
+        assert made[0].stopped == 1 and controller.effective is False
+        controller.set_remote(None)  # override cleared: the default applies again
+        assert len(made) == 2 and controller.effective is True
+
+    def test_fleet_default_is_inert_until_armed_and_ignores_junk(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.set_fleet_default(True)
+        assert made == [] and controller.effective is False
+        controller.arm(False)
+        controller.set_fleet_default("yes")
+        controller.set_fleet_default(None)
+        assert made == [] and controller.effective is False
+
     def test_stop_ends_the_thread_and_disarms(self, monkeypatch):
         controller, made = self._controller(monkeypatch)
         controller.arm(True)
@@ -271,6 +313,18 @@ def test_sidecar_applies_the_servers_setting_from_an_ingest_response(monkeypatch
     runner._apply_ingest_instructions({"keep_alive_desired": None}, [], False, False, False)
     runner._apply_ingest_instructions({}, [], False, False, False)  # absent: untouched
     assert calls == [True, None]
+
+
+def test_sidecar_applies_the_fleet_default_from_an_ingest_response(monkeypatch):
+    from scripts import sidecar
+
+    calls = []
+    monkeypatch.setattr(sidecar._KEEP_ALIVE, "set_fleet_default", lambda v: calls.append(v))
+    runner = sidecar.DaemonRunner.__new__(sidecar.DaemonRunner)
+    runner._apply_ingest_instructions({"keep_alive_fleet_default": True}, [], False, False, False)
+    runner._apply_ingest_instructions({"keep_alive_fleet_default": False}, [], False, False, False)
+    runner._apply_ingest_instructions({}, [], False, False, False)  # older server: untouched
+    assert calls == [True, False]
 
 
 def test_sidecar_builds_its_keep_alive_thread_with_the_xai_claude_and_codex_renewers():

@@ -1149,6 +1149,8 @@ class _AppConfigUpdate(BaseModel):
     sidecar_update_channel: str | None = None
     # Fleet-wide opt-in: when true, sidecars self-install available updates.
     sidecar_auto_update: bool | None = None
+    # Fleet-wide default: keep-alive on for every sidecar without its own override.
+    sidecar_keep_alive_default: bool | None = None
 
 
 class _DashboardLayout(BaseModel):
@@ -2675,6 +2677,7 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         "user_timezone": cfg.user_timezone if cfg else None,
         "sidecar_update_channel": (cfg.sidecar_update_channel if cfg else None) or "stable",
         "sidecar_auto_update": bool(cfg.sidecar_auto_update) if cfg else False,
+        "sidecar_keep_alive_default": bool(cfg.sidecar_keep_alive_default) if cfg else False,
         "env_timezone": settings.env_timezone,
     }
 
@@ -2733,6 +2736,8 @@ async def upsert_app_config(
             )
     if body.sidecar_auto_update is not None:
         cfg.sidecar_auto_update = bool(body.sidecar_auto_update)
+    if body.sidecar_keep_alive_default is not None:
+        cfg.sidecar_keep_alive_default = bool(body.sidecar_keep_alive_default)
     session.commit()
 
     # Wake poller so the new interval applies on the next tick rather than

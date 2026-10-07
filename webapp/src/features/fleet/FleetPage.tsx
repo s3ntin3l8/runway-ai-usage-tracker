@@ -39,7 +39,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
-import { keepAliveLoginsText, keepAliveState } from '@/lib/keepAlive';
+import { keepAliveLoginsText, keepAliveState, useKeepAliveFleetDefault } from '@/lib/keepAlive';
 import { AddSidecarCard } from './AddSidecarCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 import { buildSidecarNameMap } from './queries';
@@ -316,10 +316,12 @@ function SidecarCard({
 
   // `keep_alive` is what the sidecar runs now; `keep_alive_desired` is a server-side override it
   // picks up on its next check-in. keepAliveState() is the one reading, shared with Credentials.
+  const fleetDefault = useKeepAliveFleetDefault();
   const ka = keepAliveState({
     reported: sidecar.keep_alive ?? null,
     desired: sidecar.keep_alive_desired ?? null,
     offline: !online,
+    fleetDefault,
   });
   const keepAliveReported = sidecar.keep_alive === true;
   const keepAliveWhen = online ? "applies on the sidecar's next check-in" : 'applies when the sidecar reconnects';

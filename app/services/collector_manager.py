@@ -1224,6 +1224,22 @@ class CollectorManager:
             logger.debug("Could not read keep-alive for sidecar", exc_info=True)
             return None, None
 
+    @staticmethod
+    def _read_keep_alive_fleet_default() -> bool:
+        """The fleet-wide "keep-alive on for all sidecars" default (Settings → System)."""
+        try:
+            from sqlmodel import Session, select
+
+            from app.core.db import engine
+            from app.models.db import SystemConfig
+
+            with Session(engine) as session:
+                cfg = session.exec(select(SystemConfig)).first()
+                return bool(cfg and cfg.sidecar_keep_alive_default)
+        except Exception:
+            logger.debug("Could not read the keep-alive fleet default", exc_info=True)
+            return False
+
     async def _renewal_wait_reason(self, provider_id: str | None, candidate: dict[str, Any]) -> str:
         """What a stale card should say about an expired login its machine must renew.
 
@@ -1240,8 +1256,13 @@ class CollectorManager:
                 "its machine's keep-alive hasn't renewed it — check the sidecar log, "
                 "or log in again with the CLI"
             )
-        if desired is True:
-            # Already switched on in Fleet; the sidecar just hasn't checked in since.
+        fleet_default = (
+            desired is None
+            and reported is False
+            and await asyncio.to_thread(self._read_keep_alive_fleet_default)
+        )
+        if desired is True or fleet_default:
+            # Already switched on (in Fleet, or fleet-wide); the sidecar just hasn't checked in.
             return (
                 "keep-alive is switched on for its machine and applies on the sidecar's "
                 "next check-in"

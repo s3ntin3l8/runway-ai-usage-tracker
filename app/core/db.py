@@ -199,6 +199,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("system_config", "user_timezone", "VARCHAR"),
     ("system_config", "sidecar_update_channel", "VARCHAR"),
     ("system_config", "sidecar_auto_update", "BOOLEAN"),
+    ("system_config", "sidecar_keep_alive_default", "BOOLEAN"),
     ("system_config", "session_secret_encrypted", "VARCHAR"),
     # Structured audit attribution alongside the legacy `actor` string.
     ("audit_log", "actor_type", "VARCHAR"),

@@ -28,6 +28,7 @@ import { Switch } from '@/components/ui/Switch';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAppConfig } from '@/api/endpoints';
 import { useForceCollect } from '@/hooks/useForceCollect';
+import { keepAliveLoginsText } from '@/lib/keepAlive';
 import { setTzConfig } from '@/lib/tz';
 
 export function SystemSection() {
@@ -39,6 +40,7 @@ export function SystemSection() {
   const [browserPref, setBrowserPref] = useState('');
   const [channel, setChannel] = useState<'stable' | 'beta' | 'edge'>('stable');
   const [autoUpdate, setAutoUpdate] = useState(false);
+  const [keepAliveDefault, setKeepAliveDefault] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
   useEffect(() => {
@@ -54,6 +56,7 @@ export function SystemSection() {
       ? appConfig.data.sidecar_update_channel
       : 'stable');
     setAutoUpdate(appConfig.data.sidecar_auto_update === true);
+    setKeepAliveDefault(appConfig.data.sidecar_keep_alive_default === true);
   }, [appConfig.data]);
 
   const save = useMutation({
@@ -65,6 +68,7 @@ export function SystemSection() {
         browser_preference: browserPref.trim() || null,
         sidecar_update_channel: channel,
         sidecar_auto_update: autoUpdate,
+        sidecar_keep_alive_default: keepAliveDefault,
       }),
     onSuccess: () => {
       toast.success('System settings saved');
@@ -193,6 +197,22 @@ export function SystemSection() {
                 When on, sidecars self-install available updates on their next check. A sidecar's
                 explicit local <code>auto_update</code> config overrides this. Packaged builds only —
                 from-source and Docker sidecars never self-update.
+              </HelperText>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="sys-keep-alive-default">Keep logins alive on all sidecars</Label>
+                <Switch
+                  id="sys-keep-alive-default"
+                  checked={keepAliveDefault}
+                  onCheckedChange={setKeepAliveDefault}
+                />
+              </div>
+              <HelperText>
+                When on, every sidecar renews the {keepAliveLoginsText()} logins itself, so they
+                don't lapse while the CLI is idle. A sidecar's own Fleet switch overrides this, and
+                a sidecar started with <code>--keep-alive</code> stays on either way. The tray app
+                doesn't support keep-alive.
               </HelperText>
             </div>
             <Button type="submit" variant="primary" className="self-start" loading={save.isPending}>

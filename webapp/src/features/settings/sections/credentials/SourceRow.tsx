@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { timeAgo } from '@/lib/format';
-import { keepAliveState } from '@/lib/keepAlive';
+import { keepAliveState, useKeepAliveFleetDefault } from '@/lib/keepAlive';
 import { PROBE_LABEL, PROBE_VARIANT } from '@/lib/probeOutcome';
 import {
   MAPPING_HINT,
@@ -77,10 +77,12 @@ export function SourceRow({
   // Keep-alive for the machine that owns this login. The same reading as the Fleet card, so the
   // two never disagree; "Turn on" is the same override request the Fleet switch sends.
   const keepAliveOffline = source.machine_stale === true;
+  const fleetDefault = useKeepAliveFleetDefault();
   const ka = keepAliveState({
     reported: source.keep_alive === 'on' ? true : source.keep_alive === 'off' ? false : null,
     desired: source.keep_alive_desired ?? null,
     offline: keepAliveOffline,
+    fleetDefault,
   });
   const canTurnOnKeepAlive =
     Boolean(source.machine_id) && !ka.effective && !ka.pending && !ka.unsupported;
