@@ -273,9 +273,37 @@ def test_sidecar_applies_the_servers_setting_from_an_ingest_response(monkeypatch
     assert calls == [True, None]
 
 
-def test_sidecar_builds_its_keep_alive_thread_with_the_xai_renewer():
+def test_sidecar_builds_its_keep_alive_thread_with_the_xai_and_claude_renewers():
     from scripts import sidecar
+    from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     thread = sidecar._make_keep_alive_thread()
-    assert [type(r) for r in thread._renewers] == [XaiRenewer]
+    assert [type(r) for r in thread._renewers] == [XaiRenewer, AnthropicRenewer]
+    # The Claude renewer is handed the sidecar's own discovery, re-evaluated on every tick.
+    claude = thread._renewers[1]
+    assert claude._targets is sidecar._claude_login_paths
+
+
+def test_claude_login_paths_follow_the_claude_file_rule(tmp_path, monkeypatch):
+    """The renewer keeps exactly the logins the sidecar pushes: ~/.claude plus every extra
+    login dir (CLAUDE_CONFIG_DIR / claude_config_dirs), re-read on each call."""
+    from scripts import sidecar
+
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    default = home / ".claude" / ".credentials.json"
+    default.write_text("{}")
+    extra_dir = tmp_path / "work-claude"
+    extra_dir.mkdir()
+    extra = extra_dir / ".credentials.json"
+    extra.write_text("{}")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(extra_dir))
+
+    paths = {p.resolve() for p in sidecar._claude_login_paths()}
+    assert default.resolve() in paths and extra.resolve() in paths
+
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR")
+    assert extra.resolve() not in {p.resolve() for p in sidecar._claude_login_paths()}

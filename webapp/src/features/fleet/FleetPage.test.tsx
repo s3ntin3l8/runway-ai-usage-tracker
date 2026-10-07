@@ -166,7 +166,7 @@ describe('FleetPage', () => {
       const sw = await keepAliveSwitch();
       expect(sw).toHaveAttribute('aria-checked', 'false');
       expect(screen.getByText('Keep logins alive')).toBeInTheDocument();
-      expect(screen.getByText(/Antigravity \(agy\) and xAI \(Grok\) logins itself/)).toBeVisible();
+      expect(screen.getByText(/Antigravity \(agy\), Claude Code and xAI \(Grok\) logins itself/)).toBeVisible();
       expect(screen.getByText('Off.')).toBeVisible();
       expect(screen.queryByRole('button', { name: /turn keep-alive/i })).not.toBeInTheDocument();
     });

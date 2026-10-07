@@ -18,7 +18,6 @@ import contextlib
 import json
 import logging
 import os
-import tempfile
 import threading
 import time
 import urllib.error
@@ -27,6 +26,10 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from scripts.sidecar_pkg.oauth_renewal import RefreshRejectedError, atomic_replace_json
+
+__all__ = ["RefreshRejectedError", "XaiRenewer", "grok_scope_entry"]
 
 logger = logging.getLogger(__name__)
 
@@ -146,10 +149,6 @@ def login_due(login: Login, *, now: float | None = None, lead: int = LEAD_SECOND
     return expiry <= (time.time() if now is None else now) + lead
 
 
-class RefreshRejectedError(Exception):
-    """The token endpoint refused the refresh token (``invalid_grant`` etc.)."""
-
-
 def request_refresh(refresh_token: str) -> dict[str, Any]:
     """Exchange a refresh token; raises ``RefreshRejectedError`` on a 4xx, ``OSError`` otherwise."""
     body = urllib.parse.urlencode(
@@ -220,20 +219,8 @@ def write_back(login: Login, token_response: dict[str, Any]) -> str:
         entry["key"] = new_access
         entry["refresh_token"] = new_refresh
 
-    # Replace the real file, not a dotfile-manager symlink pointing at it.
-    target = Path(os.path.realpath(login.path))
-    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".auth-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.chmod(tmp, mode)
-        os.replace(tmp, target)
-    except OSError:
-        # Best-effort cleanup of our temp file; the write already failed, nothing else to do.
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        return "failed"
-    return "written"
+    # Replaces the real file (not a dotfile-manager symlink), atomically, keeping its mode.
+    return "written" if atomic_replace_json(login.path, data, mode, prefix=".auth-") else "failed"
 
 
 # One renewal at a time, process-wide: a keep-alive toggled off and on quickly can leave the

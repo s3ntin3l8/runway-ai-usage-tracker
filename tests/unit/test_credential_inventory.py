@@ -872,17 +872,17 @@ async def test_machine_renewed_xai_login_shows_its_machines_keep_alive(
 @pytest.mark.asyncio
 async def test_keep_alive_is_not_applicable_to_other_providers(engine, cache):
     with Session(engine) as s:
-        # anthropic is machine-renewed too, but its CLI has no sidecar keep-alive.
+        # chatgpt is machine-renewed too, but its CLI has no sidecar keep-alive.
         await _machine_login(
             s,
             cache,
-            "anthropic",
+            "chatgpt",
             "host-a",
             keep_alive=False,
             tokens={"oauth_token": "a", "refresh_token": "r"},
         )
     inv = await build_inventory()
-    (prov,) = [p for p in inv.providers if p.provider_id == "anthropic"]
+    (prov,) = [p for p in inv.providers if p.provider_id == "chatgpt"]
     (src,) = [s for a in prov.accounts for s in a.sources]
     assert src.refreshed_by == "machine"
     assert src.keep_alive is None
@@ -1121,6 +1121,57 @@ async def test_no_override_is_reported_for_a_login_keep_alive_does_not_apply_to(
         await _machine_login(
             s,
             cache,
+            "chatgpt",
+            "host-a",
+            keep_alive=False,
+            tokens={"oauth_token": "a", "refresh_token": "r"},
+        )
+        row = s.get(SidecarRegistry, "host-a")
+        row.keep_alive_desired = True
+        s.add(row)
+        s.commit()
+    src = await _only_source("chatgpt")
+    assert src.keep_alive is None
+    assert src.keep_alive_desired is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reported", "expected"), [(True, "on"), (False, "off"), (None, "unknown")]
+)
+async def test_machine_renewed_claude_login_shows_its_machines_keep_alive(
+    engine, cache, reported, expected
+):
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
+            "anthropic",
+            "host-a",
+            keep_alive=reported,
+            tokens={"oauth_token": "a", "refresh_token": "r"},
+        )
+    src = await _only_source("anthropic")
+    assert src.refreshed_by == "machine"
+    assert src.keep_alive == expected
+
+
+@pytest.mark.asyncio
+async def test_an_expired_claude_login_without_a_live_bundle_still_shows_keep_alive(engine, cache):
+    with Session(engine) as s:
+        await _offline_login(
+            s, "anthropic", "host-a", keep_alive=False, token_types=["oauth_token", "refresh_token"]
+        )
+    src = await _only_source("anthropic")
+    assert src.live is False and src.keep_alive == "off"
+
+
+@pytest.mark.asyncio
+async def test_claude_override_is_exposed_next_to_the_reported_state(engine, cache):
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
             "anthropic",
             "host-a",
             keep_alive=False,
@@ -1131,5 +1182,4 @@ async def test_no_override_is_reported_for_a_login_keep_alive_does_not_apply_to(
         s.add(row)
         s.commit()
     src = await _only_source("anthropic")
-    assert src.keep_alive is None
-    assert src.keep_alive_desired is None
+    assert src.keep_alive == "off" and src.keep_alive_desired is True
