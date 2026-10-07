@@ -545,7 +545,7 @@ class TestLostTokenSafety:
 
     def test_a_stored_response_is_never_saved_over_a_newer_login(self, tmp_path, monkeypatch):
         f = _creds(tmp_path / ".credentials.json", -10)
-        calls = _respond(monkeypatch)
+        _respond(monkeypatch)
         monkeypatch.setattr(ar, "atomic_replace_json", lambda *a, **k: False)
         r = _renewer(f)
         r.renew()

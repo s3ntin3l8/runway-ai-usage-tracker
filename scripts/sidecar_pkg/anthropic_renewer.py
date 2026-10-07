@@ -239,6 +239,10 @@ class AnthropicRenewer:
     def _renew_due_logins(self) -> bool:
         ok = True
         for login in self._due_logins():
+            # The retry path goes through ``_due_logins`` like any renewal, so it keeps the
+            # recent-write guard on purpose: a failed save leaves the file (and its mtime)
+            # untouched, so it is never blocked by our own failure, while a file something else
+            # just wrote is left alone for a moment instead of being raced.
             pending = self._unsaved.get(login.path)
             if pending is not None and pending[0] == login.refresh:
                 response = pending[1]  # only the save failed last time: don't spend another token
