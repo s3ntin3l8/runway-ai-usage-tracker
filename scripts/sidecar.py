@@ -873,12 +873,30 @@ def _claude_login_paths() -> list[Path]:
     return expand_file_rule_paths(paths)
 
 
+def _codex_login_paths() -> list[Path]:
+    """Every Codex ``auth.json`` the sidecar pushes, evaluated on each keep-alive tick.
+
+    The same paths as the ChatGPT file rule (``~/.codex``, the platform config dir and every
+    ``CODEX_HOME`` / ``codex_home`` entry). A callable, because the login dirs change on reload.
+    """
+    rules = __REGISTRY__["providers"].get("chatgpt", {}).get("rules", [])
+    paths = [p for rule in rules if rule.get("type") == "file" for p in rule.get("paths", [])]
+    return expand_file_rule_paths(paths)
+
+
 def _make_keep_alive_thread():
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
+    from scripts.sidecar_pkg.codex_renewer import CodexRenewer
     from scripts.sidecar_pkg.keep_alive import KeepAliveThread
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
-    return KeepAliveThread(renewers=[XaiRenewer(), AnthropicRenewer(_claude_login_paths)])
+    return KeepAliveThread(
+        renewers=[
+            XaiRenewer(),
+            AnthropicRenewer(_claude_login_paths),
+            CodexRenewer(_codex_login_paths),
+        ]
+    )
 
 
 def _keep_alive_controller():
@@ -3666,6 +3684,27 @@ class GenericCollector:
                         f"  [{provider_id}] local login expired — it renews when Claude Code "
                         "next runs, or start the sidecar with --keep-alive"
                     )
+            if (
+                provider_id == "chatgpt"
+                and candidate_kind == "file"
+                and tokens
+                and tokens.get("refresh_token")
+                and tokens.get("oauth_token")
+            ):
+                # Nudge only; the token is still pushed (see the Claude note above).
+                from app.core.utils import IdentityExtractor
+                from scripts.sidecar_pkg.keep_alive import is_enabled
+
+                exp = IdentityExtractor.extract_jwt_payload(tokens["oauth_token"]).get("exp")
+                try:
+                    expired = exp is not None and float(exp) <= time.time()
+                except (TypeError, ValueError):
+                    expired = False
+                if expired and not is_enabled():
+                    logging.warning(
+                        f"  [{provider_id}] local login expired — it renews when Codex "
+                        "next runs, or start the sidecar with --keep-alive"
+                    )
             if tokens and tokens.get("account_id"):
                 from scripts.sidecar_pkg.identity import canonical_account_id
 
@@ -5151,8 +5190,8 @@ def main():
         action="store_true",
         help=(
             "Daemon mode: renew the Antigravity (agy) access token with "
-            "`agy models` whenever it lapses, and refresh the xAI (Grok) and Claude Code "
-            "logins in their CLIs' own credential files before they expire (opt-in; config "
+            "`agy models` whenever it lapses, and refresh the xAI (Grok), Claude Code "
+            "and Codex (ChatGPT) logins in their CLIs' own credential files before they expire (opt-in; config "
             '"keep_alive": true is the same on/off switch for all renewers; it can also be '
             "toggled per sidecar from the Fleet page)"
         ),

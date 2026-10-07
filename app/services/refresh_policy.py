@@ -18,12 +18,14 @@ from __future__ import annotations
 # Anthropic rotates too, and strictly: every refresh returns a new refresh token, each one is
 # single-use (the rotated-away token answers ``invalid_grant`` straight away, but the newest
 # keeps working), verified 2026-10-07 — scripts/sidecar_pkg/anthropic_renewer.py renews and
-# writes back a machine-owned Claude Code login.
+# writes back a machine-owned Claude Code login. ChatGPT (Codex) rotates as well, with a reuse
+# window like xAI's (verified 2026-10-08); scripts/sidecar_pkg/codex_renewer.py renews and writes
+# back a machine-owned Codex login.
 ROTATING_REFRESH_PROVIDERS = frozenset({"anthropic", "chatgpt", "xai"})
 
 # Providers whose sidecar can renew a machine-owned login itself (``--keep-alive``):
-# agy via ``agy models``; xAI and Claude Code by refreshing and writing the token back to the
-# CLI's own credentials file.
+# agy via ``agy models``; xAI, Claude Code and Codex by refreshing and writing the token back to
+# the CLI's own credentials file.
 # The single source of truth for *which* logins that covers: the Fleet tooltip
 # (webapp/src/lib/keepAlive.ts) and the sidecar's ``--keep-alive`` help text must name the
 # same logins; tests/unit/test_keep_alive_copy_contract.py pins them together.
@@ -31,6 +33,7 @@ KEEP_ALIVE_LABELS = {
     "xai": "xAI (Grok)",
     "antigravity": "Antigravity (agy)",
     "anthropic": "Claude Code",
+    "chatgpt": "Codex (ChatGPT)",
 }
 KEEP_ALIVE_PROVIDERS = frozenset(KEEP_ALIVE_LABELS)
 

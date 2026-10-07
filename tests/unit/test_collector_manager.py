@@ -1975,11 +1975,17 @@ def test_keep_alive_providers_are_the_ones_with_a_sidecar_renewer():
     from scripts import sidecar
     from scripts.sidecar_pkg import keep_alive
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
+    from scripts.sidecar_pkg.codex_renewer import CodexRenewer
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     thread = sidecar._make_keep_alive_thread()
     renewer_providers = {r.name for r in thread._renewers} | {keep_alive.AGY_PROVIDER}
-    assert renewer_providers == {XaiRenewer.name, AnthropicRenewer.name, "antigravity"}
+    assert renewer_providers == {
+        XaiRenewer.name,
+        AnthropicRenewer.name,
+        CodexRenewer.name,
+        "antigravity",
+    }
     assert KEEP_ALIVE_PROVIDERS == renewer_providers
 
 
@@ -2104,7 +2110,7 @@ class TestRenewalWaitReason:
         assert "hasn't renewed" in reason
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("provider", ["chatgpt", "gemini", None])
+    @pytest.mark.parametrize("provider", ["gemini", "opencode", None])
     async def test_other_providers_get_no_keep_alive_advice(self, manager, reported, provider):
         reason = await manager._renewal_wait_reason(provider, {"sidecar_id": "host-a"})
         assert "keep-alive" not in reason

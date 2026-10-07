@@ -113,6 +113,8 @@ free/Go shape).
 
 Sidecar extracts token from `~/.codex/auth.json`. See [sidecar documentation](../sidecar.md).
 
+The Codex access token lives ten days and the refresh token rotates on every refresh, so the server never refreshes a login a sidecar pushed. It renews when `codex` next runs, or automatically when the sidecar runs with `--keep-alive` ([`docs/sidecar.md`](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in)), which refreshes the token a day before expiry and writes it back to `auth.json`.
+
 ## Troubleshooting
 
 ### "No logs/auth" error

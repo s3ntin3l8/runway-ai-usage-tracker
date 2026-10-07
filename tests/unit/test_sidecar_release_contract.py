@@ -312,6 +312,7 @@ class TestSpecHiddenImports:
             "scripts.sidecar_pkg.keep_alive",
             "scripts.sidecar_pkg.xai_renewer",
             "scripts.sidecar_pkg.anthropic_renewer",
+            "scripts.sidecar_pkg.codex_renewer",
         } <= lazy
 
     def test_helpers_only_the_renewers_import_are_required_too(self):

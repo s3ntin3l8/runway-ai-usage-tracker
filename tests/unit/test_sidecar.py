@@ -3243,6 +3243,51 @@ class TestXaiExpiredLoginWarning:
         assert "--keep-alive" not in caplog.text
 
 
+class TestCodexExpiredLoginWarning:
+    """An expired Codex login nudges the operator toward --keep-alive (the token is still pushed)."""
+
+    def _collect(self, tmp_path, monkeypatch, *, expired=True):
+        auth_path = tmp_path / "auth.json"
+        offset = -3600 if expired else 5 * 86400
+
+        def seg(obj):
+            return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+        jwt = f"{seg({'alg': 'none'})}.{seg({'exp': int(time.time()) + offset})}.sig"
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "auth_mode": "chatgpt",
+                    "tokens": {"access_token": jwt, "refresh_token": "r", "account_id": "a@x.io"},
+                }
+            )
+        )
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [auth_path])
+        sidecar.GenericCollector.collect_provider(
+            "chatgpt", sidecar.__REGISTRY__["providers"]["chatgpt"]
+        )
+
+    def test_warns_when_keep_alive_is_off(self, tmp_path, monkeypatch, caplog):
+        from scripts.sidecar_pkg import keep_alive
+
+        monkeypatch.setattr(keep_alive, "_enabled", False)
+        with caplog.at_level("WARNING"):
+            self._collect(tmp_path, monkeypatch)
+        assert "Codex" in caplog.text and "--keep-alive" in caplog.text
+
+    def test_quiet_when_keep_alive_is_on_or_the_login_is_valid(self, tmp_path, monkeypatch, caplog):
+        from scripts.sidecar_pkg import keep_alive
+
+        monkeypatch.setattr(keep_alive, "_enabled", True)
+        with caplog.at_level("WARNING"):
+            self._collect(tmp_path, monkeypatch)
+        assert "--keep-alive" not in caplog.text
+        monkeypatch.setattr(keep_alive, "_enabled", False)
+        with caplog.at_level("WARNING"):
+            self._collect(tmp_path, monkeypatch, expired=False)
+        assert "--keep-alive" not in caplog.text
+
+
 def test_grok_scope_selection_is_shared_with_the_renewer():
     from scripts.sidecar_pkg import xai_renewer
 

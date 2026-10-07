@@ -236,7 +236,7 @@ Google does not rotate Gemini's.
   (`TokenAutoRefresher`, collectors, the Refresh action).
 - The server reads no CLI login file from its own host (`~/.claude/.credentials.json`,
   `~/.codex/auth.json`, ...); only sidecars do. A rotating provider's CLI login therefore
-  always arrives as a machine-owned bundle, and the sidecar keep-alive (xAI, Claude Code, agy) renews it.
+  always arrives as a machine-owned bundle, and the sidecar keep-alive (xAI, Claude Code, Codex, agy) renews it.
 - A machine-renewed login that stays expired for more than 3 days raises the usual
   credential alert (an idle CLI is normal for a day or two, not for a week).
 - While a machine's access token is expired and its CLI is idle, collection skips that
