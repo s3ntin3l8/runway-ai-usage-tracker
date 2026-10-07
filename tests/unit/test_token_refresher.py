@@ -142,7 +142,9 @@ class TestRefreshOAuthTokenAnthropic:
         assert kwargs["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
 
     def test_the_client_id_matches_the_sidecar_renewer(self):
-        """The sidecar cannot import ``app``, so the constants are kept equal by a test."""
+        """The sidecar cannot import ``app``, so the constants are kept equal by a test.
+
+        If you change one, change both."""
         from scripts.sidecar_pkg import anthropic_renewer
 
         assert _PROVIDER_CLIENT_IDS["anthropic"] == anthropic_renewer.CLIENT_ID

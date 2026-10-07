@@ -93,17 +93,15 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if resp.status_code == 200:
                 new_data = resp.json()
                 new_refresh = new_data.get("refresh_token", refresh_token)
-                # Record the new access token's expiry: the token is opaque (no JWT ``exp``), and
-                # without it the merged cache entry keeps the *old* ``expiry_date``, so a freshly
-                # refreshed token still reads as expired.
+                # Return the new expiry along with the tokens: the base class stores them (once).
+                # The access token is opaque (no JWT ``exp``), so without ``expiry_date`` the
+                # merged cache entry keeps the *old* one and a freshly refreshed token still
+                # reads as expired.
                 expires_in = new_data.get("expires_in")
                 expiry_ms: int | None = (
                     int(time.time() * 1000 + expires_in * 1000)
                     if isinstance(expires_in, int | float) and expires_in > 0
                     else None
-                )
-                await self._store_sidecar_token(
-                    "anthropic", new_data["access_token"], new_refresh, expiry_ms
                 )
                 self._clear_refresh_429_backoff()
                 result: dict = {
