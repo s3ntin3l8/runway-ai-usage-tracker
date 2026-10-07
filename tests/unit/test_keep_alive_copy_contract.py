@@ -20,6 +20,14 @@ def test_the_fleet_tooltip_names_exactly_the_covered_logins():
     assert sorted(names) == sorted(KEEP_ALIVE_LABELS.values())
 
 
+def test_the_fleet_per_login_list_maps_every_provider_id_to_its_label():
+    ts = (ROOT / "webapp" / "src" / "lib" / "keepAlive.ts").read_text(encoding="utf-8")
+    block = re.search(r"KEEP_ALIVE_PROVIDER_LABELS = \{(.*?)\} as const", ts, re.DOTALL)
+    assert block, "KEEP_ALIVE_PROVIDER_LABELS not found in keepAlive.ts"
+    pairs = dict(re.findall(r"(\w+): '([^']+)'", block.group(1)))
+    assert pairs == KEEP_ALIVE_LABELS
+
+
 def test_the_sidecar_help_text_names_every_covered_login():
     src = (ROOT / "scripts" / "sidecar.py").read_text(encoding="utf-8")
     start = src.index('"--keep-alive"')

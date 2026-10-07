@@ -164,6 +164,8 @@ class IngestRequest(BaseModel):
     self_update_capable: bool | None = None
     # Whether the sidecar runs with --keep-alive. None from older sidecars → "unknown".
     keep_alive: bool | None = None
+    # Per sidecar-run login (provider_id -> running); None from sidecars that predate it.
+    keep_alive_providers: dict[str, bool] | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     # Providers with a complete local-card snapshot in this payload. None from
     # older sidecars means upsert-only; [] is a complete empty report.

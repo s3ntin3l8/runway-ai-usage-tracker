@@ -187,6 +187,102 @@ describe('FleetPage', () => {
       expect(await keepAliveSwitch()).toHaveAttribute('aria-checked', 'true');
     });
 
+    describe('per-login keep-alive', () => {
+      const loginSelect = (name: RegExp) => screen.findByRole('combobox', { name });
+      const open = async () => {
+        await keepAliveSwitch();
+        await userEvent.click(screen.getByText('Per-login keep-alive'));
+      };
+
+      it('lists every login with its override and what it is running', async () => {
+        vi.mocked(api.fetchSidecars).mockResolvedValue({
+          sidecars: [
+            sidecar({
+              keep_alive: true,
+              keep_alive_providers: { xai: true, chatgpt: false },
+              keep_alive_desired_providers: { chatgpt: false },
+            }),
+          ],
+        });
+        renderWithProviders(<FleetPage />);
+        await open();
+
+        expect(await loginSelect(/xAI \(Grok\) keep-alive/)).toHaveValue('default');
+        expect(screen.getByRole('combobox', { name: /Codex \(ChatGPT\) keep-alive/ })).toHaveValue('off');
+        expect(screen.getByRole('combobox', { name: /Claude Code keep-alive/ })).toHaveValue('default');
+        expect(screen.getByRole('combobox', { name: /Antigravity \(agy\) keep-alive/ })).toBeEnabled();
+        expect(screen.getByText('running')).toBeVisible();
+        expect(screen.getAllByRole('option', { name: 'Follow sidecar (on)' }).length).toBe(4);
+      });
+
+      it('sends the login id with the chosen override, and null to follow the sidecar again', async () => {
+        vi.mocked(api.fetchSidecars).mockResolvedValue({
+          sidecars: [sidecar({ keep_alive: false, keep_alive_providers: { xai: false } })],
+        });
+        vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
+          status: 'ok',
+          keep_alive_desired: null,
+        });
+        renderWithProviders(<FleetPage />);
+        await open();
+
+        await userEvent.selectOptions(await loginSelect(/xAI \(Grok\) keep-alive/), 'on');
+        expect(api.setSidecarKeepAlive).toHaveBeenLastCalledWith('laptop', true, 'xai');
+        await waitFor(() =>
+          expect(toast.success).toHaveBeenCalledWith(
+            "xAI (Grok) keep-alive on — applies on the sidecar's next check-in",
+          ),
+        );
+
+        await userEvent.selectOptions(screen.getByRole('combobox', { name: /Codex/ }), 'off');
+        expect(api.setSidecarKeepAlive).toHaveBeenLastCalledWith('laptop', false, 'chatgpt');
+      });
+
+      it('clears one login override with null', async () => {
+        vi.mocked(api.fetchSidecars).mockResolvedValue({
+          sidecars: [
+            sidecar({
+              keep_alive: true,
+              keep_alive_providers: { xai: false },
+              keep_alive_desired_providers: { xai: false },
+            }),
+          ],
+        });
+        vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
+          status: 'ok',
+          keep_alive_desired: null,
+        });
+        renderWithProviders(<FleetPage />);
+        await open();
+
+        await userEvent.selectOptions(await loginSelect(/xAI \(Grok\) keep-alive/), 'default');
+        expect(api.setSidecarKeepAlive).toHaveBeenLastCalledWith('laptop', null, 'xai');
+        await waitFor(() =>
+          expect(toast.success).toHaveBeenCalledWith(
+            "xAI (Grok) follows the sidecar's keep-alive setting — applies on the sidecar's next check-in",
+          ),
+        );
+      });
+
+      it('disables the per-login selects for a sidecar that does not report them', async () => {
+        vi.mocked(api.fetchSidecars).mockResolvedValue({
+          sidecars: [sidecar({ keep_alive: true })], // reports keep-alive, but not per login
+        });
+        renderWithProviders(<FleetPage />);
+        await open();
+
+        expect(await loginSelect(/xAI \(Grok\) keep-alive/)).toBeDisabled();
+        expect(screen.getByText(/doesn't report per-login keep-alive yet/)).toBeVisible();
+      });
+
+      it('is not offered for a sidecar that cannot do keep-alive at all', async () => {
+        vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+        renderWithProviders(<FleetPage />);
+        await keepAliveSwitch();
+        expect(screen.queryByText('Per-login keep-alive')).not.toBeInTheDocument();
+      });
+    });
+
     it('keeps the header to pause and delete (no keep-alive or reset icon buttons)', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({
         sidecars: [sidecar({ keep_alive: false, keep_alive_desired: true })],

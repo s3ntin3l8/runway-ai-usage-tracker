@@ -31,7 +31,12 @@ from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.xai import XaiCollector
 from app.services.collectors.zai import ZaiCollector
 from app.services.credential_sources import is_sidecar_source
-from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS, machine_owns_credential
+from app.services.refresh_policy import (
+    KEEP_ALIVE_PROVIDERS,
+    keep_alive_for,
+    machine_owns_credential,
+    parse_provider_flags,
+)
 from app.services.smart_collector import SmartCollector
 from app.services.source_outcome import source_outcome
 from app.services.token_cache import token_cache
@@ -1205,8 +1210,13 @@ class CollectorManager:
         return True
 
     @staticmethod
-    def _read_sidecar_keep_alive(sidecar_id: str) -> tuple[bool | None, bool | None]:
-        """``(reported, desired)`` keep-alive for *sidecar_id*; None = unknown / no override."""
+    def _read_sidecar_keep_alive(
+        sidecar_id: str, provider_id: str | None = None
+    ) -> tuple[bool | None, bool | None]:
+        """``(reported, desired)`` keep-alive for *sidecar_id*; None = unknown / no override.
+
+        With a *provider_id*, that login's own report / override wins over the sidecar-level ones.
+        """
         if not sidecar_id:
             return None, None
         try:
@@ -1219,7 +1229,15 @@ class CollectorManager:
                 row = session.get(SidecarRegistry, sidecar_id)
                 if row is None:
                     return None, None
-                return row.keep_alive, row.keep_alive_desired
+                if provider_id is None:
+                    return row.keep_alive, row.keep_alive_desired
+                return keep_alive_for(
+                    provider_id,
+                    reported=row.keep_alive,
+                    desired=row.keep_alive_desired,
+                    reported_providers=parse_provider_flags(row.keep_alive_providers),
+                    desired_providers=parse_provider_flags(row.keep_alive_desired_providers),
+                )
         except Exception:
             logger.debug("Could not read keep-alive for sidecar", exc_info=True)
             return None, None
@@ -1249,7 +1267,7 @@ class CollectorManager:
         if provider_id not in KEEP_ALIVE_PROVIDERS:
             return "waiting for its machine to renew it"
         reported, desired = await asyncio.to_thread(
-            self._read_sidecar_keep_alive, candidate.get("sidecar_id") or ""
+            self._read_sidecar_keep_alive, candidate.get("sidecar_id") or "", provider_id
         )
         if reported is True:
             return (

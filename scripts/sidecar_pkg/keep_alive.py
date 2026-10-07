@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -47,6 +48,8 @@ AGY_PROVIDER = "antigravity"
 # Set by enable() when the daemon starts the thread; the sidecar's pre-expiry
 # warning stays quiet for operators who already opted in.
 _enabled = False
+# Logins switched off individually (a per-login override) while the thread runs for the others.
+_disabled_providers: set[str] = set()
 
 
 def enable() -> None:
@@ -55,12 +58,19 @@ def enable() -> None:
 
 
 def disable() -> None:
-    global _enabled
+    global _enabled, _disabled_providers
     _enabled = False
+    _disabled_providers = set()
 
 
-def is_enabled() -> bool:
-    return _enabled
+def set_disabled_providers(providers: Iterable[str]) -> None:
+    global _disabled_providers
+    _disabled_providers = set(providers)
+
+
+def is_enabled(provider: str | None = None) -> bool:
+    """Whether keep-alive runs; with a *provider*, whether it covers that login."""
+    return _enabled and (provider is None or provider not in _disabled_providers)
 
 
 def expiry_epoch(token_path: Path) -> float | None:
@@ -172,6 +182,8 @@ class KeepAliveThread(threading.Thread):
         self._lead_seconds = lead_seconds
         self._stop_event = threading.Event()
         self._missing_warned = False
+        # Per-login switch (provider id -> on), set by the controller. None = every login is on.
+        self.enabled_for: Callable[[str], bool] | None = None
 
     def stop(self) -> None:
         """Ask the loop to exit; the wait is interruptible so this is prompt."""
@@ -192,9 +204,14 @@ class KeepAliveThread(threading.Thread):
         self._command = [agy, "models"]
         return self._command
 
+    def _provider_on(self, provider: str) -> bool:
+        return self.enabled_for is None or self.enabled_for(provider)
+
     def _cycle_renewers(self) -> None:
         now = time.monotonic()
         for renewer in self._renewers:
+            if not self._provider_on(renewer.name):
+                continue
             if self._renewer_resume_at.get(renewer.name, 0.0) > now:
                 continue
             try:
@@ -206,6 +223,8 @@ class KeepAliveThread(threading.Thread):
 
     def cycle_once(self) -> float:
         self._cycle_renewers()
+        if not self._provider_on(AGY_PROVIDER):
+            return self._tick_seconds
         return self._cycle_agy()
 
     def _cycle_agy(self) -> float:
@@ -251,11 +270,17 @@ class KeepAliveController:
     on — the default only ever turns it on, it never switches off a sidecar whose own flag is.
     The override is stateless: the server resends it every heartbeat, so nothing is
     written to the sidecar's config and a restart picks it up again on the first check-in.
+    Per-login overrides (``keep_alive_desired_providers``) sit on top of all that: a login
+    with one follows it, every other login follows the sidecar-level setting. The thread runs
+    while any login is on and skips the ones that are off.
     Inert until ``arm`` is called, so one-shot (non-daemon) runs never spawn a thread.
     """
 
-    def __init__(self, make_thread) -> None:
+    def __init__(self, make_thread, providers: Callable[[], Iterable[str]] | None = None) -> None:
         self._make_thread = make_thread
+        # The login ids this sidecar can keep alive (reported per login to the server).
+        self._provider_names = providers or (lambda: ())
+        self._providers: dict[str, bool] = {}
         self._lock = threading.Lock()
         self._thread: KeepAliveThread | None = None
         self._armed = False
@@ -273,13 +298,29 @@ class KeepAliveController:
 
         The tray app never arms the controller, so it must not claim keep-alive is off.
         """
-        return is_enabled() if self._armed else None
+        return self.effective if self._armed else None
+
+    def reported_providers(self) -> dict[str, bool] | None:
+        """Keep-alive per login to report on ingest; ``None`` when never armed (tray app)."""
+        if not self._armed:
+            return None
+        return {name: self.effective_for(name) for name in self._provider_names()}
 
     @property
     def effective(self) -> bool:
+        """The sidecar-level setting: the Fleet override, else the local flag or fleet default."""
         if self._remote is not None:
             return self._remote
         return self._local or self._fleet
+
+    def effective_for(self, provider: str) -> bool:
+        """Whether one login is kept alive: its own override, else the sidecar-level setting."""
+        override = self._providers.get(provider)
+        return self.effective if override is None else override
+
+    @property
+    def _running(self) -> bool:
+        return self.effective or any(self._providers.values())
 
     def arm(self, local: bool) -> None:
         """Daemon start: take the local flag and begin controlling the thread."""
@@ -294,6 +335,22 @@ class KeepAliveController:
             if not self._armed or desired == self._remote:
                 return
             self._remote = desired if isinstance(desired, bool) else None
+            self._reconcile()
+
+    def set_remote_providers(self, desired: object) -> None:
+        """Apply the server's per-login overrides ``{provider_id: bool}`` (no-op until armed).
+
+        Anything that isn't a bool for a string id is dropped; ``None`` / ``{}`` clears them.
+        """
+        with self._lock:
+            overrides = (
+                {k: v for k, v in desired.items() if isinstance(k, str) and isinstance(v, bool)}
+                if isinstance(desired, dict)
+                else {}
+            )
+            if not self._armed or overrides == self._providers:
+                return
+            self._providers = overrides
             self._reconcile()
 
     def set_fleet_default(self, enabled: object) -> None:
@@ -317,13 +374,17 @@ class KeepAliveController:
         disable()
 
     def _reconcile(self) -> None:
-        if self.effective and self._thread is None:
+        if self._running and self._thread is None:
             self._thread = self._make_thread()
+            self._thread.enabled_for = self.effective_for
             self._thread.start()
             enable()
             logger.info("Keep-alive enabled")
-        elif not self.effective and self._thread is not None:
+        elif not self._running and self._thread is not None:
             self._stop_thread()
             logger.info("Keep-alive disabled")
-        elif not self.effective:
+        elif not self._running:
             disable()
+        if self._running:
+            # Logins an override switched off while the thread runs for the others.
+            set_disabled_providers(n for n in self._provider_names() if not self.effective_for(n))

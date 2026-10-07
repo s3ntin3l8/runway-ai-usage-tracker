@@ -180,6 +180,8 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("sidecar_registry", "self_update_capable", "BOOLEAN"),
     ("sidecar_registry", "keep_alive", "BOOLEAN"),
     ("sidecar_registry", "keep_alive_desired", "BOOLEAN"),
+    ("sidecar_registry", "keep_alive_providers", "VARCHAR"),
+    ("sidecar_registry", "keep_alive_desired_providers", "VARCHAR"),
     ("sidecar_registry", "pending_update", "BOOLEAN NOT NULL DEFAULT 0"),
     ("sidecar_registry", "identity_sources", "TEXT"),
     ("credential_sources", "credential_expires_at", "DATETIME"),

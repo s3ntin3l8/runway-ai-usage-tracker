@@ -87,7 +87,8 @@ export function SourceRow({
   const canTurnOnKeepAlive =
     Boolean(source.machine_id) && !ka.effective && !ka.pending && !ka.unsupported;
   const turnOnKeepAlive = useMutation({
-    mutationFn: () => setSidecarKeepAlive(source.machine_id as string, true),
+    // Just this login: the sidecar's other logins keep following the sidecar-level setting.
+    mutationFn: () => setSidecarKeepAlive(source.machine_id as string, true, source.provider_id),
     onSuccess: () => {
       toast.success(
         `Keep-alive on — ${

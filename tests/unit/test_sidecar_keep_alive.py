@@ -182,16 +182,20 @@ class _FakeThread:
         self.stopped += 1
 
 
+NAMES = ["antigravity", "xai", "anthropic", "chatgpt"]
+
+
 class TestKeepAliveController:
     def _controller(self, monkeypatch):
         monkeypatch.setattr(keep_alive, "_enabled", False)
+        monkeypatch.setattr(keep_alive, "_disabled_providers", set())
         made: list[_FakeThread] = []
 
         def make():
             made.append(_FakeThread())
             return made[-1]
 
-        return keep_alive.KeepAliveController(make), made
+        return keep_alive.KeepAliveController(make, lambda: NAMES), made
 
     def test_unarmed_reports_unknown_armed_reports_bool(self, monkeypatch):
         controller, _ = self._controller(monkeypatch)
@@ -294,6 +298,64 @@ class TestKeepAliveController:
         controller.set_fleet_default(None)
         assert made == [] and controller.effective is False
 
+    def test_a_per_login_override_turns_one_login_on_for_a_sidecar_that_is_off(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        controller.set_remote_providers({"xai": True})
+        assert len(made) == 1 and made[0].started == 1  # the thread runs for xai only
+        assert controller.effective is False  # the sidecar-level setting is unchanged
+        assert controller.reported() is False
+        assert controller.effective_for("xai") is True
+        assert controller.effective_for("anthropic") is False
+        assert controller.reported_providers() == {
+            "antigravity": False,
+            "xai": True,
+            "anthropic": False,
+            "chatgpt": False,
+        }
+        assert keep_alive.is_enabled("xai") is True
+        assert keep_alive.is_enabled("anthropic") is False  # the nudge still fires for it
+
+    def test_a_per_login_off_override_leaves_the_others_running(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(True)
+        controller.set_remote_providers({"antigravity": False})
+        assert len(made) == 1 and made[0].stopped == 0  # still running for the rest
+        assert controller.effective_for("antigravity") is False
+        assert controller.effective_for("xai") is True
+        assert keep_alive.is_enabled("antigravity") is False
+        assert keep_alive.is_enabled("xai") is True
+
+    def test_switching_every_login_off_stops_the_thread(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        controller.set_remote_providers({"xai": True})
+        controller.set_remote_providers({})  # the override was cleared
+        assert made[0].stopped == 1 and keep_alive.is_enabled() is False
+
+    def test_a_login_override_follows_the_sidecar_level_setting_when_cleared(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.arm(False)
+        controller.set_remote_providers({"xai": False})
+        controller.set_remote(True)  # sidecar switched on in Fleet; xai opted out
+        assert controller.effective_for("xai") is False
+        assert controller.effective_for("chatgpt") is True
+        assert controller.reported_providers()["xai"] is False
+
+    def test_per_login_overrides_are_inert_until_armed_and_ignore_junk(self, monkeypatch):
+        controller, made = self._controller(monkeypatch)
+        controller.set_remote_providers({"xai": True})
+        assert made == [] and controller.reported_providers() is None
+        controller.arm(False)
+        controller.set_remote_providers({"xai": "yes", 3: True})
+        controller.set_remote_providers("nope")
+        controller.set_remote_providers(None)
+        assert made == [] and controller.effective_for("xai") is False
+
+    def test_the_tray_app_reports_nothing_per_login(self, monkeypatch):
+        controller, _ = self._controller(monkeypatch)
+        assert controller.reported_providers() is None
+
     def test_stop_ends_the_thread_and_disarms(self, monkeypatch):
         controller, made = self._controller(monkeypatch)
         controller.arm(True)
@@ -313,6 +375,61 @@ def test_sidecar_applies_the_servers_setting_from_an_ingest_response(monkeypatch
     runner._apply_ingest_instructions({"keep_alive_desired": None}, [], False, False, False)
     runner._apply_ingest_instructions({}, [], False, False, False)  # absent: untouched
     assert calls == [True, None]
+
+
+def test_sidecar_applies_per_login_overrides_from_an_ingest_response(monkeypatch):
+    from scripts import sidecar
+
+    calls = []
+    monkeypatch.setattr(sidecar._KEEP_ALIVE, "set_remote_providers", lambda v: calls.append(v))
+    runner = sidecar.DaemonRunner.__new__(sidecar.DaemonRunner)
+    runner._apply_ingest_instructions(
+        {"keep_alive_desired_providers": {"xai": False}}, [], False, False, False
+    )
+    runner._apply_ingest_instructions({"keep_alive_desired_providers": {}}, [], False, False, False)
+    runner._apply_ingest_instructions({}, [], False, False, False)  # older server: untouched
+    assert calls == [{"xai": False}, {}]
+
+
+def test_the_sidecar_names_every_login_it_can_keep_alive():
+    from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS
+    from scripts import sidecar
+
+    assert set(sidecar._keep_alive_provider_names()) == KEEP_ALIVE_PROVIDERS
+
+
+class _RecordingRenewer:
+    def __init__(self, name):
+        self.name = name
+        self.renewed = 0
+
+    def due(self):
+        return True
+
+    def renew(self):
+        self.renewed += 1
+        return True
+
+
+def test_the_thread_skips_logins_that_are_switched_off(tmp_path, monkeypatch):
+    a, b = _RecordingRenewer("xai"), _RecordingRenewer("chatgpt")
+    agy_runs = []
+    monkeypatch.setattr(keep_alive, "run_refresh", lambda cmd: agy_runs.append(cmd) or True)
+    token = _write_token(tmp_path / "t", datetime.now(UTC) - timedelta(minutes=5))
+    thread = keep_alive.KeepAliveThread(
+        token_path=token, command=["agy", "models"], renewers=[a, b]
+    )
+
+    thread.cycle_once()  # no per-login switch: everything runs
+    assert (a.renewed, b.renewed, len(agy_runs)) == (1, 1, 1)
+
+    thread.enabled_for = lambda provider: provider == "chatgpt"
+    thread.cycle_once()  # only chatgpt: xai and agy are skipped
+    assert (a.renewed, b.renewed, len(agy_runs)) == (1, 2, 1)
+
+    thread.enabled_for = lambda provider: provider == keep_alive.AGY_PROVIDER
+    thread.cycle_once()
+    assert (a.renewed, b.renewed, len(agy_runs)) == (1, 2, 2)
 
 
 def test_sidecar_applies_the_fleet_default_from_an_ingest_response(monkeypatch):

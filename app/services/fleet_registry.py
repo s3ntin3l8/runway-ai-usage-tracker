@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 from app.core.log_redaction import redact_secrets
 from app.core.utils import scrub_log
 from app.models.db import CredentialSource, SidecarRegistry
+from app.services.refresh_policy import parse_provider_flags
 
 logger = logging.getLogger(__name__)
 
@@ -125,15 +126,17 @@ class FleetRegistryService:
         logger.info(f"Remote update delivered to sidecar '{scrub_log(sidecar_id)}'")
         return True
 
-    def upsert_sidecar(
+    def upsert_sidecar(  # noqa: PLR0913 - one registry row, many reported fields
         self,
         sidecar_id: str,
         source_ip: str,
         session: Session,
+        *,
         sidecar_version: str | None = None,
         os_platform: str | None = None,
         self_update_capable: bool | None = None,
         keep_alive: bool | None = None,
+        keep_alive_providers: dict[str, bool] | None = None,
         collection_errors: int = 0,
         last_log_lines: list[str] | None = None,
         identity_sources: dict[str, dict[str, str]] | None = None,
@@ -152,6 +155,8 @@ class FleetRegistryService:
                 row.self_update_capable = self_update_capable
             if keep_alive is not None:
                 row.keep_alive = keep_alive
+            if keep_alive_providers is not None:
+                row.keep_alive_providers = json.dumps(parse_provider_flags(keep_alive_providers))
             if collection_errors > 0:
                 row.error_count += collection_errors
             if last_log_lines is not None:
@@ -168,6 +173,11 @@ class FleetRegistryService:
                 os_platform=os_platform,
                 self_update_capable=self_update_capable,
                 keep_alive=keep_alive,
+                keep_alive_providers=(
+                    json.dumps(parse_provider_flags(keep_alive_providers))
+                    if keep_alive_providers is not None
+                    else None
+                ),
                 error_count=collection_errors,
                 recent_logs=_recent_logs_json(last_log_lines) if last_log_lines else None,
                 identity_sources=json.dumps(identity_sources) if identity_sources else None,
@@ -270,6 +280,13 @@ class FleetRegistryService:
             "self_update_capable": row.self_update_capable,
             "keep_alive": row.keep_alive,
             "keep_alive_desired": row.keep_alive_desired,
+            # None = a sidecar that doesn't report per-login state; {} = reports none running.
+            "keep_alive_providers": (
+                parse_provider_flags(row.keep_alive_providers)
+                if row.keep_alive_providers is not None
+                else None
+            ),
+            "keep_alive_desired_providers": parse_provider_flags(row.keep_alive_desired_providers),
             "os_platform": row.os_platform,
             "collection_enabled": row.collection_enabled,
             "pending_update": row.pending_update,

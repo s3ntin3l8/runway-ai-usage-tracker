@@ -2057,7 +2057,7 @@ class TestRenewalWaitReason:
         monkeypatch.setattr(
             manager,
             "_read_sidecar_keep_alive",
-            lambda sid: (state.get(sid), state.desired.get(sid)),
+            lambda sid, provider=None: (state.get(sid), state.desired.get(sid)),
             raising=False,
         )
         return state
@@ -2184,6 +2184,43 @@ class TestRenewalWaitReason:
             s.commit()
 
         assert "switched on" in await manager._renewal_wait_reason("xai", candidate)
+
+    @pytest.mark.asyncio
+    async def test_the_reason_reads_the_logins_own_state(self, manager, monkeypatch):
+        """Keep-alive is on for the sidecar but the operator switched xAI off: xAI's stale card
+        must advise turning it on, while Codex's (still on) says keep-alive hasn't renewed it."""
+        import json
+
+        from sqlalchemy.pool import StaticPool
+        from sqlmodel import SQLModel, create_engine
+        from sqlmodel.orm.session import Session
+
+        from app.core import db as core_db
+        from app.models.db import SidecarRegistry
+
+        eng = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(eng)
+        monkeypatch.setattr(core_db, "engine", eng)
+        monkeypatch.setattr("sqlmodel.Session", Session)
+        with Session(eng) as s:
+            s.add(
+                SidecarRegistry(
+                    sidecar_id="host-a",
+                    hostname="a",
+                    keep_alive=True,
+                    keep_alive_providers=json.dumps({"xai": False, "chatgpt": True}),
+                    keep_alive_desired_providers=json.dumps({"xai": False}),
+                )
+            )
+            s.commit()
+
+        candidate = {"sidecar_id": "host-a"}
+        assert "--keep-alive" in await manager._renewal_wait_reason("xai", candidate)
+        assert "hasn't renewed" in await manager._renewal_wait_reason("chatgpt", candidate)
+        assert manager._read_sidecar_keep_alive("host-a") == (True, None)  # sidecar-level
+        assert manager._read_sidecar_keep_alive("host-a", "xai") == (False, False)
 
     def test_a_database_error_reads_as_unknown(self, manager, monkeypatch):
         def broken_session(*_a, **_k):

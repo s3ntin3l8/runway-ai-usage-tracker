@@ -51,7 +51,11 @@ from app.services.credential_sources import (
 )
 from app.services.credential_tags import origin_candidates, pick_effective_tag
 from app.services.fleet_registry import STALE_THRESHOLD_MINUTES
-from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS
+from app.services.refresh_policy import (
+    KEEP_ALIVE_PROVIDERS,
+    keep_alive_for,
+    parse_provider_flags,
+)
 from app.services.token_cache import token_cache
 from app.services.token_health import (
     credential_status,
@@ -444,9 +448,19 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             and has_refresh_credential(tokens if bundle is not None else token_types)
         ):
             machine = machines.get(row.sidecar_id or "")
-            reported = getattr(machine, "keep_alive", None)
+            # Per login: a per-login override / report wins over the sidecar-level ones.
+            reported, keep_alive_desired = keep_alive_for(
+                row.provider_id,
+                reported=getattr(machine, "keep_alive", None),
+                desired=getattr(machine, "keep_alive_desired", None),
+                reported_providers=parse_provider_flags(
+                    getattr(machine, "keep_alive_providers", None)
+                ),
+                desired_providers=parse_provider_flags(
+                    getattr(machine, "keep_alive_desired_providers", None)
+                ),
+            )
             keep_alive = "unknown" if reported is None else "on" if reported else "off"
-            keep_alive_desired = getattr(machine, "keep_alive_desired", None)
         # Only a machine-reported credential can be "waiting for an account": an env var or
         # pasted key on the ``default`` account is that deployment's real account.
         identity_pending = machine_sourced and row.account_id in ("default", row.source_id)

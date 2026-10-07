@@ -56,6 +56,7 @@ from app.services.credential_tags import (
 from app.services.credential_token import issue_credential_token
 from app.services.event_ingestor import EventIngestor, redirect_push
 from app.services.fleet_registry import fleet_registry
+from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS, parse_provider_flags
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
@@ -360,6 +361,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 os_platform=payload.os_platform,
                 self_update_capable=payload.self_update_capable,
                 keep_alive=payload.keep_alive,
+                keep_alive_providers=payload.keep_alive_providers,
                 collection_errors=payload.collection_errors,
                 last_log_lines=payload.last_log_lines or [],
                 identity_sources=payload.identity_sources,
@@ -651,9 +653,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     sys_cfg = session.exec(select(SystemConfig)).first()
     collection_enabled = True
     keep_alive_desired: bool | None = None
+    keep_alive_desired_providers: dict[str, bool] = {}
     if payload.sidecar_id:
         desired_row = session.get(SidecarRegistry, payload.sidecar_id)
         keep_alive_desired = desired_row.keep_alive_desired if desired_row else None
+        keep_alive_desired_providers = parse_provider_flags(
+            desired_row.keep_alive_desired_providers if desired_row else None
+        )
         # Honor per-sidecar pause: paused sidecars still check in but receive
         # no poll instructions, and their pending-trigger flag is preserved
         # so a resume can still deliver it.
@@ -714,6 +720,8 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "collection_enabled": collection_enabled,
         # Operator's remote keep-alive setting; null leaves the sidecar's own flag in charge.
         "keep_alive_desired": keep_alive_desired,
+        # Per-login overrides on top of it ({provider_id: bool}); only overridden logins appear.
+        "keep_alive_desired_providers": keep_alive_desired_providers,
         "identities": _get_active_identities(
             session
         ),  # For sidecar identity propagation (legacy single-value)
@@ -2133,8 +2141,12 @@ def _set_sidecar_collection_enabled(
 
 
 class SidecarKeepAliveRequest(BaseModel):
-    # true/false forces keep-alive on/off for that sidecar; null defers to its own flag.
+    # true/false forces keep-alive on/off; null defers to the sidecar's own flag / the fleet default.
     enabled: bool | None
+    # Without ``provider`` this sets the sidecar-level switch. With one (an id from
+    # KEEP_ALIVE_PROVIDERS) it overrides just that login, on top of the sidecar-level setting;
+    # null then clears that login's override so it follows the sidecar again.
+    provider: str | None = None
 
 
 @router.put("/sidecars/{sidecar_id}/keep-alive")
@@ -2149,19 +2161,38 @@ async def set_sidecar_keep_alive(
     """Turn the sidecar's keep-alive (renewal of the logins in KEEP_ALIVE_PROVIDERS) on or off remotely.
 
     Delivered on the sidecar's next check-in; the sidecar applies it without a restart."""
+    if body.provider is not None and body.provider not in KEEP_ALIVE_PROVIDERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown keep-alive provider {body.provider!r} "
+            f"(expected one of {sorted(KEEP_ALIVE_PROVIDERS)})",
+        )
     row = session.get(SidecarRegistry, sidecar_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
-    row.keep_alive_desired = body.enabled
+    if body.provider is None:
+        row.keep_alive_desired = body.enabled
+    else:
+        overrides = parse_provider_flags(row.keep_alive_desired_providers)
+        if body.enabled is None:
+            overrides.pop(body.provider, None)
+        else:
+            overrides[body.provider] = body.enabled
+        row.keep_alive_desired_providers = json.dumps(overrides) if overrides else None
     session.commit()
     audit_log.record(
         session,
         request,
         action="sidecar.keep_alive",
         target_id=sidecar_id,
-        payload={"enabled": body.enabled},
+        payload={"enabled": body.enabled, **({"provider": body.provider} if body.provider else {})},
     )
-    return {"status": "ok", "sidecar_id": sidecar_id, "keep_alive_desired": body.enabled}
+    return {
+        "status": "ok",
+        "sidecar_id": sidecar_id,
+        "keep_alive_desired": row.keep_alive_desired,
+        "keep_alive_desired_providers": parse_provider_flags(row.keep_alive_desired_providers),
+    }
 
 
 @router.post("/sidecars/{sidecar_id}/pause")
