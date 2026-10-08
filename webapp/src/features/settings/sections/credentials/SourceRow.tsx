@@ -246,7 +246,7 @@ export function SourceRow({
             ) : null}
             {source.machine_id ? (
               <Link
-                to={`/fleet#sidecar-${encodeURIComponent(source.machine_id)}`}
+                to={`/fleet?settings=${encodeURIComponent(source.machine_id)}`}
                 className="font-medium text-accent hover:underline"
                 aria-label={`Open ${source.machine_name ?? source.machine_id} in Fleet`}
               >

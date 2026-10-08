@@ -44,7 +44,7 @@ describe('SourceRow', () => {
       expect(screen.queryByRole('button', { name: /turn on keep-alive/i })).not.toBeInTheDocument();
       expect(screen.getByRole('link', { name: /open workstation in fleet/i })).toHaveAttribute(
         'href',
-        '/fleet#sidecar-host-a',
+        '/fleet?settings=host-a',
       );
     });
 
