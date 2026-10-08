@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.6...v3.0.0-beta.7) (2026-10-08)
+
+
+### Features
+
+* fleet-wide keep-alive default (Settings → System) ([#584](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/584)) ([6ba2a0c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6ba2a0c009e33452ec79b0580cb3a3e180b1e1d1)), closes [#572](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/572)
+* per-login keep-alive overrides per sidecar ([#585](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/585)) ([653f6b5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/653f6b575375780d1cae1f69bb3dd52678c202bd))
+* per-sidecar auto-update and update channel ([#593](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/593)) ([2acfe2d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2acfe2d532680e7fee842b111d4ce60491cfa531))
+* set a sidecar's log level from the dashboard ([#594](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/594)) ([4a53007](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4a53007ad1825394ea128659e7d9417aa1b2c639))
+* **sidecar:** keep the Claude Code login alive (sidecar keep-alive renewer) ([#579](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/579)) ([628b567](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/628b56700a9b400c12e53ccb175fc23aa0acb6ad))
+* **sidecar:** keep the Codex login alive (sidecar keep-alive renewer) ([#583](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/583)) ([7ef7c69](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7ef7c69993c1f8a0e679ba5a4dfbb3b8da9a8e4d))
+* **ui:** clearer per-sidecar keep-alive control and an action where the problem shows ([#574](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/574)) ([f766cef](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f766cef5b42eb475bf7d4de6e32ed26bcebdb26e))
+* **webapp:** sidecar settings dialog; fix per-login keep-alive selects ([#590](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/590)) ([e0dbefa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e0dbefa45a98f19a0b3fdaed7f96bf83313fa186))
+
+
+### Bug Fixes
+
+* don't spend an Anthropic refresh token on a usage-endpoint 429 ([#582](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/582)) ([13072a6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/13072a650d0ad78d256eb709476fad29534061fe)), closes [#578](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/578)
+* right-align provider header filters ([#596](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/596)) ([89c8f49](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/89c8f49621d17d1d9698ab7bbd44bc79dd174573))
+* send Anthropic token refreshes in the shape the endpoint accepts ([#580](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/580)) ([b7473f0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b7473f00c3dc6fffcc61293dad1e96f8132db3af))
+* **sidecar:** exit for systemd even when an older update left a nested bootloader chain ([#581](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/581)) ([f99e381](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f99e381af42cff5f41e324b418410bd588844627)), closes [#569](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/569)
+* **sidecar:** install updates found before the first check-in ([#591](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/591)) ([31ec5e1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/31ec5e1dea35685d912e251efbdbf28a2b5eebc0))
+
 ## [3.0.0-beta.6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.5...v3.0.0-beta.6) (2026-10-05)
 
 
