@@ -132,7 +132,7 @@ export function ProviderPage() {
             <div className="truncate text-[11px] text-fg-muted">{labelOrMaskedId({ account_id: accountId ?? '', account_label: entry?.critical_gauge.account_label })}</div>
           </div>
         </div>
-        <div className="order-3 flex min-w-0 w-full flex-wrap items-center gap-2 md:order-2 md:w-auto md:flex-1 md:flex-nowrap">
+        <div className="order-3 flex min-w-0 w-full flex-wrap items-center gap-2 md:order-2 md:w-auto md:flex-nowrap">
             {entry && PERIOD_AWARE_TABS.has(tab) ? (
               <TimeRangePicker
                 value={rangeValue}
