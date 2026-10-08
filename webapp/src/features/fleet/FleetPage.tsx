@@ -3,17 +3,16 @@
 // silent-listener "Untagged credentials" banner + per-card badge (PR #288).
 
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle,
   Pause,
   Plus,
-  Pencil,
+  Settings,
   Play,
   RefreshCw,
   Server,
-  Trash2,
   TriangleAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -22,9 +21,7 @@ import {
   deleteSidecar,
   fetchSidecars,
   fetchUntaggedCredentials,
-  patchSidecar,
   setSidecarEnabled,
-  setSidecarKeepAlive,
   triggerSidecarUpdate,
 } from '@/api/endpoints';
 import type { Sidecar, UntaggedCredential } from '@/api/types';
@@ -33,20 +30,12 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Switch } from '@/components/ui/Switch';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
-import {
-  KEEP_ALIVE_PROVIDER_LABELS,
-  type KeepAliveProvider,
-  keepAliveLoginsText,
-  keepAliveState,
-  useKeepAliveFleetDefault,
-} from '@/lib/keepAlive';
 import { AddSidecarCard } from './AddSidecarCard';
+import { SidecarSettingsDialog, useSidecarKeepAlive } from './SidecarSettingsDialog';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 import { buildSidecarNameMap } from './queries';
 import { PendingUsageEventsCard } from './PendingUsageEventsCard';
@@ -79,7 +68,7 @@ export function FleetPage() {
     queryFn: () => fetchUntaggedCredentials(),
     refetchInterval: 60_000,
   });
-  const [editing, setEditing] = useState<Sidecar | null>(null);
+  const [settingsId, setSettingsId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Sidecar | null>(null);
   const [updating, setUpdating] = useState<Sidecar | null>(null);
   const [confirmUpdateAll, setConfirmUpdateAll] = useState(false);
@@ -94,7 +83,7 @@ export function FleetPage() {
 
   const updatable = (sidecars.data?.sidecars ?? []).filter((s) => s.update_available);
 
-  // Deep links from other pages (`/fleet#sidecar-<id>`, e.g. the Credentials keep-alive note)
+  // Deep links from other pages (`/fleet#sidecar-<id>`)
   // land on the sidecar's card once the list has loaded.
   // Scroll once per hash: the list refetches every minute and gets a new identity each time, so
   // keying on it would pull the page back to the card while the user is reading elsewhere.
@@ -112,6 +101,25 @@ export function FleetPage() {
     }
     document.getElementById(id)?.scrollIntoView?.({ block: 'center' });
   }, [hash, sidecarsLoaded]);
+
+  // `/fleet?settings=<id>` opens that sidecar's settings (the Credentials keep-alive note links
+  // here). Once per value, so closing the dialog isn't undone by the next poll.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const settingsParam = searchParams.get('settings');
+  const handledSettings = useRef<string | null>(null);
+  useEffect(() => {
+    if (!settingsParam || !sidecarsLoaded || handledSettings.current === settingsParam) return;
+    handledSettings.current = settingsParam;
+    setSettingsId(settingsParam);
+    setSearchParams(
+      (prev) => {
+        prev.delete('settings');
+        return prev;
+      },
+      { replace: true },
+    );
+  }, [settingsParam, sidecarsLoaded, setSearchParams]);
+  const settingsSidecar = (sidecars.data?.sidecars ?? []).find((s) => s.sidecar_id === settingsId) ?? null;
 
   // Force a GitHub release poll, then refresh both the sidecar badges and the
   // server-update banner (both read the same server-side cache).
@@ -236,8 +244,7 @@ export function FleetPage() {
                   key={s.sidecar_id}
                   sidecar={s}
                   untaggedCount={untagged.data?.counts_by_sidecar[s.sidecar_id] ?? 0}
-                  onEdit={() => setEditing(s)}
-                  onDelete={() => setDeleting(s)}
+                  onSettings={() => setSettingsId(s.sidecar_id)}
                   onUpdate={() => setUpdating(s)}
                   onResolveUntagged={() => {
                     setTagDialogEntry(undefined);
@@ -249,7 +256,19 @@ export function FleetPage() {
           </>
         )}
       </div>
-      <EditSidecarDialog sidecar={editing} onClose={() => setEditing(null)} />
+      <SidecarSettingsDialog
+        sidecar={settingsSidecar}
+        online={settingsSidecar ? isOnline(settingsSidecar) : false}
+        onClose={() => setSettingsId(null)}
+        onUpdate={(sc) => {
+          setSettingsId(null);
+          setUpdating(sc);
+        }}
+        onDelete={(sc) => {
+          setSettingsId(null);
+          setDeleting(sc);
+        }}
+      />
       <DeleteSidecarDialog sidecar={deleting} onClose={() => setDeleting(null)} />
       <UpdateSidecarDialog sidecar={updating} onClose={() => setUpdating(null)} />
       <UntaggedCredentialsDialog
@@ -293,15 +312,13 @@ export function FleetPage() {
 function SidecarCard({
   sidecar,
   untaggedCount,
-  onEdit,
-  onDelete,
+  onSettings,
   onUpdate,
   onResolveUntagged,
 }: {
   sidecar: Sidecar;
   untaggedCount: number;
-  onEdit: () => void;
-  onDelete: () => void;
+  onSettings: () => void;
   onUpdate: () => void;
   /** Open the resolver for *all* of this sidecar's untagged credentials. */
   onResolveUntagged: () => void;
@@ -320,55 +337,8 @@ function SidecarCard({
     onError: (err) => toast.error(err.message),
   });
 
-  // `keep_alive` is what the sidecar runs now; `keep_alive_desired` is a server-side override it
-  // picks up on its next check-in. keepAliveState() is the one reading, shared with Credentials.
-  const fleetDefault = useKeepAliveFleetDefault();
-  const ka = keepAliveState({
-    reported: sidecar.keep_alive ?? null,
-    desired: sidecar.keep_alive_desired ?? null,
-    offline: !online,
-    fleetDefault,
-  });
+  const ka = useSidecarKeepAlive(sidecar, online);
   const keepAliveReported = sidecar.keep_alive === true;
-  const keepAliveWhen = online ? "applies on the sidecar's next check-in" : 'applies when the sidecar reconnects';
-  const keepAlive = useMutation({
-    mutationFn: (next: boolean) => setSidecarKeepAlive(sidecar.sidecar_id, next),
-    onSuccess: (_data, next) => {
-      toast.success(`Keep-alive ${next ? 'on' : 'off'} — ${keepAliveWhen}`);
-      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
-    },
-    onError: (err) => toast.error(err.message),
-  });
-  const clearKeepAlive = useMutation({
-    mutationFn: () => setSidecarKeepAlive(sidecar.sidecar_id, null),
-    onSuccess: () => {
-      toast.success("Keep-alive override cleared — the sidecar's own setting applies");
-      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  // One login's own override on top of the sidecar-level setting; null follows the sidecar again.
-  const loginKeepAlive = useMutation({
-    mutationFn: ({ provider, enabled }: { provider: KeepAliveProvider; enabled: boolean | null }) =>
-      setSidecarKeepAlive(sidecar.sidecar_id, enabled, provider),
-    onSuccess: (_data, { provider, enabled }) => {
-      const name = KEEP_ALIVE_PROVIDER_LABELS[provider];
-      toast.success(
-        enabled === null
-          ? `${name} follows the sidecar's keep-alive setting — ${keepAliveWhen}`
-          : `${name} keep-alive ${enabled ? 'on' : 'off'} — ${keepAliveWhen}`,
-      );
-      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  // All of them PUT the same endpoint, so keep them single-flight together.
-  const keepAliveBusy = keepAlive.isPending || clearKeepAlive.isPending || loginKeepAlive.isPending;
-  // A sidecar that doesn't report per-login state can't apply per-login overrides.
-  const loginsReported = sidecar.keep_alive_providers != null;
-  const keepAliveId = `keep-alive-${sidecar.sidecar_id}`;
 
   const logs = (sidecar.last_log_lines ?? []).filter(Boolean);
 
@@ -403,16 +373,6 @@ function SidecarCard({
                 loading={toggle.isPending}
               >
                 {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-              </Button>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Delete sidecar"
-                title="Delete sidecar"
-                onClick={onDelete}
-                className="text-critical hover:bg-critical-muted"
-              >
-                <Trash2 className="size-3.5" />
               </Button>
             </div>
           </div>
@@ -450,89 +410,13 @@ function SidecarCard({
             </div>
           ) : null}
 
-          <div className="mt-3 rounded-md border border-edge bg-surface-2 p-2.5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <label htmlFor={keepAliveId} className="text-[12px] font-medium">
-                  Keep logins alive
-                </label>
-                <p className="mt-0.5 text-[11px] text-fg-subtle">
-                  Renews this sidecar&apos;s {keepAliveLoginsText()} logins itself so they
-                  don&apos;t lapse while the CLI is idle.
-                </p>
-              </div>
-              <Switch
-                id={keepAliveId}
-                checked={ka.effective}
-                disabled={ka.unsupported || keepAliveBusy}
-                onCheckedChange={(next) => keepAlive.mutate(next)}
-                aria-describedby={`${keepAliveId}-status`}
-                data-pending={ka.pending ? 'true' : undefined}
-              />
-            </div>
+          {!ka.unsupported ? (
             <p
-              id={`${keepAliveId}-status`}
-              className={`mt-1.5 text-[11px] ${ka.pending ? 'text-warning' : 'text-fg-muted'}`}
+              className={`mt-3 text-[11px] ${ka.pending ? 'text-warning' : 'text-fg-muted'}`}
+              data-testid="keep-alive-status"
             >
               {ka.status}
             </p>
-            {ka.hasOverride ? (
-              <p className="mt-1 text-[11px] text-fg-subtle">
-                A Runway override is in charge of this sidecar.{' '}
-                <button
-                  type="button"
-                  className="font-medium text-accent hover:underline disabled:opacity-50"
-                  disabled={keepAliveBusy}
-                  onClick={() => clearKeepAlive.mutate()}
-                >
-                  Use the sidecar&apos;s own setting
-                </button>
-              </p>
-            ) : null}
-          </div>
-
-          {!ka.unsupported ? (
-            <details className="mt-2 rounded-md border border-edge bg-surface-2 px-2.5 py-1.5 text-[11px]">
-              <summary className="cursor-pointer text-fg-muted">Per-login keep-alive</summary>
-              <div className="mt-1.5 flex flex-col gap-1.5">
-                {!loginsReported ? (
-                  <p className="text-fg-subtle">
-                    This sidecar doesn&apos;t report per-login keep-alive yet — update it to set
-                    individual logins.
-                  </p>
-                ) : null}
-                {(Object.keys(KEEP_ALIVE_PROVIDER_LABELS) as KeepAliveProvider[]).map((provider) => {
-                  const override = sidecar.keep_alive_desired_providers?.[provider];
-                  const running = sidecar.keep_alive_providers?.[provider] === true;
-                  const label = KEEP_ALIVE_PROVIDER_LABELS[provider];
-                  return (
-                    <div key={provider} className="flex items-center justify-between gap-2">
-                      <label htmlFor={`${keepAliveId}-${provider}`} className="min-w-0 truncate">
-                        {label}
-                        {running ? <span className="ml-1.5 text-success">running</span> : null}
-                      </label>
-                      <select
-                        id={`${keepAliveId}-${provider}`}
-                        aria-label={`${label} keep-alive`}
-                        className="rounded-md border border-edge bg-surface-1 px-1.5 py-0.5 text-[11px]"
-                        disabled={!loginsReported || keepAliveBusy}
-                        value={override === true ? 'on' : override === false ? 'off' : 'default'}
-                        onChange={(e) =>
-                          loginKeepAlive.mutate({
-                            provider,
-                            enabled: e.target.value === 'default' ? null : e.target.value === 'on',
-                          })
-                        }
-                      >
-                        <option value="default">Follow sidecar ({ka.effective ? 'on' : 'off'})</option>
-                        <option value="on">Always on</option>
-                        <option value="off">Always off</option>
-                      </select>
-                    </div>
-                  );
-                })}
-              </div>
-            </details>
           ) : null}
 
           <dl className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
@@ -584,9 +468,9 @@ function SidecarCard({
           </div>
 
           <div className="mt-3 flex items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={onEdit}>
-              <Pencil className="size-3.5" aria-hidden />
-              Rename / tags
+            <Button size="sm" variant="secondary" onClick={onSettings}>
+              <Settings className="size-3.5" aria-hidden />
+              Settings
             </Button>
             {logs.length > 0 ? (
               <Button size="sm" variant="ghost" onClick={() => setShowLogs(true)}>
@@ -614,85 +498,6 @@ function SidecarCard({
         </pre>
       </ResponsiveDialog>
     </Card>
-  );
-}
-
-function EditSidecarDialog({ sidecar, onClose }: { sidecar: Sidecar | null; onClose: () => void }) {
-  const queryClient = useQueryClient();
-  // Remount the form whenever a different sidecar opens
-  return (
-    <ResponsiveDialog
-      open={sidecar !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      title="Edit sidecar"
-      description={sidecar?.hostname}
-    >
-      {sidecar ? (
-        <EditSidecarForm
-          key={sidecar.sidecar_id}
-          sidecar={sidecar}
-          onSaved={() => {
-            queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
-            onClose();
-          }}
-        />
-      ) : null}
-    </ResponsiveDialog>
-  );
-}
-
-function EditSidecarForm({ sidecar, onSaved }: { sidecar: Sidecar; onSaved: () => void }) {
-  const [name, setName] = useState(sidecar.custom_name ?? '');
-  const [tags, setTags] = useState((sidecar.tags ?? []).join(', '));
-
-  const save = useMutation({
-    mutationFn: () =>
-      patchSidecar(sidecar.sidecar_id, {
-        custom_name: name.trim(),
-        tags: tags
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
-      }),
-    onSuccess: () => {
-      toast.success('Sidecar updated');
-      onSaved();
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        save.mutate();
-      }}
-      className="flex flex-col gap-3"
-    >
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="sidecar-name">Display name</Label>
-        <Input
-          id="sidecar-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={sidecar.hostname}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="sidecar-tags">Tags (comma-separated)</Label>
-        <Input
-          id="sidecar-tags"
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-          placeholder="work, laptop"
-        />
-      </div>
-      <Button type="submit" variant="primary" className="mt-1" loading={save.isPending}>
-        Save
-      </Button>
-    </form>
   );
 }
 

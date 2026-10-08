@@ -37,8 +37,8 @@ def test_the_sidecar_help_text_names_every_covered_login():
         assert label.split(" (")[0] in help_text, f"--keep-alive help does not mention {label}"
 
 
-def test_the_fleet_page_uses_the_shared_list_not_hardcoded_names():
-    page = (ROOT / "webapp" / "src" / "features" / "fleet" / "FleetPage.tsx").read_text(
+def test_the_sidecar_settings_dialog_uses_the_shared_list_not_hardcoded_names():
+    page = (ROOT / "webapp" / "src" / "features" / "fleet" / "SidecarSettingsDialog.tsx").read_text(
         encoding="utf-8"
     )
     assert "keepAliveLoginsText()" in page

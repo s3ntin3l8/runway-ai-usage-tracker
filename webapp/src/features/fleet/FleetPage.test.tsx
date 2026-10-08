@@ -155,7 +155,18 @@ describe('FleetPage', () => {
   });
 
   describe('keep-alive switch', () => {
-    const keepAliveSwitch = () => screen.findByRole('switch', { name: /keep logins alive/i });
+    // Keep-alive lives in the sidecar's Settings dialog; open it once, then find the switch.
+    const keepAliveSwitch = async () => {
+      if (!screen.queryByRole('dialog')) {
+        await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
+      }
+      return screen.findByRole('switch', { name: /keep logins alive/i });
+    };
+    const dlg = () => within(screen.getByRole('dialog'));
+    const chooseLogin = async (name: RegExp, option: string) => {
+      await userEvent.click(await screen.findByRole('combobox', { name }));
+      await userEvent.click(await screen.findByRole('option', { name: option }));
+    };
     const resolveOk = (desired: boolean | null) =>
       vi.mocked(api.setSidecarKeepAlive).mockResolvedValue({
         status: 'ok',
@@ -170,7 +181,7 @@ describe('FleetPage', () => {
       expect(sw).toHaveAttribute('aria-checked', 'false');
       expect(screen.getByText('Keep logins alive')).toBeInTheDocument();
       expect(screen.getByText(/Antigravity \(agy\), Claude Code, Codex \(ChatGPT\) and xAI \(Grok\) logins itself/)).toBeVisible();
-      expect(screen.getByText('Off.')).toBeVisible();
+      expect(dlg().getByText('Off.')).toBeVisible();
       expect(screen.queryByRole('button', { name: /turn keep-alive/i })).not.toBeInTheDocument();
     });
 
@@ -191,7 +202,6 @@ describe('FleetPage', () => {
       const loginSelect = (name: RegExp) => screen.findByRole('combobox', { name });
       const open = async () => {
         await keepAliveSwitch();
-        await userEvent.click(screen.getByText('Per-login keep-alive'));
       };
 
       it('lists every login with its override and what it is running', async () => {
@@ -207,12 +217,11 @@ describe('FleetPage', () => {
         renderWithProviders(<FleetPage />);
         await open();
 
-        expect(await loginSelect(/xAI \(Grok\) keep-alive/)).toHaveValue('default');
-        expect(screen.getByRole('combobox', { name: /Codex \(ChatGPT\) keep-alive/ })).toHaveValue('off');
-        expect(screen.getByRole('combobox', { name: /Claude Code keep-alive/ })).toHaveValue('default');
+        expect(await loginSelect(/xAI \(Grok\) keep-alive/)).toHaveTextContent('Follow sidecar (on)');
+        expect(screen.getByRole('combobox', { name: /Codex \(ChatGPT\) keep-alive/ })).toHaveTextContent('Always off');
+        expect(screen.getByRole('combobox', { name: /Claude Code keep-alive/ })).toHaveTextContent('Follow sidecar (on)');
         expect(screen.getByRole('combobox', { name: /Antigravity \(agy\) keep-alive/ })).toBeEnabled();
         expect(screen.getByText('running')).toBeVisible();
-        expect(screen.getAllByRole('option', { name: 'Follow sidecar (on)' }).length).toBe(4);
       });
 
       it('sends the login id with the chosen override, and null to follow the sidecar again', async () => {
@@ -226,7 +235,7 @@ describe('FleetPage', () => {
         renderWithProviders(<FleetPage />);
         await open();
 
-        await userEvent.selectOptions(await loginSelect(/xAI \(Grok\) keep-alive/), 'on');
+        await chooseLogin(/xAI \(Grok\) keep-alive/, 'Always on');
         expect(api.setSidecarKeepAlive).toHaveBeenLastCalledWith('laptop', true, 'xai');
         await waitFor(() =>
           expect(toast.success).toHaveBeenCalledWith(
@@ -234,7 +243,7 @@ describe('FleetPage', () => {
           ),
         );
 
-        await userEvent.selectOptions(screen.getByRole('combobox', { name: /Codex/ }), 'off');
+        await chooseLogin(/Codex/, 'Always off');
         expect(api.setSidecarKeepAlive).toHaveBeenLastCalledWith('laptop', false, 'chatgpt');
       });
 
@@ -255,7 +264,7 @@ describe('FleetPage', () => {
         renderWithProviders(<FleetPage />);
         await open();
 
-        await userEvent.selectOptions(await loginSelect(/xAI \(Grok\) keep-alive/), 'default');
+        await chooseLogin(/xAI \(Grok\) keep-alive/, 'Follow sidecar (on)');
         expect(api.setSidecarKeepAlive).toHaveBeenLastCalledWith('laptop', null, 'xai');
         await waitFor(() =>
           expect(toast.success).toHaveBeenCalledWith(
@@ -264,33 +273,56 @@ describe('FleetPage', () => {
         );
       });
 
-      it('disables the per-login selects for a sidecar that does not report them', async () => {
+      it('explains instead of showing dead selects for a sidecar that does not report them', async () => {
         vi.mocked(api.fetchSidecars).mockResolvedValue({
           sidecars: [sidecar({ keep_alive: true })], // reports keep-alive, but not per login
         });
         renderWithProviders(<FleetPage />);
         await open();
 
-        expect(await loginSelect(/xAI \(Grok\) keep-alive/)).toBeDisabled();
-        expect(screen.getByText(/doesn't report per-login keep-alive yet/)).toBeVisible();
+        expect(await screen.findByText(/doesn't report per-login keep-alive yet/)).toBeVisible();
+        expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+        expect(screen.getByText(/Update it to a newer build/)).toBeVisible();
       });
 
       it('is not offered for a sidecar that cannot do keep-alive at all', async () => {
         vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
         renderWithProviders(<FleetPage />);
         await keepAliveSwitch();
-        expect(screen.queryByText('Per-login keep-alive')).not.toBeInTheDocument();
+        expect(screen.queryByText('Per login')).not.toBeInTheDocument();
       });
     });
 
-    it('keeps the header to pause and delete (no keep-alive or reset icon buttons)', async () => {
+    it('shows the keep-alive status on the card without opening Settings', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ keep_alive: true })] });
+      renderWithProviders(<FleetPage />);
+
+      expect(await screen.findByTestId('keep-alive-status')).toHaveTextContent(
+        /On — this sidecar renews its logins itself/,
+      );
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    });
+
+    it('opens that sidecar\'s Settings from /fleet?settings=<id>, once', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar(), sidecar({ sidecar_id: 'desktop', hostname: 'desktop', keep_alive: false })],
+      });
+      renderWithProviders(<FleetPage />, { route: '/fleet?settings=desktop' });
+
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText(/desktop/)).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(dialog).toHaveAttribute('data-state', 'closed'));
+    });
+
+    it('keeps the header to pause (no keep-alive, reset or delete icon buttons)', async () => {
       vi.mocked(api.fetchSidecars).mockResolvedValue({
         sidecars: [sidecar({ keep_alive: false, keep_alive_desired: true })],
       });
       renderWithProviders(<FleetPage />);
-      await keepAliveSwitch();
-      expect(screen.getByRole('button', { name: /pause collection/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /delete sidecar/i })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: /pause collection/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /delete sidecar/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /use sidecar's own keep-alive/i })).toBeNull();
     });
 
@@ -316,7 +348,7 @@ describe('FleetPage', () => {
       const sw = await keepAliveSwitch();
       expect(sw).toHaveAttribute('aria-checked', 'true');
       expect(screen.getByText('keep-alive')).toBeInTheDocument();
-      expect(screen.getByText(/On — this sidecar renews its logins itself/)).toBeVisible();
+      expect(dlg().getByText(/On — this sidecar renews its logins itself/)).toBeVisible();
       await userEvent.click(sw);
       expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('laptop', false);
     });
@@ -342,7 +374,7 @@ describe('FleetPage', () => {
       const sw = await keepAliveSwitch();
       expect(sw).toHaveAttribute('aria-checked', 'true');
       expect(sw).toHaveAttribute('data-pending', 'true');
-      expect(screen.getByText(/Requested on — applies on next check-in/)).toBeVisible();
+      expect(dlg().getByText(/Requested on — applies on next check-in/)).toBeVisible();
       expect(screen.getByText('keep-alive on pending')).toBeInTheDocument();
     });
 
@@ -356,9 +388,9 @@ describe('FleetPage', () => {
       expect(sw).toBeEnabled(); // an override is queued, so it stays actionable
       expect(sw).toHaveAttribute('aria-checked', 'false');
       expect(
-        screen.getByText(/Requested off — waiting for the sidecar to confirm/),
+        dlg().getByText(/Requested off — waiting for the sidecar to confirm/),
       ).toBeVisible();
-      expect(screen.getByText(/tray app and older builds don't support keep-alive/)).toBeVisible();
+      expect(dlg().getByText(/tray app and older builds don't support keep-alive/)).toBeVisible();
       expect(screen.getByText('keep-alive off pending')).toBeInTheDocument();
     });
 
@@ -417,6 +449,7 @@ describe('FleetPage', () => {
       resolveOk(null);
       renderWithProviders(<FleetPage />);
 
+      await keepAliveSwitch();
       await userEvent.click(
         await screen.findByRole('button', { name: /use the sidecar's own setting/i }),
       );
@@ -452,7 +485,7 @@ describe('FleetPage', () => {
       });
       renderWithProviders(<FleetPage />, { route: '/fleet#sidecar-desktop' });
 
-      await screen.findAllByRole('switch', { name: /keep logins alive/i });
+      await screen.findAllByRole('button', { name: /^settings$/i });
       const card = document.getElementById('sidecar-desktop');
       expect(card).not.toBeNull();
       expect(document.getElementById('sidecar-laptop')).not.toBeNull();
@@ -465,7 +498,7 @@ describe('FleetPage', () => {
       Element.prototype.scrollIntoView = scrollIntoView;
       vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
       const { client } = renderWithProviders(<FleetPage />, { route: '/fleet#sidecar-laptop' });
-      await screen.findByRole('switch', { name: /keep logins alive/i });
+      await screen.findByRole('button', { name: /^settings$/i });
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
 
       // The 60 s poll returns a fresh array (new last_seen): the page must not snap back.
@@ -487,10 +520,10 @@ describe('FleetPage', () => {
     expect(await screen.findByRole('button', { name: /resume collection/i })).toBeInTheDocument();
   });
 
-  it('exposes Rename / tags as a button', async () => {
+  it('exposes Settings as a button', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
     renderWithProviders(<FleetPage />);
-    expect(await screen.findByRole('button', { name: /rename/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^settings$/i })).toBeInTheDocument();
   });
 
   it('shows an EDGE badge for an edge-channel sidecar', async () => {
@@ -646,7 +679,7 @@ describe('FleetPage', () => {
     vi.mocked(api.patchSidecar).mockResolvedValue({ status: 'ok' } as never);
     renderWithProviders(<FleetPage />);
 
-    await userEvent.click(await screen.findByRole('button', { name: /rename/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
     const dialog = await screen.findByRole('dialog');
 
     const nameInput = within(dialog).getByLabelText(/display name/i);
@@ -675,7 +708,7 @@ describe('FleetPage', () => {
     vi.mocked(api.patchSidecar).mockRejectedValue(new Error('save failed'));
     renderWithProviders(<FleetPage />);
 
-    await userEvent.click(await screen.findByRole('button', { name: /rename/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
 
@@ -687,7 +720,8 @@ describe('FleetPage', () => {
     vi.mocked(api.deleteSidecar).mockResolvedValue({ status: 'deleted' } as never);
     renderWithProviders(<FleetPage />);
 
-    await userEvent.click(await screen.findByRole('button', { name: /delete sidecar/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /remove sidecar/i }));
     const dialog = await screen.findByRole('dialog');
     // Nothing is deleted until the user confirms in the dialog.
     expect(api.deleteSidecar).not.toHaveBeenCalled();
@@ -702,7 +736,8 @@ describe('FleetPage', () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
     renderWithProviders(<FleetPage />);
 
-    await userEvent.click(await screen.findByRole('button', { name: /delete sidecar/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /remove sidecar/i }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
 
@@ -715,7 +750,8 @@ describe('FleetPage', () => {
     vi.mocked(api.deleteSidecar).mockRejectedValue(new Error('delete boom'));
     renderWithProviders(<FleetPage />);
 
-    await userEvent.click(await screen.findByRole('button', { name: /delete sidecar/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /remove sidecar/i }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /^remove$/i }));
 
@@ -757,7 +793,7 @@ describe('FleetPage', () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
     renderWithProviders(<FleetPage />);
 
-    await userEvent.click(await screen.findByRole('button', { name: /rename/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
     const dialog = await screen.findByRole('dialog');
     // Escape triggers onOpenChange(false) → onClose, with no patch call.
     await userEvent.keyboard('{Escape}');
@@ -769,7 +805,8 @@ describe('FleetPage', () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
     renderWithProviders(<FleetPage />);
 
-    await userEvent.click(await screen.findByRole('button', { name: /delete sidecar/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /remove sidecar/i }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(dialog).toHaveAttribute('data-state', 'closed'));
