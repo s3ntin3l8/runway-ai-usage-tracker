@@ -32,6 +32,7 @@ def _recent_logs_json(lines: list[str]) -> str:
 STALE_THRESHOLD_MINUTES = 60
 
 UPDATE_CHANNELS = ("stable", "beta", "edge")
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
 
 def effective_update_channel(row: SidecarRegistry, fleet_channel: str | None) -> str:
@@ -153,6 +154,7 @@ class FleetRegistryService:
         keep_alive_providers: dict[str, bool] | None = None,
         auto_update: bool | None = None,
         update_channel: str | None = None,
+        log_level: str | None = None,
         collection_errors: int = 0,
         last_log_lines: list[str] | None = None,
         identity_sources: dict[str, dict[str, str]] | None = None,
@@ -160,6 +162,9 @@ class FleetRegistryService:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
         if update_channel not in UPDATE_CHANNELS:
             update_channel = None  # never store a channel the dashboard can't render
+        log_level = log_level.upper() if log_level else None
+        if log_level not in LOG_LEVELS:
+            log_level = None
         row = session.get(SidecarRegistry, sidecar_id)
         if row:
             row.last_seen = datetime.now(UTC)
@@ -179,6 +184,8 @@ class FleetRegistryService:
                 row.auto_update = auto_update
             if update_channel is not None:
                 row.update_channel = update_channel
+            if log_level is not None:
+                row.log_level = log_level
             if collection_errors > 0:
                 row.error_count += collection_errors
             if last_log_lines is not None:
@@ -202,6 +209,7 @@ class FleetRegistryService:
                 ),
                 auto_update=auto_update,
                 update_channel=update_channel,
+                log_level=log_level,
                 error_count=collection_errors,
                 recent_logs=_recent_logs_json(last_log_lines) if last_log_lines else None,
                 identity_sources=json.dumps(identity_sources) if identity_sources else None,
@@ -314,6 +322,8 @@ class FleetRegistryService:
             "auto_update": row.auto_update,
             "auto_update_desired": row.auto_update_desired,
             "effective_auto_update": effective_auto_update(row, auto_update),
+            "log_level": row.log_level,
+            "log_level_desired": row.log_level_desired,
             "update_channel": row.update_channel,
             "update_channel_desired": row.update_channel_desired,
             "effective_update_channel": effective_update_channel(row, update_channel),

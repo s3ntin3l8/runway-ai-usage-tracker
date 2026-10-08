@@ -56,6 +56,7 @@ from app.services.credential_tags import (
 from app.services.credential_token import issue_credential_token
 from app.services.event_ingestor import EventIngestor, redirect_push
 from app.services.fleet_registry import (
+    LOG_LEVELS,
     UPDATE_CHANNELS,
     effective_auto_update,
     effective_update_channel,
@@ -369,6 +370,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 keep_alive_providers=payload.keep_alive_providers,
                 auto_update=payload.auto_update,
                 update_channel=payload.update_channel,
+                log_level=payload.log_level,
                 collection_errors=payload.collection_errors,
                 last_log_lines=payload.last_log_lines or [],
                 identity_sources=payload.identity_sources,
@@ -665,11 +667,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     fleet_auto_update = bool((sys_cfg.sidecar_auto_update if sys_cfg else None) or False)
     update_channel = fleet_channel
     auto_update = fleet_auto_update
+    log_level_desired: str | None = None
     if payload.sidecar_id:
         desired_row = session.get(SidecarRegistry, payload.sidecar_id)
         if desired_row is not None:
             update_channel = effective_update_channel(desired_row, fleet_channel)
             auto_update = effective_auto_update(desired_row, fleet_auto_update)
+            log_level_desired = desired_row.log_level_desired
         keep_alive_desired = desired_row.keep_alive_desired if desired_row else None
         keep_alive_desired_providers = parse_provider_flags(
             desired_row.keep_alive_desired_providers if desired_row else None
@@ -747,6 +751,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # Opt-in auto-update flag (this sidecar's override, else the fleet's); a sidecar's
         # explicit local config wins.
         "sidecar_auto_update": auto_update,
+        # Operator's log-level override (raised from the dashboard while debugging); null leaves
+        # the sidecar at its own configured level.
+        "log_level": log_level_desired,
         # Fleet-wide keep-alive default: on for sidecars without their own override. It only
         # ever turns keep-alive on (the sidecar ORs it with its local flag).
         "keep_alive_fleet_default": (sys_cfg.sidecar_keep_alive_default if sys_cfg else None)
@@ -2172,13 +2179,14 @@ class SidecarKeepAliveRequest(BaseModel):
 
 
 class SidecarSettingsRequest(BaseModel):
-    """Per-sidecar overrides of the fleet-wide update settings.
+    """Per-sidecar overrides: the fleet-wide update settings, and the log level.
 
     A field that is absent is left alone; an explicit ``null`` clears that override so the
     sidecar follows the fleet again."""
 
     auto_update: bool | None = None
     update_channel: str | None = None
+    log_level: str | None = None
 
 
 @router.put("/sidecars/{sidecar_id}/settings")
@@ -2190,7 +2198,7 @@ async def set_sidecar_settings(
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
-    """Override the fleet's auto-update flag and/or update channel for one sidecar.
+    """Override the fleet's auto-update flag, update channel and/or the log level of one sidecar.
 
     Delivered on the sidecar's next check-in, in place of the fleet-wide values."""
     sent = body.model_fields_set
@@ -2200,9 +2208,17 @@ async def set_sidecar_settings(
             detail=f"Unknown update channel {body.update_channel!r} "
             f"(expected one of {list(UPDATE_CHANNELS)})",
         )
+    log_level = body.log_level.upper() if body.log_level else None
+    if body.log_level is not None and log_level not in LOG_LEVELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown log level {body.log_level!r} (expected one of {list(LOG_LEVELS)})",
+        )
     row = session.get(SidecarRegistry, sidecar_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
+    if "log_level" in sent:
+        row.log_level_desired = log_level
     if "auto_update" in sent:
         row.auto_update_desired = body.auto_update
     if "update_channel" in sent:
@@ -2221,6 +2237,7 @@ async def set_sidecar_settings(
         "sidecar_id": sidecar_id,
         "auto_update_desired": row.auto_update_desired,
         "update_channel_desired": row.update_channel_desired,
+        "log_level_desired": row.log_level_desired,
         "effective_auto_update": effective_auto_update(row, fleet_auto),
         "effective_update_channel": effective_update_channel(row, channel),
     }

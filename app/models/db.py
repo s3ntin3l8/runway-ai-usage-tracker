@@ -48,6 +48,11 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     auto_update_desired: bool | None = None
     update_channel: str | None = None
     update_channel_desired: str | None = None
+    # Log level. ``log_level_desired`` is the operator's override, raised from the dashboard while
+    # debugging (None = the sidecar's own config.json level); ``log_level`` is what the sidecar
+    # reports it logs at (None = an older sidecar that doesn't report it).
+    log_level: str | None = None
+    log_level_desired: str | None = None
     recent_logs: str | None = None  # JSON-encoded list of last log lines from the sidecar
     # JSON: provider_id → {"account_id", "source"} from the latest check-in.
     identity_sources: str | None = None

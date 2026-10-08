@@ -282,7 +282,8 @@ describe('FleetPage', () => {
 
         expect(await screen.findByText(/doesn't report per-login keep-alive yet/)).toBeVisible();
         expect(screen.queryByRole('combobox', { name: /keep-alive/ })).not.toBeInTheDocument();
-        expect(screen.getByText(/Update it to a newer build/)).toBeVisible();
+        // Keep-alive and logging each explain it; this sidecar reports neither.
+        expect(screen.getAllByText(/Update it to a newer build/)).toHaveLength(2);
       });
 
       it('is not offered for a sidecar that cannot do keep-alive at all', async () => {
@@ -993,6 +994,7 @@ describe('FleetPage', () => {
         status: 'ok',
         auto_update_desired: false,
         update_channel_desired: null,
+        log_level_desired: null,
         effective_auto_update: false,
         effective_update_channel: 'beta',
       });
@@ -1021,6 +1023,7 @@ describe('FleetPage', () => {
         status: 'ok',
         auto_update_desired: null,
         update_channel_desired: null,
+        log_level_desired: null,
         effective_auto_update: false,
         effective_update_channel: 'stable',
       });
@@ -1085,6 +1088,77 @@ describe('FleetPage', () => {
       expect(await dialog.findByText(/Not supported by this build/)).toBeVisible();
       expect(dialog.queryByRole('combobox', { name: 'Auto-update' })).not.toBeInTheDocument();
       expect(dialog.getByText(/can't replace itself/)).toBeVisible();
+    });
+  });
+
+  describe('logging', () => {
+    const openSettings = async () => {
+      await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
+      return within(await screen.findByRole('dialog'));
+    };
+    const saved = (level: 'DEBUG' | null) =>
+      vi.mocked(api.setSidecarSettings).mockResolvedValue({
+        status: 'ok',
+        auto_update_desired: null,
+        update_channel_desired: null,
+        log_level_desired: level,
+        effective_auto_update: false,
+        effective_update_channel: 'stable',
+      });
+
+    it('raises the level and shows what the sidecar logs at now', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ log_level: 'INFO' })] });
+      saved('DEBUG');
+      renderWithProviders(<FleetPage />);
+
+      const dialog = await openSettings();
+      expect(await dialog.findByText('now INFO')).toBeVisible();
+      expect(dialog.getByRole('combobox', { name: 'Log level' })).toHaveTextContent(
+        'Use sidecar config',
+      );
+      await userEvent.click(dialog.getByRole('combobox', { name: 'Log level' }));
+      await userEvent.click(await screen.findByRole('option', { name: 'Debug' }));
+      expect(api.setSidecarSettings).toHaveBeenCalledWith('laptop', { log_level: 'DEBUG' });
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/Log level DEBUG saved/)),
+      );
+    });
+
+    it('warns that debug stays on, resets it with null, and badges the card', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ log_level: 'DEBUG', log_level_desired: 'DEBUG' })],
+      });
+      saved(null);
+      renderWithProviders(<FleetPage />);
+
+      expect(await screen.findByText('debug logging')).toBeVisible();
+      const dialog = await openSettings();
+      expect(await dialog.findByText(/stays on until you reset it/)).toBeVisible();
+      await userEvent.click(dialog.getByRole('button', { name: /reset to the sidecar/i }));
+      expect(api.setSidecarSettings).toHaveBeenCalledWith('laptop', { log_level: null });
+    });
+
+    it('says the request is pending while the sidecar still logs at the old level', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ log_level: 'INFO', log_level_desired: 'DEBUG' })],
+      });
+      renderWithProviders(<FleetPage />);
+
+      const dialog = await openSettings();
+      expect(await dialog.findByTestId('log-level-pending')).toHaveTextContent(
+        /Requested DEBUG; the sidecar still logs at INFO/,
+      );
+    });
+
+    it('explains instead of offering the control to a sidecar that does not report its level', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ log_level: null, update_available: true })],
+      });
+      renderWithProviders(<FleetPage />);
+
+      const dialog = await openSettings();
+      expect(await dialog.findByText(/doesn't report its log level yet/)).toBeVisible();
+      expect(dialog.queryByRole('combobox', { name: 'Log level' })).not.toBeInTheDocument();
     });
   });
 });

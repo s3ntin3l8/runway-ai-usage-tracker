@@ -487,6 +487,8 @@ export interface HistoryDeltas {
   [key: string]: unknown;
 }
 
+export type SidecarLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
+
 export interface Sidecar {
   sidecar_id: string;
   hostname?: string;
@@ -522,6 +524,11 @@ export interface Sidecar {
   update_channel?: SidecarChannel | null;
   update_channel_desired?: SidecarChannel | null;
   effective_update_channel?: SidecarChannel;
+  // Log level: `log_level` is what the sidecar reports it logs at (null = a sidecar too old to
+  // report it, so it can't be changed from here); `log_level_desired` the operator's override
+  // (null = the sidecar's own config.json level).
+  log_level?: SidecarLogLevel | null;
+  log_level_desired?: SidecarLogLevel | null;
   // Whether the sidecar runs with --keep-alive (renews the logins in keepAlive.ts itself). null = not
   // reported by an older sidecar — treat as unknown, not off.
   keep_alive?: boolean | null;

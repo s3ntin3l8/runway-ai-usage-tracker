@@ -383,7 +383,8 @@ function SidecarCard({
           ka.pending ||
           untaggedCount > 0 ||
           sidecar.update_channel_desired ||
-          sidecar.auto_update_desired === false ? (
+          sidecar.auto_update_desired === false ||
+          sidecar.log_level_desired === 'DEBUG' ? (
             <div className="mt-2.5 flex flex-wrap gap-1">
               {paused ? <Badge variant="warning">paused</Badge> : null}
               {ka.pending ? (
@@ -396,6 +397,11 @@ function SidecarCard({
               {sidecar.update_channel_desired ? (
                 <Badge variant="neutral" title="Pinned to this update channel in Settings">
                   {sidecar.update_channel_desired}
+                </Badge>
+              ) : null}
+              {sidecar.log_level_desired === 'DEBUG' ? (
+                <Badge variant="warning" title="Verbose logging was switched on for this sidecar in Settings">
+                  debug logging
                 </Badge>
               ) : null}
               {sidecar.auto_update_desired === false ? (

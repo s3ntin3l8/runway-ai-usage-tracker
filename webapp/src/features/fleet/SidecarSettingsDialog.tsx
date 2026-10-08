@@ -1,4 +1,4 @@
-// Per-sidecar settings: name/tags, keep-alive (sidecar-wide and per login), updates and removal.
+// Per-sidecar settings: name/tags, keep-alive (sidecar-wide and per login), updates, logging and removal.
 // The Fleet card stays a summary; everything you can change lives here.
 
 import { useState } from 'react';
@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchAppConfig, patchSidecar, setSidecarKeepAlive, setSidecarSettings } from '@/api/endpoints';
-import type { Sidecar, SidecarChannel } from '@/api/types';
+import type { Sidecar, SidecarChannel, SidecarLogLevel } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
@@ -72,6 +72,7 @@ export function SidecarSettingsDialog({
           />
           <KeepAliveSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
           <UpdatesSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
+          <LoggingSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
           <section className="flex items-center justify-between gap-3 border-t border-edge pt-4">
             <p className="text-[12px] text-fg-muted">
               Removes the registry entry; collected usage stays.
@@ -428,6 +429,109 @@ function UpdatesSection({
           </Button>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+const LOG_LEVELS: SidecarLogLevel[] = ['DEBUG', 'INFO', 'WARNING', 'ERROR'];
+
+function LoggingSection({
+  sidecar,
+  online,
+  onUpdate,
+}: {
+  sidecar: Sidecar;
+  online: boolean;
+  onUpdate: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const when = online ? "applies on the sidecar's next check-in" : 'applies when the sidecar reconnects';
+  const save = useMutation({
+    mutationFn: (level: SidecarLogLevel | null) =>
+      setSidecarSettings(sidecar.sidecar_id, { log_level: level }),
+    onSuccess: (_data, level) => {
+      toast.success(
+        level ? `Log level ${level} saved — ${when}` : `Log level back to the sidecar's own — ${when}`,
+      );
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  // A sidecar that doesn't report its level predates the remote setting and would ignore it.
+  const supported = sidecar.log_level != null;
+  const desired = sidecar.log_level_desired ?? null;
+  const raised = desired === 'DEBUG';
+  const lagging = desired !== null && supported && sidecar.log_level !== desired;
+
+  return (
+    <section className="rounded-md border border-edge bg-surface-2 p-2.5">
+      <p className="text-[12px] font-medium">Logging</p>
+      <p className="mt-0.5 text-[11px] text-fg-subtle">
+        Raise the level while debugging; read the output with Logs on the card. The sidecar&apos;s
+        own level applies again when you reset it.
+      </p>
+      {!supported ? (
+        <p className="mt-1.5 text-[11px] text-fg-subtle">
+          This sidecar (v{sidecar.sidecar_version ?? '?'}) doesn&apos;t report its log level yet, so
+          it can&apos;t be changed from here.{' '}
+          {sidecar.update_available ? (
+            <button
+              type="button"
+              className="font-medium text-accent hover:underline"
+              onClick={onUpdate}
+            >
+              Update it
+            </button>
+          ) : (
+            'Update it to a newer build to enable this.'
+          )}
+        </p>
+      ) : (
+        <>
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className="text-[12px]">
+              Log level
+              <span className="ml-1.5 text-fg-subtle">now {sidecar.log_level}</span>
+            </span>
+            <Select
+              value={desired ?? 'default'}
+              disabled={save.isPending}
+              onValueChange={(v) => save.mutate(v === 'default' ? null : (v as SidecarLogLevel))}
+            >
+              <SelectTrigger aria-label="Log level" className="h-8 w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Use sidecar config</SelectItem>
+                {LOG_LEVELS.map((l) => (
+                  <SelectItem key={l} value={l}>
+                    {l[0] + l.slice(1).toLowerCase()}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {lagging ? (
+            <p className="mt-1.5 text-[11px] text-warning" data-testid="log-level-pending">
+              Requested {desired}; the sidecar still logs at {sidecar.log_level} — it {when}.
+            </p>
+          ) : null}
+          {raised ? (
+            <p className="mt-1.5 text-[11px] text-fg-muted">
+              Debug logging is verbose and stays on until you reset it.{' '}
+              <button
+                type="button"
+                className="font-medium text-accent hover:underline disabled:opacity-50"
+                disabled={save.isPending}
+                onClick={() => save.mutate(null)}
+              >
+                Reset to the sidecar&apos;s own level
+              </button>
+            </p>
+          ) : null}
+        </>
+      )}
     </section>
   );
 }

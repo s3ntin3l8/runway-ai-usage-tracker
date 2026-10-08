@@ -170,6 +170,8 @@ class IngestRequest(BaseModel):
     # None from sidecars that predate them.
     auto_update: bool | None = None
     update_channel: str | None = None
+    # Level the sidecar logs at now (config.json, or the dashboard's override); None from older ones.
+    log_level: str | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     # Providers with a complete local-card snapshot in this payload. None from
     # older sidecars means upsert-only; [] is a complete empty report.

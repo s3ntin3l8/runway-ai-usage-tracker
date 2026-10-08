@@ -40,6 +40,7 @@ import type {
   SessionsPaginatedResponse,
   Sidecar,
   SidecarChannel,
+  SidecarLogLevel,
   SidecarDownloads,
   SystemSettings,
   TopModelsResponse,
@@ -255,17 +256,22 @@ export const setSidecarKeepAlive = (sidecarId: string, enabled: boolean | null, 
     body: JSON.stringify(provider ? { enabled, provider } : { enabled }),
   });
 
-// Override the fleet's auto-update flag and/or update channel for one sidecar. A key that is left
+// Override the fleet's auto-update flag and/or update channel for one sidecar, or its log level. A key that is left
 // out stays as it is; null clears that override so the sidecar follows the fleet again. Delivered
 // on the sidecar's next check-in.
 export const setSidecarSettings = (
   sidecarId: string,
-  settings: { auto_update?: boolean | null; update_channel?: SidecarChannel | null },
+  settings: {
+    auto_update?: boolean | null;
+    update_channel?: SidecarChannel | null;
+    log_level?: SidecarLogLevel | null;
+  },
 ) =>
   api<{
     status: string;
     auto_update_desired: boolean | null;
     update_channel_desired: SidecarChannel | null;
+    log_level_desired: SidecarLogLevel | null;
     effective_auto_update: boolean;
     effective_update_channel: SidecarChannel;
   }>(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/settings`, {
