@@ -529,3 +529,12 @@ def test_ingest_records_the_reported_log_level_and_ignores_junk(client, session)
         if s["sidecar_id"] == "ka-host"
     )
     assert (sidecar["log_level"], sidecar["log_level_desired"]) == ("DEBUG", None)
+
+
+def test_an_empty_log_level_is_rejected_not_treated_as_a_clear(client, session):
+    _heartbeat(client)
+    r = client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"log_level": ""})
+    assert r.status_code == 422
+    # The error names the normalised value, matching the uppercase list it offers.
+    r = client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"log_level": "chatty"})
+    assert "'CHATTY'" in r.json()["detail"]

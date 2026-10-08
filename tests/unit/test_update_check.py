@@ -282,3 +282,24 @@ class TestServerLogLevel:
         finally:
             monkeypatch.undo()
             logging.basicConfig(level=logging.INFO, force=True)
+
+
+class TestAutoUpdateSkipReason:
+    def test_it_names_where_the_off_setting_came_from(self, monkeypatch):
+        from scripts import sidecar
+
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", None)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", False)
+        assert "the fleet default" in sidecar._auto_update_skip_reason()
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", False)
+        assert "config.json" in sidecar._auto_update_skip_reason()
+
+    def test_there_is_no_reason_when_auto_update_is_on(self, monkeypatch):
+        from scripts import sidecar
+
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", None)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", True)
+        assert sidecar._auto_update_skip_reason() is None
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", True)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", False)
+        assert sidecar._auto_update_skip_reason() is None

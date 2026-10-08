@@ -974,12 +974,22 @@ def _apply_server_log_level(value: Any) -> bool:
     return True
 
 
+def _auto_update_skip_reason() -> str | None:
+    """Why an available update is not installed automatically (None = it will be)."""
+    if _auto_update_enabled():
+        return None
+    src = "config.json" if _AUTO_UPDATE_LOCAL is not None else "the fleet default"
+    return f"Auto-update is off (set by {src})"
+
+
 def _reported_update_settings() -> tuple[str | None, bool | None]:
     """(channel, auto-update) this sidecar effectively uses, for the dashboard to show.
 
     None until the first check-in has delivered the fleet's values (unless config.json sets
     auto-update itself), so a default is never reported as if it were a choice."""
     synced = _UPDATE_CHANNEL is not None
+    # The env var is explicit operator intent, so unlike auto-update it is reported even
+    # before the first check-in has synced the fleet's values.
     channel = os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL
     auto = _auto_update_enabled() if (synced or _AUTO_UPDATE_LOCAL is not None) else None
     return channel, auto
@@ -5351,9 +5361,9 @@ def main():
                 return os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL
 
             def _maybe_self_update(_desc: str) -> None:
-                if not _auto_update_enabled():
-                    src = "config.json" if _AUTO_UPDATE_LOCAL is not None else "the fleet default"
-                    logging.info(f"Auto-update is off (set by {src}); not installing {_desc}")
+                skipped = _auto_update_skip_reason()
+                if skipped:
+                    logging.info(f"{skipped}; not installing {_desc}")
                     return
                 from scripts.sidecar_pkg.self_update import self_update
 
@@ -5364,9 +5374,11 @@ def main():
                 channel_getter=_channel_getter,
                 on_update_available=_maybe_self_update,
             )
-            update_thread.start()
+            # Bind the re-check hook before the thread starts, so a check-in that lands
+            # right away can never find it unset and leave the next check a day out.
             global _UPDATE_RECHECK
             _UPDATE_RECHECK = update_thread.poke
+            update_thread.start()
         except Exception:
             logging.debug("Update-check thread not started", exc_info=True)
 

@@ -2208,11 +2208,12 @@ async def set_sidecar_settings(
             detail=f"Unknown update channel {body.update_channel!r} "
             f"(expected one of {list(UPDATE_CHANNELS)})",
         )
-    log_level = body.log_level.upper() if body.log_level else None
-    if body.log_level is not None and log_level not in LOG_LEVELS:
+    # Case-insensitive, but otherwise validated like the channel: "" is an error, not a clear.
+    log_level = body.log_level.upper() if body.log_level is not None else None
+    if log_level is not None and log_level not in LOG_LEVELS:
         raise HTTPException(
             status_code=422,
-            detail=f"Unknown log level {body.log_level!r} (expected one of {list(LOG_LEVELS)})",
+            detail=f"Unknown log level {log_level!r} (expected one of {list(LOG_LEVELS)})",
         )
     row = session.get(SidecarRegistry, sidecar_id)
     if not row:
