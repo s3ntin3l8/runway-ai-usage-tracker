@@ -197,6 +197,7 @@ class UpdateCheckThread:
         self._interval = interval
         self._on_update_available = on_update_available
         self._stop = threading.Event()
+        self._poke_event = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -206,6 +207,12 @@ class UpdateCheckThread:
 
     def stop(self) -> None:
         self._stop.set()
+        self._poke_event.set()
+
+    def poke(self) -> None:
+        """Re-check now instead of at the next interval (e.g. once the server has
+        told us the fleet's auto-update flag and channel)."""
+        self._poke_event.set()
 
     def _check(self) -> None:
         try:
@@ -225,5 +232,9 @@ class UpdateCheckThread:
 
     def _loop(self) -> None:
         self._check()
-        while not self._stop.wait(self._interval):
+        while not self._stop.is_set():
+            self._poke_event.wait(self._interval)
+            if self._stop.is_set():
+                break
+            self._poke_event.clear()
             self._check()

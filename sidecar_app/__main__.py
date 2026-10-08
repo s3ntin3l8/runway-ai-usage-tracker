@@ -132,6 +132,14 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
 
     checker = UpdateChecker(on_update_available=on_update_available)
     checker.start()
+    try:
+        import scripts.sidecar as _sidecar_mod
+
+        # The first check runs before any check-in has delivered the fleet's
+        # auto-update flag; re-check when the daemon learns it.
+        _sidecar_mod._UPDATE_RECHECK = checker.poke
+    except Exception:
+        logging.debug("Update re-check hook not installed", exc_info=True)
 
     # 7. Wire config hot-reload (file watcher + manual "Reload Config" menu item)
     _watcher_stop = threading.Event()

@@ -49,6 +49,7 @@ class UpdateChecker:
         self._on_update_available = on_update_available
         self._interval = check_interval
         self._stop_event = threading.Event()
+        self._poke_event = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -64,6 +65,11 @@ class UpdateChecker:
     def stop(self) -> None:
         """Signal thread to stop."""
         self._stop_event.set()
+        self._poke_event.set()
+
+    def poke(self) -> None:
+        """Re-check now (the daemon learned the fleet's auto-update flag/channel)."""
+        self._poke_event.set()
 
     def check_now(self) -> None:
         """Run a single update check synchronously."""
@@ -78,5 +84,9 @@ class UpdateChecker:
     def _loop(self) -> None:
         """Background thread loop: check on start, then every interval."""
         self.check_now()
-        while not self._stop_event.wait(self._interval):
+        while not self._stop_event.is_set():
+            self._poke_event.wait(self._interval)
+            if self._stop_event.is_set():
+                break
+            self._poke_event.clear()
             self.check_now()

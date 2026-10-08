@@ -934,6 +934,10 @@ _UPDATE_CHANNEL: str | None = None
 # Effective value comes from _auto_update_enabled().
 _AUTO_UPDATE_LOCAL: bool | None = None
 _AUTO_UPDATE_SERVER: bool = False
+# Called when a check-in changes the fleet auto-update flag or channel, so the
+# update-check thread (which runs its first check before any check-in has landed)
+# re-checks right away instead of waiting a day. Set by whichever thread owns it.
+_UPDATE_RECHECK: Callable[[], None] | None = None
 
 
 def _auto_update_enabled() -> bool:
@@ -5031,6 +5035,7 @@ class DaemonRunner:
     ) -> None:
         """Apply settings from the latest successful response and merged instructions."""
         if isinstance(result, dict):
+            recheck_updates = False
             # Replace identities because the server withdraws hints by omission.
             if "identities" in result:
                 global _ACCOUNT_IDENTITIES
@@ -5048,6 +5053,7 @@ class DaemonRunner:
                 global _UPDATE_CHANNEL
                 if update_channel != _UPDATE_CHANNEL:
                     logging.debug(f"Server update channel: {update_channel}")
+                    recheck_updates = True
                 _UPDATE_CHANNEL = update_channel
 
             if "keep_alive_desired" in result:
@@ -5061,7 +5067,13 @@ class DaemonRunner:
             server_auto = bool(result.get("sidecar_auto_update", False))
             if server_auto != _AUTO_UPDATE_SERVER:
                 logging.debug(f"Server auto-update flag: {server_auto}")
+                recheck_updates = True
             _AUTO_UPDATE_SERVER = server_auto
+            if recheck_updates and _UPDATE_RECHECK is not None:
+                try:
+                    _UPDATE_RECHECK()
+                except Exception:
+                    logging.debug("Update re-check trigger failed", exc_info=True)
 
         if update_requested:
             logging.info("Server pushed an update; installing now")
@@ -5292,6 +5304,8 @@ def main():
 
             def _maybe_self_update(_desc: str) -> None:
                 if not _auto_update_enabled():
+                    src = "config.json" if _AUTO_UPDATE_LOCAL is not None else "the fleet default"
+                    logging.info(f"Auto-update is off (set by {src}); not installing {_desc}")
                     return
                 from scripts.sidecar_pkg.self_update import self_update
 
@@ -5303,6 +5317,8 @@ def main():
                 on_update_available=_maybe_self_update,
             )
             update_thread.start()
+            global _UPDATE_RECHECK
+            _UPDATE_RECHECK = update_thread.poke
         except Exception:
             logging.debug("Update-check thread not started", exc_info=True)
 
