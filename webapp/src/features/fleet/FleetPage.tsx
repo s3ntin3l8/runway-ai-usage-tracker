@@ -260,7 +260,10 @@ export function FleetPage() {
         sidecar={settingsSidecar}
         online={settingsSidecar ? isOnline(settingsSidecar) : false}
         onClose={() => setSettingsId(null)}
-        onUpdate={(sc) => setUpdating(sc)}
+        onUpdate={(sc) => {
+          setSettingsId(null);
+          setUpdating(sc);
+        }}
         onDelete={(sc) => {
           setSettingsId(null);
           setDeleting(sc);
