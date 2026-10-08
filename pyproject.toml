@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runway"
-version = "3.0.0-beta.6" # x-release-please-version
+version = "3.0.0-beta.7" # x-release-please-version
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.111.0,!=0.136.3",
