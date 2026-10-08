@@ -2189,8 +2189,6 @@ class TestRenewalWaitReason:
     async def test_the_reason_reads_the_logins_own_state(self, manager, monkeypatch):
         """Keep-alive is on for the sidecar but the operator switched xAI off: xAI's stale card
         must advise turning it on, while Codex's (still on) says keep-alive hasn't renewed it."""
-        import json
-
         from sqlalchemy.pool import StaticPool
         from sqlmodel import SQLModel, create_engine
         from sqlmodel.orm.session import Session
