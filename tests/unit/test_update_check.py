@@ -225,3 +225,60 @@ class TestReportedUpdateSettings:
         monkeypatch.setattr(sidecar, "_UPDATE_CHANNEL", None)
         monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", True)
         assert sidecar._reported_update_settings() == (None, True)
+
+
+class TestServerLogLevel:
+    """The dashboard can raise the sidecar's log level without a restart."""
+
+    def _reset(self, monkeypatch, base="INFO"):
+        import logging
+
+        from scripts import sidecar
+
+        monkeypatch.setattr(sidecar, "_BASE_LOG_LEVEL", base)
+        monkeypatch.setattr(sidecar, "_LOG_LEVEL_SERVER", None)
+        root = logging.getLogger()
+        monkeypatch.setattr(root, "level", logging.INFO)
+        return sidecar, root
+
+    def test_the_server_level_applies_immediately_and_null_restores_the_startup_level(
+        self, monkeypatch
+    ):
+        import logging
+
+        sidecar, root = self._reset(monkeypatch, base="WARNING")
+        assert sidecar._apply_server_log_level("debug") is True
+        assert root.level == logging.DEBUG and sidecar._effective_log_level() == "DEBUG"
+        assert sidecar._apply_server_log_level("DEBUG") is False  # unchanged
+        assert sidecar._apply_server_log_level(None) is True
+        assert root.level == logging.WARNING and sidecar._effective_log_level() == "WARNING"
+
+    def test_junk_falls_back_to_the_startup_level(self, monkeypatch):
+        sidecar, root = self._reset(monkeypatch)
+        assert sidecar._apply_server_log_level("chatty") is False
+        assert sidecar._apply_server_log_level(5) is False
+        assert sidecar._effective_log_level() == "INFO"
+
+    def test_ingest_response_applies_the_level_and_an_absent_key_is_untouched(self, monkeypatch):
+        sidecar, _root = self._reset(monkeypatch)
+        runner = sidecar.DaemonRunner.__new__(sidecar.DaemonRunner)
+        runner._apply_ingest_instructions({"log_level": "DEBUG"}, [], False, False, False)
+        assert sidecar._effective_log_level() == "DEBUG"
+        runner._apply_ingest_instructions({}, [], False, False, False)  # older server
+        assert sidecar._effective_log_level() == "DEBUG"
+        runner._apply_ingest_instructions({"log_level": None}, [], False, False, False)
+        assert sidecar._effective_log_level() == "INFO"
+
+    def test_setup_logging_records_the_configured_level_as_the_fallback(self, monkeypatch):
+        import logging
+
+        sidecar, root = self._reset(monkeypatch)
+        monkeypatch.setattr(sidecar, "ensure_dirs", lambda: None)
+        sidecar.setup_logging("error", False)
+        try:
+            assert sidecar._BASE_LOG_LEVEL == "ERROR" and root.level == logging.ERROR
+            sidecar._apply_server_log_level("DEBUG")
+            assert root.level == logging.DEBUG
+        finally:
+            monkeypatch.undo()
+            logging.basicConfig(level=logging.INFO, force=True)

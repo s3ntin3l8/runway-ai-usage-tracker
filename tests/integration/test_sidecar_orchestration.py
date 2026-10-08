@@ -422,6 +422,7 @@ def test_a_per_sidecar_update_override_replaces_the_fleet_value_in_the_ingest_re
         "sidecar_id": "ka-host",
         "auto_update_desired": False,
         "update_channel_desired": "edge",
+        "log_level_desired": None,
         "effective_auto_update": False,
         "effective_update_channel": "edge",
     }
@@ -489,3 +490,42 @@ def test_ingest_ignores_an_unknown_reported_update_channel(client, session):
     assert _heartbeat(client, update_channel="nightly").status_code == 200
     session.expire_all()
     assert session.get(SidecarRegistry, "ka-host").update_channel == "beta"
+
+
+def test_a_log_level_override_is_sent_on_check_in_and_cleared_with_null(client, session):
+    # No override until the operator sets one: the sidecar keeps its configured level.
+    assert _heartbeat(client).json()["log_level"] is None
+
+    r = client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"log_level": "debug"})
+    assert r.status_code == 200
+    assert r.json()["log_level_desired"] == "DEBUG"
+    assert _heartbeat(client).json()["log_level"] == "DEBUG"
+
+    # Other keys leave it alone; an explicit null clears it.
+    client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"auto_update": True})
+    assert _heartbeat(client).json()["log_level"] == "DEBUG"
+    client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"log_level": None})
+    assert _heartbeat(client).json()["log_level"] is None
+
+
+def test_an_unknown_log_level_is_rejected(client, session):
+    _heartbeat(client)
+    r = client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"log_level": "chatty"})
+    assert r.status_code == 422
+
+
+def test_ingest_records_the_reported_log_level_and_ignores_junk(client, session):
+    from app.models.db import SidecarRegistry
+
+    assert _heartbeat(client, log_level="debug").status_code == 200
+    assert session.get(SidecarRegistry, "ka-host").log_level == "DEBUG"
+    assert _heartbeat(client, log_level="chatty").status_code == 200
+    session.expire_all()
+    assert session.get(SidecarRegistry, "ka-host").log_level == "DEBUG"  # last good report stands
+
+    sidecar = next(
+        s
+        for s in client.get("/api/v1/fleet/sidecars").json()["sidecars"]
+        if s["sidecar_id"] == "ka-host"
+    )
+    assert (sidecar["log_level"], sidecar["log_level_desired"]) == ("DEBUG", None)

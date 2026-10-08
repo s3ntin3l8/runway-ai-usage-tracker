@@ -945,6 +945,35 @@ def _auto_update_enabled() -> bool:
     return _AUTO_UPDATE_LOCAL if _AUTO_UPDATE_LOCAL is not None else _AUTO_UPDATE_SERVER
 
 
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+# Level the sidecar was started with (config.json "log_level"; the tray app uses INFO).
+_BASE_LOG_LEVEL: str = "INFO"
+# Dashboard override for the level, from the /fleet/ingest response. None = use the base level.
+_LOG_LEVEL_SERVER: str | None = None
+
+
+def _effective_log_level() -> str:
+    return _LOG_LEVEL_SERVER or _BASE_LOG_LEVEL
+
+
+def _apply_server_log_level(value: Any) -> bool:
+    """Adopt the dashboard's log level (None/unknown = fall back to the startup level).
+
+    Takes effect immediately, without a restart. Returns True when the level changed."""
+    global _LOG_LEVEL_SERVER
+    wanted = value.upper() if isinstance(value, str) and value.upper() in LOG_LEVELS else None
+    before = _effective_log_level()
+    _LOG_LEVEL_SERVER = wanted
+    after = _effective_log_level()
+    if after == before:
+        return False
+    logging.getLogger().setLevel(getattr(logging, after, logging.INFO))
+    logging.info(
+        f"Log level is now {after} ({'set from the dashboard' if wanted else 'startup default'})"
+    )
+    return True
+
+
 def _reported_update_settings() -> tuple[str | None, bool | None]:
     """(channel, auto-update) this sidecar effectively uses, for the dashboard to show.
 
@@ -1214,8 +1243,10 @@ def setup_logging(log_level: str, file_enabled: bool) -> None:
     for handler in handlers:
         handler.addFilter(_RedactingFilter())
 
+    global _BASE_LOG_LEVEL
+    _BASE_LOG_LEVEL = log_level.upper() if log_level.upper() in LOG_LEVELS else "INFO"
     logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.INFO),
+        level=getattr(logging, _effective_log_level(), logging.INFO),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=handlers,
         force=True,
@@ -4820,6 +4851,7 @@ class DaemonRunner:
                     "self_update_capable": self_update_capable if first_batch else None,
                     "keep_alive": keep_alive if first_batch else None,
                     "keep_alive_providers": keep_alive_providers if first_batch else None,
+                    "log_level": _effective_log_level() if first_batch else None,
                     "auto_update": auto_update if first_batch else None,
                     "update_channel": update_channel if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
@@ -5050,6 +5082,8 @@ class DaemonRunner:
         """Apply settings from the latest successful response and merged instructions."""
         if isinstance(result, dict):
             recheck_updates = False
+            if "log_level" in result:
+                _apply_server_log_level(result.get("log_level"))
             # Replace identities because the server withdraws hints by omission.
             if "identities" in result:
                 global _ACCOUNT_IDENTITIES
