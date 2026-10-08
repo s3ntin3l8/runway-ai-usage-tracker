@@ -512,6 +512,16 @@ export interface Sidecar {
   // Whether the build can self-update in place (frozen, non-Docker). null = not
   // reported; false = from-source/Docker (no update push offered).
   self_update_capable?: boolean | null;
+  // Auto-update and update channel. `*_desired` is the operator's per-sidecar override (null =
+  // follow the fleet-wide setting); `effective_*` is what the dashboard tells the sidecar to use;
+  // the plain fields are what the sidecar reports it uses (null = an older sidecar, or no
+  // check-in yet) — they differ when its own config.json / RUNWAY_UPDATE_CHANNEL wins.
+  auto_update?: boolean | null;
+  auto_update_desired?: boolean | null;
+  effective_auto_update?: boolean;
+  update_channel?: SidecarChannel | null;
+  update_channel_desired?: SidecarChannel | null;
+  effective_update_channel?: SidecarChannel;
   // Whether the sidecar runs with --keep-alive (renews the logins in keepAlive.ts itself). null = not
   // reported by an older sidecar — treat as unknown, not off.
   keep_alive?: boolean | null;

@@ -377,7 +377,13 @@ function SidecarCard({
             </div>
           </div>
 
-          {(sidecar.tags?.length ?? 0) > 0 || paused || keepAliveReported || ka.pending || untaggedCount > 0 ? (
+          {(sidecar.tags?.length ?? 0) > 0 ||
+          paused ||
+          keepAliveReported ||
+          ka.pending ||
+          untaggedCount > 0 ||
+          sidecar.update_channel_desired ||
+          sidecar.auto_update_desired === false ? (
             <div className="mt-2.5 flex flex-wrap gap-1">
               {paused ? <Badge variant="warning">paused</Badge> : null}
               {ka.pending ? (
@@ -386,6 +392,16 @@ function SidecarCard({
                 </Badge>
               ) : keepAliveReported ? (
                 <Badge variant="neutral">keep-alive</Badge>
+              ) : null}
+              {sidecar.update_channel_desired ? (
+                <Badge variant="neutral" title="Pinned to this update channel in Settings">
+                  {sidecar.update_channel_desired}
+                </Badge>
+              ) : null}
+              {sidecar.auto_update_desired === false ? (
+                <Badge variant="neutral" title="Auto-update is turned off for this sidecar">
+                  no auto-update
+                </Badge>
               ) : null}
               {(sidecar.tags ?? []).map((tag) => (
                 <Badge key={tag} variant="neutral">

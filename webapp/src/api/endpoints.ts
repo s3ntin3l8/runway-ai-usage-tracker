@@ -255,6 +255,24 @@ export const setSidecarKeepAlive = (sidecarId: string, enabled: boolean | null, 
     body: JSON.stringify(provider ? { enabled, provider } : { enabled }),
   });
 
+// Override the fleet's auto-update flag and/or update channel for one sidecar. A key that is left
+// out stays as it is; null clears that override so the sidecar follows the fleet again. Delivered
+// on the sidecar's next check-in.
+export const setSidecarSettings = (
+  sidecarId: string,
+  settings: { auto_update?: boolean | null; update_channel?: SidecarChannel | null },
+) =>
+  api<{
+    status: string;
+    auto_update_desired: boolean | null;
+    update_channel_desired: SidecarChannel | null;
+    effective_auto_update: boolean;
+    effective_update_channel: SidecarChannel;
+  }>(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/settings`, {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  });
+
 // Push a one-shot self-update to a sidecar; it installs on its next heartbeat.
 export const triggerSidecarUpdate = (sidecarId: string) =>
   api<{ status: string; sidecar_id: string }>(

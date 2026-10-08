@@ -386,3 +386,106 @@ def test_sidecar_listing_exposes_both_keep_alive_fields(client, session):
     entry = next(s for s in sidecars if s["sidecar_id"] == "ka-host")
     assert entry["keep_alive"] is True
     assert entry["keep_alive_desired"] is False
+
+
+def test_ingest_records_the_sidecars_reported_update_settings(client, session):
+    from app.models.db import SidecarRegistry
+
+    assert _heartbeat(client, auto_update=True, update_channel="edge").status_code == 200
+    row = session.get(SidecarRegistry, "ka-host")
+    assert (row.auto_update, row.update_channel) == (True, "edge")
+
+    # An event-only batch / older sidecar omits them: the last report stands.
+    assert _heartbeat(client).status_code == 200
+    session.expire_all()
+    row = session.get(SidecarRegistry, "ka-host")
+    assert (row.auto_update, row.update_channel) == (True, "edge")
+
+
+def test_a_per_sidecar_update_override_replaces_the_fleet_value_in_the_ingest_response(
+    client, session
+):
+    client.put(
+        "/api/v1/system/app-config",
+        json={"sidecar_auto_update": True, "sidecar_update_channel": "beta"},
+    )
+    body = _heartbeat(client).json()
+    assert (body["sidecar_auto_update"], body["sidecar_update_channel"]) == (True, "beta")
+
+    r = client.put(
+        "/api/v1/fleet/sidecars/ka-host/settings",
+        json={"auto_update": False, "update_channel": "edge"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {
+        "status": "ok",
+        "sidecar_id": "ka-host",
+        "auto_update_desired": False,
+        "update_channel_desired": "edge",
+        "effective_auto_update": False,
+        "effective_update_channel": "edge",
+    }
+    body = _heartbeat(client).json()
+    assert (body["sidecar_auto_update"], body["sidecar_update_channel"]) == (False, "edge")
+
+    # An absent field is left alone; an explicit null clears just that override.
+    r = client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"auto_update": None})
+    assert r.json()["auto_update_desired"] is None
+    assert r.json()["update_channel_desired"] == "edge"
+    body = _heartbeat(client).json()
+    assert (body["sidecar_auto_update"], body["sidecar_update_channel"]) == (True, "edge")
+
+    client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"update_channel": None})
+    body = _heartbeat(client).json()
+    assert (body["sidecar_auto_update"], body["sidecar_update_channel"]) == (True, "beta")
+
+
+def test_sidecar_settings_rejects_an_unknown_channel_and_a_missing_sidecar(client, session):
+    _heartbeat(client)
+    r = client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"update_channel": "nightly"})
+    assert r.status_code == 422
+    r = client.put("/api/v1/fleet/sidecars/nope/settings", json={"auto_update": True})
+    assert r.status_code == 404
+
+
+def test_the_fleet_list_shows_overrides_and_judges_updates_by_the_effective_channel(
+    client, session, monkeypatch
+):
+    from app.services.sidecar_version_checker import sidecar_version_checker
+
+    # A beta build with a newer beta published: behind on beta, not behind on stable.
+    monkeypatch.setattr(sidecar_version_checker, "get_latest", lambda: "3.0.0")
+    monkeypatch.setattr(sidecar_version_checker, "get_latest_beta", lambda: "3.1.0-beta.2")
+    _heartbeat(client, sidecar_version="3.1.0-beta.1", auto_update=False, update_channel="stable")
+
+    def row():
+        return next(
+            s
+            for s in client.get("/api/v1/fleet/sidecars").json()["sidecars"]
+            if s["sidecar_id"] == "ka-host"
+        )
+
+    r = row()
+    assert (r["auto_update"], r["update_channel"]) == (False, "stable")
+    assert (r["auto_update_desired"], r["update_channel_desired"]) == (None, None)
+    assert (r["effective_auto_update"], r["effective_update_channel"]) == (False, "stable")
+    assert r["outdated"] is False
+
+    client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"update_channel": "beta"})
+    r = row()
+    assert (r["update_channel_desired"], r["effective_update_channel"]) == ("beta", "beta")
+    assert r["outdated"] is True
+
+
+def test_ingest_ignores_an_unknown_reported_update_channel(client, session):
+    from app.models.db import SidecarRegistry
+
+    assert _heartbeat(client, update_channel="nightly").status_code == 200
+    assert session.get(SidecarRegistry, "ka-host").update_channel is None
+    assert _heartbeat(client, update_channel="beta").status_code == 200
+    session.expire_all()
+    assert session.get(SidecarRegistry, "ka-host").update_channel == "beta"
+    # A later bogus value does not overwrite the last good report.
+    assert _heartbeat(client, update_channel="nightly").status_code == 200
+    session.expire_all()
+    assert session.get(SidecarRegistry, "ka-host").update_channel == "beta"
