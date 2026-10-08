@@ -146,6 +146,8 @@ def _merge_registry(session: Session, mapping: dict[str, str]) -> int:
             "self_update_capable": primary.self_update_capable,
             "keep_alive": primary.keep_alive,
             "keep_alive_desired": primary.keep_alive_desired,
+            "keep_alive_providers": primary.keep_alive_providers,
+            "keep_alive_desired_providers": primary.keep_alive_desired_providers,
             "recent_logs": primary.recent_logs,
             "collection_enabled": primary.collection_enabled,
         }

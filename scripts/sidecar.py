@@ -884,25 +884,35 @@ def _codex_login_paths() -> list[Path]:
     return expand_file_rule_paths(paths)
 
 
-def _make_keep_alive_thread():
+def _make_keep_alive_renewers() -> list:
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
     from scripts.sidecar_pkg.codex_renewer import CodexRenewer
-    from scripts.sidecar_pkg.keep_alive import KeepAliveThread
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
-    return KeepAliveThread(
-        renewers=[
-            XaiRenewer(),
-            AnthropicRenewer(_claude_login_paths),
-            CodexRenewer(_codex_login_paths),
-        ]
-    )
+    return [
+        XaiRenewer(),
+        AnthropicRenewer(_claude_login_paths),
+        CodexRenewer(_codex_login_paths),
+    ]
+
+
+def _make_keep_alive_thread():
+    from scripts.sidecar_pkg.keep_alive import KeepAliveThread
+
+    return KeepAliveThread(renewers=_make_keep_alive_renewers())
+
+
+def _keep_alive_provider_names() -> list[str]:
+    """Every login id keep-alive can renew: the renewers plus the built-in agy cycle."""
+    from scripts.sidecar_pkg.keep_alive import AGY_PROVIDER
+
+    return [AGY_PROVIDER, *(r.name for r in _make_keep_alive_renewers())]
 
 
 def _keep_alive_controller():
     from scripts.sidecar_pkg.keep_alive import KeepAliveController
 
-    return KeepAliveController(_make_keep_alive_thread)
+    return KeepAliveController(_make_keep_alive_thread, _keep_alive_provider_names)
 
 
 _KEEP_ALIVE = _keep_alive_controller()
@@ -3592,7 +3602,10 @@ class GenericCollector:
                         from scripts.sidecar_pkg.keep_alive import is_enabled
 
                         seconds_left = expiry_dt.timestamp() - time.time()
-                        if not is_enabled() and seconds_left <= _AG_PRE_EXPIRY_WARNING_SECONDS:
+                        if (
+                            not is_enabled(provider_id)
+                            and seconds_left <= _AG_PRE_EXPIRY_WARNING_SECONDS
+                        ):
                             logging.warning(
                                 f"  [{provider_id}] local token expires at {raw_expiry} "
                                 f"(within {_AG_PRE_EXPIRY_WARNING_SECONDS // 60} min) — "
@@ -3652,7 +3665,7 @@ class GenericCollector:
                         tokens["expiry_date"] = str(int(float(exp) * 1000))
                         from scripts.sidecar_pkg.keep_alive import is_enabled
 
-                        if float(exp) <= time.time() and not is_enabled():
+                        if float(exp) <= time.time() and not is_enabled(provider_id):
                             logging.warning(
                                 f"  [{provider_id}] local login expired — it renews when the "
                                 "CLI next runs, or start the sidecar with --keep-alive"
@@ -3679,7 +3692,7 @@ class GenericCollector:
                     expired = float(tokens["expiry_date"]) / 1000 <= time.time()
                 except (TypeError, ValueError):
                     expired = False
-                if expired and not is_enabled():
+                if expired and not is_enabled(provider_id):
                     logging.warning(
                         f"  [{provider_id}] local login expired — it renews when Claude Code "
                         "next runs, or start the sidecar with --keep-alive"
@@ -3700,7 +3713,7 @@ class GenericCollector:
                     expired = exp is not None and float(exp) <= time.time()
                 except (TypeError, ValueError):
                     expired = False
-                if expired and not is_enabled():
+                if expired and not is_enabled(provider_id):
                     logging.warning(
                         f"  [{provider_id}] local login expired — it renews when Codex "
                         "next runs, or start the sidecar with --keep-alive"
@@ -4753,6 +4766,7 @@ class DaemonRunner:
                 self_update_capable = None
             # None (unknown) for a sidecar that never armed keep-alive (the tray app).
             keep_alive = _KEEP_ALIVE.reported()
+            keep_alive_providers = _KEEP_ALIVE.reported_providers()
 
             # Try to flush queue first
             queue_flush(api_url, api_key, stop_event=self._stop_event, config=self._config)
@@ -4789,6 +4803,7 @@ class DaemonRunner:
                     "os_platform": os_platform,
                     "self_update_capable": self_update_capable if first_batch else None,
                     "keep_alive": keep_alive if first_batch else None,
+                    "keep_alive_providers": keep_alive_providers if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
                     "completed_providers": completed_providers if first_batch else None,
                     "identity_sources": dict(_IDENTITY_REPORT) if first_batch else None,
@@ -5037,6 +5052,8 @@ class DaemonRunner:
 
             if "keep_alive_desired" in result:
                 _KEEP_ALIVE.set_remote(result.get("keep_alive_desired"))
+            if "keep_alive_desired_providers" in result:
+                _KEEP_ALIVE.set_remote_providers(result.get("keep_alive_desired_providers"))
             if "keep_alive_fleet_default" in result:
                 _KEEP_ALIVE.set_fleet_default(result.get("keep_alive_fleet_default"))
 

@@ -235,7 +235,12 @@ def test_ingest_response_carries_the_remote_keep_alive_setting(client, session):
 
     r = client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": True})
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "sidecar_id": "ka-host", "keep_alive_desired": True}
+    assert r.json() == {
+        "status": "ok",
+        "sidecar_id": "ka-host",
+        "keep_alive_desired": True,
+        "keep_alive_desired_providers": {},
+    }
     assert _heartbeat(client).json()["keep_alive_desired"] is True
 
     client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": False})
@@ -261,6 +266,93 @@ def test_ingest_response_carries_the_fleet_keep_alive_default(client, session):
 
     client.put("/api/v1/system/app-config", json={"sidecar_keep_alive_default": False})
     assert _heartbeat(client).json()["keep_alive_fleet_default"] is False
+
+
+def test_ingest_records_the_sidecars_reported_per_login_keep_alive(client, session):
+    from app.models.db import SidecarRegistry
+
+    assert _heartbeat(client).status_code == 200
+    session.expire_all()
+    assert session.get(SidecarRegistry, "ka-host").keep_alive_providers is None  # never reported
+
+    assert (
+        _heartbeat(client, keep_alive_providers={"xai": True, "antigravity": False}).status_code
+        == 200
+    )
+    session.expire_all()
+    assert json.loads(session.get(SidecarRegistry, "ka-host").keep_alive_providers) == {
+        "xai": True,
+        "antigravity": False,
+    }
+
+    # An event-only batch / older sidecar omits it: the last report stands.
+    _heartbeat(client)
+    session.expire_all()
+    assert json.loads(session.get(SidecarRegistry, "ka-host").keep_alive_providers) == {
+        "xai": True,
+        "antigravity": False,
+    }
+    listing = client.get("/api/v1/fleet/sidecars/ka-host").json()
+    assert listing["keep_alive_providers"] == {"xai": True, "antigravity": False}
+
+
+def test_per_login_overrides_ride_on_the_ingest_response(client, session):
+    assert _heartbeat(client).json()["keep_alive_desired_providers"] == {}
+
+    r = client.put(
+        "/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": True, "provider": "xai"}
+    )
+    assert r.status_code == 200
+    assert r.json()["keep_alive_desired_providers"] == {"xai": True}
+    assert r.json()["keep_alive_desired"] is None  # the sidecar-level override is untouched
+
+    client.put(
+        "/api/v1/fleet/sidecars/ka-host/keep-alive",
+        json={"enabled": False, "provider": "antigravity"},
+    )
+    body = _heartbeat(client).json()
+    assert body["keep_alive_desired_providers"] == {"xai": True, "antigravity": False}
+    assert body["keep_alive_desired"] is None
+
+    # null clears just that login's override; the others and the sidecar-level setting stay.
+    client.put(
+        "/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": None, "provider": "xai"}
+    )
+    client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": True})
+    body = _heartbeat(client).json()
+    assert body["keep_alive_desired_providers"] == {"antigravity": False}
+    assert body["keep_alive_desired"] is True
+
+    # Setting the sidecar-level switch never wipes the per-login overrides, and vice versa.
+    client.put("/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": None})
+    body = _heartbeat(client).json()
+    assert body["keep_alive_desired"] is None
+    assert body["keep_alive_desired_providers"] == {"antigravity": False}
+    listing = client.get("/api/v1/fleet/sidecars/ka-host").json()
+    assert listing["keep_alive_desired_providers"] == {"antigravity": False}
+
+
+def test_a_per_login_override_for_an_unknown_provider_is_rejected(client, session):
+    _heartbeat(client)
+    r = client.put(
+        "/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": True, "provider": "gemini"}
+    )
+    assert r.status_code == 422
+    assert _heartbeat(client).json()["keep_alive_desired_providers"] == {}
+
+
+def test_per_login_overrides_are_per_sidecar(client, session):
+    _heartbeat(client)
+    _signed_ingest(
+        client, {"provider": "sidecar-t", "sidecar_id": "other", "metrics": [], "deltas": []}
+    )
+    client.put(
+        "/api/v1/fleet/sidecars/ka-host/keep-alive", json={"enabled": True, "provider": "xai"}
+    )
+    other = _signed_ingest(
+        client, {"provider": "sidecar-t", "sidecar_id": "other", "metrics": [], "deltas": []}
+    )
+    assert other.json()["keep_alive_desired_providers"] == {}
 
 
 def test_remote_keep_alive_is_per_sidecar(client, session):

@@ -3,6 +3,7 @@ status and which source is actually feeding the data."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -833,8 +834,8 @@ async def test_sources_are_ordered_active_then_healthy_then_dead(engine, cache):
     assert [v.source_id for v in acct.sources][-1] == "sidecar:dead"
 
 
-async def _machine_login(session, cache, provider, host, *, keep_alive, tokens):
-    session.add(SidecarRegistry(sidecar_id=host, hostname=host, keep_alive=keep_alive))
+async def _machine_login(session, cache, provider, host, *, keep_alive, tokens, **registry):
+    session.add(SidecarRegistry(sidecar_id=host, hostname=host, keep_alive=keep_alive, **registry))
     session.commit()
     _source(
         session,
@@ -867,6 +868,61 @@ async def test_machine_renewed_xai_login_shows_its_machines_keep_alive(
     (src,) = [s for a in prov.accounts for s in a.sources]
     assert src.refreshed_by == "machine"
     assert src.keep_alive == expected
+
+
+@pytest.mark.asyncio
+async def test_a_per_login_report_and_override_win_over_the_sidecar_level_ones(engine, cache):
+    """The sidecar runs keep-alive for xAI only; the operator forced Codex on and xAI off."""
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
+            "xai",
+            "host-a",
+            keep_alive=False,
+            tokens={"xai_access": "a", "xai_refresh": "r"},
+            keep_alive_providers=json.dumps({"xai": True, "chatgpt": False}),
+            keep_alive_desired=True,
+            keep_alive_desired_providers=json.dumps({"xai": False}),
+        )
+    src = await _only_source("xai")
+    assert src.keep_alive == "on"  # reported per login, not the sidecar-level False
+    assert src.keep_alive_desired is False  # the per-login override, not the sidecar-level True
+
+
+@pytest.mark.asyncio
+async def test_a_login_without_its_own_override_follows_the_sidecar_level_one(engine, cache):
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
+            "xai",
+            "host-a",
+            keep_alive=True,
+            tokens={"xai_access": "a", "xai_refresh": "r"},
+            keep_alive_desired=False,
+            keep_alive_desired_providers=json.dumps({"chatgpt": True}),
+        )
+    src = await _only_source("xai")
+    assert src.keep_alive == "on"
+    assert src.keep_alive_desired is False
+
+
+@pytest.mark.asyncio
+async def test_a_corrupt_per_login_column_degrades_to_the_sidecar_level_values(engine, cache):
+    with Session(engine) as s:
+        await _machine_login(
+            s,
+            cache,
+            "xai",
+            "host-a",
+            keep_alive=False,
+            tokens={"xai_access": "a", "xai_refresh": "r"},
+            keep_alive_providers="{not json",
+            keep_alive_desired_providers='["xai"]',
+        )
+    src = await _only_source("xai")
+    assert src.keep_alive == "off" and src.keep_alive_desired is None
 
 
 @pytest.mark.asyncio

@@ -517,6 +517,11 @@ export interface Sidecar {
   keep_alive?: boolean | null;
   // The operator's remote keep-alive setting (null = no preference; the sidecar's own flag decides).
   keep_alive_desired?: boolean | null;
+  // What the sidecar runs per login ({provider_id: running}). null = a sidecar too old to report
+  // it, so per-login settings can't be applied.
+  keep_alive_providers?: Record<string, boolean> | null;
+  // The operator's per-login overrides on top of the sidecar-level setting (only overridden logins).
+  keep_alive_desired_providers?: Record<string, boolean> | null;
   // One-shot "Update now" push queued but not yet delivered (persisted
   // server-side; survives a server restart until the sidecar's next
   // successful ingest — see fleet_registry.set_pending_update/consume_pending_update).

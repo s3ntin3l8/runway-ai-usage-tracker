@@ -39,7 +39,13 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
-import { keepAliveLoginsText, keepAliveState, useKeepAliveFleetDefault } from '@/lib/keepAlive';
+import {
+  KEEP_ALIVE_PROVIDER_LABELS,
+  type KeepAliveProvider,
+  keepAliveLoginsText,
+  keepAliveState,
+  useKeepAliveFleetDefault,
+} from '@/lib/keepAlive';
 import { AddSidecarCard } from './AddSidecarCard';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 import { buildSidecarNameMap } from './queries';
@@ -342,8 +348,26 @@ function SidecarCard({
     onError: (err) => toast.error(err.message),
   });
 
-  // Both PUT the same endpoint, so keep them single-flight as a pair.
-  const keepAliveBusy = keepAlive.isPending || clearKeepAlive.isPending;
+  // One login's own override on top of the sidecar-level setting; null follows the sidecar again.
+  const loginKeepAlive = useMutation({
+    mutationFn: ({ provider, enabled }: { provider: KeepAliveProvider; enabled: boolean | null }) =>
+      setSidecarKeepAlive(sidecar.sidecar_id, enabled, provider),
+    onSuccess: (_data, { provider, enabled }) => {
+      const name = KEEP_ALIVE_PROVIDER_LABELS[provider];
+      toast.success(
+        enabled === null
+          ? `${name} follows the sidecar's keep-alive setting — ${keepAliveWhen}`
+          : `${name} keep-alive ${enabled ? 'on' : 'off'} — ${keepAliveWhen}`,
+      );
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  // All of them PUT the same endpoint, so keep them single-flight together.
+  const keepAliveBusy = keepAlive.isPending || clearKeepAlive.isPending || loginKeepAlive.isPending;
+  // A sidecar that doesn't report per-login state can't apply per-login overrides.
+  const loginsReported = sidecar.keep_alive_providers != null;
   const keepAliveId = `keep-alive-${sidecar.sidecar_id}`;
 
   const logs = (sidecar.last_log_lines ?? []).filter(Boolean);
@@ -466,6 +490,50 @@ function SidecarCard({
               </p>
             ) : null}
           </div>
+
+          {!ka.unsupported ? (
+            <details className="mt-2 rounded-md border border-edge bg-surface-2 px-2.5 py-1.5 text-[11px]">
+              <summary className="cursor-pointer text-fg-muted">Per-login keep-alive</summary>
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                {!loginsReported ? (
+                  <p className="text-fg-subtle">
+                    This sidecar doesn&apos;t report per-login keep-alive yet — update it to set
+                    individual logins.
+                  </p>
+                ) : null}
+                {(Object.keys(KEEP_ALIVE_PROVIDER_LABELS) as KeepAliveProvider[]).map((provider) => {
+                  const override = sidecar.keep_alive_desired_providers?.[provider];
+                  const running = sidecar.keep_alive_providers?.[provider] === true;
+                  const label = KEEP_ALIVE_PROVIDER_LABELS[provider];
+                  return (
+                    <div key={provider} className="flex items-center justify-between gap-2">
+                      <label htmlFor={`${keepAliveId}-${provider}`} className="min-w-0 truncate">
+                        {label}
+                        {running ? <span className="ml-1.5 text-success">running</span> : null}
+                      </label>
+                      <select
+                        id={`${keepAliveId}-${provider}`}
+                        aria-label={`${label} keep-alive`}
+                        className="rounded-md border border-edge bg-surface-1 px-1.5 py-0.5 text-[11px]"
+                        disabled={!loginsReported || keepAliveBusy}
+                        value={override === true ? 'on' : override === false ? 'off' : 'default'}
+                        onChange={(e) =>
+                          loginKeepAlive.mutate({
+                            provider,
+                            enabled: e.target.value === 'default' ? null : e.target.value === 'on',
+                          })
+                        }
+                      >
+                        <option value="default">Follow sidecar ({ka.effective ? 'on' : 'off'})</option>
+                        <option value="on">Always on</option>
+                        <option value="off">Always off</option>
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          ) : null}
 
           <dl className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
             <div className="col-span-3 min-w-0">

@@ -33,6 +33,13 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     # Operator's remote setting for it, delivered on every ingest response. None = no
     # preference: the sidecar's own flag/config decides.
     keep_alive_desired: bool | None = None
+    # Per-provider detail, JSON ``{provider_id: bool}``. ``keep_alive_providers`` is what the
+    # sidecar reports it runs per login (None = a sidecar too old to report it);
+    # ``keep_alive_desired_providers`` holds the operator's per-login overrides, which sit on top of
+    # the sidecar-level ``keep_alive_desired`` / the sidecar's own flag. Only overridden logins
+    # have an entry.
+    keep_alive_providers: str | None = None
+    keep_alive_desired_providers: str | None = None
     recent_logs: str | None = None  # JSON-encoded list of last log lines from the sidecar
     # JSON: provider_id → {"account_id", "source"} from the latest check-in.
     identity_sources: str | None = None

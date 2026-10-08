@@ -242,13 +242,18 @@ export const setSidecarEnabled = (sidecarId: string, enabled: boolean) =>
     { method: 'POST' },
   );
 
-// Force a sidecar's keep-alive (login renewal) on or off; null defers to its own flag.
-// Delivered on its next check-in.
-export const setSidecarKeepAlive = (sidecarId: string, enabled: boolean | null) =>
-  api<{ status: string; keep_alive_desired: boolean | null }>(
-    `/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/keep-alive`,
-    { method: 'PUT', body: JSON.stringify({ enabled }) },
-  );
+// Force a sidecar's keep-alive (login renewal) on or off; null defers to its own flag / the fleet
+// default. With a `provider` it overrides just that login on top of the sidecar-level setting (null
+// clears that login's override). Delivered on the sidecar's next check-in.
+export const setSidecarKeepAlive = (sidecarId: string, enabled: boolean | null, provider?: string) =>
+  api<{
+    status: string;
+    keep_alive_desired: boolean | null;
+    keep_alive_desired_providers?: Record<string, boolean>;
+  }>(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/keep-alive`, {
+    method: 'PUT',
+    body: JSON.stringify(provider ? { enabled, provider } : { enabled }),
+  });
 
 // Push a one-shot self-update to a sidecar; it installs on its next heartbeat.
 export const triggerSidecarUpdate = (sidecarId: string) =>

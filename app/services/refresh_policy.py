@@ -37,6 +37,46 @@ KEEP_ALIVE_LABELS = {
 }
 KEEP_ALIVE_PROVIDERS = frozenset(KEEP_ALIVE_LABELS)
 
+
+def parse_provider_flags(raw: object) -> dict[str, bool]:
+    """``{provider_id: bool}`` from the JSON stored in a ``SidecarRegistry`` column (or a dict).
+
+    Anything malformed — bad JSON, a non-object, non-bool values, unknown providers — is dropped
+    rather than raised, so a corrupt column can never break a check-in or the dashboard.
+    """
+    import json
+
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v for k, v in raw.items() if k in KEEP_ALIVE_PROVIDERS and isinstance(v, bool)}
+
+
+def keep_alive_for(
+    provider_id: str,
+    *,
+    reported: bool | None,
+    desired: bool | None,
+    reported_providers: dict[str, bool] | None,
+    desired_providers: dict[str, bool] | None,
+) -> tuple[bool | None, bool | None]:
+    """``(reported, desired)`` keep-alive for one login on a sidecar.
+
+    A per-login override wins over the sidecar-level one; with none, the login follows the
+    sidecar-level setting. What the sidecar reports per login (``reported_providers``) wins over
+    its single sidecar-level boolean, which stays the answer for a sidecar that predates it.
+    """
+    if reported_providers and provider_id in reported_providers:
+        reported = reported_providers[provider_id]
+    if desired_providers and provider_id in desired_providers:
+        desired = desired_providers[provider_id]
+    return reported, desired
+
+
 _NON_MACHINE_SOURCES = (None, "server", "config", "manual_config")
 
 

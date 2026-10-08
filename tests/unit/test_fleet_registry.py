@@ -1,5 +1,6 @@
 """Unit tests for FleetRegistryService (Phase 4B)."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -382,3 +383,72 @@ class TestKeepAliveReporting:
         base = {"provider": "sidecar-x", "metrics": []}
         assert IngestRequest(**base).keep_alive is None
         assert IngestRequest(**base, keep_alive=True).keep_alive is True
+
+
+class TestPerLoginKeepAliveReporting:
+    """A sidecar also reports which logins its keep-alive covers; older ones report nothing."""
+
+    def _existing(self, **kw):
+        return SidecarRegistry(
+            sidecar_id="host-1",
+            last_seen=datetime(2026, 1, 1, tzinfo=UTC),
+            first_seen=datetime(2026, 1, 1, tzinfo=UTC),
+            **kw,
+        )
+
+    def test_persists_on_create_and_update_dropping_junk(self, service, mock_session):
+        mock_session.get.return_value = None
+        service.upsert_sidecar(
+            "host-1",
+            "10.0.0.1",
+            mock_session,
+            keep_alive_providers={"xai": True, "gemini": True, "chatgpt": "yes"},
+        )
+        created = mock_session.add.call_args[0][0]
+        assert json.loads(created.keep_alive_providers) == {"xai": True}
+
+        existing = self._existing(keep_alive_providers='{"xai": true}')
+        mock_session.get.return_value = existing
+        service.upsert_sidecar(
+            "host-1", "10.0.0.2", mock_session, keep_alive_providers={"xai": False}
+        )
+        assert json.loads(existing.keep_alive_providers) == {"xai": False}
+
+    def test_a_push_that_omits_it_keeps_the_last_report(self, service, mock_session):
+        existing = self._existing(keep_alive_providers='{"xai": true}')
+        mock_session.get.return_value = existing
+        service.upsert_sidecar("host-1", "10.0.0.2", mock_session, keep_alive_providers=None)
+        assert json.loads(existing.keep_alive_providers) == {"xai": True}
+
+    def test_an_empty_report_is_kept_as_empty_not_unknown(self, service, mock_session):
+        existing = self._existing(keep_alive_providers='{"xai": true}')
+        mock_session.get.return_value = existing
+        service.upsert_sidecar("host-1", "10.0.0.2", mock_session, keep_alive_providers={})
+        assert existing.keep_alive_providers == "{}"
+
+    def test_exposed_by_to_dict_with_unknown_distinct_from_empty(self, service):
+        now = datetime.now(UTC)
+        unknown = SidecarRegistry(sidecar_id="h", first_seen=now, last_seen=now)
+        d = service.to_dict(unknown)
+        assert d["keep_alive_providers"] is None
+        assert d["keep_alive_desired_providers"] == {}
+
+        row = SidecarRegistry(
+            sidecar_id="h",
+            first_seen=now,
+            last_seen=now,
+            keep_alive_providers='{"xai": true}',
+            keep_alive_desired_providers='{"chatgpt": false, "bogus": true}',
+        )
+        d = service.to_dict(row)
+        assert d["keep_alive_providers"] == {"xai": True}
+        assert d["keep_alive_desired_providers"] == {"chatgpt": False}
+
+    def test_ingest_payload_accepts_it_and_defaults_to_unknown(self):
+        from app.models.schemas import IngestRequest
+
+        base = {"provider": "sidecar-x", "metrics": []}
+        assert IngestRequest(**base).keep_alive_providers is None
+        assert IngestRequest(**base, keep_alive_providers={"xai": True}).keep_alive_providers == {
+            "xai": True
+        }

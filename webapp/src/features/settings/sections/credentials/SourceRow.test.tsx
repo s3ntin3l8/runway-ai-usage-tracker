@@ -59,7 +59,8 @@ describe('SourceRow', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /turn on keep-alive for workstation/i }));
 
-      expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('host-a', true);
+      // Only this login's override: the machine's other logins keep following the sidecar.
+      expect(api.setSidecarKeepAlive).toHaveBeenCalledWith('host-a', true, source().provider_id);
       await waitFor(() =>
         expect(toast.success).toHaveBeenCalledWith(
           "Keep-alive on — applies on the sidecar's next check-in",
