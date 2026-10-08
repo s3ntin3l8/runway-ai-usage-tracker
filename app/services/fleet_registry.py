@@ -160,10 +160,12 @@ class FleetRegistryService:
         identity_sources: dict[str, dict[str, str]] | None = None,
     ) -> SidecarRegistry:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
-        if update_channel not in UPDATE_CHANNELS:
+        if update_channel is not None and update_channel not in UPDATE_CHANNELS:
+            logger.debug(f"Ignoring unknown update channel {update_channel!r} from a sidecar")
             update_channel = None  # never store a channel the dashboard can't render
         log_level = log_level.upper() if log_level else None
-        if log_level not in LOG_LEVELS:
+        if log_level is not None and log_level not in LOG_LEVELS:
+            logger.debug(f"Ignoring unknown log level {log_level!r} from a sidecar")
             log_level = None
         row = session.get(SidecarRegistry, sidecar_id)
         if row:

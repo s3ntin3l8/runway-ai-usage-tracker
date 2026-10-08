@@ -404,6 +404,7 @@ function SidecarCard({
                   debug logging
                 </Badge>
               ) : null}
+              {/* Only "off" is badged: "on" is the common case and just follows the fleet default. */}
               {sidecar.auto_update_desired === false ? (
                 <Badge variant="neutral" title="Auto-update is turned off for this sidecar">
                   no auto-update
