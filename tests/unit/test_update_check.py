@@ -186,3 +186,42 @@ class TestRecheckAfterFirstCheckIn:
             {"sidecar_auto_update": True, "sidecar_update_channel": "edge"}, [], False, False, False
         )
         assert calls == [1, 1]
+
+
+class TestReportedUpdateSettings:
+    """What the sidecar tells the dashboard it effectively uses."""
+
+    def test_nothing_is_reported_before_the_first_check_in(self, monkeypatch):
+        from scripts import sidecar
+
+        monkeypatch.delenv("RUNWAY_UPDATE_CHANNEL", raising=False)
+        monkeypatch.setattr(sidecar, "_UPDATE_CHANNEL", None)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", None)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", False)
+        assert sidecar._reported_update_settings() == (None, None)
+
+    def test_the_fleet_values_are_reported_once_synced(self, monkeypatch):
+        from scripts import sidecar
+
+        monkeypatch.delenv("RUNWAY_UPDATE_CHANNEL", raising=False)
+        monkeypatch.setattr(sidecar, "_UPDATE_CHANNEL", "beta")
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", None)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", True)
+        assert sidecar._reported_update_settings() == ("beta", True)
+
+    def test_local_config_and_env_win_and_are_reported_as_such(self, monkeypatch):
+        from scripts import sidecar
+
+        monkeypatch.setenv("RUNWAY_UPDATE_CHANNEL", "edge")
+        monkeypatch.setattr(sidecar, "_UPDATE_CHANNEL", "stable")
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", False)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", True)
+        assert sidecar._reported_update_settings() == ("edge", False)
+
+    def test_local_auto_update_is_reported_even_before_the_first_check_in(self, monkeypatch):
+        from scripts import sidecar
+
+        monkeypatch.delenv("RUNWAY_UPDATE_CHANNEL", raising=False)
+        monkeypatch.setattr(sidecar, "_UPDATE_CHANNEL", None)
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", True)
+        assert sidecar._reported_update_settings() == (None, True)

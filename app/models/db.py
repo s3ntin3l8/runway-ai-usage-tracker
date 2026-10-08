@@ -40,6 +40,14 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     # have an entry.
     keep_alive_providers: str | None = None
     keep_alive_desired_providers: str | None = None
+    # Auto-update and update channel. ``*_desired`` is the operator's per-sidecar override
+    # (None = follow the fleet-wide SystemConfig value); the plain fields are what the sidecar
+    # reports it effectively uses (None = an older sidecar that doesn't report them), which
+    # differs when its own config.json / RUNWAY_UPDATE_CHANNEL beats the dashboard.
+    auto_update: bool | None = None
+    auto_update_desired: bool | None = None
+    update_channel: str | None = None
+    update_channel_desired: str | None = None
     recent_logs: str | None = None  # JSON-encoded list of last log lines from the sidecar
     # JSON: provider_id → {"account_id", "source"} from the latest check-in.
     identity_sources: str | None = None

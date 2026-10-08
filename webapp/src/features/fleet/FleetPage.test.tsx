@@ -281,7 +281,7 @@ describe('FleetPage', () => {
         await open();
 
         expect(await screen.findByText(/doesn't report per-login keep-alive yet/)).toBeVisible();
-        expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+        expect(screen.queryByRole('combobox', { name: /keep-alive/ })).not.toBeInTheDocument();
         expect(screen.getByText(/Update it to a newer build/)).toBeVisible();
       });
 
@@ -970,5 +970,121 @@ describe('FleetPage', () => {
     expect(
       within(dialog).queryByRole('button', { name: /^tag$/i }),
     ).not.toBeInTheDocument();
+  });
+
+  describe('update settings', () => {
+    const openSettings = async () => {
+      await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
+      return within(await screen.findByRole('dialog'));
+    };
+    const choose = async (name: RegExp, option: string) => {
+      await userEvent.click(await screen.findByRole('combobox', { name }));
+      await userEvent.click(await screen.findByRole('option', { name: option }));
+    };
+
+    it('shows the fleet values as the default and saves an auto-update override', async () => {
+      vi.mocked(api.fetchAppConfig).mockResolvedValue({
+        env_timezone: 'UTC',
+        sidecar_auto_update: true,
+        sidecar_update_channel: 'beta',
+      });
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+      vi.mocked(api.setSidecarSettings).mockResolvedValue({
+        status: 'ok',
+        auto_update_desired: false,
+        update_channel_desired: null,
+        effective_auto_update: false,
+        effective_update_channel: 'beta',
+      });
+      renderWithProviders(<FleetPage />);
+
+      const dialog = await openSettings();
+      expect(await dialog.findByRole('combobox', { name: 'Auto-update' })).toHaveTextContent(
+        'Follow fleet (on)',
+      );
+      expect(dialog.getByRole('combobox', { name: 'Update channel' })).toHaveTextContent(
+        'Follow fleet (beta)',
+      );
+
+      await choose(/^Auto-update$/, 'Always off');
+      expect(api.setSidecarSettings).toHaveBeenCalledWith('laptop', { auto_update: false });
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/Auto-update saved/)),
+      );
+    });
+
+    it('pins a channel and clears it again with null', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ update_channel_desired: 'edge', effective_update_channel: 'edge' })],
+      });
+      vi.mocked(api.setSidecarSettings).mockResolvedValue({
+        status: 'ok',
+        auto_update_desired: null,
+        update_channel_desired: null,
+        effective_auto_update: false,
+        effective_update_channel: 'stable',
+      });
+      renderWithProviders(<FleetPage />);
+
+      const dialog = await openSettings();
+      expect(await dialog.findByRole('combobox', { name: 'Update channel' })).toHaveTextContent(
+        'Edge',
+      );
+      await choose(/^Update channel$/, 'Follow fleet (stable)');
+      expect(api.setSidecarSettings).toHaveBeenCalledWith('laptop', { update_channel: null });
+    });
+
+    it('says so when the sidecar reports something other than what Runway asks for', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [
+          sidecar({
+            auto_update: false,
+            effective_auto_update: true,
+            update_channel: 'stable',
+            effective_update_channel: 'stable',
+          }),
+        ],
+      });
+      renderWithProviders(<FleetPage />);
+
+      const dialog = await openSettings();
+      const note = await dialog.findByTestId('update-differs');
+      expect(note).toHaveTextContent(/reports auto-update off \(Runway asks for on\)/);
+      expect(note).not.toHaveTextContent(/channel/);
+      expect(note).toHaveTextContent(/config\.json/);
+    });
+
+    it('badges a card whose channel is pinned or whose auto-update is off', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ update_channel_desired: 'edge', auto_update_desired: false })],
+      });
+      renderWithProviders(<FleetPage />);
+
+      expect(await screen.findByText('edge')).toBeVisible();
+      expect(screen.getByText('no auto-update')).toBeVisible();
+    });
+
+    it('shows no mismatch note while the sidecar has not reported yet', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ auto_update: null, effective_auto_update: true })],
+      });
+      renderWithProviders(<FleetPage />);
+
+      const dialog = await openSettings();
+      await dialog.findByRole('combobox', { name: 'Auto-update' });
+      expect(dialog.queryByTestId('update-differs')).not.toBeInTheDocument();
+    });
+
+    it('replaces the auto-update control for a build that cannot replace itself', async () => {
+      vi.mocked(api.fetchSidecars).mockResolvedValue({
+        sidecars: [sidecar({ self_update_capable: false })],
+      });
+      renderWithProviders(<FleetPage />);
+
+      const dialog = await openSettings();
+      expect(await dialog.findByText(/Not supported by this build/)).toBeVisible();
+      expect(dialog.queryByRole('combobox', { name: 'Auto-update' })).not.toBeInTheDocument();
+      expect(dialog.getByText(/can't replace itself/)).toBeVisible();
+    });
   });
 });

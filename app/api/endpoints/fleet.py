@@ -55,7 +55,12 @@ from app.services.credential_tags import (
 )
 from app.services.credential_token import issue_credential_token
 from app.services.event_ingestor import EventIngestor, redirect_push
-from app.services.fleet_registry import fleet_registry
+from app.services.fleet_registry import (
+    UPDATE_CHANNELS,
+    effective_auto_update,
+    effective_update_channel,
+    fleet_registry,
+)
 from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS, parse_provider_flags
 from app.services.token_cache import token_cache
 
@@ -362,6 +367,8 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 self_update_capable=payload.self_update_capable,
                 keep_alive=payload.keep_alive,
                 keep_alive_providers=payload.keep_alive_providers,
+                auto_update=payload.auto_update,
+                update_channel=payload.update_channel,
                 collection_errors=payload.collection_errors,
                 last_log_lines=payload.last_log_lines or [],
                 identity_sources=payload.identity_sources,
@@ -654,8 +661,15 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     collection_enabled = True
     keep_alive_desired: bool | None = None
     keep_alive_desired_providers: dict[str, bool] = {}
+    fleet_channel = (sys_cfg.sidecar_update_channel if sys_cfg else None) or "stable"
+    fleet_auto_update = bool((sys_cfg.sidecar_auto_update if sys_cfg else None) or False)
+    update_channel = fleet_channel
+    auto_update = fleet_auto_update
     if payload.sidecar_id:
         desired_row = session.get(SidecarRegistry, payload.sidecar_id)
+        if desired_row is not None:
+            update_channel = effective_update_channel(desired_row, fleet_channel)
+            auto_update = effective_auto_update(desired_row, fleet_auto_update)
         keep_alive_desired = desired_row.keep_alive_desired if desired_row else None
         keep_alive_desired_providers = parse_provider_flags(
             desired_row.keep_alive_desired_providers if desired_row else None
@@ -728,9 +742,11 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "reset_anchors": _reset_anchors_for_sidecar(session),  # Phase 6
         # Update channel the sidecar should track for its "update available"
         # check ("stable" | "beta" | "edge"). The dashboard owns this setting.
-        "sidecar_update_channel": (sys_cfg.sidecar_update_channel if sys_cfg else None) or "stable",
-        # Fleet-wide opt-in auto-update flag; a sidecar's explicit local config wins.
-        "sidecar_auto_update": (sys_cfg.sidecar_auto_update if sys_cfg else None) or False,
+        # The sidecar's own override, else the fleet's.
+        "sidecar_update_channel": update_channel,
+        # Opt-in auto-update flag (this sidecar's override, else the fleet's); a sidecar's
+        # explicit local config wins.
+        "sidecar_auto_update": auto_update,
         # Fleet-wide keep-alive default: on for sidecars without their own override. It only
         # ever turns keep-alive on (the sidecar ORs it with its local flag).
         "keep_alive_fleet_default": (sys_cfg.sidecar_keep_alive_default if sys_cfg else None)
@@ -2055,6 +2071,15 @@ def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:
     return anchors
 
 
+def _fleet_update_defaults(session: Session) -> tuple[str, bool]:
+    """Fleet-wide (update channel, auto-update) that a sidecar follows without an override."""
+    cfg = session.exec(select(SystemConfig)).first()
+    return (
+        (cfg.sidecar_update_channel if cfg else None) or "stable",
+        bool((cfg.sidecar_auto_update if cfg else None) or False),
+    )
+
+
 @router.get("/sidecars")
 @limiter.limit("30/minute")
 async def list_sidecars(
@@ -2065,9 +2090,8 @@ async def list_sidecars(
     rows = session.exec(
         select(SidecarRegistry).order_by(col(SidecarRegistry.last_seen).desc())
     ).all()
-    cfg = session.exec(select(SystemConfig)).first()
-    update_channel = (cfg.sidecar_update_channel if cfg else None) or "stable"
-    return {"sidecars": [fleet_registry.to_dict(row, update_channel) for row in rows]}
+    channel, auto_update = _fleet_update_defaults(session)
+    return {"sidecars": [fleet_registry.to_dict(row, channel, auto_update) for row in rows]}
 
 
 @router.get("/sidecars/{sidecar_id}")
@@ -2081,9 +2105,8 @@ async def get_sidecar(
     row = session.get(SidecarRegistry, sidecar_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
-    cfg = session.exec(select(SystemConfig)).first()
-    update_channel = (cfg.sidecar_update_channel if cfg else None) or "stable"
-    return fleet_registry.to_dict(row, update_channel)
+    channel, auto_update = _fleet_update_defaults(session)
+    return fleet_registry.to_dict(row, channel, auto_update)
 
 
 @router.patch("/sidecars/{sidecar_id}")
@@ -2106,9 +2129,8 @@ async def update_sidecar(
         target_id=sidecar_id,
         payload={"custom_name": body.custom_name, "tags": body.tags},
     )
-    cfg = session.exec(select(SystemConfig)).first()
-    update_channel = (cfg.sidecar_update_channel if cfg else None) or "stable"
-    return fleet_registry.to_dict(row, update_channel)
+    channel, auto_update = _fleet_update_defaults(session)
+    return fleet_registry.to_dict(row, channel, auto_update)
 
 
 @router.delete("/sidecars/{sidecar_id}")
@@ -2147,6 +2169,61 @@ class SidecarKeepAliveRequest(BaseModel):
     # KEEP_ALIVE_PROVIDERS) it overrides just that login, on top of the sidecar-level setting;
     # null then clears that login's override so it follows the sidecar again.
     provider: str | None = None
+
+
+class SidecarSettingsRequest(BaseModel):
+    """Per-sidecar overrides of the fleet-wide update settings.
+
+    A field that is absent is left alone; an explicit ``null`` clears that override so the
+    sidecar follows the fleet again."""
+
+    auto_update: bool | None = None
+    update_channel: str | None = None
+
+
+@router.put("/sidecars/{sidecar_id}/settings")
+@limiter.limit("10/minute")
+async def set_sidecar_settings(
+    request: Request,
+    sidecar_id: str,
+    body: SidecarSettingsRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Override the fleet's auto-update flag and/or update channel for one sidecar.
+
+    Delivered on the sidecar's next check-in, in place of the fleet-wide values."""
+    sent = body.model_fields_set
+    if body.update_channel is not None and body.update_channel not in UPDATE_CHANNELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown update channel {body.update_channel!r} "
+            f"(expected one of {list(UPDATE_CHANNELS)})",
+        )
+    row = session.get(SidecarRegistry, sidecar_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
+    if "auto_update" in sent:
+        row.auto_update_desired = body.auto_update
+    if "update_channel" in sent:
+        row.update_channel_desired = body.update_channel
+    session.commit()
+    audit_log.record(
+        session,
+        request,
+        action="sidecar.settings",
+        target_id=sidecar_id,
+        payload={k: getattr(body, k) for k in sorted(sent)},
+    )
+    channel, fleet_auto = _fleet_update_defaults(session)
+    return {
+        "status": "ok",
+        "sidecar_id": sidecar_id,
+        "auto_update_desired": row.auto_update_desired,
+        "update_channel_desired": row.update_channel_desired,
+        "effective_auto_update": effective_auto_update(row, fleet_auto),
+        "effective_update_channel": effective_update_channel(row, channel),
+    }
 
 
 @router.put("/sidecars/{sidecar_id}/keep-alive")

@@ -31,6 +31,20 @@ def _recent_logs_json(lines: list[str]) -> str:
 # Sidecars that haven't checked in for this long are considered stale
 STALE_THRESHOLD_MINUTES = 60
 
+UPDATE_CHANNELS = ("stable", "beta", "edge")
+
+
+def effective_update_channel(row: SidecarRegistry, fleet_channel: str | None) -> str:
+    """Channel this sidecar is told to follow: its own override, else the fleet's."""
+    return row.update_channel_desired or fleet_channel or "stable"
+
+
+def effective_auto_update(row: SidecarRegistry, fleet_auto_update: bool | None) -> bool:
+    """Whether this sidecar is told to auto-update: its own override, else the fleet's."""
+    if row.auto_update_desired is not None:
+        return row.auto_update_desired
+    return bool(fleet_auto_update)
+
 
 class FleetRegistryService:
     """Manages upsert and CRUD operations for SidecarRegistry rows."""
@@ -137,11 +151,15 @@ class FleetRegistryService:
         self_update_capable: bool | None = None,
         keep_alive: bool | None = None,
         keep_alive_providers: dict[str, bool] | None = None,
+        auto_update: bool | None = None,
+        update_channel: str | None = None,
         collection_errors: int = 0,
         last_log_lines: list[str] | None = None,
         identity_sources: dict[str, dict[str, str]] | None = None,
     ) -> SidecarRegistry:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
+        if update_channel not in UPDATE_CHANNELS:
+            update_channel = None  # never store a channel the dashboard can't render
         row = session.get(SidecarRegistry, sidecar_id)
         if row:
             row.last_seen = datetime.now(UTC)
@@ -157,6 +175,10 @@ class FleetRegistryService:
                 row.keep_alive = keep_alive
             if keep_alive_providers is not None:
                 row.keep_alive_providers = json.dumps(parse_provider_flags(keep_alive_providers))
+            if auto_update is not None:
+                row.auto_update = auto_update
+            if update_channel is not None:
+                row.update_channel = update_channel
             if collection_errors > 0:
                 row.error_count += collection_errors
             if last_log_lines is not None:
@@ -178,6 +200,8 @@ class FleetRegistryService:
                     if keep_alive_providers is not None
                     else None
                 ),
+                auto_update=auto_update,
+                update_channel=update_channel,
                 error_count=collection_errors,
                 recent_logs=_recent_logs_json(last_log_lines) if last_log_lines else None,
                 identity_sources=json.dumps(identity_sources) if identity_sources else None,
@@ -230,8 +254,17 @@ class FleetRegistryService:
         logger.info(f"Deleted sidecar from registry: '{scrub_log(sidecar_id)}'")
         return True
 
-    def to_dict(self, row: SidecarRegistry, update_channel: str | None = None) -> dict:
-        """Serialize a SidecarRegistry row to a response dict."""
+    def to_dict(
+        self,
+        row: SidecarRegistry,
+        update_channel: str | None = None,
+        auto_update: bool = False,
+    ) -> dict:
+        """Serialize a SidecarRegistry row to a response dict.
+
+        ``update_channel`` / ``auto_update`` are the fleet-wide values; this sidecar's own
+        override (if any) is applied on top, so ``update_available`` is judged against the
+        channel the sidecar is actually told to follow."""
         # Imported lazily so unit tests that exercise to_dict don't need
         # the global FastAPI startup wiring.
         from app.services.sidecar_version_checker import (
@@ -259,7 +292,7 @@ class FleetRegistryService:
             latest_version,
             latest_edge_sha,
             latest_beta,
-            target_channel=update_channel,
+            target_channel=row.update_channel_desired or update_channel,
         )
         update_available = not stale and row.self_update_capable is not False and outdated
         return {
@@ -278,6 +311,12 @@ class FleetRegistryService:
             "update_available": update_available,
             "outdated": outdated,
             "self_update_capable": row.self_update_capable,
+            "auto_update": row.auto_update,
+            "auto_update_desired": row.auto_update_desired,
+            "effective_auto_update": effective_auto_update(row, auto_update),
+            "update_channel": row.update_channel,
+            "update_channel_desired": row.update_channel_desired,
+            "effective_update_channel": effective_update_channel(row, update_channel),
             "keep_alive": row.keep_alive,
             "keep_alive_desired": row.keep_alive_desired,
             # None = a sidecar that doesn't report per-login state; {} = reports none running.

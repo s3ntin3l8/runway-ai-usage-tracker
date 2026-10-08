@@ -1,12 +1,12 @@
-// Per-sidecar settings: name/tags, keep-alive (sidecar-wide and per login), update and removal.
+// Per-sidecar settings: name/tags, keep-alive (sidecar-wide and per login), updates and removal.
 // The Fleet card stays a summary; everything you can change lives here.
 
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { patchSidecar, setSidecarKeepAlive } from '@/api/endpoints';
-import type { Sidecar } from '@/api/types';
+import { fetchAppConfig, patchSidecar, setSidecarKeepAlive, setSidecarSettings } from '@/api/endpoints';
+import type { Sidecar, SidecarChannel } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
@@ -71,15 +71,7 @@ export function SidecarSettingsDialog({
             }}
           />
           <KeepAliveSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
-          {sidecar.update_available ? (
-            <section className="flex items-center justify-between gap-3 border-t border-edge pt-4">
-              <p className="text-[12px] text-fg-muted">A newer sidecar build is available.</p>
-              <Button size="sm" variant="secondary" onClick={() => onUpdate(sidecar)}>
-                <ArrowUpCircle className="size-3.5" aria-hidden />
-                Update now
-              </Button>
-            </section>
-          ) : null}
+          <UpdatesSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
           <section className="flex items-center justify-between gap-3 border-t border-edge pt-4">
             <p className="text-[12px] text-fg-muted">
               Removes the registry entry; collected usage stays.
@@ -299,6 +291,141 @@ function KeepAliveSection({
               })}
             </div>
           )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+const CHANNELS: SidecarChannel[] = ['stable', 'beta', 'edge'];
+const onOff = (v: boolean) => (v ? 'on' : 'off');
+
+/** The fleet-wide auto-update flag and channel from Settings → System (shares the cached query). */
+function useFleetUpdateDefaults(): { autoUpdate: boolean; channel: SidecarChannel } {
+  const { data } = useQuery({ queryKey: ['system', 'app-config'], queryFn: fetchAppConfig });
+  return {
+    autoUpdate: data?.sidecar_auto_update === true,
+    channel: (data?.sidecar_update_channel as SidecarChannel | undefined) ?? 'stable',
+  };
+}
+
+function UpdatesSection({
+  sidecar,
+  online,
+  onUpdate,
+}: {
+  sidecar: Sidecar;
+  online: boolean;
+  onUpdate: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const fleet = useFleetUpdateDefaults();
+  const when = online ? "applies on the sidecar's next check-in" : 'applies when the sidecar reconnects';
+
+  const save = useMutation({
+    mutationFn: (settings: Parameters<typeof setSidecarSettings>[1]) =>
+      setSidecarSettings(sidecar.sidecar_id, settings),
+    onSuccess: (_data, settings) => {
+      const what = 'auto_update' in settings ? 'Auto-update' : 'Update channel';
+      toast.success(`${what} saved — ${when}`);
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const effectiveAuto = sidecar.effective_auto_update ?? fleet.autoUpdate;
+  const effectiveChannel = sidecar.effective_update_channel ?? fleet.channel;
+  const autoValue =
+    sidecar.auto_update_desired == null ? 'default' : sidecar.auto_update_desired ? 'on' : 'off';
+  const channelValue = sidecar.update_channel_desired ?? 'default';
+  const canSelfUpdate = sidecar.self_update_capable !== false;
+  // The sidecar says it uses something other than what Runway asks for: either the request has
+  // not landed yet, or its own config.json / RUNWAY_UPDATE_CHANNEL wins over the dashboard.
+  const autoDiffers = sidecar.auto_update != null && sidecar.auto_update !== effectiveAuto;
+  const channelDiffers = sidecar.update_channel != null && sidecar.update_channel !== effectiveChannel;
+
+  return (
+    <section className="rounded-md border border-edge bg-surface-2 p-2.5">
+      <p className="text-[12px] font-medium">Updates</p>
+      <p className="mt-0.5 text-[11px] text-fg-subtle">
+        Overrides for this sidecar only; by default it follows Settings → System.
+      </p>
+      <div className="mt-2 flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[12px]">Auto-update</span>
+          {canSelfUpdate ? (
+            <Select
+              value={autoValue}
+              disabled={save.isPending}
+              onValueChange={(v) =>
+                save.mutate({ auto_update: v === 'default' ? null : v === 'on' })
+              }
+            >
+              <SelectTrigger aria-label="Auto-update" className="h-8 w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Follow fleet ({onOff(fleet.autoUpdate)})</SelectItem>
+                <SelectItem value="on">Always on</SelectItem>
+                <SelectItem value="off">Always off</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-[11px] text-fg-subtle">Not supported by this build</span>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[12px]">Update channel</span>
+          <Select
+            value={channelValue}
+            disabled={save.isPending}
+            onValueChange={(v) =>
+              save.mutate({ update_channel: v === 'default' ? null : (v as SidecarChannel) })
+            }
+          >
+            <SelectTrigger aria-label="Update channel" className="h-8 w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">Follow fleet ({fleet.channel})</SelectItem>
+              {CHANNELS.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {c[0].toUpperCase() + c.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      {!canSelfUpdate ? (
+        <p className="mt-1.5 text-[11px] text-fg-subtle">
+          This build (from source or Docker) can&apos;t replace itself, so it is never updated
+          automatically.
+        </p>
+      ) : null}
+      {canSelfUpdate && (autoDiffers || channelDiffers) ? (
+        <p className="mt-1.5 text-[11px] text-warning" data-testid="update-differs">
+          {[
+            autoDiffers
+              ? `reports auto-update ${onOff(sidecar.auto_update === true)} (Runway asks for ${onOff(effectiveAuto)})`
+              : null,
+            channelDiffers
+              ? `reports the ${sidecar.update_channel} channel (Runway asks for ${effectiveChannel})`
+              : null,
+          ]
+            .filter(Boolean)
+            .join('; ')}
+          . Either the change {when}, or this sidecar&apos;s own config.json or
+          RUNWAY_UPDATE_CHANNEL overrides the dashboard.
+        </p>
+      ) : null}
+      {sidecar.update_available ? (
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-edge pt-2.5">
+          <p className="text-[12px] text-fg-muted">A newer sidecar build is available.</p>
+          <Button size="sm" variant="secondary" onClick={onUpdate}>
+            <ArrowUpCircle className="size-3.5" aria-hidden />
+            Update now
+          </Button>
         </div>
       ) : null}
     </section>

@@ -945,6 +945,17 @@ def _auto_update_enabled() -> bool:
     return _AUTO_UPDATE_LOCAL if _AUTO_UPDATE_LOCAL is not None else _AUTO_UPDATE_SERVER
 
 
+def _reported_update_settings() -> tuple[str | None, bool | None]:
+    """(channel, auto-update) this sidecar effectively uses, for the dashboard to show.
+
+    None until the first check-in has delivered the fleet's values (unless config.json sets
+    auto-update itself), so a default is never reported as if it were a choice."""
+    synced = _UPDATE_CHANNEL is not None
+    channel = os.environ.get("RUNWAY_UPDATE_CHANNEL") or _UPDATE_CHANNEL
+    auto = _auto_update_enabled() if (synced or _AUTO_UPDATE_LOCAL is not None) else None
+    return channel, auto
+
+
 def get_sidecar_dir() -> Path:
     """Get the sidecar configuration directory.
 
@@ -4771,6 +4782,7 @@ class DaemonRunner:
             # None (unknown) for a sidecar that never armed keep-alive (the tray app).
             keep_alive = _KEEP_ALIVE.reported()
             keep_alive_providers = _KEEP_ALIVE.reported_providers()
+            update_channel, auto_update = _reported_update_settings()
 
             # Try to flush queue first
             queue_flush(api_url, api_key, stop_event=self._stop_event, config=self._config)
@@ -4808,6 +4820,8 @@ class DaemonRunner:
                     "self_update_capable": self_update_capable if first_batch else None,
                     "keep_alive": keep_alive if first_batch else None,
                     "keep_alive_providers": keep_alive_providers if first_batch else None,
+                    "auto_update": auto_update if first_batch else None,
+                    "update_channel": update_channel if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
                     "completed_providers": completed_providers if first_batch else None,
                     "identity_sources": dict(_IDENTITY_REPORT) if first_batch else None,

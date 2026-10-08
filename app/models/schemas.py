@@ -166,6 +166,10 @@ class IngestRequest(BaseModel):
     keep_alive: bool | None = None
     # Per sidecar-run login (provider_id -> running); None from sidecars that predate it.
     keep_alive_providers: dict[str, bool] | None = None
+    # Effective auto-update setting and update channel (local config beats the dashboard);
+    # None from sidecars that predate them.
+    auto_update: bool | None = None
+    update_channel: str | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     # Providers with a complete local-card snapshot in this payload. None from
     # older sidecars means upsert-only; [] is a complete empty report.
