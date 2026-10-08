@@ -1,6 +1,7 @@
 """Unit tests for the sidecar-side update check (scripts/sidecar_pkg/update_check.py)."""
 
 import json
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -125,3 +126,63 @@ class TestCheckOnceBeta:
         opener = _make_urlopen({"releases?per_page=100": []})
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             assert check_once("3.0.0-beta.1", channel="beta") is None
+
+
+class TestRecheckAfterFirstCheckIn:
+    """The first update check runs before any check-in has delivered the fleet's
+    auto-update flag; a check-in that changes it must trigger another check."""
+
+    def test_poke_runs_another_check_without_waiting_the_interval(self):
+        import threading
+
+        from scripts.sidecar_pkg.update_check import UpdateCheckThread
+
+        seen = []
+        second = threading.Event()
+
+        def on_available(desc):
+            seen.append(desc)
+            if len(seen) == 2:
+                second.set()
+
+        with patch("scripts.sidecar_pkg.update_check.check_once", return_value="v9"):
+            t = UpdateCheckThread("1.0.0", on_update_available=on_available, interval=3600)
+            t.start()
+            try:
+                deadline = time.monotonic() + 5
+                while not seen and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                t.poke()
+                assert second.wait(5), "poke() did not trigger a second check"
+            finally:
+                t.stop()
+
+    def test_stop_wakes_the_thread(self):
+        from scripts.sidecar_pkg.update_check import UpdateCheckThread
+
+        with patch("scripts.sidecar_pkg.update_check.check_once", return_value=None):
+            t = UpdateCheckThread("1.0.0", interval=3600)
+            t.start()
+            t.stop()
+            t._thread.join(5)
+            assert not t._thread.is_alive()
+
+    def test_ingest_triggers_a_recheck_when_the_fleet_flag_or_channel_changes(self, monkeypatch):
+        from scripts import sidecar
+
+        calls = []
+        monkeypatch.setattr(sidecar, "_UPDATE_RECHECK", lambda: calls.append(1))
+        monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", False)
+        monkeypatch.setattr(sidecar, "_UPDATE_CHANNEL", None)
+        runner = sidecar.DaemonRunner.__new__(sidecar.DaemonRunner)
+
+        runner._apply_ingest_instructions({"sidecar_auto_update": False}, [], False, False, False)
+        assert calls == []  # nothing changed
+        runner._apply_ingest_instructions({"sidecar_auto_update": True}, [], False, False, False)
+        assert calls == [1]
+        runner._apply_ingest_instructions({"sidecar_auto_update": True}, [], False, False, False)
+        assert calls == [1]  # unchanged
+        runner._apply_ingest_instructions(
+            {"sidecar_auto_update": True, "sidecar_update_channel": "edge"}, [], False, False, False
+        )
+        assert calls == [1, 1]
