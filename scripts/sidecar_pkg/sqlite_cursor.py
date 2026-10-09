@@ -10,7 +10,10 @@ class CursorReadError(Exception):
 
 
 def iter_cursor(cursor: sqlite3.Cursor) -> Iterator[Any]:
-    """Translate read failures without intercepting errors in the caller's parser."""
+    """Translate read failures without intercepting errors in the caller's parser.
+
+    SQLite Cursor.__iter__ returns itself; database reads happen in next().
+    """
     rows = iter(cursor)
     while True:
         try:

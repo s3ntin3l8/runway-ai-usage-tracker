@@ -1744,11 +1744,13 @@ def queue_flush(
                 try:
                     source = os.fdopen(source_fd, encoding="utf-8")
                 except BaseException:
+                    # Failed wrapping leaves the raw descriptor owned here.
                     os.close(source_fd)
                     raise
                 with source:
                     snapshot = os.fstat(source.fileno())
-                    # A random suffix avoids collisions; O_EXCL prevents reuse.
+                    # Random names and O_EXCL defend against leftovers from a
+                    # prior interrupted run or another concurrent flusher.
                     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
                     fd = (
                         os.open(queue_dir / temporary, flags, 0o600)
@@ -1759,6 +1761,7 @@ def queue_flush(
                     try:
                         retained = os.fdopen(fd, "w", encoding="utf-8")
                     except BaseException:
+                        # Close the unwrapped descriptor, even on interruption.
                         os.close(fd)
                         raise
                     with retained:
@@ -1768,7 +1771,7 @@ def queue_flush(
                         retained.flush()
                         os.fsync(retained.fileno())
                         temporary_snapshot = os.fstat(retained.fileno())
-                # All handles are closed here, including on Windows.
+                # Exiting both stream contexts closes their FDs on POSIX and Windows.
                 _check_queue_snapshot(dir_fd, name, snapshot)
                 if failed_count:
                     _check_queue_snapshot(dir_fd, temporary, temporary_snapshot)
@@ -1779,6 +1782,8 @@ def queue_flush(
                     temporary_created = False
                     logging.warning(f"Queue file has {failed_count} failed entries: {name}")
                 else:
+                    # The empty temp is only removed in finally, never published,
+                    # so its contents need no snapshot check.
                     if dir_fd < 0:
                         (queue_dir / name).unlink()
                     else:

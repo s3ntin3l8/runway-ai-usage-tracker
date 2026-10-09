@@ -3,8 +3,8 @@
 
 Run: .venv/bin/python scripts/benchmark_sidecar_memory.py --baseline-ref <base-sha>
 No provider files, credentials, network requests, or live sidecar state are used.
-Both revisions use the same interpreter and dependencies. Add --trace-python for
-Python allocation peaks (this increases RSS). Measure packaged processes separately
+Requires Python 3.12 or newer. Both revisions use the same interpreter and
+dependencies. Add --trace-python for Python allocation peaks (this increases RSS). Measure packaged processes separately
 for deployment sizing. The desktop_import case requires sidecar_app in both
 checkouts.
 """
@@ -236,6 +236,9 @@ def _worker(case: str, source_root: Path, trace_python: bool = False) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    # Direct invocations can come from an unsupported venv.
+    if sys.version_info < (3, 12):  # noqa: UP036
+        parser.error("the sidecar memory benchmark requires Python 3.12 or newer")
     parser.add_argument("--baseline-ref", default="origin/main")
     parser.add_argument("--trace-python", action="store_true")
     parser.add_argument("--runs", type=int, default=3)

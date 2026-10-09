@@ -232,7 +232,9 @@ def test_cursor_distinguishes_database_read_errors():
 
 
 @pytest.mark.parametrize("provider", [opencode, antigravity, hermes])
-def test_partial_database_reads_discard_events_and_state(tmp_path, monkeypatch, provider):
+def test_partial_database_reads_discard_events_without_writing_state(
+    tmp_path, monkeypatch, provider
+):
     db = tmp_path / "state.db"
     state = tmp_path / "watermark.json"
     conn = sqlite3.connect(db)
@@ -267,6 +269,8 @@ def test_partial_database_reads_discard_events_and_state(tmp_path, monkeypatch, 
         conn = make_hermes_db(str(db))
     conn.commit()
     conn.close()
+    save_state = MagicMock(wraps=hermes._save_hermes_watermark)
+    monkeypatch.setattr(hermes, "_save_hermes_watermark", save_state)
     cursor_iterator = provider.iter_cursor
 
     def fail_after_first(cursor):
@@ -284,6 +288,8 @@ def test_partial_database_reads_discard_events_and_state(tmp_path, monkeypatch, 
         events = provider.parse_hermes_events([db], "local", since, state_file=state)
     assert events == []
     assert not state.exists()
+    assert not state.with_suffix(".json.tmp").exists()
+    save_state.assert_not_called()
 
 
 @pytest.mark.parametrize("settings_page", [False, True])
