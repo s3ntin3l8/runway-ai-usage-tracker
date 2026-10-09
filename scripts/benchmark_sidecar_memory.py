@@ -5,7 +5,8 @@ Run: .venv/bin/python scripts/benchmark_sidecar_memory.py --baseline-ref <base-s
 No provider files, credentials, network requests, or live sidecar state are used.
 Both revisions use the same interpreter and dependencies. Add --trace-python for
 Python allocation peaks (this increases RSS). Measure packaged processes separately
-for deployment sizing.
+for deployment sizing. The desktop_import case requires sidecar_app in both
+checkouts.
 """
 
 import argparse
@@ -41,7 +42,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 def _process_memory() -> dict[str, float | None]:
     """Report native memory metrics without adding a production dependency."""
     if sys.platform == "win32":
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
 
         class Counters(ctypes.Structure):
             _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [

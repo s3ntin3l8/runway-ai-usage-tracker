@@ -39,7 +39,6 @@ import urllib.error
 import urllib.request
 from collections import deque
 from collections.abc import Callable
-from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
@@ -1632,9 +1631,9 @@ def _replay_queue_lines(
     stop_event: threading.Event | None,
     config: dict[str, Any] | None,
     on_sent: Callable[[], None] | None = None,
-) -> tuple[int, int, bool]:
+) -> tuple[int, bool]:
     """Replay one entry at a time, streaming failures and the unprocessed suffix."""
-    count = failed_count = 0
+    failed_count = 0
     interrupted = False
     for line in source:
         if not interrupted and stop_event and stop_event.is_set():
@@ -1643,6 +1642,7 @@ def _replay_queue_lines(
         line = line.strip()
         if not line:
             continue
+        # A stop treats the current line as part of the unprocessed suffix.
         keep = interrupted
         if not interrupted:
             try:
@@ -1661,7 +1661,6 @@ def _replay_queue_lines(
                     and result.get("events_error")
                 )
                 if success and not events_failed:
-                    count += 1
                     if on_sent is not None:
                         on_sent()
                 else:
@@ -1681,7 +1680,7 @@ def _replay_queue_lines(
             # must abort publication, leaving the original queue untouched.
             retained.write(_sanitize_queue_line(line) + "\n")
             failed_count += 1
-    return count, failed_count, interrupted
+    return failed_count, interrupted
 
 
 def _check_queue_snapshot(dir_fd: int, name: str, snapshot: os.stat_result) -> None:
@@ -1737,13 +1736,19 @@ def queue_flush(
             temporary = f".{name}.{secrets.token_hex(8)}.tmp"
             temporary_created = False
             try:
-                with ExitStack() as stack:
-                    if dir_fd < 0:
-                        source = stack.enter_context(open(queue_dir / name, encoding="utf-8"))
-                    else:
-                        fd = _open_queue_file(dir_fd, name, os.O_RDONLY)
-                        source = stack.enter_context(os.fdopen(fd, encoding="utf-8"))
+                source_fd = (
+                    os.open(queue_dir / name, os.O_RDONLY)
+                    if dir_fd < 0
+                    else _open_queue_file(dir_fd, name, os.O_RDONLY)
+                )
+                try:
+                    source = os.fdopen(source_fd, encoding="utf-8")
+                except BaseException:
+                    os.close(source_fd)
+                    raise
+                with source:
                     snapshot = os.fstat(source.fileno())
+                    # A random suffix avoids collisions; O_EXCL prevents reuse.
                     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
                     fd = (
                         os.open(queue_dir / temporary, flags, 0o600)
@@ -1751,13 +1756,18 @@ def queue_flush(
                         else _open_queue_file(dir_fd, temporary, flags)
                     )
                     temporary_created = True
-                    retained = stack.enter_context(os.fdopen(fd, "w", encoding="utf-8"))
-                    _, failed_count, interrupted = _replay_queue_lines(
-                        source, retained, target_url, api_key, stop_event, config, record_sent
-                    )
-                    retained.flush()
-                    os.fsync(retained.fileno())
-                    temporary_snapshot = os.fstat(retained.fileno())
+                    try:
+                        retained = os.fdopen(fd, "w", encoding="utf-8")
+                    except BaseException:
+                        os.close(fd)
+                        raise
+                    with retained:
+                        failed_count, interrupted = _replay_queue_lines(
+                            source, retained, target_url, api_key, stop_event, config, record_sent
+                        )
+                        retained.flush()
+                        os.fsync(retained.fileno())
+                        temporary_snapshot = os.fstat(retained.fileno())
                 # All handles are closed here, including on Windows.
                 _check_queue_snapshot(dir_fd, name, snapshot)
                 if failed_count:
@@ -1786,6 +1796,7 @@ def queue_flush(
                         else:
                             os.unlink(temporary, dir_fd=dir_fd)
                     except FileNotFoundError:
+                        # Replacement already consumed the temporary file.
                         pass
                     except OSError as e:
                         logging.warning(f"Failed to remove queue temporary file: {e}")

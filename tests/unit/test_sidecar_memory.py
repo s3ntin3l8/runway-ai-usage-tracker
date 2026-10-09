@@ -160,6 +160,34 @@ def test_failed_retention_write_keeps_original_queue(queue_file, monkeypatch, ac
     assert list(queue_file.parent.iterdir()) == [queue_file]
 
 
+@pytest.mark.parametrize("failed_open", [1, 2])
+def test_queue_fdopen_failure_closes_handles_and_keeps_original(
+    queue_file, monkeypatch, failed_open
+):
+    original = queue_file.read_bytes()
+    fdopen = sidecar.os.fdopen
+    descriptors = []
+    streams = []
+
+    def open_stream(fd, *args, **kwargs):
+        descriptors.append(fd)
+        if len(descriptors) == failed_open:
+            raise OSError("cannot wrap descriptor")
+        stream = fdopen(fd, *args, **kwargs)
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr(sidecar.os, "fdopen", open_stream)
+    assert sidecar.queue_flush("http://localhost", "test") == 0
+    assert queue_file.read_bytes() == original
+    assert list(queue_file.parent.iterdir()) == [queue_file]
+    assert all(stream.closed for stream in streams)
+    assert len(descriptors) == failed_open
+    for fd in descriptors:
+        with pytest.raises(OSError):
+            sidecar.os.fstat(fd)
+
+
 def test_concurrent_append_is_not_overwritten(queue_file, monkeypatch):
     original = queue_file.read_bytes()
     new_entry = b'{"payload":{"events":[{"event_id":"appended"}]}}\n'
@@ -186,7 +214,7 @@ def test_queue_iterator_keeps_interrupted_suffix_without_bulk_reads():
     stop.is_set.return_value = True
     assert sidecar._replay_queue_lines(
         source, retained, "http://localhost", "test", stop, None
-    ) == (0, 1, True)
+    ) == (1, True)
     assert json.loads(retained.getvalue())["payload"]["events"][0]["event_id"] == "1"
 
 
