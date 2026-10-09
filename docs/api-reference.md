@@ -94,7 +94,7 @@ The grouped pending-events response reports `total_events` across the full queue
 | `PATCH` | `/api/v1/system/provider-config/{provider_id}/{account_id}/credential-sources` | Set enabled state and zero-based order for every known source on this account (admin); duplicate priorities are allowed and ties sort by `source_id`; optional `all_machines` applies each listed source preference to matching sidecar origins across hosts; values are never returned |
 | `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it |
 | `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write); includes `sidecar_update_channel`, `sidecar_auto_update` and `sidecar_keep_alive_default` (fleet-wide keep-alive default: on for every sidecar without its own override; omitted fields in a `PUT` keep their stored value) |
-| `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout |
+| `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout (admin for reads and writes) |
 | `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` (public) |
 
 ### Data health (admin)
@@ -202,3 +202,12 @@ interface LimitCard {
 ```
 
 See `../app/models/schemas.py` for the authoritative Pydantic definition. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are documented in [architecture.md](architecture.md) and [statistics.md](statistics.md).
+
+
+Private `/usage/*` reads, fleet sidecar inventory/detail, system state and
+provider configuration reads, and GitHub OAuth status require administrator
+authentication in network mode. Localhost trust remains available with valid
+local Host and browser Origin headers. Public bootstrap endpoints are
+`/system/settings`, `/system/health`, and `/system/sidecar-downloads`; fleet
+`/config` retains its redacted public view and signed sidecar behavior.
+Webhook URLs must use the supported Slack or Discord HTTPS endpoint hosts.

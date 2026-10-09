@@ -5,8 +5,22 @@ import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath } from 'node:url';
 
+const devHost = process.env.VITE_HOST ?? '127.0.0.1';
+
 export default defineConfig({
   plugins: [
+    {
+      name: 'runway-dev-auth-boundary',
+      configureServer(server) {
+        // Use the resolved listener so CLI --host overrides are covered too.
+        const host = server.config.server.host;
+        const local = typeof host === 'string' && ['127.0.0.1', 'localhost', '::1'].includes(host);
+        const proxy = server.config.server.proxy?.['/api'];
+        if (proxy && typeof proxy !== 'string') {
+          proxy.headers = { ...proxy.headers, 'X-Runway-Dev-Remote': local ? '0' : '1' };
+        }
+      },
+    },
     react(),
     tailwindcss(),
     VitePWA({
@@ -115,17 +129,19 @@ export default defineConfig({
     },
   },
   server: {
-    // Bind on all interfaces so the dev server is reachable when Runway runs
-    // on a remote/headless host (matches APP_HOST=0.0.0.0). Override the port
-    // with VITE_PORT if 5173 is taken.
-    host: true,
+    // Remote development requires an explicit bind and an authenticated backend.
+    host: devHost,
     port: Number(process.env.VITE_PORT ?? 5173),
     proxy: {
       // Dev: Vite serves the SPA, FastAPI (make dev) serves the API. The
-      // proxy originates from localhost so the server's localhost admin
-      // bypass applies — no key setup needed in dev. Override the target
+      // default local proxy retains localhost trust; remote listeners require
+      // an admin key or session. Override the target
       // with RUNWAY_API_URL when the backend runs elsewhere.
-      '/api': process.env.RUNWAY_API_URL ?? 'http://127.0.0.1:8765',
+      '/api': {
+        target: process.env.RUNWAY_API_URL ?? 'http://127.0.0.1:8765',
+        // Overwrite caller input: a LAN-facing proxy never inherits local trust.
+        headers: { 'X-Runway-Dev-Remote': '1' },
+      },
     },
   },
   build: {

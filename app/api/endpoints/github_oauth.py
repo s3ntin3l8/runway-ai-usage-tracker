@@ -203,7 +203,9 @@ def _token_stored_in_plaintext() -> bool:
     return isinstance(token, str) and bool(token) and not token.startswith(_FERNET_PREFIX)
 
 
-@router.get("/status", response_model=DeviceFlowStatusResponse)
+@router.get(
+    "/status", response_model=DeviceFlowStatusResponse, dependencies=[Depends(require_admin_key)]
+)
 async def get_status() -> DeviceFlowStatusResponse:
     """Check if GitHub is authenticated."""
     if os.path.exists(settings.GITHUB_OAUTH_PATH):

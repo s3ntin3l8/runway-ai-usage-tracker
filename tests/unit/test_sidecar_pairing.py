@@ -300,3 +300,46 @@ def test_pair_request_rejects_oversized_body(settings_srv):
     status, _ = _http(settings_srv, "POST", "/pair-request", body, {"X-Runway-Control": token})
     assert status == 413
     assert settings_srv.opened == []
+
+
+@pytest.mark.parametrize("path", ["/", "/status", "/logs", "/pair"])
+def test_settings_rejects_rebound_host(settings_srv, path):
+    status, _ = _http(settings_srv, "GET", path, headers={"Host": "rebind.attacker.test"})
+    assert status == 403
+
+
+def test_settings_never_returns_ingest_key(settings_srv):
+    settings_srv.get_config = lambda: {
+        "api_url": "https://server.test",
+        "api_key": "unique-secret-key",  # pragma: allowlist secret — synthetic regression fixture
+    }
+    status, body = _http(settings_srv, "GET", "/")
+    assert status == 200
+    assert "unique-secret-key" not in body
+
+
+def test_settings_rejects_origin_prefix_attack(settings_srv):
+    status, _ = _http(
+        settings_srv,
+        "POST",
+        "/save",
+        body=b"api_url=https://server.test",
+        headers={
+            "Origin": f"http://127.0.0.1:{settings_srv.port}.attacker.test",
+        },
+    )
+    assert status == 403
+
+
+def test_settings_blank_key_preserves_saved_key(settings_srv):
+    status, _ = _http(
+        settings_srv,
+        "POST",
+        "/save",
+        body=b"api_url=https://server.test&api_key=",
+        headers={
+            "Origin": f"http://127.0.0.1:{settings_srv.port}",
+        },
+    )
+    assert status == 200
+    assert settings_srv.saved[-1]["api_key"] == "k"

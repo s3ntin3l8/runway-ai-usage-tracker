@@ -45,6 +45,10 @@ from tests.fixtures.mock_data import (
 def setup_test_settings(monkeypatch):
     """Ensure consistent settings for all tests, isolating them from the local .env."""
     monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
+    monkeypatch.setattr(
+        "app.core.http_security._LOCAL_HOSTS",
+        frozenset({"localhost", "127.0.0.1", "::1", "testserver", "test"}),
+    )
     # An operator's .env may configure real forward-auth values (e.g. Authentik
     # header names, TRUSTED_PROXY_IPS) for their deployment; reset to the
     # Settings model's own defaults (not re-hardcoded here) so proxy-trust

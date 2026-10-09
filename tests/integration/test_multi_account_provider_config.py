@@ -1761,7 +1761,9 @@ def test_delete_provider_config_requires_admin_key(client: TestClient, monkeypat
     )
 
     # Pin: the rejected request must NOT archive the row.
-    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    listing = client.get(
+        "/api/v1/system/provider-configs", headers={"X-Admin-Key": "admin-secret"}
+    ).json()["providers"]
     openrouter = next(p for p in listing if p["provider_id"] == "openrouter")
     by_id = {row["account_id"]: row for row in openrouter["accounts"]}
     assert "alice@example.com" in by_id

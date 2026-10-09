@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import math
 import re
 import threading
 import time
@@ -145,14 +146,19 @@ def resolve_auth(
     # convention every other check below and every existing auth test uses)
     # wouldn't reach the other. Match `settings.APP_HOST` on the same bound
     # object step 1 below already reads.
-    if not settings.ADMIN_API_KEY and settings.APP_HOST in _LOOPBACK_BIND_HOSTS:
+    remote_dev = request.headers.get("X-Runway-Dev-Remote") == "1"
+    if not remote_dev and not settings.ADMIN_API_KEY and settings.APP_HOST in _LOOPBACK_BIND_HOSTS:
         return AuthResult(True, "none")
 
     client_host = request.client.host if request.client else None
 
     # 1. Local trust (zero-touch local usage). Only when client IS localhost
     # AND the server is bound to localhost-only.
-    if client_host in ("127.0.0.1", "::1") and settings.APP_HOST in _LOOPBACK_BIND_HOSTS:
+    if (
+        not remote_dev
+        and client_host in ("127.0.0.1", "::1")
+        and settings.APP_HOST in _LOOPBACK_BIND_HOSTS
+    ):
         return AuthResult(True, "localhost")
 
     # 2. Reverse-proxy trust — gated by an IP allowlist so the user headers
@@ -172,7 +178,13 @@ def resolve_auth(
     if not proxy_user and settings.FORWARD_AUTH_USER_HEADER == _DEFAULT_FORWARD_AUTH_USER_HEADER:
         proxy_user = request.headers.get(_REMOTE_USER_FALLBACK_HEADER)
     trusted = settings.trusted_proxy_ips
-    if trusted and client_host in trusted and proxy_user and _proxy_authorized(request, proxy_user):
+    if (
+        not remote_dev
+        and trusted
+        and client_host in trusted
+        and proxy_user
+        and _proxy_authorized(request, proxy_user)
+    ):
         return AuthResult(True, "proxy", actor_id=proxy_user, actor_meta=_proxy_meta(request))
 
     # 3. Browser session cookie (admin key already exchanged at /auth/session).
@@ -275,6 +287,9 @@ async def validate_ingest_auth(
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid X-Timestamp format") from None
 
+    if not math.isfinite(ts):
+        raise HTTPException(status_code=401, detail="Invalid X-Timestamp format")
+
     now = time.time()
     skew = now - ts
     # 5-minute window for past timestamps, 60s for future drift.
@@ -296,11 +311,24 @@ async def validate_ingest_auth(
             },
         )
 
-    body_bytes = await request.body()
-    # 8 MB cap. Manifests stay small (one origin per host-provider), ingest
-    # bodies batch up to 1000 events (~1 MB worst case), so 8 MB is generous.
-    if len(body_bytes) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Request body too large")
+    # Enforce the cap while receiving, including chunked / dishonest lengths.
+    limit = 8 * 1024 * 1024
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            length = int(content_length)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length") from None
+        if length < 0:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length")
+        if length > limit:
+            raise HTTPException(status_code=413, detail="Request body too large")
+    chunks = bytearray()
+    async for chunk in request.stream():
+        if len(chunks) + len(chunk) > limit:
+            raise HTTPException(status_code=413, detail="Request body too large")
+        chunks.extend(chunk)
+    body_bytes = bytes(chunks)
 
     expected_sig = hmac.new(
         _settings.INGEST_API_KEY.encode(),
@@ -347,6 +375,8 @@ def verify_config_signature(request: Request) -> bool:
         skew = time.time() - float(x_timestamp)
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid X-Timestamp format") from None
+    if not math.isfinite(skew):
+        raise HTTPException(status_code=401, detail="Invalid X-Timestamp format")
     if skew < -60 or skew > 300:
         raise HTTPException(status_code=400, detail="X-Timestamp outside the allowed window")
     expected = hmac.new(

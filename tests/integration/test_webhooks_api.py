@@ -40,7 +40,7 @@ def test_create_webhook(client):
     payload = {
         "provider_id": "anthropic",
         "threshold_pct": 90.0,
-        "url": "https://discord.example.com/hook",
+        "url": "https://discord.com/api/webhooks/123/token",
         "channel": "discord",
     }
     response = client.post("/api/v1/system/webhooks", json=payload)
@@ -52,7 +52,7 @@ def test_list_webhooks_after_create(client):
     payload = {
         "provider_id": "openai",
         "threshold_pct": 85.0,
-        "url": "https://hooks.slack.com/example",
+        "url": "https://hooks.slack.com/services/T/B/token",
         "channel": "slack",
     }
     client.post("/api/v1/system/webhooks", json=payload)
@@ -69,7 +69,7 @@ def test_create_webhook_credential_alerts_defaults_true(client):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     )
@@ -84,7 +84,7 @@ def test_create_webhook_credential_alerts_can_be_disabled(client):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
             "credential_alerts": False,
         },
@@ -100,7 +100,7 @@ def test_patch_webhook_credential_alerts(client):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     )
@@ -119,7 +119,7 @@ def test_patch_webhook(client):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     )
@@ -138,7 +138,7 @@ def test_delete_webhook(client):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     )
@@ -157,7 +157,7 @@ def test_delete_webhook_clears_credential_alert_rows(client, session):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     )
@@ -265,7 +265,7 @@ def test_test_endpoint_sends_payload(client):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     )
@@ -293,7 +293,7 @@ def test_test_endpoint_returns_502_on_delivery_failure(client):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     )
@@ -337,7 +337,7 @@ def _payload(**overrides):
     payload = {
         "provider_id": "anthropic",
         "threshold_pct": 90.0,
-        "url": "https://discord.example.com/hook",
+        "url": "https://discord.com/api/webhooks/123/token",
         "channel": "discord",
     }
     payload.update(overrides)
@@ -419,7 +419,7 @@ def test_patch_duplicate_scoped_account_409(client, session):
             "provider_id": "anthropic",
             "account_id": "work@example.com",
             "threshold_pct": 90.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     )
@@ -428,7 +428,7 @@ def test_patch_duplicate_scoped_account_409(client, session):
         json={
             "provider_id": "anthropic",
             "threshold_pct": 80.0,
-            "url": "https://discord.example.com/hook",
+            "url": "https://discord.com/api/webhooks/123/token",
             "channel": "discord",
         },
     ).json()["id"]
@@ -582,7 +582,7 @@ def test_add_columns_backfills_credential_alerts_as_true():
             text(
                 "INSERT INTO webhook_configs "
                 "(id, provider_id, threshold_pct, url, channel, active) "
-                "VALUES (1, 'anthropic', 90.0, 'https://discord.example.com/hook', 'discord', 1)"
+                "VALUES (1, 'anthropic', 90.0, 'https://discord.com/api/webhooks/123/token', 'discord', 1)"
             )
         )
         conn.commit()
@@ -632,9 +632,9 @@ def test_migrate_webhook_uniqueness_upgrades_legacy_db():
         conn.execute(
             text(
                 "INSERT INTO webhook_configs (id, provider_id, threshold_pct, url, channel, active) "
-                "VALUES (1, 'anthropic', 90.0, 'https://discord.example.com/hook', 'discord', 1),"
-                "(2, 'anthropic', 80.0, 'https://discord.example.com/hook', 'discord', 1),"
-                "(3, 'openai', 75.0, 'https://hooks.slack.com/example', 'slack', 1)"
+                "VALUES (1, 'anthropic', 90.0, 'https://discord.com/api/webhooks/123/token', 'discord', 1),"
+                "(2, 'anthropic', 80.0, 'https://discord.com/api/webhooks/123/token', 'discord', 1),"
+                "(3, 'openai', 75.0, 'https://hooks.slack.com/services/T/B/token', 'slack', 1)"
             )
         )
         conn.commit()

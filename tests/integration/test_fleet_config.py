@@ -143,3 +143,20 @@ def test_config_disabled_first_row_keeps_first_strategies(client: TestClient, se
     openrouter = r.json()["config"]["providers"]["openrouter"]
     assert openrouter["strategies"] == [{"id": "web", "label": "Web"}]
     assert openrouter["enabled"] is True  # OR-merge from second row
+
+
+def test_remote_dev_proxy_gets_redacted_config(client, session, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "127.0.0.1")
+    monkeypatch.setattr("app.core.config.settings.INGEST_API_KEY", "safe-ingest-secret")
+    _add(
+        session,
+        "openrouter",
+        "private@example.com",
+        api_key_encrypted="synthetic-secret",  # pragma: allowlist secret
+    )
+    response = client.get("/api/v1/fleet/config", headers={"X-Runway-Dev-Remote": "1"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["config"]["providers"]["openrouter"]["accounts"] == []
+    assert "private@example.com" not in response.text
+    assert "credential_token" not in response.text
