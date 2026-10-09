@@ -1,5 +1,7 @@
 """Regression coverage for the security audit's HTTP boundary exploits."""
 
+from unittest.mock import Mock
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -65,6 +67,10 @@ def test_network_auth_bootstrap_remains_public(monkeypatch):
 
 
 def test_remote_dev_proxy_cannot_inherit_loopback_admin(monkeypatch):
+    rotate_secret = Mock()
+    audit_record = Mock()
+    monkeypatch.setattr("app.api.endpoints.auth.rotate_secret", rotate_secret)
+    monkeypatch.setattr("app.api.endpoints.auth.audit_log.record", audit_record)
     for module in ("app.core.config", "app.core.security"):
         monkeypatch.setattr(f"{module}.settings.APP_HOST", "127.0.0.1")
         monkeypatch.setattr(f"{module}.settings.ADMIN_API_KEY", "dev-admin")
@@ -74,8 +80,12 @@ def test_remote_dev_proxy_cannot_inherit_loopback_admin(monkeypatch):
     assert response.status_code == 200
     assert response.json()["is_authenticated"] is False
     assert client.post("/api/v1/auth/revoke-all", headers=headers).status_code == 403
+    rotate_secret.assert_not_called()
+    audit_record.assert_not_called()
     headers["X-Admin-Key"] = "dev-admin"
     assert client.post("/api/v1/auth/revoke-all", headers=headers).status_code == 204
+    rotate_secret.assert_called_once_with()
+    audit_record.assert_called_once()
 
 
 def test_remote_dev_proxy_cannot_forge_sso(monkeypatch):
