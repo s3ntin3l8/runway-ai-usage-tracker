@@ -1,6 +1,5 @@
 # app/services/webhooks.py
 import asyncio
-import ipaddress
 import logging
 from datetime import UTC, datetime
 from urllib.parse import urlparse
@@ -29,56 +28,36 @@ class WebhookURLError(ValueError):
     """Webhook URL fails SSRF allowlist checks."""
 
 
-_BLOCKED_HOSTNAMES = {
-    "localhost",
-    "metadata.google.internal",
-    "metadata",  # short alias some cloud SDKs accept
+_WEBHOOK_PATHS = {
+    "hooks.slack.com": "/services/",
+    "discord.com": "/api/webhooks/",
+    "discordapp.com": "/api/webhooks/",
 }
 
 
 def validate_webhook_url(url: str) -> None:
-    """Raise WebhookURLError if `url` is unsafe for outbound webhook delivery.
+    """Restrict delivery to the supported providers' HTTPS webhook endpoints.
 
-    Blocks non-http(s) schemes, loopback, RFC1918, link-local (incl. cloud
-    metadata at 169.254.169.254), multicast/reserved/unspecified IP literals,
-    and the literal hostnames used by cloud-metadata services.
-
-    Hostnames that resolve to internal IPs at request time are NOT caught
-    here — full SSRF protection against DNS rebinding requires resolving at
-    the moment of connect and pinning to a public IP. Validating literal
-    forms catches the bulk of "I pasted localhost into the form" misuse and
-    accidental metadata access.
+    Arbitrary destinations (including DNS / numeric aliases for private hosts)
+    are deliberately unsupported. Redirects must never expand this allowlist.
     """
     try:
         parsed = urlparse(url)
-    except Exception as exc:
-        raise WebhookURLError(f"Invalid URL: {exc}") from exc
-
-    if parsed.scheme not in ("http", "https"):
-        raise WebhookURLError(f"Only http(s) URLs are allowed (got scheme {parsed.scheme!r})")
-
-    host = (parsed.hostname or "").lower()
-    if not host:
-        raise WebhookURLError("URL must include a hostname")
-
-    if host in _BLOCKED_HOSTNAMES:
-        raise WebhookURLError(f"Hostname {host!r} is not allowed")
-
-    try:
-        ip = ipaddress.ip_address(host)
+        prefix = _WEBHOOK_PATHS.get(parsed.hostname or "")
+        safe = (
+            parsed.scheme == "https"
+            and parsed.port in (None, 443)
+            and parsed.username is None
+            and parsed.password is None
+            and prefix is not None
+            and parsed.path.startswith(prefix)
+            and not parsed.fragment
+            and not any(c.isspace() or ord(c) < 32 for c in url)
+        )
     except ValueError:
-        # Hostname — defer to connect-time (see docstring note).
-        return
-
-    if (
-        ip.is_loopback
-        or ip.is_private
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    ):
-        raise WebhookURLError(f"IP {ip} is not allowed for webhook delivery")
+        safe = False
+    if not safe:
+        raise WebhookURLError("Use an HTTPS Slack or Discord webhook URL")
 
 
 async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
@@ -234,7 +213,7 @@ async def _post_payload(client: httpx.AsyncClient, config: WebhookConfig, payloa
     # Defense in depth: rows created before validate_webhook_url was added
     # could still hold loopback/metadata URLs. Re-check before each call.
     validate_webhook_url(config.url)
-    response = await client.post(config.url, json=payload)
+    response = await client.post(config.url, json=payload, follow_redirects=False)
     response.raise_for_status()
 
 

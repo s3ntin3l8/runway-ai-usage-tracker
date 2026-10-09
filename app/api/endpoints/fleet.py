@@ -2087,7 +2087,7 @@ def _fleet_update_defaults(session: Session) -> tuple[str, bool]:
     )
 
 
-@router.get("/sidecars")
+@router.get("/sidecars", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def list_sidecars(
     request: Request,
@@ -2101,7 +2101,7 @@ async def list_sidecars(
     return {"sidecars": [fleet_registry.to_dict(row, channel, auto_update) for row in rows]}
 
 
-@router.get("/sidecars/{sidecar_id}")
+@router.get("/sidecars/{sidecar_id}", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def get_sidecar(
     request: Request,
@@ -2383,7 +2383,9 @@ async def get_fleet_config(
     # Decided up front (verification consumes the single-use signature):
     # untrusted callers get a redacted view, so nothing identity-bearing —
     # including credential tokens — is even computed for them.
-    trusted = verify_config_signature(request) or is_loopback_bind()
+    trusted = verify_config_signature(request) or (
+        is_loopback_bind() and request.headers.get("X-Runway-Dev-Remote") != "1"
+    )
 
     rows = session.exec(select(ProviderConfig)).all()
 

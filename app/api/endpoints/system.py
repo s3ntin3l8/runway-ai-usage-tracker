@@ -254,7 +254,7 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
     return response
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def get_collector_status(request: Request) -> dict[str, Any]:
     """Return detailed health and cache stats for all active collectors."""
@@ -935,6 +935,16 @@ def _assert_webhook_unique(
         )
 
 
+def _webhook_destination_warning(url: str) -> str | None:
+    from app.services.webhooks import WebhookURLError, validate_webhook_url
+
+    try:
+        validate_webhook_url(url)
+    except WebhookURLError:
+        return "Unsupported destination. Replace this alert with a Slack or Discord HTTPS webhook."
+    return None
+
+
 @router.get("/webhooks")
 async def list_webhooks(
     account_id: str | None = None,
@@ -963,6 +973,7 @@ async def list_webhooks(
                 "active": c.active,
                 "credential_alerts": c.credential_alerts,
                 "last_fired_at": iso_utc(c.last_fired_at),
+                "validation_error": _webhook_destination_warning(c.url),
             }
             for c in configs
         ]
@@ -1509,7 +1520,7 @@ def _supported_saved_strategies(
     return [entry for entry in saved if entry.get("id") in allowed]
 
 
-@router.get("/provider-configs")
+@router.get("/provider-configs", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def list_provider_configs(request: Request, session: Session = Depends(get_session)) -> dict:  # noqa: PLR0915
     """Return all known providers merged with their DB configuration."""
@@ -2665,7 +2676,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     poller.wake()
 
 
-@router.get("/app-config")
+@router.get("/app-config", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def get_app_config(request: Request, session: Session = Depends(get_session)) -> dict:
     """Return global application configuration."""
@@ -2748,7 +2759,7 @@ async def upsert_app_config(
     return {"status": "saved"}
 
 
-@router.get("/dashboard-layout")
+@router.get("/dashboard-layout", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def get_dashboard_layout(request: Request, session: Session = Depends(get_session)) -> dict:
     """Return the persisted dashboard layout. Empty default if unset."""
@@ -2768,14 +2779,14 @@ async def get_dashboard_layout(request: Request, session: Session = Depends(get_
     }
 
 
-@router.put("/dashboard-layout")
+@router.put("/dashboard-layout", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def put_dashboard_layout(
     request: Request,
     body: _DashboardLayout,
     session: Session = Depends(get_session),
 ) -> dict:
-    """Store a new dashboard layout. No admin key — matches other UI-facing settings."""
+    """Store a new dashboard layout for an authenticated administrator."""
     import json
 
     cfg = session.exec(select(SystemConfig)).first()
@@ -2784,4 +2795,5 @@ async def put_dashboard_layout(
         session.add(cfg)
     cfg.dashboard_layout_json = json.dumps(body.model_dump())
     session.commit()
+    audit_log.record(session, request, action="dashboard.layout_update", target_id="dashboard")
     return {"status": "saved"}

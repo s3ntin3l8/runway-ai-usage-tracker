@@ -33,6 +33,30 @@ jobs:
       strict-checks: true
     secrets: inherit
 
+  dependency-audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Audit server, desktop and build dependencies
+        run: |
+          python -m pip install --upgrade pip 'setuptools>=83.0.0'
+          python -m pip install -r requirements-dev.txt '.[desktop]' pyinstaller
+          pip-audit --skip-editable
+      - name: Audit frontend including build dependencies
+        run: |
+          npm --prefix webapp ci
+          npm --prefix webapp audit
+
   installer-check:
     # Compile the Windows NSIS installer on every PR (placeholder exe — the real
     # one is built on windows-latest by sidecar-build.yml) so a broken .nsi or

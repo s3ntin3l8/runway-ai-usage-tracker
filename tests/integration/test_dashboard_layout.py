@@ -39,7 +39,11 @@ def test_get_dashboard_layout_empty_default(client: TestClient):
     assert r.json() == {"provider_order": [], "card_orders": {}}
 
 
-def test_put_and_get_roundtrip(client: TestClient):
+def test_put_and_get_roundtrip(client: TestClient, monkeypatch):
+    for module in ("app.core.config", "app.core.security"):
+        monkeypatch.setattr(f"{module}.settings.APP_HOST", "0.0.0.0")
+        monkeypatch.setattr(f"{module}.settings.ADMIN_API_KEY", "layout-admin")
+    client.headers["X-Admin-Key"] = "layout-admin"
     body = {
         "provider_order": ["anthropic", "gemini"],
         "card_orders": {"anthropic": ["acc1|Claude Pro||5hr_limit"]},

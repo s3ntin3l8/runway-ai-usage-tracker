@@ -483,3 +483,17 @@ def test_the_sidecar_does_not_ship_runways_own_github_token_file():
         for p in rule.get("paths", [])
     ]
     assert not any("github_oauth.json" in p for p in paths)
+
+
+def test_github_migration_encryption_failure_returns_503_and_preserves_file(
+    github_file, encryption
+):
+    github_file.parent.mkdir(parents=True)
+    original = json.dumps({"access_token": "legacy-test-token"})
+    github_file.write_text(original)
+    with patch.object(encryption._fernet, "encrypt", side_effect=RuntimeError("synthetic failure")):
+        response = TestClient(app).get("/api/v1/auth/github/status")
+    assert response.status_code == 503
+    assert "refusing to persist plaintext" in response.json()["detail"]
+    assert "synthetic failure" not in response.text
+    assert github_file.read_text() == original

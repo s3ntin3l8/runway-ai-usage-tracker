@@ -3,7 +3,7 @@
 Before this fix, `/api/v1/auth/github/{init,poll,logout}` had no auth
 dependency at all — any caller who could reach the server could kick off a
 device-flow login (that ends with this server persisting a GitHub access
-token to disk) or wipe an existing one. `/status` stays open; it's a read.
+token to disk) or wipe an existing one. `/status` also requires authentication.
 
 Same pattern as `test_multi_account_provider_config.py::test_delete_provider_config_requires_admin_key`
 and `test_status_reset.py::test_reset_provider_requires_admin_key`: patch
@@ -53,11 +53,10 @@ def test_logout_requires_admin_key(client, off_loopback_admin):
     assert response.status_code == 403
 
 
-def test_status_stays_unauthenticated(client, off_loopback_admin):
-    """`/status` is a read endpoint and stays open, same as every other
-    unauthenticated `/usage/*` and `/system/status` GET."""
+def test_status_requires_admin_key(client, off_loopback_admin):
+    assert client.get("/api/v1/auth/github/status").status_code == 403
     with patch("app.api.endpoints.github_oauth.os.path.exists", return_value=False):
-        response = client.get("/api/v1/auth/github/status")
+        response = client.get("/api/v1/auth/github/status", headers={"X-Admin-Key": "admin-secret"})
     assert response.status_code == 200
     assert response.json()["authenticated"] is False
 

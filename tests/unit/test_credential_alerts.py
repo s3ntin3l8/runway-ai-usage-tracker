@@ -65,7 +65,7 @@ def _config(
     provider="anthropic",
     account=None,
     channel="discord",
-    url="https://discord.example.com/webhook",
+    url="https://discord.com/api/webhooks/123/token",
     credential_alerts=True,
     active=True,
 ):
@@ -413,8 +413,8 @@ async def test_failed_delivery_retries_next_run(session):
 
 @pytest.mark.asyncio
 async def test_two_webhooks_deduped_independently(session):
-    _config(session, url="https://discord.example.com/a")
-    _config(session, channel="slack", url="https://hooks.slack.com/b")
+    _config(session, url="https://discord.com/api/webhooks/456/token")
+    _config(session, channel="slack", url="https://hooks.slack.com/services/T/B/other")
 
     client = await _run(session, [_row(status="invalid")])
     assert client.post.call_count == 2

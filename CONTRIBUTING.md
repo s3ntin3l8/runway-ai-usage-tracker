@@ -52,3 +52,9 @@ documented in [AGENTS.md](AGENTS.md) — follow them rather than improvising.
 - Collection/merge logic: [docs/collection_logic.md](docs/collection_logic.md)
 - Testing guide: [tests/README.md](tests/README.md)
 - Security model: [docs/SECURITY.md](docs/SECURITY.md)
+
+
+Remote development: Vite defaults to `127.0.0.1`; set `VITE_HOST` explicitly
+when remote access is needed. Configure the API in network mode with an admin
+key, explicit CORS origins and TLS (see `docs/SECURITY.md`). A remote browser
+cannot use the API's localhost administrator bypass through Vite.

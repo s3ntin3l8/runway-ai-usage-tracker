@@ -66,7 +66,7 @@ def _config(
         provider_id=provider,
         account_id=account,
         threshold_pct=threshold,
-        url="https://discord.example.com/webhook",
+        url="https://discord.com/api/webhooks/123/token",
         channel=channel,
         active=True,
         last_fired_at=last_fired,
@@ -262,7 +262,7 @@ async def test_global_wildcard_matches_all_providers(session):
     cfg = WebhookConfig(
         provider_id="*",
         threshold_pct=90.0,
-        url="https://discord.example.com/webhook",
+        url="https://discord.com/api/webhooks/123/token",
         channel="discord",
         active=True,
         last_fired_at=None,

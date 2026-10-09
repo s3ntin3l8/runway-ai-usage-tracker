@@ -237,8 +237,8 @@ $css</style>
     <div class="field">
       <label for="api_key">API Key</label>
       <div class="input-wrap">
-        <input type="password" id="api_key" name="api_key" value="$api_key"
-               class="has-toggle" placeholder="Your INGEST_API_KEY" autocomplete="current-password">
+        <input type="password" id="api_key" name="api_key" value=""
+               class="has-toggle" placeholder="Leave blank to keep the existing key" autocomplete="current-password">
         <button type="button" class="toggle-vis" onclick="toggleKey()" title="Show / hide key" id="toggle-btn">
           <svg id="eye-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24"
                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -510,7 +510,16 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:  # noqa: A002
         pass  # suppress access log noise
 
+    def _valid_host(self) -> bool:
+        expected = f"127.0.0.1:{self.server.server_address[1]}"
+        if self.headers.get("Host", "") != expected:
+            self.send_error(403, "Forbidden")
+            return False
+        return True
+
     def do_GET(self) -> None:
+        if not self._valid_host():
+            return
         path = urlparse(self.path).path
         if path == "/":
             self._serve_settings_page()
@@ -524,6 +533,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        if not self._valid_host():
+            return
         # Hand-off from a second sidecar process that was launched with a
         # runway-sidecar:// URL (Windows protocol handler). Authenticated by the
         # per-run token in the owner-only control file, not by Origin — it is
@@ -538,7 +549,7 @@ class _Handler(BaseHTTPRequestHandler):
         # historical loophole some non-browser clients exploited.
         origin = self.headers.get("Origin", "")
         allowed = f"http://127.0.0.1:{self.server.server_address[1]}"
-        if not origin or not origin.startswith(allowed):
+        if origin != allowed:
             self.send_error(403, "Forbidden")
             return
 
@@ -562,7 +573,6 @@ class _Handler(BaseHTTPRequestHandler):
         html = _HTML.substitute(
             css=_CSS,
             api_url=_esc(config.get("api_url", "")),
-            api_key=_esc(config.get("api_key", "")),
             version=_esc(status.get("version", "?")),
             sidecar_id=_esc(status.get("sidecar_id", "")),
         )
@@ -600,7 +610,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         new_config = dict(self.server.get_config())
         new_config["api_url"] = api_url
-        new_config["api_key"] = api_key
+        if api_key:
+            new_config["api_key"] = api_key
 
         try:
             self.server.save_config(new_config)

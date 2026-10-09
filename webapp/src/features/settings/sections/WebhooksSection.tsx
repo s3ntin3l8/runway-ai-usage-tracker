@@ -183,6 +183,9 @@ function WebhookRow({
           {webhook.channel} ·{' '}
           {webhook.last_fired_at ? `last fired ${timeAgo(webhook.last_fired_at)}` : 'never fired'}
         </p>
+        {webhook.validation_error && (
+          <p role="alert" className="mt-1 text-xs text-warning">{webhook.validation_error}</p>
+        )}
       </div>
       <Badge variant={webhook.channel === 'discord' ? 'accent' : 'unlimited'}>
         {webhook.channel}

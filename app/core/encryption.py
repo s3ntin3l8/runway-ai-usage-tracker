@@ -9,6 +9,10 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class EncryptionError(Exception):
+    """Configured encryption failed; callers must not persist plaintext."""
+
+
 class DecryptionError(Exception):
     """Decryption of a value that looks like Fernet ciphertext failed.
 
@@ -61,8 +65,8 @@ class EncryptionService:
         try:
             return fernet.encrypt(plaintext.encode()).decode()
         except Exception as e:
-            logger.error(f"Encryption failed: {e}")
-            return plaintext
+            logger.error("Encryption failed")
+            raise EncryptionError("Unable to encrypt credential") from e
 
     def decrypt_string(self, ciphertext: str) -> str:
         """Decrypt a string and return plaintext.

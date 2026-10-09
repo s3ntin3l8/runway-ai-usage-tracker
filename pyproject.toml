@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -25,7 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 desktop = [
     "pystray>=0.19",
-    "Pillow>=10",
+    "Pillow>=12.3.0",
     "packaging>=24",
 ]
 

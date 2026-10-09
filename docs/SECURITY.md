@@ -84,7 +84,7 @@ These are fail-fast checks: a misconfigured deployment dies at import time with 
 
 Blank values are treated as unset: an empty or whitespace-only `ADMIN_API_KEY` or `DB_ENCRYPTION_KEY` normalizes to `None` (so `KEY=""` in `.env` doesn't masquerade as a configured secret). A **malformed** `DB_ENCRYPTION_KEY` (set but not a valid Fernet key) also fails fast at startup, rather than silently falling back to plaintext storage.
 
-The `["*"]` CORS fallback only takes effect when `APP_HOST` resolves to `127.0.0.1` / `localhost`; the gate above guarantees any non-localhost bind must ship an explicit allow-list, so wildcard CORS is never exposed off-host.
+Local CORS defaults allow only the configured localhost origins. Network deployments must provide an explicit allow-list. Browser requests with an Origin outside the request origin and this allow-list are rejected before handlers run. In local mode, Host must name localhost or a loopback address, protecting localhost administrator trust against DNS rebinding and LAN-facing proxies.
 
 ## 🔐 Application Authentication
 
@@ -202,3 +202,39 @@ When using GitHub Actions or other CI/CD pipelines:
 
 ## 👮 Reporting Vulnerabilities
 If you discover a security vulnerability, please open a private security advisory on GitHub or contact the maintainer directly.
+
+
+### Audit boundary protections
+
+Private usage, event, fleet, provider configuration, GitHub login status, and
+system state reads require the same administrator authentication as writes.
+`/system/settings`, `/system/health`, and `/system/sidecar-downloads` remain
+public bootstrap endpoints; fleet configuration retains its existing redacted
+public / signed sidecar contract. Dashboard layout writes require admin auth.
+
+Vite binds `127.0.0.1` by default. For remote development, explicitly set
+`VITE_HOST` and use a network-mode backend with an admin key, explicit CORS
+origins, and TLS as described above. A LAN proxy cannot grant local admin trust.
+
+The sidecar settings server validates Host and exact Origin. It never embeds
+the saved ingestion key in HTML; leaving the key field blank preserves it.
+Enter a replacement to rotate the key, or pair again from the dashboard.
+
+Webhook destinations must be HTTPS Slack (`hooks.slack.com/services/…`) or
+Discord (`discord.com/api/webhooks/…`, legacy `discordapp.com` also accepted)
+URLs on port 443. Custom hosts and redirects are unsupported; existing custom
+webhooks must be replaced. Saved unsupported destinations display a warning in
+Settings → Webhooks immediately after upgrade; no database rewrite is needed.
+Validation applies at save time and delivery time.
+
+Ingestion stops receiving when its 8 MiB cap is exceeded, irrespective of
+Content-Length. Nonfinite HMAC timestamps are rejected. If configured encryption
+fails at runtime, credential writes fail instead of persisting plaintext.
+
+Encryption failures return HTTP 503 with a safe retry message. Credential writes
+remain blocked until encryption recovers. No exception details or keys reach the client.
+
+`X-Runway-Dev-Remote` is an internal Vite downgrade marker, overwritten by the
+dev proxy on every request. It never grants authentication. Production reverse
+proxies should strip client-supplied values, alongside identity headers, and
+assert identity only after authenticating the caller.
