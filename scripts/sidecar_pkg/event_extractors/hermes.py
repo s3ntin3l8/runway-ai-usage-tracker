@@ -40,6 +40,7 @@ from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
     SHARED_CANONICAL_PROVIDER_MAP,
     CanonicalProviderTuple,
 )
+from scripts.sidecar_pkg.sqlite_cursor import CursorReadError, iter_cursor  # noqa: E402
 
 logger = logging.getLogger("runway.sidecar.hermes")
 
@@ -288,6 +289,13 @@ def parse_hermes_events(
         uri_path = f"file:{db_path.resolve()}?mode=ro"
         try:
             conn = sqlite3.connect(uri_path, uri=True)
+        except Exception as exc:
+            logger.warning("Failed to query Hermes state DB at %s: %s", db_path, exc)
+            continue
+
+        event_start = len(events)
+        state_updates: dict[str, Any] = {}
+        try:
             conn.row_factory = sqlite3.Row
             try:
                 cur = conn.cursor()
@@ -330,172 +338,179 @@ def parse_hermes_events(
                        OR (smu.last_seen IS NULL AND smu.first_seen IS NULL)
                     ORDER BY MAX(COALESCE(smu.last_seen, 0), COALESCE(smu.first_seen, 0)) ASC
                 """
-                rows = cur.execute(query, (profile_name, since_epoch)).fetchall()
-            finally:
-                conn.close()
-        except Exception as exc:
-            logger.warning("Failed to query Hermes state DB at %s: %s", db_path, exc)
-            continue
-
-        for row in rows:
-            session_id = row["session_id"]
-            model = row["model"] or "unknown"
-            billing_provider = row["billing_provider"] or ""
-            billing_base_url = row["billing_base_url"] or ""
-            billing_mode = row["billing_mode"] or ""
-            task = row["task"] or ""
-
-            raw_last_seen = row["last_seen"]
-            raw_first_seen = row["first_seen"]
-            if raw_last_seen is None and raw_first_seen is None:
-                logger.warning(
-                    "Hermes session_model_usage row for session %s has both last_seen and first_seen NULL; skipping",
-                    session_id,
-                )
-                continue
-
-            last_seen = float(
-                max(
-                    raw_last_seen if raw_last_seen is not None else 0.0,
-                    raw_first_seen if raw_first_seen is not None else 0.0,
-                )
-            )
-            # Belt-and-suspenders guard against floating-point precision / rounding
-            # differences between SQLite and Python timestamps; SQL query already filters smu.last_seen > since_epoch.
-            if last_seen <= since_epoch:
+                rows = iter_cursor(cur.execute(query, (profile_name, since_epoch)))
+            except Exception as exc:
+                logger.warning("Failed to query Hermes state DB at %s: %s", db_path, exc)
                 continue
 
             try:
-                ts = datetime.fromtimestamp(last_seen, tz=UTC)
-            except Exception:
-                continue
+                for row in rows:
+                    session_id = row["session_id"]
+                    model = row["model"] or "unknown"
+                    billing_provider = row["billing_provider"] or ""
+                    billing_base_url = row["billing_base_url"] or ""
+                    billing_mode = row["billing_mode"] or ""
+                    task = row["task"] or ""
 
-            curr_calls = int(row["api_call_count"] or 0)
-            curr_in = int(row["input_tokens"] or 0)
-            curr_out = int(row["output_tokens"] or 0)
-            curr_cache_read = int(row["cache_read_tokens"] or 0)
-            curr_cache_write = int(row["cache_write_tokens"] or 0)
-            curr_reasoning = int(row["reasoning_tokens"] or 0)
-
-            actual_cost = row["actual_cost_usd"]
-            est_cost = row["estimated_cost_usd"]
-            # Provider-supplied actual_cost_usd is authoritative; estimated fallback only when NULL
-            curr_cost = float(actual_cost if actual_cost is not None else (est_cost or 0.0))
-
-            # Watermark key uniquely identifies this slice within the DB per account (including billing_base_url and billing_mode)
-            state_key = f"{account_id}|{db_path.resolve()}|{profile_name}|{session_id}|{model}|{billing_provider}|{billing_base_url}|{billing_mode}|{task}"
-            prev = watermark_state.get(state_key, {})
-
-            prev_in = int(prev.get("input_tokens", 0))
-            prev_out = int(prev.get("output_tokens", 0))
-            prev_cache_read = int(prev.get("cache_read_tokens", 0))
-            prev_cache_write = int(prev.get("cache_write_tokens", 0))
-            prev_reasoning = int(prev.get("reasoning_tokens", 0))
-            prev_cost = float(prev.get("cost_usd", 0.0))
-            prev_calls = int(prev.get("api_call_count", 0))
-
-            delta_in = max(0, curr_in - prev_in)
-            delta_out = max(0, curr_out - prev_out)
-            delta_cache_read = max(0, curr_cache_read - prev_cache_read)
-            delta_cache_write = max(0, curr_cache_write - prev_cache_write)
-            delta_reasoning = max(0, curr_reasoning - prev_reasoning)
-            delta_cost = max(0.0, curr_cost - prev_cost)
-
-            has_tokens = any(
-                (delta_in, delta_out, delta_cache_read, delta_cache_write, delta_reasoning)
-            )
-            has_cost = delta_cost > 0
-            is_new_calls = curr_calls > 0 and curr_calls > prev_calls
-
-            if not (has_tokens or has_cost or is_new_calls):
-                continue
-
-            # Determine provider_id and canonical mapping
-            target_provider_id, canonical = resolve_hermes_provider_and_canonical(
-                billing_provider=billing_provider,
-                billing_base_url=billing_base_url,
-                model=model,
-                session_billing_provider=row["session_billing_provider"] or "",
-                session_billing_base_url=row["session_billing_base_url"] or "",
-                session_model=row["session_model"] or "",
-                session_billing_mode=row["session_billing_mode"] or "",
-            )
-            if canonical is not None:
-                canonical_provider_id, account_override = canonical
-                target_provider_id = canonical_provider_id
-
-                if account_override is not None:
-                    event_account_id = account_override
-                    event_account_source = "tag"
-                elif canonical_hints:
-                    provider_hints = canonical_hints.get(canonical_provider_id, {})
-                    canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
-                    if not canonical_hint and canonical_provider_id == "opencode-free":
-                        canonical_hint = canonical_hints.get("opencode", {}).get(
-                            "provider:opencode"
+                    raw_last_seen = row["last_seen"]
+                    raw_first_seen = row["first_seen"]
+                    if raw_last_seen is None and raw_first_seen is None:
+                        logger.warning(
+                            "Hermes session_model_usage row for session %s has both last_seen and first_seen NULL; skipping",
+                            session_id,
                         )
-                    if canonical_hint:
-                        event_account_id = canonical_hint
-                        event_account_source = "tag"
+                        continue
+
+                    last_seen = float(
+                        max(
+                            raw_last_seen if raw_last_seen is not None else 0.0,
+                            raw_first_seen if raw_first_seen is not None else 0.0,
+                        )
+                    )
+                    # Belt-and-suspenders guard against floating-point precision / rounding
+                    # differences between SQLite and Python timestamps; SQL query already filters smu.last_seen > since_epoch.
+                    if last_seen <= since_epoch:
+                        continue
+
+                    try:
+                        ts = datetime.fromtimestamp(last_seen, tz=UTC)
+                    except Exception:
+                        continue
+
+                    curr_calls = int(row["api_call_count"] or 0)
+                    curr_in = int(row["input_tokens"] or 0)
+                    curr_out = int(row["output_tokens"] or 0)
+                    curr_cache_read = int(row["cache_read_tokens"] or 0)
+                    curr_cache_write = int(row["cache_write_tokens"] or 0)
+                    curr_reasoning = int(row["reasoning_tokens"] or 0)
+
+                    actual_cost = row["actual_cost_usd"]
+                    est_cost = row["estimated_cost_usd"]
+                    # Provider-supplied actual_cost_usd is authoritative; estimated fallback only when NULL
+                    curr_cost = float(actual_cost if actual_cost is not None else (est_cost or 0.0))
+
+                    # Watermark key uniquely identifies this slice within the DB per account (including billing_base_url and billing_mode)
+                    state_key = f"{account_id}|{db_path.resolve()}|{profile_name}|{session_id}|{model}|{billing_provider}|{billing_base_url}|{billing_mode}|{task}"
+                    prev = state_updates.get(state_key, watermark_state.get(state_key, {}))
+
+                    prev_in = int(prev.get("input_tokens", 0))
+                    prev_out = int(prev.get("output_tokens", 0))
+                    prev_cache_read = int(prev.get("cache_read_tokens", 0))
+                    prev_cache_write = int(prev.get("cache_write_tokens", 0))
+                    prev_reasoning = int(prev.get("reasoning_tokens", 0))
+                    prev_cost = float(prev.get("cost_usd", 0.0))
+                    prev_calls = int(prev.get("api_call_count", 0))
+
+                    delta_in = max(0, curr_in - prev_in)
+                    delta_out = max(0, curr_out - prev_out)
+                    delta_cache_read = max(0, curr_cache_read - prev_cache_read)
+                    delta_cache_write = max(0, curr_cache_write - prev_cache_write)
+                    delta_reasoning = max(0, curr_reasoning - prev_reasoning)
+                    delta_cost = max(0.0, curr_cost - prev_cost)
+
+                    has_tokens = any(
+                        (delta_in, delta_out, delta_cache_read, delta_cache_write, delta_reasoning)
+                    )
+                    has_cost = delta_cost > 0
+                    is_new_calls = curr_calls > 0 and curr_calls > prev_calls
+
+                    if not (has_tokens or has_cost or is_new_calls):
+                        continue
+
+                    # Determine provider_id and canonical mapping
+                    target_provider_id, canonical = resolve_hermes_provider_and_canonical(
+                        billing_provider=billing_provider,
+                        billing_base_url=billing_base_url,
+                        model=model,
+                        session_billing_provider=row["session_billing_provider"] or "",
+                        session_billing_base_url=row["session_billing_base_url"] or "",
+                        session_model=row["session_model"] or "",
+                        session_billing_mode=row["session_billing_mode"] or "",
+                    )
+                    if canonical is not None:
+                        canonical_provider_id, account_override = canonical
+                        target_provider_id = canonical_provider_id
+
+                        if account_override is not None:
+                            event_account_id = account_override
+                            event_account_source = "tag"
+                        elif canonical_hints:
+                            provider_hints = canonical_hints.get(canonical_provider_id, {})
+                            canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
+                            if not canonical_hint and canonical_provider_id == "opencode-free":
+                                canonical_hint = canonical_hints.get("opencode", {}).get(
+                                    "provider:opencode"
+                                )
+                            if canonical_hint:
+                                event_account_id = canonical_hint
+                                event_account_source = "tag"
+                            else:
+                                # Hermes host identity doesn't prove which account was used
+                                # through an underlying canonical provider. Hold back as pending.
+                                event_account_id = "default"
+                                event_account_source = "default"
+                        else:
+                            event_account_id = "default"
+                            event_account_source = "default"
                     else:
-                        # Hermes host identity doesn't prove which account was used
-                        # through an underlying canonical provider. Hold back as pending.
-                        event_account_id = "default"
-                        event_account_source = "default"
-                else:
-                    event_account_id = "default"
-                    event_account_source = "default"
-            else:
-                event_account_id = account_id
-                event_account_source = None
+                        event_account_id = account_id
+                        event_account_source = None
 
-            # Monotonic event ID incorporating slice call count and emission sequence
-            emission_seq = int(prev.get("emission_seq", 0)) + 1
-            task_slug = task if task else "main"
-            event_id = f"hermes|{profile_name}|{session_id}|{model}|{task_slug}|c{curr_calls}s{emission_seq}"
+                    # Monotonic event ID incorporating slice call count and emission sequence
+                    emission_seq = int(prev.get("emission_seq", 0)) + 1
+                    task_slug = task if task else "main"
+                    event_id = f"hermes|{profile_name}|{session_id}|{model}|{task_slug}|c{curr_calls}s{emission_seq}"
 
-            cost_usd: float | None = delta_cost if delta_cost > 0.0 else None
+                    cost_usd: float | None = delta_cost if delta_cost > 0.0 else None
 
-            events.append(
-                UsageEventPush(
-                    provider_id=target_provider_id,
-                    account_id=event_account_id,
-                    account_source=event_account_source,
-                    event_id=event_id,
-                    ts=ts.isoformat(),
-                    model_id=model,
-                    session_id=session_id,
-                    subagent_type=task or None,
-                    cwd=row["cwd"] or None,
-                    git_branch=row["git_branch"] or None,
-                    tokens_input=delta_in,
-                    tokens_output=delta_out,
-                    tokens_cache_read=delta_cache_read,
-                    tokens_cache_create=delta_cache_write,
-                    tokens_reasoning=delta_reasoning,
-                    cost_usd=cost_usd,
-                    entrypoint=(
-                        f"hermes-{row['source']}"
-                        if row["source"] and row["source"] != "api_server"
-                        else "hermes"
-                    ),
-                    kind="message",
-                )
-            )
+                    events.append(
+                        UsageEventPush(
+                            provider_id=target_provider_id,
+                            account_id=event_account_id,
+                            account_source=event_account_source,
+                            event_id=event_id,
+                            ts=ts.isoformat(),
+                            model_id=model,
+                            session_id=session_id,
+                            subagent_type=task or None,
+                            cwd=row["cwd"] or None,
+                            git_branch=row["git_branch"] or None,
+                            tokens_input=delta_in,
+                            tokens_output=delta_out,
+                            tokens_cache_read=delta_cache_read,
+                            tokens_cache_create=delta_cache_write,
+                            tokens_reasoning=delta_reasoning,
+                            cost_usd=cost_usd,
+                            entrypoint=(
+                                f"hermes-{row['source']}"
+                                if row["source"] and row["source"] != "api_server"
+                                else "hermes"
+                            ),
+                            kind="message",
+                        )
+                    )
 
-            # Update tracked watermark monotonically
-            watermark_state[state_key] = {
-                "input_tokens": max(curr_in, prev_in),
-                "output_tokens": max(curr_out, prev_out),
-                "cache_read_tokens": max(curr_cache_read, prev_cache_read),
-                "cache_write_tokens": max(curr_cache_write, prev_cache_write),
-                "reasoning_tokens": max(curr_reasoning, prev_reasoning),
-                "cost_usd": max(curr_cost, prev_cost),
-                "api_call_count": max(curr_calls, prev_calls),
-                "emission_seq": emission_seq,
-                "last_seen": max(last_seen, float(prev.get("last_seen", 0.0))),
-            }
-            state_modified = True
+                    # Update tracked watermark monotonically
+                    state_updates[state_key] = {
+                        "input_tokens": max(curr_in, prev_in),
+                        "output_tokens": max(curr_out, prev_out),
+                        "cache_read_tokens": max(curr_cache_read, prev_cache_read),
+                        "cache_write_tokens": max(curr_cache_write, prev_cache_write),
+                        "reasoning_tokens": max(curr_reasoning, prev_reasoning),
+                        "cost_usd": max(curr_cost, prev_cost),
+                        "api_call_count": max(curr_calls, prev_calls),
+                        "emission_seq": emission_seq,
+                        "last_seen": max(last_seen, float(prev.get("last_seen", 0.0))),
+                    }
+            except CursorReadError as exc:
+                del events[event_start:]
+                logger.warning("Failed to query Hermes state DB at %s: %s", db_path, exc)
+                continue
+            # A failed cursor must not commit deltas for a partial DB scan.
+            watermark_state.update(state_updates)
+            state_modified = state_modified or bool(state_updates)
+        finally:
+            conn.close()
 
     if state_modified:
         _save_hermes_watermark(state_path, watermark_state)

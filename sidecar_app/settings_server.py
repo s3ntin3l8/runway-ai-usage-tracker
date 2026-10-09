@@ -14,6 +14,7 @@ import secrets
 import socketserver
 import threading
 import webbrowser
+from collections import deque
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
 from string import Template
@@ -576,7 +577,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             log_path = get_log_path()
             with open(log_path, encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()[-200:]
+                lines = deque(f, maxlen=200)
             self._send_json({"lines": [line.rstrip() for line in lines]})
         except Exception as exc:
             self._send_json({"lines": [], "error": str(exc)})

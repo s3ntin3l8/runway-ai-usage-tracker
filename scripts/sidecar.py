@@ -24,6 +24,7 @@ import math
 import os
 import platform
 import re
+import secrets
 import signal
 import socket
 import sqlite3
@@ -36,10 +37,12 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 from urllib import error, request
 
 # When invoked as `python scripts/sidecar.py`, Python sets sys.path[0] to
@@ -1101,8 +1104,8 @@ def _tail_log(n: int = 20) -> list[str]:
     try:
         path = get_log_path()
         with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-        return [redact_log_text(line.rstrip()) for line in lines[-n:]]
+            lines = deque(f, maxlen=n)
+        return [redact_log_text(line.rstrip()) for line in lines]
     except Exception:
         return []
 
@@ -1621,134 +1624,166 @@ def queue_rotate(max_size_mb: float | None = None, config: dict[str, Any] | None
         os.close(dir_fd)
 
 
+def _replay_queue_lines(
+    source: TextIO,
+    retained: TextIO,
+    target_url: str,
+    api_key: str,
+    stop_event: threading.Event | None,
+    config: dict[str, Any] | None,
+) -> tuple[int, int, bool]:
+    """Replay one entry at a time, streaming failures and the unprocessed suffix."""
+    count = failed_count = 0
+    interrupted = False
+    for line in source:
+        if not interrupted and stop_event and stop_event.is_set():
+            logging.info("queue_flush: stop requested, aborting flush")
+            interrupted = True
+        line = line.strip()
+        if not line:
+            continue
+        keep = interrupted
+        if not interrupted:
+            try:
+                entry = json.loads(line)
+                queued = entry.get("payload", {})
+                payload = strip_credentials(queued)
+                if payload != queued and not payload.get("metrics") and not payload.get("events"):
+                    # Legacy credential-only entries have nothing useful to replay.
+                    continue
+                success, result, _ = http_post_signed_with_retry(
+                    target_url, payload, api_key, stop_event=stop_event, config=config
+                )
+                events_failed = bool(
+                    payload.get("events")
+                    and isinstance(result, dict)
+                    and result.get("events_error")
+                )
+                if success and not events_failed:
+                    count += 1
+                else:
+                    keep = True
+                    if success and events_failed:
+                        logging.warning(
+                            "Server reported an event-ingest failure; "
+                            "keeping queued payload for retry"
+                        )
+            except json.JSONDecodeError:
+                logging.error(f"Invalid JSON in queue file: {line[:100]}")
+            except Exception as e:
+                logging.error(f"Failed to send queued payload: {e}")
+                keep = True
+        if keep:
+            # Keep writes outside the replay exception handler: a write failure
+            # must abort publication, leaving the original queue untouched.
+            retained.write(_sanitize_queue_line(line) + "\n")
+            failed_count += 1
+    return count, failed_count, interrupted
+
+
+def _check_queue_snapshot(dir_fd: int, name: str, snapshot: os.stat_result) -> None:
+    """Do not overwrite or unlink an entry replaced/appended during replay."""
+    current = (
+        os.stat(get_queue_dir() / name, follow_symlinks=False)
+        if dir_fd < 0
+        else os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    )
+    if not stat.S_ISREG(current.st_mode) or (
+        current.st_dev,
+        current.st_ino,
+        current.st_size,
+        current.st_mtime_ns,
+    ) != (snapshot.st_dev, snapshot.st_ino, snapshot.st_size, snapshot.st_mtime_ns):
+        raise OSError(f"Queue entry changed during replay: {name}")
+
+
 def queue_flush(
     api_url: str,
     api_key: str,
     stop_event: threading.Event | None = None,
     config: dict[str, Any] | None = None,
 ) -> int:
-    """Flush all queued payloads to server. Returns count of successful sends."""
+    """Replay the queue with bounded memory and atomic replacement of retained entries."""
     queue_dir = get_queue_dir()
     dir_fd = -1
     if os.name == "nt" and not queue_dir.exists():
         return 0
-
     if os.name == "nt":
-        queue_files = sorted(queue_dir.glob("*.jsonl"))
+        queue_names = sorted(p.name for p in queue_dir.glob("*.jsonl"))
     else:
         try:
             dir_fd = _secure_queue_dir()
-            queue_files = _queue_names(dir_fd)
+            queue_names = _queue_names(dir_fd)
         except Exception as e:
             logging.error(f"Failed to access queue directory: {e}")
             return 0
-    if not queue_files:
-        if dir_fd >= 0:
-            os.close(dir_fd)
-        return 0
 
     count = 0
     target_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
-
-    for queue_file in queue_files:
-        if stop_event and stop_event.is_set():
-            logging.info("queue_flush: stop requested, aborting flush")
-            break
-        try:
-            if os.name == "nt":
-                with open(queue_file) as f:
-                    lines = f.readlines()
-            else:
-                fd = _open_queue_file(dir_fd, queue_file, os.O_RDONLY)
-                with os.fdopen(fd, encoding="utf-8") as f:
-                    lines = f.readlines()
-
-            failed_lines = []
-            interrupted = False
-            for line_idx, line in enumerate(lines):
-                if stop_event and stop_event.is_set():
-                    logging.info("queue_flush: stop requested, aborting flush")
-                    failed_lines.extend(
-                        remaining.rstrip("\r\n")
-                        for remaining in lines[line_idx:]
-                        if remaining.strip()
-                    )
-                    interrupted = True
-                    break
-                line = line.strip()
-                if not line:
-                    continue
-
-                try:
-                    entry = json.loads(line)
-                    queued = entry.get("payload", {})
-                    payload = strip_credentials(queued)
-                    if (
-                        payload != queued
-                        and not payload.get("metrics")
-                        and not payload.get("events")
-                    ):
-                        # Only credentials were queued (an older sidecar); nothing to replay.
-                        continue
-
-                    success, result, _ = http_post_signed_with_retry(
-                        target_url, payload, api_key, stop_event=stop_event, config=config
-                    )
-
-                    events_failed = bool(
-                        payload.get("events")
-                        and isinstance(result, dict)
-                        and result.get("events_error")
-                    )
-                    if success and not events_failed:
-                        count += 1
-                    else:
-                        failed_lines.append(line)
-                        if success and events_failed:
-                            logging.warning(
-                                "Server reported an event-ingest failure; "
-                                "keeping queued payload for retry"
-                            )
-                except json.JSONDecodeError:
-                    logging.error(f"Invalid JSON in queue file: {line[:100]}")
-                except Exception as e:
-                    logging.error(f"Failed to send queued payload: {e}")
-                    failed_lines.append(line)
-
-            # Remove file if all sent successfully, otherwise rewrite with failures
-            if not failed_lines:
-                if os.name == "nt":
-                    queue_file.unlink()
-                    name = queue_file.name
-                else:
-                    _unlink_queue_file(dir_fd, queue_file)
-                    name = queue_file
-                logging.info(f"Queue file processed and removed: {name}")
-            else:
-                if os.name == "nt":
-                    with open(queue_file, "w") as f:
-                        for line in failed_lines:
-                            f.write(_sanitize_queue_line(line) + "\n")
-                else:
-                    fd = _open_queue_file(dir_fd, queue_file, os.O_WRONLY | os.O_TRUNC)
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        for line in failed_lines:
-                            f.write(_sanitize_queue_line(line) + "\n")
-                logging.warning(
-                    f"Queue file has {len(failed_lines)} failed entries: {getattr(queue_file, 'name', queue_file)}"
-                )
-
-            if interrupted:
+    try:
+        for name in queue_names:
+            if stop_event and stop_event.is_set():
+                logging.info("queue_flush: stop requested, aborting flush")
                 break
-
-        except Exception as e:
-            logging.error(
-                f"Failed to process queue file {getattr(queue_file, 'name', queue_file)}: {e}"
-            )
-
-    if dir_fd >= 0:
-        os.close(dir_fd)
-
+            temporary = f".{name}.{secrets.token_hex(8)}.tmp"
+            temporary_created = False
+            try:
+                with ExitStack() as stack:
+                    if dir_fd < 0:
+                        source = stack.enter_context(open(queue_dir / name, encoding="utf-8"))
+                    else:
+                        fd = _open_queue_file(dir_fd, name, os.O_RDONLY)
+                        source = stack.enter_context(os.fdopen(fd, encoding="utf-8"))
+                    snapshot = os.fstat(source.fileno())
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                    fd = (
+                        os.open(queue_dir / temporary, flags, 0o600)
+                        if dir_fd < 0
+                        else _open_queue_file(dir_fd, temporary, flags)
+                    )
+                    temporary_created = True
+                    retained = stack.enter_context(os.fdopen(fd, "w", encoding="utf-8"))
+                    sent, failed_count, interrupted = _replay_queue_lines(
+                        source, retained, target_url, api_key, stop_event, config
+                    )
+                    count += sent
+                    retained.flush()
+                    os.fsync(retained.fileno())
+                    temporary_snapshot = os.fstat(retained.fileno())
+                # All handles are closed here, including on Windows.
+                _check_queue_snapshot(dir_fd, name, snapshot)
+                if failed_count:
+                    _check_queue_snapshot(dir_fd, temporary, temporary_snapshot)
+                    if dir_fd < 0:
+                        os.replace(queue_dir / temporary, queue_dir / name)
+                    else:
+                        os.replace(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+                    temporary_created = False
+                    logging.warning(f"Queue file has {failed_count} failed entries: {name}")
+                else:
+                    if dir_fd < 0:
+                        (queue_dir / name).unlink()
+                    else:
+                        _unlink_queue_file(dir_fd, name)
+                    logging.info(f"Queue file processed and removed: {name}")
+                if interrupted:
+                    break
+            except Exception as e:
+                logging.error(f"Failed to process queue file {name}: {e}")
+            finally:
+                if temporary_created:
+                    try:
+                        if dir_fd < 0:
+                            (queue_dir / temporary).unlink()
+                        else:
+                            os.unlink(temporary, dir_fd=dir_fd)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:
+                        logging.warning(f"Failed to remove queue temporary file: {e}")
+    finally:
+        if dir_fd >= 0:
+            os.close(dir_fd)
     return count
 
 
@@ -2700,18 +2735,25 @@ def _extract_events_for_provider(
             continue
         if evts:
             logging.info(f"  [{provider_id}/{account_id}] {len(evts)} new event(s)")
-            for event in evts:
+            # The extractor returns an owned list. Consume it in original order so
+            # validated models do not coexist with a second complete payload list.
+            evts.reverse()
+            while evts:
+                event = evts.pop()
                 payload = event.model_dump(mode="json")
                 if account_source and not payload.get("account_source"):
                     payload["account_source"] = account_source
                 out_events.append(payload)
-            for e in evts:
-                ev_provider = getattr(e, "provider_id", provider_id)
-                if ev_provider != provider_id or getattr(e, "account_id", account_id) != account_id:
-                    _EVENT_WATERMARK_ALIASES[(ev_provider, e.event_id)] = (
+                ev_provider = getattr(event, "provider_id", provider_id)
+                if (
+                    ev_provider != provider_id
+                    or getattr(event, "account_id", account_id) != account_id
+                ):
+                    _EVENT_WATERMARK_ALIASES[(ev_provider, event.event_id)] = (
                         provider_id,
                         account_id,
                     )
+                del event
     return failures
 
 
@@ -4787,6 +4829,9 @@ class DaemonRunner:
         try:
             return self._run_once_impl(providers=providers)
         finally:
+            # Aliases are needed only until this cycle's watermark advancement.
+            # Clear before releasing the guard so another cycle cannot race us.
+            _EVENT_WATERMARK_ALIASES.clear()
             with self._lock:
                 self._cycle_running = False
 
@@ -4833,10 +4878,10 @@ class DaemonRunner:
             # server's 8 MB body limit. Send the first batch with metrics +
             # heartbeat fields; subsequent batches are events-only.
             EVENT_BATCH_SIZE = 1000
+            batch_count = max(1, (len(events) + EVENT_BATCH_SIZE - 1) // EVENT_BATCH_SIZE)
             event_batches = (
-                [events[i : i + EVENT_BATCH_SIZE] for i in range(0, len(events), EVENT_BATCH_SIZE)]
-                if events
-                else [[]]
+                events[i : i + EVENT_BATCH_SIZE]
+                for i in range(0, max(1, len(events)), EVENT_BATCH_SIZE)
             )
 
             success = True
@@ -4904,10 +4949,9 @@ class DaemonRunner:
                     # events — keep the watermark so they are re-extracted
                     # next cycle instead of being lost.
                     events_failed = True
-                if len(event_batches) > 1:
+                if batch_count > 1:
                     logging.info(
-                        f"  sent batch {batch_idx + 1}/{len(event_batches)} "
-                        f"({len(event_batch)} events)"
+                        f"  sent batch {batch_idx + 1}/{batch_count} ({len(event_batch)} events)"
                     )
 
             with self._lock:
