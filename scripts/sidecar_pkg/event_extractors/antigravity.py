@@ -39,6 +39,7 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.model_normalization import (  # noqa: E402
     normalize_ag_model as _normalize_ag_model,
 )
+from scripts.sidecar_pkg.sqlite_cursor import CursorReadError, iter_cursor  # noqa: E402
 
 # ── Dependency-free protobuf varint reader ────────────────────────────────────
 
@@ -203,82 +204,87 @@ def parse_antigravity_events(
         except Exception:
             continue
 
+        event_start = len(events)
         try:
             cwd = _read_cwd_from_db(conn)
 
             cur = conn.cursor()
             try:
                 cur.execute("SELECT idx, data FROM gen_metadata ORDER BY idx ASC")
-                rows = cur.fetchall()
+                rows = iter_cursor(cur)
             except Exception:
                 continue
+
+            try:
+                for row_idx, (idx, blob) in enumerate(rows):
+                    if not blob:
+                        continue
+                    try:
+                        root = _parse_proto_fields(bytes(blob))
+                    except Exception:
+                        continue
+
+                    f1_blobs = root.get(1, [])
+                    if not f1_blobs:
+                        continue
+
+                    f1_bytes = f1_blobs[0]
+                    if not isinstance(f1_bytes, (bytes, bytearray)):
+                        continue
+
+                    f1 = _parse_proto_fields(bytes(f1_bytes))
+
+                    # Usage stats are nested inside field 4.
+                    f4_blobs = f1.get(4, [])
+                    if not f4_blobs:
+                        continue
+                    f4 = _parse_proto_fields(bytes(f4_blobs[0]))
+
+                    tokens_input = _first_int(f4, 2)
+                    tokens_output = _first_int(f4, 3)
+                    tokens_cache_read = _first_int(f4, 1)
+                    # Field 5 is a monotonic cumulative — skip it.
+
+                    # Skip rows with no token data (non-assistant turns / empty metadata).
+                    if tokens_input == 0 and tokens_output == 0:
+                        continue
+
+                    raw_model = _first_str(f1, 19, "")
+                    display_name = _first_str(f1, 21, "")
+                    kv = _parse_kv_metadata(f1)
+                    model_id = _normalize_ag_model(raw_model, display_name, kv)
+                    effort = _extract_ag_effort(display_name)
+
+                    event_id = f"{conversation_id}|gen_{idx}"
+
+                    # Spread events across the same second by microsecond offset so
+                    # the server's time-ordering is stable within one DB.
+                    event_ts = datetime.fromtimestamp(mtime + row_idx * 0.001, tz=UTC)
+
+                    events.append(
+                        UsageEventPush(
+                            provider_id="antigravity",
+                            account_id=account_id,
+                            event_id=event_id,
+                            ts=event_ts.isoformat(),
+                            model_id=model_id,
+                            session_id=conversation_id,
+                            cwd=cwd,
+                            tokens_input=tokens_input,
+                            tokens_output=tokens_output,
+                            tokens_cache_read=tokens_cache_read,
+                            tokens_cache_create=0,
+                            tokens_reasoning=0,
+                            stop_reason=None,
+                            tool_calls=0,
+                            cost_usd=None,
+                            effort=effort,
+                        )
+                    )
+            except CursorReadError:
+                # Match fetchall: an incomplete DB read contributes no events.
+                del events[event_start:]
         finally:
             conn.close()
-
-        for row_idx, (idx, blob) in enumerate(rows):
-            if not blob:
-                continue
-            try:
-                root = _parse_proto_fields(bytes(blob))
-            except Exception:
-                continue
-
-            f1_blobs = root.get(1, [])
-            if not f1_blobs:
-                continue
-
-            f1_bytes = f1_blobs[0]
-            if not isinstance(f1_bytes, (bytes, bytearray)):
-                continue
-
-            f1 = _parse_proto_fields(bytes(f1_bytes))
-
-            # Usage stats are nested inside field 4.
-            f4_blobs = f1.get(4, [])
-            if not f4_blobs:
-                continue
-            f4 = _parse_proto_fields(bytes(f4_blobs[0]))
-
-            tokens_input = _first_int(f4, 2)
-            tokens_output = _first_int(f4, 3)
-            tokens_cache_read = _first_int(f4, 1)
-            # Field 5 is a monotonic cumulative — skip it.
-
-            # Skip rows with no token data (non-assistant turns / empty metadata).
-            if tokens_input == 0 and tokens_output == 0:
-                continue
-
-            raw_model = _first_str(f1, 19, "")
-            display_name = _first_str(f1, 21, "")
-            kv = _parse_kv_metadata(f1)
-            model_id = _normalize_ag_model(raw_model, display_name, kv)
-            effort = _extract_ag_effort(display_name)
-
-            event_id = f"{conversation_id}|gen_{idx}"
-
-            # Spread events across the same second by microsecond offset so
-            # the server's time-ordering is stable within one DB.
-            event_ts = datetime.fromtimestamp(mtime + row_idx * 0.001, tz=UTC)
-
-            events.append(
-                UsageEventPush(
-                    provider_id="antigravity",
-                    account_id=account_id,
-                    event_id=event_id,
-                    ts=event_ts.isoformat(),
-                    model_id=model_id,
-                    session_id=conversation_id,
-                    cwd=cwd,
-                    tokens_input=tokens_input,
-                    tokens_output=tokens_output,
-                    tokens_cache_read=tokens_cache_read,
-                    tokens_cache_create=0,
-                    tokens_reasoning=0,
-                    stop_reason=None,
-                    tool_calls=0,
-                    cost_usd=None,
-                    effort=effort,
-                )
-            )
 
     return events

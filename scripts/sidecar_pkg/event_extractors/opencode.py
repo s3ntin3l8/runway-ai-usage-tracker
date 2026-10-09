@@ -87,6 +87,7 @@ from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
     SHARED_CANONICAL_PROVIDER_MAP,
     CanonicalProviderTuple,
 )
+from scripts.sidecar_pkg.sqlite_cursor import CursorReadError, iter_cursor  # noqa: E402
 
 # OpenCode's own providerID (backend/billing tier) -> runway provider_id.
 # Keep this in sync with scripts/reclassify_opencode_providers.py, which
@@ -202,6 +203,10 @@ def parse_opencode_events(
     events: list[UsageEventPush] = []
     try:
         conn = sqlite3.connect(str(db_path))
+    except Exception:
+        return []
+
+    try:
         try:
             cur = conn.cursor()
             cur.execute(
@@ -214,164 +219,167 @@ def parse_opencode_events(
                 """,
                 (since_ms,),
             )
-            rows = cur.fetchall()
-        finally:
-            conn.close()
-    except Exception:
-        return []
-
-    for row in rows:
-        msg_id, session_id, time_created_ms, data_json = row
-        try:
-            data = json.loads(data_json) if data_json else {}
+            rows = iter_cursor(cur)
         except Exception:
-            continue
+            return []
 
-        # Convert ms epoch to datetime
         try:
-            ts = datetime.fromtimestamp(int(time_created_ms) / 1000.0, tz=UTC)
-        except Exception:
-            continue
+            for row in rows:
+                msg_id, session_id, time_created_ms, data_json = row
+                try:
+                    data = json.loads(data_json) if data_json else {}
+                except Exception:
+                    continue
 
-        # Extract token fields from the nested tokens dict
-        raw_tokens = data.get("tokens") or {}
-        tokens_input = int(raw_tokens.get("input", 0))
-        tokens_output = int(raw_tokens.get("output", 0))
-        tokens_reasoning = int(raw_tokens.get("reasoning", 0))
-        cache = raw_tokens.get("cache") or {}
-        tokens_cache_read = int(cache.get("read", 0))
-        tokens_cache_create = int(cache.get("write", 0))
+                # Convert ms epoch to datetime
+                try:
+                    ts = datetime.fromtimestamp(int(time_created_ms) / 1000.0, tz=UTC)
+                except Exception:
+                    continue
 
-        # Cost is authoritative — skip pricing table
-        cost_usd = float(data.get("cost") or 0.0)
+                # Extract token fields from the nested tokens dict
+                raw_tokens = data.get("tokens") or {}
+                tokens_input = int(raw_tokens.get("input", 0))
+                tokens_output = int(raw_tokens.get("output", 0))
+                tokens_reasoning = int(raw_tokens.get("reasoning", 0))
+                cache = raw_tokens.get("cache") or {}
+                tokens_cache_read = int(cache.get("read", 0))
+                tokens_cache_create = int(cache.get("write", 0))
 
-        model_id = data.get("modelID") or "unknown"
-        stop_reason = data.get("finish") or None
-        # Per-message intensity (OpenCode's `variant`) → effort. Absent → None.
-        # Normalize: non-strings are dropped (UsageEventPush would ValidationError),
-        # and casing/whitespace are canonicalized to the documented lowercase form.
-        raw_effort = data.get("variant")
-        effort = (
-            raw_effort.strip().lower()
-            if isinstance(raw_effort, str) and raw_effort.strip()
-            else None
-        )
+                # Cost is authoritative — skip pricing table
+                cost_usd = float(data.get("cost") or 0.0)
 
-        # Working directory (path.cwd, falling back to the repo root) and request
-        # latency (completed − created, both ms epoch) — OpenCode is the only
-        # provider that logs message timing.
-        path = data.get("path") or {}
-        cwd = path.get("cwd") or path.get("root")
-        time_obj = data.get("time") or {}
-        created = time_obj.get("created")
-        completed = time_obj.get("completed")
-        latency_ms = (
-            int(completed - created)
-            if isinstance(created, int | float)
-            and isinstance(completed, int | float)
-            and completed >= created
-            else None
-        )
-
-        # Use the row's id (stable primary key) as event_id
-        event_id = msg_id or f"opencode|{session_id or 'unknown'}|ts_{time_created_ms}"
-
-        # OpenCode tags each message with a providerID identifying which
-        # backend/billing tier served it (Go subscription, free models,
-        # bring-your-own-key, OpenRouter, Ollama Cloud, ...). Map it to a
-        # dedicated runway provider_id so no backend is ever silently folded
-        # into the Go tier (issue #182).
-        oc_provider_id = data.get("providerID") or ""
-        runway_provider_id = map_opencode_provider_id(oc_provider_id)
-        event_account_id = account_id
-
-        # Some OpenCode providerIDs front a provider Runway already collects
-        # directly (e.g. MiniMax's coding plan) — retag onto that provider_id
-        # (and its account_id when the map pins one) so this event lands on the
-        # same card, and drop the logged $0 subscription cost so the server
-        # prices it. A None account override falls back to the operator's
-        # tag-hint for the canonical provider (when supplied) — the events
-        # branch in run_collection only ships the iterating provider's hint
-        # (e.g. provider:opencode), but the server emits the auto-hint under
-        # the canonical provider (e.g. provider:minimax), so per-event
-        # consultation here is the only way to retarget the event onto the
-        # labeled quota card.
-        canonical = map_opencode_canonical(oc_provider_id)
-        if canonical is not None:
-            canonical_provider_id, account_override = canonical
-            runway_provider_id = canonical_provider_id
-            if account_override is not None:
-                event_account_id = account_override
-                event_account_source = "tag"
-            elif canonical_hints:
-                provider_hints = canonical_hints.get(canonical_provider_id, {})
-                # OpenCode only tells us which upstream provider served a
-                # message, not which credential origin it used. A fingerprint
-                # or path tag describes one credential and cannot prove it
-                # handled this message; only a provider-level mapping can.
-                canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
-                if canonical_hint:
-                    event_account_id = canonical_hint
-                    event_account_source = "tag"
-                else:
-                    # The account identity used for the OpenCode provider
-                    # does not prove which account owns a message billed by
-                    # an underlying provider such as xAI or OpenRouter.
-                    event_account_id = "default"
-                    event_account_source = "default"
-            else:
-                # The OpenCode account identity identifies the OpenCode user,
-                # not which account they used through a canonical backend.
-                # Keep this event pending until the canonical provider is
-                # explicitly mapped to one of its configured accounts.
-                event_account_id = "default"
-                event_account_source = "default"
-            cost_usd = None
-        else:
-            event_account_source = None
-
-        # A failed request (bad auth, no subscription, etc.) never actually
-        # incurred usage — push it as kind="error" so it doesn't inflate
-        # message/token counts on whichever card it lands on.
-        err = data.get("error")
-        if isinstance(err, dict):
-            events.append(
-                UsageEventPush(
-                    provider_id=runway_provider_id,
-                    account_id=event_account_id,
-                    account_source=event_account_source,
-                    event_id=event_id,
-                    ts=ts.isoformat(),
-                    model_id=model_id,
-                    session_id=session_id or None,
-                    cwd=cwd,
-                    kind="error",
-                    error_reason=_classify_opencode_error(err),
+                model_id = data.get("modelID") or "unknown"
+                stop_reason = data.get("finish") or None
+                # Per-message intensity (OpenCode's `variant`) → effort. Absent → None.
+                # Normalize: non-strings are dropped (UsageEventPush would ValidationError),
+                # and casing/whitespace are canonicalized to the documented lowercase form.
+                raw_effort = data.get("variant")
+                effort = (
+                    raw_effort.strip().lower()
+                    if isinstance(raw_effort, str) and raw_effort.strip()
+                    else None
                 )
-            )
-            continue
 
-        events.append(
-            UsageEventPush(
-                provider_id=runway_provider_id,
-                account_id=event_account_id,
-                account_source=event_account_source,
-                event_id=event_id,
-                ts=ts.isoformat(),
-                model_id=model_id,
-                session_id=session_id or None,
-                cwd=cwd,
-                latency_ms=latency_ms,
-                tokens_input=tokens_input,
-                tokens_output=tokens_output,
-                tokens_cache_read=tokens_cache_read,
-                tokens_cache_create=tokens_cache_create,
-                tokens_reasoning=tokens_reasoning,
-                stop_reason=stop_reason,
-                tool_calls=0,
-                effort=effort,
-                cost_usd=cost_usd,
-            )
-        )
+                # Working directory (path.cwd, falling back to the repo root) and request
+                # latency (completed − created, both ms epoch) — OpenCode is the only
+                # provider that logs message timing.
+                path = data.get("path") or {}
+                cwd = path.get("cwd") or path.get("root")
+                time_obj = data.get("time") or {}
+                created = time_obj.get("created")
+                completed = time_obj.get("completed")
+                latency_ms = (
+                    int(completed - created)
+                    if isinstance(created, int | float)
+                    and isinstance(completed, int | float)
+                    and completed >= created
+                    else None
+                )
+
+                # Use the row's id (stable primary key) as event_id
+                event_id = msg_id or f"opencode|{session_id or 'unknown'}|ts_{time_created_ms}"
+
+                # OpenCode tags each message with a providerID identifying which
+                # backend/billing tier served it (Go subscription, free models,
+                # bring-your-own-key, OpenRouter, Ollama Cloud, ...). Map it to a
+                # dedicated runway provider_id so no backend is ever silently folded
+                # into the Go tier (issue #182).
+                oc_provider_id = data.get("providerID") or ""
+                runway_provider_id = map_opencode_provider_id(oc_provider_id)
+                event_account_id = account_id
+
+                # Some OpenCode providerIDs front a provider Runway already collects
+                # directly (e.g. MiniMax's coding plan) — retag onto that provider_id
+                # (and its account_id when the map pins one) so this event lands on the
+                # same card, and drop the logged $0 subscription cost so the server
+                # prices it. A None account override falls back to the operator's
+                # tag-hint for the canonical provider (when supplied) — the events
+                # branch in run_collection only ships the iterating provider's hint
+                # (e.g. provider:opencode), but the server emits the auto-hint under
+                # the canonical provider (e.g. provider:minimax), so per-event
+                # consultation here is the only way to retarget the event onto the
+                # labeled quota card.
+                canonical = map_opencode_canonical(oc_provider_id)
+                if canonical is not None:
+                    canonical_provider_id, account_override = canonical
+                    runway_provider_id = canonical_provider_id
+                    if account_override is not None:
+                        event_account_id = account_override
+                        event_account_source = "tag"
+                    elif canonical_hints:
+                        provider_hints = canonical_hints.get(canonical_provider_id, {})
+                        # OpenCode only tells us which upstream provider served a
+                        # message, not which credential origin it used. A fingerprint
+                        # or path tag describes one credential and cannot prove it
+                        # handled this message; only a provider-level mapping can.
+                        canonical_hint = provider_hints.get(f"provider:{canonical_provider_id}")
+                        if canonical_hint:
+                            event_account_id = canonical_hint
+                            event_account_source = "tag"
+                        else:
+                            # The account identity used for the OpenCode provider
+                            # does not prove which account owns a message billed by
+                            # an underlying provider such as xAI or OpenRouter.
+                            event_account_id = "default"
+                            event_account_source = "default"
+                    else:
+                        # The OpenCode account identity identifies the OpenCode user,
+                        # not which account they used through a canonical backend.
+                        # Keep this event pending until the canonical provider is
+                        # explicitly mapped to one of its configured accounts.
+                        event_account_id = "default"
+                        event_account_source = "default"
+                    cost_usd = None
+                else:
+                    event_account_source = None
+
+                # A failed request (bad auth, no subscription, etc.) never actually
+                # incurred usage — push it as kind="error" so it doesn't inflate
+                # message/token counts on whichever card it lands on.
+                err = data.get("error")
+                if isinstance(err, dict):
+                    events.append(
+                        UsageEventPush(
+                            provider_id=runway_provider_id,
+                            account_id=event_account_id,
+                            account_source=event_account_source,
+                            event_id=event_id,
+                            ts=ts.isoformat(),
+                            model_id=model_id,
+                            session_id=session_id or None,
+                            cwd=cwd,
+                            kind="error",
+                            error_reason=_classify_opencode_error(err),
+                        )
+                    )
+                    continue
+
+                events.append(
+                    UsageEventPush(
+                        provider_id=runway_provider_id,
+                        account_id=event_account_id,
+                        account_source=event_account_source,
+                        event_id=event_id,
+                        ts=ts.isoformat(),
+                        model_id=model_id,
+                        session_id=session_id or None,
+                        cwd=cwd,
+                        latency_ms=latency_ms,
+                        tokens_input=tokens_input,
+                        tokens_output=tokens_output,
+                        tokens_cache_read=tokens_cache_read,
+                        tokens_cache_create=tokens_cache_create,
+                        tokens_reasoning=tokens_reasoning,
+                        stop_reason=stop_reason,
+                        tool_calls=0,
+                        effort=effort,
+                        cost_usd=cost_usd,
+                    )
+                )
+        except CursorReadError:
+            return []
+    finally:
+        conn.close()
 
     return events

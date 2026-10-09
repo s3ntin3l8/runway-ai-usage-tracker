@@ -61,6 +61,7 @@ a = Analysis(
         "scripts.sidecar_pkg.event_extractors.opencode",
         "scripts.sidecar_pkg.event_extractors.xai",
         "scripts.sidecar_pkg.event_watermark",
+        "scripts.sidecar_pkg.sqlite_cursor",
         "scripts.sidecar_pkg.identity",
         "scripts.sidecar_pkg.keep_alive",
         "scripts.sidecar_pkg.runtime_cleanup",

@@ -153,6 +153,9 @@ You can install the update without leaving the app:
 
 ---
 
+Memory measurements and reproducible comparisons are documented in
+[Sidecar memory measurements](sidecar-memory.md).
+
 ## Headless / CLI Mode (Linux, Advanced Users)
 
 > The sections below describe running the sidecar as a headless script or system daemon. This is the recommended approach on Linux and for server/Docker deployments.

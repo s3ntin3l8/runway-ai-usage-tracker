@@ -3,18 +3,10 @@
 import json
 import os
 import pathlib
-import sys
 import threading
 from collections.abc import Callable
 
-# scripts/ is not a package; use sys.path injection to import it
-if getattr(sys, "frozen", False):
-    _BASE = pathlib.Path(sys._MEIPASS)  # type: ignore[attr-defined]
-else:
-    _BASE = pathlib.Path(__file__).parent.parent
-
-sys.path.insert(0, str(_BASE / "scripts"))
-import sidecar as _sidecar  # noqa: E402
+from scripts import sidecar as _sidecar
 
 load_config = _sidecar.load_config
 get_sidecar_dir = _sidecar.get_sidecar_dir
