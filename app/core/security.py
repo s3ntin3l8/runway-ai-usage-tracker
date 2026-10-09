@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from fastapi import Cookie, Header, HTTPException, Request
 
 from app.core.config import settings
+from app.core.net import LOOPBACK_HOSTS
 from app.core.sessions import verify_session
 from app.core.utils import scrub_log
 
@@ -47,7 +48,6 @@ _REMOTE_USER_FALLBACK_HEADER = "Remote-User"
 # FORWARD_AUTH_USER_HEADER at something else.
 _DEFAULT_FORWARD_AUTH_USER_HEADER = "X-Forwarded-User"
 
-_LOOPBACK_BIND_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 # Some proxies (Authentik) delimit multi-valued group headers with "|"
 # rather than ",", since group names may themselves contain commas.
@@ -146,8 +146,9 @@ def resolve_auth(
     # convention every other check below and every existing auth test uses)
     # wouldn't reach the other. Match `settings.APP_HOST` on the same bound
     # object step 1 below already reads.
+    # Vite overwrites this downgrade marker; caller input never grants trust.
     remote_dev = request.headers.get("X-Runway-Dev-Remote") == "1"
-    if not remote_dev and not settings.ADMIN_API_KEY and settings.APP_HOST in _LOOPBACK_BIND_HOSTS:
+    if not remote_dev and not settings.ADMIN_API_KEY and settings.APP_HOST in LOOPBACK_HOSTS:
         return AuthResult(True, "none")
 
     client_host = request.client.host if request.client else None
@@ -157,7 +158,7 @@ def resolve_auth(
     if (
         not remote_dev
         and client_host in ("127.0.0.1", "::1")
-        and settings.APP_HOST in _LOOPBACK_BIND_HOSTS
+        and settings.APP_HOST in LOOPBACK_HOSTS
     ):
         return AuthResult(True, "localhost")
 
@@ -414,4 +415,4 @@ def is_loopback_bind() -> bool:
     """True when the server only listens on loopback (local topology)."""
     from app.core.config import settings as _settings
 
-    return _settings.APP_HOST in _LOOPBACK_BIND_HOSTS
+    return _settings.APP_HOST in LOOPBACK_HOSTS

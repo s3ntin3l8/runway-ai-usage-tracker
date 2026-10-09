@@ -265,3 +265,12 @@ describe('WebhooksSection', () => {
     expect(screen.getByText('All accounts')).toBeInTheDocument();
   });
 });
+
+it('warns when a saved webhook destination is blocked after upgrade', async () => {
+  vi.mocked(api.fetchWebhooks).mockResolvedValue({ webhooks: [webhook({
+    validation_error: 'Unsupported destination. Replace this alert with a Slack or Discord HTTPS webhook.',
+  })] });
+  vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+  renderWithProviders(<WebhooksSection />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Unsupported destination');
+});

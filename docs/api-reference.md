@@ -211,3 +211,7 @@ local Host and browser Origin headers. Public bootstrap endpoints are
 `/system/settings`, `/system/health`, and `/system/sidecar-downloads`; fleet
 `/config` retains its redacted public view and signed sidecar behavior.
 Webhook URLs must use the supported Slack or Discord HTTPS endpoint hosts.
+
+Webhook list entries include optional `validation_error` text for saved URLs
+blocked by the current destination policy. Configured encryption failures return
+HTTP 503 and refuse credential persistence.

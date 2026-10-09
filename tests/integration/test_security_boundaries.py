@@ -96,3 +96,11 @@ def test_remote_dev_proxy_cannot_forge_sso(monkeypatch):
     client = TestClient(app, base_url="http://127.0.0.1:5173", client=("127.0.0.1", 12345))
     headers = {"X-Runway-Dev-Remote": "1", "X-Forwarded-User": "forged-admin"}
     assert client.post("/api/v1/auth/revoke-all", headers=headers).status_code == 403
+
+
+def test_production_host_policy_rejects_test_client_alias(monkeypatch):
+    from app.core.net import LOOPBACK_HOSTS
+
+    monkeypatch.setattr("app.core.http_security.local_request_hosts", lambda: LOOPBACK_HOSTS)
+    monkeypatch.setattr("app.core.config.settings.APP_HOST", "127.0.0.1")
+    assert TestClient(app).get("/api/v1/system/settings").status_code == 403

@@ -17,7 +17,7 @@ export default defineConfig({
         const local = typeof host === 'string' && ['127.0.0.1', 'localhost', '::1'].includes(host);
         const proxy = server.config.server.proxy?.['/api'];
         if (proxy && typeof proxy !== 'string') {
-          proxy.headers = { ...proxy.headers, 'X-Runway-Dev-Remote': local ? '0' : '1' };
+          proxy.headers = { ...(proxy.headers ?? {}), 'X-Runway-Dev-Remote': local ? '0' : '1' };
         }
       },
     },

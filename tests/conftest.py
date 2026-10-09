@@ -27,6 +27,7 @@ import httpx
 import pytest
 
 from app.core.config import Settings, settings
+from app.core.net import LOOPBACK_HOSTS
 from app.main import app
 from app.services.token_cache import token_cache
 from tests.fixtures.mock_data import (
@@ -46,8 +47,8 @@ def setup_test_settings(monkeypatch):
     """Ensure consistent settings for all tests, isolating them from the local .env."""
     monkeypatch.setattr(settings, "ADMIN_API_KEY", None)
     monkeypatch.setattr(
-        "app.core.http_security._LOCAL_HOSTS",
-        frozenset({"localhost", "127.0.0.1", "::1", "testserver", "test"}),
+        "app.core.http_security.local_request_hosts",
+        lambda: LOOPBACK_HOSTS | frozenset({"testserver", "test"}),
     )
     # An operator's .env may configure real forward-auth values (e.g. Authentik
     # header names, TRUSTED_PROXY_IPS) for their deployment; reset to the

@@ -4,7 +4,12 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+from app.core.net import LOOPBACK_HOSTS
+
+
+def local_request_hosts() -> frozenset[str]:
+    """Allowed browser hosts; tests extend this without changing bind trust."""
+    return LOOPBACK_HOSTS
 
 
 class BrowserBoundaryMiddleware:
@@ -27,7 +32,7 @@ class BrowserBoundaryMiddleware:
             hostname = None
         # A loopback TCP peer can be a browser following a rebound DNS name,
         # or a LAN-facing dev proxy. Neither inherits local administrator trust.
-        if settings.APP_HOST in _LOCAL_HOSTS and hostname not in _LOCAL_HOSTS:
+        if settings.APP_HOST in LOOPBACK_HOSTS and hostname not in local_request_hosts():
             await JSONResponse({"detail": "Untrusted Host"}, status_code=403)(scope, receive, send)
             return
         origin = headers.get("origin")

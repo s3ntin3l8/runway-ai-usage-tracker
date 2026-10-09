@@ -2173,3 +2173,26 @@ def test_stale_latest_usage_row_is_excluded_from_discovered_accounts(
     discovered_ids = [a["account_id"] for a in github["accounts"]]
     assert "active_user" in discovered_ids
     assert "stale_ghost@example.com" not in discovered_ids
+
+
+def test_encryption_failure_returns_retry_message_without_storing_secret(
+    client, session, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from app.models.db import ProviderConfig, encryption_service
+
+    broken_fernet = MagicMock()
+    broken_fernet.encrypt.side_effect = RuntimeError("synthetic encryption failure")
+    monkeypatch.setattr(encryption_service, "_fernet", broken_fernet)
+    response = client.put(
+        "/api/v1/system/provider-config/openrouter/test-account",
+        json={"api_key": "synthetic"},  # pragma: allowlist secret — regression fixture
+        headers=_admin_headers(),
+    )
+    assert response.status_code == 503
+    assert "refusing to persist plaintext" in response.json()["detail"]
+    assert "synthetic encryption failure" not in response.text
+    session.rollback()
+    rows = session.exec(select(ProviderConfig)).all()
+    assert all(not row.api_key_encrypted for row in rows)

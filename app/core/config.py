@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import Field, ValidationInfo, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.net import LOOPBACK_HOSTS
+
 logger = logging.getLogger(__name__)
 
 
@@ -313,7 +315,7 @@ def _validate_security_invariants(s: Settings) -> None:
         )
         raise RuntimeError("DB_ENCRYPTION_KEY must be set when ADMIN_API_KEY is configured")
 
-    if s.APP_HOST in ("127.0.0.1", "localhost", "::1"):
+    if s.APP_HOST in LOOPBACK_HOSTS:
         return  # localhost binds are exempt from the multi-host gates
 
     if not s.DB_ENCRYPTION_KEY:

@@ -935,6 +935,16 @@ def _assert_webhook_unique(
         )
 
 
+def _webhook_destination_warning(url: str) -> str | None:
+    from app.services.webhooks import WebhookURLError, validate_webhook_url
+
+    try:
+        validate_webhook_url(url)
+    except WebhookURLError:
+        return "Unsupported destination. Replace this alert with a Slack or Discord HTTPS webhook."
+    return None
+
+
 @router.get("/webhooks")
 async def list_webhooks(
     account_id: str | None = None,
@@ -963,6 +973,7 @@ async def list_webhooks(
                 "active": c.active,
                 "credential_alerts": c.credential_alerts,
                 "last_fired_at": iso_utc(c.last_fired_at),
+                "validation_error": _webhook_destination_warning(c.url),
             }
             for c in configs
         ]

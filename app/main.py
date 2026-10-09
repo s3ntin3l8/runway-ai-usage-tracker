@@ -18,6 +18,7 @@ from starlette.responses import Response
 from app.api.routes import router as api_router
 from app.core.config import settings
 from app.core.db import init_db
+from app.core.encryption import EncryptionError
 from app.core.http_security import BrowserBoundaryMiddleware
 from app.core.rate_limit import limiter
 from app.services.collector_manager import manager
@@ -201,6 +202,14 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=512)
 
 app.add_middleware(BrowserBoundaryMiddleware)
+
+
+@app.exception_handler(EncryptionError)
+async def encryption_unavailable(request: Request, exc: EncryptionError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Encryption unavailable; refusing to persist plaintext. Please retry."},
+    )
 
 
 # Defence-in-depth security headers on every response. The v2 SPA bundles

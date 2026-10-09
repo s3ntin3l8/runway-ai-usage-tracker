@@ -722,3 +722,36 @@ def test_fresh_db_has_single_covering_unique_index():
                 )
             )
             conn.commit()
+
+
+def test_legacy_custom_webhook_is_flagged_and_delivery_blocked(client, session):
+    from app.models.db import WebhookConfig
+
+    config = WebhookConfig(
+        provider_id="anthropic",
+        threshold_pct=90,
+        url="https://custom.example.test/hook",
+        channel="discord",
+    )
+    session.add(config)
+    session.commit()
+    response = client.get("/api/v1/system/webhooks")
+    entry = response.json()["webhooks"][0]
+    assert "Unsupported destination" in entry["validation_error"]
+    with patch("app.services.webhooks.httpx.AsyncClient") as http_client:
+        result = client.post(f"/api/v1/system/webhooks/{config.id}/test")
+    assert result.status_code == 502
+    http_client.return_value.__aenter__.return_value.post.assert_not_called()
+
+
+def test_legacy_webhook_shape_rejected_when_creating(client):
+    response = client.post(
+        "/api/v1/system/webhooks",
+        json={
+            "provider_id": "anthropic",
+            "threshold_pct": 90,
+            "url": "https://discord.example.com/hook",
+            "channel": "discord",
+        },
+    )
+    assert response.status_code == 400

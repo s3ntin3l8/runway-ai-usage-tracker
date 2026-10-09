@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.core.encryption import encryption_service
+from app.core.encryption import EncryptionError, encryption_service
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
 from app.core.utils import IdentityExtractor, safe_write_json
@@ -168,6 +168,8 @@ async def poll_device_flow(
             raise HTTPException(status_code=500, detail="Unexpected response from GitHub")
         except HTTPException:
             raise
+        except EncryptionError:
+            raise
         except Exception as e:
             logger.error(f"Error polling GitHub Device Flow: {e}")
             raise HTTPException(status_code=500, detail="Error communicating with GitHub")
@@ -268,6 +270,8 @@ async def get_status() -> DeviceFlowStatusResponse:
                     name=creds.get("name"),
                     email=creds.get("email"),
                 )
+        except EncryptionError:
+            raise
         except Exception as e:
             logger.error(f"Error checking GitHub status: {e}")
             # If we failed to read file or something else, but file exists,

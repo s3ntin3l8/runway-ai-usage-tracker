@@ -881,6 +881,7 @@ export interface Webhook {
   active: boolean;
   credential_alerts: boolean; // also alert when Token Health goes expired/invalid
   last_fired_at?: string | null;
+  validation_error?: string | null; // legacy destinations blocked by current webhook policy
 }
 
 /** `failing` = not rejected, but the last several collections with it failed. `invalid` = the provider rejected the credential (401/403) — opaque keys and

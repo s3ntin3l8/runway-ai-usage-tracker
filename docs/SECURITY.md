@@ -223,8 +223,18 @@ Enter a replacement to rotate the key, or pair again from the dashboard.
 Webhook destinations must be HTTPS Slack (`hooks.slack.com/services/…`) or
 Discord (`discord.com/api/webhooks/…`, legacy `discordapp.com` also accepted)
 URLs on port 443. Custom hosts and redirects are unsupported; existing custom
-webhooks must be replaced. Validation applies at save time and delivery time.
+webhooks must be replaced. Saved unsupported destinations display a warning in
+Settings → Webhooks immediately after upgrade; no database rewrite is needed.
+Validation applies at save time and delivery time.
 
 Ingestion stops receiving when its 8 MiB cap is exceeded, irrespective of
 Content-Length. Nonfinite HMAC timestamps are rejected. If configured encryption
 fails at runtime, credential writes fail instead of persisting plaintext.
+
+Encryption failures return HTTP 503 with a safe retry message. Credential writes
+remain blocked until encryption recovers. No exception details or keys reach the client.
+
+`X-Runway-Dev-Remote` is an internal Vite downgrade marker, overwritten by the
+dev proxy on every request. It never grants authentication. Production reverse
+proxies should strip client-supplied values, alongside identity headers, and
+assert identity only after authenticating the caller.
