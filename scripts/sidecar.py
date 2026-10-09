@@ -1631,6 +1631,7 @@ def _replay_queue_lines(
     api_key: str,
     stop_event: threading.Event | None,
     config: dict[str, Any] | None,
+    on_sent: Callable[[], None] | None = None,
 ) -> tuple[int, int, bool]:
     """Replay one entry at a time, streaming failures and the unprocessed suffix."""
     count = failed_count = 0
@@ -1661,6 +1662,8 @@ def _replay_queue_lines(
                 )
                 if success and not events_failed:
                     count += 1
+                    if on_sent is not None:
+                        on_sent()
                 else:
                     keep = True
                     if success and events_failed:
@@ -1719,6 +1722,12 @@ def queue_flush(
             return 0
 
     count = 0
+
+    def record_sent() -> None:
+        # Count acknowledgements even if a later retention write/read fails.
+        nonlocal count
+        count += 1
+
     target_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
     try:
         for name in queue_names:
@@ -1743,10 +1752,9 @@ def queue_flush(
                     )
                     temporary_created = True
                     retained = stack.enter_context(os.fdopen(fd, "w", encoding="utf-8"))
-                    sent, failed_count, interrupted = _replay_queue_lines(
-                        source, retained, target_url, api_key, stop_event, config
+                    _, failed_count, interrupted = _replay_queue_lines(
+                        source, retained, target_url, api_key, stop_event, config, record_sent
                     )
-                    count += sent
                     retained.flush()
                     os.fsync(retained.fileno())
                     temporary_snapshot = os.fstat(retained.fileno())

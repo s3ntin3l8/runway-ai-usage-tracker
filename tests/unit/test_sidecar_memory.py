@@ -139,7 +139,8 @@ def test_failed_atomic_replacement_keeps_original_queue(queue_file, monkeypatch)
     assert list(queue_file.parent.iterdir()) == [queue_file]
 
 
-def test_failed_retention_write_keeps_original_queue(queue_file, monkeypatch):
+@pytest.mark.parametrize("acknowledged", [False, True])
+def test_failed_retention_write_keeps_original_queue(queue_file, monkeypatch, acknowledged):
     original = queue_file.read_bytes()
     replay = sidecar._replay_queue_lines
 
@@ -147,13 +148,14 @@ def test_failed_retention_write_keeps_original_queue(queue_file, monkeypatch):
         def write(self, _line):
             raise OSError("disk full")
 
-    monkeypatch.setattr(sidecar, "http_post_signed_with_retry", lambda *a, **k: (False, {}, 503))
+    replies = iter([(True, {}, 200)] * int(acknowledged) + [(False, {}, 503)])
+    monkeypatch.setattr(sidecar, "http_post_signed_with_retry", lambda *a, **k: next(replies))
     monkeypatch.setattr(
         sidecar,
         "_replay_queue_lines",
         lambda source, retained, *args: replay(source, FailingWriter(), *args),
     )
-    assert sidecar.queue_flush("http://localhost", "test") == 0
+    assert sidecar.queue_flush("http://localhost", "test") == int(acknowledged)
     assert queue_file.read_bytes() == original
     assert list(queue_file.parent.iterdir()) == [queue_file]
 
