@@ -304,6 +304,8 @@ def _download(url: str, dest: pathlib.Path, *, max_bytes: int = MAX_ARCHIVE_BYTE
             for chunk in bounded_chunks(resp, max_bytes):
                 fh.write(chunk)
     except BaseException:
+        # Interruptions and process-exit exceptions must also remove partial
+        # resources; cleanup never converts the original failure into success.
         try:
             dest.unlink(missing_ok=True)
         except OSError:

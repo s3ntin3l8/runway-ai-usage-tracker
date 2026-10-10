@@ -257,6 +257,7 @@ jobs:
       - name: Install updater verification dependencies
         run: pip install -e '.[sidecar]'
       - name: Verify portable updates with the production updater
+        # Requires egress for the production Sigstore client's TUF trust refresh.
         run: python -m scripts.verify_release_updates release-assets
 
       - name: Check update download budgets

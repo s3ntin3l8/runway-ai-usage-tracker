@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from scripts.check_update_asset_sizes import check_sizes
+from scripts import check_update_asset_sizes as sizes
 from scripts.sidecar_pkg import self_update, signatures, update_limits
 
 
@@ -126,16 +126,14 @@ def test_overflow_never_extracts_installs_restarts_or_retries(tmp_path, monkeypa
 
 
 def test_packaging_budget_checks(tmp_path, monkeypatch):
-    import scripts.check_update_asset_sizes as sizes
-
     monkeypatch.setattr(sizes, "MAX_ARCHIVE_BYTES", 10)
     monkeypatch.setattr(sizes, "MAX_BUNDLE_BYTES", 5)
-    assert check_sizes(tmp_path)
+    assert sizes.check_sizes(tmp_path)
     payload = tmp_path / "Runway-Sidecar-Windows-edge.zip"
     bundle = payload.with_name(payload.name + ".sigstore.json")
     payload.write_bytes(b"x" * 10)
     bundle.write_bytes(b"x" * 5)
-    assert check_sizes(tmp_path) == []
+    assert sizes.check_sizes(tmp_path) == []
     payload.write_bytes(b"x" * 11)
     bundle.write_bytes(b"x" * 6)
-    assert len(check_sizes(tmp_path)) == 2
+    assert len(sizes.check_sizes(tmp_path)) == 2
