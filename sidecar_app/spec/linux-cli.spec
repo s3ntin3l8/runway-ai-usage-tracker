@@ -7,18 +7,21 @@
 # server or DBus session.
 
 import os
+from PyInstaller.utils.hooks import collect_all
+
+sigstore_datas, sigstore_binaries, sigstore_imports = collect_all("sigstore")
 
 _ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 a = Analysis(
     [os.path.join(_ROOT, "scripts", "sidecar.py")],
     pathex=[_ROOT],
-    binaries=[],
-    datas=[
+    binaries=sigstore_binaries,
+    datas=sigstore_datas + [
         # package.json is read at runtime for --version output.
         (os.path.join(_ROOT, "package.json"), "."),
     ],
-    hiddenimports=[
+    hiddenimports=sigstore_imports + [
         # Mirror every top-level import in scripts/sidecar.py. PyInstaller's
         # static scan should find these, but declaring them is cheap insurance.
         "argparse",
@@ -49,6 +52,8 @@ a = Analysis(
         # certifi hiddenimport triggers PyInstaller's hook-certifi, which
         # ships cacert.pem so HTTPS verifies without a system CA store.
         "scripts.sidecar_pkg.tls",
+        "scripts.sidecar_pkg.transport",
+        "scripts.sidecar_pkg.signatures",
         # Every sidecar_pkg module scripts/sidecar.py imports inside a function body.
         # Declared explicitly (guarded by tests/unit/test_sidecar_release_contract.py) so a
         # lazily imported module can never be left out of a frozen build.

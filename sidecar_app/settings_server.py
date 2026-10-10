@@ -608,6 +608,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "API URL is required"}, 400)
             return
 
+        from scripts.sidecar_pkg.transport import ServerURLError, validate_server_url
+
+        try:
+            api_url = validate_server_url(api_url, base=True)
+        except ServerURLError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+
         new_config = dict(self.server.get_config())
         new_config["api_url"] = api_url
         if api_key:

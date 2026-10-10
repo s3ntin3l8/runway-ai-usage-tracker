@@ -12,14 +12,14 @@ concurrency:
 
 jobs:
   test-python:
-    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
       python-version: '3.12'
       coverage-fail-under: '70'
     secrets: inherit
 
   test-frontend:
-    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
       node-version: '22'
       working-directory: 'webapp'
@@ -50,7 +50,7 @@ jobs:
       - name: Audit server, desktop and build dependencies
         run: |
           python -m pip install --upgrade pip 'setuptools>=83.0.0'
-          python -m pip install -r requirements-dev.txt '.[desktop]' pyinstaller
+          python -m pip install -r requirements-dev.txt '.[desktop,sidecar]' pyinstaller
           pip-audit --skip-editable
       - name: Audit frontend including build dependencies
         run: |
@@ -65,7 +65,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install NSIS
         run: sudo apt-get update -qq && sudo apt-get install -y -qq nsis
       - name: Compile installer
@@ -84,7 +84,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
-    uses: s3ntin3l8/.github/.github/workflows/docker-publish.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/docker-publish.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
       image-name: 's3ntin3l8/runway'
       push-edge: true

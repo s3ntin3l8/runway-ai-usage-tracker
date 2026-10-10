@@ -23,5 +23,5 @@ jobs:
       issues: read
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
-    uses: s3ntin3l8/.github/.github/workflows/claude-code.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/claude-code.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     secrets: inherit # pragma: allowlist secret

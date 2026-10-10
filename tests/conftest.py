@@ -10,6 +10,7 @@ Provides:
 
 import json
 import os
+import sys
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -107,20 +108,24 @@ def clear_response_cache():
 
 
 @pytest.fixture(autouse=True)
-def mock_db_session():
-    """Mock the DB session to prevent tests from hitting the local database."""
-    # We patch sqlmodel.Session directly as it is used via context manager in CredentialProvider
-    with patch("sqlmodel.Session") as mock_session:
-        mock_db = MagicMock()
-        # Mock .exec() (SQLModel style)
-        mock_db.exec.return_value.all.return_value = []
-        mock_db.exec.return_value.first.return_value = None
-        # Mock .query() (Legacy SQLAlchemy style)
-        mock_db.query.return_value.filter.return_value.first.return_value = None
+def mock_db_session(monkeypatch):
+    """Mock DB access without leaking patched Session classes across tests."""
+    from sqlmodel import Session
 
-        # Make the context manager return our mock DB
-        mock_session.return_value.__enter__.return_value = mock_db
-        yield mock_db
+    mock_session = MagicMock()
+    mock_db = MagicMock()
+    mock_db.exec.return_value.all.return_value = []
+    mock_db.exec.return_value.first.return_value = None
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+    mock_session.return_value.__enter__.return_value = mock_db
+    # Share the undo stack with tests which temporarily restore real Session.
+    # A separate patch context can otherwise undo before monkeypatch teardown,
+    # leaving its mock installed globally for subsequent tests.
+    monkeypatch.setattr("sqlmodel.Session", mock_session)
+    yield mock_db
+    for module in tuple(sys.modules.values()):
+        if module is not None and vars(module).get("Session") is mock_session:
+            module.Session = Session
 
 
 @pytest.fixture
@@ -251,3 +256,28 @@ def mock_keyring():
 def pytest_configure(config):
     """Configure pytest with asyncio mode."""
     config.addinivalue_line("markers", "asyncio: mark test as asyncio")
+
+
+@pytest.fixture(autouse=True)
+def isolated_replay_receipts(monkeypatch, tmp_path):
+    """Replay auth must never read/write the developer's real database."""
+    from sqlmodel import create_engine
+
+    from app.models.db import SidecarRequestReceipt
+
+    replay_engine = None
+
+    def get_engine():
+        nonlocal replay_engine
+        if replay_engine is None:
+            replay_engine = create_engine(
+                f"sqlite:///{tmp_path / 'replay.db'}",
+                connect_args={"check_same_thread": False, "timeout": 30},
+            )
+            SidecarRequestReceipt.__table__.create(replay_engine)
+        return replay_engine
+
+    monkeypatch.setattr("app.core.replay.receipt_engine", get_engine)
+    yield
+    if replay_engine is not None:
+        replay_engine.dispose()

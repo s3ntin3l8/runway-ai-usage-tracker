@@ -110,6 +110,7 @@ def init_db() -> None:
         ProviderPricing,
         QuotaSnapshot,
         SidecarRegistry,
+        SidecarRequestReceipt,
         SystemConfig,
         UsageEvent,
         UsagePeriodRollup,

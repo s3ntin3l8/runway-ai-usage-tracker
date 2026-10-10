@@ -58,7 +58,7 @@ def watch_config(
                         try:
                             new_config = load_config(str(config_path))
                             on_change(new_config)
-                        except Exception as e:
+                        except (Exception, SystemExit) as e:
                             import logging
 
                             logging.warning(f"Config reload skipped — parse error: {e}")

@@ -215,3 +215,7 @@ Webhook URLs must use the supported Slack or Discord HTTPS endpoint hosts.
 Webhook list entries include optional `validation_error` text for saved URLs
 blocked by the current destination policy. Configured encryption failures return
 HTTP 503 and refuse credential persistence.
+
+### Signed fleet request retries
+
+Authenticated fleet ingest and signed config requests consume a durable, single-use signature receipt before handler effects. Reusing the same envelope returns HTTP `409` (`detail.error: "replayed_request"`), including after handler validation errors. Receipt storage failures return `503`. Generate a fresh timestamp and HMAC for every retry; the signing format is unchanged. Timestamps must be finite and no more than five minutes in the past or one minute in the future. Event identifiers continue to deduplicate retried usage events.

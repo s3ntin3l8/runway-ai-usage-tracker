@@ -2247,7 +2247,7 @@ class TestPostCredentialManifest:
 
         with (
             patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
-            patch("urllib.request.urlopen", return_value=ctx),
+            patch("scripts.sidecar_pkg.transport.urlopen", return_value=ctx),
         ):
             sidecar._post_credential_manifest(
                 api_url="https://api.example.com",
@@ -2278,7 +2278,7 @@ class TestPostCredentialManifest:
 
         with (
             patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
-            patch("urllib.request.urlopen", return_value=ctx),
+            patch("scripts.sidecar_pkg.transport.urlopen", return_value=ctx),
         ):
             sidecar._post_credential_manifest(
                 api_url="https://api.example.com",
@@ -2298,7 +2298,7 @@ class TestPostCredentialManifest:
 
         with (
             patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
-            patch("urllib.request.urlopen", return_value=ctx),
+            patch("scripts.sidecar_pkg.transport.urlopen", return_value=ctx),
         ):
             sidecar._post_credential_manifest(
                 api_url="https://api.example.com",
@@ -2320,7 +2320,7 @@ class TestPostCredentialManifest:
 
         with (
             patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
-            patch("urllib.request.urlopen", return_value=ctx),
+            patch("scripts.sidecar_pkg.transport.urlopen", return_value=ctx),
         ):
             sidecar._post_credential_manifest(
                 api_url="https://api.example.com",
@@ -2348,7 +2348,7 @@ class TestPostCredentialManifest:
 
         with (
             patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
-            patch("urllib.request.urlopen", return_value=ctx),
+            patch("scripts.sidecar_pkg.transport.urlopen", return_value=ctx),
         ):
             # Must not raise.
             sidecar._post_credential_manifest(

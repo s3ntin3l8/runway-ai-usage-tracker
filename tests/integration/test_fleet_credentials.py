@@ -239,7 +239,9 @@ def test_config_emits_distinct_tokens_per_account(client: TestClient, session: S
 
 def _sign_manifest(body: bytes, ts: str | None = None) -> tuple[str, str]:
     """Compute HMAC headers the manifest endpoint expects."""
-    ts = ts or str(int(time.time()))
+    from scripts.sidecar_pkg.transport import signing_timestamp
+
+    ts = ts or signing_timestamp()
     sig = hmac.new(SECRET.encode(), ts.encode() + body, hashlib.sha256).hexdigest()
     return ts, sig
 
@@ -2779,7 +2781,7 @@ def test_config_signature_is_single_use(client: TestClient, monkeypatch) -> None
     headers = _signed_config_headers(query)
     assert client.get(f"/api/v1/fleet/config?{query}", headers=headers).status_code == 200
     replay = client.get(f"/api/v1/fleet/config?{query}", headers=headers)
-    assert replay.status_code == 401
+    assert replay.status_code == 409
 
 
 def test_config_issues_no_credential_tokens_for_unsigned_remote_caller(
@@ -3814,3 +3816,25 @@ def test_mixed_provider_assignment_keeps_each_events_own_provider(
         },
     )
     assert rejected.status_code == 422, rejected.text
+
+
+def test_manifest_replay_cannot_restore_old_pending_state(client, session):
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    old_body = {
+        "sidecar_id": "replay-host",
+        "completed_providers": ["anthropic"],
+        "entries": [{"provider_id": "anthropic", "credential_origin": "path:/old"}],
+    }
+    timestamp, _ = _sign_manifest(json.dumps(old_body).encode())
+    assert _post_manifest(client, old_body, ts=timestamp).status_code == 200
+    new_body = {
+        **old_body,
+        "entries": [{"provider_id": "anthropic", "credential_origin": "path:/new"}],
+    }
+    assert _post_manifest(client, new_body).status_code == 200
+    assert _post_manifest(client, old_body, ts=timestamp).status_code == 409
+    assert {
+        r.credential_origin
+        for r in PendingCredentialTagRepo.list_all(session, sidecar_id="replay-host")
+    } == {"path:/new"}

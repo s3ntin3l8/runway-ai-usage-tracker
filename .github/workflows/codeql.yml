@@ -14,6 +14,6 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    uses: s3ntin3l8/.github/.github/workflows/codeql.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/codeql.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
       languages: '"python", "javascript-typescript"'

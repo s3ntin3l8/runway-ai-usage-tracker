@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from urllib import error, request
 from urllib.parse import parse_qs, urlsplit
 
+from scripts.sidecar_pkg import transport as server_http
+
 SCHEME = "runway-sidecar"
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 _TIMEOUT_SECONDS = 20
@@ -51,17 +53,10 @@ class PairTarget:
 
 def normalize_server(server: str) -> str:
     """Validate a server base URL; raise ``PairingError`` if unusable."""
-    parts = urlsplit((server or "").strip())
-    host = parts.hostname or ""
-    if parts.scheme not in ("http", "https") or not host:
-        raise PairingError("The server address must start with https://")
-    if parts.username or parts.password or parts.query or parts.fragment:
-        raise PairingError("The server address must not contain credentials or parameters")
-    if parts.scheme == "http" and host not in _LOOPBACK:
-        raise PairingError(
-            "Refusing to pair over plain http:// with a remote server; use its https:// address"
-        )
-    return f"{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}"
+    try:
+        return server_http.validate_server_url((server or "").strip(), base=True)
+    except server_http.ServerURLError as exc:
+        raise PairingError(str(exc)) from None
 
 
 def normalize_code(code: str) -> str:
@@ -113,7 +108,7 @@ def redeem(
         headers={"Content-Type": "application/json", "User-Agent": "Runway-Sidecar-Pairing"},
     )
     try:
-        with request.urlopen(  # noqa: S310
+        with server_http.urlopen(  # noqa: S310
             req, timeout=_TIMEOUT_SECONDS, context=build_context_from_config(url, config)
         ) as resp:
             data = json.loads(resp.read().decode())

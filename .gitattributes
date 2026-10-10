@@ -1,0 +1,2 @@
+# Signed payload bytes must be identical on every platform.
+tests/fixtures/sigstore/SHA256SUMS.txt -text

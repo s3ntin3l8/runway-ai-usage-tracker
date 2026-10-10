@@ -8,6 +8,14 @@ from app.core.encryption import encryption_service
 from app.models._datetime import UTCDateTime
 
 
+class SidecarRequestReceipt(SQLModel, table=True):  # type: ignore[call-arg]
+    """Short-lived digest receipts; authoritative authentication state."""
+
+    __tablename__ = "sidecar_request_receipts"
+    receipt_id: str = Field(primary_key=True)
+    expires_at: float = Field(index=True)
+
+
 class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     """Persistent registry of known sidecars that have sent data."""
 

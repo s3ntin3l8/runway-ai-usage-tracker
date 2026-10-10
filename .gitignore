@@ -106,3 +106,7 @@ coverage/
 
 # memray profiling output
 memray*.bin
+
+# Browser security test reports
+webapp/playwright-report/
+webapp/test-results/

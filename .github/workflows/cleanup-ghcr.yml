@@ -18,7 +18,7 @@ jobs:
   cleanup:
     permissions:
       packages: write
-    uses: s3ntin3l8/.github/.github/workflows/ghcr-cleanup.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/ghcr-cleanup.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
       package-name: 'runway'
       dry-run: ${{ inputs.dry-run || false }}

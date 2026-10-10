@@ -10,6 +10,11 @@ import threading
 import traceback
 import webbrowser
 
+from scripts.sidecar_pkg.signatures import verification_command
+
+# Run before desktop imports/initialization so this diagnostic works headlessly.
+verification_command(sys.argv[1:])
+
 from sidecar_app import __version__
 from sidecar_app.config import (
     get_config_path,
@@ -171,7 +176,7 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         try:
             new_config = load_config(str(config_path))
             _on_config_change(new_config)
-        except Exception as e:
+        except (Exception, SystemExit) as e:
             logging.warning(f"Manual config reload failed: {e}")
 
     tray._on_reload_config = _manual_reload

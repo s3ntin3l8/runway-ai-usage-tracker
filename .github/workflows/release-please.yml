@@ -10,7 +10,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: s3ntin3l8/.github/.github/workflows/release-please.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/release-please.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
 
   build-docker:
     needs: release-please
@@ -19,7 +19,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
-    uses: s3ntin3l8/.github/.github/workflows/docker-publish.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/docker-publish.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
       image-name: 's3ntin3l8/runway'
       push-release: true
@@ -45,7 +45,7 @@ jobs:
       contents: write
     steps:
       - name: Download signed asset set
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: sidecar-release-assets
           path: release-assets
@@ -53,7 +53,7 @@ jobs:
       - name: Upload to GitHub Release
         # .dmg / -setup.exe installers, .zip / .tar.gz self-update payloads,
         # per-asset .sha256, SHA256SUMS.txt and Sigstore .sig/.cert files.
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
           files: release-assets/*
