@@ -28,6 +28,8 @@ from collections.abc import Callable
 from typing import Any
 from urllib import error, request
 
+from scripts.sidecar_pkg.update_limits import MAX_METADATA_BYTES, bounded_read
+
 logger = logging.getLogger(__name__)
 
 _LATEST_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest"
@@ -72,7 +74,7 @@ def _get_json(url: str) -> Any:
     # GitHub always presents a valid cert, so never honour the insecure opt-in.
     ctx = build_context(url, insecure=False)
     with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=ctx) as resp:  # noqa: S310
-        return json.loads(resp.read().decode())
+        return json.loads(bounded_read(resp, MAX_METADATA_BYTES).decode())
 
 
 def _stable_update(current: str) -> str | None:

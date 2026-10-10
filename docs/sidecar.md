@@ -35,13 +35,12 @@ Every asset has a sibling `<asset>.sha256`, and each release has one `SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS.txt      # Linux   (macOS: shasum -a 256 -c …)
 ```
 
-Each asset and `SHA256SUMS.txt` is also signed with [Sigstore](https://www.sigstore.dev/) keyless signing from the release workflow (`<asset>.sig` + `<asset>.cert`). To prove a file was built by this repository's CI:
+Each asset and `SHA256SUMS.txt` is also signed with [Sigstore](https://www.sigstore.dev/) keyless signing from the release workflow (`<asset>.sigstore.json` bundle, Cosign 3 format). To prove a file was built by this repository's CI:
 
 ```bash
 cosign verify-blob \
-  --signature Runway-Sidecar-macOS-v2.13.0.dmg.sig \
-  --certificate Runway-Sidecar-macOS-v2.13.0.dmg.cert \
-  --certificate-identity-regexp '^https://github\.com/s3ntin3l8/runway-ai-usage-tracker/\.github/workflows/sidecar-build\.yml@' \
+  --bundle Runway-Sidecar-macOS-v2.13.0.dmg.sigstore.json \
+  --certificate-identity https://github.com/s3ntin3l8/runway-ai-usage-tracker/.github/workflows/sidecar-build.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   Runway-Sidecar-macOS-v2.13.0.dmg
 ```
@@ -513,3 +512,21 @@ python3 scripts/sidecar.py --daemon
 See [Collector Docs](../docs/collectors/) for provider-specific setup details.
 
 *Last updated: 2026-05-09*
+
+### Update resource budgets
+
+Portable update archives are limited to **256 MiB**, signature bundles to **1 MiB**,
+checksum responses to **4 KiB**, and release metadata to **4 MiB**. Current signed
+edge payloads measured on 2026-10-10 are Linux CLI 52,153,543 bytes, Linux tray
+59,861,976 bytes, Windows 38,049,361 bytes, and macOS 92,751,463 bytes. Archives
+therefore have nearly three times the largest current package's size in headroom.
+
+Actual bytes are counted even if Content-Length is absent or incorrect. Overflow
+is a permanent failure: the response closes, temporary bytes are removed, and the
+installed copy/rollback slot remain unchanged. There is no operator override.
+Local archives are rejected before hashing when oversized. Release packaging
+checks the same archive/bundle budgets so legitimate packages cannot silently
+outgrow the updater. A future budget increase must update the documented limits
+and ship through a reviewed change. Signature verification remains mandatory.
+
+Release signing uses Cosign 3 modern bundles. Before publishing, CI verifies every portable archive with the same Python verifier and exact main-branch identity used by the updater. Older legacy bundles fail closed; a checksum cannot substitute for a valid signature.
