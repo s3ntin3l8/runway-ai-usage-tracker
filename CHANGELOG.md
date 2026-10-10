@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.7...v3.0.0-beta.8) (2026-10-10)
+
+
+### Bug Fixes
+
+* **security:** close application audit trust-boundary gaps ([#601](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/601)) ([1f35acf](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1f35acfa13c47f38b2b9e644533a61ae1b9cd61a))
+* **security:** enforce replay, transport and signed update boundaries ([#604](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/604)) ([502e602](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/502e602c6dc2a196d847e1fdf188d15bbb5d3a59))
+* **security:** gate image promotion on reviewed vulnerability reports ([#607](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/607)) ([87d0e6d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/87d0e6d5c3dd8c04d445cee197fd4c2609285331))
+* **sidecar:** bound update resources and verify release bundle compatibility ([#609](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/609)) ([17e9f24](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/17e9f248fc179bf53d217f2de0b10e5411642c87))
+
+
+### Performance Improvements
+
+* reduce sidecar collection memory ([#598](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/598)) ([2e58912](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2e58912a1c1e01ddd6182de0638c175c1e67a655))
+
 ## [3.0.0-beta.7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.6...v3.0.0-beta.7) (2026-10-08)
 
 
