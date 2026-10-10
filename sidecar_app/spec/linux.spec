@@ -15,12 +15,14 @@ a = Analysis(
     [os.path.join(_ROOT, "sidecar_app", "__main__.py")],
     pathex=[_ROOT],
     binaries=sigstore_binaries,
-    datas=sigstore_datas + [
+    datas=sigstore_datas
+    + [
         (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
         (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
         (os.path.join(_ROOT, "package.json"), "."),
     ],
-    hiddenimports=sigstore_imports + [
+    hiddenimports=sigstore_imports
+    + [
         # pystray picks the available backend at runtime; bundle both so the
         # binary works on AppIndicator-capable desktops (GNOME/Unity/KDE with
         # the extension) and falls back to plain GTK elsewhere.
@@ -62,6 +64,7 @@ a = Analysis(
         "scripts.sidecar_pkg.tls",
         "scripts.sidecar_pkg.transport",
         "scripts.sidecar_pkg.signatures",
+        "scripts.sidecar_pkg.update_limits",
         # Every sidecar_pkg module scripts/sidecar.py imports inside a function body.
         # Declared explicitly (guarded by tests/unit/test_sidecar_release_contract.py) so a
         # lazily imported module can never be left out of a frozen build.
