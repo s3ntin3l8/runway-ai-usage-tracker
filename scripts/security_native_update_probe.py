@@ -10,6 +10,7 @@ import io
 import json
 import platform
 import tempfile
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -55,6 +56,7 @@ def probe(installed: Path, payload: Path, bundle: Path, output: Path) -> bool:
         with payload.open("rb") as src, tampered.open("wb") as dest:
             while chunk := src.read(1024 * 1024):
                 dest.write(chunk)
+            # Preserve the original bytes, then append corruption deliberately.
             dest.write(b"tampered")
         malformed = root / "malformed.sigstore.json"
         malformed.write_text("not a signature bundle")
@@ -91,6 +93,7 @@ def probe(installed: Path, payload: Path, bundle: Path, output: Path) -> bool:
                 "checksum_requested": False,
                 "signature_attempted": False,
                 "signature_rejected": False,
+                "lock_acquired": False,
             }
 
             class Response(io.BytesIO):
@@ -99,7 +102,7 @@ def probe(installed: Path, payload: Path, bundle: Path, output: Path) -> bool:
                     self.headers = headers or {}
 
                 def read(self, size: int = -1) -> bytes:
-                    if case == "oversized-response":
+                    if case == "oversized-response" and size != 0:
                         stages["body_read"] = True
                     return super().read(size)
 
@@ -124,7 +127,18 @@ def probe(installed: Path, payload: Path, bundle: Path, output: Path) -> bool:
                     stages["signature_rejected"] = True
                     raise
 
+            # Capture production callables before replacing them below; wrappers
+            # must never resolve the patched attribute and recurse into themselves.
             self_update_verifier = self_update.verify_update
+            single_flight = self_update._single_flight
+
+            @contextmanager
+            def recorded_single_flight():
+                with single_flight() as acquired:
+                    stages["lock_acquired"] = bool(
+                        acquired and (root / "config" / self_update._LOCK_NAME).is_file()
+                    )
+                    yield acquired
 
             def never_install(*args, **kwargs):
                 raise AssertionError("Refused update reached extraction or installation")
@@ -136,6 +150,7 @@ def probe(installed: Path, payload: Path, bundle: Path, output: Path) -> bool:
                     patch.object(self_update, "running_from_disk_image", return_value=False),
                     patch.object(self_update, "_detect_target", return_value="tray"),
                     patch.object(self_update, "_sidecar_dir", return_value=root / "config"),
+                    patch.object(self_update, "_single_flight", side_effect=recorded_single_flight),
                     patch.object(self_update, "check_once", return_value="edge build fixture"),
                     patch.object(
                         self_update,
@@ -171,6 +186,7 @@ def probe(installed: Path, payload: Path, bundle: Path, output: Path) -> bool:
                     and unchanged
                     and rollback_unchanged
                     and lock_released
+                    and stages["lock_acquired"]
                     and expected_stage
                 )
                 report["cases"].append(

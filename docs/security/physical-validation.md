@@ -32,6 +32,15 @@ Run each row on both supported installation forms:
 | Windows x64 | portable ZIP; per-user setup.exe | Install A → launch → update to signed B → restart → rollback to A → relaunch → update to B again |
 | macOS Apple Silicon | portable ZIP; DMG dragged to Applications | Install A → launch → update to signed B → restart → rollback to A → relaunch → update to B again |
 
+On each host, also simulate an interrupted update in the isolated test config:
+leave an orphaned `self-update.lock` older than `_LOCK_STALE_SECONDS` with no
+updater process running, then retry a refused update. Confirm stale-lock reclaim,
+unchanged installed/rollback copies, and final lock release. Repeat with a fresh
+lock held by another updater; the second update must refuse without deleting it.
+Record failed swap/rollback behavior and that the surviving installed copy still
+relaunches; retain the error and filesystem evidence rather than calling a
+partial rollback successful.
+
 At each step record the running version and executable/bundle location, confirm
 configuration survives, confirm only the intended sidecar process runs, and confirm
 updates do not leave a stale lock. On macOS also record quarantine/Gatekeeper
@@ -62,7 +71,13 @@ Use Edge/Chrome and Firefox on Windows, and Safari, Chrome and Firefox on macOS.
 Test dashboard and sidecar settings independently. Record Local Network Access
 prompts and permission denied/granted states where the browser supports them.
 
-1. Start isolated dashboard/sidecar loopback services with a synthetic fleet key.
+1. Start isolated dashboard/sidecar loopback services with the disposable fixture
+   fleet key `synthetic-fleet-key`. The probe's `keySeen` field searches only for
+   that exact fixture marker; never use it against production. Confirm the fixture
+   value through owner access to the isolated config. Ordinary authenticated
+   settings HTML must omit it (the password field stays blank). Validate the
+   substring detector separately with a synthetic sample containing the marker;
+   do not treat ordinary settings HTML as a positive disclosure control.
 2. On a **separate helper host** on an isolated network, run the hostile page and
    controlled DNS responder. Use a hostname under your control and a fresh hostname
    for each run; no public rebinding service is required.
@@ -107,7 +122,7 @@ users and groups; record the actual source IP seen by Runway.
 | Case | Expected result |
 | --- | --- |
 | Unauthenticated browser | Authentik challenge; private Runway state unavailable |
-| Allowed SSO user/group | Private reads and a reversible settings mutation succeed; audit attribution matches synthetic user |
+| Allowed SSO user/group | Private reads and a reversible `PUT /api/v1/system/dashboard-layout` succeed; audit attribution matches synthetic user |
 | Disallowed user/group without other credentials | Private operations denied |
 | Forged Authentik/Remote-User headers from client | No impersonation through Traefik |
 | Direct backend forged identity and X-Forwarded-For | Denied; untrusted immediate peer remains untrusted |

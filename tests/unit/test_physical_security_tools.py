@@ -75,6 +75,7 @@ def test_native_driver_records_refusals_and_preserves_install(tmp_path, monkeypa
         "oversized-response",
     ]
     assert all(c["status"] == "pass" for c in report["cases"][:3])
+    assert all(c["stages"]["lock_acquired"] for c in report["cases"][:3])
     assert report["cases"][-1]["status"] in {"pass", "blocked"}
 
 
@@ -94,7 +95,10 @@ def test_uncapped_downloader_cannot_pass_oversize_probe(tmp_path, monkeypatch):
     from scripts.sidecar_pkg import self_update
 
     monkeypatch.setattr("scripts.security_native_update_probe.verify_update", lambda *args: None)
+    # raising=False permits adding the constant before #605; it still replaces
+    # an existing attribute after #605 (it never skips assignment).
     monkeypatch.setattr(self_update, "MAX_ARCHIVE_BYTES", 10, raising=False)
+    assert self_update.MAX_ARCHIVE_BYTES == 10
 
     def uncapped(url, dest, **kwargs):
         from urllib.request import Request
@@ -111,3 +115,22 @@ def test_uncapped_downloader_cannot_pass_oversize_probe(tmp_path, monkeypatch):
     assert oversized["status"] == "fail"
     assert oversized["stages"]["body_read"]
     assert not oversized["expected_refusal_stage"]
+
+
+def test_probe_cannot_pass_without_real_lock_acquisition(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from scripts.sidecar_pkg import self_update
+
+    @contextmanager
+    def unlocked():
+        yield True
+
+    monkeypatch.setattr(self_update, "_single_flight", unlocked)
+    monkeypatch.setattr("scripts.security_native_update_probe.verify_update", lambda *args: None)
+    for name in ("installed", "payload.zip", "bundle"):
+        (tmp_path / name).write_bytes(b"synthetic")
+    output = tmp_path / "evidence.json"
+    assert not probe(tmp_path / "installed", tmp_path / "payload.zip", tmp_path / "bundle", output)
+    cases = json.loads(output.read_text())["cases"][:3]
+    assert all(c["status"] == "fail" and not c["stages"]["lock_acquired"] for c in cases)
