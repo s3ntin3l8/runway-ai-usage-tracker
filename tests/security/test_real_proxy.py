@@ -115,6 +115,7 @@ http {
                     ):
                         break
                 except httpx.HTTPError:
+                    # The proxy may still be starting; retry until the readiness deadline.
                     pass
                 time.sleep(0.1)
             else:

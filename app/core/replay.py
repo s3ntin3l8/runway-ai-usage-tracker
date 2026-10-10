@@ -1,6 +1,7 @@
 """Durable single-use receipts for authenticated sidecar envelopes."""
 
 import hashlib
+import hmac
 import logging
 import time
 
@@ -27,11 +28,14 @@ def claim_signature(api_key: str, signature: str) -> None:
 
     The primary key makes concurrent claims atomic across processes. A fresh
     signature is required for a retry after a lost response or handler error.
+    A domain-separated keyed digest namespaces receipts by the current ingest key.
     Receipts contain neither the request body nor reusable signature material.
     """
     now = time.time()
-    receipt_id = hashlib.sha256(
-        f"{hashlib.sha256(api_key.encode()).hexdigest()}:{signature}".encode()
+    receipt_id = hmac.new(
+        api_key.encode(),
+        b"runway-sidecar-receipt-v1\0" + signature.encode(),
+        hashlib.sha256,
     ).hexdigest()
     try:
         with Session(receipt_engine()) as session:
