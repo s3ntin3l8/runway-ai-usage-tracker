@@ -364,4 +364,5 @@ if __name__ == "__main__":
     # Single process, no `workers=` — app/services/data_health/jobs.py's
     # in-process asyncio.Lock job registry depends on this; a multi-worker
     # deployment would need a cross-process lock instead.
-    uvicorn.run(app, host=settings.APP_HOST, port=settings.APP_PORT)
+    # Auth trusts the immediate proxy IP, not a forwarded end-user address.
+    uvicorn.run(app, host=settings.APP_HOST, port=settings.APP_PORT, proxy_headers=False)

@@ -13,6 +13,7 @@ import certifi
 import pytest
 
 import scripts.sidecar_pkg.tls as tls
+from scripts.sidecar_pkg import transport as tls_transport
 from scripts.sidecar_pkg.self_update import _github_ssl_context
 
 # Import sidecar as a module (it lives in scripts/, not a package)
@@ -21,8 +22,8 @@ import sidecar  # noqa: E402
 
 
 def test_http_url_returns_no_context():
-    assert tls.build_context("http://server:8765") is None
-    assert sidecar.build_ssl_context("http://server:8765") is None
+    assert tls.build_context("http://localhost:8765") is None
+    assert sidecar.build_ssl_context("http://localhost:8765") is None
 
 
 def test_https_default_verifies():
@@ -118,7 +119,7 @@ def test_health_check_honours_tls_insecure_config(monkeypatch):
         captured["context"] = context
         return _FakeResp()
 
-    monkeypatch.setattr(sidecar.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tls_transport, "urlopen", fake_urlopen)
     assert sidecar.health_check("https://server", config={"tls_insecure": True}) is True
     assert captured["context"].verify_mode == ssl.CERT_NONE
 
@@ -130,7 +131,7 @@ def test_http_post_signed_honours_tls_insecure_config(monkeypatch):
         captured["context"] = context
         return _FakeResp(body=b'{"status": "ok"}')
 
-    monkeypatch.setattr(sidecar.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tls_transport, "urlopen", fake_urlopen)
     success, _result, _code = sidecar.http_post_signed(
         "https://server/x", {"a": 1}, "key", config={"tls_insecure": True}
     )
@@ -145,7 +146,7 @@ def test_http_post_signed_with_retry_threads_config(monkeypatch):
         captured["context"] = context
         return _FakeResp(body=b'{"status": "ok"}')
 
-    monkeypatch.setattr(sidecar.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tls_transport, "urlopen", fake_urlopen)
     success, _result, _code = sidecar.http_post_signed_with_retry(
         "https://server/x", {"a": 1}, "key", config={"tls_insecure": True}
     )
@@ -162,7 +163,7 @@ def test_fetch_config_payload_honours_tls_insecure_config(monkeypatch):
         captured["context"] = context
         return _FakeResp(body=b'{"config": {}}', url=req.full_url)
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("scripts.sidecar_pkg.transport.urlopen", fake_urlopen)
     payload = credentials._fetch_config_payload("https://server", config={"tls_insecure": True})
     assert payload == {"config": {}}
     assert captured["context"].verify_mode == ssl.CERT_NONE
@@ -190,7 +191,7 @@ def test_pairing_redeem_honours_tls_insecure_config(monkeypatch):
         captured["context"] = context
         return _FakeResp(body=b'{"api_url": "https://server", "api_key": "k"}')
 
-    monkeypatch.setattr(pairing.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tls_transport, "urlopen", fake_urlopen)
     target = pairing.PairTarget(server="https://server", code="ABCD1234")
     creds = pairing.redeem(target, config={"tls_insecure": True})
     assert creds == {"api_url": "https://server", "api_key": "k"}
@@ -204,7 +205,7 @@ def test_manifest_post_honours_tls_insecure_config(monkeypatch):
         captured["context"] = context
         return _FakeResp(body=b"{}", url=req.full_url)
 
-    monkeypatch.setattr(sidecar.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tls_transport, "urlopen", fake_urlopen)
     sidecar._post_credential_manifest(
         api_url="https://server",
         api_key="key",  # pragma: allowlist secret

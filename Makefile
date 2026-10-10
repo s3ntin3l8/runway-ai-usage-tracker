@@ -28,7 +28,7 @@ install: ## Set up venv, install Python and Node dependencies
 dev: ## Run development server (hot reload). Data → ./data (gitignored) unless RUNWAY_CONFIG_DIR is set.
 	$(LOAD_ENV); \
 	RUNWAY_CONFIG_DIR="$${RUNWAY_CONFIG_DIR:-$(CURDIR)/data}" \
-	$(VENV)/bin/uvicorn app.main:app --reload \
+	$(VENV)/bin/uvicorn app.main:app --reload --no-proxy-headers \
 	  --host "$${APP_HOST:-127.0.0.1}" \
 	  --port "$${APP_PORT:-8765}"
 

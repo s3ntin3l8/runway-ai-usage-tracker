@@ -1,0 +1,6 @@
+c87b2d0bb949dfe1de057003f59486625576f00c153b49da6cd0549f5ee94a5b  Runway-Sidecar-Linux-CLI-edge.tar.gz
+ba03d6dd5d232ea5bbc0a9cc7c9375c988e5d969024528c3979964543fbfeeb7  Runway-Sidecar-Linux-edge.tar.gz
+51046dde2c1c8e154b6dee8b26cfae108429c631c51853909141b71d0611e902  Runway-Sidecar-Windows-edge-setup.exe
+e26c85b9b32733325c3d55c0bf5490447174a722d853e9798c996320d95bb494  Runway-Sidecar-Windows-edge.zip
+ebef386d57764494eed9ed6488bc974bcc7348b65f2556de74a4c130ca5c8565  Runway-Sidecar-macOS-edge.dmg
+291e87c459ae19ba0f24dc364e45d2ba8c0b961700eea39ac62e5c1098157f7b  Runway-Sidecar-macOS-edge.zip

@@ -77,7 +77,7 @@ jobs:
       pull-requests: write
       issues: write
       checks: write
-    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
       mode: auto # review on trigger, no @mention needed
       mention-trigger: s3ntin3l8-hermes
@@ -96,7 +96,7 @@ jobs:
       pull-requests: write
       issues: write
       checks: write
-    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@main
+    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
       mention-trigger: s3ntin3l8-hermes # mode: on-demand is the reusable workflow's default
     secrets: inherit # pragma: allowlist secret

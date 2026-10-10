@@ -1,0 +1,68 @@
+name: Security Validation
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-and-proxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Install security test dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements-dev.txt
+          npm --prefix webapp ci
+          cd webapp && npx playwright install --with-deps
+      - name: Check immutable CI references
+        run: python scripts/check_workflow_pins.py
+      - name: Browser boundaries
+        run: npm --prefix webapp run test:security
+      - name: Real reverse-proxy trust boundaries
+        env:
+          RUNWAY_PROXY_TEST: '1'
+        run: |
+          export RUNWAY_CONFIG_DIR="$(mktemp -d)"
+          .venv/bin/pytest tests/security/test_real_proxy.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: browser-security-report
+          path: webapp/playwright-report
+  frozen-verifier:
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            spec: linux-cli
+            binary: dist/runway-sidecar-cli
+          - os: ubuntu-latest
+            spec: linux
+            binary: dist/RunwaySidecar
+          - os: windows-latest
+            spec: windows
+            binary: dist/RunwaySidecar.exe
+          - os: macos-latest
+            spec: macos
+            binary: dist/Runway Sidecar.app/Contents/MacOS/RunwaySidecar
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[desktop,sidecar]' pyinstaller
+      - run: python sidecar_app/assets/generate_icons.py
+      - run: pyinstaller --noconfirm sidecar_app/spec/${{ matrix.spec }}.spec
+      - run: python scripts/security_packaging_smoke.py --binary '${{ matrix.binary }}'

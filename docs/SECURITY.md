@@ -29,15 +29,26 @@ pre-commit run --all-files  # Optional: Test on existing files
 
 ## 🛰️ Ingestion API Security (Sidecars)
 
-In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message events via `POST /api/v1/fleet/ingest`. To prevent replay attacks and token theft, Runway uses **HMAC-SHA256 Signing**:
+In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message events via `POST /api/v1/fleet/ingest`. Runway uses **HMAC-SHA256 Signing** for request authenticity and integrity. HTTPS provides confidentiality and authenticates the server; HMAC does not encrypt credentials or authenticate responses:
 
 1. **Shared Secret**: The `INGEST_API_KEY` (from `.env`) is the HMAC secret.
 2. **Signature Generation**:
    - Sidecars calculate a signature over the JSON body and a `X-Timestamp`.
-   - The server verifies the signature matches and that the timestamp is within a 5-minute sliding window.
+   - The server rejects nonfinite timestamps and accepts a 5-minute sliding window. Valid signatures are claimed atomically in SQLite before handler effects and retained for 360 seconds across workers and restarts. A repeated envelope returns `409` with `detail.error = "replayed_request"`; unavailable receipt storage returns `503`.
+   - Every retry must use a fresh timestamp and signature, including after a lost response or handler error. Sidecars generate unique microsecond timestamps. The signed wire format remains unchanged; event identifiers still provide event-level idempotency.
 3. **Rate Limit**: `POST /ingest` is capped at **600 requests/minute per source IP** to bound damage from a stolen key or a misconfigured sidecar.
 4. **Requirement**: Always use **HTTPS** for the `APP_HOST` in production to encrypt the request body during transit.
 5. **Config endpoint**: `GET /api/v1/fleet/config` needs no key, but only a request signed with the same HMAC (message: `X-Timestamp + "GET:" + query string`, which binds `sidecar_id`) receives account ids, operator tag hints and per-account credential tokens. Unsigned callers on a non-loopback bind get only the enabled/strategies view; a present-but-invalid signature is rejected (401).
+
+### Sidecar transport and update verification
+
+All sidecar server URLs reject embedded credentials, fragments, invalid ports, and redirects. Plain HTTP is allowed only for canonical loopback hosts (`localhost`, `127.0.0.1`, `[::1]`); remote servers require HTTPS. An explicit `RUNWAY_INSECURE` / `tls_insecure` certificate-verification opt-in remains available with warnings. It does not permit remote HTTP and weakens server authentication; use a trusted certificate or configured CA instead where possible.
+
+Packaged self-updates require both the existing checksum and a `.sigstore.json` bundle. The official Sigstore verifier checks the artifact digest, certificate chain, GitHub issuer, transparency evidence, and exact signing identity `https://github.com/s3ntin3l8/runway-ai-usage-tracker/.github/workflows/sidecar-build.yml@refs/heads/main` before extraction or installation. Trust refresh and verification failures leave the installation unchanged. Older releases without bundles are refused; there is no checksum-only fallback. The sidecar's insecure server-TLS option does not change update verification trust.
+
+The built-in server disables uvicorn forwarded-header rewriting so trusted-proxy decisions use the immediate socket peer. If launching uvicorn yourself, pass `--no-proxy-headers`; configure `TRUSTED_PROXY_IPS` for the immediate authenticated proxy, strip client identity headers there, and configure the explicit HTTPS `CORS_ORIGINS` and `TLS_TERMINATED=1` for TLS termination. Do not infer the trusted hop from a client-supplied `X-Forwarded-For` header.
+
+See [the security validation record](security-validation.md) for evidence and tracked gaps.
 
 ### Unidentified credentials and identity verification
 

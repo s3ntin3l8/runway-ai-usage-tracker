@@ -131,10 +131,14 @@ Click **Launch at Login** in the menu to register the sidecar as a login item (m
 The sidecar checks for updates daily. When a newer version is available, the menu title shows **(update available)**.
 
 You can install the update without leaving the app:
-- **Tray app**: click **Download & Install Update** (shown once an update is detected). It downloads the matching release asset, verifies its `.sha256` checksum, swaps the binary/`.app`, and relaunches.
+- **Tray app**: click **Download & Install Update** (shown once an update is detected). It downloads the matching release asset, verifies its `.sha256` checksum and mandatory Sigstore `.sigstore.json` bundle, swaps the binary/`.app`, and relaunches.
 - **Headless CLI**: run `runway-sidecar-cli --self-update` (alias `--update`) for a one-shot download → verify → install, then relaunch under your supervisor (systemd/launchd).
 - **Background auto-install**: enable it locally or fleet-wide (see below). The daily check then self-installs newer builds automatically.
 - **Push from the dashboard**: on the Fleet page, a sidecar with an available update shows an **Update now** button — clicking it makes that sidecar self-install on its next heartbeat.
+
+Updates refuse missing or invalid signature bundles before extraction. Older checksum-only releases cannot be installed through self-update. Verification pins the repository signing workflow on `main` and the GitHub issuer; trust/network failures leave the installed copy unchanged. For a read-only packaging check, use `--verify-update <archive> --bundle <bundle>`.
+
+Remote server URLs require HTTPS; canonical loopback HTTP remains supported. Signed requests and pairing never follow redirects. Explicit insecure HTTPS certificate verification remains available with warnings. See [SECURITY.md](SECURITY.md) for the trust policy.
 
 **Auto-update control (local vs server):**
 - **Server (fleet-wide):** the dashboard's *System → Auto-install updates* toggle (default off) is pushed to every sidecar on its next heartbeat.

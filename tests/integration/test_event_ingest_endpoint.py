@@ -143,3 +143,38 @@ def test_ingest_normalizes_sidecar_id(session):
     assert ev.sidecar_id == "macbook"
     reg_ids = session.exec(select(SidecarRegistry.sidecar_id)).all()
     assert reg_ids == ["macbook"]
+
+
+def test_replay_cannot_repeat_state_updates_but_fresh_retry_works(session, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.INGEST_API_KEY", TEST_KEY)
+    client = TestClient(app)
+    payload = {
+        "provider": "sidecar-replay",
+        "sidecar_id": "replay-host",
+        "metrics": [],
+        "events": [],
+    }
+    body, headers = _signed(payload)
+    assert client.post("/api/v1/fleet/ingest", content=body, headers=headers).status_code == 200
+    row = session.get(SidecarRegistry, "replay-host")
+    session.refresh(row)
+    first_count = row.ingest_count
+    response = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "replayed_request"
+    session.refresh(row)
+    assert row.ingest_count == first_count
+    body, headers = _signed(payload)
+    assert client.post("/api/v1/fleet/ingest", content=body, headers=headers).status_code == 200
+    session.refresh(row)
+    assert row.ingest_count == first_count + 1
+
+
+def test_handler_failure_consumes_signature_and_fresh_retry_is_accepted(session, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.INGEST_API_KEY", TEST_KEY)
+    client = TestClient(app)
+    body, headers = _signed({"invalid": "payload"})
+    assert client.post("/api/v1/fleet/ingest", content=body, headers=headers).status_code == 400
+    assert client.post("/api/v1/fleet/ingest", content=body, headers=headers).status_code == 409
+    body, headers = _signed({"invalid": "payload"})
+    assert client.post("/api/v1/fleet/ingest", content=body, headers=headers).status_code == 400

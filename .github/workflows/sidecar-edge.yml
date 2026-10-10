@@ -32,7 +32,7 @@ jobs:
     # a commit that isn't main's tip and ship a misleading +edge.<sha> (issue #106).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify HEAD is the tip of origin/main
         shell: bash
         run: |
@@ -74,10 +74,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download signed asset set
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: sidecar-release-assets
           path: edge-dist
@@ -90,7 +90,7 @@ jobs:
           git push -f origin edge
 
       - name: Publish to rolling edge prerelease
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: edge
           prerelease: true

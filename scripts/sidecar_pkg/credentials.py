@@ -38,6 +38,8 @@ import time
 from typing import Any
 from urllib.parse import urlsplit
 
+from scripts.sidecar_pkg import transport as server_http
+
 logger = logging.getLogger(__name__)
 
 
@@ -118,14 +120,14 @@ def _fetch_config_payload(
         # credential tokens); the server redacts it for unsigned callers.
         # Microsecond precision: the server accepts each signature once, so
         # two fetches in the same second must not collide.
-        ts = f"{time.time():.6f}"
+        ts = server_http.signing_timestamp()
         headers = {
             "X-Timestamp": ts,
             "X-Signature": config_request_signature(api_key, ts, query),
         }
     req = request.Request(url, headers=headers)
     try:
-        with request.urlopen(
+        with server_http.urlopen(
             req, timeout=timeout, context=build_context_from_config(url, config)
         ) as resp:
             response_url = resp.geturl()

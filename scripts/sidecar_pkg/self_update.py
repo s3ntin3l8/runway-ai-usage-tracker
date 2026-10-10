@@ -3,13 +3,15 @@
 This is the *apply* layer that sits on top of the notify-only detection in
 ``scripts.sidecar_pkg.update_check``. It is shared by the headless CLI
 (``scripts/sidecar.py``) and the desktop tray (``sidecar_app``), so — like
-``update_check`` — it uses only the standard library (urllib) and never imports
+``update_check`` — it uses urllib plus the Sigstore verification extra and never imports
 ``app.*``; the frozen sidecar binary must stay self-contained.
 
 Safety model:
   * **Frozen-only.** Self-update runs only under PyInstaller
     (``getattr(sys, "frozen", False)``). From-source checkouts and Docker
     containers are no-ops — they update via ``git pull`` / image repull.
+  * **Sigstore mandatory.** Payloads must verify against the repository signing
+    workflow and GitHub issuer before extraction; checksum-only releases fail.
   * **Checksum mandatory.** Every release asset ships a sibling ``.sha256``;
     we refuse to install bytes that don't verify.
   * **Download-then-swap.** The installed copy is never touched until the new
@@ -48,6 +50,7 @@ from typing import Any
 from urllib import error, request
 
 from scripts.sidecar_pkg import asset_names, runtime_cleanup
+from scripts.sidecar_pkg.signatures import UpdateVerificationError, verify_update
 from scripts.sidecar_pkg.update_check import (
     _BETA_RELEASES_API_URL,
     _LATEST_URL,
@@ -1109,6 +1112,16 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
             published = {a.get("name") for a in release.get("assets", [])}
             asset_name = next((n for n in candidates if n in published), candidates[0])
             asset_url, sha_url = find_asset_urls(release, asset_name)
+            bundle_url = next(
+                (
+                    a.get("browser_download_url")
+                    for a in release.get("assets", [])
+                    if a.get("name") == f"{asset_name}.sigstore.json"
+                ),
+                None,
+            )
+            if not bundle_url:
+                raise SelfUpdateError("Release lacks mandatory Sigstore verification bundle")
         except SelfUpdateUnsupportedError as exc:
             logger.warning("Self-update unsupported: %s", exc)
             return False
@@ -1125,6 +1138,11 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
             if not verify_sha256(archive, expected):
                 logger.error("Self-update aborted: checksum mismatch for %s", asset_name)
                 return False
+            bundle_path = tmp / f"{asset_name}.sigstore.json"
+            _with_retries(
+                lambda: _download(bundle_url, bundle_path), what="signature bundle download"
+            )
+            verify_update(archive, bundle_path)
             extracted = tmp / "extracted"
             extracted.mkdir()
             _extract(archive, extracted)
@@ -1140,6 +1158,7 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
             error.URLError,
             OSError,
             SelfUpdateError,
+            UpdateVerificationError,
             tarfile.TarError,
             zipfile.BadZipFile,
         ):

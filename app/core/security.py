@@ -21,7 +21,6 @@ import hmac
 import logging
 import math
 import re
-import threading
 import time
 from dataclasses import dataclass
 
@@ -29,6 +28,7 @@ from fastapi import Cookie, Header, HTTPException, Request
 
 from app.core.config import settings
 from app.core.net import LOOPBACK_HOSTS
+from app.core.replay import claim_signature
 from app.core.sessions import verify_session
 from app.core.utils import scrub_log
 
@@ -347,6 +347,7 @@ async def validate_ingest_auth(
         )
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
+    claim_signature(_settings.INGEST_API_KEY, x_signature)
     return body_bytes
 
 
@@ -389,26 +390,8 @@ def verify_config_signature(request: Request) -> bool:
         source = request.client.host if request.client else "unknown"
         logger.warning("fleet/config: HMAC mismatch from %s", scrub_log(source))
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
-    # Single use: a captured signed GET (on-path, within the timestamp
-    # window) must not be replayable for the hints + credential tokens.
-    now = time.time()
-    with _SEEN_CONFIG_SIGNATURES_LOCK:  # check-then-set must be atomic
-        for seen_sig, seen_at in list(_SEEN_CONFIG_SIGNATURES.items()):
-            if now - seen_at > _CONFIG_SIGNATURE_TTL:
-                del _SEEN_CONFIG_SIGNATURES[seen_sig]
-        replayed = x_signature in _SEEN_CONFIG_SIGNATURES
-        if not replayed:
-            _SEEN_CONFIG_SIGNATURES[x_signature] = now
-    if replayed:
-        raise HTTPException(status_code=401, detail="Replayed signature")
+    claim_signature(_settings.INGEST_API_KEY, x_signature)
     return True
-
-
-# Signatures already accepted by verify_config_signature, kept for the whole
-# accepted timestamp window (+60s future skew) so each is usable once.
-_CONFIG_SIGNATURE_TTL = 360
-_SEEN_CONFIG_SIGNATURES: dict[str, float] = {}
-_SEEN_CONFIG_SIGNATURES_LOCK = threading.Lock()
 
 
 def is_loopback_bind() -> bool:

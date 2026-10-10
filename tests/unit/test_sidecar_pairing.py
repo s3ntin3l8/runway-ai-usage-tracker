@@ -84,7 +84,7 @@ class TestRedeem:
             }
             return _Resp(json.dumps(body).encode())
 
-        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(pairing.server_http, "urlopen", fake_urlopen)
         creds = pairing.redeem(self.target, hostname="laptop")
         assert creds == {
             "api_url": "https://runway.example.com",
@@ -100,7 +100,7 @@ class TestRedeem:
         def fake_urlopen(req, timeout, context):
             raise error.HTTPError(req.full_url, status, "x", {}, io.BytesIO())
 
-        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(pairing.server_http, "urlopen", fake_urlopen)
         with pytest.raises(PairingError, match=needle):
             pairing.redeem(self.target)
 
@@ -108,14 +108,14 @@ class TestRedeem:
         def fake_urlopen(req, timeout, context):
             raise error.URLError("connection refused")
 
-        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(pairing.server_http, "urlopen", fake_urlopen)
         with pytest.raises(PairingError, match="Could not reach"):
             pairing.redeem(self.target)
 
     def test_rejects_downgraded_api_url(self, monkeypatch):
         # A server can't talk the sidecar into shipping tokens over plain http.
         monkeypatch.setattr(
-            urllib.request,
+            pairing.server_http,
             "urlopen",
             lambda req, timeout, context: _Resp(
                 json.dumps({"api_url": "http://evil.example.com", KEY: "k"}).encode()

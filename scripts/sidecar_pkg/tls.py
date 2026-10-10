@@ -19,6 +19,8 @@ import logging
 import os
 import ssl
 
+from scripts.sidecar_pkg.transport import validate_server_url
+
 logger = logging.getLogger(__name__)
 
 _TRUTHY = ("1", "true", "yes", "on")
@@ -50,8 +52,10 @@ def build_context(
       3. bundled ``certifi`` → ``certifi.where()``.
       4. OpenSSL system default.
     """
-    if url is not None and not url.lower().startswith("https"):
-        return None
+    if url is not None:
+        validate_server_url(url)
+        if url.lower().startswith("http://"):
+            return None
 
     if insecure is None:
         insecure = os.environ.get("RUNWAY_INSECURE", "").strip().lower() in _TRUTHY

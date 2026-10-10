@@ -72,7 +72,7 @@ class TestFetchIdentityHints:
         from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen", side_effect=TimeoutError("nope")):
+            with patch("scripts.sidecar_pkg.transport.urlopen", side_effect=TimeoutError("nope")):
                 result = fetch_identity_hints("https://api.example.com")
                 assert result is None
 
@@ -80,7 +80,7 @@ class TestFetchIdentityHints:
         from scripts.sidecar_pkg.credentials import fetch_identity_hints
 
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen") as mock_urlopen:
+            with patch("scripts.sidecar_pkg.transport.urlopen") as mock_urlopen:
                 ctx = MagicMock()
                 ctx.__enter__ = MagicMock(
                     return_value=MagicMock(getcode=MagicMock(return_value=500))
@@ -129,7 +129,7 @@ class TestFetchIdentityHints:
             }
         ).encode()
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen") as mock_urlopen:
+            with patch("scripts.sidecar_pkg.transport.urlopen") as mock_urlopen:
                 ctx = MagicMock()
                 ctx.__enter__ = MagicMock(
                     return_value=MagicMock(
@@ -180,7 +180,7 @@ class TestFetchIdentityHints:
             }
         ).encode()
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen") as mock_urlopen:
+            with patch("scripts.sidecar_pkg.transport.urlopen") as mock_urlopen:
                 ctx = MagicMock()
                 ctx.__enter__ = MagicMock(
                     return_value=MagicMock(
@@ -216,7 +216,7 @@ class TestFetchIdentityHints:
             }
         ).encode()
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen") as mock_urlopen:
+            with patch("scripts.sidecar_pkg.transport.urlopen") as mock_urlopen:
                 ctx = MagicMock()
                 ctx.__enter__ = MagicMock(
                     return_value=MagicMock(
@@ -272,7 +272,7 @@ class TestFetchIdentityHints:
             )
 
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen", side_effect=_counted):
+            with patch("scripts.sidecar_pkg.transport.urlopen", side_effect=_counted):
                 fetch_identity_hints("https://api.example.com")
 
         assert call_count["n"] == 1, (
@@ -329,7 +329,7 @@ class TestFetchCredentialTokens:
             }
         ).encode()
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen") as mock_urlopen:
+            with patch("scripts.sidecar_pkg.transport.urlopen") as mock_urlopen:
                 ctx = MagicMock()
                 ctx.__enter__ = MagicMock(
                     return_value=MagicMock(
@@ -351,7 +351,7 @@ class TestFetchCredentialTokens:
         from scripts.sidecar_pkg.credentials import fetch_credential_tokens
 
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen", side_effect=TimeoutError("nope")):
+            with patch("scripts.sidecar_pkg.transport.urlopen", side_effect=TimeoutError("nope")):
                 result = fetch_credential_tokens("https://api.example.com")
                 assert result is None
 
@@ -382,7 +382,7 @@ class TestFetchCredentialTokens:
             }
         ).encode()
         with patch("scripts.sidecar_pkg.tls.build_context", return_value=None):
-            with patch("urllib.request.urlopen") as mock_urlopen:
+            with patch("scripts.sidecar_pkg.transport.urlopen") as mock_urlopen:
                 ctx = MagicMock()
                 ctx.__enter__ = MagicMock(
                     return_value=MagicMock(

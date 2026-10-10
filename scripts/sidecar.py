@@ -51,6 +51,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from scripts.sidecar_pkg import transport as server_http
+
 
 def _subprocess_creationflags() -> int:
     """Hide console windows opened by child commands on Windows."""
@@ -1158,7 +1160,7 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
     if not config_file.exists():
         ensure_dirs()
         template = {
-            "api_url": "http://your-server:8765",
+            "api_url": "https://your-server",
             "api_key": "your-secret-key",
             "heartbeat_seconds": 60,
             "providers": ["all"],
@@ -1215,6 +1217,12 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
         print(f"ERROR: Missing required config fields: {', '.join(missing)}")
         print(f"Config file: {config_file}")
         print("Tip: you can also set RUNWAY_API_URL / RUNWAY_API_KEY env vars.")
+        sys.exit(1)
+
+    try:
+        config["api_url"] = server_http.validate_server_url(config["api_url"], base=True)
+    except server_http.ServerURLError as exc:
+        print(f"ERROR: {exc}")
         sys.exit(1)
 
     # Apply defaults for optional fields
@@ -1832,8 +1840,8 @@ def build_ssl_context(api_url: str, config: dict[str, Any] | None = None) -> ssl
 def health_check(api_url: str, timeout: int = 5, config: dict[str, Any] | None = None) -> bool:
     """Check if server is healthy before pushing."""
     try:
-        req = request.Request(f"{api_url.rstrip('/')}/api/health", method="GET")
-        with request.urlopen(
+        req = request.Request(f"{api_url.rstrip('/')}/api/v1/system/health", method="GET")
+        with server_http.urlopen(
             req, timeout=timeout, context=build_ssl_context(api_url, config)
         ) as resp:
             return resp.getcode() == 200
@@ -1845,7 +1853,7 @@ def http_post_signed(
     url: str, data: dict[str, Any], api_key: str, config: dict[str, Any] | None = None
 ) -> tuple[bool, Any, int]:
     """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
-    timestamp = str(int(time.time()))
+    timestamp = server_http.signing_timestamp()
     body = json.dumps(data, separators=(",", ":")).encode("utf-8")
 
     signature = hmac.new(api_key.encode(), timestamp.encode() + body, hashlib.sha256).hexdigest()
@@ -1858,7 +1866,7 @@ def http_post_signed(
 
     req = request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with request.urlopen(req, timeout=15, context=build_ssl_context(url, config)) as resp:
+        with server_http.urlopen(req, timeout=15, context=build_ssl_context(url, config)) as resp:
             return True, json.loads(resp.read().decode("utf-8")), resp.getcode()
     except error.HTTPError as e:
         try:
@@ -4264,7 +4272,7 @@ def _post_credential_manifest(
             "observations": observations or [],
         }
     ).encode("utf-8")
-    ts = str(int(time.time()))
+    ts = server_http.signing_timestamp()
     sig = hmac.new(
         api_key.encode("utf-8"),
         ts.encode() + body,
@@ -4285,7 +4293,7 @@ def _post_credential_manifest(
     # stdlib-heavy sidecar slim when TLS is unused.
 
     try:
-        with urllib.request.urlopen(
+        with server_http.urlopen(
             req, timeout=5, context=build_context_from_config(url, config)
         ) as resp:
             from scripts.sidecar_pkg.credentials import response_url_was_redirected
@@ -5310,6 +5318,9 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
 
 
 def main():
+    from scripts.sidecar_pkg.signatures import verification_command
+
+    verification_command(sys.argv[1:])
     # Before anything can spawn a subprocess: the self-update hand-off variable must not leak
     # into children, and the abandoned runtime dir is dead weight.
     from scripts.sidecar_pkg.runtime_cleanup import release_retired_runtime
