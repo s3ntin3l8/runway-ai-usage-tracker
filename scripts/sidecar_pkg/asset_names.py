@@ -16,7 +16,7 @@ Two kinds of asset per desktop platform:
   downloads and swaps in place. Linux ships payloads only.
 
 Every asset has a sibling ``<name>.sha256``; the release also carries an
-unversioned ``SHA256SUMS.txt`` plus Sigstore ``.sig`` / ``.cert`` files.
+unversioned ``SHA256SUMS.txt`` plus Sigstore ``.sigstore.json`` bundles.
 
 Stdlib only, no ``app.*`` imports — this ships inside the frozen sidecar.
 """
