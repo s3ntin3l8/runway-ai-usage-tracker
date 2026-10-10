@@ -78,13 +78,13 @@ jobs:
           ls -l dist/runway-sidecar-setup.exe
 
   build-docker:
-    needs: [test-python, test-frontend]
+    needs: [test-python, test-frontend, dependency-audit]
     if: github.event_name == 'push'
     permissions:
       contents: read
       packages: write
       id-token: write
-    uses: s3ntin3l8/.github/.github/workflows/docker-publish.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
+    uses: ./.github/workflows/docker-publish.yml
     with:
       image-name: 's3ntin3l8/runway'
       push-edge: true

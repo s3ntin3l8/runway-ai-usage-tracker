@@ -1,0 +1,406 @@
+name: Runway Audited Docker Publish
+
+on:
+  # Lets this shared workflow be exercised standalone (e.g. against a scratch
+  # image-name) without a downstream caller — the multi-image merge-job plumbing
+  # (per-image digest download/manifest-assembly) has no other way to be smoke-tested
+  # before a caller's first real push.
+  workflow_dispatch:
+    inputs:
+      image-name:
+        required: true
+        type: string
+      dockerfile:
+        required: false
+        type: string
+        default: 'Dockerfile'
+      platforms:
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      push-edge:
+        required: false
+        type: boolean
+        default: false
+      push-release:
+        required: false
+        type: boolean
+        default: false
+      release-channel:
+        required: false
+        type: choice
+        options:
+          - stable
+          - beta
+        default: stable
+  workflow_call:
+    inputs:
+      image-name:
+        required: true
+        type: string
+      push-edge:
+        required: false
+        type: boolean
+        default: false
+      push-release:
+        required: false
+        type: boolean
+        default: false
+      # Stable releases publish the immutable semver tags plus `latest`; beta
+      # releases publish their semver prerelease tag plus the moving `beta` tag.
+      release-channel:
+        required: false
+        type: string
+        default: stable
+      release-tag:
+        required: false
+        type: string
+      platforms:
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      # Path to the Dockerfile, relative to the repo root (the build `context` below is
+      # hardcoded to `.`). Default is the repo-root `Dockerfile`. Set this when a repo
+      # publishes more than one image from the same checkout — e.g. `Dockerfile` for the
+      # API, `apps/web/Dockerfile` for the web frontend. Each distinct Dockerfile must be
+      # a separate workflow_call invocation; build/matrix/cache scoping is namespaced per
+      # `image-name`, so two parallel invocations in the same caller run do not collide.
+      dockerfile:
+        required: false
+        type: string
+        default: 'Dockerfile'
+      # Multiline `key=value` pairs passed to `docker build --build-arg`. Secrets must
+      # NOT be passed this way — build args land in image history/logs regardless of
+      # GitHub secret masking. Use repo variables for publishable tokens that are
+      # inlined into the client bundle by design (e.g. NEXT_PUBLIC_*). Empty by default.
+      build-args:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      REGISTRY_USERNAME:
+        required: false
+      REGISTRY_TOKEN:
+        required: false
+      DOCKERHUB_USERNAME:
+        description: "Optional. With DOCKERHUB_TOKEN, authenticates base-image pulls from Docker Hub to avoid the anonymous rate limit."
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+
+env:
+  REGISTRY: ghcr.io
+
+# Deny by default; each job below declares exactly what it needs (build and merge:
+# contents read, packages write, id-token write -- the caller's required set).
+permissions: {}
+
+# Build each architecture natively (no QEMU emulation) on its own runner, push each
+# as a by-digest image, then assemble a multi-arch manifest list in a final merge job.
+# This replaces the previous single-job buildx build, where the arm64 leg ran under
+# QEMU emulation and dominated the wall-clock. Each platform from `platforms` is mapped
+# to a native GitHub-hosted runner; the input surface is unchanged so callers need no edits.
+jobs:
+  # Turn the `platforms` CSV into a build matrix of {platform, runner}, mapping each
+  # architecture to a native runner. Unknown platforms fall back to an amd64 runner
+  # (with QEMU set up in the build job) so exotic targets still build, just slower.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      push: ${{ steps.flags.outputs.push }}
+      # Sanitized image-name usable in job output names, buildx cache scopes, and
+      # artifact names (none of which accept `/`). `s3ntin3l8/pocket-portfolio-tracker`
+      # becomes `s3ntin3l8-pocket-portfolio-tracker`. Without this, two same-run
+      # invocations (e.g. one for `-api`, one for `-web`) would share a cache scope
+      # and step on each other's layers — see build/cache-from below.
+      image-slug: ${{ steps.slug.outputs.slug }}
+    steps:
+      - name: Resolve push flag
+        id: flags
+        env:
+          PUSH_EDGE: ${{ inputs.push-edge }}
+          PUSH_RELEASE: ${{ inputs.push-release }}
+          RELEASE_CHANNEL: ${{ inputs.release-channel }}
+        run: |
+          if [[ "$PUSH_RELEASE" == "true" && "$RELEASE_CHANNEL" != "stable" && "$RELEASE_CHANNEL" != "beta" ]]; then
+            echo "::error::release-channel must be stable or beta when push-release is true"
+            exit 1
+          fi
+          if [[ "$PUSH_EDGE" == "true" || "$PUSH_RELEASE" == "true" ]]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build platform -> runner matrix
+        id: matrix
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          include='[]'
+          IFS=',' read -ra parts <<< "$PLATFORMS"
+          for p in "${parts[@]}"; do
+            p="$(printf '%s' "$p" | xargs)"   # trim whitespace
+            [ -z "$p" ] && continue
+            case "$p" in
+              linux/amd64) runner='ubuntu-24.04' ;;
+              linux/arm64) runner='ubuntu-24.04-arm' ;;
+              *)           runner='ubuntu-24.04' ;;   # fallback: emulate on amd64
+            esac
+            include=$(jq -c --arg p "$p" --arg r "$runner" '. += [{"platform":$p,"runner":$r}]' <<< "$include")
+          done
+          echo "platforms -> $include"
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+
+      - name: Derive image slug
+        id: slug
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+        run: echo "slug=$(printf '%s' "$IMAGE_NAME" | tr '/:' '-')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - name: Architecture slug
+        id: arch
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: echo "slug=$(printf '%s' "$PLATFORM" | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release-tag || github.ref }}
+          persist-credentials: false
+
+      # Only needed for the fallback case (a non-amd64 platform pinned to an amd64 runner).
+      # Native amd64/arm64 builds skip this entirely.
+      - name: Set up QEMU
+        if: ${{ matrix.runner == 'ubuntu-24.04' && matrix.platform != 'linux/amd64' }}
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Base images (python, node, ...) come from Docker Hub; anonymous pulls from
+      # shared runner IPs hit its rate limit (429). Falls back to anonymous when unset.
+      - name: Log in to Docker Hub
+        uses: s3ntin3l8/.github/.github/actions/dockerhub-login@3b9d7cfd58090eb37898f24d654a0788f944e090 # main @ 2026-10-10
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # docker/login-action has no retry, and ghcr.io intermittently answers
+      # `GET /v2/` with `denied: denied` under load -- observed 2026-08-18, where
+      # the amd64 leg was denied while the arm64 leg of the same run, using the
+      # same credentials, succeeded 0.6s later. A single denial skips the `merge`
+      # job and silently leaves :edge stale, so retry with escalating backoff.
+      - name: Log in to the Container registry
+        if: ${{ needs.prepare.outputs.push == 'true' }}
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          REGISTRY_PASS: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          attempts=4
+          for attempt in $(seq 1 "$attempts"); do
+            if printf '%s' "$REGISTRY_PASS" \
+               | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              echo "::warning::${REGISTRY} login attempt ${attempt}/${attempts} failed; retrying in $((attempt * 10))s"
+              sleep $((attempt * 10))
+            fi
+          done
+          echo "::error::${REGISTRY} login failed after ${attempts} attempts"
+          exit 1
+
+      - name: Extract metadata (labels)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ inputs.image-name }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          build-args: ${{ inputs.build-args }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache scope is `image-slug` + `arch-slug`. The image-slug dimension only
+          # matters when a caller invokes this workflow more than once in the same run
+          # (one image per invocation); for the typical single-image call the prefix
+          # is just a longer, equally-unique scope.
+          cache-from: type=gha,scope=${{ needs.prepare.outputs.image-slug }}-${{ steps.arch.outputs.slug }}
+          cache-to: type=gha,mode=max,scope=${{ needs.prepare.outputs.image-slug }}-${{ steps.arch.outputs.slug }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ inputs.image-name }},push-by-digest=true,name-canonical=true,push=${{ needs.prepare.outputs.push }}
+
+      - name: Export digest
+        if: ${{ needs.prepare.outputs.push == 'true' }}
+        env:
+          IMAGE_SLUG: ${{ needs.prepare.outputs.image-slug }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Per-image subdir so two same-run invocations (one per image) never share a
+          # `/tmp/digests` flat namespace — see merge's `docker buildx imagetools create`
+          # below, which globs every file in here and assumes they all belong to this
+          # invocation's `image-name`.
+          mkdir -p "/tmp/digests/${IMAGE_SLUG}"
+          digest="$BUILD_DIGEST"
+          touch "/tmp/digests/${IMAGE_SLUG}/${digest#sha256:}"
+
+      - name: Upload digest
+        if: ${{ needs.prepare.outputs.push == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          # Double-dash delimiter, not single: `image-slug` isn't guaranteed
+          # collision-free under a single-dash join. A repo publishing both
+          # `pocket-portfolio-tracker` and `pocket-portfolio-tracker-web` makes the
+          # first slug a strict prefix of the second, so a `digests-<slug>-*` pattern
+          # in the merge job below would match both invocations' artifacts. `--` can't
+          # occur inside a slug (image-name has already had `/` and `:` replaced with
+          # `-`), so it's a safe, unambiguous separator.
+          name: digests-${{ needs.prepare.outputs.image-slug }}--${{ steps.arch.outputs.slug }}
+          path: /tmp/digests/${{ needs.prepare.outputs.image-slug }}/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Assemble the per-arch digests into a single multi-arch manifest list, tag it,
+  # and sign it. Skipped entirely for non-publishing (build-only) invocations.
+  merge:
+    needs: [prepare, build]
+    if: ${{ needs.prepare.outputs.push == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout audited source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.release-tag || github.ref }}
+          persist-credentials: false
+
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          # `download-artifact@v4` extracts each matched artifact into its own
+          # subdirectory named after the artifact (e.g.
+          # /tmp/digests/digests-<slug>--<arch>/<digest-file>) unless
+          # `merge-multiple: true` is set — it does NOT reproduce the upload side's
+          # `/tmp/digests/<image-slug>/` layout on its own. Pointing `path` at the
+          # per-image dir and flattening with `merge-multiple` is what makes the
+          # `working-directory` below (and its `*` glob) valid.
+          path: /tmp/digests/${{ needs.prepare.outputs.image-slug }}
+          # image-slug-scoped, `--`-delimited so this invocation only pulls the
+          # digests it produced (see the matching comment on `Upload digest`).
+          pattern: digests-${{ needs.prepare.outputs.image-slug }}--*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      # See the build job's identically-named step for why this isn't
+      # docker/login-action -- same rationale applies here.
+      - name: Log in to the Container registry
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          REGISTRY_PASS: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          attempts=4
+          for attempt in $(seq 1 "$attempts"); do
+            if printf '%s' "$REGISTRY_PASS" \
+               | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              echo "::warning::${REGISTRY} login attempt ${attempt}/${attempts} failed; retrying in $((attempt * 10))s"
+              sleep $((attempt * 10))
+            fi
+          done
+          echo "::error::${REGISTRY} login failed after ${attempts} attempts"
+          exit 1
+
+      - name: Extract metadata (tags)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ inputs.image-name }}
+          tags: |
+            type=raw,value=edge,enable=${{ inputs.push-edge }}
+            type=semver,pattern={{version}},value=${{ inputs.release-tag }},enable=${{ inputs.push-release && inputs.release-channel == 'stable' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.release-tag }},enable=${{ inputs.push-release && inputs.release-channel == 'stable' }}
+            type=raw,value=latest,enable=${{ inputs.push-release && inputs.release-channel == 'stable' }}
+            type=semver,pattern={{version}},value=${{ inputs.release-tag }},enable=${{ inputs.push-release && inputs.release-channel == 'beta' }}
+            type=raw,value=beta,enable=${{ inputs.push-release && inputs.release-channel == 'beta' }}
+            type=sha,enable=${{ !inputs.push-release }}
+
+      - name: Assemble candidate and audit both architectures
+        id: audit
+        env:
+          IMAGE_SLUG: ${{ needs.prepare.outputs.image-slug }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+        run: |
+          cd "/tmp/digests/${IMAGE_SLUG}"
+          digest_args=()
+          for digest_file in *; do
+            digest_args+=("${REGISTRY}/${IMAGE_NAME}@sha256:${digest_file}")
+          done
+          CANDIDATE="${REGISTRY}/${IMAGE_NAME}:audit-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx imagetools create -t "$CANDIDATE" "${digest_args[@]}"
+          DIGEST=$(docker buildx imagetools inspect "$CANDIDATE" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          cd "$GITHUB_WORKSPACE"
+          python -m scripts.audit_release_image "${REGISTRY}/${IMAGE_NAME}@${DIGEST}" --output image-audit
+
+      - name: Retain audit evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-image-audit
+          path: image-audit
+          retention-days: 90
+
+      - name: Sign audited candidate before promotion
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          AUDITED_DIGEST: ${{ steps.audit.outputs.digest }}
+        run: |
+          if ! cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${AUDITED_DIGEST}"; then
+            echo "::error::Candidate signing failed; no public tags were promoted. Re-run the workflow to rebuild, re-audit, and sign before promotion. The audit candidate is retained for diagnosis."
+            exit 1
+          fi
+
+      - name: Promote exactly the audited image
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          AUDITED_DIGEST: ${{ steps.audit.outputs.digest }}
+        run: |
+          mapfile -t tags < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          tag_args=()
+          for tag in "${tags[@]}"; do tag_args+=("-t" "$tag"); done
+          docker buildx imagetools create "${tag_args[@]}" "${REGISTRY}/${IMAGE_NAME}@${AUDITED_DIGEST}"
+          for tag in "${tags[@]}"; do
+            ACTUAL=$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' | tr -d '"')
+            test "$ACTUAL" = "$AUDITED_DIGEST"
+          done

@@ -1,0 +1,66 @@
+name: Image Security
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build and scan candidate without publishing
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker build -t runway-candidate .
+          docker run --rm -e APP_HOST=127.0.0.1 -e RUNWAY_CONFIG_DIR=/tmp/ci --entrypoint python runway-candidate -c 'import app.main, sqlite3; print(sqlite3.sqlite_version)'
+          docker save --output /tmp/candidate.tar runway-candidate
+          python -m scripts.audit_release_image --archive /tmp/candidate.tar --architecture "$ARCH" --output image-audit
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: image-security-${{ matrix.arch }}
+          path: image-audit
+          retention-days: 90
+  published:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Audit published edge and newest versioned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .tag_name != "edge")] | sort_by(.created_at) | last | .tag_name')
+          test -n "$RELEASE" && test "$RELEASE" != null
+          export RELEASE
+          python -m scripts.audit_published_images --release "$RELEASE" --output image-audit
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: published-image-security
+          path: image-audit
+          retention-days: 90
