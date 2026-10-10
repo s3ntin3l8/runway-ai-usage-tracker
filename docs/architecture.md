@@ -329,7 +329,7 @@ Workflows live in `.github/workflows/`.
   Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`)
   installers, plus the `.zip`/`.tar.gz` self-update payloads for all four
   targets. Its `attest` job then writes `SHA256SUMS.txt` and Sigstore
-  keyless `.sig`/`.cert` files. Every asset name comes from
+  keyless `.sigstore.json` bundles. Every asset name comes from
   `scripts/sidecar_pkg/asset_names.py` (the updater's source of truth), and
   `tests/unit/test_sidecar_release_contract.py` pins it all together.
   `sidecar-release.yml` is a manual wrapper (`workflow_dispatch`; empty

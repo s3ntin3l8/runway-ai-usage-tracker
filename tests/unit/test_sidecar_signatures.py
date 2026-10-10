@@ -22,6 +22,33 @@ def test_real_repository_signature_with_expired_leaf(offline_verifier):
     signatures.verify_update(FIXTURES / "SHA256SUMS.txt", FIXTURES / "SHA256SUMS.txt.sigstore.json")
 
 
+def test_release_gate_verifies_every_payload_with_production_policy(offline_verifier, tmp_path):
+    from scripts.verify_release_updates import verify_release
+
+    assert verify_release(tmp_path) == ["No portable update payloads found"]
+    for name in ["Runway-Sidecar-Windows-edge.zip", "Runway-Sidecar-Linux-edge.tar.gz"]:
+        payload = tmp_path / name
+        payload.write_bytes((FIXTURES / "SHA256SUMS.txt").read_bytes())
+        payload.with_name(name + ".sigstore.json").write_bytes(
+            (FIXTURES / "SHA256SUMS.txt.sigstore.json").read_bytes()
+        )
+    assert verify_release(tmp_path) == []
+    (tmp_path / "Runway-Sidecar-Windows-edge.zip").write_bytes(b"tampered")
+    (tmp_path / "Runway-Sidecar-Linux-edge.tar.gz.sigstore.json").unlink()
+    assert len(verify_release(tmp_path)) == 2
+
+
+def test_release_gate_rejects_legacy_cosign_bundle(offline_verifier, tmp_path):
+    from scripts.verify_release_updates import verify_release
+
+    payload = tmp_path / "Runway-Sidecar-Windows-edge.zip"
+    payload.write_bytes((FIXTURES / "SHA256SUMS.txt").read_bytes())
+    payload.with_name(payload.name + ".sigstore.json").write_text(
+        '{"base64Signature":"","cert":"","rekorBundle":{}}'
+    )
+    assert len(verify_release(tmp_path)) == 1
+
+
 @pytest.mark.parametrize("failure", ["tamper", "identity", "issuer", "bundle", "oversize"])
 def test_invalid_signature_fails_closed(offline_verifier, monkeypatch, tmp_path, failure):
     artifact = tmp_path / "artifact"
@@ -77,7 +104,9 @@ def test_verification_before_extraction_and_installation(monkeypatch, tmp_path, 
             ],
         },
     )
-    monkeypatch.setattr(self_update, "_download", lambda url, dest: dest.write_bytes(b"payload"))
+    monkeypatch.setattr(
+        self_update, "_download", lambda url, dest, **kwargs: dest.write_bytes(b"payload")
+    )
     monkeypatch.setattr(self_update, "_fetch_expected_sha", lambda *a: "expected")
     monkeypatch.setattr(self_update, "verify_sha256", lambda *a: True)
 

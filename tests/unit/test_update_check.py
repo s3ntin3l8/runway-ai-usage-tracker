@@ -1,5 +1,6 @@
 """Unit tests for the sidecar-side update check (scripts/sidecar_pkg/update_check.py)."""
 
+import io
 import json
 import time
 from unittest.mock import MagicMock, patch
@@ -11,7 +12,7 @@ from scripts.sidecar_pkg.update_check import check_once, parse_channel
 
 def _urlopen_returning(payload: dict):
     cm = MagicMock()
-    reader = MagicMock(read=MagicMock(return_value=json.dumps(payload).encode()))
+    reader = io.BytesIO(json.dumps(payload).encode())
     cm.__enter__ = MagicMock(return_value=reader)
     cm.__exit__ = MagicMock(return_value=False)
     return cm

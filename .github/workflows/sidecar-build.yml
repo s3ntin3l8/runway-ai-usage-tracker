@@ -15,7 +15,7 @@ name: Sidecar Build
 # tests/unit/test_sidecar_release_contract.py enforces that.
 #
 # The `attest` job then writes SHA256SUMS.txt and Sigstore keyless signatures
-# (.sig/.cert, GitHub OIDC — no secrets) for every asset, and uploads the whole
+# (.sigstore.json bundles, GitHub OIDC — no secrets) for every asset, and uploads the whole
 # set as the `sidecar-release-assets` artifact for the caller to publish.
 # Signing is ad-hoc on macOS and absent on Windows (see docs/sidecar.md).
 
@@ -203,6 +203,9 @@ jobs:
       contents: read
       id-token: write  # Sigstore keyless signing via GitHub OIDC
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Download build artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -223,7 +226,9 @@ jobs:
           sha256sum -c SHA256SUMS.txt
           for f in "${assets[@]}"; do sha256sum -c "$f.sha256"; done
 
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.3'
 
       - name: Sign assets (Sigstore keyless)
         working-directory: release-assets
@@ -231,7 +236,6 @@ jobs:
           shopt -s nullglob
           for f in Runway-Sidecar-*.{dmg,exe,zip,tar.gz} SHA256SUMS.txt; do
             cosign sign-blob --yes \
-              --output-signature "$f.sig" --output-certificate "$f.cert" \
               --bundle "$f.sigstore.json" "$f"
           done
 
@@ -246,6 +250,18 @@ jobs:
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "$f"
           done
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Install updater verification dependencies
+        run: pip install -e '.[sidecar]'
+      - name: Verify portable updates with the production updater
+        # Requires egress for the production Sigstore client's TUF trust refresh.
+        run: python -m scripts.verify_release_updates release-assets
+
+      - name: Check update download budgets
+        run: python -m scripts.check_update_asset_sizes release-assets
 
       - name: Upload release asset set
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

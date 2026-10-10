@@ -58,6 +58,15 @@ from scripts.sidecar_pkg.update_check import (
     latest_beta_release,
     parse_channel,
 )
+from scripts.sidecar_pkg.update_limits import (
+    MAX_ARCHIVE_BYTES,
+    MAX_BUNDLE_BYTES,
+    MAX_CHECKSUM_BYTES,
+    MAX_METADATA_BYTES,
+    UpdateSizeError,
+    bounded_chunks,
+    bounded_read,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +253,7 @@ def _get_json(url: str) -> Any:
         url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"}
     )
     with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=_github_ssl_context(url)) as resp:  # noqa: S310
-        return json.loads(resp.read().decode())
+        return json.loads(bounded_read(resp, MAX_METADATA_BYTES).decode())
 
 
 def _get_release_json(channel: str) -> dict:
@@ -284,27 +293,39 @@ def find_asset_urls(release: dict, asset_name: str | list[str]) -> tuple[str, st
 # ---------------------------------------------------------------------------
 
 
-def _download(url: str, dest: pathlib.Path) -> None:
+def _download(url: str, dest: pathlib.Path, *, max_bytes: int = MAX_ARCHIVE_BYTES) -> None:
     req = request.Request(url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"})  # noqa: S310
     ctx = _github_ssl_context(url)
-    with (
-        request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=ctx) as resp,
-        open(dest, "wb") as fh,
-    ):  # noqa: S310
-        shutil.copyfileobj(resp, fh)
+    try:
+        with (
+            request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=ctx) as resp,
+            open(dest, "wb") as fh,
+        ):  # noqa: S310
+            for chunk in bounded_chunks(resp, max_bytes):
+                fh.write(chunk)
+    except BaseException:
+        # Interruptions and process-exit exceptions must also remove partial
+        # resources; cleanup never converts the original failure into success.
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove partial update resource", exc_info=True)
+        raise
 
 
 def _fetch_expected_sha(url: str) -> str:
     """Download a ``.sha256`` file and return the lowercased hex digest."""
     req = request.Request(url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"})  # noqa: S310
     with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=_github_ssl_context(url)) as resp:  # noqa: S310
-        text = resp.read().decode().strip()
+        text = bounded_read(resp, MAX_CHECKSUM_BYTES).decode().strip()
     # shasum format: "<hex>  <filename>" — take the first token.
     return text.split()[0].lower() if text else ""
 
 
 def verify_sha256(path: pathlib.Path, expected_hex: str) -> bool:
     """True when the SHA-256 of *path* matches *expected_hex* (case-insensitive)."""
+    if path.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise UpdateSizeError("Update archive exceeds size limit")
     if not expected_hex:
         return False
     h = hashlib.sha256()
@@ -1140,7 +1161,8 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
                 return False
             bundle_path = tmp / f"{asset_name}.sigstore.json"
             _with_retries(
-                lambda: _download(bundle_url, bundle_path), what="signature bundle download"
+                lambda: _download(bundle_url, bundle_path, max_bytes=MAX_BUNDLE_BYTES),
+                what="signature bundle download",
             )
             verify_update(archive, bundle_path)
             extracted = tmp / "extracted"
@@ -1159,6 +1181,7 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
             OSError,
             SelfUpdateError,
             UpdateVerificationError,
+            UpdateSizeError,
             tarfile.TarError,
             zipfile.BadZipFile,
         ):
