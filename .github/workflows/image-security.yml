@@ -27,7 +27,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           docker build -t runway-candidate .
-          docker run --rm -e APP_HOST=127.0.0.1 --entrypoint python runway-candidate -c 'import app.main, sqlite3; print(sqlite3.sqlite_version)'
+          docker run --rm -e APP_HOST=127.0.0.1 -e RUNWAY_CONFIG_DIR=/tmp/ci --entrypoint python runway-candidate -c 'import app.main, sqlite3; print(sqlite3.sqlite_version)'
           docker save --output /tmp/candidate.tar runway-candidate
           python -m scripts.audit_release_image --archive /tmp/candidate.tar --architecture "$ARCH" --output image-audit
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

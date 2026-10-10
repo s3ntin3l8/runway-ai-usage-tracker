@@ -41,3 +41,13 @@ Critical/High applicability decisions below must be reviewed with the exact-vers
 Before closure, attach the original and replacement audit artifacts, record both replacement architecture digests and image index digest, and confirm public promotion passed the gate. Keep #602 open until the replacement image has actually been published; a source PR alone does not replace released bytes.
 
 Evidence collected during implementation includes source searches for FTS/MATCH/arbitrary SQL, native scanf/wide I/O, GSSAPI, GnuTLS, DTLS and subprocess usage, and a non-root candidate import/runtime-library inventory. The standard server smoke check must start with isolated data and exercise `/api/v1/system/health`. Full tests remain required to verify application behavior after the base refresh.
+
+Builder inputs retain exact direct package pins: `gcc=4:12.2.0-3` and
+`libsqlite3-dev=3.40.1-2+deb12u2`, verified against Bookworm's resolver on
+2026-10-10. These packages stay in the dependency builder stage; pip, setuptools
+and wheel are removed there before copying the venv. The final stage separately
+removes the base interpreter's packaging tools. Runtime distro packages remain
+eligible for security upgrades; every resulting candidate is scanned by immutable
+digest before promotion. If signing fails, publishing remains failed and operators
+must re-run the complete build/audit/sign path; audit tags remain as diagnostic
+references and are not public release tags.

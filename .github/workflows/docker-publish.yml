@@ -385,7 +385,11 @@ jobs:
         env:
           IMAGE_NAME: ${{ inputs.image-name }}
           AUDITED_DIGEST: ${{ steps.audit.outputs.digest }}
-        run: cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${AUDITED_DIGEST}"
+        run: |
+          if ! cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${AUDITED_DIGEST}"; then
+            echo "::error::Candidate signing failed; no public tags were promoted. Re-run the workflow to rebuild, re-audit, and sign before promotion. The audit candidate is retained for diagnosis."
+            exit 1
+          fi
 
       - name: Promote exactly the audited image
         env:
