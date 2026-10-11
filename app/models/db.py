@@ -298,6 +298,7 @@ class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]
     __tablename__ = "system_config"
 
     id: int | None = Field(default=None, primary_key=True)
+    credential_file_migration_json: str | None = None
     browser_preference: str | None = None  # e.g. "safari,chrome,firefox"
     default_poll_interval_seconds: int | None = None  # None = use per-collector default TTL
     dashboard_layout_json: str | None = None

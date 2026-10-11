@@ -224,3 +224,13 @@ settings (`CORS_ORIGINS`, and any provider credential configured only via
 a registry "env" rule) are read straight from the process environment
 rather than through pydantic's own `.env` loading, so a bare
 `python -m app.main` or the previous `make run` silently missed them.
+
+When an upgrade removes legacy server credential-file sources, Runway shows a
+notice on Home and in Settings → Credentials naming the affected providers.
+Pair a sidecar on the machine where you use those CLI logins from Fleet, or
+save an API key in Settings → Providers. Dismissing the notice saves that choice
+for the whole installation, across browsers and server restarts.
+
+The notice records only removals observed by this version. Fresh installations
+and installations whose old sources were already removed receive no inferred
+notice.

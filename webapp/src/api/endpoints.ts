@@ -466,6 +466,9 @@ export const postCleanup = (body: CleanupRequest) =>
   });
 
 
+export const dismissCredentialFileMigrationNotice = () =>
+  api<{ status: string }>('/api/v1/system/credentials/migration-notice/dismiss', { method: 'POST' });
+
 export const fetchCredentialInventory = () =>
   api<CredentialInventory>('/api/v1/system/credentials');
 

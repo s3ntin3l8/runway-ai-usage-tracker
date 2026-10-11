@@ -1029,7 +1029,14 @@ export interface BlockedCollection {
   first_seen?: string | null;
 }
 
+export interface CredentialFileMigrationNotice {
+  providers: { provider_id: string; name: string }[];
+  removed_count: number;
+  recorded_at: string;
+}
+
 export interface CredentialInventory {
+  credential_file_migration_notice?: CredentialFileMigrationNotice | null;
   providers: CredentialProviderView[];
   machines: CredentialMachineView[];
   unmapped_count: number;

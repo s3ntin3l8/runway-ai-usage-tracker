@@ -126,11 +126,11 @@ async def lifespan(app: FastAPI):
         with _Session(_engine) as _s:
             _removed = prune_unmanaged_server_file_sources(_s)
             _s.commit()
-        if _removed:
+        if _removed.removed_count:
             logger.info(
                 "Removed %d stale server-side credential file source(s); credentials now "
                 "reach the server only via sidecars, env vars and Settings",
-                _removed,
+                _removed.removed_count,
             )
     except Exception:
         # Not fatal, but loud: until it succeeds the stale ``server:*:file:*`` rows stay.

@@ -375,9 +375,10 @@ def test_sweep_drops_stale_server_file_rows_and_keeps_everything_else():
         removed = prune_unmanaged_server_file_sources(session)
         session.commit()
         left = {r.source_id for r in session.exec(select(CredentialSource)).all()}
-        assert prune_unmanaged_server_file_sources(session) == 0  # idempotent
+        assert prune_unmanaged_server_file_sources(session).removed_count == 0  # idempotent
 
-    assert removed == 3
+    assert removed.removed_count == 3
+    assert removed.provider_ids == ("anthropic", "gemini", "github")
     assert "server:gemini:file:oauth_creds.json" not in left
     assert left == {
         "server:github:file:github_oauth.json",

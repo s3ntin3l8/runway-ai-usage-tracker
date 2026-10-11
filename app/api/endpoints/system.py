@@ -685,7 +685,24 @@ async def get_credential_inventory(
     for machine in inventory.machines:
         machine.unmapped_count = per_machine.get(machine.machine_id, 0)
     inventory.blocked_collection = blocked_collection(session, visible)
+    from app.services.credential_file_migration import get_file_migration_notice
+
+    inventory.credential_file_migration_notice = get_file_migration_notice(session)
     return inventory
+
+
+@router.post("/credentials/migration-notice/dismiss")
+@limiter.limit("30/minute")
+async def dismiss_credential_file_migration(
+    request: Request,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, str]:
+    from app.services.credential_file_migration import dismiss_file_migration_notice
+
+    dismiss_file_migration_notice(session)
+    session.commit()
+    return {"status": "ok"}
 
 
 @router.post("/credentials/{provider}/{account_id}/{source_id}/refresh")

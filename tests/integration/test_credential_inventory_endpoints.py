@@ -416,3 +416,51 @@ def test_bulk_remove_that_removes_nothing_leaves_the_rejection_flag_alone(client
     assert resp.json()["removed"] == []
     assert ALICE in auth_failures.flagged_accounts("gemini")
     auth_failures.reset()
+
+
+def test_migration_notice_read_and_persisted_dismissal(client, session):
+    from app.services.credential_sources import (
+        prune_unmanaged_server_file_sources,
+        register_server_source,
+    )
+
+    assert (
+        client.get("/api/v1/system/credentials", headers=_headers()).json()[
+            "credential_file_migration_notice"
+        ]
+        is None
+    )
+    register_server_source(
+        session,
+        provider_id="gemini",
+        account_id="default",
+        source_type="file",
+        label="oauth_creds.json",
+    )
+    session.commit()
+    prune_unmanaged_server_file_sources(session)
+    session.commit()
+    notice = client.get("/api/v1/system/credentials", headers=_headers()).json()[
+        "credential_file_migration_notice"
+    ]
+    assert notice["providers"] == [{"provider_id": "gemini", "name": "Gemini API"}]
+    assert notice["removed_count"] == 1
+    for _ in range(2):
+        response = client.post(
+            "/api/v1/system/credentials/migration-notice/dismiss", headers=_headers()
+        )
+        assert response.status_code == 200
+    assert (
+        client.get("/api/v1/system/credentials", headers=_headers()).json()[
+            "credential_file_migration_notice"
+        ]
+        is None
+    )
+
+
+def test_migration_dismiss_requires_admin(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", "test-admin")  # pragma: allowlist secret
+    response = client.post("/api/v1/system/credentials/migration-notice/dismiss")
+    assert response.status_code in (401, 403)

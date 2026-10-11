@@ -475,7 +475,13 @@ def prune_server_sources(session: Session, provider_id: str, keep_source_ids: se
 _RUNWAY_MANAGED_FILE_LABELS = frozenset({"github_oauth.json"})
 
 
-def prune_unmanaged_server_file_sources(session: Session) -> int:
+@dataclass(frozen=True)
+class FileSourcePruneResult:
+    removed_count: int
+    provider_ids: tuple[str, ...]
+
+
+def prune_unmanaged_server_file_sources(session: Session) -> FileSourcePruneResult:
     """Delete ``server:<provider>:file:<label>`` rows for files the server no longer reads.
 
     The server used to scan CLI login files in its own host's home (``oauth_creds.json``,
@@ -485,6 +491,7 @@ def prune_unmanaged_server_file_sources(session: Session) -> int:
     sidecar rows, and Runway's own ``github_oauth.json``, are kept. Idempotent.
     """
     removed = 0
+    providers: set[str] = set()
     for row in session.exec(
         select(CredentialSource).where(col(CredentialSource.source_id).like("server:%"))
     ).all():
@@ -492,7 +499,12 @@ def prune_unmanaged_server_file_sources(session: Session) -> int:
         if len(parts) == 4 and parts[2] == "file" and parts[3] not in _RUNWAY_MANAGED_FILE_LABELS:
             session.delete(row)
             removed += 1
-    return removed
+            providers.add(row.provider_id)
+    from app.services.credential_file_migration import record_file_source_removal
+
+    result = FileSourcePruneResult(removed, tuple(sorted(providers)))
+    record_file_source_removal(session, result.removed_count, result.provider_ids)
+    return result
 
 
 HEALTH_DETAILS = {

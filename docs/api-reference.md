@@ -256,3 +256,12 @@ root's identity and watermark are independent. Unidentified root events use only
 an exact origin mapping, never a legacy provider-wide mapping. Pending-event
 assignment saves the root mapping; older events without this field keep the
 existing provider-wide behavior.
+
+### Credential-file migration notice
+
+`GET /system/credentials` includes `credential_file_migration_notice`, either
+`null` or `{providers: [{provider_id, name}], removed_count, recorded_at}` for
+confirmed legacy server credential-file removals. It contains no credential
+values or file paths. `POST /system/credentials/migration-notice/dismiss`
+requires administrator access and returns `{status: "ok"}`. The dismissal is
+idempotent, persists for the installation, and is not reset by later removals.
