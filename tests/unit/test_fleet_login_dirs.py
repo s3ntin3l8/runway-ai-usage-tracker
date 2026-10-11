@@ -78,11 +78,13 @@ def test_response_applies_without_starting_tray_keepalive(tmp_path, monkeypatch)
     ]  # older server / missing instruction
 
 
-def test_existing_file_cannot_be_used_as_root(tmp_path):
+def test_existing_file_cannot_be_used_as_root(tmp_path, caplog):
     file = tmp_path / "arbitrary"
     file.write_text("")
     sidecar.apply_remote_login_dirs({"codex_home": [str(file)]})
-    assert sidecar.custom_login_dirs("CODEX_HOME") == []
+    with caplog.at_level("DEBUG"):
+        assert sidecar.custom_login_dirs("CODEX_HOME") == []
+    assert "Fleet login directory is not a directory on this host" in caplog.text
 
 
 def test_old_response_cannot_restore_directories_after_pairing_switch(tmp_path):
@@ -281,3 +283,11 @@ def test_partial_batch_failure_cannot_apply_previous_pairing_response(tmp_path, 
     monkeypatch.setattr(sidecar, "http_post_signed_with_retry", post)
     assert runner.run_once() is False
     assert sidecar._LOGIN_DIR_REMOTE == clean_login_dirs({})
+
+
+def test_new_columns_have_forward_safe_migrations():
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert ("sidecar_registry", "login_dirs_desired", "TEXT") in _DEFERRED_COLUMNS
+    assert ("sidecar_registry", "login_dirs_report", "TEXT") in _DEFERRED_COLUMNS
+    assert ("usage_events", "credential_origin", "VARCHAR") in _DEFERRED_COLUMNS
