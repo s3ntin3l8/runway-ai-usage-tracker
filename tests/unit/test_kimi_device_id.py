@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from app.core.kimi_device import normalize_device_id
-from app.services.collectors.kimi_coding import KimiCodingCollector
+from app.services.collectors import kimi_coding as kimi
 from app.services.token_cache import TokenCache
 from scripts import sidecar
 
@@ -129,8 +129,6 @@ async def test_token_updates_keep_source_bundles_atomic_and_clear_absent_device(
 
 @pytest.mark.asyncio
 async def test_concurrent_collections_use_their_pinned_bearer_and_device(monkeypatch):
-    import app.services.collectors.kimi_coding as kimi
-
     cache = TokenCache()
     monkeypatch.setattr(kimi, "token_cache", cache)
     monkeypatch.setattr("app.services.token_cache.token_cache", cache)
@@ -152,18 +150,18 @@ async def test_concurrent_collections_use_their_pinned_bearer_and_device(monkeyp
 
     async def collect(source):
         async with cache.using_source("kimi_coding", "work", source):
-            await KimiCodingCollector(account_id="work")._strategy_code_api(AsyncMock())
+            await kimi.KimiCodingCollector(account_id="work")._strategy_code_api(AsyncMock())
 
     await asyncio.gather(*(collect(source) for source in ("a", "b", "c")))
     headers = {item["Authorization"]: item for item in calls}
     assert headers["Bearer token-a"]["X-Msh-Device-Id"] == "device-a"
     assert headers["Bearer token-b"]["X-Msh-Device-Id"] == "device-b"
-    fallback = KimiCodingCollector(account_id="work")._kimi_code_identity_headers()[
+    fallback = kimi.KimiCodingCollector(account_id="work")._kimi_code_identity_headers()[
         "X-Msh-Device-Id"
     ]
     assert headers["Bearer token-c"]["X-Msh-Device-Id"] == fallback
     assert (
-        KimiCodingCollector(account_id="work")._kimi_code_identity_headers("\x00bad")[
+        kimi.KimiCodingCollector(account_id="work")._kimi_code_identity_headers("\x00bad")[
             "X-Msh-Device-Id"
         ]
         == fallback
@@ -203,9 +201,7 @@ async def test_promotion_and_retirement_keep_cli_identity_with_bearer():
 
 @pytest.mark.asyncio
 async def test_api_key_requests_never_include_cli_device_headers(monkeypatch):
-    import app.services.collectors.kimi_coding as kimi
-
-    collector = KimiCodingCollector(account_id="work")
+    collector = kimi.KimiCodingCollector(account_id="work")
     monkeypatch.setattr(
         collector,
         "_resolve_code_bearer",
