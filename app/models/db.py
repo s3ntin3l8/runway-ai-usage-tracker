@@ -61,6 +61,8 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     # reports it logs at (None = an older sidecar that doesn't report it).
     log_level: str | None = None
     log_level_desired: str | None = None
+    login_dirs_desired: str | None = None  # JSON Fleet additions; never expanded on the server
+    login_dirs_report: str | None = None  # JSON acknowledgement and searched directories
     recent_logs: str | None = None  # JSON-encoded list of last log lines from the sidecar
     # JSON: provider_id → {"account_id", "source"} from the latest check-in.
     identity_sources: str | None = None
@@ -417,6 +419,7 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     provider_id: str = Field(index=True)  # "anthropic", "chatgpt", ...
     account_id: str = Field(index=True)  # canonical (email or hash)
     attribution_source: str = "unknown"  # local | tag | default | unknown
+    credential_origin: str | None = None  # directory-scoped events; None for legacy streams
     sidecar_id: str = Field(default="local")  # hostname that pushed this
     event_id: str  # provider's msg_id / request_id
     ts: UTCDateTime = Field(index=True)  # actual log timestamp (UTC)

@@ -42,6 +42,21 @@ export function ByMachineView({ inventory }: { inventory: CredentialInventory })
                 </Link>
               ) : null}
             </div>
+            {m.login_dirs_report ? (
+              <details className="mt-2 text-[12px] text-fg-muted">
+                <summary className="cursor-pointer">Login directories searched</summary>
+                <p className="mt-1">Directory candidates from the last check-in, including missing locations.</p>
+                {Object.entries(m.login_dirs_report.searched).map(([provider, paths]) => (
+                  <div key={provider} className="mt-2">
+                    <span className="font-medium">{provider === 'anthropic' ? 'Claude Code' : 'Codex'}</span>
+                    <ul className="mt-1 space-y-1">{paths?.map(path => <li key={path} className="break-all font-mono">{path}</li>)}</ul>
+                  </div>
+                ))}
+                <Link className="mt-2 inline-block text-accent underline" to={`/fleet?settings=${encodeURIComponent(m.machine_id)}`}>Configure login directories</Link>
+              </details>
+            ) : (
+              <p className="mt-2 text-[12px] text-fg-subtle">Login directories are not reported by this sidecar yet.</p>
+            )}
             {rows.length === 0 ? (
               <p className="mt-2 text-[12px] text-fg-muted">This machine reports no credentials.</p>
             ) : (

@@ -219,3 +219,40 @@ HTTP 503 and refuse credential persistence.
 ### Signed fleet request retries
 
 Authenticated fleet ingest and signed config requests consume a durable, single-use signature receipt before handler effects. Reusing the same envelope returns HTTP `409` (`detail.error: "replayed_request"`), including after handler validation errors. Receipt storage failures return `503`. Generate a fresh timestamp and HMAC for every retry; the signing format is unchanged. Timestamps must be finite and no more than five minutes in the past or one minute in the future. Event identifiers continue to deduplicate retried usage events.
+
+### Fleet login-directory additions
+
+`PUT /api/v1/fleet/sidecars/{id}/settings` accepts optional
+`claude_config_dirs` and `codex_home` arrays (maximum 32 directories each, 4096
+characters per path). Omission preserves the field; `null` or `[]` clears only
+that Fleet addition. Absolute POSIX/Windows and home-relative paths are accepted;
+control characters, glob patterns, relative paths and known credential-file
+names are rejected. Paths are evaluated only by the sidecar.
+
+Fleet rows expose `login_dirs_desired`. Check-in responses carry `login_dirs`:
+
+```json
+{"claude_config_dirs": ["~/work-claude"], "codex_home": ["C:\\Users\\me\\codex"]}
+```
+
+The first ingest batch may include `login_dirs_report`; omitted reports preserve
+the previous value. Fleet and credential inventory machine rows expose this
+report (`null` means the sidecar has not reported support):
+
+```json
+{
+  "applied": {"claude_config_dirs": ["~/work-claude"], "codex_home": []},
+  "searched": {"anthropic": ["/home/me/.claude", "/home/me/work-claude"], "chatgpt": ["/home/me/.codex"]}
+}
+```
+
+`applied` acknowledges Fleet settings; `searched` lists resolved directory
+candidates, including missing locations. Acknowledgement does not imply that a
+credential exists or that the directory is readable.
+
+When custom Claude/Codex roots are active, events include optional
+`credential_origin` (for example `path:/home/me/work-claude/projects`). Each
+root's identity and watermark are independent. Unidentified root events use only
+an exact origin mapping, never a legacy provider-wide mapping. Pending-event
+assignment saves the root mapping; older events without this field keep the
+existing provider-wide behavior.

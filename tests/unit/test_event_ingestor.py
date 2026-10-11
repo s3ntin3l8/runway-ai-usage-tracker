@@ -474,3 +474,41 @@ def test_non_redirected_hermes_gemini_event_keeps_raw_model():
     EventIngestor(s).ingest([push], sidecar_id="host-a")
     ev = s.exec(select(UsageEvent)).one()
     assert (ev.provider_id, ev.model_id) == ("gemini", "gemini-3-pro-preview")
+
+
+def test_directory_event_never_inherits_another_roots_provider_tag():
+    s = _seeded_session()
+    s.add(
+        CredentialTag(
+            provider_id="anthropic",
+            credential_origin="provider:anthropic",
+            account_id="personal@example.com",
+            sidecar_id="dev-01",
+            set_by="operator",
+        )
+    )
+    s.commit()
+    push = _make_push(
+        "work-root-event",
+        account_id="default",
+        account_source="default",
+        credential_origin="path:/home/work/projects",
+    )
+    EventIngestor(s).ingest([push], sidecar_id="dev-01")
+    assert s.exec(select(UsageEvent)).first() is None
+    pending = s.exec(select(PendingUsageEvent)).one()
+    assert "path:/home/work/projects" in pending.payload_json
+    s.add(
+        CredentialTag(
+            provider_id="anthropic",
+            credential_origin="path:/home/work/projects",
+            account_id="work@example.com",
+            sidecar_id="dev-01",
+            set_by="operator",
+        )
+    )
+    s.commit()
+    EventIngestor(s).ingest([push], sidecar_id="dev-01")
+    event = s.exec(select(UsageEvent)).one()
+    assert event.account_id == "work@example.com"
+    assert event.credential_origin == "path:/home/work/projects"

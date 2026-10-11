@@ -479,3 +479,11 @@ describe('RulesView', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('denied'));
   });
 });
+
+it('shows directory diagnostics for a machine with no credentials', async () => {
+  renderWithProviders(<ByMachineView inventory={inventory({ machines: [{ machine_id: 'empty', name: 'Empty machine', credential_count: 0, unmapped_count: 0, login_dirs_report: { applied: { claude_config_dirs: [], codex_home: [] }, searched: { anthropic: ['/home/missing'], chatgpt: ['/home/codex'] } } }] })} />);
+  expect(screen.getByText('This machine reports no credentials.')).toBeVisible();
+  await userEvent.click(screen.getByText('Login directories searched'));
+  expect(screen.getByText('/home/missing')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Configure login directories' })).toHaveAttribute('href', '/fleet?settings=empty');
+});

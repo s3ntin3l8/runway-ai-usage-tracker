@@ -72,6 +72,7 @@ a = Analysis(
         "scripts.sidecar_pkg.sqlite_cursor",
         "scripts.sidecar_pkg.identity",
         "scripts.sidecar_pkg.keep_alive",
+        "app.core.login_dirs",
         "scripts.sidecar_pkg.runtime_cleanup",
         "scripts.sidecar_pkg.self_update",
         "scripts.sidecar_pkg.xai_renewer",

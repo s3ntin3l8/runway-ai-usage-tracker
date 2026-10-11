@@ -39,6 +39,7 @@ from app.models.schemas import (
     CredentialMachineView,
     CredentialProviderView,
     CredentialSourceView,
+    read_login_directory_report,
 )
 from app.services.account_identity import canonical_account_id, credential_fingerprint
 from app.services.credential_provider import CredentialProvider
@@ -643,6 +644,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             counts[row.sidecar_id] = counts.get(row.sidecar_id, 0) + 1
     machine_views = [
         CredentialMachineView(
+            login_dirs_report=read_login_directory_report(
+                machines[sidecar_id].login_dirs_report if sidecar_id in machines else None
+            ),
             machine_id=sidecar_id,
             name=machine_name(sidecar_id) or sidecar_id,
             last_seen=_iso(machines[sidecar_id].last_seen) if sidecar_id in machines else None,

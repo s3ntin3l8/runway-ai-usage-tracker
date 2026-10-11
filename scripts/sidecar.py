@@ -2010,6 +2010,63 @@ def resolve_path(path_str: str) -> Path:
 # key (comma-separated string or list) that is searched in addition to the env var.
 _LOGIN_DIR_CONFIG_KEYS = {"CLAUDE_CONFIG_DIR": "claude_config_dirs", "CODEX_HOME": "codex_home"}
 _LOGIN_DIR_EXTRAS: dict[str, list[str]] = {}
+_LOGIN_DIR_REMOTE: dict[str, list[str]] = {"claude_config_dirs": [], "codex_home": []}
+_LOGIN_DIR_SERVER: tuple[str, str] | None = None
+_LOGIN_DIR_LOCK = threading.RLock()
+
+
+def scope_login_dirs(config: dict[str, Any]) -> None:
+    """Never carry Fleet directories over to a different pairing/deployment."""
+    global _LOGIN_DIR_SERVER, _LOGIN_DIR_REMOTE
+    target = (
+        os.environ.get("RUNWAY_API_URL") or config.get("api_url", ""),
+        os.environ.get("RUNWAY_API_KEY") or config.get("api_key", ""),
+    )
+    with _LOGIN_DIR_LOCK:
+        if _LOGIN_DIR_SERVER is not None and target != _LOGIN_DIR_SERVER:
+            _LOGIN_DIR_REMOTE = {"claude_config_dirs": [], "codex_home": []}
+        _LOGIN_DIR_SERVER = target
+
+
+def apply_remote_login_dirs(value: Any, request_target: tuple[str, str] | None = None) -> bool:
+    """Replace an entire validated snapshot, preserving it on invalid responses."""
+    from app.core.login_dirs import clean_login_dirs
+
+    global _LOGIN_DIR_REMOTE
+    try:
+        new = clean_login_dirs(value)
+    except ValueError:
+        logging.warning("Ignoring invalid Fleet login directories")
+        return False
+    with _LOGIN_DIR_LOCK:
+        if request_target is not None and request_target != _LOGIN_DIR_SERVER:
+            return False
+        changed = new != _LOGIN_DIR_REMOTE
+        _LOGIN_DIR_REMOTE = new
+        return changed
+
+
+def login_directory_report() -> dict[str, Any]:
+    """Directory candidates (even missing ones), without inspecting credential contents."""
+    searched: dict[str, list[str]] = {}
+    for provider, env in (("anthropic", "CLAUDE_CONFIG_DIR"), ("chatgpt", "CODEX_HOME")):
+        roots = [*custom_login_dirs(env)]
+        rules = __REGISTRY__["providers"].get(provider, {}).get("rules", [])
+        for rule in rules:
+            if rule.get("type") == "file":
+                for raw in rule.get("paths", []):
+                    roots.extend(path.parent for path in resolve_paths(raw))
+        roots.extend(
+            (
+                Path.home() / (".claude" if provider == "anthropic" else ".codex"),
+                Path.home() / ".config" / ("claude" if provider == "anthropic" else "codex"),
+            )
+        )
+        searched[provider] = list(dict.fromkeys(str(path) for path in roots))[:128]
+    return {
+        "applied": {key: list(paths) for key, paths in _LOGIN_DIR_REMOTE.items()},
+        "searched": searched,
+    }
 
 
 def _split_dirs(value: Any) -> list[str]:
@@ -2022,6 +2079,8 @@ def _split_dirs(value: Any) -> list[str]:
 
 def configure_login_dirs(config: dict[str, Any]) -> None:
     """Pick up the per-CLI extra login dirs from the sidecar's local config."""
+    if "api_url" in config or "api_key" in config:
+        scope_login_dirs(config)
     _LOGIN_DIR_EXTRAS.clear()
     for env_name, key in _LOGIN_DIR_CONFIG_KEYS.items():
         dirs = _split_dirs(config.get(key))
@@ -2037,8 +2096,21 @@ def custom_login_dirs(env_name: str) -> list[Path]:
     drops files it has already returned.
     """
     dirs: list[Path] = []
-    for raw in [*_split_dirs(os.getenv(env_name, "")), *_LOGIN_DIR_EXTRAS.get(env_name, [])]:
+    remote = _LOGIN_DIR_REMOTE.get(_LOGIN_DIR_CONFIG_KEYS.get(env_name, ""), [])
+    for raw in [
+        *_split_dirs(os.getenv(env_name, "")),
+        *_LOGIN_DIR_EXTRAS.get(env_name, []),
+        *remote,
+    ]:
         p = Path(os.path.expanduser(raw))
+        try:
+            if raw in remote and (not p.is_absolute() or p.is_file()):
+                logging.debug("Fleet login directory is not a directory on this host: %s", p)
+                continue
+            p = p.resolve()
+        except OSError:
+            logging.debug("Unable to resolve login directory: %s", p)
+            continue
         if p not in dirs:
             dirs.append(p)
     return dirs
@@ -2841,6 +2913,102 @@ def _build_canonical_hints_for_provider(
         if canonical_hint_map:
             canonical_hints[canonical_provider_id] = dict(canonical_hint_map)
     return canonical_hints or None
+
+
+def _extract_directory_events(
+    provider_id: str,
+    watermark: Any,
+    bootstrap_days: int,
+    hints: dict[str, dict[str, str]],
+    out_events: list[dict[str, Any]],
+    blocked: list[dict[str, str]],
+) -> tuple[int, bool]:
+    """A directory's logs belong to its own login, never another root's first identity."""
+    from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+    from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
+    from scripts.sidecar_pkg.identity import canonical_account_id
+
+    claude = provider_id == "anthropic"
+    env = "CLAUDE_CONFIG_DIR" if claude else "CODEX_HOME"
+    name = "claude" if claude else "codex"
+    roots = [
+        *custom_login_dirs(env),
+        Path.home() / f".{name}",
+        get_platform_config_dir(name),
+        Path.home() / ".config" / name,
+    ]
+    roots = list(dict.fromkeys(root.resolve() for root in roots))
+    parser = parse_anthropic_events if claude else parse_chatgpt_events
+    failures = 0
+    manifest_complete = True
+    seen: set[tuple[str, str]] = set()
+    for root in roots:
+        logs = root / ("projects" if claude else "sessions")
+        if not logs.is_dir():
+            continue
+        identity = ""
+        if claude:
+            metadata = (
+                Path.home() / ".claude.json"
+                if root == (Path.home() / ".claude").resolve()
+                else root / ".claude.json"
+            )
+            for metadata_path in (metadata, root / ".credentials.json"):
+                try:
+                    account = json.loads(metadata_path.read_text()).get("oauthAccount", {})
+                    identity = account.get("emailAddress") or account.get("email") or ""
+                    if isinstance(identity, str) and identity.strip():
+                        break
+                except (OSError, ValueError, AttributeError):
+                    continue
+        else:
+            try:
+                tokens = json.loads((root / "auth.json").read_text()).get("tokens", {})
+                identity = (
+                    _decode_id_token_email(tokens.get("id_token", ""))
+                    or _decode_id_token_email(tokens.get("access_token", ""))
+                    or ""
+                )
+            except (OSError, ValueError, AttributeError):
+                logging.debug("Unable to identify log root %s", root)
+        origin = f"path:{logs}"
+        hinted = hints.get(provider_id, {}).get(origin)
+        account_id = canonical_account_id(
+            (identity if isinstance(identity, str) and identity.strip() else None) or hinted
+        )
+        source = "local" if account_id != "default" and identity else "tag" if hinted else "default"
+        since = watermark.last_pushed(provider_id, account_id) or (
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
+        )
+        try:
+            paths = list(dict.fromkeys(path.resolve() for path in logs.glob("**/*.jsonl")))
+            events = parser(paths, account_id=account_id, since=since)
+            before = len(out_events)
+            for event in events:
+                key = (account_id, event.event_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                payload = event.model_dump(mode="json")
+                payload["account_source"] = source
+                payload["credential_origin"] = origin
+                out_events.append(payload)
+            if len(out_events) > before and source == "default":
+                blocked.append(
+                    {
+                        "provider_id": provider_id,
+                        "credential_origin": origin,
+                        "reason": "events_untagged",
+                    }
+                )
+            if len(out_events) == before and source == "default":
+                manifest_complete = (
+                    False  # an idle unresolved root must not prune its pending origin
+                )
+        except Exception:
+            logging.warning("Event extraction failed for directory %s", logs, exc_info=True)
+            failures += 1
+    return failures, manifest_complete
 
 
 def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
@@ -3655,7 +3823,9 @@ class GenericCollector:
                             with open(path) as f:
                                 data = json.load(f)
 
-                            email = discover_anthropic_email()
+                            email = discover_anthropic_oauth_email(
+                                path.parent / ".credentials.json"
+                            )
                             name_map = {"five_hour": "Session Window", "seven_day": "Weekly Window"}
 
                             # Rate Limits
@@ -4520,7 +4690,24 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
             # doesn't match our local discovery — those belong to other
             # sidecar hosts, and stamping events under them would leak
             # another user's account_id into our event stream.
-            if _events_enabled and _watermark is not None and provider_id in _EVENT_PROVIDERS:
+            directory_scoped = provider_id in {"anthropic", "chatgpt"} and bool(
+                custom_login_dirs(
+                    "CLAUDE_CONFIG_DIR" if provider_id == "anthropic" else "CODEX_HOME"
+                )
+            )
+            if _events_enabled and _watermark is not None and directory_scoped:
+                failures, provider_manifest_complete = _extract_directory_events(
+                    provider_id,
+                    _watermark,
+                    bootstrap_days,
+                    server_account_tag_hints,
+                    all_events,
+                    blocked_origins_this_cycle,
+                )
+                error_count += failures
+                if failures:
+                    provider_cycle_complete = False
+            elif _events_enabled and _watermark is not None and provider_id in _EVENT_PROVIDERS:
                 from scripts.sidecar_pkg.identity import canonical_account_id
 
                 # Canonical form (lowercased email) so the membership check
@@ -4869,8 +5056,9 @@ class DaemonRunner:
 
     def _run_once_impl(self, providers: list[str] | None = None) -> bool:
         """Inner implementation of run_once (called only when no cycle is running)."""
-        api_url = self._config["api_url"]
-        api_key = self._config["api_key"]
+        cycle_config = dict(self._config)
+        api_url = cycle_config["api_url"]
+        api_key = cycle_config["api_key"]
 
         try:
             if providers is None:
@@ -4880,7 +5068,8 @@ class DaemonRunner:
             else:
                 logging.info(f"Starting targeted collection for: {providers}...")
 
-            collection_result = run_collection(self._config, providers=providers)
+            scope_login_dirs(cycle_config)
+            collection_result = run_collection(cycle_config, providers=providers)
             metrics = collection_result.metrics
             events = collection_result.events
             collection_errors = collection_result.error_count
@@ -4944,6 +5133,7 @@ class DaemonRunner:
                     "collection_errors": collection_errors if first_batch else 0,
                     "completed_providers": completed_providers if first_batch else None,
                     "identity_sources": dict(_IDENTITY_REPORT) if first_batch else None,
+                    "login_dirs_report": login_directory_report() if first_batch else None,
                     "last_log_lines": (_tail_log(20) if not providers else [])
                     if first_batch
                     else [],
@@ -5043,6 +5233,7 @@ class DaemonRunner:
                     has_poll_instruction,
                     trigger_requested,
                     update_requested,
+                    request_target=(api_url, api_key),
                 )
 
                 return True
@@ -5101,6 +5292,7 @@ class DaemonRunner:
                 has_poll_instruction,
                 trigger_requested,
                 update_requested,
+                request_target=(api_url, api_key),
             )
             return False
 
@@ -5164,10 +5356,19 @@ class DaemonRunner:
         has_poll_instruction: bool,
         trigger_requested: bool,
         update_requested: bool,
+        *,
+        request_target: tuple[str, str] | None = None,
     ) -> None:
         """Apply settings from the latest successful response and merged instructions."""
+        if request_target is not None and request_target != (
+            self._config.get("api_url", ""),
+            self._config.get("api_key", ""),
+        ):
+            return  # an in-flight response from the previous pairing is no longer authoritative
         if isinstance(result, dict):
             recheck_updates = False
+            if "login_dirs" in result:
+                apply_remote_login_dirs(result["login_dirs"], request_target)
             if "log_level" in result:
                 _apply_server_log_level(result.get("log_level"))
             # Replace identities because the server withdraws hints by omission.

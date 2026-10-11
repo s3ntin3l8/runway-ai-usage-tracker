@@ -4,12 +4,13 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import or_
 from sqlmodel import Session, col, func, select
 
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
+from app.core.login_dirs import LOGIN_DIR_KEYS, stored_login_dirs, validate_directories
 from app.core.rate_limit import limiter
 from app.core.security import (
     is_loopback_bind,
@@ -374,6 +375,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 collection_errors=payload.collection_errors,
                 last_log_lines=payload.last_log_lines or [],
                 identity_sources=payload.identity_sources,
+                login_dirs_report=payload.login_dirs_report,
             )
         except Exception as _e:
             logger.warning(f"Fleet registry upsert failed for '{payload.sidecar_id}': {_e}")
@@ -668,12 +670,14 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     update_channel = fleet_channel
     auto_update = fleet_auto_update
     log_level_desired: str | None = None
+    login_dirs = stored_login_dirs(None)
     if payload.sidecar_id:
         desired_row = session.get(SidecarRegistry, payload.sidecar_id)
         if desired_row is not None:
             update_channel = effective_update_channel(desired_row, fleet_channel)
             auto_update = effective_auto_update(desired_row, fleet_auto_update)
             log_level_desired = desired_row.log_level_desired
+            login_dirs = stored_login_dirs(desired_row.login_dirs_desired)
         keep_alive_desired = desired_row.keep_alive_desired if desired_row else None
         keep_alive_desired_providers = parse_provider_flags(
             desired_row.keep_alive_desired_providers if desired_row else None
@@ -754,6 +758,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # Operator's log-level override (raised from the dashboard while debugging); null leaves
         # the sidecar at its own configured level.
         "log_level": log_level_desired,
+        "login_dirs": login_dirs,
         # Fleet-wide keep-alive default: on for sidecars without their own override. It only
         # ever turns keep-alive on (the sidecar ORs it with its local flag).
         "keep_alive_fleet_default": (sys_cfg.sidecar_keep_alive_default if sys_cfg else None)
@@ -1768,7 +1773,7 @@ async def _validate_pending_event_assignments(
     by_id = {row.id: row for row in rows}
     # Check mapping collisions before validating account configuration so a
     # malformed batch cannot partially populate the validated work list.
-    future_tags: dict[tuple[str, str], tuple[str, str]] = {}
+    future_tags: dict[tuple[str, str, str], tuple[str, str]] = {}
     for assignment in assignments:
         account_id = resolve_account_id("", assignment.account_id, None)
         for event_id in assignment.event_ids:
@@ -1780,7 +1785,10 @@ async def _validate_pending_event_assignments(
                     detail=f"Account provider {target!r} is not a valid target for "
                     f"{row.provider_id!r} events.",
                 )
-            tag_key = (row.provider_id, row.sidecar_id)
+            origin = json.loads(row.payload_json).get(
+                "credential_origin"
+            ) or CredentialTagRepo.provider_origin(row.provider_id)
+            tag_key = (row.provider_id, row.sidecar_id, origin)
             if tag_key in future_tags and future_tags[tag_key] != (target, account_id):
                 raise HTTPException(
                     status_code=422,
@@ -1859,7 +1867,8 @@ def _promote_pending_event_rows(
         CredentialTagRepo.set_tag(
             session,
             provider_id=row.provider_id,
-            credential_origin=CredentialTagRepo.provider_origin(row.provider_id),
+            credential_origin=payload.credential_origin
+            or CredentialTagRepo.provider_origin(row.provider_id),
             account_id=account_id,
             sidecar_id=row.sidecar_id,
             set_by="operator",
@@ -2187,6 +2196,13 @@ class SidecarSettingsRequest(BaseModel):
     auto_update: bool | None = None
     update_channel: str | None = None
     log_level: str | None = None
+    claude_config_dirs: list[str] | None = None
+    codex_home: list[str] | None = None
+
+    @field_validator("claude_config_dirs", "codex_home", mode="before")
+    @classmethod
+    def directories_only(cls, value: Any) -> list[str] | None:
+        return None if value is None else validate_directories(value)
 
 
 @router.put("/sidecars/{sidecar_id}/settings")
@@ -2218,6 +2234,12 @@ async def set_sidecar_settings(
     row = session.get(SidecarRegistry, sidecar_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
+    old_dirs = stored_login_dirs(row.login_dirs_desired)
+    new_dirs = dict(old_dirs)
+    for key in LOGIN_DIR_KEYS:
+        if key in sent:
+            new_dirs[key] = getattr(body, key) or []
+    row.login_dirs_desired = json.dumps(new_dirs)
     if "log_level" in sent:
         row.log_level_desired = log_level
     if "auto_update" in sent:
@@ -2232,6 +2254,8 @@ async def set_sidecar_settings(
         target_id=sidecar_id,
         payload={k: getattr(body, k) for k in sorted(sent)},
     )
+    if new_dirs != old_dirs:
+        fleet_registry.set_pending_trigger(sidecar_id)
     channel, fleet_auto = _fleet_update_defaults(session)
     return {
         "status": "ok",
@@ -2239,6 +2263,7 @@ async def set_sidecar_settings(
         "auto_update_desired": row.auto_update_desired,
         "update_channel_desired": row.update_channel_desired,
         "log_level_desired": row.log_level_desired,
+        "login_dirs_desired": new_dirs,
         "effective_auto_update": effective_auto_update(row, fleet_auto),
         "effective_update_channel": effective_update_channel(row, channel),
     }

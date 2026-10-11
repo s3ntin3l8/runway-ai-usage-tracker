@@ -253,7 +253,9 @@ class TestClaudeStatuslineRules:
             )
         )
         monkeypatch.setattr(sidecar, "resolve_path", lambda _path: statusline)
-        monkeypatch.setattr(sidecar, "discover_anthropic_email", lambda: "claude@example.com")
+        monkeypatch.setattr(
+            sidecar, "discover_anthropic_oauth_email", lambda _path: "claude@example.com"
+        )
 
         cards, blocked = sidecar.GenericCollector.collect_provider(
             "anthropic",

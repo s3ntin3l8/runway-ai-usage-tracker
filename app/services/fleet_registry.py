@@ -7,8 +7,10 @@ from datetime import UTC, datetime, timedelta
 from sqlmodel import Session, select
 
 from app.core.log_redaction import redact_secrets
+from app.core.login_dirs import stored_login_dirs
 from app.core.utils import scrub_log
 from app.models.db import CredentialSource, SidecarRegistry
+from app.models.schemas import LoginDirectoryReport
 from app.services.refresh_policy import parse_provider_flags
 
 logger = logging.getLogger(__name__)
@@ -158,6 +160,7 @@ class FleetRegistryService:
         collection_errors: int = 0,
         last_log_lines: list[str] | None = None,
         identity_sources: dict[str, dict[str, str]] | None = None,
+        login_dirs_report: LoginDirectoryReport | None = None,
     ) -> SidecarRegistry:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
         if update_channel is not None and update_channel not in UPDATE_CHANNELS:
@@ -192,6 +195,8 @@ class FleetRegistryService:
                 row.error_count += collection_errors
             if last_log_lines is not None:
                 row.recent_logs = _recent_logs_json(last_log_lines)
+            if login_dirs_report is not None:
+                row.login_dirs_report = login_dirs_report.model_dump_json()
             if identity_sources is not None:
                 row.identity_sources = json.dumps(identity_sources)
             logger.debug(f"Updated sidecar '{sidecar_id}' (ingest #{row.ingest_count})")
@@ -215,6 +220,9 @@ class FleetRegistryService:
                 error_count=collection_errors,
                 recent_logs=_recent_logs_json(last_log_lines) if last_log_lines else None,
                 identity_sources=json.dumps(identity_sources) if identity_sources else None,
+                login_dirs_report=login_dirs_report.model_dump_json()
+                if login_dirs_report
+                else None,
             )
             session.add(row)
             logger.info(f"Registered new sidecar: '{sidecar_id}' from {source_ip}")
@@ -326,6 +334,10 @@ class FleetRegistryService:
             "effective_auto_update": effective_auto_update(row, auto_update),
             "log_level": row.log_level,
             "log_level_desired": row.log_level_desired,
+            "login_dirs_desired": stored_login_dirs(row.login_dirs_desired),
+            "login_dirs_report": json.loads(row.login_dirs_report)
+            if row.login_dirs_report
+            else None,
             "update_channel": row.update_channel,
             "update_channel_desired": row.update_channel_desired,
             "effective_update_channel": effective_update_channel(row, update_channel),
