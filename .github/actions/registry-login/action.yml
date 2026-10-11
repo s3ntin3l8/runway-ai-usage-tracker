@@ -1,0 +1,21 @@
+name: Registry login with retry
+description: Preserve fatal registry login failures with bounded retries and stdin credentials
+inputs:
+  registry:
+    required: true
+    description: Registry hostname
+  username:
+    required: true
+    description: Registry username
+  password:
+    required: true
+    description: Registry token
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        REGISTRY_HOST: ${{ inputs.registry }}
+        REGISTRY_USER: ${{ inputs.username }}
+        REGISTRY_PASS: ${{ inputs.password }}
+      run: bash "$GITHUB_ACTION_PATH/login.sh"

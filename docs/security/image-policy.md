@@ -54,3 +54,38 @@ or extending this runtime invalidates the corresponding exposure assessment.
 The source/vendor advisory is authoritative for the affected component. Scanner
 severity and fix status are retained even when Debian calls an issue minor or
 postpones a security update. Neither label alone is enough to grant an exception.
+
+## Trusted database caches
+
+`--database` is an operator-only path to a previously prepared, trusted local
+cache, for controlled before/after comparisons. It is not a cache supplied by a
+web request, sidecar, untrusted PR artifact, or release attachment. Cache status
+is provenance metadata, not authentication of an arbitrary SQLite file. Only
+reuse caches that you prepared with the pinned scanner and kept under your own
+control. The downloaded compressed archive checksum cannot be compared directly
+to the decompressed database file; an additional local file hash would be a
+corruption diagnostic, not a replacement for this trust boundary.
+
+Production daily audits prepare one fresh database and use it for both edge and
+the newest versioned release. Every architecture still validates its actual Grype
+database descriptor against that source. Each target retains independent evidence;
+a failure for edge does not skip the release, and either failure fails the job.
+Database preparation or freshness failure records failed evidence for both targets.
+
+## Candidate retention and manual cleanup
+
+Keep `audit-RUN-ATTEMPT` candidate references for at least 90 days, matching audit
+artifact retention. Canonical edge, SHA, version, beta, stable and latest tags,
+retained image indexes, and signature/attestation material take precedence over
+this minimum. Age alone never authorizes deleting a registry version.
+
+Cleanup is manual and reviewed. Inventory all tags and retained index references
+before considering an old audit-only version. Delete a package version only when
+it is proven unreferenced by canonical tags, retained indexes and signature or
+attestation material. A version shared with any retained reference must stay.
+If the registry inventory cannot prove that a manifest is unreferenced, retain it.
+Keep the reviewed inventory and proposed deletions with the maintenance record.
+
+Do not assume removing an audit tag removes the per-architecture bytes pushed by
+digest, and do not invent a `docker buildx imagetools rm` command. This policy adds
+no automatic deletion and performs no registry cleanup as part of publishing.
