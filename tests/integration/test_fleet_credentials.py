@@ -3838,3 +3838,52 @@ def test_manifest_replay_cannot_restore_old_pending_state(client, session):
         r.credential_origin
         for r in PendingCredentialTagRepo.list_all(session, sidecar_id="replay-host")
     } == {"path:/new"}
+
+
+@pytest.mark.parametrize(
+    ("provider", "token_key", "device", "expected"),
+    [
+        ("kimi_coding", "cli_access_token", " cli-device\n", "cli-device"),
+        ("kimi_coding", "cli_access_token", "bad\x00device", None),
+        ("kimi_coding", "api_key", "cli-device", None),
+        ("kimi_api", "cli_access_token", "cli-device", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ingest_accepts_device_only_in_kimi_cli_bundle(
+    client, monkeypatch, provider, token_key, device, expected
+):
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    payload = {
+        "provider": "sidecar",
+        "sidecar_id": "device-host",
+        "metrics": [
+            {
+                "service_name": "Kimi",
+                "remaining": "Token",
+                "unit": "oauth",
+                "account_id": "work",
+                "metadata": {
+                    "provider_id": provider,
+                    token_key: "test-bearer",
+                    "cli_expires_at": str(time.time() + 3600),
+                    "cli_device_id": device,
+                },
+            }
+        ],
+    }
+    body = json.dumps(payload).encode()
+    ts, sig = _sign(body)
+    response = client.post(
+        "/api/v1/fleet/ingest",
+        content=body,
+        headers={"X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200, response.text
+    bundles = await cache.get_source_candidates(provider, "work")
+    assert len(bundles) == 1
+    assert bundles[0]["tokens"].get("cli_device_id") == expected
+    assert bundles[0]["tokens"][token_key] == "test-bearer"

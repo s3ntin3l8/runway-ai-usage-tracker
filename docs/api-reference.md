@@ -265,3 +265,10 @@ confirmed legacy server credential-file removals. It contains no credential
 values or file paths. `POST /system/credentials/migration-notice/dismiss`
 requires administrator access and returns `{status: "ok"}`. The dismissal is
 idempotent, persists for the installation, and is not reset by later removals.
+
+### Kimi CLI device identity
+
+Kimi Coding sidecar token cards may include `metadata.cli_device_id` alongside
+`cli_access_token`. It is trimmed printable ASCII, at most 256 characters,
+and is accepted only for a `kimi_coding` CLI bundle. It is device metadata,
+not an authentication value, and is never returned by the credential inventory.

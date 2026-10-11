@@ -3316,7 +3316,7 @@ class TestKimiCodingCollector:
             credential_patcher.stop()
             settings_patcher.stop()
 
-        assert resolved == ("cli-sidecar-token", "sidecar")
+        assert resolved == ("cli-sidecar-token", "sidecar", None)
         get_with_metadata.assert_awaited_once_with("kimi_coding", account_id="default")
 
     @pytest.mark.asyncio

@@ -300,6 +300,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         ) and (key in _INGEST_CREDENTIAL_KEYS or _is_cookie_key(key)):
                             provider_tokens[key] = val
 
+                if provider_id == "kimi_coding" and provider_tokens.get("cli_access_token"):
+                    from app.core.kimi_device import normalize_device_id
+
+                    device_id = normalize_device_id((card.metadata or {}).get("cli_device_id"))
+                    if device_id:
+                        provider_tokens["cli_device_id"] = device_id
+
                 # Older sidecars combined browser cookies and CLI OAuth in
                 # one card, then assigned the CLI account to the whole card.
                 # That identity does not prove the cookie owner. Keep the

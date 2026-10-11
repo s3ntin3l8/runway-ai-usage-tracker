@@ -11,6 +11,7 @@ Architecture:
 import asyncio
 import hashlib
 import logging
+import math
 import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -46,11 +47,37 @@ _OAUTH_CREDENTIAL_KEYS = {
     "id_token",
     "access_token",
     "cli_access_token",
+    "cli_expires_at",
+    "cli_device_id",
     "expiry_date",
     "client_id",
     "xai_access",
     "xai_refresh",
 }
+_CLI_FAMILY_KEYS = frozenset({"cli_access_token", "cli_expires_at", "cli_device_id"})
+
+
+def _credential_expiry(tokens: dict[str, str]) -> float | None:
+    expiry = IdentityExtractor.exp_from_tokens(tokens)
+    if expiry is not None or not tokens.get("cli_access_token"):
+        return expiry
+    try:
+        cli_expiry = float(tokens["cli_expires_at"])
+        return cli_expiry if math.isfinite(cli_expiry) else None
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def _merge_cli_family(
+    target: dict[str, str], incoming: dict[str, str], *, prefer_incoming: bool
+) -> None:
+    """The device identity and expiry belong to the selected CLI bearer."""
+    if incoming.get("cli_access_token") and prefer_incoming:
+        for key in _CLI_FAMILY_KEYS:
+            target.pop(key, None)
+        target.update({key: value for key, value in incoming.items() if key in _CLI_FAMILY_KEYS})
+
+
 AUTH_VALUE_KEYS = CREDENTIAL_VALUE_KEYS
 OAUTH_TOKEN_VALUE_KEYS = AUTH_VALUE_KEYS - {"api_key", "session_cookie"}
 
@@ -158,6 +185,8 @@ class TokenCache:
             # A probe only looks: whatever a collector would remember (a mirrored login file, an
             # exchanged bearer, a refreshed token) is not stored.
             return canonical_account_id(account_id or "default")
+        if "cli_device_id" in tokens and not tokens.get("cli_access_token"):
+            tokens = {key: value for key, value in tokens.items() if key != "cli_device_id"}
         selection = _active_source.get()
         if source_id is None and selection and selection[0] == provider:
             source_id = selection[2]
@@ -197,6 +226,7 @@ class TokenCache:
                     if tokens.get("xai_refresh") and "xai_refresh" not in stored_tokens:
                         stored_tokens["xai_refresh"] = tokens["xai_refresh"]
                 else:
+                    _merge_cli_family(stored_tokens, tokens, prefer_incoming=True)
                     stored_tokens.update(tokens)
                 metadata = dict(previous[1]) if previous else {}
                 metadata.update(source_metadata or {})
@@ -252,7 +282,9 @@ class TokenCache:
             # store, etc.), except that an explicit dashboard origin is never
             # downgraded by a sidecar/server push (`_resolve_source`).
             prev_meta = existing[1] if existing is not None else {}
-            stored_tokens = {**existing[0], **tokens} if existing is not None else tokens
+            stored_tokens = dict(existing[0]) if existing is not None else {}
+            _merge_cli_family(stored_tokens, tokens, prefer_incoming=True)
+            stored_tokens.update(tokens)
             for key in tokens:
                 self._mark_token_seen(provider, account_id, key)
             metadata = {
@@ -304,8 +336,8 @@ class TokenCache:
         and the normal overwrite wins.
         """
         now = time.time()
-        inc_exp = IdentityExtractor.exp_from_tokens(incoming)
-        exist_exp = IdentityExtractor.exp_from_tokens(existing)
+        inc_exp = _credential_expiry(incoming)
+        exist_exp = _credential_expiry(existing)
         if inc_exp is not None and inc_exp < now:
             if exist_exp is None or exist_exp >= now:
                 return True
@@ -709,6 +741,8 @@ class TokenCache:
                             and not any(o.get(key) == source_tokens[key] for o in others)
                         )
                     }
+                    if "cli_access_token" in keys_to_remove:
+                        keys_to_remove.update(_CLI_FAMILY_KEYS)
                     # `tokens` aliases the live dict in `aggregate`; pop in
                     # place before reassigning the tuple.
                     for key in keys_to_remove:
@@ -757,7 +791,10 @@ class TokenCache:
                 target_tokens, target_metadata, target_timestamp = existing_target
                 merged_tokens = dict(target_tokens)
                 from_oauth_is_staler = self._is_staler(tokens, target_tokens)
+                _merge_cli_family(merged_tokens, tokens, prefer_incoming=not from_oauth_is_staler)
                 for key, value in tokens.items():
+                    if key in _CLI_FAMILY_KEYS:
+                        continue
                     if key in merged_tokens:
                         if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
                             {key: merged_tokens[key]}, {key: value}
@@ -782,7 +819,14 @@ class TokenCache:
                 if target_aggregate is None:
                     self._cache[provider][to_id] = old_aggregate
                 else:
+                    _merge_cli_family(
+                        target_aggregate[0],
+                        old_aggregate[0],
+                        prefer_incoming=not self._is_staler(old_aggregate[0], target_aggregate[0]),
+                    )
                     for key, value in old_aggregate[0].items():
+                        if key in _CLI_FAMILY_KEYS:
+                            continue
                         if key in target_aggregate[0]:
                             # Keep the better known-expiry OAuth value when a
                             # stale target survived an earlier legacy migration.
@@ -816,9 +860,14 @@ class TokenCache:
                         timestamp,
                     )
                 else:
-                    target_aggregate[0].update(tokens)
+                    prefer_cli = not self._is_staler(tokens, target_aggregate[0])
+                    _merge_cli_family(target_aggregate[0], tokens, prefer_incoming=prefer_cli)
+                    target_aggregate[0].update(
+                        {key: value for key, value in tokens.items() if key not in _CLI_FAMILY_KEYS}
+                    )
                     for key in tokens:
-                        self._mark_token_seen(provider, to_id, key)
+                        if key not in _CLI_FAMILY_KEYS or prefer_cli:
+                            self._mark_token_seen(provider, to_id, key)
             return True
 
     async def remove_source_tokens(
@@ -831,6 +880,8 @@ class TokenCache:
             if not entry:
                 return
             tokens, metadata, timestamp = entry
+            if "cli_access_token" in token_types:
+                token_types = token_types | _CLI_FAMILY_KEYS
             for token_type in token_types:
                 tokens.pop(token_type, None)
             if tokens:

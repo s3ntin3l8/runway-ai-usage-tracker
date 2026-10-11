@@ -800,7 +800,7 @@ def test_kimi_cache_mirror_resolves_through_real_collector(client: TestClient):
 
     resolved = asyncio.run(_resolve("default"))
     assert resolved is not None, "cached mirror did not resolve"
-    token, input_source, is_cli = resolved
+    token, input_source, is_cli, device_id = resolved
     assert token == "sk-kimi-e2e-123"  # pragma: allowlist secret
     assert input_source == "config"
     assert is_cli is False
