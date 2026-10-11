@@ -530,3 +530,28 @@ outgrow the updater. A future budget increase must update the documented limits
 and ship through a reviewed change. Signature verification remains mandatory.
 
 Release signing uses Cosign 3 modern bundles. Before publishing, CI verifies every portable archive with the same Python verifier and exact main-branch identity used by the updater. Older legacy bundles fail closed; a checksum cannot substitute for a valid signature.
+
+### Extra login directories from Fleet
+
+Fleet → a machine's Settings → **Login directories** accepts Claude Code and Codex
+state directories, one per line. These are additions to standard locations,
+`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, and the sidecar's local configuration. Paths
+refer to the **sidecar machine**, and `~` belongs to its service user. Enter a
+directory, not `.credentials.json` or `auth.json`. Missing directories can be
+configured before a login is created. Windows drive/UNC paths are supported.
+
+A successful check-in applies the additions without restarting and schedules
+collection, unless paused. The status stays pending until the machine reports
+its acknowledgement; offline machines apply changes when they reconnect. Older
+builds must update before these controls become available. Clearing Fleet
+additions preserves local/environment discovery. Additions survive connection
+failures in memory and are retrieved again after a restart; they are not written
+to local config.json and are cleared when the pairing/server changes.
+
+Credentials → **By machine** → **Login directories searched** lists the directory
+candidates from the last check-in, even when the machine reports no credentials.
+The list includes missing locations; it is not proof that a credential was found.
+The sidecar probes known credential/identity files, `projects/` and `sessions/`.
+The server never expands or opens these paths. Tray collection uses the same
+settings; tray keep-alive remains unsupported (#548), and custom macOS keychain
+renewal remains tracked separately (#526).

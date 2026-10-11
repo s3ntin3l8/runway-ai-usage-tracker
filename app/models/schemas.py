@@ -144,10 +144,50 @@ class UsageEventPush(BaseModel):
     # Attribution decision made while reading the source logs. Missing legacy
     # values are treated as unresolved when account_id is the default sentinel.
     account_source: str | None = None  # local | tag | default
+    credential_origin: str | None = Field(
+        default=None, max_length=4096
+    )  # directory-scoped event origin
     kind: str = "message"  # "message" | "error"; reserved: "reset", "anomaly"
     error_reason: str | None = (
         None  # short tag: "rate_limit", "auth_failed", "quota_exceeded", "timeout"
     )
+
+
+class LoginDirectorySettings(BaseModel):
+    claude_config_dirs: list[str] = Field(default_factory=list)
+    codex_home: list[str] = Field(default_factory=list)
+
+    @field_validator("claude_config_dirs", "codex_home", mode="before")
+    @classmethod
+    def directories_only(cls, value: Any) -> list[str]:
+        from app.core.login_dirs import validate_directories
+
+        return validate_directories(value)
+
+
+class LoginDirectoryReport(BaseModel):
+    applied: LoginDirectorySettings = Field(default_factory=LoginDirectorySettings)
+    searched: dict[str, list[str]] = Field(default_factory=dict)
+
+    @field_validator("searched")
+    @classmethod
+    def bounded_search_paths(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        if set(value) - {"anthropic", "chatgpt"} or any(
+            len(paths) > 128
+            or any(len(path) > 4096 or any(ord(c) < 32 for c in path) for path in paths)
+            for paths in value.values()
+        ):
+            raise ValueError("Invalid searched directories")
+        return value
+
+
+def read_login_directory_report(value: str | None) -> LoginDirectoryReport | None:
+    if not value:
+        return None
+    try:
+        return LoginDirectoryReport.model_validate_json(value)
+    except ValueError:
+        return None
 
 
 class IngestRequest(BaseModel):
@@ -172,6 +212,7 @@ class IngestRequest(BaseModel):
     update_channel: str | None = None
     # Level the sidecar logs at now (config.json, or the dashboard's override); None from older ones.
     log_level: str | None = None
+    login_dirs_report: LoginDirectoryReport | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     # Providers with a complete local-card snapshot in this payload. None from
     # older sidecars means upsert-only; [] is a complete empty report.
@@ -548,6 +589,7 @@ class CredentialProviderView(BaseModel):
 
 
 class CredentialMachineView(BaseModel):
+    login_dirs_report: LoginDirectoryReport | None = None
     machine_id: str
     name: str
     last_seen: str | None = None

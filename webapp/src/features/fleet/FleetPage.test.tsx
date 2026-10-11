@@ -282,8 +282,8 @@ describe('FleetPage', () => {
 
         expect(await screen.findByText(/doesn't report per-login keep-alive yet/)).toBeVisible();
         expect(screen.queryByRole('combobox', { name: /keep-alive/ })).not.toBeInTheDocument();
-        // Keep-alive and logging each explain it; this sidecar reports neither.
-        expect(screen.getAllByText(/Update it to a newer build/)).toHaveLength(2);
+        // Keep-alive, logging and login directories each explain the older build.
+        expect(screen.getAllByText(/Update it to a newer build/)).toHaveLength(3);
       });
 
       it('is not offered for a sidecar that cannot do keep-alive at all', async () => {
@@ -1160,5 +1160,37 @@ describe('FleetPage', () => {
       expect(await dialog.findByText(/doesn't report its log level yet/)).toBeVisible();
       expect(dialog.queryByRole('combobox', { name: 'Log level' })).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('Fleet login directories', () => {
+  const report = { applied: { claude_config_dirs: [], codex_home: [] }, searched: { anthropic: ['/home/service/.claude'], chatgpt: [] } };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.fetchAppConfig).mockResolvedValue({ sidecar_keep_alive_default: false });
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ login_dirs_report: report })] });
+    vi.mocked(api.setSidecarSettings).mockResolvedValue({ status: 'ok' } as never);
+  });
+  it('saves directory lists and clears only Fleet additions', async () => {
+    renderWithProviders(<FleetPage />, { route: '/fleet?settings=laptop' });
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText('Claude Code directories'), '~/work\n~/personal');
+    await userEvent.type(within(dialog).getByLabelText('Codex directories'), '~/codex');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save directories' }));
+    await waitFor(() => expect(api.setSidecarSettings).toHaveBeenCalledWith('laptop', { claude_config_dirs: ['~/work', '~/personal'], codex_home: ['~/codex'] }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Clear Fleet additions' }));
+    await waitFor(() => expect(api.setSidecarSettings).toHaveBeenLastCalledWith('laptop', { claude_config_dirs: null, codex_home: null }));
+  });
+  it('shows pending and offline delivery', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ login_dirs_report: report, login_dirs_desired: { claude_config_dirs: ['~/new'], codex_home: [] } })] });
+    renderWithProviders(<FleetPage />, { route: '/fleet?settings=laptop' });
+    expect(await screen.findByText('Requested directories — waiting for the sidecar to confirm.')).toBeVisible();
+  });
+  it('explains unsupported builds instead of showing inputs', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar()] });
+    renderWithProviders(<FleetPage />, { route: '/fleet?settings=laptop' });
+    await screen.findByRole('dialog');
+    expect(screen.queryByLabelText('Claude Code directories')).not.toBeInTheDocument();
+    expect(screen.getByText(/This sidecar does not report login directories yet/)).toBeVisible();
   });
 });

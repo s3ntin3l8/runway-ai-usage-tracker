@@ -60,6 +60,7 @@ a = Analysis(
         # Optional --keep-alive (agy + xAI + Claude Code login renewal) — imported lazily, so
         # PyInstaller's scan must be told about it.
         "scripts.sidecar_pkg.keep_alive",
+        "app.core.login_dirs",
         # One-time pairing (runway-sidecar://pair links, --pair).
         "scripts.sidecar_pkg.pairing",
         # Shared TLS trust-store helper + bundled CA store (certifi). The

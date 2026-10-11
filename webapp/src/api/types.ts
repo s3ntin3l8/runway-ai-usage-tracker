@@ -307,6 +307,7 @@ export interface TopToolsResponse {
 }
 
 export interface UsageEvent {
+  credential_origin?: string | null;
   id?: number;
   event_id?: string;
   ts?: string;
@@ -489,7 +490,19 @@ export interface HistoryDeltas {
 
 export type SidecarLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 
+export interface LoginDirectorySettings {
+  claude_config_dirs: string[];
+  codex_home: string[];
+}
+
+export interface LoginDirectoryReport {
+  applied: LoginDirectorySettings;
+  searched: Partial<Record<'anthropic' | 'chatgpt', string[]>>;
+}
+
 export interface Sidecar {
+  login_dirs_desired?: LoginDirectorySettings;
+  login_dirs_report?: LoginDirectoryReport | null;
   sidecar_id: string;
   hostname?: string;
   custom_name?: string | null;
@@ -998,6 +1011,7 @@ export interface CredentialProviderView {
 }
 
 export interface CredentialMachineView {
+  login_dirs_report?: LoginDirectoryReport | null;
   machine_id: string;
   name: string;
   last_seen?: string | null;

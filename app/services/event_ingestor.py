@@ -140,7 +140,8 @@ class EventIngestor:
                     mapped_account = CredentialTagRepo.get_account_id(
                         self.session,
                         provider_id=push.provider_id,
-                        credential_origin=CredentialTagRepo.provider_origin(push.provider_id),
+                        credential_origin=push.credential_origin
+                        or CredentialTagRepo.provider_origin(push.provider_id),
                         sidecar_id=sidecar_id,
                     )
                     if mapped_account:
@@ -195,6 +196,7 @@ class EventIngestor:
                         provider_id=push.provider_id,
                         account_id=account_id,
                         attribution_source=push.account_source or "unknown",
+                        credential_origin=push.credential_origin,
                         sidecar_id=sidecar_id or "local",
                         event_id=push.event_id,
                         ts=ts,
@@ -245,6 +247,7 @@ class EventIngestor:
                     provider_id=push.provider_id,
                     account_id=account_id,
                     attribution_source=push.account_source or "unknown",
+                    credential_origin=push.credential_origin,
                     sidecar_id=sidecar_id or "local",
                     event_id=push.event_id,
                     ts=ts,

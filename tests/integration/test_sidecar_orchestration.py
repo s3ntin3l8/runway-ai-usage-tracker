@@ -423,6 +423,7 @@ def test_a_per_sidecar_update_override_replaces_the_fleet_value_in_the_ingest_re
         "auto_update_desired": False,
         "update_channel_desired": "edge",
         "log_level_desired": None,
+        "login_dirs_desired": {"claude_config_dirs": [], "codex_home": []},
         "effective_auto_update": False,
         "effective_update_channel": "edge",
     }
@@ -538,3 +539,87 @@ def test_an_empty_log_level_is_rejected_not_treated_as_a_clear(client, session):
     # The error names the normalised value, matching the uppercase list it offers.
     r = client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"log_level": "chatty"})
     assert "'CHATTY'" in r.json()["detail"]
+
+
+def test_login_directories_roundtrip_and_isolation(client, session):
+    from app.models.db import SidecarRegistry
+
+    session.add(SidecarRegistry(sidecar_id="dirs-host"))
+    session.add(SidecarRegistry(sidecar_id="other-host"))
+    session.commit()
+    endpoint = "/api/v1/fleet/sidecars/dirs-host/settings"
+    assert (
+        client.put(
+            endpoint,
+            json={
+                "claude_config_dirs": ["~/work", "~/work"],
+                "codex_home": [r"C:\Users\Person\codex"],
+            },
+        ).status_code
+        == 200
+    )
+    row = session.get(SidecarRegistry, "dirs-host")
+    assert json.loads(row.login_dirs_desired) == {
+        "claude_config_dirs": ["~/work"],
+        "codex_home": [r"C:\Users\Person\codex"],
+    }
+    assert session.get(SidecarRegistry, "other-host").login_dirs_desired is None
+    assert client.put(endpoint, json={"log_level": "DEBUG"}).status_code == 200
+    assert json.loads(row.login_dirs_desired)["claude_config_dirs"] == ["~/work"]
+    assert client.put(endpoint, json={"claude_config_dirs": None}).status_code == 200
+    assert json.loads(row.login_dirs_desired)["claude_config_dirs"] == []
+    assert json.loads(row.login_dirs_desired)["codex_home"] == [r"C:\Users\Person\codex"]
+    assert client.put(endpoint, json={"codex_home": []}).status_code == 200
+    assert json.loads(row.login_dirs_desired)["codex_home"] == []
+
+
+@pytest.mark.parametrize(
+    "directory", ["relative/path", "/tmp/auth.json", "~/x/*", "/tmp/a\nb", "", 123]
+)
+def test_invalid_login_directory_is_rejected(client, directory):
+    response = client.put(
+        "/api/v1/fleet/sidecars/ghost/settings", json={"claude_config_dirs": [directory]}
+    )
+    assert response.status_code == 422
+
+
+def test_directory_report_and_instructions_survive_checkins(client, session):
+    from app.models.db import SidecarRegistry
+    from app.services.fleet_registry import FleetRegistryService
+
+    report = {
+        "applied": {"claude_config_dirs": [], "codex_home": []},
+        "searched": {"anthropic": ["/home/missing"], "chatgpt": []},
+    }
+    response = _heartbeat(client, login_dirs_report=report)
+    assert response.status_code == 200
+    assert response.json()["login_dirs"] == {"claude_config_dirs": [], "codex_home": []}
+    assert (
+        client.put(
+            "/api/v1/fleet/sidecars/ka-host/settings", json={"claude_config_dirs": ["/home/new"]}
+        ).status_code
+        == 200
+    )
+    response = _heartbeat(client)
+    assert response.json()["login_dirs"]["claude_config_dirs"] == ["/home/new"]
+    assert response.json()["trigger"] is True
+    row = session.get(SidecarRegistry, "ka-host")
+    assert json.loads(row.login_dirs_report) == report
+    assert FleetRegistryService().to_dict(row)["login_dirs_report"] == report
+    assert _heartbeat(client).json()["trigger"] is False
+
+
+def test_directory_trigger_waits_while_collection_is_paused(client, session):
+    from app.models.db import SidecarRegistry
+
+    _heartbeat(client)
+    row = session.get(SidecarRegistry, "ka-host")
+    row.collection_enabled = False
+    session.commit()
+    client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"codex_home": ["~/extra"]})
+    response = _heartbeat(client).json()
+    assert response["login_dirs"]["codex_home"] == ["~/extra"]
+    assert response["trigger"] is False
+    row.collection_enabled = True
+    session.commit()
+    assert _heartbeat(client).json()["trigger"] is True
