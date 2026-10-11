@@ -34,6 +34,9 @@ services:
     volumes: !override
       - ${HOME}/.config/runway:/home/runway/.config/runway
     networks: [proxy]
+    # Python is available in the runtime image; curl is not.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/v1/system/health', timeout=5).close()"]
     environment:
       APP_PORT: "8765"                             # match the base healthcheck + label
       CORS_ORIGINS: "https://runway.example.com"   # your public origin
