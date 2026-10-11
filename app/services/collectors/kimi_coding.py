@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.date_utils import parse_iso8601_utc
+from app.core.kimi_device import normalize_device_id
 from app.core.utils import IdentityExtractor, error_card, http_request_with_retry, human_delta
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
@@ -225,22 +226,29 @@ class KimiCodingCollector(BaseCollector):
     # Credential resolution
     # ------------------------------------------------------------------
 
-    async def _resolve_code_bearer(self) -> tuple[str, str, bool] | None:
+    async def _resolve_code_bearer(self) -> tuple[str, str, bool, str | None] | None:
         """
         Resolve a Bearer token for the Code API, plus its input source.
 
         Priority: DB API key (config) > KIMI_CODE_API_KEY env > token-cache
         ``api_key`` slot (dashboard-paste mirror / opencode CLI discovery) >
         Kimi Code CLI access token (sidecar-pushed), which must
-        be fresh (expires_at > now + 60s). Returns (token, input_source, is_cli).
+        be fresh (expires_at > now + 60s). Returns (token, input_source, is_cli, device_id).
         """
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
+        selected = token_cache.current_source_tokens("kimi_coding", account_id)
+        if selected and selected.get("cli_access_token") and not selected.get("api_key"):
+            # The generic API-key accessor aliases OAuth bearers. Keep a pinned
+            # CLI bundle on its own path so its expiry and device headers apply.
+            cli = await self._resolve_cli_token()
+            return (cli[0], cli[1], True, cli[2]) if cli else None
+
         key = credential_provider.get_provider_api_key("kimi_coding", account_id=account_id)
         if self._is_valid_credential(key):
-            return key, self.INPUT_SOURCE_CONFIG, False  # type: ignore[return-value]
+            return key, self.INPUT_SOURCE_CONFIG, False, None  # type: ignore[return-value]
 
         if account_id == "default" and self._is_valid_credential(settings.KIMI_CODE_API_KEY):
-            return settings.KIMI_CODE_API_KEY, self.INPUT_SOURCE_SERVER, False
+            return settings.KIMI_CODE_API_KEY, self.INPUT_SOURCE_SERVER, False, None
 
         # Dashboard paste (mirrored by the provider PUT and by
         # _sync_manual_config_to_cache) and the opencode CLI's
@@ -261,14 +269,14 @@ class KimiCodingCollector(BaseCollector):
                     if source in ("config", "manual_config")
                     else self.INPUT_SOURCE_SIDECAR
                 )
-                return cached_key, input_source, False
+                return cached_key, input_source, False, None
 
         cli = await self._resolve_cli_token()
         if cli:
-            return cli[0], cli[1], True
+            return cli[0], cli[1], True, cli[2]
         return None
 
-    async def _resolve_cli_token(self) -> tuple[str, str] | None:
+    async def _resolve_cli_token(self) -> tuple[str, str, str | None] | None:
         """
         Read-only access token from the Kimi Code CLI credential file.
 
@@ -279,7 +287,7 @@ class KimiCodingCollector(BaseCollector):
         or its device_id. The refresh token is never used (CodexBar parity — the official
         CLI owns the refresh flow; when the token lapses, re-login).
         """
-        candidates: list[tuple[str, Any, str]] = []
+        candidates: list[tuple[str, Any, str, str | None]] = []
         self._stale_cli_token = False
 
         # Local file (registry rule) — access_token + expires_at together.
@@ -291,6 +299,7 @@ class KimiCodingCollector(BaseCollector):
                         creds["cli_access_token"],
                         creds.get("cli_expires_at"),
                         creds.sources.get("cli_access_token", "server"),
+                        normalize_device_id(creds.get("cli_device_id")),
                     )  # type: ignore[arg-type]
                 )
         except Exception:
@@ -308,13 +317,20 @@ class KimiCodingCollector(BaseCollector):
                 value, meta = cache_data
                 token = (value or {}).get("cli_access_token")
                 if token:
-                    candidates.append((token, (value or {}).get("cli_expires_at"), "sidecar"))
+                    candidates.append(
+                        (
+                            token,
+                            (value or {}).get("cli_expires_at"),
+                            "sidecar",
+                            normalize_device_id((value or {}).get("cli_device_id")),
+                        )
+                    )
         except Exception:
             logger.debug("Kimi Code CLI token cache unreadable", exc_info=True)
 
-        for token, expires_at, source in candidates:
+        for token, expires_at, source, device_id in candidates:
             if self._is_cli_token_fresh(expires_at):
-                return token, source
+                return token, source, device_id
         if candidates:
             self._stale_cli_token = True
         return None
@@ -353,22 +369,13 @@ class KimiCodingCollector(BaseCollector):
                 return token, self.INPUT_SOURCE_SIDECAR
         return None
 
-    def _kimi_code_identity_headers(self) -> dict[str, str]:
-        """X-Msh-* identity headers for CLI-credential calls (CodexBar parity).
-
-        The device id is a deterministic uuid5 of the account, so it is stable
-        across restarts without any filesystem read (the server never touches
-        ~/.kimi-code).
-
-        Tradeoff, deliberate until #557 lands: the header used to carry the CLI's real
-        ``~/.kimi-code/device_id`` when the server shared a host with it. Every account now
-        sends a server-derived id instead, so if Kimi keys rate-limit or fraud signals on
-        the device id, a CLI-credential account may look like a fresh device after upgrade.
-        """
+    def _kimi_code_identity_headers(self, device_id: str | None = None) -> dict[str, str]:
+        """Prefer the selected CLI bundle's device ID; otherwise derive the stable fallback."""
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         return {
             "X-Msh-Platform": "kimi_code_cli",
-            "X-Msh-Device-Id": uuid.uuid5(_DEVICE_ID_NAMESPACE, f"kimi_coding:{account_id}").hex,
+            "X-Msh-Device-Id": normalize_device_id(device_id)
+            or uuid.uuid5(_DEVICE_ID_NAMESPACE, f"kimi_coding:{account_id}").hex,
         }
 
     # ------------------------------------------------------------------
@@ -380,13 +387,13 @@ class KimiCodingCollector(BaseCollector):
         resolved = await self._resolve_code_bearer()
         if resolved is None:
             return []
-        token, input_source, is_cli = resolved
+        token, input_source, is_cli, device_id = resolved
 
         base = (settings.KIMI_CODE_BASE_URL or "https://api.kimi.com").rstrip("/")
         endpoint = f"{base}/coding/v1/usages"
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         if is_cli:
-            headers.update(self._kimi_code_identity_headers())
+            headers.update(self._kimi_code_identity_headers(device_id))
 
         try:
             resp = await http_request_with_retry(

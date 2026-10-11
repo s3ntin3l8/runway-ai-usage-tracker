@@ -31,6 +31,7 @@ a = Analysis(
     ],
     hiddenimports=sigstore_imports
     + [
+        "app.core.kimi_device",
         "pystray._win32",
         "PIL.Image",
         "PIL.PngImagePlugin",

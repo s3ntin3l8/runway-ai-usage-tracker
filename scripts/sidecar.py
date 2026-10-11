@@ -3412,6 +3412,19 @@ def parse_simple_yaml(text: str) -> dict[str, Any]:
     return root
 
 
+def read_kimi_cli_device_id(credential_path: Path) -> str | None:
+    """Read only the device file beside this CLI credential directory."""
+    from app.core.kimi_device import normalize_device_id
+
+    try:
+        with (credential_path.parent.parent / "device_id").open(encoding="ascii") as file:
+            # Read beyond the 256-character limit (plus newline) to reject oversized IDs.
+            value = file.read(259)
+        return normalize_device_id(value)
+    except (OSError, UnicodeError):
+        return None
+
+
 def _key_glob(pattern: str) -> "re.Pattern[str]":
     """Compile a mapping-key glob. ``*`` is the only special character and matches zero or
     more characters (dots and colons included) within ONE dict key. Same rule as
@@ -3603,6 +3616,12 @@ class GenericCollector:
                             val = GenericCollector.get_nested(data, key_path)
                             if val:
                                 candidate_tokens[target] = val
+                        if provider_id == "kimi_coding" and candidate_tokens.get(
+                            "cli_access_token"
+                        ):
+                            device_id = read_kimi_cli_device_id(Path(path))
+                            if device_id:
+                                candidate_tokens["cli_device_id"] = device_id
                         if provider_id == "anthropic" and isinstance(data, dict):
                             oauth_account = data.get("oauthAccount", {})
                             if isinstance(oauth_account, dict):

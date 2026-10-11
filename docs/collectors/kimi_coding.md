@@ -227,3 +227,20 @@ auth) the weekly card is the primary quota and stays.
 - **Kimi For Coding:** https://www.kimi.com/code
 - **API key console:** https://www.kimi.com/code/console
 - **Kimi API pricing (notional cost seed):** https://platform.kimi.ai/docs/pricing/chat
+
+The sidecar reads the Kimi Code CLI's `device_id` beside its `credentials/`
+directory and forwards it with that CLI access token. CLI requests use that
+identifier in `X-Msh-Device-Id`. Missing, unreadable, blank, non-ASCII, control
+character, or longer-than-256-character identifiers are omitted; Runway uses
+the existing deterministic per-account UUID instead. The sidecar never writes
+or creates this file. API-key and browser-cookie requests do not use the CLI
+identifier, and the server never reads the CLI's files.
+
+The CLI access token, expiry and device identifier stay together when sources
+are selected, updated or promoted. A replacement CLI bundle without a device
+identifier clears the previous one, including pushes from older sidecars.
+
+When Fleet selects a specific credential source, the collector uses that
+bundle's own credential type. A pinned CLI token remains a CLI token even when
+another source provides an API key; the general priority list applies to
+unpinned resolution.
