@@ -208,23 +208,11 @@ jobs:
       # job and silently leaves :edge stale, so retry with escalating backoff.
       - name: Log in to the Container registry
         if: ${{ needs.prepare.outputs.push == 'true' }}
-        env:
-          REGISTRY_USER: ${{ secrets.REGISTRY_USERNAME || github.actor }}
-          REGISTRY_PASS: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          attempts=4
-          for attempt in $(seq 1 "$attempts"); do
-            if printf '%s' "$REGISTRY_PASS" \
-               | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin; then
-              exit 0
-            fi
-            if [ "$attempt" -lt "$attempts" ]; then
-              echo "::warning::${REGISTRY} login attempt ${attempt}/${attempts} failed; retrying in $((attempt * 10))s"
-              sleep $((attempt * 10))
-            fi
-          done
-          echo "::error::${REGISTRY} login failed after ${attempts} attempts"
-          exit 1
+        uses: ./.github/actions/registry-login
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata (labels)
         id: meta
@@ -323,23 +311,11 @@ jobs:
       # See the build job's identically-named step for why this isn't
       # docker/login-action -- same rationale applies here.
       - name: Log in to the Container registry
-        env:
-          REGISTRY_USER: ${{ secrets.REGISTRY_USERNAME || github.actor }}
-          REGISTRY_PASS: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          attempts=4
-          for attempt in $(seq 1 "$attempts"); do
-            if printf '%s' "$REGISTRY_PASS" \
-               | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin; then
-              exit 0
-            fi
-            if [ "$attempt" -lt "$attempts" ]; then
-              echo "::warning::${REGISTRY} login attempt ${attempt}/${attempts} failed; retrying in $((attempt * 10))s"
-              sleep $((attempt * 10))
-            fi
-          done
-          echo "::error::${REGISTRY} login failed after ${attempts} attempts"
-          exit 1
+        uses: ./.github/actions/registry-login
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata (tags)
         id: meta

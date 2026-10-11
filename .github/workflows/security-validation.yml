@@ -3,6 +3,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release-tag:
+        description: Optional versioned release to capture and verify in frozen binaries
+        required: false
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -38,7 +44,34 @@ jobs:
         with:
           name: browser-security-report
           path: webapp/playwright-report
+  capture-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release-tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[sidecar]'
+      - name: Capture and verify release updates
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: python -m scripts.capture_release_updates --release-tag "$RELEASE_TAG" --output captured-release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: captured-release-updates
+          path: captured-release
+          if-no-files-found: error
+          retention-days: 90
   frozen-verifier:
+    needs: capture-release
+    if: >-
+      always() && !cancelled() &&
+      (needs.capture-release.result == 'success' ||
+       (needs.capture-release.result == 'skipped' &&
+        (github.event_name != 'workflow_dispatch' || inputs.release-tag == '')))
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -46,15 +79,19 @@ jobs:
         include:
           - os: ubuntu-latest
             spec: linux-cli
+            platform: Linux-CLI
             binary: dist/runway-sidecar-cli
           - os: ubuntu-latest
             spec: linux
+            platform: Linux
             binary: dist/RunwaySidecar
           - os: windows-latest
             spec: windows
+            platform: Windows
             binary: dist/RunwaySidecar.exe
           - os: macos-latest
             spec: macos
+            platform: macOS
             binary: dist/Runway Sidecar.app/Contents/MacOS/RunwaySidecar
     runs-on: ${{ matrix.os }}
     steps:
@@ -65,4 +102,20 @@ jobs:
       - run: python -m pip install -e '.[desktop,sidecar]' pyinstaller
       - run: python sidecar_app/assets/generate_icons.py
       - run: pyinstaller --noconfirm sidecar_app/spec/${{ matrix.spec }}.spec
-      - run: python scripts/security_packaging_smoke.py --binary '${{ matrix.binary }}'
+      - name: Verify standard signed fixture
+        run: python -m scripts.security_packaging_smoke --binary '${{ matrix.binary }}' --report fixture-evidence.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: needs.capture-release.result == 'success'
+        with:
+          name: captured-release-updates
+          path: captured-release
+      - name: Verify captured release in frozen binary
+        if: needs.capture-release.result == 'success'
+        run: python -m scripts.security_packaging_smoke --binary '${{ matrix.binary }}' --release-dir captured-release --platform '${{ matrix.platform }}' --report release-evidence.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: frozen-verifier-${{ matrix.spec }}
+          path: '*-evidence.json'
+          if-no-files-found: error
+          retention-days: 90

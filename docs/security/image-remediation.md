@@ -30,6 +30,7 @@ Critical/High applicability decisions below must be reviewed with the exact-vers
 | [CVE-2026-82560](https://security-tracker.debian.org/tracker/CVE-2026-82560) | Requires Perl Pod::Text formatting untrusted POD. The Runway server does not execute Perl or render POD documents; this inherited distro tooling is outside the server input path. |
 | [CVE-2026-84782](https://security-tracker.debian.org/tracker/CVE-2026-84782) | Affected path is OpenSSL DTLS retransmission. Runway serves and collects HTTP(S) using TLS-over-TCP; Python ssl does not provide a DTLS endpoint, and Runway has no DTLS code. |
 | [CVE-2026-85091](https://security-tracker.debian.org/tracker/CVE-2026-85091) | Requires native gzwrite/gzprintf after nonblocking write stalls. Runway uses Python zlib compression/decompression and does not call native gz-file formatted output APIs. |
+| [CVE-2026-88647](https://security-tracker.debian.org/tracker/CVE-2026-88647) | GnuTLS hostname verification/Common Name fallback is not used by Runway HTTP clients, which use Python ssl/OpenSSL. Runtime package installation or adding GnuTLS-based clients invalidates this assessment; the installed library is not claimed patched. |
 | [CVE-2026-95184](https://security-tracker.debian.org/tracker/CVE-2026-95184) | The affected GnuTLS/libtasn1 certificate/ASN.1 parsing path is not used by the Runway server. HTTPS uses Python ssl/OpenSSL and cryptography; GnuTLS/libtasn1 are inherited apt dependencies, not runtime network handlers. Runtime package installation is outside this exception. |
 | [CVE-2026-95209](https://security-tracker.debian.org/tracker/CVE-2026-95209) | The affected GnuTLS/libtasn1 certificate/ASN.1 parsing path is not used by the Runway server. HTTPS uses Python ssl/OpenSSL and cryptography; GnuTLS/libtasn1 are inherited apt dependencies, not runtime network handlers. Runtime package installation is outside this exception. |
 | [CVE-2026-95210](https://security-tracker.debian.org/tracker/CVE-2026-95210) | The affected GnuTLS/libtasn1 certificate/ASN.1 parsing path is not used by the Runway server. HTTPS uses Python ssl/OpenSSL and cryptography; GnuTLS/libtasn1 are inherited apt dependencies, not runtime network handlers. Runtime package installation is outside this exception. |
@@ -51,3 +52,38 @@ eligible for security upgrades; every resulting candidate is scanned by immutabl
 digest before promotion. If signing fails, publishing remains failed and operators
 must re-run the complete build/audit/sign path; audit tags remain as diagnostic
 references and are not public release tags.
+
+## Published beta.8 replacement
+
+Release source: `4c784e73d59b753be209aef8b6765c91787603cd`.
+[Release Please run 38128962870](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/38128962870)
+passed native builds, the two-architecture audit, candidate signing and promotion
+of exactly the audited index to `3.0.0-beta.8` and `beta`.
+
+| Reference | Digest |
+| --- | --- |
+| Published index | `sha256:e0699f280795b0b39ff617be3d4bbc2dc7852e24e783072d1b8c7ed6bd8724b6` |
+| linux/amd64 | `sha256:8c556a77ae050c106e731d908eb2e2f9856dcdbe07885c43d2c101226a264332` |
+| linux/arm64 | `sha256:552474695c26a06e841aab151ced9936aa75fcf0947e37f3538df778f86033c4` |
+
+The retained `release-image-audit` artifact reports 279 matches per architecture:
+5 Critical, 66 High, 93 Medium, 17 Low, 81 Negligible, 17 Unknown. All 71
+Critical/High matches have exact reviewed exceptions; neither architecture has a
+blocked match or Python finding. The database was built at
+`2026-10-11T06:30:42Z`, source compressed archive checksum
+`a1e7eb21958172e46e2bb6db02e72d68eb4efd4b17d0c43fba5e56ae73d0a196`.
+
+The original baseline retained 477 matches per architecture, including 175
+Critical/High and 12 Python findings. The earlier controlled before/after scans
+used the same database; the published replacement above uses a fresh database and
+includes the newly reported CVE-2026-88647. These counts are scanner matches, not
+a claim of zero vulnerabilities. See [release acceptance](release-acceptance.md)
+for captured sidecar validation and the evidence required for issue closure.
+
+Independent verification of the public index passed with Cosign 3.1.3, container
+`ghcr.io/sigstore/cosign/cosign@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8`,
+requiring certificate identity
+`https://github.com/s3ntin3l8/runway-ai-usage-tracker/.github/workflows/docker-publish.yml@refs/heads/main`
+and issuer `https://token.actions.githubusercontent.com`. Certificate chain,
+transparency evidence and index digest claims were checked. A separate registry
+inspection confirmed the public versioned tag matches the index above.
