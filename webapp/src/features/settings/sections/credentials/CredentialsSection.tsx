@@ -2,6 +2,7 @@
 // account's data actually comes from — in one place. Replaces Token health and absorbs
 // Fleet's assignment rules / account identities and the credential list in Providers.
 
+import { CredentialFileMigrationNotice } from '@/components/CredentialFileMigrationNotice';
 import { useSearchParams } from 'react-router';
 import { KeyRound } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
@@ -47,6 +48,7 @@ export function CredentialsSection() {
 
   return (
     <div className="space-y-4">
+      <CredentialFileMigrationNotice inventory={data} />
       <div>
         <h2 className="text-base font-semibold">Credentials</h2>
         <p className="text-[12px] text-fg-muted">

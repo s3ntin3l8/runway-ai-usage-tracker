@@ -608,7 +608,19 @@ class BlockedCollectionView(BaseModel):
     first_seen: str | None = None
 
 
+class AffectedCredentialProvider(BaseModel):
+    provider_id: str
+    name: str
+
+
+class CredentialFileMigrationNotice(BaseModel):
+    providers: list[AffectedCredentialProvider]
+    removed_count: int
+    recorded_at: str
+
+
 class CredentialInventory(BaseModel):
+    credential_file_migration_notice: CredentialFileMigrationNotice | None = None
     providers: list[CredentialProviderView] = Field(default_factory=list)
     machines: list[CredentialMachineView] = Field(default_factory=list)
     unmapped_count: int = 0  # credentials awaiting an account (Fleet "untagged")

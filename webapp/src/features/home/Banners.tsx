@@ -3,6 +3,7 @@
 // against a fingerprint of the banner's condition: it stays hidden across reloads,
 // restarts and updates, and comes back only when the condition changes.
 
+import { CredentialFileMigrationNotice } from '@/components/CredentialFileMigrationNotice';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { AlertTriangle, BellOff, HeartPulse, KeyRound, TrendingUp, Unlink, X } from 'lucide-react';
@@ -115,6 +116,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
 
   return (
     <>
+      <CredentialFileMigrationNotice inventory={credentials} />
       {kinds.collection.active ? (
         <Banner
           tone="critical"
