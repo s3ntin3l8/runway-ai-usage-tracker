@@ -1820,6 +1820,32 @@
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/602",
       "reviewed_at": "2026-10-10T12:00:00Z",
       "expires_at": "2026-11-08T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-88647",
+      "namespace": "debian:distro:debian:12",
+      "package": "libgnutls30",
+      "version": "3.7.9-2+deb12u7",
+      "architecture": "amd64",
+      "reason": "The affected GnuTLS hostname verification and Common Name fallback path is not used by the Runway server. Runway HTTP clients use Python ssl/OpenSSL; the inspected runtime _ssl extension links libssl and libcrypto, not GnuTLS. GnuTLS is an inherited apt dependency, not a server TLS handler. Runtime package installation and adding GnuTLS-based clients invalidate this applicability assessment. This exception does not assert that the installed library is patched.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-88647",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/602",
+      "reviewed_at": "2026-10-11T08:32:48Z",
+      "expires_at": "2026-11-08T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-88647",
+      "namespace": "debian:distro:debian:12",
+      "package": "libgnutls30",
+      "version": "3.7.9-2+deb12u7",
+      "architecture": "arm64",
+      "reason": "The affected GnuTLS hostname verification and Common Name fallback path is not used by the Runway server. Runway HTTP clients use Python ssl/OpenSSL; the inspected runtime _ssl extension links libssl and libcrypto, not GnuTLS. GnuTLS is an inherited apt dependency, not a server TLS handler. Runtime package installation and adding GnuTLS-based clients invalidate this applicability assessment. This exception does not assert that the installed library is patched.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-88647",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/602",
+      "reviewed_at": "2026-10-11T08:32:48Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     }
   ]
 }
