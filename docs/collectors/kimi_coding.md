@@ -239,3 +239,8 @@ identifier, and the server never reads the CLI's files.
 The CLI access token, expiry and device identifier stay together when sources
 are selected, updated or promoted. A replacement CLI bundle without a device
 identifier clears the previous one, including pushes from older sidecars.
+
+When Fleet selects a specific credential source, the collector uses that
+bundle's own credential type. A pinned CLI token remains a CLI token even when
+another source provides an API key; the general priority list applies to
+unpinned resolution.

@@ -3418,6 +3418,7 @@ def read_kimi_cli_device_id(credential_path: Path) -> str | None:
 
     try:
         with (credential_path.parent.parent / "device_id").open(encoding="ascii") as file:
+            # Read beyond the 256-character limit (plus newline) to reject oversized IDs.
             value = file.read(259)
         return normalize_device_id(value)
     except (OSError, UnicodeError):

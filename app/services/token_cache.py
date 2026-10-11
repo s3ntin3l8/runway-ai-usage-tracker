@@ -63,6 +63,7 @@ def _credential_expiry(tokens: dict[str, str]) -> float | None:
         return expiry
     try:
         cli_expiry = float(tokens["cli_expires_at"])
+        # Non-finite expiry stays unknown, preserving the replacement recovery path.
         return cli_expiry if math.isfinite(cli_expiry) else None
     except (KeyError, ValueError, TypeError):
         return None
