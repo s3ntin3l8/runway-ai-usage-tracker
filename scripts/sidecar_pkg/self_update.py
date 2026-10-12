@@ -42,6 +42,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import zipfile
 from collections.abc import Callable, Iterator
@@ -430,6 +431,25 @@ def _undo_pre_exec_hooks() -> None:
             _call_best_effort(undo, "Pre-exec undo")
 
 
+_ACTIVE_LOCK_LEASE: tuple[int, pathlib.Path] | None = None
+_ACTIVE_LOCK_GUARD = threading.Lock()
+
+
+def _release_owned_lock(lease: tuple[int, pathlib.Path]) -> None:
+    global _ACTIVE_LOCK_LEASE
+    with _ACTIVE_LOCK_GUARD:
+        if _ACTIVE_LOCK_LEASE is not lease:
+            return
+        _ACTIVE_LOCK_LEASE = None
+        fd, lock_path = lease
+        # Windows cannot unlink this lock while our CRT descriptor is open.
+        os.close(fd)
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
+
 def _release_lock() -> None:
     """Remove the single-flight lock file.
 
@@ -440,12 +460,10 @@ def _release_lock() -> None:
     future updates with "already in progress". Call this immediately before any
     re-exec/exit.
     """
-    try:
-        _lock_path().unlink()
-    except OSError:
-        # Already gone (or un-removable) — either way the lock is effectively
-        # released; a leftover self-heals via _LOCK_STALE_SECONDS reclaim.
-        pass
+    with _ACTIVE_LOCK_GUARD:
+        lease = _ACTIVE_LOCK_LEASE
+    if lease is not None:
+        _release_owned_lock(lease)
 
 
 @contextmanager
@@ -456,6 +474,7 @@ def _single_flight() -> Iterator[bool]:
     lock older than ``_LOCK_STALE_SECONDS`` is treated as orphaned and reclaimed
     so a leaked lock self-heals instead of wedging updates forever.
     """
+    global _ACTIVE_LOCK_LEASE
     lock_dir = _sidecar_dir()
     try:
         lock_dir.mkdir(parents=True, exist_ok=True)
@@ -465,6 +484,7 @@ def _single_flight() -> Iterator[bool]:
         return
     lock_path = lock_dir / _LOCK_NAME
     fd: int | None = None
+    lease: tuple[int, pathlib.Path] | None = None
     try:
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -483,15 +503,15 @@ def _single_flight() -> Iterator[bool]:
                 logger.warning("Self-update already in progress; skipping")
                 yield False
                 return
+        lease = (fd, lock_path)
+        with _ACTIVE_LOCK_GUARD:
+            _ACTIVE_LOCK_LEASE = lease
         yield True
     finally:
-        if fd is not None:
-            os.close(fd)
-            try:
-                lock_path.unlink()
-            except OSError:
-                # Lock file already gone (or not removable); nothing to clean up.
-                pass
+        if lease is not None:
+            # Identity prevents a released/recycled descriptor from closing a
+            # newer updater's lock when this older context exits.
+            _release_owned_lock(lease)
 
 
 def _lock_is_stale(lock_path: pathlib.Path) -> bool:
@@ -780,13 +800,18 @@ def _apply_windows(
 
     CREATE_NO_WINDOW = 0x08000000
     CREATE_NEW_PROCESS_GROUP = 0x00000200
+    # CreateProcess's explicit application name is not resolved through PATH.
+    # Use the OS command processor, even when the install/CWD is elsewhere.
+    command_processor = (
+        pathlib.Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "cmd.exe"
+    )
     try:
         # cmd /s removes the outer quotes and keeps the quoted batch path.
         # Passing the path as a separate argv element can lose its quotes when
         # the per-user install directory contains spaces.
         subprocess.Popen(  # noqa: S603
-            f'cmd.exe /d /s /c ""{helper}""',
-            executable="cmd.exe",
+            f'"{command_processor}" /d /s /c ""{helper}""',
+            executable=str(command_processor),
             creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
             close_fds=True,
         )

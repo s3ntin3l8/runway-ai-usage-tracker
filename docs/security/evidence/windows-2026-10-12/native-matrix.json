@@ -1,0 +1,118 @@
+[
+  {
+    "form": "portable",
+    "initiation": "source driver: captured metadata and version check; production download/signature/native helper",
+    "steps": [
+      {
+        "step": "launch-A",
+        "version": "3.0.0-beta.8",
+        "sha256": "ec8769e2f7d9d3f30913660ab87a5fdc583bf9665ff62cfd0f1d7a1124e0de4d"
+      },
+      {
+        "step": "update-restart-B",
+        "version": "3.0.0-beta.9+edge.70779c4",
+        "sha256": "77a7612bf3be8093f639ef2333fa06b37fe25f68228cfe555032216e902761c6",
+        "backup_matches_A": true
+      },
+      {
+        "step": "rollback-relaunch-A",
+        "version": "3.0.0-beta.8",
+        "backup_matches_B": true
+      },
+      {
+        "step": "update-restart-B-again",
+        "version": "3.0.0-beta.9+edge.70779c4",
+        "sha256": "77a7612bf3be8093f639ef2333fa06b37fe25f68228cfe555032216e902761c6"
+      }
+    ],
+    "passed": true,
+    "blocked_until_old_exits": true,
+    "config_unchanged": true,
+    "lock_released": true,
+    "frozen_verifier": [
+      {
+        "case": "valid",
+        "exit_code": 0,
+        "passed": true,
+        "stderr_available": false
+      },
+      {
+        "case": "tampered",
+        "exit_code": 1,
+        "passed": true,
+        "stderr_available": true
+      },
+      {
+        "case": "missing",
+        "exit_code": 1,
+        "passed": true,
+        "stderr_available": true
+      },
+      {
+        "case": "malformed",
+        "exit_code": 1,
+        "passed": true,
+        "stderr_available": true
+      }
+    ],
+    "runnable_after_refusals": true
+  },
+  {
+    "form": "installer",
+    "initiation": "source driver: captured metadata and version check; production download/signature/native helper",
+    "steps": [
+      {
+        "step": "launch-A",
+        "version": "3.0.0-beta.8",
+        "sha256": "ec8769e2f7d9d3f30913660ab87a5fdc583bf9665ff62cfd0f1d7a1124e0de4d"
+      },
+      {
+        "step": "update-restart-B",
+        "version": "3.0.0-beta.9+edge.70779c4",
+        "sha256": "77a7612bf3be8093f639ef2333fa06b37fe25f68228cfe555032216e902761c6",
+        "backup_matches_A": true
+      },
+      {
+        "step": "rollback-relaunch-A",
+        "version": "3.0.0-beta.8",
+        "backup_matches_B": true
+      },
+      {
+        "step": "update-restart-B-again",
+        "version": "3.0.0-beta.9+edge.70779c4",
+        "sha256": "77a7612bf3be8093f639ef2333fa06b37fe25f68228cfe555032216e902761c6"
+      }
+    ],
+    "passed": true,
+    "blocked_until_old_exits": true,
+    "config_unchanged": true,
+    "lock_released": true,
+    "frozen_verifier": [
+      {
+        "case": "valid",
+        "exit_code": 0,
+        "passed": true,
+        "stderr_available": false
+      },
+      {
+        "case": "tampered",
+        "exit_code": 1,
+        "passed": true,
+        "stderr_available": true
+      },
+      {
+        "case": "missing",
+        "exit_code": 1,
+        "passed": true,
+        "stderr_available": true
+      },
+      {
+        "case": "malformed",
+        "exit_code": 1,
+        "passed": true,
+        "stderr_available": true
+      }
+    ],
+    "runnable_after_refusals": true
+  }
+]

@@ -1,0 +1,1822 @@
+{
+  "os": {
+    "Caption": "Microsoft Windows 11 Pro",
+    "Version": "10.0.26200",
+    "BuildNumber": "26200",
+    "OSArchitecture": "64-bit"
+  },
+  "python": "3.12.14",
+  "baseline_commit": "510eb785",
+  "optimized_commit": "2e58912a",
+  "sampling_interval_seconds": 0.1,
+  "runs_per_revision": 3,
+  "test_port_isolation_hook_sha256": "c800872271ae6056a8a14fdf4e9e68e389b83e9e6685fb20e38b8fc7a452f5a3",
+  "summary": {
+    "memory-baseline": {
+      "backfill_seconds": 44.985,
+      "phases": {
+        "startup": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.348
+            },
+            "peak_working_set_mib": {
+              "median": 8.34,
+              "max": 8.348
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 38.375,
+              "max": 66.309
+            },
+            "peak_working_set_mib": {
+              "median": 38.375,
+              "max": 66.309
+            },
+            "private_bytes_mib": {
+              "median": 25.059,
+              "max": 45.887
+            }
+          }
+        },
+        "warmed_idle": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.348,
+              "max": 8.348
+            },
+            "peak_working_set_mib": {
+              "median": 8.348,
+              "max": 8.348
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 70.711,
+              "max": 71.633
+            },
+            "peak_working_set_mib": {
+              "median": 71.896,
+              "max": 73.48
+            },
+            "private_bytes_mib": {
+              "median": 49.684,
+              "max": 50.199
+            }
+          }
+        },
+        "backfill": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 88.406,
+              "max": 88.617
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 67.82,
+              "max": 67.926
+            }
+          }
+        },
+        "repeated_polls": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.227,
+              "max": 77.438
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 56.152,
+              "max": 56.605
+            }
+          }
+        },
+        "log_viewing": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.348,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.355,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 78.219,
+              "max": 78.348
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 56.379,
+              "max": 56.812
+            }
+          }
+        },
+        "offline_queue": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.348,
+              "max": 8.348
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.355,
+              "max": 1.355
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 78.289,
+              "max": 78.293
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 56.332,
+              "max": 56.336
+            }
+          }
+        },
+        "queue_replay": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.352,
+              "max": 1.352
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 78.242,
+              "max": 78.293
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 56.238,
+              "max": 56.238
+            }
+          }
+        }
+      }
+    },
+    "memory-optimized": {
+      "backfill_seconds": 41.625,
+      "phases": {
+        "startup": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.34
+            },
+            "peak_working_set_mib": {
+              "median": 8.336,
+              "max": 8.34
+            },
+            "private_bytes_mib": {
+              "median": 1.367,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 41.312,
+              "max": 68.18
+            },
+            "peak_working_set_mib": {
+              "median": 41.312,
+              "max": 68.18
+            },
+            "private_bytes_mib": {
+              "median": 27.867,
+              "max": 47.297
+            }
+          }
+        },
+        "warmed_idle": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "peak_working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "private_bytes_mib": {
+              "median": 1.367,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 69.898,
+              "max": 72.602
+            },
+            "peak_working_set_mib": {
+              "median": 69.902,
+              "max": 75.156
+            },
+            "private_bytes_mib": {
+              "median": 48.961,
+              "max": 51.668
+            }
+          }
+        },
+        "backfill": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.34,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.367,
+              "max": 1.375
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 87.918,
+              "max": 103.883
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 67.238,
+              "max": 82.359
+            }
+          }
+        },
+        "repeated_polls": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.375,
+              "max": 1.375
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.084,
+              "max": 77.137
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 55.816,
+              "max": 55.816
+            }
+          }
+        },
+        "log_viewing": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.375,
+              "max": 1.375
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.176,
+              "max": 77.176
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 55.469,
+              "max": 55.73
+            }
+          }
+        },
+        "offline_queue": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.352,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.184,
+              "max": 77.258
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 55.73,
+              "max": 55.82
+            }
+          }
+        },
+        "queue_replay": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.336
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.352,
+              "max": 1.352
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.258,
+              "max": 77.508
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 55.719,
+              "max": 55.719
+            }
+          }
+        }
+      }
+    }
+  },
+  "runs": [
+    {
+      "revision": "memory-baseline",
+      "run": 0,
+      "binary_sha256": "237796fa5539e15d572ff652e44429e90080d6fd7e2e642b23886fb86bd0c030",
+      "backfill_complete": true,
+      "backfill_seconds": 47.188000000081956,
+      "settings_owner_verified": true,
+      "config_reload": true,
+      "config_key_reloaded": true,
+      "queue_created": true,
+      "queue_drained": true,
+      "unique_event_count": 10100,
+      "event_digest": "63763cf5b0d40beb1fb8b71509f8693ab0ac428e1a64cc674b378d84176078af",
+      "server_channel_reported": true,
+      "ingests": 22,
+      "phases": {
+        "startup": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.348
+            },
+            "peak_working_set_mib": {
+              "median": 8.336,
+              "max": 8.348
+            },
+            "private_bytes_mib": {
+              "median": 1.363,
+              "max": 1.363
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 35.934,
+              "max": 66.309
+            },
+            "peak_working_set_mib": {
+              "median": 35.934,
+              "max": 66.309
+            },
+            "private_bytes_mib": {
+              "median": 22.443,
+              "max": 45.887
+            }
+          }
+        },
+        "warmed_idle": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.348,
+              "max": 8.348
+            },
+            "peak_working_set_mib": {
+              "median": 8.348,
+              "max": 8.348
+            },
+            "private_bytes_mib": {
+              "median": 1.363,
+              "max": 1.363
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 70.148,
+              "max": 71.246
+            },
+            "peak_working_set_mib": {
+              "median": 70.152,
+              "max": 73.363
+            },
+            "private_bytes_mib": {
+              "median": 48.836,
+              "max": 50.199
+            }
+          }
+        },
+        "backfill": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.363,
+              "max": 1.363
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 88.617,
+              "max": 88.617
+            },
+            "peak_working_set_mib": {
+              "median": 111.551,
+              "max": 111.551
+            },
+            "private_bytes_mib": {
+              "median": 67.926,
+              "max": 67.926
+            }
+          }
+        },
+        "repeated_polls": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.363,
+              "max": 1.363
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 78.199,
+              "max": 78.223
+            },
+            "peak_working_set_mib": {
+              "median": 111.551,
+              "max": 111.551
+            },
+            "private_bytes_mib": {
+              "median": 57.504,
+              "max": 57.504
+            }
+          }
+        },
+        "log_viewing": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.332,
+              "max": 1.332
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 78.828,
+              "max": 78.938
+            },
+            "peak_working_set_mib": {
+              "median": 111.551,
+              "max": 111.551
+            },
+            "private_bytes_mib": {
+              "median": 56.812,
+              "max": 56.812
+            }
+          }
+        },
+        "offline_queue": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.332,
+              "max": 1.332
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 79.195,
+              "max": 79.195
+            },
+            "peak_working_set_mib": {
+              "median": 111.551,
+              "max": 111.551
+            },
+            "private_bytes_mib": {
+              "median": 57.031,
+              "max": 57.031
+            }
+          }
+        },
+        "queue_replay": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.332,
+              "max": 1.332
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 79.195,
+              "max": 79.195
+            },
+            "peak_working_set_mib": {
+              "median": 111.551,
+              "max": 111.551
+            },
+            "private_bytes_mib": {
+              "median": 57.031,
+              "max": 57.031
+            }
+          }
+        }
+      },
+      "passed": true
+    },
+    {
+      "revision": "memory-baseline",
+      "run": 1,
+      "binary_sha256": "237796fa5539e15d572ff652e44429e90080d6fd7e2e642b23886fb86bd0c030",
+      "backfill_complete": true,
+      "backfill_seconds": 44.984999999869615,
+      "settings_owner_verified": true,
+      "config_reload": true,
+      "config_key_reloaded": true,
+      "queue_created": true,
+      "queue_drained": true,
+      "unique_event_count": 10100,
+      "event_digest": "63763cf5b0d40beb1fb8b71509f8693ab0ac428e1a64cc674b378d84176078af",
+      "server_channel_reported": true,
+      "ingests": 22,
+      "phases": {
+        "startup": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.352,
+              "max": 8.355
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.387,
+              "max": 1.387
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 38.375,
+              "max": 68.469
+            },
+            "peak_working_set_mib": {
+              "median": 38.375,
+              "max": 68.469
+            },
+            "private_bytes_mib": {
+              "median": 25.059,
+              "max": 47.766
+            }
+          }
+        },
+        "warmed_idle": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.355
+            },
+            "private_bytes_mib": {
+              "median": 1.387,
+              "max": 1.387
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 70.711,
+              "max": 71.633
+            },
+            "peak_working_set_mib": {
+              "median": 71.896,
+              "max": 73.578
+            },
+            "private_bytes_mib": {
+              "median": 49.684,
+              "max": 50.184
+            }
+          }
+        },
+        "backfill": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.355,
+              "max": 8.363
+            },
+            "peak_working_set_mib": {
+              "median": 8.355,
+              "max": 8.363
+            },
+            "private_bytes_mib": {
+              "median": 1.387,
+              "max": 1.387
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 87.402,
+              "max": 102.406
+            },
+            "peak_working_set_mib": {
+              "median": 110.746,
+              "max": 110.746
+            },
+            "private_bytes_mib": {
+              "median": 66.855,
+              "max": 80.977
+            }
+          }
+        },
+        "repeated_polls": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.363,
+              "max": 8.363
+            },
+            "peak_working_set_mib": {
+              "median": 8.363,
+              "max": 8.363
+            },
+            "private_bytes_mib": {
+              "median": 1.387,
+              "max": 1.387
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 76.957,
+              "max": 77.438
+            },
+            "peak_working_set_mib": {
+              "median": 110.746,
+              "max": 110.746
+            },
+            "private_bytes_mib": {
+              "median": 56.152,
+              "max": 56.605
+            }
+          }
+        },
+        "log_viewing": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.348,
+              "max": 8.363
+            },
+            "peak_working_set_mib": {
+              "median": 8.363,
+              "max": 8.363
+            },
+            "private_bytes_mib": {
+              "median": 1.355,
+              "max": 1.387
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.84,
+              "max": 78.348
+            },
+            "peak_working_set_mib": {
+              "median": 110.746,
+              "max": 110.746
+            },
+            "private_bytes_mib": {
+              "median": 56.059,
+              "max": 57.082
+            }
+          }
+        },
+        "offline_queue": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.348,
+              "max": 8.348
+            },
+            "peak_working_set_mib": {
+              "median": 8.363,
+              "max": 8.363
+            },
+            "private_bytes_mib": {
+              "median": 1.355,
+              "max": 1.355
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.969,
+              "max": 77.973
+            },
+            "peak_working_set_mib": {
+              "median": 110.746,
+              "max": 110.746
+            },
+            "private_bytes_mib": {
+              "median": 55.93,
+              "max": 55.934
+            }
+          }
+        },
+        "queue_replay": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.348,
+              "max": 8.348
+            },
+            "peak_working_set_mib": {
+              "median": 8.363,
+              "max": 8.363
+            },
+            "private_bytes_mib": {
+              "median": 1.355,
+              "max": 1.355
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.973,
+              "max": 77.973
+            },
+            "peak_working_set_mib": {
+              "median": 110.746,
+              "max": 110.746
+            },
+            "private_bytes_mib": {
+              "median": 55.934,
+              "max": 55.934
+            }
+          }
+        }
+      },
+      "passed": true
+    },
+    {
+      "revision": "memory-baseline",
+      "run": 2,
+      "binary_sha256": "237796fa5539e15d572ff652e44429e90080d6fd7e2e642b23886fb86bd0c030",
+      "backfill_complete": true,
+      "backfill_seconds": 40.936999999918044,
+      "settings_owner_verified": true,
+      "config_reload": true,
+      "config_key_reloaded": true,
+      "queue_created": true,
+      "queue_drained": true,
+      "unique_event_count": 10100,
+      "event_digest": "63763cf5b0d40beb1fb8b71509f8693ab0ac428e1a64cc674b378d84176078af",
+      "server_channel_reported": true,
+      "ingests": 22,
+      "phases": {
+        "startup": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.34,
+              "max": 8.344
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 41.09,
+              "max": 65.98
+            },
+            "peak_working_set_mib": {
+              "median": 41.09,
+              "max": 65.98
+            },
+            "private_bytes_mib": {
+              "median": 27.555,
+              "max": 45.852
+            }
+          }
+        },
+        "warmed_idle": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.344,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.344,
+              "max": 8.344
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 71.723,
+              "max": 71.77
+            },
+            "peak_working_set_mib": {
+              "median": 73.48,
+              "max": 73.48
+            },
+            "private_bytes_mib": {
+              "median": 50.422,
+              "max": 50.422
+            }
+          }
+        },
+        "backfill": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.344,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.344,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 88.406,
+              "max": 88.406
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 67.82,
+              "max": 67.82
+            }
+          }
+        },
+        "repeated_polls": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.227,
+              "max": 77.23
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 55.867,
+              "max": 55.867
+            }
+          }
+        },
+        "log_viewing": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 78.219,
+              "max": 78.219
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 56.379,
+              "max": 56.379
+            }
+          }
+        },
+        "offline_queue": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 78.289,
+              "max": 78.293
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 56.332,
+              "max": 56.336
+            }
+          }
+        },
+        "queue_replay": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.336
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.352,
+              "max": 1.352
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 78.242,
+              "max": 78.293
+            },
+            "peak_working_set_mib": {
+              "median": 111.078,
+              "max": 111.078
+            },
+            "private_bytes_mib": {
+              "median": 56.238,
+              "max": 56.238
+            }
+          }
+        }
+      },
+      "passed": true
+    },
+    {
+      "revision": "memory-optimized",
+      "run": 0,
+      "binary_sha256": "a7394ac4ac4ffdc180b161b14cba37e6ce9b5a8ae7b4299cb44cdebf9e755b0e",
+      "backfill_complete": true,
+      "backfill_seconds": 28.141000000061467,
+      "settings_owner_verified": true,
+      "config_reload": true,
+      "config_key_reloaded": true,
+      "queue_created": true,
+      "queue_drained": true,
+      "unique_event_count": 10100,
+      "event_digest": "63763cf5b0d40beb1fb8b71509f8693ab0ac428e1a64cc674b378d84176078af",
+      "server_channel_reported": true,
+      "ingests": 22,
+      "phases": {
+        "startup": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "peak_working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "private_bytes_mib": {
+              "median": 1.34,
+              "max": 1.34
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 40.039,
+              "max": 68.5
+            },
+            "peak_working_set_mib": {
+              "median": 40.039,
+              "max": 68.5
+            },
+            "private_bytes_mib": {
+              "median": 26.707,
+              "max": 47.297
+            }
+          }
+        },
+        "warmed_idle": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "peak_working_set_mib": {
+              "median": 8.34,
+              "max": 8.34
+            },
+            "private_bytes_mib": {
+              "median": 1.34,
+              "max": 1.34
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 69.898,
+              "max": 72.227
+            },
+            "peak_working_set_mib": {
+              "median": 69.902,
+              "max": 73.203
+            },
+            "private_bytes_mib": {
+              "median": 48.961,
+              "max": 51.973
+            }
+          }
+        },
+        "backfill": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.34,
+              "max": 8.367
+            },
+            "peak_working_set_mib": {
+              "median": 8.34,
+              "max": 8.367
+            },
+            "private_bytes_mib": {
+              "median": 1.34,
+              "max": 1.375
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 86.836,
+              "max": 104.016
+            },
+            "peak_working_set_mib": {
+              "median": 104.016,
+              "max": 104.016
+            },
+            "private_bytes_mib": {
+              "median": 65.781,
+              "max": 82.723
+            }
+          }
+        },
+        "repeated_polls": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.367,
+              "max": 8.367
+            },
+            "peak_working_set_mib": {
+              "median": 8.367,
+              "max": 8.367
+            },
+            "private_bytes_mib": {
+              "median": 1.375,
+              "max": 1.375
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.098,
+              "max": 77.355
+            },
+            "peak_working_set_mib": {
+              "median": 104.016,
+              "max": 104.016
+            },
+            "private_bytes_mib": {
+              "median": 56.262,
+              "max": 56.52
+            }
+          }
+        },
+        "log_viewing": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.367,
+              "max": 8.367
+            },
+            "peak_working_set_mib": {
+              "median": 8.367,
+              "max": 8.367
+            },
+            "private_bytes_mib": {
+              "median": 1.375,
+              "max": 1.375
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.387,
+              "max": 77.531
+            },
+            "peak_working_set_mib": {
+              "median": 104.016,
+              "max": 104.016
+            },
+            "private_bytes_mib": {
+              "median": 56.527,
+              "max": 56.672
+            }
+          }
+        },
+        "offline_queue": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.367,
+              "max": 8.367
+            },
+            "peak_working_set_mib": {
+              "median": 8.367,
+              "max": 8.367
+            },
+            "private_bytes_mib": {
+              "median": 1.375,
+              "max": 1.375
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.602,
+              "max": 77.613
+            },
+            "peak_working_set_mib": {
+              "median": 104.016,
+              "max": 104.016
+            },
+            "private_bytes_mib": {
+              "median": 56.773,
+              "max": 56.773
+            }
+          }
+        },
+        "queue_replay": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.367,
+              "max": 8.367
+            },
+            "peak_working_set_mib": {
+              "median": 8.367,
+              "max": 8.367
+            },
+            "private_bytes_mib": {
+              "median": 1.375,
+              "max": 1.375
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.613,
+              "max": 77.641
+            },
+            "peak_working_set_mib": {
+              "median": 104.016,
+              "max": 104.016
+            },
+            "private_bytes_mib": {
+              "median": 56.773,
+              "max": 56.773
+            }
+          }
+        }
+      },
+      "passed": true
+    },
+    {
+      "revision": "memory-optimized",
+      "run": 1,
+      "binary_sha256": "a7394ac4ac4ffdc180b161b14cba37e6ce9b5a8ae7b4299cb44cdebf9e755b0e",
+      "backfill_complete": true,
+      "backfill_seconds": 44.57799999997951,
+      "settings_owner_verified": true,
+      "config_reload": true,
+      "config_key_reloaded": true,
+      "queue_created": true,
+      "queue_drained": true,
+      "unique_event_count": 10100,
+      "event_digest": "63763cf5b0d40beb1fb8b71509f8693ab0ac428e1a64cc674b378d84176078af",
+      "server_channel_reported": true,
+      "ingests": 22,
+      "phases": {
+        "startup": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.336,
+              "max": 8.344
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 42.988,
+              "max": 67.012
+            },
+            "peak_working_set_mib": {
+              "median": 42.988,
+              "max": 67.012
+            },
+            "private_bytes_mib": {
+              "median": 28.35,
+              "max": 47.094
+            }
+          }
+        },
+        "warmed_idle": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.344,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.344,
+              "max": 8.344
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 69.844,
+              "max": 72.773
+            },
+            "peak_working_set_mib": {
+              "median": 69.848,
+              "max": 75.328
+            },
+            "private_bytes_mib": {
+              "median": 48.656,
+              "max": 51.668
+            }
+          }
+        },
+        "backfill": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.344,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.344,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 88.242,
+              "max": 88.242
+            },
+            "peak_working_set_mib": {
+              "median": 103.238,
+              "max": 103.238
+            },
+            "private_bytes_mib": {
+              "median": 67.375,
+              "max": 67.375
+            }
+          }
+        },
+        "repeated_polls": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.084,
+              "max": 77.086
+            },
+            "peak_working_set_mib": {
+              "median": 103.238,
+              "max": 103.238
+            },
+            "private_bytes_mib": {
+              "median": 55.334,
+              "max": 55.336
+            }
+          }
+        },
+        "log_viewing": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.383,
+              "max": 1.383
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.176,
+              "max": 77.176
+            },
+            "peak_working_set_mib": {
+              "median": 103.238,
+              "max": 103.238
+            },
+            "private_bytes_mib": {
+              "median": 55.469,
+              "max": 55.469
+            }
+          }
+        },
+        "offline_queue": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.336
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.352,
+              "max": 1.352
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.184,
+              "max": 77.258
+            },
+            "peak_working_set_mib": {
+              "median": 103.238,
+              "max": 103.238
+            },
+            "private_bytes_mib": {
+              "median": 55.328,
+              "max": 55.422
+            }
+          }
+        },
+        "queue_replay": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.336
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.352,
+              "max": 1.352
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.258,
+              "max": 77.508
+            },
+            "peak_working_set_mib": {
+              "median": 103.238,
+              "max": 103.238
+            },
+            "private_bytes_mib": {
+              "median": 55.379,
+              "max": 55.637
+            }
+          }
+        }
+      },
+      "passed": true
+    },
+    {
+      "revision": "memory-optimized",
+      "run": 2,
+      "binary_sha256": "a7394ac4ac4ffdc180b161b14cba37e6ce9b5a8ae7b4299cb44cdebf9e755b0e",
+      "backfill_complete": true,
+      "backfill_seconds": 41.625,
+      "settings_owner_verified": true,
+      "config_reload": true,
+      "config_key_reloaded": true,
+      "queue_created": true,
+      "queue_drained": true,
+      "unique_event_count": 10100,
+      "event_digest": "63763cf5b0d40beb1fb8b71509f8693ab0ac428e1a64cc674b378d84176078af",
+      "server_channel_reported": true,
+      "ingests": 22,
+      "phases": {
+        "startup": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.328,
+              "max": 8.336
+            },
+            "peak_working_set_mib": {
+              "median": 8.328,
+              "max": 8.336
+            },
+            "private_bytes_mib": {
+              "median": 1.367,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 41.312,
+              "max": 68.18
+            },
+            "peak_working_set_mib": {
+              "median": 41.312,
+              "max": 68.18
+            },
+            "private_bytes_mib": {
+              "median": 27.867,
+              "max": 47.977
+            }
+          }
+        },
+        "warmed_idle": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.336
+            },
+            "peak_working_set_mib": {
+              "median": 8.336,
+              "max": 8.336
+            },
+            "private_bytes_mib": {
+              "median": 1.367,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 71.105,
+              "max": 72.602
+            },
+            "peak_working_set_mib": {
+              "median": 73.258,
+              "max": 75.156
+            },
+            "private_bytes_mib": {
+              "median": 49.949,
+              "max": 51.578
+            }
+          }
+        },
+        "backfill": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.336,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.367,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 87.918,
+              "max": 103.883
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 67.238,
+              "max": 82.359
+            }
+          }
+        },
+        "repeated_polls": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.344,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.367,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.07,
+              "max": 77.137
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 55.816,
+              "max": 55.816
+            }
+          }
+        },
+        "log_viewing": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.344,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.367,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 76.723,
+              "max": 76.988
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 55.402,
+              "max": 55.73
+            }
+          }
+        },
+        "offline_queue": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.336,
+              "max": 8.344
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.352,
+              "max": 1.367
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.055,
+              "max": 77.109
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 55.73,
+              "max": 55.82
+            }
+          }
+        },
+        "queue_replay": {
+          "launcher": {
+            "working_set_mib": {
+              "median": 8.328,
+              "max": 8.328
+            },
+            "peak_working_set_mib": {
+              "median": 8.352,
+              "max": 8.352
+            },
+            "private_bytes_mib": {
+              "median": 1.336,
+              "max": 1.336
+            }
+          },
+          "worker": {
+            "working_set_mib": {
+              "median": 77.098,
+              "max": 77.102
+            },
+            "peak_working_set_mib": {
+              "median": 103.887,
+              "max": 103.887
+            },
+            "private_bytes_mib": {
+              "median": 55.719,
+              "max": 55.719
+            }
+          }
+        }
+      },
+      "passed": true
+    }
+  ]
+}
