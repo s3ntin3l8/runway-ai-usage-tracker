@@ -314,10 +314,11 @@ class TestSingleFlightLockHygiene:
         # context-manager finally — _release_lock is the explicit cleanup.
         monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path)
         lock = tmp_path / self_update._LOCK_NAME
-        lock.write_text("")
-        self_update._release_lock()
-        assert not lock.exists()
-        self_update._release_lock()  # idempotent — no raise when already gone
+        with self_update._single_flight() as acquired:
+            assert acquired
+            self_update._release_lock()
+            assert not lock.exists()
+            self_update._release_lock()  # idempotent — no raise when already gone
 
     def test_blocks_on_a_fresh_lock(self, monkeypatch, tmp_path):
         monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path)
@@ -522,6 +523,7 @@ class TestExtractSafety:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows filesystems do not expose POSIX execute bits")
 class TestApplyUpdateMacOSExecBit:
     def _make_app(self, root, name, *, executable):
         """Build a minimal `<name>.app/Contents/MacOS/<name>` bundle, plus a
@@ -784,8 +786,15 @@ class TestWindowsSwapScript:
 
         assert self_update._apply_windows(install, incoming, restart=False)
         (args, kwargs) = calls[0]
-        assert args[0] == f'cmd.exe /d /s /c ""{install_dir / "runway-self-update.bat"}""'
-        assert kwargs["executable"] == "cmd.exe"
+        command_processor = (
+            pathlib.Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "cmd.exe"
+        )
+        # cmd /s strips the outer repair pair while keeping a spaced batch path quoted.
+        assert (
+            args[0]
+            == f'"{command_processor}" /d /s /c ""{install_dir / "runway-self-update.bat"}""'
+        )
+        assert kwargs["executable"] == str(command_processor)
         assert kwargs["creationflags"] & 0x08000000
 
 

@@ -1,0 +1,45 @@
+{
+  "tag": "edge",
+  "captured_at": "2026-10-12T12:01:30.409901+00:00",
+  "release_id": 337535649,
+  "target_commitish": "main",
+  "assets": {
+    "Runway-Sidecar-Windows-edge-setup.exe": {
+      "id": 633206591,
+      "size": 38336427,
+      "updated_at": "2026-10-12T08:49:02Z",
+      "sha256": "f67c41150bc0b4411be3e271a2c408fd03e7b5d39be9e10fd99abb63613bd3c4"
+    },
+    "Runway-Sidecar-Windows-edge-setup.exe.sha256": {
+      "id": 633206577,
+      "size": 105,
+      "updated_at": "2026-10-12T08:49:00Z",
+      "sha256": "b38bc61d0b157d05cef61ecbdd80ecc7b57f6521c127999ecfe326315d50b977"
+    },
+    "Runway-Sidecar-Windows-edge-setup.exe.sigstore.json": {
+      "id": 633206583,
+      "size": 10748,
+      "updated_at": "2026-10-12T08:49:00Z",
+      "sha256": "280f29426945c8b164c8a4afa9caa32d0f5658319023c0059d52cfb2380f9bfc"
+    },
+    "Runway-Sidecar-Windows-edge.zip": {
+      "id": 633206584,
+      "size": 38068630,
+      "updated_at": "2026-10-12T08:49:02Z",
+      "sha256": "1fd6b0e46b9436673d3a009de761420c3fd8405306b6d62be6bab702c72707ea"
+    },
+    "Runway-Sidecar-Windows-edge.zip.sha256": {
+      "id": 633206573,
+      "size": 99,
+      "updated_at": "2026-10-12T08:49:00Z",
+      "sha256": "ba4b6cb677fd08a7efcc448dd26e3a1a3a2dc9a7ab9c4a73961802a114e42652"
+    },
+    "Runway-Sidecar-Windows-edge.zip.sigstore.json": {
+      "id": 633206578,
+      "size": 10791,
+      "updated_at": "2026-10-12T08:49:00Z",
+      "sha256": "7941952f0f02b998e7d961598b60567f07a92551c08683ada3ff14240bf4a691"
+    }
+  },
+  "passed": true
+}

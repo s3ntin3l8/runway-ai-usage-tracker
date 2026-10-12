@@ -1,0 +1,45 @@
+{
+  "tag": "v3.0.0-beta.8",
+  "captured_at": "2026-10-12T11:57:09.668748+00:00",
+  "release_id": 409572285,
+  "target_commitish": "4c784e73d59b753be209aef8b6765c91787603cd",
+  "assets": {
+    "Runway-Sidecar-Windows-v3.0.0-beta.8-setup.exe": {
+      "id": 630353754,
+      "size": 38317161,
+      "updated_at": "2026-10-11T09:40:21Z",
+      "sha256": "45da187edbaa7bc4a505ff50d953008a0f9db218faa1de03879d9fedcd315750"
+    },
+    "Runway-Sidecar-Windows-v3.0.0-beta.8-setup.exe.sha256": {
+      "id": 630353734,
+      "size": 114,
+      "updated_at": "2026-10-11T09:40:19Z",
+      "sha256": "0064f291bfe3b6ed26824d432177b3ae71a79b126025b7b0831fe325fad047d7"
+    },
+    "Runway-Sidecar-Windows-v3.0.0-beta.8-setup.exe.sigstore.json": {
+      "id": 630353738,
+      "size": 10654,
+      "updated_at": "2026-10-11T09:40:19Z",
+      "sha256": "002e8dbe0c735fd7c9ce72ad0e69c1f09256914a77cfed856106c052ed6dfa26"
+    },
+    "Runway-Sidecar-Windows-v3.0.0-beta.8.zip": {
+      "id": 630353752,
+      "size": 38051319,
+      "updated_at": "2026-10-11T09:40:20Z",
+      "sha256": "353ea4343c5a88c574ccc757d260c0438437251e953e86635f5ed62b97d4095b"
+    },
+    "Runway-Sidecar-Windows-v3.0.0-beta.8.zip.sha256": {
+      "id": 630353750,
+      "size": 108,
+      "updated_at": "2026-10-11T09:40:19Z",
+      "sha256": "166322771f29e58793f456a8a5c513e3595cf4ce37e336d7633c2eeac0132347"
+    },
+    "Runway-Sidecar-Windows-v3.0.0-beta.8.zip.sigstore.json": {
+      "id": 630353736,
+      "size": 10795,
+      "updated_at": "2026-10-11T09:40:19Z",
+      "sha256": "b3efee4bc30c42a50e5662ca3ffb0979875bdd9c7d2b1cf52911c3184ea312d2"
+    }
+  },
+  "passed": true
+}

@@ -110,3 +110,6 @@ memray*.bin
 # Browser security test reports
 webapp/playwright-report/
 webapp/test-results/
+
+# Raw physical validation profiles, registry backups and runtime control files.
+/evidence/

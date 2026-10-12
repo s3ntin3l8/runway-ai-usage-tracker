@@ -11,6 +11,7 @@ import logging
 import os
 import pathlib
 import secrets
+import socket
 import socketserver
 import threading
 import webbrowser
@@ -765,7 +766,14 @@ def _esc(s: str) -> str:
 
 
 class _SettingsServer(socketserver.TCPServer):
-    allow_reuse_address = True
+    # SO_REUSEADDR permits multiple listeners on the same port on Windows.
+    # os.name describes the running process at import, including PyInstaller builds.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self) -> None:
+        if os.name == "nt":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
     def __init__(
         self,

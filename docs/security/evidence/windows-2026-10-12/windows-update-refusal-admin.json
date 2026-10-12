@@ -1,0 +1,73 @@
+{
+  "tested_at": "2026-10-12T07:40:49.603115+00:00",
+  "os": "Windows-11-10.0.26200-SP0",
+  "architecture": "AMD64",
+  "payload_sha256": "353ea4343c5a88c574ccc757d260c0438437251e953e86635f5ed62b97d4095b",
+  "driver": "source fixture; production updater refusal logic",
+  "cases": [
+    {
+      "case": "missing-bundle",
+      "status": "pass",
+      "installed_unchanged": true,
+      "rollback_unchanged": true,
+      "lock_released": true,
+      "expected_refusal_stage": true,
+      "stages": {
+        "archive_opened": false,
+        "body_read": false,
+        "checksum_requested": false,
+        "signature_attempted": false,
+        "signature_rejected": false,
+        "lock_acquired": true
+      }
+    },
+    {
+      "case": "malformed-bundle",
+      "status": "pass",
+      "installed_unchanged": true,
+      "rollback_unchanged": true,
+      "lock_released": true,
+      "expected_refusal_stage": true,
+      "stages": {
+        "archive_opened": true,
+        "body_read": false,
+        "checksum_requested": true,
+        "signature_attempted": true,
+        "signature_rejected": true,
+        "lock_acquired": true
+      }
+    },
+    {
+      "case": "tampered-payload",
+      "status": "pass",
+      "installed_unchanged": true,
+      "rollback_unchanged": true,
+      "lock_released": true,
+      "expected_refusal_stage": true,
+      "stages": {
+        "archive_opened": true,
+        "body_read": false,
+        "checksum_requested": true,
+        "signature_attempted": true,
+        "signature_rejected": true,
+        "lock_acquired": true
+      }
+    },
+    {
+      "case": "oversized-response",
+      "status": "pass",
+      "installed_unchanged": true,
+      "rollback_unchanged": true,
+      "lock_released": true,
+      "expected_refusal_stage": true,
+      "stages": {
+        "archive_opened": true,
+        "body_read": false,
+        "checksum_requested": false,
+        "signature_attempted": false,
+        "signature_rejected": false,
+        "lock_acquired": true
+      }
+    }
+  ]
+}
