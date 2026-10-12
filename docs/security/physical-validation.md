@@ -109,6 +109,12 @@ prompts and permission denied/granted states where the browser supports them.
 
 ## Actual Authentik + Traefik over TLS
 
+The [2026-10-12 execution record](evidence/603-authentik-traefik-2026-10-12/README.md)
+contains the completed actual Authentik/Traefik TLS matrix on an isolated synthetic
+application, including sanitized configuration, results, immediate-peer logs and
+teardown. Native installation and physical browser LNA/DNS rebinding acceptance
+remain pending in #603.
+
 Create a separate Runway test hostname, Authentik application and Proxy Provider
 in forward-auth single-application mode, reusing your existing Traefik installation.
 Record component versions and sanitized configuration. Follow the [Authentik
