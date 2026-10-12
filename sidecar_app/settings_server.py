@@ -767,6 +767,7 @@ def _esc(s: str) -> str:
 
 class _SettingsServer(socketserver.TCPServer):
     # SO_REUSEADDR permits multiple listeners on the same port on Windows.
+    # os.name describes the running process at import, including PyInstaller builds.
     allow_reuse_address = os.name != "nt"
 
     def server_bind(self) -> None:

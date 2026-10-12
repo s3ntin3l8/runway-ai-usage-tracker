@@ -433,6 +433,7 @@ def _undo_pre_exec_hooks() -> None:
 
 # Only _single_flight registers ownership; release/context teardown retire it.
 _ACTIVE_LOCK_LEASE: tuple[int, pathlib.Path] | None = None
+# Protects in-process lease ownership and retirement; O_EXCL excludes other processes.
 _ACTIVE_LOCK_GUARD = threading.Lock()
 
 

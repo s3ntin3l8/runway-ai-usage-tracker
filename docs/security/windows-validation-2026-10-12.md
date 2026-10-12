@@ -52,4 +52,6 @@ Focused Windows regressions: 161 passed, one POSIX-only test skipped, including 
 
 Still required: publish a signed build containing the fixes, then execute the genuine tray/published-channel update/rollback and tray-control/Start Menu UI checks; physical hostile-origin/LNA/DNS tests; macOS acceptance. [#621](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/621) tracks full native Windows gate portability.
 
+The separate dev-01 Authentik/Traefik TLS matrix is complete: all 51 checks passed, with deployment teardown and production health restoration confirmed. See the [sanitized deployment evidence](evidence/603-authentik-traefik-2026-10-12/README.md), merged through #620. This completes the deployment checks, while the native and physical-browser acceptance above remains outstanding for #603.
+
 Sanitized machine-readable artifacts: [packaged memory](evidence/windows-2026-10-12/packaged-memory.json), [native matrix](evidence/windows-2026-10-12/native-matrix.json), [installer](evidence/windows-2026-10-12/native-installer-report.json), [refusal probe](evidence/windows-2026-10-12/windows-update-refusal-admin.json), [dependencies](evidence/windows-2026-10-12/dependencies.txt). Raw logs, child profiles, registry backups and control tokens remain local and are excluded from publication.
