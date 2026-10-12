@@ -1,0 +1,496 @@
+{
+  "baseline_sha": "e44385938eb6a0809cbc89e652311e4560133af8",
+  "date": "2026-10-12",
+  "fixture": "synthetic, no production data",
+  "docker_profile": {
+    "MALLOC_ARENA_MAX": "4",
+    "SQLITE_TEMP_STORE": "MEMORY"
+  },
+  "cases": [
+    {
+      "case": "window",
+      "events": 100000,
+      "snapshots": 100000,
+      "runs": 3,
+      "rounds": 3,
+      "baseline_ref": "origin/main",
+      "output_identical": true,
+      "baseline": {
+        "elapsed_seconds": 12.56,
+        "p95_seconds": 5.132,
+        "peak_rss_mib": 922.516,
+        "rss_mib": 806.219,
+        "pss_mib": 790.418,
+        "anonymous_mib": 656.621
+      },
+      "current": {
+        "elapsed_seconds": 0.414,
+        "p95_seconds": 0.159,
+        "peak_rss_mib": 205.184,
+        "rss_mib": 205.648,
+        "pss_mib": 189.818,
+        "anonymous_mib": 56.023
+      },
+      "arena-2-memory": {
+        "elapsed_seconds": 0.401,
+        "p95_seconds": 0.158,
+        "peak_rss_mib": 204.973,
+        "rss_mib": 205.684,
+        "pss_mib": 189.832,
+        "anonymous_mib": 56.016
+      },
+      "arena-4-memory": {
+        "elapsed_seconds": 0.442,
+        "p95_seconds": 0.164,
+        "peak_rss_mib": 205.188,
+        "rss_mib": 205.578,
+        "pss_mib": 189.818,
+        "anonymous_mib": 56.02
+      },
+      "arena--file": {
+        "elapsed_seconds": 0.418,
+        "p95_seconds": 0.153,
+        "peak_rss_mib": 209.938,
+        "rss_mib": 210.449,
+        "pss_mib": 194.684,
+        "anonymous_mib": 60.859
+      },
+      "arena-2-file": {
+        "elapsed_seconds": 0.346,
+        "p95_seconds": 0.133,
+        "peak_rss_mib": 210.086,
+        "rss_mib": 210.434,
+        "pss_mib": 194.672,
+        "anonymous_mib": 60.863
+      }
+    },
+    {
+      "case": "classify",
+      "events": 100000,
+      "snapshots": 100000,
+      "runs": 3,
+      "rounds": 3,
+      "baseline_ref": "origin/main",
+      "output_identical": true,
+      "baseline": {
+        "elapsed_seconds": 2.499,
+        "p95_seconds": 0.91,
+        "peak_rss_mib": 269.379,
+        "rss_mib": 204.957,
+        "pss_mib": 189.225,
+        "anonymous_mib": 55.367
+      },
+      "current": {
+        "elapsed_seconds": 2.036,
+        "p95_seconds": 0.738,
+        "peak_rss_mib": 197.316,
+        "rss_mib": 197.727,
+        "pss_mib": 181.79,
+        "anonymous_mib": 47.934
+      },
+      "arena-2-memory": {
+        "elapsed_seconds": 2.15,
+        "p95_seconds": 0.85,
+        "peak_rss_mib": 197.387,
+        "rss_mib": 197.734,
+        "pss_mib": 181.795,
+        "anonymous_mib": 47.938
+      },
+      "arena-4-memory": {
+        "elapsed_seconds": 2.062,
+        "p95_seconds": 0.711,
+        "peak_rss_mib": 197.43,
+        "rss_mib": 197.609,
+        "pss_mib": 181.79,
+        "anonymous_mib": 47.949
+      },
+      "arena--file": {
+        "elapsed_seconds": 2.153,
+        "p95_seconds": 0.734,
+        "peak_rss_mib": 197.277,
+        "rss_mib": 197.695,
+        "pss_mib": 181.83,
+        "anonymous_mib": 47.945
+      },
+      "arena-2-file": {
+        "elapsed_seconds": 2.143,
+        "p95_seconds": 0.752,
+        "peak_rss_mib": 197.41,
+        "rss_mib": 197.68,
+        "pss_mib": 181.88,
+        "anonymous_mib": 47.953
+      }
+    },
+    {
+      "case": "recost-preview",
+      "events": 100000,
+      "snapshots": 100000,
+      "runs": 3,
+      "rounds": 3,
+      "baseline_ref": "origin/main",
+      "output_identical": true,
+      "baseline": {
+        "elapsed_seconds": 9.918,
+        "p95_seconds": 3.528,
+        "peak_rss_mib": 636.629,
+        "rss_mib": 404.426,
+        "pss_mib": 396.413,
+        "anonymous_mib": 254.742
+      },
+      "current": {
+        "elapsed_seconds": 3.778,
+        "p95_seconds": 1.285,
+        "peak_rss_mib": 197.891,
+        "rss_mib": 198.27,
+        "pss_mib": 190.229,
+        "anonymous_mib": 48.602
+      },
+      "arena-2-memory": {
+        "elapsed_seconds": 3.728,
+        "p95_seconds": 1.267,
+        "peak_rss_mib": 197.965,
+        "rss_mib": 198.262,
+        "pss_mib": 190.243,
+        "anonymous_mib": 48.586
+      },
+      "arena-4-memory": {
+        "elapsed_seconds": 3.552,
+        "p95_seconds": 1.218,
+        "peak_rss_mib": 198.172,
+        "rss_mib": 198.32,
+        "pss_mib": 190.247,
+        "anonymous_mib": 48.602
+      },
+      "arena--file": {
+        "elapsed_seconds": 3.858,
+        "p95_seconds": 1.311,
+        "peak_rss_mib": 197.973,
+        "rss_mib": 198.238,
+        "pss_mib": 190.216,
+        "anonymous_mib": 48.602
+      },
+      "arena-2-file": {
+        "elapsed_seconds": 3.732,
+        "p95_seconds": 1.271,
+        "peak_rss_mib": 198.121,
+        "rss_mib": 198.367,
+        "pss_mib": 190.282,
+        "anonymous_mib": 48.594
+      }
+    },
+    {
+      "case": "recost-apply",
+      "events": 100000,
+      "snapshots": 100000,
+      "runs": 3,
+      "rounds": 3,
+      "baseline_ref": "origin/main",
+      "output_identical": true,
+      "baseline": {
+        "elapsed_seconds": 65.84,
+        "p95_seconds": 59.279,
+        "peak_rss_mib": 939.559,
+        "rss_mib": 468.359,
+        "pss_mib": 449.407,
+        "anonymous_mib": 318.652
+      },
+      "current": {
+        "elapsed_seconds": 5.921,
+        "p95_seconds": 3.199,
+        "peak_rss_mib": 219.902,
+        "rss_mib": 220.344,
+        "pss_mib": 201.398,
+        "anonymous_mib": 70.652
+      },
+      "arena-2-memory": {
+        "elapsed_seconds": 6.589,
+        "p95_seconds": 3.314,
+        "peak_rss_mib": 219.773,
+        "rss_mib": 220.344,
+        "pss_mib": 201.385,
+        "anonymous_mib": 70.672
+      },
+      "arena-4-memory": {
+        "elapsed_seconds": 6.071,
+        "p95_seconds": 3.193,
+        "peak_rss_mib": 219.945,
+        "rss_mib": 220.34,
+        "pss_mib": 201.4,
+        "anonymous_mib": 70.648
+      },
+      "arena--file": {
+        "elapsed_seconds": 6.049,
+        "p95_seconds": 3.319,
+        "peak_rss_mib": 219.855,
+        "rss_mib": 220.363,
+        "pss_mib": 201.351,
+        "anonymous_mib": 70.66
+      },
+      "arena-2-file": {
+        "elapsed_seconds": 5.546,
+        "p95_seconds": 2.921,
+        "peak_rss_mib": 220.094,
+        "rss_mib": 220.461,
+        "pss_mib": 201.45,
+        "anonymous_mib": 70.73
+      }
+    },
+    {
+      "case": "dashboard",
+      "events": 100000,
+      "snapshots": 100000,
+      "runs": 3,
+      "rounds": 3,
+      "baseline_ref": "origin/main",
+      "output_identical": true,
+      "baseline": {
+        "elapsed_seconds": 2.429,
+        "p95_seconds": 0.845,
+        "peak_rss_mib": 250.117,
+        "rss_mib": 250.66,
+        "pss_mib": 231.768,
+        "anonymous_mib": 64.75
+      },
+      "current": {
+        "elapsed_seconds": 2.748,
+        "p95_seconds": 0.969,
+        "peak_rss_mib": 250.188,
+        "rss_mib": 250.73,
+        "pss_mib": 231.801,
+        "anonymous_mib": 64.805
+      },
+      "arena-2-memory": {
+        "elapsed_seconds": 2.529,
+        "p95_seconds": 0.939,
+        "peak_rss_mib": 250.23,
+        "rss_mib": 250.703,
+        "pss_mib": 231.76,
+        "anonymous_mib": 64.82
+      },
+      "arena-4-memory": {
+        "elapsed_seconds": 2.366,
+        "p95_seconds": 0.803,
+        "peak_rss_mib": 249.996,
+        "rss_mib": 250.668,
+        "pss_mib": 231.766,
+        "anonymous_mib": 64.805
+      },
+      "arena--file": {
+        "elapsed_seconds": 2.473,
+        "p95_seconds": 0.868,
+        "peak_rss_mib": 249.285,
+        "rss_mib": 249.41,
+        "pss_mib": 231.979,
+        "anonymous_mib": 63.441
+      },
+      "arena-2-file": {
+        "elapsed_seconds": 3.714,
+        "p95_seconds": 1.374,
+        "peak_rss_mib": 248.93,
+        "rss_mib": 249.316,
+        "pss_mib": 232.291,
+        "anonymous_mib": 63.445
+      }
+    },
+    {
+      "case": "ingest",
+      "events": 100000,
+      "snapshots": 100000,
+      "runs": 3,
+      "rounds": 3,
+      "baseline_ref": "origin/main",
+      "output_identical": true,
+      "baseline": {
+        "elapsed_seconds": 2.442,
+        "p95_seconds": 0.894,
+        "peak_rss_mib": 74.965,
+        "rss_mib": 75.523,
+        "pss_mib": 58.957,
+        "anonymous_mib": 47.848
+      },
+      "current": {
+        "elapsed_seconds": 2.713,
+        "p95_seconds": 1.036,
+        "peak_rss_mib": 75.0,
+        "rss_mib": 75.57,
+        "pss_mib": 59.054,
+        "anonymous_mib": 47.91
+      },
+      "arena-2-memory": {
+        "elapsed_seconds": 2.242,
+        "p95_seconds": 0.795,
+        "peak_rss_mib": 75.172,
+        "rss_mib": 75.539,
+        "pss_mib": 59.192,
+        "anonymous_mib": 47.906
+      },
+      "arena-4-memory": {
+        "elapsed_seconds": 2.26,
+        "p95_seconds": 0.789,
+        "peak_rss_mib": 75.203,
+        "rss_mib": 75.539,
+        "pss_mib": 59.187,
+        "anonymous_mib": 47.906
+      },
+      "arena--file": {
+        "elapsed_seconds": 2.241,
+        "p95_seconds": 0.791,
+        "peak_rss_mib": 75.168,
+        "rss_mib": 75.629,
+        "pss_mib": 59.163,
+        "anonymous_mib": 47.879
+      },
+      "arena-2-file": {
+        "elapsed_seconds": 2.681,
+        "p95_seconds": 0.977,
+        "peak_rss_mib": 75.125,
+        "rss_mib": 75.598,
+        "pss_mib": 59.159,
+        "anonymous_mib": 47.879
+      }
+    },
+    {
+      "case": "mixed",
+      "events": 100000,
+      "snapshots": 100000,
+      "runs": 3,
+      "rounds": 3,
+      "baseline_ref": "origin/main",
+      "output_identical": true,
+      "baseline": {
+        "elapsed_seconds": 27.563,
+        "p95_seconds": 5.263,
+        "peak_rss_mib": 1361.945,
+        "rss_mib": 1160.883,
+        "pss_mib": 536.939,
+        "anonymous_mib": 367.332
+      },
+      "current": {
+        "elapsed_seconds": 17.612,
+        "p95_seconds": 5.874,
+        "peak_rss_mib": 906.645,
+        "rss_mib": 907.715,
+        "pss_mib": 283.689,
+        "anonymous_mib": 114.066
+      },
+      "arena-2-memory": {
+        "elapsed_seconds": 18.292,
+        "p95_seconds": 5.998,
+        "peak_rss_mib": 897.891,
+        "rss_mib": 898.66,
+        "pss_mib": 274.741,
+        "anonymous_mib": 105.148
+      },
+      "arena-4-memory": {
+        "elapsed_seconds": 17.665,
+        "p95_seconds": 5.97,
+        "peak_rss_mib": 897.797,
+        "rss_mib": 892.754,
+        "pss_mib": 268.759,
+        "anonymous_mib": 99.164
+      },
+      "arena--file": {
+        "elapsed_seconds": 17.374,
+        "p95_seconds": 5.748,
+        "peak_rss_mib": 952.219,
+        "rss_mib": 953.02,
+        "pss_mib": 292.809,
+        "anonymous_mib": 123.141
+      },
+      "arena-2-file": {
+        "elapsed_seconds": 17.44,
+        "p95_seconds": 5.725,
+        "peak_rss_mib": 923.684,
+        "rss_mib": 920.738,
+        "pss_mib": 273.612,
+        "anonymous_mib": 103.996
+      }
+    }
+  ],
+  "extended_mixed": {
+    "case": "mixed",
+    "events": 100000,
+    "snapshots": 100000,
+    "runs": 3,
+    "rounds": 10,
+    "baseline_ref": "origin/main",
+    "baseline_sha": "e44385938eb6a0809cbc89e652311e4560133af8",
+    "output_identical": true,
+    "baseline": {
+      "elapsed_seconds": 97.993,
+      "p95_seconds": 5.642,
+      "peak_rss_mib": 1614.133,
+      "rss_mib": 1372.777,
+      "pss_mib": 722.936,
+      "anonymous_mib": 544.98
+    },
+    "current": {
+      "elapsed_seconds": 58.482,
+      "p95_seconds": 5.924,
+      "peak_rss_mib": 978.047,
+      "rss_mib": 962.031,
+      "pss_mib": 301.894,
+      "anonymous_mib": 132.199
+    },
+    "arena-2-memory": {
+      "elapsed_seconds": 59.819,
+      "p95_seconds": 5.989,
+      "peak_rss_mib": 952.934,
+      "rss_mib": 948.527,
+      "pss_mib": 292.705,
+      "anonymous_mib": 118.598
+    },
+    "arena-4-memory": {
+      "elapsed_seconds": 57.643,
+      "p95_seconds": 6.025,
+      "peak_rss_mib": 952.152,
+      "rss_mib": 949.977,
+      "pss_mib": 294.741,
+      "anonymous_mib": 122.324
+    },
+    "arena--file": {
+      "elapsed_seconds": 58.946,
+      "p95_seconds": 5.978,
+      "peak_rss_mib": 968.898,
+      "rss_mib": 969.762,
+      "pss_mib": 316.386,
+      "anonymous_mib": 140.082
+    },
+    "arena-2-file": {
+      "elapsed_seconds": 57.761,
+      "p95_seconds": 5.923,
+      "peak_rss_mib": 960.598,
+      "rss_mib": 959.832,
+      "pss_mib": 301.283,
+      "anonymous_mib": 129.906
+    }
+  },
+  "python_allocations": {
+    "case": "window",
+    "events": 100000,
+    "snapshots": 10000,
+    "runs": 1,
+    "rounds": 1,
+    "baseline_ref": "origin/main",
+    "baseline_sha": "e44385938eb6a0809cbc89e652311e4560133af8",
+    "output_identical": true,
+    "baseline": {
+      "elapsed_seconds": 9.81,
+      "p95_seconds": 9.809,
+      "peak_rss_mib": 974.641,
+      "rss_mib": 683.422,
+      "pss_mib": 664.386,
+      "anonymous_mib": 533.727,
+      "python_peak_mib": 424.563
+    },
+    "current": {
+      "elapsed_seconds": 0.26,
+      "p95_seconds": 0.259,
+      "peak_rss_mib": 206.711,
+      "rss_mib": 206.82,
+      "pss_mib": 187.771,
+      "anonymous_mib": 57.109,
+      "python_peak_mib": 2.027
+    }
+  }
+}

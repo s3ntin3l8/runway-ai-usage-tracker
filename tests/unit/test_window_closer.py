@@ -13,10 +13,13 @@ Tests verify:
 import json
 from datetime import UTC, datetime
 
+import pytest
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.core.date_utils import parse_iso8601_utc
+from app.core.db import configure_sqlite_engine
 from app.models.db import LatestUsage, UsageEvent, UsageWindow
 from app.services.pricing_seed import seed_pricing_table
 from app.services.window_closer import _maybe_close_previous_window, close_window
@@ -657,3 +660,78 @@ def test_maybe_close_handles_naive_new_reset_at():
         new_reset_at=rolled_over,
     )
     assert inserted > 0, "Offset-less reset_at normalised to UTC must still close the window"
+
+
+def test_close_window_groups_empty_identities_without_loading_events():
+    s = _seeded_session()
+    expected = {}
+    for i, (model, host) in enumerate(
+        [(None, ""), ("", ""), ("sonnet", ""), ("", "a"), ("sonnet", "a"), ("sonnet", "b")]
+    ):
+        _add_event(
+            s,
+            f"group-{i}",
+            _mid_window(),
+            model_id=model,
+            sidecar_id=host,
+            tokens_input=i + 1,
+            tokens_cache_read=2 * i,
+            cost_usd=0.01 * (i + 1),
+        )
+        for key in {("", ""), (model or "", ""), ("", host), (model or "", host)}:
+            totals = expected.setdefault(key, [0, 0, 0, 0.0])
+            for j, value in enumerate([1, i + 1, 2 * i, 0.01 * (i + 1)]):
+                totals[j] += value
+    s.expunge_all()
+    loaded_events = []
+    event.listen(
+        s,
+        "loaded_as_persistent",
+        lambda session, obj: loaded_events.append(obj) if isinstance(obj, UsageEvent) else None,
+    )
+    inserted = close_window(
+        s,
+        provider_id="anthropic",
+        account_id="user@example.com",
+        window_type="weekly",
+        window_start=_WINDOW_START,
+        window_end=_WINDOW_END,
+    )
+    assert inserted == len(expected)
+    assert loaded_events == []
+    for row in s.exec(select(UsageWindow)):
+        assert [row.msgs, row.tokens_input, row.tokens_cache_read, row.cost_usd] == pytest.approx(
+            expected[(row.model_id, row.sidecar_id)]
+        )
+
+
+def test_close_window_includes_pending_events_and_respects_outer_rollback():
+    engine = _engine()
+    configure_sqlite_engine(engine)
+    with Session(engine) as s:
+        s.add(
+            UsageEvent(
+                provider_id="anthropic",
+                account_id="user@example.com",
+                event_id="pending",
+                ts=_WINDOW_START,
+                kind="message",
+                tokens_input=123,
+            )
+        )
+        assert (
+            close_window(
+                s,
+                provider_id="anthropic",
+                account_id="user@example.com",
+                window_type="weekly",
+                window_start=_WINDOW_START,
+                window_end=_WINDOW_END,
+            )
+            > 0
+        )
+        assert s.exec(select(UsageWindow)).first().tokens_input == 123
+        s.rollback()
+    with Session(engine) as s:
+        assert s.exec(select(UsageEvent)).first() is None
+        assert s.exec(select(UsageWindow)).first() is None

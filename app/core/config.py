@@ -2,6 +2,7 @@
 import logging
 import os
 import platform
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, ValidationInfo, computed_field, field_validator
@@ -205,6 +206,8 @@ class Settings(BaseSettings):
     DATABASE_PATH: str = Field(
         default_factory=lambda: os.path.join(get_platform_config_dir("runway"), "runway.db")
     )
+    # Connection-scoped; changing this setting takes effect on restart.
+    SQLITE_TEMP_STORE: Literal["MEMORY", "FILE"] = "MEMORY"
 
     BROWSER_PREFERENCE: str = "safari,chrome,chromium,edge,firefox"
 
