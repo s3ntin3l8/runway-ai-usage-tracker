@@ -1,0 +1,868 @@
+{
+  "issue": 603,
+  "scope": "actual Authentik/Traefik TLS deployment matrix; isolated synthetic app on existing infrastructure",
+  "metadata": {
+    "tested_host": "runway-603.dev-01.in.s3ntin3l8.de",
+    "reference_deployment": "https://runway.dev-01.in.s3ntin3l8.de/",
+    "idp": "https://authentik.s3ntin3l8.de",
+    "operator": "Codex acting for repository owner on dev-01",
+    "os": "Ubuntu 24.04.5 LTS",
+    "kernel": "7.0.14-3-pve",
+    "architecture": "x86_64",
+    "runway_revision": "git:70779c444da05c9e19aad0b5a87f4979d42ab081",
+    "image_id": "sha256:d54325987b93950279d6373c17c85e6fc6d1d617286f2b120389da31647a3c54",
+    "image_repo_digests": [
+      "ghcr.io/s3ntin3l8/runway@sha256:d54325987b93950279d6373c17c85e6fc6d1d617286f2b120389da31647a3c54"
+    ],
+    "authentik_core": "2026.8.3",
+    "authentik_outpost": "2026.8.3",
+    "traefik": "v3.7.1",
+    "runtime": {
+      "python": "3.12.15",
+      "uvicorn": "0.54.0",
+      "fastapi": "0.143.0",
+      "pydantic": "2.14.0"
+    },
+    "tls": {
+      "protocol": "TLSv1.3",
+      "cipher": "TLS_AES_128_GCM_SHA256",
+      "certificate_verified": true,
+      "issuer": [
+        [
+          [
+            "countryName",
+            "US"
+          ]
+        ],
+        [
+          [
+            "organizationName",
+            "Let's Encrypt"
+          ]
+        ],
+        [
+          [
+            "commonName",
+            "YR2"
+          ]
+        ]
+      ],
+      "not_after": "Dec 27 16:58:09 2026 GMT"
+    },
+    "outpost_provider_membership_before": [
+      86,
+      85,
+      88,
+      87,
+      84
+    ],
+    "test_provider_id": 90,
+    "browser": "Chromium 156.0.8078.4",
+    "runway_version": "3.0.0-beta.9",
+    "started_at": "2026-10-12T11:12:30.763208348Z",
+    "matrix_finished_at": "2026-10-12T11:29:57.618878+00:00"
+  },
+  "server_config": {
+    "APP_HOST": "0.0.0.0",
+    "APP_PORT": 8765,
+    "RUNWAY_CONFIG_DIR": "/data (disposable runway-603-data volume)",
+    "DATABASE_PATH": "/data/runway.db",
+    "CORS_ORIGINS": "https://runway-603.dev-01.in.s3ntin3l8.de",
+    "PUBLIC_URL": "https://runway-603.dev-01.in.s3ntin3l8.de",
+    "TLS_TERMINATED": true,
+    "TRUSTED_PROXY_IPS": [
+      "172.20.0.254"
+    ],
+    "FORWARD_AUTH_USER_HEADER": "X-authentik-username",
+    "FORWARD_AUTH_EMAIL_HEADER": "X-authentik-email",
+    "FORWARD_AUTH_GROUPS_HEADER": "X-authentik-groups",
+    "FORWARD_AUTH_ALLOWED_GROUPS": [
+      "runway-603-allowed"
+    ],
+    "FORWARD_AUTH_ALLOWED_USERS": [],
+    "launch": [
+      "python",
+      "-m",
+      "uvicorn",
+      "fixture_server:app",
+      "--app-dir",
+      "/validation",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8765",
+      "--no-proxy-headers",
+      "--lifespan",
+      "off"
+    ],
+    "instrumentation": "fixture_server imports unchanged app, calls init_db, and wraps ASGI send to log peer/path/Host/Origin/XFF/status only; lifespan off prevents collectors and unrelated background work",
+    "synthetic_secrets_configured": [
+      "ADMIN_API_KEY",
+      "INGEST_API_KEY",
+      "DB_ENCRYPTION_KEY"
+    ]
+  },
+  "authentik_config": {
+    "mode": "forward_single",
+    "external_host": "https://runway-603.dev-01.in.s3ntin3l8.de",
+    "authentication_flow": "runway-603-authentication",
+    "authorization_flow": "default-provider-authorization-implicit-consent",
+    "invalidation_flow": "default-provider-invalidation-flow",
+    "intercept_header_auth": false,
+    "application_slug": "runway-603-validation",
+    "application_policy_engine_mode": "any",
+    "application_group_binding": "runway-603-app-access",
+    "outpost": "existing dev-01 real proxy outpost",
+    "flow_stages": [
+      "synthetic username/password identification using InbuiltBackend",
+      "user login limited to runway-603-synthetic-users"
+    ],
+    "users": {
+      "runway-603-allowed": [
+        "runway-603-synthetic-users",
+        "runway-603-app-access",
+        "runway-603-allowed"
+      ],
+      "runway-603-disallowed": [
+        "runway-603-synthetic-users",
+        "runway-603-app-access",
+        "runway-603-disallowed"
+      ],
+      "runway-603-idp-denied": [
+        "runway-603-synthetic-users",
+        "runway-603-disallowed"
+      ]
+    }
+  },
+  "summary": {
+    "total_cases": 51,
+    "passed": 51,
+    "failed": 0,
+    "blocked": 0
+  },
+  "cases": [
+    {
+      "case": "unauthenticated-private-api",
+      "expected": "Authentik redirect; private state unavailable",
+      "actual": {
+        "status": 302,
+        "location": "https://authentik.s3ntin3l8.de"
+      },
+      "status": "pass"
+    },
+    {
+      "case": "allowed-private-read",
+      "expected": "200",
+      "actual": {
+        "status": 200,
+        "body": {
+          "provider_order": [],
+          "card_orders": {}
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "case": "allowed-browser-write",
+      "expected": "200; synthetic layout persisted",
+      "actual": {
+        "status": 200,
+        "body": {
+          "status": "saved"
+        },
+        "readback": {
+          "provider_order": [
+            "synthetic-603"
+          ],
+          "card_orders": {}
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "case": "allowed-identity",
+      "expected": "synthetic allowed user asserted by real outpost",
+      "actual": {
+        "user_context": "runway-603-allowed",
+        "is_authenticated": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "forged-identity-through-traefik",
+      "expected": "real allowed identity retained",
+      "actual": {
+        "user_context": "runway-603-allowed"
+      },
+      "status": "pass"
+    },
+    {
+      "case": "forged-forwarded-peer-write",
+      "expected": "200 with immediate Traefik peer retained",
+      "actual": {
+        "status": 200
+      },
+      "status": "pass"
+    },
+    {
+      "case": "layout-restored",
+      "expected": "baseline restored",
+      "actual": {
+        "provider_order": [],
+        "card_orders": {}
+      },
+      "status": "pass"
+    },
+    {
+      "case": "disallowed-private-read",
+      "expected": "403",
+      "actual": {
+        "status": 403,
+        "body": {
+          "detail": "Invalid or missing admin key"
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "case": "disallowed-private-write",
+      "expected": "403",
+      "actual": {
+        "status": 403
+      },
+      "status": "pass"
+    },
+    {
+      "case": "disallowed-forged-allowed-group",
+      "expected": "403",
+      "actual": {
+        "status": 403
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-valid",
+      "expected": "200",
+      "actual": {
+        "status": 200
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-invalid",
+      "expected": "403",
+      "actual": {
+        "status": 403
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-missing",
+      "expected": "403",
+      "actual": {
+        "status": 403
+      },
+      "status": "pass"
+    },
+    {
+      "case": "idp-denied-private-read",
+      "expected": "redirect to Authentik denial; no private state",
+      "actual": {
+        "status": 302,
+        "body": {
+          "non_json": true
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "case": "idp-denied-private-write",
+      "expected": "403",
+      "actual": {
+        "status": 403
+      },
+      "status": "pass"
+    },
+    {
+      "case": "direct-backend-forged-identity-and-xff",
+      "expected": "403 reads/writes; unchanged business state",
+      "actual": {
+        "read_status": 403,
+        "write_status": 403,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "unauthenticated-forged-proxy-identity",
+      "expected": "SSO challenge; no backend identity or state change",
+      "actual": {
+        "status": 302,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "authentik-application-group-policy",
+      "expected": "Authentik permission-denied page",
+      "actual": {
+        "final_status": 200,
+        "final_host": "authentik.s3ntin3l8.de",
+        "denial_text_present": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "runway-group-refusal-preserves-state",
+      "expected": "403; unchanged business state",
+      "actual": {
+        "status": 403,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-write-without-sso",
+      "expected": "200; reversible mutation; restored baseline",
+      "actual": {
+        "status": 200,
+        "readback": {
+          "provider_order": [
+            "synthetic-break-glass"
+          ],
+          "card_orders": {}
+        },
+        "restored": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-refusal-preserves-state",
+      "expected": "403; unchanged business state",
+      "actual": {
+        "status": 403,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-path-scope",
+      "expected": "other private paths retain SSO challenge",
+      "actual": {
+        "status": 302
+      },
+      "status": "pass"
+    },
+    {
+      "case": "hmac-missing-no-sso",
+      "expected": "401; no login redirect; unchanged ingestion state",
+      "actual": {
+        "status": 401,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "hmac-success-no-sso",
+      "expected": "200; synthetic event and sidecar stored",
+      "actual": {
+        "status": 200,
+        "body": {
+          "status": "ok",
+          "provider": "synthetic-603",
+          "tokens_received": 0,
+          "metrics_stored": 1,
+          "events_received": 1,
+          "events_inserted": 1,
+          "events_duplicate": 0,
+          "events_reattributed": 0,
+          "events_error": false,
+          "windows_closed": 0,
+          "poll_providers": [],
+          "trigger": false,
+          "collection_enabled": true,
+          "keep_alive_desired": null,
+          "keep_alive_desired_providers": {},
+          "identities": {},
+          "reset_anchors": {},
+          "sidecar_update_channel": "stable",
+          "sidecar_auto_update": false,
+          "log_level": null,
+          "login_dirs": {
+            "claude_config_dirs": [],
+            "codex_home": []
+          },
+          "keep_alive_fleet_default": false,
+          "update_now": false
+        },
+        "counts": {
+          "usage_events": 1,
+          "latest_usage": 0,
+          "latest_usage_contributions": 0,
+          "usage_windows": 0,
+          "usage_period_rollup": 10,
+          "quota_snapshots": 0,
+          "sidecar_registry": 1,
+          "credential_sources": 0,
+          "pending_credential_tags": 0,
+          "credential_tags": 0,
+          "sidecar_request_receipts": 3,
+          "system_config": 1
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "case": "hmac-replay",
+      "expected": "409; unchanged ingestion state",
+      "actual": {
+        "status": 409,
+        "body": {
+          "detail": {
+            "error": "replayed_request"
+          }
+        },
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "hmac-bad",
+      "expected": "401; unchanged ingestion state",
+      "actual": {
+        "status": 401,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "hmac-body-integrity",
+      "expected": "401 when transmitted bytes differ; unchanged state",
+      "actual": {
+        "status": 401,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "sidecar-origin-manipulation",
+      "expected": "403; unchanged state; no fixture secret disclosure",
+      "actual": {
+        "status": 403,
+        "state_unchanged": true,
+        "secret_disclosed": false
+      },
+      "status": "pass"
+    },
+    {
+      "case": "sidecar-host-manipulation",
+      "expected": "404; unchanged state; no fixture secret disclosure",
+      "actual": {
+        "status": 404,
+        "state_unchanged": true,
+        "secret_disclosed": false
+      },
+      "status": "pass"
+    },
+    {
+      "case": "signed-fleet-config-no-sso",
+      "expected": "200 JSON through scoped sidecar route",
+      "actual": {
+        "status": 200,
+        "content_type": "application/json"
+      },
+      "status": "pass"
+    },
+    {
+      "case": "bad-signed-fleet-config",
+      "expected": "401; unchanged state",
+      "actual": {
+        "status": 401,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "signed-credential-manifest-no-sso",
+      "expected": "200 through scoped sidecar route",
+      "actual": {
+        "status": 200
+      },
+      "status": "pass"
+    },
+    {
+      "case": "credential-manifest-replay",
+      "expected": "409; unchanged state",
+      "actual": {
+        "status": 409,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "audit-attribution-and-immediate-peer",
+      "expected": "all SSO mutations attributed to allowed fixture user and Traefik peer",
+      "actual": {
+        "proxy_audit_count": 6,
+        "actors": [
+          "runway-603-allowed"
+        ],
+        "source_ips": [
+          "172.20.0.254"
+        ]
+      },
+      "status": "pass"
+    },
+    {
+      "case": "direct-immediate-peer-not-rewritten",
+      "expected": "forged trusted XFF does not replace untrusted socket peer",
+      "actual": {
+        "observations": [
+          {
+            "method": "GET",
+            "path": "/api/v1/system/dashboard-layout",
+            "peer": "172.20.0.1",
+            "status": 403,
+            "host": "runway-603.dev-01.in.s3ntin3l8.de",
+            "origin": "",
+            "xff": "172.20.0.254"
+          },
+          {
+            "method": "PUT",
+            "path": "/api/v1/system/dashboard-layout",
+            "peer": "172.20.0.1",
+            "status": 403,
+            "host": "runway-603.dev-01.in.s3ntin3l8.de",
+            "origin": "",
+            "xff": "172.20.0.254"
+          },
+          {
+            "method": "GET",
+            "path": "/api/v1/system/dashboard-layout",
+            "peer": "172.20.0.1",
+            "status": 403,
+            "host": "runway-603.dev-01.in.s3ntin3l8.de",
+            "origin": "",
+            "xff": "172.20.0.254"
+          },
+          {
+            "method": "PUT",
+            "path": "/api/v1/system/dashboard-layout",
+            "peer": "172.20.0.1",
+            "status": 403,
+            "host": "runway-603.dev-01.in.s3ntin3l8.de",
+            "origin": "",
+            "xff": "172.20.0.254"
+          }
+        ]
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-audit-attribution",
+      "expected": "API-key mutations have API-key attribution",
+      "actual": {
+        "count": 4,
+        "actors": [
+          "api-key"
+        ]
+      },
+      "status": "pass"
+    },
+    {
+      "case": "credential-positive-control",
+      "expected": "signed owner response contains an opaque credential token",
+      "actual": {
+        "status": 200,
+        "credential_token_present": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "fleet-config-replay",
+      "expected": "409; unchanged state",
+      "actual": {
+        "status": 409,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "unsigned-fleet-config-redacted",
+      "expected": "200 public configuration only; credential tokens/account ids withheld",
+      "actual": {
+        "status": 200,
+        "credential_fields_withheld": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "fleet-config-signature-binds-query",
+      "expected": "401 for altered sidecar id; unchanged state",
+      "actual": {
+        "status": 401,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "credential-config-origin-rejection",
+      "expected": "403; no credential disclosure; unchanged state",
+      "actual": {
+        "status": 403,
+        "credential_disclosed": false,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "credential-config-host-rejection",
+      "expected": "404; no credential disclosure; unchanged state",
+      "actual": {
+        "status": 404,
+        "credential_disclosed": false,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "credential-manifest-bad-hmac-rejection",
+      "expected": "401; unchanged state",
+      "actual": {
+        "status": 401,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "credential-manifest-origin-rejection",
+      "expected": "403; unchanged state",
+      "actual": {
+        "status": 403,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "credential-manifest-host-rejection",
+      "expected": "404; unchanged state",
+      "actual": {
+        "status": 404,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-hostile-origin",
+      "expected": "403; unchanged state despite valid admin key",
+      "actual": {
+        "status": 403,
+        "state_unchanged": true
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-operator-source-restriction",
+      "expected": "403 from another container even with valid admin key",
+      "actual": {
+        "status": 403
+      },
+      "status": "pass"
+    },
+    {
+      "case": "break-glass-forged-identity-without-key",
+      "expected": "403",
+      "actual": {
+        "status": 403
+      },
+      "status": "pass"
+    },
+    {
+      "case": "manifest-forged-identity-without-hmac",
+      "expected": "401",
+      "actual": {
+        "status": 401
+      },
+      "status": "pass"
+    },
+    {
+      "case": "unauthenticated-dashboard-browser",
+      "expected": "real Authentik login challenge",
+      "actual": {
+        "final_host": "authentik.s3ntin3l8.de",
+        "final_path": "/if/flow/runway-603-authentication/",
+        "status": 200,
+        "login_form_visible": true,
+        "title": "Runway 603 synthetic validation - authentik"
+      },
+      "status": "pass"
+    },
+    {
+      "case": "allowed-dashboard-browser",
+      "expected": "dashboard HTML accessible after real SSO",
+      "actual": {
+        "final_host": "runway-603.dev-01.in.s3ntin3l8.de",
+        "final_path": "/",
+        "status": 200,
+        "login_form_visible": false,
+        "title": "Runway"
+      },
+      "status": "pass"
+    }
+  ],
+  "audit_log": [
+    {
+      "actor": "runway-603-allowed",
+      "actor_type": "proxy",
+      "actor_meta_json": "{\"email\":\"runway-603-allowed@example.invalid\",\"groups\":\"runway-603-synthetic-users|runway-603-app-access|runway-603-allowed\"}",
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "runway-603-allowed",
+      "actor_type": "proxy",
+      "actor_meta_json": "{\"email\":\"runway-603-allowed@example.invalid\",\"groups\":\"runway-603-synthetic-users|runway-603-app-access|runway-603-allowed\"}",
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "runway-603-allowed",
+      "actor_type": "proxy",
+      "actor_meta_json": "{\"email\":\"runway-603-allowed@example.invalid\",\"groups\":\"runway-603-synthetic-users|runway-603-app-access|runway-603-allowed\"}",
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "runway-603-allowed",
+      "actor_type": "proxy",
+      "actor_meta_json": "{\"email\":\"runway-603-allowed@example.invalid\",\"groups\":\"runway-603-synthetic-users|runway-603-app-access|runway-603-allowed\"}",
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "runway-603-allowed",
+      "actor_type": "proxy",
+      "actor_meta_json": "{\"email\":\"runway-603-allowed@example.invalid\",\"groups\":\"runway-603-synthetic-users|runway-603-app-access|runway-603-allowed\"}",
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "runway-603-allowed",
+      "actor_type": "proxy",
+      "actor_meta_json": "{\"email\":\"runway-603-allowed@example.invalid\",\"groups\":\"runway-603-synthetic-users|runway-603-app-access|runway-603-allowed\"}",
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "api-key",
+      "actor_type": "api-key",
+      "actor_meta_json": null,
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "api-key",
+      "actor_type": "api-key",
+      "actor_meta_json": null,
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "api-key",
+      "actor_type": "api-key",
+      "actor_meta_json": null,
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    },
+    {
+      "actor": "api-key",
+      "actor_type": "api-key",
+      "actor_meta_json": null,
+      "source_ip": "172.20.0.254",
+      "action": "dashboard.layout_update"
+    }
+  ],
+  "driver_preflight": {
+    "status": 400,
+    "detail": "Invalid payload: events.0.ts: missing",
+    "reason": "driver supplied timestamp rather than schema field ts; corrected synthetic payload passed",
+    "classification": "driver fixture error; not an application defect"
+  },
+  "teardown": {
+    "started_at": "2026-10-12T11:30:55.871793+00:00",
+    "steps": [
+      {
+        "step": "test-provider-detached",
+        "original_provider_set_restored": true,
+        "preserved_concurrent_provider_changes": true
+      },
+      {
+        "step": "test-routing-container-volume-removed"
+      },
+      {
+        "step": "synthetic-authentik-objects-deleted",
+        "count": 17
+      },
+      {
+        "step": "synthetic-authentik-objects-deleted",
+        "count": 17
+      },
+      {
+        "step": "no-test-users-groups-app-provider-flow-stages-remain"
+      },
+      {
+        "step": "original-runway-provider-config-unchanged",
+        "verified_fields": [
+          "name",
+          "mode",
+          "external_host",
+          "authentication_flow",
+          "authorization_flow",
+          "invalidation_flow",
+          "intercept_header_auth",
+          "property_mappings"
+        ]
+      },
+      {
+        "step": "post-teardown-health",
+        "production_private_status": 302,
+        "production_container_health": "healthy",
+        "test_host_status": 404
+      },
+      {
+        "step": "management-token-revocation-needs-exact-identifier",
+        "matching_test_token_found": false
+      },
+      {
+        "step": "management-token-revoked-and-file-deleted",
+        "revoked_request_status": 403
+      },
+      {
+        "step": "local-secrets-cookies-and-api-snapshots-removed",
+        "browser_contexts_closed": true,
+        "dns_changes": "none; pre-existing DNS retained",
+        "shared_tls_certificate": "existing certificate retained; no private-key export"
+      }
+    ],
+    "status": "complete",
+    "retry_reason": "Flow deletion endpoint uses slug, not UUID; remaining test flow detected and journal corrected before final verification",
+    "finished_at": "2026-10-12T11:33:52.985469+00:00"
+  },
+  "remaining_acceptance": {
+    "tracked_in": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603",
+    "native_windows": "pending",
+    "native_apple_silicon_macos": "pending",
+    "physical_browser_lna_and_dns_rebinding": "pending"
+  },
+  "repository_gate": {
+    "lint": "pass (ruff check/format, mypy, pip-audit)",
+    "python_tests": {
+      "passed": 4319,
+      "skipped": 36
+    },
+    "frontend_tests": {
+      "passed": 1155,
+      "files_passed": 114
+    }
+  }
+}
