@@ -789,6 +789,7 @@ class TestWindowsSwapScript:
         command_processor = (
             pathlib.Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "cmd.exe"
         )
+        # cmd /s strips the outer repair pair while keeping a spaced batch path quoted.
         assert (
             args[0]
             == f'"{command_processor}" /d /s /c ""{install_dir / "runway-self-update.bat"}""'

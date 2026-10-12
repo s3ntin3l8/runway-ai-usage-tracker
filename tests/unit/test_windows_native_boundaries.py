@@ -83,7 +83,13 @@ def test_native_swap_from_directory_with_spaces(tmp_path):
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and installed.read_bytes() != b"replacement":
+    while time.monotonic() < deadline:
+        try:
+            if installed.read_bytes() == b"replacement":
+                break
+        except FileNotFoundError:
+            # The helper briefly moves the old image away before the new one.
+            pass
         time.sleep(0.1)
     assert installed.read_bytes() == b"replacement"
     assert installed.with_name(installed.name + ".previous").read_bytes() == b"original"

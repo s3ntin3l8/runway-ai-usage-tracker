@@ -431,6 +431,7 @@ def _undo_pre_exec_hooks() -> None:
             _call_best_effort(undo, "Pre-exec undo")
 
 
+# Only _single_flight registers ownership; release/context teardown retire it.
 _ACTIVE_LOCK_LEASE: tuple[int, pathlib.Path] | None = None
 _ACTIVE_LOCK_GUARD = threading.Lock()
 
@@ -447,6 +448,8 @@ def _release_owned_lock(lease: tuple[int, pathlib.Path]) -> None:
         try:
             lock_path.unlink()
         except OSError:
+            # Already removed, or left for stale-lock reclaim after a transient
+            # filesystem/antivirus refusal. The owned CRT handle is closed.
             pass
 
 
