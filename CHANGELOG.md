@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.8...v3.0.0-beta.9) (2026-10-12)
+
+
+### Features
+
+* configure additional CLI login directories per machine ([#614](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/614)) ([e2d40e4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e2d40e4ccf00d0e0399a0d0d00fed74a9c6d1400))
+* show migration notice for removed server login sources ([#615](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/615)) ([4c6b7cd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4c6b7cd6257d6e89ca1776abfea573d6584feb8e))
+
+
+### Bug Fixes
+
+* forward Kimi CLI device identity with its token bundle ([#616](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/616)) ([e443859](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e44385938eb6a0809cbc89e652311e4560133af8))
+* reduce server RAM with bounded usage aggregation ([#619](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/619)) ([f1d9369](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f1d93690229f71668f555da8f99a0ed11f807408))
+
 ## [3.0.0-beta.8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.7...v3.0.0-beta.8) (2026-10-11)
 
 
