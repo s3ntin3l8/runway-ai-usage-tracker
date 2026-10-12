@@ -31,6 +31,7 @@ does not make queries allocate less memory.
 .venv/bin/python scripts/benchmark_server_memory.py --baseline-ref <commit> --matrix
 ```
 
+Requires Python 3.12 or newer, matching the project's virtual environment.
 The benchmark archives the baseline application code and runs both versions
 with the same dependencies. Every sample uses a fresh process and a private copy
 of a synthetic SQLite fixture; production data, credentials, and network
@@ -75,6 +76,8 @@ Individual cases use three rounds per process; concurrent reads use ten rounds.
 | Unpriced classification | 269 MiB | 197 MiB | 0.910 s | 0.711 s |
 | Recost preview | 637 MiB | 198 MiB | 3.528 s | 1.218 s |
 | Recost apply | 940 MiB | 220 MiB | 59.279 s | 3.193 s |
+| Dashboard reads | 250 MiB | 250 MiB | 0.845 s | 0.803 s |
+| Ingestion | 75 MiB | 75 MiB | 0.894 s | 0.789 s |
 | Concurrent reads/window closes | 1,614 MiB | 952 MiB | 5.642 s | 6.025 s |
 
 The concurrent workload's retained anonymous memory falls from **545 MiB to
@@ -86,6 +89,13 @@ The arena-4 profile stays within 10% of the optimized allocator default's latenc
 in every case. Arena-2 fails that gate for classification in the shorter matrix;
 FILE does not consistently reduce memory in the extended workload. Retain
 MEMORY and use arena-4 as the Docker default. Native behavior stays opt-in.
+
+The uncapped optimized profile in the shorter matrix measured dashboard and
+ingest p95 at 0.969 s and 1.036 s: 14.7% and 15.9% slower than baseline, despite
+unchanged query/ingestion paths. The table above reports the selected arena-4
+profile, not these uncapped results. The coarse samples do not establish a
+production latency change; native users and the deployed Docker service still
+need the equivalent-workload comparison in #618.
 
 Separately, tracing a single 100,000-event window close shows peak Python
 allocations dropping from **425 MiB to 2 MiB**. Traced timings are not used for
