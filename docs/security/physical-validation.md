@@ -67,6 +67,11 @@ update/restart sequence above. Use Python 3.12 and the repository's sidecar extr
 
 ## Physical browser boundaries
 
+The [Windows helper guide](windows-browser-helper.md) describes isolated trusted
+TLS direct probes, separate matching-port HTTP rebinding fixtures, scoped real
+DNS resolver setup, body-free exports, source restrictions and teardown. Helper
+readiness and DNS diagnostics are not physical browser acceptance.
+
 Use Edge/Chrome and Firefox on Windows, and Safari, Chrome and Firefox on macOS.
 Test dashboard and sidecar settings independently. Record Local Network Access
 prompts and permission denied/granted states where the browser supports them.
