@@ -62,7 +62,8 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             UsageEvent.tokens_cache_create_1h,
             UsageEvent.tokens_cache_create_5m,
             UsageEvent.cost_reported_usd,
-        ).where(
+        )
+        .where(
             col(UsageEvent.kind) == "message",
             col(UsageEvent.cost_usd) == 0.0,
             col(UsageEvent.model_id).is_not(None),
@@ -75,6 +76,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             )
             > 0,
         )
+        .execution_options(yield_per=1000)
     )
     for (
         provider_id,

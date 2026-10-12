@@ -9,6 +9,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderConfig, ProviderPricing, UsageEvent, UsagePeriodRollup
+from app.services.maintenance import recost
 from app.services.maintenance.recost import RecostChange, apply_recost, plan_recost
 
 
@@ -277,3 +278,85 @@ def test_apply_recost_skip_rollups_and_windows_flags():
     assert result.rollups_rebuilt_pairs == 0
     assert result.windows_rebuilt == 0
     assert list(session.exec(select(UsagePeriodRollup))) == []
+
+
+def test_recost_pages_survive_zero_filter_changes_and_ignore_new_events(monkeypatch):
+    monkeypatch.setattr(recost, "_EVENT_BATCH", 3)
+    s = _session()
+    _price(s, "chatgpt", "gpt-6-sol", rate=2.0)
+    # Equal timestamps must not skip siblings when a page boundary splits them.
+    for i in range(11):
+        _event(s, event_id=f"page-{i}")
+    _event(s, event_id="already-priced", cost_usd=50.0)
+    preview = plan_recost(s, ["chatgpt"], only_zero_cost=True, sample_size=20)
+    assert preview.updated == 11
+    assert [x.event_ref for x in preview.samples] == [f"page-{i}" for i in range(11)]
+
+    def insert_during_commit(session):
+        session.add(
+            UsageEvent(
+                provider_id="chatgpt",
+                account_id="alice@example.com",
+                event_id="new-during-scan",
+                model_id="gpt-6-sol",
+                ts=datetime(2026, 9, 2, tzinfo=UTC),
+                tokens_input=1_000_000,
+            )
+        )
+
+    event.listen(s, "before_commit", insert_during_commit, once=True)
+    result = apply_recost(s, ["chatgpt"], only_zero_cost=True, skip_rollups=True, skip_windows=True)
+    assert result.updated == 11
+    costs = {r.event_id: r.cost_usd for r in s.exec(select(UsageEvent))}
+    assert all(costs[f"page-{i}"] == 2.0 for i in range(11))
+    assert costs["already-priced"] == 50.0
+    assert costs["new-during-scan"] == 0.0
+
+
+def test_recost_pages_keep_chronological_order_and_avoid_orm_payloads(monkeypatch):
+    monkeypatch.setattr(recost, "_EVENT_BATCH", 2)
+    s = _session()
+    _price(s, "chatgpt", "gpt-6-sol", rate=2.0)
+    for day in [4, 2, 5, 1, 3]:
+        _event(
+            s, event_id=f"day-{day}", ts=datetime(2026, 9, day, tzinfo=UTC), raw_json="x" * 10000
+        )
+    s.expunge_all()
+    loaded = []
+    event.listen(
+        s,
+        "loaded_as_persistent",
+        lambda session, obj: loaded.append(obj) if isinstance(obj, UsageEvent) else None,
+    )
+    plan = plan_recost(s, ["chatgpt"])
+    assert [x.event_ref for x in plan.samples] == [f"day-{day}" for day in range(1, 6)]
+    assert loaded == []
+
+
+def test_recost_pages_seek_the_timestamp_index_with_bound_parameters(monkeypatch):
+    monkeypatch.setattr(recost, "_EVENT_BATCH", 2)
+    s = _session()
+    for day in range(1, 6):
+        _event(s, event_id=f"seek-{day}", ts=datetime(2026, 9, day, tzinfo=UTC))
+    plans = []
+
+    def explain_pages(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith("SELECT usage_events.id") and "usage_events.ts >" in statement:
+            # Use actual bound operands: literal substitution can hide the OR
+            # planner problem by letting SQLite see equal timestamp constants.
+            with_cursor = cursor.connection.cursor()
+            try:
+                plans.append(
+                    with_cursor.execute("EXPLAIN QUERY PLAN " + statement, parameters).fetchall()
+                )
+            finally:
+                with_cursor.close()
+
+    bind = s.get_bind()
+    event.listen(bind, "before_cursor_execute", explain_pages)
+    try:
+        assert plan_recost(s, None).unchanged == 5
+    finally:
+        event.remove(bind, "before_cursor_execute", explain_pages)
+    assert plans
+    assert all(any("kind=? AND ts>?" in row[3] for row in plan) for plan in plans)

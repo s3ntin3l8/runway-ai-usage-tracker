@@ -68,7 +68,14 @@ def configure_sqlite_engine(engine_: Engine) -> None:
             # ORDER BY / GROUP BY / window-function work that can't be
             # satisfied by an index — the ranking and forecast aggregations
             # all do this) in RAM instead of spilling to a temp file on disk.
-            cursor.execute("PRAGMA temp_store=MEMORY")
+            # FILE allows large sorts to spill to disk on memory-constrained
+            # deployments. Keep the SQL static as well as validating the enum.
+            cursor.execute(
+                {
+                    "MEMORY": "PRAGMA temp_store=MEMORY",
+                    "FILE": "PRAGMA temp_store=FILE",
+                }[settings.SQLITE_TEMP_STORE]
+            )
             # cache_size=-20000: ~20MB page cache (negative = KiB), up from
             # SQLite's ~2MB default. Cheap given this app's local-first,
             # single-instance deployment; keeps the hot working set (recent

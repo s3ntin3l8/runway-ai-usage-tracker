@@ -20,6 +20,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -58,21 +59,32 @@ def close_window(
     billable usage. This matches event_ingestor, which also excludes them from
     period rollups, keeping window totals consistent with rollup sums.
     """
-    # Query message events in the window range for this provider + account.
-    # Error events are tracked in usage_events for diagnostics but never roll
-    # up into quota windows.
-    events = session.exec(
-        select(UsageEvent).where(
+    # Summarize the smallest grain in SQLite. Loading every UsageEvent also
+    # materializes raw_json and ORM state: a busy monthly window can otherwise
+    # consume hundreds of MiB just to sum a few numeric columns.
+    model = func.coalesce(UsageEvent.model_id, "")
+    sidecar = func.coalesce(UsageEvent.sidecar_id, "")
+    groups = session.execute(
+        select(  # type: ignore[call-overload]
+            model,
+            sidecar,
+            func.count(),
+            func.sum(UsageEvent.tokens_input),
+            func.sum(UsageEvent.tokens_output),
+            func.sum(UsageEvent.tokens_cache_read),
+            func.sum(UsageEvent.tokens_cache_create),
+            func.sum(UsageEvent.tokens_reasoning),
+            func.sum(UsageEvent.cost_usd),
+        )
+        .where(
             UsageEvent.provider_id == provider_id,
             UsageEvent.account_id == account_id,
             UsageEvent.ts >= window_start,
             UsageEvent.ts < window_end,
             UsageEvent.kind != "error",
         )
-    ).all()
-
-    if not events:
-        return 0
+        .group_by(model, sidecar)
+    )
 
     # Aggregate at the different grains
     # grain_key: (model_id, sidecar_id) -> {msgs, tokens_input, ...}
@@ -91,15 +103,12 @@ def close_window(
             }
         return agg[key]
 
-    for ev in events:
-        model = ev.model_id or ""
-        sidecar = ev.sidecar_id or ""
-
+    for model_id, sidecar_id, msgs, ti, to, tcr, tcc, tr, cost in groups:
         grains: list[tuple[str, str]] = [
             ("", ""),
-            (model, ""),
-            ("", sidecar),
-            (model, sidecar),
+            (model_id, ""),
+            ("", sidecar_id),
+            (model_id, sidecar_id),
         ]
         # deduplicate (e.g. when model is "" the first two grains are identical)
         seen: dict[tuple[str, str], None] = {}
@@ -108,13 +117,13 @@ def close_window(
 
         for key in seen:
             totals = _ensure(key)
-            totals["msgs"] += 1
-            totals["tokens_input"] += ev.tokens_input
-            totals["tokens_output"] += ev.tokens_output
-            totals["tokens_cache_read"] += ev.tokens_cache_read
-            totals["tokens_cache_create"] += ev.tokens_cache_create
-            totals["tokens_reasoning"] += ev.tokens_reasoning
-            totals["cost_usd"] += ev.cost_usd
+            totals["msgs"] += msgs
+            totals["tokens_input"] += ti
+            totals["tokens_output"] += to
+            totals["tokens_cache_read"] += tcr
+            totals["tokens_cache_create"] += tcc
+            totals["tokens_reasoning"] += tr
+            totals["cost_usd"] += cost
 
     # Write rows — one per grain, idempotent via SAVEPOINT + IntegrityError catch.
     # Caller owns commit; we must not commit or rollback the outer session.

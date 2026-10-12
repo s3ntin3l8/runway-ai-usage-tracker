@@ -240,6 +240,11 @@ Resolution order is per-provider override → global default → built-in 900s. 
 - **Token Cache**: Sidecar-forwarded tokens are kept in-memory only (30-min TTL, never persisted to disk on the server)
 - **Smart sleep**: Idle dashboards downshift the poller to a 2-hour cadence; any usage event or `/api/v1/system/wake` resets it
 
+## Memory usage
+
+See [Server memory](server-memory.md) for bounded aggregation, SQLite temporary
+storage and allocator controls, reproducible benchmarks, and rollout measurement.
+
 ## Security
 
 ### API keys in Docker
