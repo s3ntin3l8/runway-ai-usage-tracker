@@ -117,3 +117,11 @@ def test_isolated_checks_remove_inherited_database_and_login_paths(monkeypatch):
 
     monkeypatch.setattr(dc.subprocess, "run", capture)
     dc.execute(["synthetic-check"], isolated_paths={"RUNWAY_CONFIG_DIR": "isolated-config"})
+
+
+@pytest.mark.parametrize("task", ["install-hooks", "lint", "mypy", "test", "unit", "gate"])
+def test_missing_venv_reports_install_before_running_commands(tmp_path, monkeypatch, task):
+    monkeypatch.setattr(dc, "ROOT", tmp_path)
+    monkeypatch.setattr(dc, "execute", lambda *a, **k: pytest.fail("check ran without .venv"))
+    with pytest.raises(RuntimeError, match=r"python scripts/dev_checks.py install first"):
+        dc.check(task, [])

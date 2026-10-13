@@ -27,7 +27,9 @@ def test_path_conversion_preserves_fingerprints_and_the_original():
     native = cs.baseline_paths(BASELINE, "\\")
     assert "app\\file.py" in native["results"]
     assert native["results"]["app\\file.py"][0]["filename"] == "app\\file.py"
-    assert cs.baseline_paths(native, "/") == BASELINE
+    restored = cs.baseline_paths(native, "/")
+    assert restored == BASELINE
+    assert json.dumps(restored, sort_keys=True) == json.dumps(BASELINE, sort_keys=True)
     assert "app/file.py" in BASELINE["results"]
 
 

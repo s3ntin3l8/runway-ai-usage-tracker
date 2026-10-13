@@ -1,4 +1,8 @@
-"""Keep detect-secrets baselines portable while preserving its failure/update semantics."""
+"""Keep detect-secrets baselines portable while preserving its failure/update semantics.
+
+Pre-commit filters filenames using its hook exclusions before invoking this wrapper.
+Manual invocations scan the supplied filenames without that pre-commit filtering.
+"""
 
 from __future__ import annotations
 

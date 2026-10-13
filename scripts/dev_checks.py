@@ -55,7 +55,10 @@ def execute(command: list[str], *, isolated_paths: dict[str, str] | None = None)
 
 
 def check(task: str, extra: list[str]) -> None:
-    python = str(venv_python())
+    interpreter = venv_python()
+    if task not in {"install", "web-test"} and not interpreter.is_file():
+        raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
+    python = str(interpreter)
     if task == "install":
         if not venv_python().is_file():
             execute([sys.executable, "-m", "venv", str(ROOT / ".venv")])

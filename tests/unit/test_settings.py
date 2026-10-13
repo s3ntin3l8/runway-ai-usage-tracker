@@ -87,6 +87,7 @@ def test_cors_origins_returns_localhost_fallback_when_unset():
 def test_log_format_defaults_to_plain(monkeypatch):
     from app.core.config import Settings
 
+    # Ignore both the operator environment and the checkout .env to test the default.
     monkeypatch.delenv("LOG_FORMAT", raising=False)
     s = Settings(_env_file=None)
     assert s.LOG_FORMAT == "plain"

@@ -3340,7 +3340,6 @@ class TestCustomLoginDirs:
         home.mkdir()
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("USERPROFILE", str(home))
-        monkeypatch.setenv("USERPROFILE", str(home))
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
         monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
         monkeypatch.delenv("CODEX_HOME", raising=False)
