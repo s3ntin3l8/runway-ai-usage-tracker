@@ -6,6 +6,27 @@
 make install    # venv + Python deps + webapp deps + git hooks (pre-commit & pre-push)
 ```
 
+On native Windows, install Python 3.12+ and Node.js (including npm), then run
+these commands in PowerShell from the repository root; Make and WSL are not required:
+
+```powershell
+python scripts/dev_checks.py install
+python scripts/dev_checks.py gate
+```
+
+Individual commands are `lint`, `test`, `web-test`, and `install-hooks`; the
+same runner also works on Linux and macOS. It uses this checkout's `.venv`,
+sets UTF-8 mode for Python child processes, installs the lockfile dependency
+graph with `npm ci`, and gives pytest fresh owned home, config, app-data and
+temporary directories so discovery fixtures cannot touch developer logins.
+For example: `python scripts/dev_checks.py test tests/unit/test_self_update.py`.
+Git Bash is needed for the registry-login shell action's tests on Windows.
+Symlink tests require Windows Developer Mode or an elevated process; a missing
+symlink privilege is reported as a specific skip, not Windows acceptance of those checks.
+POSIX permission assertions remain active on POSIX; Windows still checks
+credential contents and temporary-file cleanup. Frontend English date-label tests
+use a fixed test locale, while the dashboard retains the user's locale.
+
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
 note that `make dev` alone no longer sees your local CLI logins (Gemini, Claude,
 Codex, `gh`, opencode, ...): the server reads no credential files, so use

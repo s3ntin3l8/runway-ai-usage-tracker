@@ -170,7 +170,9 @@ class TestSharedProviderSet:
         knows would never produce a keyed origin. What each registry's *rules*
         look like is #351's problem, deliberately not asserted here."""
         registry = json.loads(
-            (Path(__file__).resolve().parents[2] / "app" / "core" / "registry.json").read_text()
+            (Path(__file__).resolve().parents[2] / "app" / "core" / "registry.json").read_text(
+                encoding="utf-8"
+            )
         )
         for pid in SERVER_SET:
             assert pid in sc.__REGISTRY__["providers"], pid

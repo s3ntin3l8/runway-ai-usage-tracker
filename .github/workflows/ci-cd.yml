@@ -33,6 +33,26 @@ jobs:
       strict-checks: true
     secrets: inherit
 
+  windows-native-gate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Install canonical dependencies and hooks
+        run: python scripts/dev_checks.py install
+      - name: Run the complete native Windows gate
+        run: python scripts/dev_checks.py gate
+
   dependency-audit:
     runs-on: ubuntu-latest
     permissions:

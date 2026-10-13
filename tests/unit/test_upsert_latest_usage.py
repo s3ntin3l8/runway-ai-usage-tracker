@@ -21,13 +21,15 @@ from app.services.accumulator import (
 @pytest.fixture(name="session")
 def session_fixture():
     fd, db_path = tempfile.mkstemp()
+    os.close(fd)
     db_url = f"sqlite:///{db_path}"
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as s:
-        yield s
-    os.close(fd)
-    if os.path.exists(db_path):
+    try:
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            yield s
+    finally:
+        engine.dispose()
         os.remove(db_path)
 
 

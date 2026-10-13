@@ -787,8 +787,10 @@ _HOMES = {
 
 def _registry_file_paths() -> list[str]:
     root = Path(__file__).resolve().parents[2]
-    registry_json = json.loads((root / "app/core/registry.json").read_text())
-    overlay = json.loads((root / "scripts/sidecar_registry_overlay.json").read_text())
+    registry_json = json.loads((root / "app/core/registry.json").read_text(encoding="utf-8"))
+    overlay = json.loads(
+        (root / "scripts/sidecar_registry_overlay.json").read_text(encoding="utf-8")
+    )
     rules = [r for p in registry_json["providers"].values() for r in p.get("rules", [])]
     rules += [add["rule"] for p in overlay["providers"].values() for add in p.get("add_rules", [])]
     paths: list[str] = []

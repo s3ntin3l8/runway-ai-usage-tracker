@@ -31,7 +31,8 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   `main` — Release Please parses it to cut versions/changelogs, and an
   unprefixed title silently drops out of the changelog.
 - **Before pushing, run the full gate:**
-  `make lint && make test && make web-test`.
+  `make lint && make test && make web-test` (or on native Windows,
+  `python scripts/dev_checks.py gate`).
   `make install` wires the same checks into git hooks: pre-commit runs ruff,
   mypy, detect-secrets, and the unit tests; pre-push runs the full suite.
   CI must stay green — `test-python / lint`, `test-python / type-and-test`,
@@ -61,7 +62,8 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   `git push origin --delete <branch>`, and `git worktree remove <path>` if a
   worktree was used. Skipping this lets stale references accumulate.
 - **Fresh clone or worktree:** run `make install` first (venv, Python + webapp
-  dependencies, git hooks) — none of it is inherited.
+  dependencies, git hooks) — none of it is inherited. On native Windows use
+  `python scripts/dev_checks.py install` instead.
 
 ## Everyday commands
 

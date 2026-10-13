@@ -94,7 +94,7 @@ def test_queued_payload_holds_no_credentials(queue_dirs):
 
     assert sidecar.queue_push(payload) is True
 
-    text = "".join(f.read_text() for f in queue_dirs.glob("*.jsonl"))
+    text = "".join(f.read_text(encoding="utf-8") for f in queue_dirs.glob("*.jsonl"))
     assert OAUTH not in text and KEY not in text
     assert "80%" in text, "usage is still queued"
 
@@ -129,7 +129,7 @@ def test_failed_replay_rewrites_the_entry_without_its_credentials(queue_dirs, mo
 
     sidecar.queue_flush("http://localhost", "k")
 
-    text = (queue_dirs / "2026-01-01.jsonl").read_text()
+    text = (queue_dirs / "2026-01-01.jsonl").read_text(encoding="utf-8")
     assert OAUTH not in text and KEY not in text
     assert "80%" in text
 
@@ -242,7 +242,7 @@ def test_logging_filter_redacts_tracebacks_too(tmp_path):
         logger.removeHandler(handler)
         handler.close()
 
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     assert OAUTH not in text
     assert "ValueError" in text and "send failed" in text
 
@@ -353,7 +353,7 @@ def test_github_token_is_encrypted_on_disk_and_round_trips(github_file, encrypti
         github_oauth.save_token({"access_token": "gho_synthetic_token_value", "login": "a"})
     )
 
-    on_disk = github_file.read_text()
+    on_disk = github_file.read_text(encoding="utf-8")
     assert "gho_synthetic_token_value" not in on_disk
     assert json.loads(on_disk)["login"] == "a", "only the secret is encrypted"
     assert github_oauth.load_token()["access_token"] == "gho_synthetic_token_value"
@@ -394,7 +394,7 @@ def test_get_status_upgrades_a_plaintext_token_in_place(github_file, encryption,
     status = asyncio.run(github_oauth.get_status())
 
     assert status.authenticated is True
-    assert "gho_legacy_plain_token" not in github_file.read_text()
+    assert "gho_legacy_plain_token" not in github_file.read_text(encoding="utf-8")
     assert github_oauth.load_token()["access_token"] == "gho_legacy_plain_token"
 
 
@@ -405,7 +405,7 @@ def test_without_a_key_the_token_stays_plaintext_and_nothing_breaks(github_file,
 
     asyncio.run(github_oauth.save_token({"access_token": "gho_plain_when_no_key"}))
 
-    assert "gho_plain_when_no_key" in github_file.read_text()
+    assert "gho_plain_when_no_key" in github_file.read_text(encoding="utf-8")
     assert github_oauth.load_token()["access_token"] == "gho_plain_when_no_key"
     assert github_oauth._token_stored_in_plaintext() is False
 
@@ -496,4 +496,4 @@ def test_github_migration_encryption_failure_returns_503_and_preserves_file(
     assert response.status_code == 503
     assert "refusing to persist plaintext" in response.json()["detail"]
     assert "synthetic failure" not in response.text
-    assert github_file.read_text() == original
+    assert github_file.read_text(encoding="utf-8") == original

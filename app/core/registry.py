@@ -25,7 +25,7 @@ class Registry:
         try:
             mtime = os.path.getmtime(self._path)
             if mtime != self._mtime:
-                with open(self._path) as f:
+                with open(self._path, encoding="utf-8") as f:
                     self._cache = json.load(f)
                 self._mtime = mtime
         except Exception as e:

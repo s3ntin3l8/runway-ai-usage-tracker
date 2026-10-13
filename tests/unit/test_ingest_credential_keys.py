@@ -29,7 +29,7 @@ def _sidecar_mapping_targets() -> set[str]:
     Blocks hold several ``"source.path": "target"`` pairs and the source paths contain dots
     (``claudeAiOauth.accessToken``), so match whole blocks and take *all* their values.
     """
-    text = SIDECAR.read_text()
+    text = SIDECAR.read_text(encoding="utf-8")
     targets: set[str] = set()
     for body in re.findall(r'"mapping":\s*\{(.*?)\}', text, re.DOTALL):
         targets.update(re.findall(r'"[^"]+":\s*"([^"]+)"', body))

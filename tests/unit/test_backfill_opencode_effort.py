@@ -1,6 +1,7 @@
 """Tests for the OpenCode effort backfill — match, guard, dry-run, idempotency."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
@@ -194,7 +195,6 @@ def test_missing_db_override_exits_nonzero(tmp_path, monkeypatch):
 
 def test_collect_pushes_resolves_identity_per_path(monkeypatch):
     """Each DB path resolves its own account_id — not db_paths[0] for all."""
-    from pathlib import Path
 
     seen: list[str] = []
 
@@ -219,7 +219,7 @@ def test_collect_pushes_resolves_identity_per_path(monkeypatch):
     paths = [Path("/tmp/a.db"), Path("/tmp/b.db")]
     pushes = bf._collect_pushes(paths)
 
-    assert seen == ["/tmp/a.db", "/tmp/b.db"]
+    assert seen == [str(Path("/tmp/a.db")), str(Path("/tmp/b.db"))]
     assert pushes["ev-a.db"].account_id == "acct-for-a.db"
     assert pushes["ev-b.db"].account_id == "acct-for-b.db"
 

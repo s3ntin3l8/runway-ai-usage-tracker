@@ -471,6 +471,7 @@ def test_codex_login_paths_follow_the_chatgpt_file_rule(tmp_path, monkeypatch):
     extra = extra_dir / "auth.json"
     extra.write_text("{}")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("CODEX_HOME", str(extra_dir))
 
@@ -495,6 +496,7 @@ def test_claude_login_paths_follow_the_claude_file_rule(tmp_path, monkeypatch):
     extra = extra_dir / ".credentials.json"
     extra.write_text("{}")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(extra_dir))
 

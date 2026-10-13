@@ -11,3 +11,4 @@ secretstorage>=3.3.0
 PyYAML>=6.0.0
 slowapi==0.1.10
 sqlmodel==0.0.47
+tzdata>=2026.5; sys_platform == "win32"

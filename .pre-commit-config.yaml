@@ -8,6 +8,8 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
+        entry: python scripts/check_secrets.py
+        require_serial: true
         args: ['--baseline', '.secrets.baseline']
         exclude: |
           (?x)^(
@@ -43,8 +45,8 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: .venv/bin/mypy . --ignore-missing-imports
-        language: system
+        entry: python scripts/dev_checks.py mypy
+        language: python
         types: [python]
         pass_filenames: false
 
@@ -53,16 +55,16 @@ repos:
     hooks:
       - id: pytest-unit
         name: pytest (unit tests)
-        entry: .venv/bin/pytest tests/unit/ -q
-        language: system
+        entry: python scripts/dev_checks.py unit
+        language: python
         types: [python]
         pass_filenames: false
         stages: [pre-commit]
 
       - id: pytest-all
         name: pytest (all tests)
-        entry: .venv/bin/pytest -q
-        language: system
+        entry: python scripts/dev_checks.py test -q
+        language: python
         types: [python]
         pass_filenames: false
         stages: [pre-push]

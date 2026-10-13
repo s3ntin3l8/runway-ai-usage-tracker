@@ -23,13 +23,15 @@ from app.models.db import AuditLog, CredentialSource, CredentialTag, LatestUsage
 @pytest.fixture(name="session")
 def session_fixture():
     fd, db_path = tempfile.mkstemp()
+    os.close(fd)
     db_url = f"sqlite:///{db_path}"
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        yield session
-    os.close(fd)
-    if os.path.exists(db_path):
+    try:
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            yield session
+    finally:
+        engine.dispose()
         os.remove(db_path)
 
 

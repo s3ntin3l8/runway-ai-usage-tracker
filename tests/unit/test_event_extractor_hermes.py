@@ -152,6 +152,7 @@ def test_discover_hermes_db_paths(monkeypatch, tmp_path):
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
     monkeypatch.delenv("HERMES_HOME", raising=False)
 
     hermes_dir = fake_home / ".hermes"
@@ -175,6 +176,7 @@ def test_discover_hermes_db_paths_with_hermes_home_profiles(monkeypatch, tmp_pat
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
 
     custom_dir = tmp_path / "custom_hermes"
     custom_dir.mkdir()
@@ -670,12 +672,13 @@ def test_watermark_mixed_counter_regression_preserves_high_watermark(tmp_path):
         db_path.unlink(missing_ok=True)
 
 
-def test_discover_hermes_db_paths_canonicalizes_symlinks(tmp_path, monkeypatch):
+def test_discover_hermes_db_paths_canonicalizes_symlinks(tmp_path, monkeypatch, make_symlink):
     """If HERMES_HOME points to a symlink of ~/.hermes, discovery canonicalizes with
     resolve() and returns the database only once."""
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
 
     real_dir = fake_home / ".hermes"
     real_dir.mkdir()
@@ -683,7 +686,7 @@ def test_discover_hermes_db_paths_canonicalizes_symlinks(tmp_path, monkeypatch):
     real_db.touch()
 
     symlink_dir = tmp_path / "symlink_hermes"
-    symlink_dir.symlink_to(real_dir)
+    make_symlink(symlink_dir, real_dir)
 
     monkeypatch.setenv("HERMES_HOME", str(symlink_dir))
 

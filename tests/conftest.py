@@ -281,3 +281,25 @@ def isolated_replay_receipts(monkeypatch, tmp_path):
     yield
     if replay_engine is not None:
         replay_engine.dispose()
+
+
+@pytest.fixture
+def make_symlink():
+    """Skip only a missing Windows symlink privilege, never an application failure."""
+
+    def create(link, target, *, target_is_directory=None):
+        try:
+            link.symlink_to(
+                target,
+                target_is_directory=target.is_dir()
+                if target_is_directory is None
+                else target_is_directory,
+            )
+        except OSError as exc:
+            if os.name == "nt" and exc.winerror == 1314:
+                pytest.skip(
+                    "Windows symlink privilege unavailable (Developer Mode or elevation required)"
+                )
+            raise
+
+    return create
