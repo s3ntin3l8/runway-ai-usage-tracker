@@ -355,3 +355,26 @@ def test_settings_blank_key_preserves_saved_key(settings_srv):
     )
     assert status == 200
     assert settings_srv.saved[-1]["api_key"] == "k"
+
+
+def test_pair_size_gate_rejects_matching_nonempty_body_before_reading():
+    from io import BytesIO
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from sidecar_app.settings_server import _Handler
+
+    body = json.dumps({"url": LINK, "pad": "x" * 9000}).encode()
+    reader = Mock(wraps=BytesIO(body))
+    reject = Mock()
+    callback = Mock()
+    handler = SimpleNamespace(
+        headers={"X-Runway-Control": "fixture-control", "Content-Length": str(len(body))},
+        server=SimpleNamespace(control_token="fixture-control", on_pair_url=callback),
+        rfile=reader,
+        send_error=reject,
+    )
+    _Handler._handle_pair_request(handler)
+    reject.assert_called_once_with(413)
+    reader.read.assert_not_called()
+    callback.assert_not_called()

@@ -43,6 +43,7 @@ def test_hook_keeps_failure_codes_and_only_saves_actual_updates(tmp_path, monkey
     def scan(command, **kwargs):
         assert kwargs["check"] is False
         assert kwargs["env"]["PYTHONUTF8"] == "1"
+        assert command[1:3] == ["-X", "utf8"]
         assert "detect_secrets.pre_commit_hook" in command
         assert str(baseline) not in command
         if code == 3:

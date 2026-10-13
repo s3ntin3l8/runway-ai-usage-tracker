@@ -1,5 +1,6 @@
 """Real loopback helper transports; these are not physical browser acceptance."""
 
+import errno
 import http.client
 import json
 import socket
@@ -257,3 +258,68 @@ def test_actual_tls_routes_serve_target_pages_with_certificate_verification(help
             assert not thread.is_alive()
             assert time.monotonic() - started < 1
             stalled.close()
+
+
+@pytest.mark.parametrize("bind_errno", [errno.EACCES, errno.EADDRINUSE])
+def test_ephemeral_dns_reselects_and_closes_tcp_when_udp_port_is_unavailable(
+    helper, monkeypatch, bind_errno
+):
+    import socketserver
+
+    original_bind = socketserver.ThreadingUDPServer.server_bind
+    original_close = socketserver.ThreadingTCPServer.server_close
+    attempts = []
+    closed = []
+
+    def bind_udp(server):
+        attempts.append(server.server_address)
+        if len(attempts) == 1:
+            raise OSError(bind_errno, "synthetic unavailable UDP port")
+        return original_bind(server)
+
+    def close_tcp(server):
+        closed.append(server.server_address)
+        return original_close(server)
+
+    monkeypatch.setattr(socketserver.ThreadingUDPServer, "server_bind", bind_udp)
+    monkeypatch.setattr(socketserver.ThreadingTCPServer, "server_close", close_tcp)
+    udp, tcp = servers(helper, 0)
+    try:
+        assert len(attempts) == 2
+        assert closed == [attempts[0]]
+        assert udp.server_address == tcp.server_address
+    finally:
+        udp.server_close()
+        tcp.server_close()
+
+
+@pytest.mark.parametrize("port, attempts", [(0, 5), (19443, 1)])
+def test_dns_allocation_failure_is_bounded_and_closes_tcp(helper, monkeypatch, port, attempts):
+    import socketserver
+
+    closed = []
+    binds = []
+    original_tcp_bind = socketserver.ThreadingTCPServer.server_bind
+    original_close = socketserver.ThreadingTCPServer.server_close
+
+    def bind_tcp(server):
+        # Use a real owned socket without depending on the configured fixture's
+        # port being available on the test host. Keep servers()' retry policy real.
+        server.server_address = (helper.bind, 0)
+        original_tcp_bind(server)
+
+    def reject_udp(server):
+        binds.append(server.server_address)
+        raise PermissionError(errno.EACCES, "synthetic UDP exclusion")
+
+    def close_tcp(server):
+        closed.append(server.server_address)
+        original_close(server)
+
+    monkeypatch.setattr(socketserver.ThreadingTCPServer, "server_bind", bind_tcp)
+    monkeypatch.setattr(socketserver.ThreadingUDPServer, "server_bind", reject_udp)
+    monkeypatch.setattr(socketserver.ThreadingTCPServer, "server_close", close_tcp)
+    with pytest.raises(PermissionError):
+        servers(helper, port)
+    assert len(binds) == attempts
+    assert closed == binds

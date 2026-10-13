@@ -96,8 +96,8 @@ class SmartCollector:
         - TTL not exceeded AND
         - Error count below threshold
         """
-        # Zero TTL disables caching even when a coarse Windows clock returns
-        # the same timestamp for two consecutive collection cycles.
+        # Zero TTL must disable caching even when consecutive cycles share a
+        # coarse Windows timestamp; otherwise last_success_time == now is fresh.
         if self.ttl <= 0 or self.last_result is None:
             return False
 

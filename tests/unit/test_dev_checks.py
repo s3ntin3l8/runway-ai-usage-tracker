@@ -9,6 +9,15 @@ import pytest
 from scripts import dev_checks as dc
 
 
+@pytest.fixture(autouse=True)
+def owned_checkout(tmp_path, monkeypatch):
+    """Mocked commands use an owned checkout, never the caller's real .venv."""
+    monkeypatch.setattr(dc, "ROOT", tmp_path)
+    interpreter = dc.venv_python()
+    interpreter.parent.mkdir(parents=True)
+    interpreter.touch()
+
+
 def test_command_failure_is_not_hidden(monkeypatch):
     def fail(command, **kwargs):
         assert kwargs["check"] is True
@@ -42,9 +51,17 @@ def test_gate_stops_after_a_failed_step(monkeypatch):
 
 def test_install_uses_lockfile_and_both_hooks(monkeypatch):
     commands = []
-    monkeypatch.setattr(dc, "execute", commands.append)
+    dc.venv_python().unlink()
+
+    def execute(command):
+        commands.append(command)
+        if command[1:3] == ["-m", "venv"]:
+            dc.venv_python().touch()
+
+    monkeypatch.setattr(dc, "execute", execute)
     monkeypatch.setattr(dc, "npm_command", lambda: ["node", "npm-cli.js"])
     dc.check("install", [])
+    assert commands[0][1:3] == ["-m", "venv"]
     assert ["node", "npm-cli.js", "--prefix", "webapp", "ci"] in commands
     assert commands[-2][-3:] == ["-m", "pre_commit", "install"]
     assert commands[-1][-2:] == ["--hook-type", "pre-push"]
@@ -121,7 +138,7 @@ def test_isolated_checks_remove_inherited_database_and_login_paths(monkeypatch):
 
 @pytest.mark.parametrize("task", ["install-hooks", "lint", "mypy", "test", "unit", "gate"])
 def test_missing_venv_reports_install_before_running_commands(tmp_path, monkeypatch, task):
-    monkeypatch.setattr(dc, "ROOT", tmp_path)
+    dc.venv_python().unlink()
     monkeypatch.setattr(dc, "execute", lambda *a, **k: pytest.fail("check ran without .venv"))
     with pytest.raises(RuntimeError, match=r"python scripts/dev_checks.py install first"):
         dc.check(task, [])

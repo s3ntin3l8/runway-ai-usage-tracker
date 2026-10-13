@@ -47,6 +47,8 @@ def run_hook(baseline: Path, filenames: list[str]) -> int:
         result = subprocess.run(
             [
                 sys.executable,
+                "-X",
+                "utf8",
                 "-m",
                 "detect_secrets.pre_commit_hook",
                 "--baseline",
