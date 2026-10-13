@@ -19,6 +19,7 @@ import sys
 import tarfile
 import time
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -1449,3 +1450,23 @@ class TestExecFailureRestoresHooks:
             self_update._relaunch_posix("cli", tmp_path / "x")
         assert pid_file.exists()
         sidecar.remove_pid_file()
+
+
+@pytest.mark.parametrize("error,alive", [(87, False), (5, True), (6, True), (0, True)])
+def test_windows_helper_unknown_status_blocks_recovery(monkeypatch, error, alive):
+    import ctypes
+
+    def open_process(*args):
+        return None
+
+    def wait(*args):
+        raise AssertionError("No process handle was opened")
+
+    def close(*args):
+        raise AssertionError("No process handle was opened")
+
+    kernel = SimpleNamespace(OpenProcess=open_process, WaitForSingleObject=wait, CloseHandle=close)
+    monkeypatch.setattr(self_update, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: kernel, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: error, raising=False)
+    assert self_update._windows_helper_is_alive(12345) is alive

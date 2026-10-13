@@ -1258,16 +1258,19 @@ def _windows_helper_is_alive(pid: int) -> bool:
     """Unknown process status must block destructive recovery, like a live helper."""
     if os.name != "nt":
         return runtime_cleanup.pid_is_alive(pid)
-    import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes
 
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
-    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel.OpenProcess.restype = wintypes.HANDLE
-    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    kernel.WaitForSingleObject.restype = wintypes.DWORD
-    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.OpenProcess.argtypes = [
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.BOOL,
+        ctypes.wintypes.DWORD,
+    ]
+    kernel.OpenProcess.restype = ctypes.wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = ctypes.wintypes.DWORD
+    kernel.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+    kernel.CloseHandle.restype = ctypes.wintypes.BOOL
     handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE, not terminate rights
     if not handle:
         return ctypes.get_last_error() != 87  # type: ignore[attr-defined]  # Only confirmed absence.
