@@ -193,6 +193,8 @@ class Helper:
                 self.reply(200, render_page(selected.target, selected.name))
 
             def do_POST(self) -> None:
+                # Rebinding pages use plain HTTP; TLS direct pages cannot arm.
+                # An HTTPS Origin here is intentionally refused.
                 expected_origin = f"http://{fixture.hostname}:{fixture.port}" if fixture else ""
                 if not self.trusted_host() or self.headers.get("Origin", "") != expected_origin:
                     self.reply(403)
@@ -326,6 +328,9 @@ def main() -> None:
     ):
         parser.error("TLS hostname, certificate chain and private key must be supplied together")
     log = EventLog(args.evidence_dir / "helper-events.jsonl")
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
     helper = Helper(
         [Fixture.parse(f) for f in args.fixture],
         args.bind,
@@ -333,9 +338,6 @@ def main() -> None:
         log,
         args.tls_hostname,
     )
-    stop = threading.Event()
-    signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    signal.signal(signal.SIGINT, lambda *_: stop.set())
     running = []
     threads = []
     with ExitStack() as stack:
