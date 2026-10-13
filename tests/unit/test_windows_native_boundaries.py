@@ -69,10 +69,12 @@ def test_native_swap_from_directory_with_spaces(tmp_path):
     incoming = install_dir / "RunwaySidecar.new.exe"
     installed.write_bytes(b"original")
     incoming.write_bytes(b"replacement")
+    installed.with_name(installed.name + ".previous").write_bytes(b"older backup")
+    installed.with_name(installed.name + ".previous.version").write_text("1.0.0\n")
     command = (
         "import pathlib,sys; from scripts.sidecar_pkg.self_update import _apply_windows; "
         "sys.exit(0 if _apply_windows(pathlib.Path(sys.argv[1]), "
-        "pathlib.Path(sys.argv[2]), restart=False) else 1)"
+        "pathlib.Path(sys.argv[2]), restart=False, backup_version='2.0.0') else 1)"
     )
     result = subprocess.run(
         [sys.executable, "-c", command, str(installed), str(incoming)],
@@ -83,9 +85,14 @@ def test_native_swap_from_directory_with_spaces(tmp_path):
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     deadline = time.monotonic() + 15
+    log = install_dir / "runway-self-update.log"
     while time.monotonic() < deadline:
         try:
-            if installed.read_bytes() == b"replacement":
+            if (
+                installed.read_bytes() == b"replacement"
+                and log.exists()
+                and "Installed updated sidecar." in log.read_text()
+            ):
                 break
         except FileNotFoundError:
             # The helper briefly moves the old image away before the new one.
@@ -93,6 +100,107 @@ def test_native_swap_from_directory_with_spaces(tmp_path):
         time.sleep(0.1)
     assert installed.read_bytes() == b"replacement"
     assert installed.with_name(installed.name + ".previous").read_bytes() == b"original"
+    assert installed.with_name(installed.name + ".previous.version").read_text().strip() == "2.0.0"
+    assert not installed.with_name(installed.name + ".previous_old").exists()
+    assert not installed.with_name(installed.name + ".previous_old.version").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows non-delete-sharing handle")
+@pytest.mark.parametrize("operation", ["swap", "rollback"])
+def test_failed_native_swap_preserves_rollback_bytes_and_version(tmp_path, monkeypatch, operation):
+    installed = tmp_path / "RunwaySidecar.exe"
+    previous = installed.with_name(installed.name + ".previous")
+    version = installed.with_name(installed.name + ".previous.version")
+    installed.write_bytes(b"current")
+    previous.write_bytes(b"backup")
+    version.write_text("1.0.0\n")
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / installed.name).write_bytes(b"replacement")
+    # Pause only initiation: all staging, the detached batch and recovery use
+    # production code. The parent obstructs exactly the staged incoming file.
+    command = """
+import pathlib, sys
+from scripts.sidecar_pkg import self_update as u
+install = pathlib.Path(sys.argv[1])
+u._install_path = lambda: install
+u._sidecar_dir = lambda: install.parent / 'config'
+u._is_frozen = lambda: True
+u._is_docker = lambda: False
+u.running_from_disk_image = lambda: False
+original = u._apply_windows
+def paused(*args, **kwargs):
+    print(args[1], flush=True)
+    sys.stdin.readline()
+    return original(*args, **kwargs)
+u._apply_windows = paused
+if sys.argv[2] == 'swap':
+    with u._single_flight() as owned:
+        assert owned
+        result = u.apply_update('tray', install.parent / 'staged', restart=False, current_version='2.0.0')
+else:
+    result = u.rollback('2.0.0', restart=False)
+assert result  # helper staged; this is not a claim that its swap succeeded
+"""
+    child = subprocess.Popen(
+        [sys.executable, "-c", command, str(installed), operation],
+        cwd=pathlib.Path(__file__).resolve().parents[2],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert child.stdout is not None
+    incoming = pathlib.Path(child.stdout.readline().strip())
+    assert incoming.parent == tmp_path
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        ctypes.wintypes.LPCWSTR,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.HANDLE,
+    ]
+    kernel.CreateFileW.restype = ctypes.wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+    handle = kernel.CreateFileW(str(incoming), 0x80000000, 1, None, 3, 0, None)
+    assert handle != ctypes.c_void_p(-1).value
+    try:
+        _, stderr = child.communicate("\n", timeout=15)
+        assert child.returncode == 0, stderr
+        log = tmp_path / "runway-self-update.log"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if log.exists() and "Sidecar swap failed;" in log.read_text():
+                break
+            time.sleep(0.1)
+        assert "New executable move failed; restoring previous sidecar." in log.read_text()
+        assert "Sidecar swap failed;" in log.read_text()
+        assert installed.read_bytes() == b"current"
+        assert version.read_text().strip() == "1.0.0"
+        assert not (tmp_path / "config" / self_update._LOCK_NAME).exists()
+        if operation == "swap":
+            assert previous.read_bytes() == b"backup"
+        else:
+            assert incoming.read_bytes() == b"backup"
+    finally:
+        assert kernel.CloseHandle(handle)
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=10)
+    if operation == "rollback":
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: True)
+        monkeypatch.setattr(self_update, "_install_path", lambda: installed)
+        monkeypatch.setattr(self_update, "_is_docker", lambda: False)
+        self_update.recover_stranded_rollback(
+            now=incoming.stat().st_ctime + self_update._ROLLBACK_MAX_AGE_S + 1
+        )
+        assert previous.read_bytes() == b"backup"
+        assert self_update.rollback_available() == "1.0.0"
+    assert not installed.with_name(installed.name + ".previous_old").exists()
+    assert not installed.with_name(installed.name + ".previous_old.version").exists()
 
 
 def test_early_lock_release_closes_handle_and_allows_immediate_reacquisition(tmp_path, monkeypatch):
@@ -177,3 +285,14 @@ def test_locked_queue_replacement_retains_original_and_retry_closes_handles(tmp_
     monkeypatch.setattr(sidecar, "http_post_signed_with_retry", lambda *a, **k: (True, {}, 200))
     assert sidecar.queue_flush("http://fixture.invalid", "synthetic-key") == 3
     assert not queue_file.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows helper process liveness")
+def test_native_helper_liveness_requires_observed_process_exit():
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert self_update._windows_helper_is_alive(child.pid)
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+    assert not self_update._windows_helper_is_alive(child.pid)

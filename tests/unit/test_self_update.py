@@ -797,6 +797,71 @@ class TestWindowsSwapScript:
         assert kwargs["executable"] == str(command_processor)
         assert kwargs["creationflags"] & 0x08000000
 
+    def test_version_label_is_not_committed_before_native_swap(self, tmp_path, monkeypatch):
+        install = tmp_path / "RunwaySidecar.exe"
+        version = self_update._previous_version_path(install)
+        version.write_text("1.0.0\n")
+        monkeypatch.setattr(self_update.subprocess, "Popen", lambda *a, **kw: None)
+        assert self_update._apply_windows(
+            install, tmp_path / "incoming", restart=False, backup_version="2.0.0"
+        )
+        assert version.read_text().strip() == "1.0.0"
+        pending = install.with_name(install.name + ".previous.pending.version")
+        assert pending.read_text().strip() == "2.0.0"
+
+    def test_failed_helper_spawn_preserves_rollback_backup(self, tmp_path, monkeypatch):
+        install = tmp_path / "RunwaySidecar.exe"
+        install.write_bytes(b"current")
+        previous = self_update._previous_path(install)
+        previous.write_bytes(b"backup")
+        self_update._previous_version_path(install).write_text("1.0.0\n")
+        monkeypatch.setattr(self_update, "self_update_supported", lambda: True)
+        monkeypatch.setattr(self_update, "_install_path", lambda: install)
+        monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path / "config")
+        monkeypatch.setattr(self_update.sys, "platform", "win32")
+
+        def fail_spawn(*args, **kwargs):
+            raise OSError("fixture spawn failure")
+
+        monkeypatch.setattr(self_update.subprocess, "Popen", fail_spawn)
+        assert self_update.rollback("2.0.0", restart=False) is False
+        assert install.read_bytes() == b"current"
+        assert previous.read_bytes() == b"backup"
+        assert self_update.rollback_available() == "1.0.0"
+        assert not install.with_name(install.name + ".rollback").exists()
+
+    def test_failed_helper_write_cleanup_does_not_prevent_backup_restore(
+        self, tmp_path, monkeypatch
+    ):
+        install = tmp_path / "RunwaySidecar.exe"
+        install.write_bytes(b"current")
+        previous = self_update._previous_path(install)
+        previous.write_bytes(b"backup")
+        self_update._previous_version_path(install).write_text("1.0.0\n")
+        monkeypatch.setattr(self_update, "self_update_supported", lambda: True)
+        monkeypatch.setattr(self_update, "_install_path", lambda: install)
+        monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path / "config")
+        monkeypatch.setattr(self_update.sys, "platform", "win32")
+        write = pathlib.Path.write_text
+        unlink = pathlib.Path.unlink
+
+        def locked_write(path, *args, **kwargs):
+            if path.name == "runway-self-update.bat":
+                raise PermissionError("fixture locked helper")
+            return write(path, *args, **kwargs)
+
+        def locked_unlink(path, *args, **kwargs):
+            if path.name == "runway-self-update.bat":
+                raise PermissionError("fixture locked helper")
+            return unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "write_text", locked_write)
+        monkeypatch.setattr(pathlib.Path, "unlink", locked_unlink)
+        assert self_update.rollback("2.0.0", restart=False) is False
+        assert install.read_bytes() == b"current"
+        assert previous.read_bytes() == b"backup"
+        assert self_update.rollback_available() == "1.0.0"
+
 
 class TestPreExecHooks:
     """execve keeps the PID and skips atexit: cleanup must run just before it."""
@@ -1186,6 +1251,118 @@ class TestRecoverStrandedRollback:
         stranded.write_bytes(b"backup")
         self_update.recover_stranded_rollback(now=self._age(stranded))
         assert stranded.exists()
+
+
+class TestWindowsTransactionRecovery:
+    @pytest.fixture
+    def transaction(self, tmp_path, monkeypatch):
+        install = tmp_path / "RunwaySidecar.exe"
+        install.write_bytes(b"replacement")
+        previous = self_update._previous_path(install)
+        previous.write_bytes(b"original")
+        self_update._previous_version_path(install).write_text("old-backup-version\n")
+        record = {
+            "original": {
+                "sha256": hashlib.sha256(b"original").hexdigest(),
+                "version": "original-version",
+            },
+            "incoming": {
+                "sha256": hashlib.sha256(b"replacement").hexdigest(),
+                "version": "replacement-version",
+            },
+            "previous": {
+                "sha256": hashlib.sha256(b"old-backup").hexdigest(),
+                "version": "old-backup-version",
+            },
+            "helper_pid": 12345,
+        }
+        self_update._write_windows_transaction(install, record)
+        saved = previous.with_name(previous.name + "_old")
+        saved.write_bytes(b"old-backup")
+        saved.with_name(saved.name + ".version").write_text("old-backup-version\n")
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: True)
+        monkeypatch.setattr(self_update, "_is_docker", lambda: False)
+        monkeypatch.setattr(self_update, "_install_path", lambda: install)
+        monkeypatch.setattr(self_update, "_windows_helper_is_alive", lambda pid: False)
+        return install
+
+    @staticmethod
+    def age(install):
+        return self_update._windows_transaction_path(install).stat().st_mtime + 3600
+
+    @pytest.mark.parametrize("metadata_committed", [False, True])
+    def test_recovers_interrupted_commit_and_correct_label(self, transaction, metadata_committed):
+        install = transaction
+        if metadata_committed:
+            self_update._previous_version_path(install).write_text("original-version\n")
+        assert self_update.rollback_available() == "original-version"
+        self_update.recover_stranded_rollback(now=self.age(install))
+        assert install.read_bytes() == b"replacement"
+        assert self_update._previous_path(install).read_bytes() == b"original"
+        assert self_update.rollback_available() == "original-version"
+        assert not self_update._windows_transaction_path(install).exists()
+        assert not install.with_name(install.name + ".previous_old").exists()
+
+    def test_recovers_partial_restore_without_losing_prior_backup(self, transaction):
+        install = transaction
+        install.unlink()
+        incoming = install.with_name(install.name + ".new.exe")
+        incoming.write_bytes(b"replacement")
+        self_update.recover_stranded_rollback(now=self.age(install))
+        assert install.read_bytes() == b"original"
+        assert self_update._previous_path(install).read_bytes() == b"old-backup"
+        assert self_update.rollback_available() == "old-backup-version"
+        assert incoming.read_bytes() == b"replacement"
+
+    def test_recovers_interrupted_rollback_staging(self, transaction):
+        install = transaction
+        install.write_bytes(b"original")
+        self_update._previous_path(install).unlink()
+        saved = install.with_name(install.name + ".previous_old")
+        saved.unlink()
+        incoming = install.with_name(install.name + ".rollback")
+        incoming.write_bytes(b"old-backup")
+        self_update.recover_stranded_rollback(now=self.age(install))
+        assert install.read_bytes() == b"original"
+        assert self_update._previous_path(install).read_bytes() == b"old-backup"
+        assert self_update.rollback_available() == "old-backup-version"
+        assert not incoming.exists()
+
+    @pytest.mark.parametrize(
+        "reason",
+        ["live-helper", "unknown-helper", "fresh", "unmatched-installed", "unmatched-saved"],
+    )
+    def test_preserves_unresolved_state(self, transaction, monkeypatch, reason):
+        install = transaction
+        now = self.age(install)
+        if reason == "live-helper":
+            monkeypatch.setattr(self_update, "_windows_helper_is_alive", lambda pid: True)
+        elif reason == "unknown-helper":
+            record = self_update._windows_transaction(install)
+            record["helper_pid"] = None
+            self_update._write_windows_transaction(install, record)
+        elif reason == "fresh":
+            now = self_update._windows_transaction_path(install).stat().st_mtime
+        elif reason == "unmatched-installed":
+            install.write_bytes(b"unidentified")
+        else:
+            install.with_name(install.name + ".previous_old").write_bytes(b"unidentified")
+        before = {p.name: p.read_bytes() for p in install.parent.iterdir()}
+        self_update.recover_stranded_rollback(now=now)
+        assert {p.name: p.read_bytes() for p in install.parent.iterdir()} == before
+
+    def test_unmatched_backup_does_not_inherit_stale_label(self, transaction):
+        self_update._previous_path(transaction).write_bytes(b"unidentified")
+        assert self_update.rollback_available() == ""
+
+    def test_unresolved_transaction_refuses_new_rollback_before_staging(
+        self, transaction, monkeypatch
+    ):
+        monkeypatch.setattr(self_update.sys, "platform", "win32")
+        monkeypatch.setattr(self_update, "_sidecar_dir", lambda: transaction.parent / "config")
+        assert self_update.rollback("replacement-version", restart=False) is False
+        assert self_update._previous_path(transaction).read_bytes() == b"original"
+        assert not transaction.with_name(transaction.name + ".rollback").exists()
 
 
 class TestReclaimStaleState:

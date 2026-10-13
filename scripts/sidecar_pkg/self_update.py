@@ -580,6 +580,45 @@ def _write_previous_version(install: pathlib.Path, version: str | None) -> None:
         logger.debug("Could not write previous-version marker", exc_info=True)
 
 
+def _windows_transaction_path(install: pathlib.Path) -> pathlib.Path:
+    return install.with_name(install.name + ".previous.transaction.json")
+
+
+def _file_digest(path: pathlib.Path) -> str | None:
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _windows_transaction(install: pathlib.Path) -> dict[str, Any]:
+    record = json.loads(_windows_transaction_path(install).read_text())
+    if not isinstance(record, dict):
+        raise ValueError("Invalid Windows update transaction")
+    for name in ("original", "incoming", "previous"):
+        item = record[name]
+        if not isinstance(item, dict) or not isinstance(item["version"], str):
+            raise ValueError("Invalid Windows update transaction entry")
+        digest = item["sha256"]
+        if digest is not None and (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+        ):
+            raise ValueError("Invalid Windows update transaction digest")
+    helper_pid = record["helper_pid"]
+    if helper_pid is not None and (not isinstance(helper_pid, int) or helper_pid <= 0):
+        raise ValueError("Invalid Windows update helper PID")
+    return record
+
+
+def _write_windows_transaction(install: pathlib.Path, record: dict[str, Any]) -> None:
+    path = _windows_transaction_path(install)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(record))
+    os.replace(temporary, path)
+
+
 def rollback_available() -> str | None:
     """Version string of the kept backup when a rollback is possible, else ``None``.
 
@@ -590,6 +629,16 @@ def rollback_available() -> str | None:
     install = _install_path()
     if not _previous_path(install).exists():
         return None
+    if _windows_transaction_path(install).exists():
+        try:
+            record = _windows_transaction(install)
+            digest = _file_digest(_previous_path(install))
+            for name in ("original", "previous"):
+                if digest is not None and digest == record[name]["sha256"]:
+                    return str(record[name]["version"])
+        except (OSError, ValueError, KeyError, TypeError):
+            logger.warning("Cannot identify interrupted Windows rollback backup", exc_info=True)
+        return ""  # An unmatched backup must not inherit another executable's label.
     try:
         return _previous_version_path(install).read_text().strip()
     except OSError:
@@ -619,6 +668,9 @@ def apply_update(
     staged = _find_staged(staged_dir, install)
 
     if sys.platform == "win32":
+        if _windows_transaction_path(install).exists():
+            logger.error("Self-update requires recovery of the previous Windows transaction")
+            return False
         new_exe = install.with_name(install.stem + ".new" + install.suffix)
         try:
             if new_exe.exists():
@@ -627,8 +679,13 @@ def apply_update(
         except OSError:
             logger.exception("Self-update staging failed")
             return False
-        _write_previous_version(install, current_version)
-        return _apply_windows(install, new_exe, restart=restart, display_version=new_version)
+        return _apply_windows(
+            install,
+            new_exe,
+            restart=restart,
+            display_version=new_version,
+            backup_version=current_version,
+        )
 
     return _swap_posix(
         target,
@@ -712,6 +769,11 @@ def _windows_swap_script(
     *incoming* → *install* (restoring on failure), refresh the installer's
     DisplayVersion, relaunch, and delete itself. Its log is kept beside the
     helper because the parent process exits before the swap finishes."""
+    saved_backup = backup.with_name(backup.name + "_old")
+    version = _previous_version_path(install)
+    saved_version = saved_backup.with_name(saved_backup.name + _VERSION_SUFFIX)
+    pending_version = install.with_name(install.name + ".previous.pending.version")
+    transaction = _windows_transaction_path(install)
     relaunch = f'start "" "{install}"' if restart else "rem no relaunch"
     reg = (
         f'reg query "{_WIN_UNINSTALL_KEY}" >NUL 2>&1 && '
@@ -734,6 +796,25 @@ def _windows_swap_script(
         "  ping -n 2 127.0.0.1 >NUL\r\n"
         "  goto waitloop\r\n"
         ")\r\n"
+        # Retain the pre-existing rollback slot until both incoming bytes and
+        # their backup label are committed. Never overwrite interrupted state.
+        'set "BACKUP_SAVED=0"\r\n'
+        'set "VERSION_SAVED=0"\r\n'
+        'set "ORIGINAL_MOVED=0"\r\n'
+        'set "ORIGINAL_RESTORED=0"\r\n'
+        f'if exist "{saved_backup}" goto backup_conflict\r\n'
+        f'if exist "{saved_version}" goto backup_conflict\r\n'
+        f'if not exist "{pending_version}" goto metadata_missing\r\n'
+        f'if exist "{backup}" (\r\n'
+        f'  move /Y "{backup}" "{saved_backup}" >>"%LOG%" 2>&1\r\n'
+        "  if errorlevel 1 goto swap_failed\r\n"
+        '  set "BACKUP_SAVED=1"\r\n'
+        ")\r\n"
+        f'if exist "{version}" (\r\n'
+        f'  copy /B /Y "{version}" "{saved_version}" >>"%LOG%" 2>&1\r\n'
+        "  if errorlevel 1 goto swap_failed\r\n"
+        '  set "VERSION_SAVED=1"\r\n'
+        ")\r\n"
         # PyInstaller's onefile parent remains alive briefly after its Python
         # child exits to clean up the extraction directory. Retry the rename
         # until Windows releases the image, with a bound so failures are logged.
@@ -746,19 +827,28 @@ def _windows_swap_script(
         "ping -n 2 127.0.0.1 >NUL\r\n"
         "goto move_original\r\n"
         ":install_new\r\n"
+        'set "ORIGINAL_MOVED=1"\r\n'
         f'move /Y "{incoming}" "{install}" >>"%LOG%" 2>&1\r\n'
         "if errorlevel 1 goto restore_previous\r\n"
+        f'move /Y "{pending_version}" "{version}" >>"%LOG%" 2>&1\r\n'
+        "if errorlevel 1 goto restore_new\r\n"
+        f'del "{saved_backup}" "{saved_version}" "{transaction}" >NUL 2>&1\r\n'
         'echo [%date% %time%] Installed updated sidecar.>>"%LOG%"\r\n'
         f"{reg}"
         f"{relaunch}\r\n"
         f"{restart_log}"
         'del "%~f0"\r\n'
         "exit /b 0\r\n"
+        ":restore_new\r\n"
+        'echo [%date% %time%] Backup version commit failed; undoing replacement.>>"%LOG%"\r\n'
+        f'move /Y "{install}" "{incoming}" >>"%LOG%" 2>&1\r\n'
+        "if errorlevel 1 goto restore_failed\r\n"
         ":restore_previous\r\n"
         'echo [%date% %time%] New executable move failed; restoring previous sidecar.>>"%LOG%"\r\n'
         f'if not exist "{backup}" goto restore_failed\r\n'
         f'move /Y "{backup}" "{install}" >>"%LOG%" 2>&1\r\n'
         "if errorlevel 1 goto restore_failed\r\n"
+        'set "ORIGINAL_RESTORED=1"\r\n'
         "goto swap_failed\r\n"
         ":restore_failed\r\n"
         'echo [%date% %time%] Failed to restore previous sidecar from backup.>>"%LOG%"\r\n'
@@ -767,7 +857,32 @@ def _windows_swap_script(
         f'echo [%date% %time%] Original sidecar PID {pid} exited, but the executable stayed locked after %wait_attempts% move attempts.>>"%LOG%"\r\n'
         'tasklist /FI "IMAGENAME eq RunwaySidecar.exe" >>"%LOG%" 2>&1\r\n'
         "goto swap_failed\r\n"
+        ":backup_conflict\r\n"
+        'echo [%date% %time%] Existing saved rollback state requires recovery; refusing overwrite.>>"%LOG%"\r\n'
+        "goto swap_failed\r\n"
+        ":metadata_missing\r\n"
+        'echo [%date% %time%] Missing staged backup version; refusing swap.>>"%LOG%"\r\n'
+        "goto swap_failed\r\n"
         ":swap_failed\r\n"
+        'set "RESTORE_SAVED=0"\r\n'
+        'if "%ORIGINAL_MOVED%"=="0" set "RESTORE_SAVED=1"\r\n'
+        'if "%ORIGINAL_RESTORED%"=="1" set "RESTORE_SAVED=1"\r\n'
+        'if "%RESTORE_SAVED%"=="1" (\r\n'
+        '  if "%BACKUP_SAVED%"=="1" (\r\n'
+        f'    move /Y "{saved_backup}" "{backup}" >>"%LOG%" 2>&1\r\n'
+        "    if errorlevel 1 goto saved_restore_failed\r\n"
+        "  )\r\n"
+        '  if "%VERSION_SAVED%"=="1" (\r\n'
+        f'    move /Y "{saved_version}" "{version}" >>"%LOG%" 2>&1\r\n'
+        "    if errorlevel 1 goto saved_restore_failed\r\n"
+        "  )\r\n"
+        ")\r\n"
+        'if "%RESTORE_SAVED%"=="0" goto failure_done\r\n'
+        f'del "{pending_version}" "{transaction}" >NUL 2>&1\r\n'
+        "goto failure_done\r\n"
+        ":saved_restore_failed\r\n"
+        'echo [%date% %time%] Saved rollback restoration failed; preserving recovery files.>>"%LOG%"\r\n'
+        ":failure_done\r\n"
         'echo [%date% %time%] Sidecar swap failed; check file permissions and running RunwaySidecar processes.>>"%LOG%"\r\n'
         # The first move may have failed before the original was renamed;
         # relaunch it when it is still present.
@@ -783,11 +898,16 @@ def _apply_windows(
     *,
     restart: bool,
     display_version: str | None = None,
+    backup_version: str | None = None,
 ) -> bool:
     """Windows swap: a running .exe can't be overwritten, so a detached helper
     waits for us to exit, swaps *incoming* in (keeping the old exe as
     ``.previous``), and relaunches."""
+    if _windows_transaction_path(install).exists():
+        logger.error("Windows update transaction requires recovery before helper launch")
+        return False
     helper = install.with_name("runway-self-update.bat")
+    pending_version = install.with_name(install.name + ".previous.pending.version")
     script = _windows_swap_script(
         os.getpid(),
         install,
@@ -797,9 +917,36 @@ def _apply_windows(
         display_version=display_version,
     )
     try:
+        # Record identities before any detached moves. Readers can label a
+        # backup safely even if the helper is interrupted before metadata commit.
+        try:
+            previous_version = _previous_version_path(install).read_text().strip()
+        except FileNotFoundError:
+            previous_version = ""
+        record: dict[str, Any] = {
+            "original": {"sha256": _file_digest(install), "version": backup_version or ""},
+            "incoming": {"sha256": _file_digest(incoming), "version": display_version or ""},
+            "previous": {
+                "sha256": _file_digest(_previous_path(install)),
+                "version": previous_version,
+            },
+            "helper_pid": None,  # Unknown until detached-helper ownership is persisted.
+        }
+        # Rollback already moved its backup into the incoming slot.
+        if incoming == install.with_name(install.name + ".rollback"):
+            record["previous"] = {"sha256": _file_digest(incoming), "version": previous_version}
+        _write_windows_transaction(install, record)
+        pending_version.write_text((backup_version or "").strip() + "\n")
         helper.write_text(script)
     except OSError:
         logger.exception("Self-update helper write failed")
+        for path in (helper, pending_version, _windows_transaction_path(install)):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Could not remove failed Windows staging file %s", path, exc_info=True
+                )
         return False
 
     CREATE_NO_WINDOW = 0x08000000
@@ -813,7 +960,7 @@ def _apply_windows(
         # cmd /s removes the outer quotes and keeps the quoted batch path.
         # Passing the path as a separate argv element can lose its quotes when
         # the per-user install directory contains spaces.
-        subprocess.Popen(  # noqa: S603
+        process = subprocess.Popen(  # noqa: S603
             f'"{command_processor}" /d /s /c ""{helper}""',
             executable=str(command_processor),
             creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
@@ -821,7 +968,10 @@ def _apply_windows(
         )
     except OSError:
         logger.exception("Could not start Windows self-update helper %s", helper)
-        for staged_file in (helper, incoming):
+        staged_files = [helper, pending_version, _windows_transaction_path(install)]
+        if incoming != install.with_name(install.name + ".rollback"):
+            staged_files.append(incoming)
+        for staged_file in staged_files:
             try:
                 staged_file.unlink(missing_ok=True)
             except OSError:
@@ -831,6 +981,22 @@ def _apply_windows(
                     exc_info=True,
                 )
         return False
+    if process is not None:
+        record["helper_pid"] = process.pid
+        try:
+            _write_windows_transaction(install, record)
+        except OSError:
+            # The helper waits for this process; keep it from swapping after a
+            # failed ownership-record write, and retain metadata for recovery.
+            try:
+                process.terminate()
+                process.wait(timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                logger.warning(
+                    "Could not stop the Windows helper; retaining recovery state", exc_info=True
+                )
+            logger.exception("Could not record Windows helper ownership")
+            return False
     logger.info("Self-update staged; helper will swap %s after exit", install)
     if restart:
         # The helper relaunches once we exit; leave the loop / process to wind down.
@@ -854,6 +1020,9 @@ def rollback(current_version: str, *, restart: bool = True) -> bool:
             return False
         install = _install_path()
         previous = _previous_path(install)
+        if sys.platform == "win32" and _windows_transaction_path(install).exists():
+            logger.error("Rollback requires recovery of the previous Windows transaction")
+            return False
         if not previous.exists():
             logger.info("Rollback skipped: no previous build kept next to %s", install)
             return False
@@ -875,10 +1044,19 @@ def rollback(current_version: str, *, restart: bool = True) -> bool:
 
         logger.info("Rolling back %s to %s", install, target_version or "previous build")
         if sys.platform == "win32":
-            _write_previous_version(install, current_version)
-            return _apply_windows(
-                install, incoming, restart=restart, display_version=target_version
+            ok = _apply_windows(
+                install,
+                incoming,
+                restart=restart,
+                display_version=target_version,
+                backup_version=current_version,
             )
+            if not ok and not previous.exists() and incoming.exists():
+                try:
+                    os.rename(incoming, previous)
+                except OSError:
+                    logger.warning("Rollback backup remains at %s", incoming, exc_info=True)
+            return ok
         ok = _swap_posix(
             _detect_target(), install, incoming, restart=restart, backup_version=current_version
         )
@@ -1076,6 +1254,87 @@ def _rm(path: pathlib.Path) -> None:
 _ROLLBACK_MAX_AGE_S = 600
 
 
+def _windows_helper_is_alive(pid: int) -> bool:
+    """Unknown process status must block destructive recovery, like a live helper."""
+    if os.name != "nt":
+        return runtime_cleanup.pid_is_alive(pid)
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE, not terminate rights
+    if not handle:
+        return ctypes.get_last_error() != 87  # type: ignore[attr-defined]  # Only confirmed absence.
+    try:
+        return kernel.WaitForSingleObject(handle, 0) != 0  # WAIT_OBJECT_0 proves process exit.
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def _recover_windows_transaction(install: pathlib.Path, now: float | None) -> bool:
+    """Recover only identified bytes after an old, positively inactive helper."""
+    path = _windows_transaction_path(install)
+    record = _windows_transaction(install)
+    if path.stat().st_mtime > (time.time() if now is None else now) - _ROLLBACK_MAX_AGE_S:
+        return False
+    if record["helper_pid"] is None or _windows_helper_is_alive(record["helper_pid"]):
+        return False
+    previous = _previous_path(install)
+    saved = previous.with_name(previous.name + "_old")
+    pending = install.with_name(install.name + ".previous.pending.version")
+    incoming = install.with_name(install.name + ".rollback")
+    if not incoming.exists():
+        incoming = install.with_name(install.stem + ".new" + install.suffix)
+    original = record["original"]["sha256"]
+    old_backup = record["previous"]["sha256"]
+    replacement = record["incoming"]["sha256"]
+    if original is None or replacement is None:
+        return False
+    installed_digest = _file_digest(install)
+    previous_digest = _file_digest(previous)
+    saved_digest = _file_digest(saved)
+    if saved_digest is not None and saved_digest != old_backup:
+        return False
+    if installed_digest == replacement and previous_digest == original and not incoming.exists():
+        # The incoming rename committed; repair its backup label even when the
+        # helper died before moving pending metadata or cleaning the old slot.
+        version = record["original"]["version"]
+    else:
+        # Undo an incomplete swap, but never overwrite unidentified bytes.
+        if installed_digest is None and previous_digest == original:
+            os.replace(previous, install)
+            installed_digest = original
+            previous_digest = None
+        if installed_digest != original:
+            return False
+        if previous_digest is None and old_backup is not None:
+            source = saved if saved_digest == old_backup else incoming
+            if _file_digest(source) != old_backup:
+                return False
+            os.replace(source, previous)
+            previous_digest = old_backup
+        if previous_digest != old_backup:
+            return False
+        version = record["previous"]["version"]
+    # A successful replace is required before recovery files are removed.
+    if previous.exists():
+        pending.write_text(version + "\n")
+        os.replace(pending, _previous_version_path(install))
+    else:
+        _previous_version_path(install).unlink(missing_ok=True)
+    for leftover in (saved, saved.with_name(saved.name + _VERSION_SUFFIX), pending):
+        leftover.unlink(missing_ok=True)
+    path.unlink()
+    logger.info("Recovered interrupted Windows update metadata for %s", install)
+    return True
+
+
 def recover_stranded_rollback(now: float | None = None) -> int:
     """Undo a ``rollback()`` that was killed between its two renames.
 
@@ -1086,6 +1345,9 @@ def recover_stranded_rollback(now: float | None = None) -> int:
     if not _is_frozen():
         return 0
     install = _install_path()
+    if _windows_transaction_path(install).exists():
+        _recover_windows_transaction(install, now)
+        return 0  # Preserve ambiguous state instead of dropping a distinct backup.
     stranded = install.with_name(install.name + ".rollback")
     if not stranded.exists():
         return 0
