@@ -14,11 +14,17 @@ Authentik/Traefik matrix. Follow [physical-validation.md](physical-validation.md
   browser and run**. A helper on dev-01 can bind `192.168.2.152`; this is a private
   LAN address on a shared interface, not a separate physical test VLAN. The
   fixture is isolated by process, explicit bind address and client allow-list.
+  Use the confirmed PC source IPv4 as a `/32`; the helper's own `/32` may also
+  be admitted for controller diagnostics. Membership is checked against the
+  connecting peer, so admitting the bind address does not admit other LAN hosts.
   Supply a reserved address/interface instead if VLAN isolation is required.
 - Obtain a separate TLS certificate/key for the TLS page hostname. Serve it on
   its own listener, not production Traefik. Verify the ordinary Windows browser
   accepts the chain/name without exceptions. Self-signed helper transport tests
   are not evidence of trusted browser TLS. Keep private keys outside the repo.
+  The configured TLS hostname must appear in the certificate SAN; a mismatch
+  causes ordinary browser certificate verification to fail and is not acceptance.
+  Use the exact `/sidecar` and `/dashboard` URLs; the TLS root `/` returns 404.
 - The fixture serves only exact configured names, with no forwarding/recursion,
   A answers with TTL zero, and no AAAA addresses. Other names return NXDOMAIN;
   unallowlisted clients receive no service. DNS supports UDP and TCP on the same
@@ -90,6 +96,10 @@ that a browser re-resolved. Actual browser runs require correlated browser/helpe
 DNS/connection evidence. Preserve browser secure-DNS/proxy/protection settings;
 if they bypass the isolated resolver, record that constraint rather than disabling
 them. Check rule precedence and actual fixture queries before proceeding.
+Missing or bypassed resolver rules can cause lookup failures or connections to
+another host. Check actual DNS answers and the browser remote address; a helper
+403 specifically indicates its Host/Origin guard refused that request, not proof
+that resolver routing worked. Controller resolution never proves browser routing.
 Microsoft documents [NRPT creation](https://learn.microsoft.com/powershell/module/dnsclient/add-dnsclientnrptrule)
 and [removal](https://learn.microsoft.com/powershell/module/dnsclient/remove-dnsclientnrptrule).
 
@@ -157,6 +167,11 @@ Do not log bodies, cookies, signatures, owner keys or settings values.
   from JavaScript even when the Windows application logs prove it occurred.
 
 ## Teardown and handoff status
+
+Create the evidence directory under a protected parent with mode `0700` before
+starting the helper; it creates a missing final directory with mode `0700` and
+writes its log with mode `0600`. Existing directory permissions remain the
+operator's responsibility, including intermediate parents created by `mkdir`.
 
 The human removes only the recorded NRPT rules and verifies the prior effective
 resolver configuration is restored:

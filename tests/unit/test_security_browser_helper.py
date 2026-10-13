@@ -52,6 +52,7 @@ def helper(tmp_path):
         "sidecar,sidecar.example,http://127.0.0.1:18653/save",
         "sidecar,<script>.example,http://127.0.0.1:18653",
         "sidecar,sidecar.example,http://127.0.0.1",
+        "openai,sidecar.example,http://127.0.0.1:18653",
     ],
 )
 def test_fixture_refuses_remote_targets_credentials_and_unsafe_names(value):
@@ -69,13 +70,14 @@ def test_bind_and_client_allowlist_are_required(helper):
 
 
 def test_independent_arm_logs_real_answer_and_never_recurses(helper):
+    helper = Helper(
+        list(helper.fixtures.values()), "192.0.2.1", ["127.0.0.1/32"], helper.log, "tls.example"
+    )
     initial = helper.answer(question("sidecar.example"), "127.0.0.1", "udp")
     helper.arm(helper.names["sidecar"], "127.0.0.1")
     rebound = helper.answer(question("sidecar.example"), "127.0.0.1", "udp")
-    # The loopback transport fixture's helper IP is itself loopback: inspect
-    # arm state plus the independent authoritative answer using a LAN helper.
-    assert initial[-4:] == rebound[-4:] == socket.inet_aton("127.0.0.1")
-    helper.bind = "192.0.2.1"
+    assert initial[-4:] == socket.inet_aton("192.0.2.1")
+    assert rebound[-4:] == socket.inet_aton("127.0.0.1")
     assert helper.answer(question("sidecar.example"), "127.0.0.1", "tcp")[-4:] == socket.inet_aton(
         "127.0.0.1"
     )
@@ -177,6 +179,14 @@ def test_http_arm_requires_real_host_and_origin_and_records_no_bodies(helper):
             assert fixture.armed and not helper.names["dashboard"].armed
             assert "do-not-log-this-body" not in helper.log.path.read_text()
             assert request("GET", "/", {"Host": "wrong.example"})[0] == 403
+            assert request("PUT", "/api/v1/system/dashboard-layout", {"Host": host})[0] == 405
+            assert request("PUT", "/", {"Host": "wrong.example"})[0] == 403
+            # Admitting the helper's own /32 does not admit another LAN peer.
+            with socket.socket() as forbidden:
+                forbidden.bind(("127.0.0.2", 0))
+                forbidden.settimeout(1)
+                forbidden.connect(server.server_address)
+                assert forbidden.recv(1) == b""
         finally:
             server.shutdown()
             thread.join()
@@ -225,6 +235,7 @@ def test_actual_tls_routes_serve_target_pages_with_certificate_verification(help
         assert forbidden.recv(1) == b""
         forbidden.close()
         context = ssl.create_default_context(cafile=str(certfile))
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         try:
             for fixture in helper.names.values():
                 with socket.create_connection(server.server_address, timeout=2) as plain:

@@ -40,7 +40,7 @@ class Fixture:
         name, hostname, target = value.split(",", 2)
         parsed = urlsplit(target)
         if (
-            not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", name)
+            name not in {"sidecar", "dashboard"}
             or not valid_hostname(hostname)
             or parsed.scheme != "http"
             or parsed.hostname not in {"127.0.0.1", "localhost"}
@@ -51,7 +51,9 @@ class Fixture:
             or parsed.fragment
             or parsed.port is None
         ):
-            raise ValueError("Fixture must be name,controlled-FQDN,http://loopback:port")
+            raise ValueError(
+                "Fixture must be sidecar/dashboard,controlled-FQDN,http://loopback:port"
+            )
         return cls(name, hostname.lower(), target.rstrip("/"))
 
 
@@ -68,7 +70,7 @@ def valid_hostname(hostname: str) -> bool:
 
 class EventLog:
     def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = path
         self.lock = threading.Lock()
 
@@ -96,6 +98,8 @@ class Helper:
             raise ValueError("Bind must be a specific unicast helper IPv4")
         if not fixtures or not allowed_clients:
             raise ValueError("At least one fixture and an explicit client allow-list are required")
+        if any(f.name not in {"sidecar", "dashboard"} for f in fixtures):
+            raise ValueError("Fixture name must be sidecar or dashboard")
         if (
             len({f.hostname for f in fixtures}) != len(fixtures)
             or len({f.name for f in fixtures}) != len(fixtures)
@@ -186,8 +190,7 @@ class Helper:
                 if selected is None:
                     self.reply(404)
                     return
-                kind = selected.name if selected.name in {"sidecar", "dashboard"} else "both"
-                self.reply(200, render_page(selected.target, kind))
+                self.reply(200, render_page(selected.target, selected.name))
 
             def do_POST(self) -> None:
                 expected_origin = f"http://{fixture.hostname}:{fixture.port}" if fixture else ""
@@ -201,7 +204,7 @@ class Helper:
                 self.reply(204)
 
             def do_PUT(self) -> None:
-                self.reply(403 if not self.trusted_host() else 404)
+                self.reply(403 if not self.trusted_host() else 405)
 
         return HTTP
 
@@ -230,6 +233,7 @@ def servers(
                 answer = helper.answer(query, self.client_address[0], "udp")
                 sock.sendto(answer, self.client_address)
             except (ValueError, UnicodeError):
+                # Malformed DNS input is discarded without logging untrusted names.
                 pass
 
     class TCPHandler(socketserver.BaseRequestHandler):
@@ -254,6 +258,7 @@ def servers(
                 answer = helper.answer(bytes(query), self.client_address[0], "tcp")
                 self.request.sendall(struct.pack("!H", len(answer)) + answer)
             except (ValueError, UnicodeError, OSError):
+                # Ignore malformed frames, read timeouts and client disconnects.
                 pass
 
     udp = UDP((helper.bind, dns_port), UDPHandler)
@@ -287,6 +292,7 @@ def http_server(
                     handler = cast(type[BaseHTTPRequestHandler], self.RequestHandlerClass)
                     handler(tls, client_address, self)
             except (ssl.SSLError, OSError):
+                # An invalid/timed-out handshake or disconnect is not a probe result.
                 pass
 
     return HTTP((helper.bind, port), helper.handler(fixture))
