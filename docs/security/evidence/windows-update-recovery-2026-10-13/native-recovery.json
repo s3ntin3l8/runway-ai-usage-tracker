@@ -1,0 +1,82 @@
+{
+  "at": "2026-10-13T16:50:44.809737+02:00",
+  "base_revision": "f9f45029175a174c9232f58821be97ae01cb6d32",
+  "updater_source_sha256": "e4160e0dc71397e927ce6f7a2e0a8857ea61a2616e0a51d0fae64c039407154d",
+  "scope": "source initiated production apply/rollback; unmodified Windows batch; incoming non-delete-sharing handle; explicit relaunch separately",
+  "cases": [
+    {
+      "case": "swap",
+      "before": {
+        "installed": "13c0e98f641dc4533599be50b22fd467dfbfb703f8976547369bc12226ec49c4",
+        ".previous": "e9b1b8167b86b90fda94c0e44bb4022b1ea1f4ba11f38f4ef8b17d4005ac7a8a",
+        ".previous_old": null,
+        ".rollback": null
+      },
+      "batch_exit_code": 1,
+      "blocked_file_sha256": "e9b1b8167b86b90fda94c0e44bb4022b1ea1f4ba11f38f4ef8b17d4005ac7a8a",
+      "after_failed_batch": {
+        "installed": "13c0e98f641dc4533599be50b22fd467dfbfb703f8976547369bc12226ec49c4",
+        ".previous": "e9b1b8167b86b90fda94c0e44bb4022b1ea1f4ba11f38f4ef8b17d4005ac7a8a",
+        ".previous_old": null,
+        ".rollback": null
+      },
+      "handle_share_delete": false,
+      "failure_logged": true,
+      "lock_released": true,
+      "backup_bytes_and_version_preserved": true,
+      "version_before": "3.0.0-beta.9+edge.f9f4502",
+      "version_after": "3.0.0-beta.9+edge.f9f4502"
+    },
+    {
+      "case": "rollback",
+      "before": {
+        "installed": "e9b1b8167b86b90fda94c0e44bb4022b1ea1f4ba11f38f4ef8b17d4005ac7a8a",
+        ".previous": "13c0e98f641dc4533599be50b22fd467dfbfb703f8976547369bc12226ec49c4",
+        ".previous_old": null,
+        ".rollback": null
+      },
+      "batch_exit_code": 1,
+      "blocked_file_sha256": "13c0e98f641dc4533599be50b22fd467dfbfb703f8976547369bc12226ec49c4",
+      "after_failed_batch": {
+        "installed": "e9b1b8167b86b90fda94c0e44bb4022b1ea1f4ba11f38f4ef8b17d4005ac7a8a",
+        ".previous": null,
+        ".previous_old": null,
+        ".rollback": "13c0e98f641dc4533599be50b22fd467dfbfb703f8976547369bc12226ec49c4"
+      },
+      "handle_share_delete": false,
+      "failure_logged": true,
+      "rollback_label_before_recovery": "3.0.0-beta.9+edge.85c0dfe",
+      "rollback_label_after_recovery": "3.0.0-beta.9+edge.85c0dfe",
+      "after_recovery": {
+        "installed": "e9b1b8167b86b90fda94c0e44bb4022b1ea1f4ba11f38f4ef8b17d4005ac7a8a",
+        ".previous": "13c0e98f641dc4533599be50b22fd467dfbfb703f8976547369bc12226ec49c4",
+        ".previous_old": null,
+        ".rollback": null
+      },
+      "lock_released": true,
+      "backup_bytes_and_version_preserved": true,
+      "version_before": "3.0.0-beta.9+edge.85c0dfe",
+      "version_after": "3.0.0-beta.9+edge.85c0dfe"
+    }
+  ],
+  "surviving_relaunches": {
+    "swap": {
+      "at": "2026-10-13T16:50:48.058493+02:00",
+      "pid": 42536,
+      "version": "3.0.0-beta.9+edge.85c0dfe",
+      "binary_sha256": "13c0e98f641dc4533599be50b22fd467dfbfb703f8976547369bc12226ec49c4",
+      "settings_port": 17654,
+      "config_unchanged": true,
+      "fixture_processes_stopped": true
+    },
+    "rollback": {
+      "at": "2026-10-13T16:50:49.494866+02:00",
+      "pid": 21120,
+      "version": "3.0.0-beta.9+edge.f9f4502",
+      "binary_sha256": "e9b1b8167b86b90fda94c0e44bb4022b1ea1f4ba11f38f4ef8b17d4005ac7a8a",
+      "settings_port": 17654,
+      "config_unchanged": true,
+      "fixture_processes_stopped": true
+    }
+  }
+}
