@@ -103,6 +103,18 @@ FILE_CASE_IDS = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _no_real_opencode_v2_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the machine's real opencode v2 DB out of these tests.
+
+    They patch ``expand_file_rule_paths`` to one temp file, but the registry's
+    opencode rules still name ``~/.local/share/opencode/auth.json``; on a host
+    whose ``opencode.db`` is v2 the sidecar would add that real path as a
+    virtual candidate and leak a real credential into the assertions.
+    """
+    monkeypatch.setattr(sc, "v2_db_for_auth", lambda _path: None)
+
+
 def _rule(pid: str, rule_type: str, **match: Any) -> dict[str, Any]:
     """One rule from the sidecar's baked registry, filtered by extra fields.
 

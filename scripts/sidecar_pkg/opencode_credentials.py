@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 _AUTH_DIR_NAMES = frozenset({"opencode", ".opencode"})
 _DB_NAME = "opencode.db"
 
+# What a missing / locked / non-sqlite / unresolvable DB path raises (``Path.as_uri``
+# raises ValueError for a path it cannot make absolute).
+_EXPECTED_DB_ERRORS = (OSError, sqlite3.Error, ValueError)
+
 
 def _connect_ro(db_path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
@@ -50,7 +54,7 @@ def is_v2_credentials_db(db_path: Path) -> bool:
     """
     try:
         conn = _connect_ro(db_path)
-    except Exception:
+    except _EXPECTED_DB_ERRORS:
         return False
     try:
         names = {
@@ -61,7 +65,7 @@ def is_v2_credentials_db(db_path: Path) -> bool:
             )
         }
         return names == {"session_v2", "credential"}
-    except Exception:
+    except _EXPECTED_DB_ERRORS:
         return False
     finally:
         conn.close()
@@ -90,8 +94,8 @@ def _rows(db_path: Path) -> list[tuple[str, str, Any, int]]:
 def _pick(rows: list[tuple[str, Any, int]]) -> tuple[dict[str, Any] | None, bool]:
     """Choose the credential for one integration: ``(value, ambiguous)``.
 
-    Prefer the ``active`` row; with none flagged (migrated rows leave it NULL) a
-    single row is unambiguous, while several are resolved by recency but reported
+    Prefer the ``active`` row (``active`` is truthy: NULL and 0 both mean inactive;
+    migrated rows leave it NULL); with none flagged a single row is unambiguous, while several are resolved by recency but reported
     ambiguous so callers can refuse to guess which account they belong to.
     """
     parsed: list[tuple[dict[str, Any], Any, int]] = []
@@ -119,7 +123,7 @@ def load_auth_view(db_path: Path) -> dict[str, Any] | None:
     """
     try:
         rows = _rows(db_path)
-    except Exception:
+    except _EXPECTED_DB_ERRORS:
         logger.debug("opencode credential table unreadable: %s", db_path, exc_info=True)
         return None
     grouped: dict[str, list[tuple[str, Any, int]]] = {}
@@ -143,7 +147,7 @@ def key_binding(db_path: Path, service: str, discovered_key: str) -> str:
     """
     try:
         group = [(v, a, u) for i, v, a, u in _rows(db_path) if i == service]
-    except Exception:
+    except _EXPECTED_DB_ERRORS:
         return "unknown"
     value, ambiguous = _pick(group)
     active_key = str((value or {}).get("key") or "").strip()

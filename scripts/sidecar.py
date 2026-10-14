@@ -2190,18 +2190,24 @@ def expand_file_rule_paths(paths: list) -> list:
     return out
 
 
-def _file_rule_paths_with_opencode_v2(paths: list) -> list:
-    """``expand_file_rule_paths`` plus opencode ``auth.json`` paths v2 has superseded.
+def _file_rule_paths_with_opencode_v2(paths: list) -> list[tuple[Path, Path | None]]:
+    """``expand_file_rule_paths`` as ``(path, v2_db)`` pairs, plus superseded opencode paths.
 
-    A fresh v2 install never writes ``auth.json``, so the file may not exist even
-    though the credentials are in ``opencode.db`` — keep such a path as a virtual
-    candidate; the file loop reads the database instead of the file.
+    ``v2_db`` is the opencode v2 database that supersedes an opencode ``auth.json``
+    (None for every other file). It is resolved once here, so the file loop reads
+    exactly the database that was detected. A fresh v2 install never writes
+    ``auth.json``, so the file may not exist even though the credentials are in
+    ``opencode.db`` — keep such a path as a virtual candidate; the file loop reads
+    the database instead of the file.
     """
-    out = expand_file_rule_paths(paths)
+    existing = expand_file_rule_paths(paths)
+    out: list[tuple[Path, Path | None]] = [(p, v2_db_for_auth(p)) for p in existing]
     for path_str in paths:
         for resolved in resolve_paths(path_str):
-            if resolved not in out and v2_db_for_auth(resolved) is not None:
-                out.append(resolved)
+            if resolved not in existing and not resolved.exists():
+                v2_db = v2_db_for_auth(resolved)
+                if v2_db is not None:
+                    out.append((resolved, v2_db))
     return out
 
 
@@ -3619,7 +3625,7 @@ class GenericCollector:
                 # kimi-code-env-<hash>.json), freshest match last.
                 # Per rule on purpose: two rules may map one file differently.
                 seen_files: set[str] = set()
-                for path in _file_rule_paths_with_opencode_v2(rule.get("paths", [])):
+                for path, v2_db in _file_rule_paths_with_opencode_v2(rule.get("paths", [])):
                     # Distinct spellings of one file (`~/.config/gh` vs the
                     # platform config dir) must yield a single candidate.
                     try:
@@ -3631,7 +3637,6 @@ class GenericCollector:
                     seen_files.add(real)
                     try:
                         fmt = rule.get("format", "json")
-                        v2_db = v2_db_for_auth(Path(path))
                         if v2_db is not None:
                             # opencode v2 keeps credentials in its database and never
                             # reads auth.json again; the file (if any) is a stale leftover.
