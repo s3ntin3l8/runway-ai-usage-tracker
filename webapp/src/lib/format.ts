@@ -4,9 +4,11 @@
 //   - formatNumber: K/M/B with 1 decimal; preserves integers untouched.
 //   - formatTokens: K/M/B with 2 decimals on B and M, 0 decimals on K. Used
 //     where tokens are the primary value.
+// formatAxisNumber / formatAxisCost are a third, axis-tick-only flavour: as
+// short as possible (no trailing zeros) so ticks fit on narrow screens.
 
 export function formatNumber(num: number | null | undefined): string {
-  if (num === null || num === undefined || Number.isNaN(num)) return '—';
+  if (num === null || num === undefined || Number.isNaN(num)) return "—";
   const abs = Math.abs(num);
   if (abs >= 1e9) return `${(num / 1e9).toFixed(1)}B`;
   if (abs >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
@@ -18,24 +20,25 @@ export function formatNumber(num: number | null | undefined): string {
 const formatterCache = new Map<string, Intl.NumberFormat>();
 
 function getCurrencyFormatter(currencyCode?: string | null): Intl.NumberFormat {
-  const code = (currencyCode || 'USD').toUpperCase();
-  const locale = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+  const code = (currencyCode || "USD").toUpperCase();
+  const locale =
+    (typeof navigator !== "undefined" && navigator.language) || "en-US";
   const key = `${locale}|${code}`;
   let f = formatterCache.get(key);
   if (!f) {
     try {
       f = new Intl.NumberFormat(locale, {
-        style: 'currency',
+        style: "currency",
         currency: code,
-        currencyDisplay: 'narrowSymbol',
+        currencyDisplay: "narrowSymbol",
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
     } catch {
       f = new Intl.NumberFormat(locale, {
-        style: 'currency',
-        currency: 'USD',
-        currencyDisplay: 'narrowSymbol',
+        style: "currency",
+        currency: "USD",
+        currencyDisplay: "narrowSymbol",
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
@@ -49,40 +52,44 @@ export function formatCurrency(
   amount: number | null | undefined,
   currencyCode?: string | null,
 ): string {
-  if (amount === null || amount === undefined || Number.isNaN(amount)) return '—';
+  if (amount === null || amount === undefined || Number.isNaN(amount))
+    return "—";
   return getCurrencyFormatter(currencyCode).format(amount);
 }
 
 // Token formatter. Zero renders as literal '0' (not '—') because detail
 // panes show explicit zero rows.
 export function formatTokens(val: number | null | undefined): string {
-  if (val == null || val === 0) return '0';
-  if (val >= 1e9) return (val / 1e9).toFixed(2) + 'B';
-  if (val >= 1e6) return (val / 1e6).toFixed(2) + 'M';
-  if (val >= 1e3) return (val / 1e3).toFixed(0) + 'K';
+  if (val == null || val === 0) return "0";
+  if (val >= 1e9) return (val / 1e9).toFixed(2) + "B";
+  if (val >= 1e6) return (val / 1e6).toFixed(2) + "M";
+  if (val >= 1e3) return (val / 1e3).toFixed(0) + "K";
   return String(val);
 }
 
 // Cost formatter. Distinguishes 0 (literal $0.00) from sub-cent (< $0.01)
 // from null/missing (—) — all three render differently in cost panes.
-export function formatCost(usd: number | null | undefined, currencyCode = 'USD'): string {
-  if (usd == null) return '—';
+export function formatCost(
+  usd: number | null | undefined,
+  currencyCode = "USD",
+): string {
+  if (usd == null) return "—";
   const f = getCurrencyFormatter(currencyCode);
   if (usd === 0) return f.format(0);
-  if (usd > 0 && usd < 0.01) return '< ' + f.format(0.01);
+  if (usd > 0 && usd < 0.01) return "< " + f.format(0.01);
   return f.format(usd);
 }
 
 export function formatPct(pct: number | null | undefined, digits = 0): string {
-  if (pct === null || pct === undefined || Number.isNaN(pct)) return '—';
+  if (pct === null || pct === undefined || Number.isNaN(pct)) return "—";
   return `${pct.toFixed(digits)}%`;
 }
 
 // Compact duration for countdowns: "3d 4h", "4h 12m", "12m", "<1m".
 export function formatDuration(ms: number): string {
-  if (ms <= 0) return 'now';
+  if (ms <= 0) return "now";
   const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return '<1m';
+  if (minutes < 1) return "<1m";
   const days = Math.floor(minutes / 1440);
   const hours = Math.floor((minutes % 1440) / 60);
   const mins = minutes % 60;
@@ -101,10 +108,56 @@ export function timeUntil(iso: string | null | undefined): string | null {
 
 // Relative "ago" formatter for last-seen / updated-at stamps.
 export function timeAgo(iso: string | null | undefined): string {
-  if (!iso) return '—';
+  if (!iso) return "—";
   const then = Date.parse(iso);
-  if (Number.isNaN(then)) return '—';
+  if (Number.isNaN(then)) return "—";
   const ms = Date.now() - then;
-  if (ms < 60_000) return 'just now';
+  if (ms < 60_000) return "just now";
   return `${formatDuration(ms)} ago`;
+}
+
+const axisFormatterCache = new Map<string, Intl.NumberFormat>();
+
+function getAxisFormatter(currencyCode?: string): Intl.NumberFormat {
+  const locale =
+    (typeof navigator !== "undefined" && navigator.language) || "en-US";
+  const key = `${locale}|${currencyCode ?? ""}`;
+  let f = axisFormatterCache.get(key);
+  if (!f) {
+    const opts: Intl.NumberFormatOptions = {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    };
+    try {
+      f = new Intl.NumberFormat(
+        locale,
+        currencyCode
+          ? {
+              ...opts,
+              style: "currency",
+              currency: currencyCode,
+              currencyDisplay: "narrowSymbol",
+            }
+          : opts,
+      );
+    } catch {
+      f = new Intl.NumberFormat("en-US", {
+        ...opts,
+        style: "currency",
+        currency: "USD",
+      });
+    }
+    axisFormatterCache.set(key, f);
+  }
+  return f;
+}
+
+// Compact axis tick: 300M, 1.2B, 40K.
+export function formatAxisNumber(v: number): string {
+  return getAxisFormatter().format(v);
+}
+
+// Compact currency axis tick: $300, $1.2K.
+export function formatAxisCost(v: number, currencyCode = "USD"): string {
+  return getAxisFormatter(currencyCode.toUpperCase()).format(v);
 }

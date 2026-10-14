@@ -1,18 +1,18 @@
 // Top Models card: cross-provider model ranking with a tokens/cost toggle.
 // Shares the Insights page's time range and the global exclude-cache preference.
 
-import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
-import { TopModelsBar, type TopMetric } from '@/components/charts/TopModelsBar';
-import { useExcludeCache } from '@/hooks/useExcludeCache';
-import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { useTopModels } from './queries';
+import { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import { TopModelsBar, type TopMetric } from "@/components/charts/TopModelsBar";
+import { useExcludeCache } from "@/hooks/useExcludeCache";
+import { formatRangeLabel, type DateRangeValue } from "@/lib/timeRange";
+import { useTopModels } from "./queries";
 
 export function TopModelsCard({ range }: { range: DateRangeValue }) {
   const { excludeCache } = useExcludeCache();
-  const [metric, setMetric] = useState<TopMetric>('tokens');
+  const [metric, setMetric] = useState<TopMetric>("tokens");
   const top = useTopModels(metric, range, excludeCache);
   const hasData = (top.data?.models.length ?? 0) > 0;
 
@@ -35,9 +35,15 @@ export function TopModelsCard({ range }: { range: DateRangeValue }) {
         {top.isPending ? (
           <Skeleton className="h-72 w-full" />
         ) : !hasData ? (
-          <p className="py-16 text-center text-xs text-fg-subtle">No model usage in this range.</p>
+          <p className="py-16 text-center text-xs text-fg-subtle">
+            No model usage in this range.
+          </p>
         ) : (
-          <TopModelsBar models={top.data!.models} metric={metric} excludeCache={excludeCache} />
+          <TopModelsBar
+            models={top.data!.models}
+            metric={metric}
+            excludeCache={excludeCache}
+          />
         )}
       </CardContent>
     </Card>

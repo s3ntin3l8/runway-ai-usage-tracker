@@ -2,21 +2,21 @@
 // per provider. Range-total tiles sit above the chart. Shares the Insights
 // page's time range and the global exclude-cache preference.
 
-import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { StatTile } from '@/components/ui/StatTile';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
-import { HistoryChart } from '@/features/history/HistoryChart';
-import { useHistoryDeltas } from '@/features/history/queries';
-import { useExcludeCache } from '@/hooks/useExcludeCache';
-import { formatCost, formatTokens } from '@/lib/format';
-import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { useOverallChart, type OverallMetric } from './queries';
+import { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { StatTile } from "@/components/ui/StatTile";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import { HistoryChart } from "@/features/history/HistoryChart";
+import { useHistoryDeltas } from "@/features/history/queries";
+import { useExcludeCache } from "@/hooks/useExcludeCache";
+import { formatCost, formatTokens } from "@/lib/format";
+import { formatRangeLabel, type DateRangeValue } from "@/lib/timeRange";
+import { useOverallChart, type OverallMetric } from "./queries";
 
 export function OverallChartCard({ range }: { range: DateRangeValue }) {
   const { excludeCache } = useExcludeCache();
-  const [metric, setMetric] = useState<OverallMetric>('tokens');
+  const [metric, setMetric] = useState<OverallMetric>("tokens");
   const chart = useOverallChart(range, metric);
   const deltas = useHistoryDeltas(range);
   const rangeLabel = formatRangeLabel(range);
@@ -34,7 +34,10 @@ export function OverallChartCard({ range }: { range: DateRangeValue }) {
     <Card>
       <CardHeader>
         <CardTitle>Overall usage · {rangeLabel}</CardTitle>
-        <Tabs value={metric} onValueChange={(v) => setMetric(v as OverallMetric)}>
+        <Tabs
+          value={metric}
+          onValueChange={(v) => setMetric(v as OverallMetric)}
+        >
           <TabsList className="border-0" aria-label="Overall metric">
             <TabsTrigger value="tokens" className="h-8 px-2.5">
               Tokens
@@ -61,9 +64,15 @@ export function OverallChartCard({ range }: { range: DateRangeValue }) {
         {chart.isPending ? (
           <Skeleton className="h-72 w-full" />
         ) : !hasData ? (
-          <p className="py-16 text-center text-xs text-fg-subtle">No usage in this range.</p>
+          <p className="py-16 text-center text-xs text-fg-subtle">
+            No usage in this range.
+          </p>
         ) : (
-          <HistoryChart data={chart.data!} metric={metric} excludeCache={excludeCache} />
+          <HistoryChart
+            data={chart.data!}
+            metric={metric}
+            excludeCache={excludeCache}
+          />
         )}
       </CardContent>
     </Card>

@@ -2,18 +2,30 @@
 // count. Stacked bars show token/cost breakdown when the metric is tokens or
 // cost. Reused globally on Insights and per-provider on the Activity tab.
 
-import { useState } from 'react';
-import type { TopProjectEntry } from '@/api/types';
-import { RankBar, type RankRow, type RankSegment } from '@/components/charts/RankBar';
-import { COST_SEGMENT_KEYS, TOKEN_SEGMENT_KEYS } from '@/components/charts/segmentDefs';
-import { useChartTokens } from '@/components/charts/theme';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
-import { useExcludeCache } from '@/hooks/useExcludeCache';
-import { formatCost, formatTokens } from '@/lib/format';
-import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { useTopProjects, type ProjectMetric } from './queries';
+import { useState } from "react";
+import type { TopProjectEntry } from "@/api/types";
+import {
+  RankBar,
+  type RankRow,
+  type RankSegment,
+} from "@/components/charts/RankBar";
+import {
+  COST_SEGMENT_KEYS,
+  TOKEN_SEGMENT_KEYS,
+} from "@/components/charts/segmentDefs";
+import { useChartTokens } from "@/components/charts/theme";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import { useExcludeCache } from "@/hooks/useExcludeCache";
+import {
+  formatAxisCost,
+  formatAxisNumber,
+  formatCost,
+  formatTokens,
+} from "@/lib/format";
+import { formatRangeLabel, type DateRangeValue } from "@/lib/timeRange";
+import { useTopProjects, type ProjectMetric } from "./queries";
 
 const COST_ACCESSORS: Record<string, (p: TopProjectEntry) => number> = {
   cost_input: (p) => p.cost_input,
@@ -36,13 +48,13 @@ function projectRow(
   excludeCache: boolean,
   series: string[],
 ): RankRow {
-  const sub = p.providers.length ? `via ${p.providers.join(', ')}` : undefined;
+  const sub = p.providers.length ? `via ${p.providers.join(", ")}` : undefined;
 
-  if (metric === 'sessions') {
+  if (metric === "sessions") {
     return { label: p.project, value: p.sessions, sub };
   }
 
-  if (metric === 'cost') {
+  if (metric === "cost") {
     const accessors = COST_ACCESSORS;
     const segments: RankSegment[] = COST_SEGMENT_KEYS.map((k, i) => ({
       key: k.key,
@@ -52,7 +64,7 @@ function projectRow(
     }));
     if (excludeCache) {
       for (const s of segments) {
-        if (s.key.startsWith('cost_cache')) s.value = 0;
+        if (s.key.startsWith("cost_cache")) s.value = 0;
       }
     }
     return {
@@ -73,13 +85,17 @@ function projectRow(
   }));
   if (excludeCache) {
     for (const s of segments) {
-      if (s.key.startsWith('tokens_cache')) s.value = 0;
+      if (s.key.startsWith("tokens_cache")) s.value = 0;
     }
   }
   const cache = p.tokens_cache_read + p.tokens_cache_create;
   return {
     label: p.project,
-    value: p.tokens_input + p.tokens_output + p.tokens_reasoning + (excludeCache ? 0 : cache),
+    value:
+      p.tokens_input +
+      p.tokens_output +
+      p.tokens_reasoning +
+      (excludeCache ? 0 : cache),
     sub,
     segments,
   };
@@ -89,6 +105,12 @@ const FORMAT: Record<ProjectMetric, (v: number) => string> = {
   tokens: (v) => formatTokens(v),
   cost: (v) => formatCost(v),
   sessions: (v) => v.toLocaleString(),
+};
+
+const AXIS_FORMAT: Record<ProjectMetric, (v: number) => string> = {
+  tokens: formatAxisNumber,
+  cost: (v) => formatAxisCost(v),
+  sessions: formatAxisNumber,
 };
 
 // The shared range value scopes the ranking; `providerId` narrows it to one
@@ -104,16 +126,23 @@ export function TopProjectsCard({
 }) {
   const { excludeCache } = useExcludeCache();
   const t = useChartTokens();
-  const [metric, setMetric] = useState<ProjectMetric>('tokens');
+  const [metric, setMetric] = useState<ProjectMetric>("tokens");
   const top = useTopProjects(metric, excludeCache, range, providerId);
-  const rows = (top.data?.projects ?? []).map((p) => projectRow(p, metric, excludeCache, t.series));
+  const rows = (top.data?.projects ?? []).map((p) =>
+    projectRow(p, metric, excludeCache, t.series),
+  );
   const hasData = rows.some((r) => r.value > 0);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title ?? `Top projects · ${formatRangeLabel(range)}`}</CardTitle>
-        <Tabs value={metric} onValueChange={(v) => setMetric(v as ProjectMetric)}>
+        <CardTitle>
+          {title ?? `Top projects · ${formatRangeLabel(range)}`}
+        </CardTitle>
+        <Tabs
+          value={metric}
+          onValueChange={(v) => setMetric(v as ProjectMetric)}
+        >
           <TabsList className="border-0" aria-label="Top projects metric">
             <TabsTrigger value="tokens" className="h-8 px-2.5">
               Tokens
@@ -135,7 +164,11 @@ export function TopProjectsCard({
             No project-attributed usage in this range.
           </p>
         ) : (
-          <RankBar rows={rows} format={FORMAT[metric]} />
+          <RankBar
+            rows={rows}
+            format={FORMAT[metric]}
+            axisFormat={AXIS_FORMAT[metric]}
+          />
         )}
       </CardContent>
     </Card>
