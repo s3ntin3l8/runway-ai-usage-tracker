@@ -202,7 +202,15 @@ def _is_v2(cur: sqlite3.Cursor) -> bool:
 
 
 def _v2_row_status(raw: dict, msg_type: str, time_created_ms: int, now_ms: int) -> str:
-    """Classify a v2 row as ``ready``, ``pending`` (hold back) or ``skip``."""
+    """Classify a v2 row as ``ready``, ``pending`` (hold back) or ``skip``.
+
+    ``pending`` stalls the whole forward window by design (the caller ``break``s,
+    not ``continue``s): ingest is insert-or-ignore and the watermark advances past
+    every pushed event, so anything after an in-flight row must wait too.
+    ``skip`` (unsettled for over an hour) is a known trade-off: if such a row
+    later settles — e.g. a long compaction — its ``time_created`` is already behind
+    the watermark and it is not recovered.
+    """
     if msg_type == "compaction":
         settled = raw.get("status") in ("completed", "failed")
     else:
@@ -225,7 +233,7 @@ def _normalize_v2_message(
     if msg_type == "compaction" and not (raw.get("tokens") or raw.get("cost")):
         return None
     # Compactions only sometimes name the model; fall back to the session's.
-    model = raw.get("model") or session_model or {}
+    model = (raw["model"] if "model" in raw else session_model) or {}
     variant = model.get("variant")
     # Migrated v1 rows get variant "default" where v1 had none — that is "no effort".
     if isinstance(variant, str) and variant.strip().lower() == "default":

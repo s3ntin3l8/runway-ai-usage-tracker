@@ -3450,6 +3450,23 @@ class TestOpencodeDbOverride:
         monkeypatch.setenv("OPENCODE_DB", str(custom))
         assert sidecar._discover_opencode_db_path() == custom
 
+    def test_missing_override_does_not_fall_back_to_defaults(self, tmp_path, monkeypatch):
+        # A default DB exists, but an explicit (typo'd) override must be loud, not silent.
+        default = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+        default.parent.mkdir(parents=True)
+        default.touch()
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("OPENCODE_DB", str(tmp_path / "typo.db"))
+        assert sidecar._discover_opencode_db_path() is None
+
+    def test_relative_override_resolves_under_data_dir(self, tmp_path, monkeypatch):
+        custom = tmp_path / ".local" / "share" / "opencode" / "custom.db"
+        custom.parent.mkdir(parents=True)
+        custom.touch()
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("OPENCODE_DB", "custom.db")
+        assert sidecar._discover_opencode_db_path() == custom
+
     def test_memory_override_is_ignored(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("OPENCODE_DB", ":memory:")

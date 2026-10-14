@@ -4278,18 +4278,20 @@ def _discover_opencode_db_path() -> Path | None:
     regardless of which the local install chose; the missing path is a
     no-op on platforms that use neither.
 
-    ``OPENCODE_DB`` (opencode v2's own override) wins when set: an absolute
-    path, or one relative to ``~/.local/share/opencode``.
+    ``OPENCODE_DB`` (opencode v2's own override) is authoritative when set:
+    ``~`` expands to ``$HOME`` and counts as absolute (as in opencode itself);
+    anything else is relative to ``~/.local/share/opencode``. A missing target
+    returns None rather than falling back to the defaults — silently reading a
+    different install's DB would ingest the wrong data.
     """
-    candidates = []
     override = os.environ.get("OPENCODE_DB", "").strip()
     if override and override != ":memory:":
-        candidates.append(
-            os.path.join(
-                os.path.expanduser("~/.local/share/opencode"), os.path.expanduser(override)
-            )
+        raw = Path(os.path.expanduser(override))
+        target = (
+            raw if raw.is_absolute() else Path(os.path.expanduser("~/.local/share/opencode")) / raw
         )
-    candidates += [
+        return target if target.exists() else None
+    candidates = [
         os.path.expanduser("~/.local/share/opencode/opencode.db"),
         os.path.expanduser("~/.opencode/opencode.db"),
     ]

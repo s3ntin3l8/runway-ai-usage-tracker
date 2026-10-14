@@ -1167,3 +1167,19 @@ def test_parser_opens_db_read_only(tmp_path):
     parse_opencode_events(db, account_id="u", since=_V2_SINCE)
     assert db.stat().st_mtime_ns == before
     assert not (tmp_path / "opencode.db-wal").exists()
+
+
+def test_v2_explicit_empty_row_model_does_not_fall_back_to_session_model(tmp_path):
+    db = _v2_db(
+        tmp_path,
+        [_msg("msg_a", _V2_T0, model={})],
+        [
+            {
+                "id": "ses_1",
+                "directory": "/w",
+                "model": {"id": "sess-model", "providerID": "opencode-go"},
+            }
+        ],
+    )
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.model_id == "unknown"
