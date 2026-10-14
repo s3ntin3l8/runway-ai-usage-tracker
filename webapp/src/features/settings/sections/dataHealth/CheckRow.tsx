@@ -60,11 +60,11 @@ export function CheckRow({
         <Badge variant={severity.variant} className="w-[4.5rem] shrink-0 justify-center">
           {severity.label}
         </Badge>
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">
+        <span className="min-w-0 flex-1 break-words text-[13px] font-medium text-fg sm:truncate">
           {check.title}
         </span>
         {check.blocked ? <Badge variant="outline">Blocked</Badge> : null}
-        <span className="text-[12px] tabular text-fg-subtle">
+        <span className="shrink-0 text-[12px] tabular text-fg-subtle">
           {check.total_count === 0
             ? 'clean'
             : `${check.total_count.toLocaleString()} ${check.total_count === 1 ? 'finding' : 'findings'}`}
@@ -119,8 +119,8 @@ function GroupRow({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-[12px] text-fg">{group.label}</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="min-w-0 basis-full break-words text-[12px] text-fg sm:flex-1 sm:basis-auto sm:truncate">{group.label}</span>
         {group.samples.length > 0 && (
           <Button size="sm" variant="ghost" onClick={() => setShowSamples((s) => !s)}>
             {showSamples ? 'Hide samples' : 'Show samples'}
@@ -131,15 +131,15 @@ function GroupRow({
             Fix
           </Button>
         ) : (
-          <span className="flex items-center gap-2">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2">
             <span
-              className={cn('text-[11px] text-fg-subtle', 'max-w-64 truncate')}
+              className={cn('text-[11px] text-fg-subtle', 'sm:max-w-64 sm:truncate')}
               title={group.not_fixable_reason ?? undefined}
             >
               {group.not_fixable_reason ?? 'not fixable'}
             </span>
             {link && (
-              <Link className="text-[11px] font-medium text-accent underline" to={link}>
+              <Link className="shrink-0 whitespace-nowrap text-[11px] font-medium text-accent underline" to={link}>
                 Open Fleet
               </Link>
             )}

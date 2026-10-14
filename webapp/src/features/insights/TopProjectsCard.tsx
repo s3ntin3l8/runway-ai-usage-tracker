@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
-import { formatCost, formatTokens } from '@/lib/format';
+import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { useTopProjects, type ProjectMetric } from './queries';
 
@@ -91,6 +91,12 @@ const FORMAT: Record<ProjectMetric, (v: number) => string> = {
   sessions: (v) => v.toLocaleString(),
 };
 
+const AXIS_FORMAT: Record<ProjectMetric, (v: number) => string> = {
+  tokens: formatAxisNumber,
+  cost: formatAxisCost,
+  sessions: formatAxisNumber,
+};
+
 // The shared range value scopes the ranking; `providerId` narrows it to one
 // provider (Activity). `title` overrides the default `Top projects · label`.
 export function TopProjectsCard({
@@ -135,7 +141,7 @@ export function TopProjectsCard({
             No project-attributed usage in this range.
           </p>
         ) : (
-          <RankBar rows={rows} format={FORMAT[metric]} />
+          <RankBar rows={rows} format={FORMAT[metric]} axisFormat={AXIS_FORMAT[metric]} />
         )}
       </CardContent>
     </Card>

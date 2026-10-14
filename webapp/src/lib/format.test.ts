@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  formatAxisCost,
+  formatAxisNumber,
   formatCost,
   formatCurrency,
   formatDuration,
@@ -35,6 +37,19 @@ describe('formatTokens', () => {
     expect(formatTokens(1_500)).toBe('2K');
     expect(formatTokens(2_440_000)).toBe('2.44M');
     expect(formatTokens(3_100_000_000)).toBe('3.10B');
+  });
+});
+
+describe('formatAxisNumber / formatAxisCost', () => {
+  it('compacts without trailing zeros', () => {
+    expect(formatAxisNumber(300_000_000)).toBe('300M');
+    expect(formatAxisNumber(1_500_000_000)).toBe('1.5B');
+    expect(formatAxisNumber(0)).toBe('0');
+  });
+  it('compacts currency', () => {
+    expect(formatAxisCost(1200)).toBe('$1.2K');
+    expect(formatAxisCost(300)).toBe('$300');
+    expect(formatAxisCost(0)).toBe('$0');
   });
 });
 
