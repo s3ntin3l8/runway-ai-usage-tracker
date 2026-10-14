@@ -269,19 +269,17 @@ def servers(
     # the other protocol. Only ephemeral allocation can select a replacement.
     attempts = 5 if dns_port == 0 else 1
     for attempt in range(attempts):
-        tcp = TCP((helper.bind, dns_port), TCPHandler)
-        try:
-            udp = UDP((helper.bind, tcp.server_address[1]), UDPHandler)
-        except BaseException as exc:
-            tcp.server_close()
-            if (
-                isinstance(exc, OSError)
-                and exc.errno in {errno.EACCES, errno.EADDRINUSE}
-                and attempt + 1 < attempts
-            ):
-                continue
-            raise
-        return udp, tcp
+        with ExitStack() as reserved:
+            tcp = reserved.enter_context(TCP((helper.bind, dns_port), TCPHandler))
+            try:
+                udp = reserved.enter_context(UDP((helper.bind, tcp.server_address[1]), UDPHandler))
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EADDRINUSE} and attempt + 1 < attempts:
+                    continue
+                raise
+            # Both sockets are now reserved; ownership transfers to the caller.
+            reserved.pop_all()
+            return udp, tcp
     raise AssertionError("DNS allocation exhausted without a result or exception")
 
 
