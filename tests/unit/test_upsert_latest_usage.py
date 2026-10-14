@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -31,6 +32,23 @@ def session_fixture():
     finally:
         engine.dispose()
         os.remove(db_path)
+
+
+@pytest.fixture
+def accumulator_clock(monkeypatch):
+    """Each persistence operation happens later, without relying on OS clock ticks."""
+    from app.services import accumulator
+
+    current = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            nonlocal current
+            current += timedelta(seconds=1)
+            return current.astimezone(tz) if tz is not None else current.replace(tzinfo=None)
+
+    monkeypatch.setattr(accumulator, "datetime", Clock)
 
 
 def _success_card(
@@ -158,7 +176,7 @@ def test_complete_snapshot_retires_only_its_source_and_keeps_history_tables(sess
     assert [(r.source_id, r.window_type) for r in contributions] == [("server:chatgpt", "weekly")]
 
 
-def test_real_failure_marks_last_good_source_stale(session: Session):
+def test_real_failure_marks_last_good_source_stale(session: Session, accumulator_clock):
     upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
     session.commit()
 
@@ -177,7 +195,9 @@ def test_real_failure_marks_last_good_source_stale(session: Session):
     assert card["collection_failing"] is True
 
 
-def test_missing_server_account_can_be_marked_stale_without_touching_siblings(session: Session):
+def test_missing_server_account_can_be_marked_stale_without_touching_siblings(
+    session: Session, accumulator_clock
+):
     upsert_latest_usage(
         session, _success_card(account_id="alice@example.com"), source_id="server:chatgpt"
     )
@@ -205,7 +225,7 @@ def test_missing_server_account_can_be_marked_stale_without_touching_siblings(se
     assert cards["bob@example.com"].get("stale") is not True
 
 
-def test_fresh_non_quota_card_clears_source_staleness(session: Session):
+def test_fresh_non_quota_card_clears_source_staleness(session: Session, accumulator_clock):
     card = _success_card()
     upsert_latest_usage(session, card, source_id="server:chatgpt")
     session.commit()
@@ -253,7 +273,9 @@ def test_server_source_keeps_local_sidecar_id_when_sidecar_writes_later(session:
     assert row.sidecar_id == "local"
 
 
-def test_fresh_sidecar_owns_card_when_server_contribution_is_stale(session: Session):
+def test_fresh_sidecar_owns_card_when_server_contribution_is_stale(
+    session: Session, accumulator_clock
+):
     server_card = _success_card()
     sidecar_card = {**server_card, "data_source": "local", "sidecar_id": "host-a"}
     upsert_latest_usage(session, server_card, source_id="server:chatgpt")
@@ -278,7 +300,7 @@ def test_fresh_sidecar_owns_card_when_server_contribution_is_stale(session: Sess
     assert card.get("collection_failing") is not True
 
 
-def test_stale_only_server_card_keeps_local_owner(session: Session):
+def test_stale_only_server_card_keeps_local_owner(session: Session, accumulator_clock):
     upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
     mark_latest_usage_source_stale(
         session,
@@ -292,7 +314,7 @@ def test_stale_only_server_card_keeps_local_owner(session: Session):
     assert row.sidecar_id == "local"
 
 
-def test_when_all_sources_are_stale_latest_sidecar_owns_card(session: Session):
+def test_when_all_sources_are_stale_latest_sidecar_owns_card(session: Session, accumulator_clock):
     server_card = _success_card()
     sidecar_card = {**server_card, "data_source": "local", "sidecar_id": "host-a"}
     upsert_latest_usage(session, server_card, source_id="server:chatgpt")
@@ -701,7 +723,7 @@ def test_model_specific_conflicting_window_type_is_deleted(session: Session):
     assert rows[0].window_type == "weekly"
 
 
-def test_stale_reason_is_shown_and_replaced_not_stacked(session: Session):
+def test_stale_reason_is_shown_and_replaced_not_stacked(session: Session, accumulator_clock):
     upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
     session.commit()
 
@@ -728,7 +750,9 @@ def test_stale_reason_is_shown_and_replaced_not_stacked(session: Session):
     assert mark(None).startswith("⚠ Collection failing — ")
 
 
-def test_reason_containing_parentheses_round_trips_and_is_replaced(session: Session):
+def test_reason_containing_parentheses_round_trips_and_is_replaced(
+    session: Session, accumulator_clock
+):
     upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
     session.commit()
 
@@ -751,7 +775,9 @@ def test_reason_containing_parentheses_round_trips_and_is_replaced(session: Sess
     assert "invalid_grant" not in second
 
 
-def test_reason_containing_separator_is_sanitized_and_round_trips(session: Session):
+def test_reason_containing_separator_is_sanitized_and_round_trips(
+    session: Session, accumulator_clock
+):
     upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
     session.commit()
     base = json.loads(session.exec(select(LatestUsage)).one().card_json)["detail"]

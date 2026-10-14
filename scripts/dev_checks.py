@@ -41,6 +41,8 @@ def npm_command() -> list[str]:
 def execute(command: list[str], *, isolated_paths: dict[str, str] | None = None) -> None:
     env = {**os.environ, "PYTHONUTF8": "1"}
     if isolated_paths is not None:
+        # Isolate filesystem state, not every runtime setting. Tests requiring
+        # default API/CORS/auth settings must clear those inherited variables.
         for name in (
             "DATABASE_PATH",
             "GITHUB_OAUTH_PATH",

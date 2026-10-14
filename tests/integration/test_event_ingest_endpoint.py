@@ -3,7 +3,6 @@
 import hashlib
 import hmac
 import json
-import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +14,7 @@ from app.core.db import get_session
 from app.main import app
 from app.models.db import SidecarRegistry, UsageEvent
 from app.services.pricing_seed import seed_pricing_table
+from scripts.sidecar_pkg.transport import signing_timestamp
 
 TEST_KEY = "test-ingest-key-phase3"
 
@@ -34,7 +34,7 @@ def session():
 
 def _signed(payload: dict, key: str = TEST_KEY) -> tuple[bytes, dict]:
     body = json.dumps(payload, separators=(",", ":")).encode()
-    ts = str(time.time())
+    ts = signing_timestamp()
     sig = hmac.new(key.encode(), ts.encode() + body, hashlib.sha256).hexdigest()
     return body, {"X-Signature": sig, "X-Timestamp": ts}
 

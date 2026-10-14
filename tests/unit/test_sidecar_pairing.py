@@ -218,6 +218,7 @@ class TestSettingsServerPairing:
     def test_pair_post_requires_same_origin(self, settings_srv):
         status, _ = _http(settings_srv, "POST", "/pair", b"")
         assert status == 403
+        assert settings_srv.saved == []
 
     def test_pair_post_redeems_and_saves(self, settings_srv, monkeypatch):
         calls = []
