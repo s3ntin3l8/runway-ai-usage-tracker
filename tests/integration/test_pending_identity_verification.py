@@ -187,6 +187,7 @@ async def test_a_pinned_claude_cookie_is_not_verified_as_the_servers_own_cli_log
     )
     # Even a planted login in the server host's home is never consulted.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     source_id = await _seed(
         world, "anthropic", "cookie:anthropic/session", {"cookie_sessionKey": CLAUDE_COOKIE}

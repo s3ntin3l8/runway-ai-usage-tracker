@@ -216,8 +216,9 @@ class TestSettingsServerPairing:
         assert "<script>" not in html.split("<script>\nconst")[0].split("</style>")[1]
 
     def test_pair_post_requires_same_origin(self, settings_srv):
-        status, _ = _http(settings_srv, "POST", "/pair", b"server=x&code=y")
+        status, _ = _http(settings_srv, "POST", "/pair", b"")
         assert status == 403
+        assert settings_srv.saved == []
 
     def test_pair_post_redeems_and_saves(self, settings_srv, monkeypatch):
         calls = []
@@ -253,7 +254,7 @@ class TestSettingsServerPairing:
         assert settings_srv.saved == []
 
     def test_pair_request_needs_control_token(self, settings_srv):
-        body = json.dumps({"url": LINK}).encode()
+        body = b""  # Header rejection must precede parsing any payload.
         assert _http(settings_srv, "POST", "/pair-request", body)[0] == 403
         assert (
             _http(settings_srv, "POST", "/pair-request", body, {"X-Runway-Control": "nope"})[0]
@@ -297,7 +298,16 @@ def test_macos_handler_is_noop_elsewhere(monkeypatch):
 def test_pair_request_rejects_oversized_body(settings_srv):
     token = settings_srv.control_token
     body = json.dumps({"url": LINK, "pad": "x" * 9000}).encode()
-    status, _ = _http(settings_srv, "POST", "/pair-request", body, {"X-Runway-Control": token})
+    # The size gate rejects Content-Length before reading the payload. Sending
+    # just the oversized declaration avoids an HTTP/1.0 close racing a Windows
+    # client still transmitting bytes, while requiring the actual 413 response.
+    status, _ = _http(
+        settings_srv,
+        "POST",
+        "/pair-request",
+        b"",
+        {"X-Runway-Control": token, "Content-Length": str(len(body))},
+    )
     assert status == 413
     assert settings_srv.opened == []
 
@@ -323,12 +333,15 @@ def test_settings_rejects_origin_prefix_attack(settings_srv):
         settings_srv,
         "POST",
         "/save",
-        body=b"api_url=https://server.test",
+        # Exercise the Origin gate without an unread request body: an HTTP/1.0
+        # close can reset a Windows client still sending that body, hiding the 403.
+        body=b"",
         headers={
             "Origin": f"http://127.0.0.1:{settings_srv.port}.attacker.test",
         },
     )
     assert status == 403
+    assert settings_srv.saved == []
 
 
 def test_settings_blank_key_preserves_saved_key(settings_srv):
@@ -343,3 +356,26 @@ def test_settings_blank_key_preserves_saved_key(settings_srv):
     )
     assert status == 200
     assert settings_srv.saved[-1]["api_key"] == "k"
+
+
+def test_pair_size_gate_rejects_matching_nonempty_body_before_reading():
+    from io import BytesIO
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from sidecar_app.settings_server import _Handler
+
+    body = json.dumps({"url": LINK, "pad": "x" * 9000}).encode()
+    reader = Mock(wraps=BytesIO(body))
+    reject = Mock()
+    callback = Mock()
+    handler = SimpleNamespace(
+        headers={"X-Runway-Control": "fixture-control", "Content-Length": str(len(body))},
+        server=SimpleNamespace(control_token="fixture-control", on_pair_url=callback),
+        rfile=reader,
+        send_error=reject,
+    )
+    _Handler._handle_pair_request(handler)
+    reject.assert_called_once_with(413)
+    reader.read.assert_not_called()
+    callback.assert_not_called()

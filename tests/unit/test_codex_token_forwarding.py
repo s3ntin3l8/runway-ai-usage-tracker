@@ -30,7 +30,7 @@ def _codex_file_mapping(providers: dict) -> dict:
 
 def test_registry_json_codex_rule_forwards_refresh_and_id_token():
     """The source-of-truth registry must map all three token fields."""
-    reg = json.loads(REGISTRY_JSON.read_text())
+    reg = json.loads(REGISTRY_JSON.read_text(encoding="utf-8"))
     mapping = _codex_file_mapping(reg["providers"])
     assert mapping.get("tokens.access_token") == "oauth_token"
     assert mapping.get("tokens.refresh_token") == "refresh_token"
@@ -46,7 +46,7 @@ def test_sidecar_baked_registry_matches_registry_json_for_codex_tokens():
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     import sidecar
 
-    src = _codex_file_mapping(json.loads(REGISTRY_JSON.read_text())["providers"])
+    src = _codex_file_mapping(json.loads(REGISTRY_JSON.read_text(encoding="utf-8"))["providers"])
     baked = _codex_file_mapping(sidecar.__REGISTRY__["providers"])
     for token_key in ("tokens.access_token", "tokens.refresh_token", "tokens.id_token"):
         assert baked.get(token_key) == src.get(token_key), (
@@ -73,6 +73,7 @@ async def test_server_does_not_read_codex_auth_json(tmp_path, monkeypatch):
         )
     )
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("CODEX_HOME", str(codex))
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     monkeypatch.delenv("CHATGPT_OAUTH_TOKEN", raising=False)

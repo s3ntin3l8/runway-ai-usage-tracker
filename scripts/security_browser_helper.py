@@ -4,6 +4,7 @@ No credentials, DNS forwarding, production proxy integration, or browser control
 """
 
 import argparse
+import errno
 import hashlib
 import ipaddress
 import json
@@ -263,13 +264,23 @@ def servers(
                 # Ignore malformed frames, read timeouts and client disconnects.
                 pass
 
-    udp = UDP((helper.bind, dns_port), UDPHandler)
-    try:
-        tcp = TCP((helper.bind, udp.server_address[1]), TCPHandler)
-    except BaseException:
-        udp.server_close()
-        raise
-    return udp, tcp
+    # Windows UDP allocation can select a port excluded from TCP binding. Let
+    # TCP choose first, then reserve UDP on that port; neither allocator checks
+    # the other protocol. Only ephemeral allocation can select a replacement.
+    attempts = 5 if dns_port == 0 else 1
+    for attempt in range(attempts):
+        with ExitStack() as reserved:
+            tcp = reserved.enter_context(TCP((helper.bind, dns_port), TCPHandler))
+            try:
+                udp = reserved.enter_context(UDP((helper.bind, tcp.server_address[1]), UDPHandler))
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EADDRINUSE} and attempt + 1 < attempts:
+                    continue
+                raise
+            # Both sockets are now reserved; ownership transfers to the caller.
+            reserved.pop_all()
+            return udp, tcp
+    raise AssertionError("DNS allocation exhausted without a result or exception")
 
 
 def http_server(

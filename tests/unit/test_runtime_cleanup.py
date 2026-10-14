@@ -57,7 +57,7 @@ class TestOwnRuntimeDir:
 class TestClaim:
     def test_writes_our_pid(self, frozen):
         rc.claim_runtime_dir()
-        assert (frozen / rc.OWNER_MARKER).read_text() == str(os.getpid())
+        assert (frozen / rc.OWNER_MARKER).read_text(encoding="utf-8") == str(os.getpid())
 
     def test_noop_when_not_frozen(self, monkeypatch, tmp_path):
         monkeypatch.delattr(sys, "frozen", raising=False)
@@ -99,9 +99,9 @@ class TestSweepStaleRuntimeDirs:
         rc.sweep_stale_runtime_dirs()
         assert d.exists()
 
-    def test_does_not_follow_a_symlinked_dir(self, frozen, tmp_path):
+    def test_does_not_follow_a_symlinked_dir(self, frozen, tmp_path, make_symlink):
         real = _make_dir(tmp_path, "elsewhere", owner=_dead_pid())
-        (frozen.parent / "_MEIlink").symlink_to(real, target_is_directory=True)
+        make_symlink(frozen.parent / "_MEIlink", real, target_is_directory=True)
         rc.sweep_stale_runtime_dirs()
         assert real.exists()
 
@@ -152,10 +152,10 @@ class TestReleaseRetiredRuntime:
         assert rc.release_retired_runtime() == 0
         assert far.exists()
 
-    def test_refuses_a_symlink(self, frozen, monkeypatch, tmp_path):
+    def test_refuses_a_symlink(self, frozen, monkeypatch, tmp_path, make_symlink):
         real = _make_dir(tmp_path, "elsewhere")
         link = frozen.parent / "_MEIlink"
-        link.symlink_to(real, target_is_directory=True)
+        make_symlink(link, real, target_is_directory=True)
         monkeypatch.setenv(rc.RETIRED_ENV, str(link))
         assert rc.release_retired_runtime() == 0
         assert real.exists()

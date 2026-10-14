@@ -53,7 +53,7 @@ def _auth(path: Path, expires_in: float, refresh: str = "r-old", *, age: float =
 
 
 def _read(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _response(**over):
@@ -271,7 +271,8 @@ class TestWriteBack:
     def test_keeps_the_file_mode_and_leaves_no_temp_file(self, tmp_path):
         f = _auth(tmp_path / "auth.json", -10)
         cr.write_back(cr.read_login(f), _response())
-        assert oct(f.stat().st_mode & 0o777) == "0o600"
+        if os.name != "nt":
+            assert oct(f.stat().st_mode & 0o777) == "0o600"
         assert [p.name for p in tmp_path.iterdir()] == ["auth.json"]
 
     def test_codex_renewing_first_wins(self, tmp_path):
@@ -301,11 +302,11 @@ class TestWriteBack:
         assert [p.name for p in tmp_path.iterdir()] == ["auth.json"]
         assert _read(f)["tokens"]["refresh_token"] == "r-old"
 
-    def test_a_symlinked_auth_file_stays_a_symlink(self, tmp_path):
+    def test_a_symlinked_auth_file_stays_a_symlink(self, tmp_path, make_symlink):
         real = _auth(tmp_path / "dotfiles" / "auth.json", -10)
         link = tmp_path / ".codex" / "auth.json"
         link.parent.mkdir()
-        link.symlink_to(real)
+        make_symlink(link, real)
         os.utime(real, (time.time() - 600, time.time() - 600))
         assert cr.write_back(cr.read_login(link), _response()) == "written"
         assert link.is_symlink()
@@ -329,20 +330,24 @@ class TestRenew:
         assert sorted(calls) == ["ra", "rb"]
         assert _read(fresh)["tokens"]["refresh_token"] == "rc"
 
-    def test_a_file_reachable_through_two_paths_is_renewed_once(self, tmp_path, monkeypatch):
+    def test_a_file_reachable_through_two_paths_is_renewed_once(
+        self, tmp_path, monkeypatch, make_symlink
+    ):
         real = _auth(tmp_path / "real" / "auth.json", -10)
         link = tmp_path / "link.json"
-        link.symlink_to(real)
+        make_symlink(link, real)
         calls = _respond(monkeypatch)
         _renewer(real, link).renew()
         assert len(calls) == 1
 
-    def test_a_dead_login_stays_blocked_whichever_path_reaches_it(self, tmp_path, monkeypatch):
+    def test_a_dead_login_stays_blocked_whichever_path_reaches_it(
+        self, tmp_path, monkeypatch, make_symlink
+    ):
         """The rejection memo is keyed on the resolved file, so ``~/.codex`` and a ``CODEX_HOME``
         pointing at the same ``auth.json`` are one login, in either order."""
         real = _auth(tmp_path / "real" / "auth.json", -10)
         link = tmp_path / "link.json"
-        link.symlink_to(real)
+        make_symlink(link, real)
         current = [real]
         r = CodexRenewer(lambda: list(current))
         calls = _respond(monkeypatch, error=RefreshRejectedError("HTTP 400 refresh_token_expired"))
@@ -385,12 +390,12 @@ class TestRenew:
         self, tmp_path, monkeypatch, caplog
     ):
         f = _auth(tmp_path / "auth.json", -10, refresh="SECRET-REFRESH")
-        before = f.read_text()
+        before = f.read_text(encoding="utf-8")
         calls = _respond(monkeypatch, error=RefreshRejectedError("HTTP 401 refresh_token_expired"))
         r = _renewer(f)
         with caplog.at_level(logging.INFO):
             assert r.renew() is False
-        assert f.read_text() == before
+        assert f.read_text(encoding="utf-8") == before
         assert "codex login" in caplog.text and "refresh_token_expired" in caplog.text
         assert "SECRET-REFRESH" not in caplog.text
         assert r.due() is False  # not retried with the same dead token…
@@ -404,11 +409,11 @@ class TestRenew:
         self, tmp_path, monkeypatch, code
     ):
         f = _auth(tmp_path / "auth.json", -10)
-        before = f.read_text()
+        before = f.read_text(encoding="utf-8")
         _respond(monkeypatch, error=OSError(f"HTTP {code}"))
         r = _renewer(f)
         assert r.renew() is False
-        assert f.read_text() == before
+        assert f.read_text(encoding="utf-8") == before
         assert r.due() is True and r._rejected == {}
 
     def test_a_failed_save_is_reported_as_a_failure(self, tmp_path, monkeypatch, caplog):

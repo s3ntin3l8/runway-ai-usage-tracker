@@ -62,6 +62,8 @@ def hermetic_home(tmp_path, monkeypatch):
     runway_config.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(runway_config))
@@ -142,6 +144,7 @@ def test_runways_own_github_oauth_file_is_still_read(tmp_path, monkeypatch):
     runway_config.mkdir()
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(runway_config))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
     (runway_config / "github_oauth.json").write_text(json.dumps({"access_token": "gho_runway"}))
@@ -168,7 +171,7 @@ _FORBIDDEN_MODULES = {"subprocess"}
 
 
 def _violations(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text(), filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     found: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):

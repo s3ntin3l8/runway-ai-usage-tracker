@@ -13,6 +13,7 @@ from app.main import app
 from app.models.db import LatestUsage, ProviderConfig, SystemConfig
 from app.services.accumulator import merge_card_json
 from app.services.fleet_registry import fleet_registry
+from scripts.sidecar_pkg.transport import signing_timestamp
 
 
 @pytest.fixture(name="session")
@@ -53,7 +54,7 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     settings.INGEST_API_KEY = "test-key"
 
     def get_signed_payload(payload: dict, key: str):
-        ts = str(time.time())
+        ts = signing_timestamp()
         body_bytes = json.dumps(payload, separators=(",", ":")).encode()
         sig = hmac.new(key.encode(), ts.encode() + body_bytes, hashlib.sha256).hexdigest()
         return body_bytes, {"X-Signature": sig, "X-Timestamp": ts}
@@ -196,7 +197,7 @@ def _signed_ingest(client, payload: dict):
     from app.core.config import settings
 
     settings.INGEST_API_KEY = "test-key"
-    ts = str(time.time())
+    ts = signing_timestamp()
     body = json.dumps(payload, separators=(",", ":")).encode()
     sig = hmac.new(b"test-key", ts.encode() + body, hashlib.sha256).hexdigest()
     return client.post(

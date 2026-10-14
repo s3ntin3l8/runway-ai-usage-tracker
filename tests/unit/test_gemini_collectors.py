@@ -470,6 +470,7 @@ async def test_default_gemini_collector_reads_only_the_cached_bundle(tmp_path, m
         json.dumps({"access_token": "FILE-TOKEN", "expiry_date": 9999999999999})
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     cache = TokenCache()
     await cache.store(
         "gemini",

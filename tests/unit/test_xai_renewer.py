@@ -90,7 +90,7 @@ class TestDue:
 
     def test_jwt_exp_beats_stale_expires_field(self, tmp_path):
         f = _opencode(tmp_path / "a.json", time.time() - 10)
-        data = json.loads(f.read_text())
+        data = json.loads(f.read_text(encoding="utf-8"))
         data["xai"]["expires"] = int((time.time() + 9999) * 1000)
         f.write_text(json.dumps(data))
         assert XaiRenewer([(f, "opencode")]).due() is True
@@ -105,26 +105,27 @@ class TestRenew:
         assert XaiRenewer([(f, "opencode")]).renew() is True
 
         assert calls == ["r-old"]
-        data = json.loads(f.read_text())
+        data = json.loads(f.read_text(encoding="utf-8"))
         assert data["openrouter"] == {"type": "api", "key": "keep-me"}
         assert data["xai"]["refresh"] == "r-new"
         assert data["xai"]["extra"] == "kept"
         assert data["xai"]["expires"] == int(new_exp) * 1000
-        assert oct(f.stat().st_mode & 0o777) == "0o600"
+        if os.name != "nt":
+            assert oct(f.stat().st_mode & 0o777) == "0o600"
         assert not [p for p in tmp_path.iterdir() if p.name.startswith(".auth-")]
 
     def test_keeps_refresh_token_when_not_rotated(self, tmp_path, monkeypatch):
         f = _opencode(tmp_path / "a.json", time.time() - 10)
         _respond(monkeypatch, {"access_token": _jwt(time.time() + 3600)})
         XaiRenewer([(f, "opencode")]).renew()
-        assert json.loads(f.read_text())["xai"]["refresh"] == "r-old"
+        assert json.loads(f.read_text(encoding="utf-8"))["xai"]["refresh"] == "r-old"
 
     def test_grok_cli_file(self, tmp_path, monkeypatch):
         f = _grok(tmp_path / "auth.json", time.time() - 10)
         new = _jwt(time.time() + 3600)
         _respond(monkeypatch, {"access_token": new, "refresh_token": "g-new"})
         assert XaiRenewer([(f, "grok")]).renew() is True
-        entry = json.loads(f.read_text())["https://auth.x.ai::client"]
+        entry = json.loads(f.read_text(encoding="utf-8"))["https://auth.x.ai::client"]
         assert entry["key"] == new and entry["refresh_token"] == "g-new"
         assert entry["first_name"] == "A"
 
@@ -137,11 +138,11 @@ class TestRenew:
 
         monkeypatch.setattr(xai_renewer, "request_refresh", cli_renews_meanwhile)
         XaiRenewer([(f, "opencode")]).renew()
-        assert json.loads(f.read_text())["xai"]["refresh"] == "r-cli"
+        assert json.loads(f.read_text(encoding="utf-8"))["xai"]["refresh"] == "r-cli"
 
     def test_rejected_grant_writes_nothing_and_stops_retrying(self, tmp_path, monkeypatch, caplog):
         f = _opencode(tmp_path / "a.json", time.time() - 10, refresh="SECRET-REFRESH")
-        before = f.read_text()
+        before = f.read_text(encoding="utf-8")
         calls = _respond(
             monkeypatch, error=xai_renewer.RefreshRejectedError("HTTP 400 invalid_grant")
         )
@@ -149,7 +150,7 @@ class TestRenew:
 
         with caplog.at_level(logging.INFO):
             assert renewer.renew() is False
-        assert f.read_text() == before
+        assert f.read_text(encoding="utf-8") == before
         assert "SECRET-REFRESH" not in caplog.text and "invalid_grant" in caplog.text
         assert renewer.due() is False
         assert len(calls) == 1
@@ -239,7 +240,7 @@ class TestReviewFixes:
         calls = _respond(monkeypatch, {"access_token": _jwt(time.time() + 3600)})
         XaiRenewer([(f, "grok")]).renew()
         assert calls == ["rb"]
-        data = json.loads(f.read_text())
+        data = json.loads(f.read_text(encoding="utf-8"))
         assert data["https://auth.x.ai::a"]["refresh_token"] == "ra"
 
     def test_failed_write_warns_and_backs_off(self, tmp_path, monkeypatch, caplog):
@@ -251,14 +252,14 @@ class TestReviewFixes:
         assert "could not write" in caplog.text
         assert not [p for p in tmp_path.iterdir() if p.name.startswith(".auth-")]
 
-    def test_symlinked_auth_file_stays_a_symlink(self, tmp_path, monkeypatch):
+    def test_symlinked_auth_file_stays_a_symlink(self, tmp_path, monkeypatch, make_symlink):
         real = _opencode(tmp_path / "real.json", time.time() - 10)
         link = tmp_path / "auth.json"
-        link.symlink_to(real)
+        make_symlink(link, real)
         _respond(monkeypatch, {"access_token": _jwt(time.time() + 3600), "refresh_token": "n"})
         XaiRenewer([(link, "opencode")]).renew()
         assert link.is_symlink()
-        assert json.loads(real.read_text())["xai"]["refresh"] == "n"
+        assert json.loads(real.read_text(encoding="utf-8"))["xai"]["refresh"] == "n"
 
 
 class _FakeResponse:
@@ -380,7 +381,7 @@ class TestHelpers:
             login, {"access_token": "opaque-token", "expires_in": 3600}
         )
         assert outcome == "written"
-        expires = json.loads(f.read_text())["xai"]["expires"]
+        expires = json.loads(f.read_text(encoding="utf-8"))["xai"]["expires"]
         assert abs(expires / 1000 - (time.time() + 3600)) < 5
 
     def test_write_back_reports_failure_when_the_file_vanished(self, tmp_path):
@@ -438,4 +439,4 @@ def test_concurrent_renewals_refresh_the_token_once(tmp_path, monkeypatch):
     t2.join(5)
 
     assert calls == ["r-old"]
-    assert json.loads(f.read_text())["xai"]["refresh"] == "r-new"
+    assert json.loads(f.read_text(encoding="utf-8"))["xai"]["refresh"] == "r-new"

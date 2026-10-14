@@ -896,3 +896,11 @@ class TestCollectionReason:
         await smart.collect(mock_client)
         result = await smart.collect(mock_client)  # fresh cache hit, aged past the ceiling
         assert "fresh cache hit" not in result[0]["detail"]
+
+
+@pytest.mark.parametrize("ttl", [0, -1])
+def test_disabled_cache_does_not_reuse_a_same_tick_result(mock_collector, ttl):
+    smart = SmartCollector(mock_collector, "TestCollector", ttl=ttl)
+    smart.last_result = []
+    smart.last_success_time = 1000.0
+    assert smart._should_use_cache(1000.0) is False

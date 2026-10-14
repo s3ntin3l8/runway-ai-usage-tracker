@@ -96,7 +96,9 @@ class SmartCollector:
         - TTL not exceeded AND
         - Error count below threshold
         """
-        if self.last_result is None:
+        # Zero TTL must disable caching even when consecutive cycles share a
+        # coarse Windows timestamp; otherwise last_success_time == now is fresh.
+        if self.ttl <= 0 or self.last_result is None:
             return False
 
         if self.last_success_time is None:

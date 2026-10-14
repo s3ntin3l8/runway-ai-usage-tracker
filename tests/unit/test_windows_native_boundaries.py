@@ -94,8 +94,9 @@ def test_native_swap_from_directory_with_spaces(tmp_path):
                 and "Installed updated sidecar." in log.read_text()
             ):
                 break
-        except FileNotFoundError:
-            # The helper briefly moves the old image away before the new one.
+        except (FileNotFoundError, PermissionError):
+            # During the bounded wait the native helper can briefly move or
+            # exclusively hold the image; final assertions still require success.
             pass
         time.sleep(0.1)
     assert installed.read_bytes() == b"replacement"

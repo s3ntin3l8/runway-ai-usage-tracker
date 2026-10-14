@@ -128,6 +128,7 @@ def test_github_token_gh_cli_file_is_not_read_by_the_server(tmp_path, monkeypatc
     hosts.parent.mkdir(parents=True)
     hosts.write_text("github.com:\n  oauth_token: gho_cli_token\n  user: test")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     monkeypatch.setenv("GITHUB_TOKEN", "")
@@ -162,6 +163,7 @@ def test_claude_cli_credential_files_are_not_read_by_the_server(tmp_path, monkey
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(payload)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
@@ -279,6 +281,7 @@ def test_opencode_auth_json_file_rule_yields_nothing_on_the_server(
     auth_path.parent.mkdir(parents=True)
     auth_path.write_text(json.dumps({service_key: {"key": "sk-live-from-auth"}}))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     monkeypatch.setenv(env_var, "")
 
@@ -301,6 +304,7 @@ def test_opencode_auth_json_env_rule_still_works(
     auth_path.parent.mkdir(parents=True)
     auth_path.write_text(json.dumps({service_key: {"key": "sk-from-file"}}))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway-config"))
     monkeypatch.setenv(env_var, "sk-from-env")
 

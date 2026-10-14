@@ -57,7 +57,11 @@ def test_redirects_never_forward_headers_or_body(status):
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            paths.append((self.path, self.headers.get("X-Signature")))
+            # Consume the request before closing the HTTP/1.0 response so a
+            # Windows reset cannot hide the redirect status. Still record the
+            # original body and prove no request reaches the redirect target.
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            paths.append((self.path, self.headers.get("X-Signature"), body))
             self.send_response(status if self.path == "/source" else 200)
             self.send_header("Location", "/target")
             self.end_headers()
@@ -79,7 +83,7 @@ def test_redirects_never_forward_headers_or_body(status):
         with pytest.raises(error.HTTPError) as exc:
             transport.urlopen(req, timeout=3)
         assert exc.value.code == status
-        assert paths == [("/source", "synthetic")]
+        assert paths == [("/source", "synthetic", b"synthetic-credential")]
     finally:
         server.shutdown()
         server.server_close()

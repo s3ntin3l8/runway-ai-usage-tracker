@@ -1,7 +1,20 @@
 // Global vitest setup for component tests (jsdom environment).
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
-import { afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
+
+// English date-label assertions must not depend on the developer's OS locale.
+// Explicit locales still reach the native implementation; product code remains localized.
+const nativeLocaleDate = Date.prototype.toLocaleDateString;
+beforeEach(() => {
+  vi.spyOn(Date.prototype, 'toLocaleDateString').mockImplementation(function (this: Date, locales, options) {
+    const locale = locales == null || (Array.isArray(locales) && locales.length === 0)
+      ? 'en-US'
+      : locales;
+    return nativeLocaleDate.call(this, locale, options);
+  });
+});
+afterEach(() => vi.restoreAllMocks());
 
 // RTL auto-cleanup between tests.
 afterEach(() => cleanup());

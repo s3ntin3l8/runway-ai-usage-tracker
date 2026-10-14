@@ -136,3 +136,21 @@ describe('calendar date boundaries', () => {
     );
   });
 });
+
+
+it('formats dates with the native default locale outside the English test fixture', () => {
+  vi.restoreAllMocks();
+  setTzConfig({ user_timezone: 'UTC', env_timezone: null });
+  const iso = '2026-06-15T12:00:00Z';
+  const options = { month: 'short', day: 'numeric' } as const;
+  expect(formatLocalDate(iso, options)).toBe(
+    new Intl.DateTimeFormat(undefined, { ...options, timeZone: 'UTC' }).format(new Date(iso)),
+  );
+});
+
+
+it('reinstalls the English date fixture before the next test', () => {
+  expect(vi.isMockFunction(Date.prototype.toLocaleDateString)).toBe(true);
+  setTzConfig({ user_timezone: 'UTC', env_timezone: null });
+  expect(formatLocalDate('2026-06-15T12:00:00Z', { month: 'short', day: 'numeric' })).toBe('Jun 15');
+});

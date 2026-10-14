@@ -61,7 +61,7 @@ def _creds(
 
 
 def _read(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _response(**over):
@@ -316,7 +316,8 @@ class TestWriteBack:
     def test_keeps_the_file_mode_and_leaves_no_temp_file(self, tmp_path):
         f = _creds(tmp_path / ".credentials.json", -10)
         ar.write_back(ar.read_login(f), _response())
-        assert oct(f.stat().st_mode & 0o777) == "0o600"
+        if os.name != "nt":
+            assert oct(f.stat().st_mode & 0o777) == "0o600"
         assert [p.name for p in tmp_path.iterdir()] == [".credentials.json"]
 
     def test_the_cli_renewing_first_wins(self, tmp_path):
@@ -346,11 +347,11 @@ class TestWriteBack:
         assert [p.name for p in tmp_path.iterdir()] == [".credentials.json"]
         assert _read(f)["claudeAiOauth"]["refreshToken"] == "r-old"
 
-    def test_a_symlinked_credentials_file_stays_a_symlink(self, tmp_path):
+    def test_a_symlinked_credentials_file_stays_a_symlink(self, tmp_path, make_symlink):
         real = _creds(tmp_path / "dotfiles" / "credentials.json", -10)
         link = tmp_path / ".claude" / ".credentials.json"
         link.parent.mkdir()
-        link.symlink_to(real)
+        make_symlink(link, real)
         os.utime(real, (time.time() - 600, time.time() - 600))
         assert ar.write_back(ar.read_login(link), _response()) == "written"
         assert link.is_symlink()
@@ -380,10 +381,12 @@ class TestRenew:
         assert sorted(c[0] for c in calls) == ["ra", "rb"]
         assert _read(fresh)["claudeAiOauth"]["refreshToken"] == "rc"
 
-    def test_a_file_reachable_through_two_paths_is_renewed_once(self, tmp_path, monkeypatch):
+    def test_a_file_reachable_through_two_paths_is_renewed_once(
+        self, tmp_path, monkeypatch, make_symlink
+    ):
         real = _creds(tmp_path / "real" / ".credentials.json", -10)
         link = tmp_path / "link.json"
-        link.symlink_to(real)
+        make_symlink(link, real)
         calls = _respond(monkeypatch)
         _renewer(real, link).renew()
         assert len(calls) == 1
@@ -423,12 +426,12 @@ class TestRenew:
         self, tmp_path, monkeypatch, caplog
     ):
         f = _creds(tmp_path / ".credentials.json", -10, refresh="SECRET-REFRESH")
-        before = f.read_text()
+        before = f.read_text(encoding="utf-8")
         calls = _respond(monkeypatch, error=RefreshRejectedError("HTTP 400 invalid_grant"))
         r = _renewer(f)
         with caplog.at_level(logging.INFO):
             assert r.renew() is False
-        assert f.read_text() == before
+        assert f.read_text(encoding="utf-8") == before
         assert "claude auth login" in caplog.text and "invalid_grant" in caplog.text
         assert "SECRET-REFRESH" not in caplog.text
         # Not retried with the same dead token…
@@ -444,11 +447,11 @@ class TestRenew:
         self, tmp_path, monkeypatch, code
     ):
         f = _creds(tmp_path / ".credentials.json", -10)
-        before = f.read_text()
+        before = f.read_text(encoding="utf-8")
         _respond(monkeypatch, error=OSError(f"HTTP {code}"))
         r = _renewer(f)
         assert r.renew() is False
-        assert f.read_text() == before
+        assert f.read_text(encoding="utf-8") == before
         assert r.due() is True and r._rejected == {}
 
     def test_a_failed_save_is_reported_as_a_failure(self, tmp_path, monkeypatch, caplog):

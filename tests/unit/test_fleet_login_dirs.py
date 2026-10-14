@@ -12,6 +12,7 @@ from scripts import sidecar
 @pytest.fixture(autouse=True)
 def isolated_dirs(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
     monkeypatch.delenv("RUNWAY_API_URL", raising=False)
@@ -172,7 +173,7 @@ def test_codex_roots_keep_distinct_accounts_and_per_account_watermarks(tmp_path)
         )
         sample = (
             __import__("pathlib").Path(__file__).parents[1] / "fixtures" / "chatgpt-sample.jsonl"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         (root / "sessions" / "test.jsonl").write_text(sample)
     sidecar.apply_remote_login_dirs({"codex_home": [str(roots[1])]})
     wm = EventWatermark(tmp_path / "wm")
@@ -203,7 +204,7 @@ def test_unknown_root_uses_its_own_hint_not_another_roots_identity(tmp_path):
     )
     sidecar.apply_remote_login_dirs({"claude_config_dirs": [str(root)]})
     events, blocked = [], []
-    hint = {"anthropic": {f"path:{root}/projects": "assigned@example.com"}}
+    hint = {"anthropic": {f"path:{root / 'projects'}": "assigned@example.com"}}
     sidecar._extract_directory_events(
         "anthropic", EventWatermark(tmp_path / "wm"), 90, hint, events, blocked
     )
@@ -235,7 +236,7 @@ def test_idle_unresolved_log_root_does_not_clear_pending_manifest(tmp_path):
         0,
         True,
     )
-    assert blocked[0]["credential_origin"] == f"path:{root}/projects"
+    assert blocked[0]["credential_origin"] == f"path:{root / 'projects'}"
     watermark.advance("anthropic", "default", datetime.datetime.now(datetime.UTC))
     assert sidecar._extract_directory_events("anthropic", watermark, 90, {}, [], []) == (0, False)
     (root / ".credentials.json").write_text(

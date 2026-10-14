@@ -41,7 +41,9 @@ class TestOpenCodeCookieRules:
 
     def test_console_cookie_is_present_in_both_registries(self):
         sidecar_rules = sidecar.__REGISTRY__["providers"]["opencode"]["rules"]
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         config_rules = registry["providers"]["opencode"]["rules"]
 
         for rules in (sidecar_rules, config_rules):
@@ -69,7 +71,9 @@ class TestGeminiCredentialMapping:
         assert mapping.get("expiry_date") == "expiry_date"
 
     def test_canonical_registry_ships_id_token(self):
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         gemini = registry["providers"]["gemini"]
         mapping = _gemini_file_mapping(gemini["rules"])
         assert mapping.get("id_token") == "id_token"
@@ -143,7 +147,9 @@ class TestClaudeOAuthCredentialRules:
         ]
 
     def test_oauth_creds_path_and_identity_mapping_are_available_in_both_registries(self):
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             rules = providers["anthropic"]["rules"]
             oauth_file = next(
@@ -220,7 +226,9 @@ class TestOpenCodeCredentialRules:
         assert cookie_slots["__Host-console_session"] == "console_session"
 
     def test_canonical_registry_mirrors_sidecar_credential_rules(self):
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         rules = registry["providers"]["opencode"]["rules"]
         file_rule = next(rule for rule in rules if rule.get("type") == "file")
         assert file_rule["mapping"]["opencode-go.key"] == "api_key"
@@ -229,7 +237,9 @@ class TestOpenCodeCredentialRules:
         assert cookie_slots == {"auth", "__Host-console_session"}
 
     def test_open_code_registries_do_not_emit_sqlite_rolling_usage_cards(self):
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             assert all(rule.get("type") != "sqlite" for rule in providers["opencode"]["rules"])
 
@@ -278,7 +288,9 @@ class TestDeepSeekCredentialRules:
     CLI stores for its BYOK provider — both registries must ship the rule."""
 
     def test_baked_and_canonical_registries_discover_env_and_auth_json(self):
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             rules = provider["deepseek"]["rules"]
             env_rule = next(rule for rule in rules if rule.get("type") == "env")
@@ -334,7 +346,9 @@ class TestOpencodeAuthJsonRuleMirrors:
         assert set(self._sidecar_rules()) == self._EXPECTED
 
     def test_canonical_registry_mirrors_paths_and_mappings(self):
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         for provider_id, sidecar_rules in self._sidecar_rules().items():
             assert provider_id in registry["providers"], f"{provider_id} missing from registry.json"
             canonical_rules = self._auth_json_file_rules(
@@ -369,7 +383,9 @@ class TestOpencodeAuthJsonRuleMirrors:
         """#351: the three sibling keys added by #340 must stay in both registries."""
         for providers in (
             sidecar.__REGISTRY__["providers"],
-            json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())["providers"],
+            json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8"))[
+                "providers"
+            ],
         ):
             rules = self._auth_json_file_rules(providers[provider_id]["rules"])
             assert any(rule["mapping"] == mapping for rule in rules), provider_id
@@ -381,7 +397,9 @@ class TestOpencodeAuthJsonRuleMirrors:
 
 class TestXaiCredentialRules:
     def test_baked_and_canonical_registries_map_actual_auth_fields(self):
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             file_rule = next(
                 rule for rule in provider["xai"]["rules"] if rule.get("type") == "file"
@@ -702,7 +720,7 @@ class TestQueueRotate:
 
         files = list(tmp_path.glob("*.jsonl"))
         assert len(files) == 1
-        entry = json.loads(files[0].read_text().strip())
+        entry = json.loads(files[0].read_text(encoding="utf-8").strip())
         assert entry["payload"] == {"provider": "test", "metrics": []}
 
     def test_queue_push_retains_existing_entries_when_limit_is_reached(self, tmp_path):
@@ -776,7 +794,10 @@ class TestQueueFlush:
         )
 
         assert sidecar.queue_flush("http://localhost", "synthetic-key") == 1
-        retained = [json.loads(line)["payload"] for line in queue_file.read_text().splitlines()]
+        retained = [
+            json.loads(line)["payload"]
+            for line in queue_file.read_text(encoding="utf-8").splitlines()
+        ]
         assert retained == [failed_payload]
 
         assert sidecar.queue_flush("http://localhost", "synthetic-key") == 1
@@ -801,7 +822,10 @@ class TestQueueFlush:
         monkeypatch.setattr(sidecar, "http_post_signed_with_retry", acknowledge_then_stop)
 
         assert sidecar.queue_flush("http://localhost", "synthetic-key", stop_event) == 1
-        retained = [json.loads(line)["payload"] for line in queue_file.read_text().splitlines()]
+        retained = [
+            json.loads(line)["payload"]
+            for line in queue_file.read_text(encoding="utf-8").splitlines()
+        ]
         assert retained == [payloads[1]]
 
 
@@ -826,7 +850,7 @@ class TestSecureQueueStorage:
         assert sidecar_dir.stat().st_mode & 0o777 == 0o700
         assert queue_dir.stat().st_mode & 0o777 == 0o700
         assert queue_file.stat().st_mode & 0o777 == 0o600
-        assert "synthetic-secret" in queue_file.read_text()
+        assert "synthetic-secret" in queue_file.read_text(encoding="utf-8")
 
     def test_push_repairs_permissive_directory_and_file_preserving_content(
         self, tmp_path, monkeypatch
@@ -845,7 +869,7 @@ class TestSecureQueueStorage:
         assert sidecar_dir.stat().st_mode & 0o777 == 0o700
         assert queue_dir.stat().st_mode & 0o777 == 0o700
         assert queue_file.stat().st_mode & 0o777 == 0o600
-        assert queue_file.read_text().startswith(original)
+        assert queue_file.read_text(encoding="utf-8").startswith(original)
 
     def test_push_rejects_symlinked_queue_file(self, tmp_path, monkeypatch):
         _sidecar_dir, queue_dir = self._use_dirs(monkeypatch, tmp_path)
@@ -858,7 +882,7 @@ class TestSecureQueueStorage:
 
         with pytest.raises(OSError):
             sidecar.queue_push({"credential": "secret"})
-        assert target.read_text() == "private target\n"
+        assert target.read_text(encoding="utf-8") == "private target\n"
 
     def test_rejects_symlinked_sidecar_directory(self, tmp_path, monkeypatch):
         sidecar_dir = tmp_path / "sidecar"
@@ -898,7 +922,7 @@ class TestSecureQueueStorage:
 
         assert sidecar.queue_flush("http://localhost", "synthetic-key") == 0
         assert queue_file.stat().st_mode & 0o777 == 0o600
-        assert queue_file.read_text() == line
+        assert queue_file.read_text(encoding="utf-8") == line
 
     def test_flush_and_rotation_leave_symlink_target_untouched(self, tmp_path, monkeypatch):
         _sidecar_dir, queue_dir = self._use_dirs(monkeypatch, tmp_path)
@@ -911,7 +935,7 @@ class TestSecureQueueStorage:
         assert sidecar.queue_flush("http://localhost", "synthetic-key") == 0
         sidecar.queue_rotate(max_size_mb=0)
         assert link.is_symlink()
-        assert target.read_text() == '{"payload":{"credential":"do-not-read"}}\n'
+        assert target.read_text(encoding="utf-8") == '{"payload":{"credential":"do-not-read"}}\n'
 
 
 class TestKimiApiRegistryId:
@@ -1739,7 +1763,7 @@ class TestSingleInstanceLock:
         pid_file.write_text(str(os.getpid()))
         try:
             assert sidecar.write_pid_file() is True
-            assert pid_file.read_text().strip() == str(os.getpid())
+            assert pid_file.read_text(encoding="utf-8").strip() == str(os.getpid())
         finally:
             sidecar.remove_pid_file()
 
@@ -1750,7 +1774,7 @@ class TestSingleInstanceLock:
         pid_file.write_text(str(other))
         monkeypatch.setattr(sidecar, "_pid_is_alive", lambda pid: True)
         assert sidecar.write_pid_file() is False
-        assert pid_file.read_text().strip() == str(other)
+        assert pid_file.read_text(encoding="utf-8").strip() == str(other)
 
     def test_stale_pid_is_reclaimed(self, tmp_path, monkeypatch):
         """A pid file left by a dead process must not block a new instance."""
@@ -1956,11 +1980,13 @@ class TestPostCredentialManifest:
 
         assert observation["token_types"] == ["api_key"]
 
-    def test_file_rule_spellings_of_one_file_yield_one_candidate(self, monkeypatch, tmp_path):
+    def test_file_rule_spellings_of_one_file_yield_one_candidate(
+        self, monkeypatch, tmp_path, make_symlink
+    ):
         hosts = tmp_path / "hosts.yml"
         hosts.write_text("github.com:\n  oauth_token: gho_abc\n")
         alias = tmp_path / "alias"
-        alias.symlink_to(tmp_path)
+        make_symlink(alias, tmp_path)
         monkeypatch.setattr(
             sidecar, "expand_file_rule_paths", lambda _paths: [hosts, alias / "hosts.yml"]
         )
@@ -3048,7 +3074,9 @@ def test_grok_env_bearer_is_collected_through_dispatcher(monkeypatch):
 
 
 def test_grok_registries_register_auth_sources_and_no_unused_oauth_parser():
-    registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+    registry = json.loads(
+        (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+    )
     for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
         rules = provider["xai"]["rules"]
         file_rule = next(rule for rule in rules if rule.get("type") == "file")
@@ -3392,7 +3420,9 @@ class TestCustomLoginDirs:
         assert sidecar._discover_anthropic_log_paths() == [log]
 
     def test_both_registries_list_the_env_dir_paths(self):
-        registry = json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text())
+        registry = json.loads(
+            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        )
         for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             claude = [p for r in providers["anthropic"]["rules"] for p in r.get("paths", [])]
             codex = [p for r in providers["chatgpt"]["rules"] for p in r.get("paths", [])]
