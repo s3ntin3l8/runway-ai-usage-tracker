@@ -3456,6 +3456,7 @@ class TestOpencodeDbOverride:
         default.parent.mkdir(parents=True)
         default.touch()
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))  # expanduser on Windows
         monkeypatch.setenv("OPENCODE_DB", str(tmp_path / "typo.db"))
         assert sidecar._discover_opencode_db_path() is None
 
@@ -3464,10 +3465,12 @@ class TestOpencodeDbOverride:
         custom.parent.mkdir(parents=True)
         custom.touch()
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))  # expanduser on Windows
         monkeypatch.setenv("OPENCODE_DB", "custom.db")
         assert sidecar._discover_opencode_db_path() == custom
 
     def test_memory_override_is_ignored(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))  # expanduser on Windows
         monkeypatch.setenv("OPENCODE_DB", ":memory:")
         assert sidecar._discover_opencode_db_path() is None
