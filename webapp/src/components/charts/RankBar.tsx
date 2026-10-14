@@ -2,9 +2,9 @@
 // Supports simple single-value bars AND stacked bars with breakdown data.
 // Shared by Top Projects and Top Tools cards.
 
-import { useMemo } from "react";
-import { EChart } from "./EChart";
-import { baseAxisStyle, baseTooltip, useChartTokens } from "./theme";
+import { useMemo } from 'react';
+import { EChart } from './EChart';
+import { baseAxisStyle, baseTooltip, useChartTokens } from './theme';
 
 export interface RankSegment {
   key: string;
@@ -39,13 +39,11 @@ export function RankBar({
   const option = useMemo(() => {
     // ECharts category axis draws bottom-up; sort ascending so the largest
     // lands at the top via the natural order.
-    const sorted = [...rows]
-      .filter((r) => r.value > 0)
-      .sort((a, b) => a.value - b.value);
+    const sorted = [...rows].filter((r) => r.value > 0).sort((a, b) => a.value - b.value);
     const categoryData = sorted.map((r) => r.label);
     const tickFormat = axisFormat ?? format;
     const xAxis = {
-      type: "value" as const,
+      type: 'value' as const,
       ...baseAxisStyle(t),
       axisLabel: {
         ...baseAxisStyle(t).axisLabel,
@@ -60,22 +58,18 @@ export function RankBar({
         grid: { left: 8, right: 16, top: 8, bottom: 8, containLabel: true },
         tooltip: {
           ...baseTooltip(t),
-          trigger: "axis",
-          axisPointer: { type: "shadow" },
-          formatter: (
-            params: { name: string; value: number; dataIndex: number }[],
-          ) => {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: (params: { name: string; value: number; dataIndex: number }[]) => {
             const p = params[0];
             const sub = sorted[p.dataIndex]?.sub;
-            const subLine = sub
-              ? `<br/><span style="opacity:.6">${sub}</span>`
-              : "";
+            const subLine = sub ? `<br/><span style="opacity:.6">${sub}</span>` : '';
             return `${p.name}: ${format(p.value)}${subLine}`;
           },
         },
         xAxis,
         yAxis: {
-          type: "category",
+          type: 'category',
           data: categoryData,
           ...baseAxisStyle(t),
           splitLine: { show: false },
@@ -83,13 +77,12 @@ export function RankBar({
             color: t.fgMuted,
             fontSize: 11,
             fontFamily: t.monoFamily,
-            formatter: (v: string) =>
-              v.length > 10 ? v.slice(0, 10) + "…" : v,
+            formatter: (v: string) => (v.length > 10 ? v.slice(0, 10) + '…' : v),
           },
         },
         series: [
           {
-            type: "bar",
+            type: 'bar',
             data: sorted.map((r) => r.value),
             barMaxWidth: 18,
             itemStyle: { color: t.accent, borderRadius: [0, 3, 3, 0] },
@@ -103,19 +96,15 @@ export function RankBar({
     const segKeys = new Map<string, { label: string; color: string }>();
     for (const r of sorted) {
       for (const s of r.segments ?? []) {
-        if (!segKeys.has(s.key))
-          segKeys.set(s.key, { label: s.label, color: s.color });
+        if (!segKeys.has(s.key)) segKeys.set(s.key, { label: s.label, color: s.color });
       }
     }
-    const segmentDefs = Array.from(segKeys.entries()).map(([key, meta]) => ({
-      key,
-      ...meta,
-    }));
+    const segmentDefs = Array.from(segKeys.entries()).map(([key, meta]) => ({ key, ...meta }));
 
     const series = segmentDefs.map((seg, i) => ({
       name: seg.label,
-      type: "bar" as const,
-      stack: "total",
+      type: 'bar' as const,
+      stack: 'total',
       barMaxWidth: 18,
       data: sorted.map((r) => {
         const s = r.segments?.find((x) => x.key === seg.key);
@@ -131,15 +120,13 @@ export function RankBar({
       grid: { left: 8, right: 16, top: 8, bottom: 8, containLabel: true },
       tooltip: {
         ...baseTooltip(t),
-        trigger: "axis",
-        axisPointer: { type: "shadow" },
-        formatter: (
-          params: { seriesName: string; value: number; dataIndex: number }[],
-        ) => {
-          if (!params.length) return "";
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => {
+          if (!params.length) return '';
           const idx = params[0].dataIndex;
           const r = sorted[idx];
-          if (!r) return "";
+          if (!r) return '';
 
           const lines: string[] = [`<b>${r.label}</b>`];
           for (const p of params) {
@@ -148,18 +135,16 @@ export function RankBar({
               lines.push(`${p.seriesName}: ${format(val)}`);
             }
           }
-          lines.push(
-            `<span style="opacity:.6">Total: ${format(r.value)}</span>`,
-          );
+          lines.push(`<span style="opacity:.6">Total: ${format(r.value)}</span>`);
           if (r.sub) {
             lines.push(`<span style="opacity:.6">${r.sub}</span>`);
           }
-          return lines.join("<br/>");
+          return lines.join('<br/>');
         },
       },
       xAxis,
       yAxis: {
-        type: "category",
+        type: 'category',
         data: categoryData,
         ...baseAxisStyle(t),
         splitLine: { show: false },
@@ -167,12 +152,12 @@ export function RankBar({
           color: t.fgMuted,
           fontSize: 11,
           fontFamily: t.monoFamily,
-          formatter: (v: string) => (v.length > 10 ? v.slice(0, 10) + "…" : v),
+          formatter: (v: string) => (v.length > 10 ? v.slice(0, 10) + '…' : v),
         },
       },
       series,
     };
   }, [rows, format, axisFormat, t, hasStacked]);
 
-  return <EChart option={option} className={className ?? "h-72"} />;
+  return <EChart option={option} className={className ?? 'h-72'} />;
 }

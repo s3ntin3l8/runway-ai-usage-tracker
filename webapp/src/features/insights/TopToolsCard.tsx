@@ -2,20 +2,16 @@
 // Sourced from per-event tool names (Anthropic today), so it reflects Claude
 // tool usage — labelled as such to avoid implying every provider contributes.
 
-import type { TopToolEntry } from "@/api/types";
-import { RankBar, type RankRow } from "@/components/charts/RankBar";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Skeleton } from "@/components/ui/Skeleton";
-import { formatAxisNumber } from "@/lib/format";
-import { formatRangeLabel, type DateRangeValue } from "@/lib/timeRange";
-import { useTopTools } from "./queries";
+import type { TopToolEntry } from '@/api/types';
+import { RankBar, type RankRow } from '@/components/charts/RankBar';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { formatAxisNumber } from '@/lib/format';
+import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
+import { useTopTools } from './queries';
 
 function toolRow(t: TopToolEntry): RankRow {
-  return {
-    label: t.tool,
-    value: t.calls,
-    sub: `${t.msgs.toLocaleString()} msgs`,
-  };
+  return { label: t.tool, value: t.calls, sub: `${t.msgs.toLocaleString()} msgs` };
 }
 
 export function TopToolsCard({ range }: { range: DateRangeValue }) {
@@ -33,15 +29,9 @@ export function TopToolsCard({ range }: { range: DateRangeValue }) {
         {top.isPending ? (
           <Skeleton className="h-72 w-full" />
         ) : !hasData ? (
-          <p className="py-16 text-center text-xs text-fg-subtle">
-            No tool usage in this range.
-          </p>
+          <p className="py-16 text-center text-xs text-fg-subtle">No tool usage in this range.</p>
         ) : (
-          <RankBar
-            rows={rows}
-            format={(v) => v.toLocaleString()}
-            axisFormat={formatAxisNumber}
-          />
+          <RankBar rows={rows} format={(v) => v.toLocaleString()} axisFormat={formatAxisNumber} />
         )}
       </CardContent>
     </Card>
