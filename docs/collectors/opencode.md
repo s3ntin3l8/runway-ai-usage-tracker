@@ -206,6 +206,22 @@ gets a vote over the other's credential:
 | Active record holds this exact key | `"single"` — one live account, the discovered key is it. Hint applies. |
 | Active record holds a *different* key | `"ambiguous"` — the credential on disk is not the account the CLI says is active. The hint is withheld, a warning is logged, the card stays Untagged until tagged against its key-scoped origin. |
 
+#### opencode v2: the `credential` table
+
+opencode v2 imports `auth.json` into `opencode.db` (`credential` table) once and
+never reads the file again — the stale file is left behind. On a v2 host the
+sidecar therefore reads the table instead, presented in the legacy `auth.json`
+shape (`{integration_id: value}`: `type:"key"` keeps `key`; `type:"oauth"` keeps
+`access`/`refresh`/`expires`), so every mapping above is unchanged. The origin
+stays `path:…/auth.json#<fingerprint>` (even when v2 never wrote the file), so
+existing operator tags keep binding. The database is opened read-only and v2 is
+detected by its `session_v2` table (1.19 ships an empty `credential` table too).
+
+The tier-3 gate uses the table instead of `account.json` on v2: the key is
+`"single"` when it is `opencode-go`'s active credential (`active = 1`, or the only
+row), `"ambiguous"` when a different active key exists or several unflagged rows
+compete, `"unknown"` when the table has nothing for the service.
+
 ### Assigning a key
 
 - **Paste it** in Providers → opencode (source 3). The server then

@@ -370,6 +370,9 @@ class TestHelpers:
 
     def test_default_targets_cover_opencode_and_grok(self, monkeypatch, tmp_path):
         monkeypatch.setenv("GROK_HOME", str(tmp_path))
+        # Isolate from the machine's real opencode install (a v2 DB there would
+        # rightly drop the opencode targets).
+        monkeypatch.setattr(xai_renewer, "OPENCODE_PATHS", (tmp_path / "oc" / "auth.json",))
         targets = XaiRenewer()._targets()
         assert (tmp_path / "auth.json", "grok") in targets
         assert {kind for _, kind in targets} == {"opencode", "grok"}

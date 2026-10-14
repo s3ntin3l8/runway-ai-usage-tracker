@@ -77,6 +77,7 @@ a = Analysis(
         "scripts.sidecar_pkg.runtime_cleanup",
         "scripts.sidecar_pkg.self_update",
         "scripts.sidecar_pkg.xai_renewer",
+        "scripts.sidecar_pkg.opencode_credentials",
         "scripts.sidecar_pkg.anthropic_renewer",
         "scripts.sidecar_pkg.codex_renewer",
         "scripts.sidecar_pkg.oauth_renewal",
