@@ -93,7 +93,7 @@ const FORMAT: Record<ProjectMetric, (v: number) => string> = {
 
 const AXIS_FORMAT: Record<ProjectMetric, (v: number) => string> = {
   tokens: formatAxisNumber,
-  cost: (v) => formatAxisCost(v),
+  cost: formatAxisCost,
   sessions: formatAxisNumber,
 };
 

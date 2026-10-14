@@ -42,11 +42,12 @@ export function RankBar({
     const sorted = [...rows].filter((r) => r.value > 0).sort((a, b) => a.value - b.value);
     const categoryData = sorted.map((r) => r.label);
     const tickFormat = axisFormat ?? format;
+    const axisStyle = baseAxisStyle(t);
     const xAxis = {
       type: 'value' as const,
-      ...baseAxisStyle(t),
+      ...axisStyle,
       axisLabel: {
-        ...baseAxisStyle(t).axisLabel,
+        ...axisStyle.axisLabel,
         hideOverlap: true,
         formatter: (v: number) => tickFormat(v),
       },

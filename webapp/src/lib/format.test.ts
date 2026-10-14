@@ -49,6 +49,7 @@ describe('formatAxisNumber / formatAxisCost', () => {
   it('compacts currency', () => {
     expect(formatAxisCost(1200)).toBe('$1.2K');
     expect(formatAxisCost(300)).toBe('$300');
+    expect(formatAxisCost(0)).toBe('$0');
   });
 });
 

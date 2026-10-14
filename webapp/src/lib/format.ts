@@ -131,6 +131,8 @@ function getAxisFormatter(currencyCode?: string): Intl.NumberFormat {
           : opts,
       );
     } catch {
+      // Invalid currency code: deliberately fall back to USD (cached under the
+      // requested key, as getCurrencyFormatter does) rather than throwing mid-render.
       f = new Intl.NumberFormat('en-US', { ...opts, style: 'currency', currency: 'USD' });
     }
     axisFormatterCache.set(key, f);
