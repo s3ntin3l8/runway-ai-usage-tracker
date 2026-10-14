@@ -3439,3 +3439,18 @@ class TestCustomLoginDirs:
         )
 
         assert found == [creds]
+
+
+class TestOpencodeDbOverride:
+    """OPENCODE_DB (opencode v2's override) takes precedence over the defaults."""
+
+    def test_absolute_override_wins(self, tmp_path, monkeypatch):
+        custom = tmp_path / "custom.db"
+        custom.touch()
+        monkeypatch.setenv("OPENCODE_DB", str(custom))
+        assert sidecar._discover_opencode_db_path() == custom
+
+    def test_memory_override_is_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("OPENCODE_DB", ":memory:")
+        assert sidecar._discover_opencode_db_path() is None

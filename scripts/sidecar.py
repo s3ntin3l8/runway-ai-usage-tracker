@@ -4277,8 +4277,19 @@ def _discover_opencode_db_path() -> Path | None:
     Linux installs). Check both so token usage events get ingested
     regardless of which the local install chose; the missing path is a
     no-op on platforms that use neither.
+
+    ``OPENCODE_DB`` (opencode v2's own override) wins when set: an absolute
+    path, or one relative to ``~/.local/share/opencode``.
     """
-    candidates = [
+    candidates = []
+    override = os.environ.get("OPENCODE_DB", "").strip()
+    if override and override != ":memory:":
+        candidates.append(
+            os.path.join(
+                os.path.expanduser("~/.local/share/opencode"), os.path.expanduser(override)
+            )
+        )
+    candidates += [
         os.path.expanduser("~/.local/share/opencode/opencode.db"),
         os.path.expanduser("~/.opencode/opencode.db"),
     ]

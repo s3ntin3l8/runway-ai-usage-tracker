@@ -114,3 +114,70 @@ def make_opencode_db(path: str = ":memory:") -> sqlite3.Connection:
         )
     conn.commit()
     return conn
+
+
+def make_opencode_v2_db(path: str, messages: list[dict], sessions: list[dict] | None = None):
+    """Create an opencode v2-shaped DB (migrated in place, v1 tables left behind).
+
+    Mirrors a real migrated ``opencode.db``: ``session_v2`` + ``session_message``
+    (``type`` column, model nested in ``data``) alongside a *frozen* v1 ``message``
+    table holding one stale assistant row that a v2 reader must ignore. Each
+    message is ``{id, session_id, time_created, type, data}``; each session
+    ``{id, directory, model}``.
+    """
+    conn = sqlite3.connect(path)
+    cur = conn.cursor()
+    cur.execute(
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, "
+        "time_created INTEGER, time_updated INTEGER, data TEXT)"
+    )
+    cur.execute(
+        "INSERT INTO message VALUES ('msg_frozen_v1','ses_old',1,1,?)",
+        (json.dumps({"role": "assistant", "modelID": "stale", "providerID": "opencode-go"}),),
+    )
+    cur.execute("CREATE TABLE account (id TEXT PRIMARY KEY, email TEXT)")
+    cur.execute("INSERT INTO account VALUES ('acc1', 'user@opencode.test')")
+    cur.execute("CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, model TEXT)")
+    cur.execute(
+        "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, "
+        "seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)"
+    )
+    for s in sessions or []:
+        cur.execute(
+            "INSERT INTO session_v2 VALUES (?,?,?)",
+            (s["id"], s.get("directory"), json.dumps(s["model"]) if s.get("model") else None),
+        )
+    for seq, m in enumerate(messages):
+        cur.execute(
+            "INSERT INTO session_message VALUES (?,?,?,?,?,?,?)",
+            (
+                m["id"],
+                m["session_id"],
+                m["type"],
+                seq,
+                m["time_created"],
+                m["time_created"],
+                json.dumps(m["data"]),
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def v2_assistant_data(created_ms: int, **overrides) -> dict:
+    """A settled v2 assistant ``data`` payload (shape taken from a real row)."""
+    data = {
+        "agent": "build",
+        "model": {"providerID": "xai", "id": "grok-4.3", "variant": "default"},
+        "finish": "stop",
+        "cost": 0.0409734,
+        "tokens": {
+            "input": 32476,
+            "output": 1,
+            "reasoning": 135,
+            "cache": {"read": 192, "write": 0},
+        },
+        "time": {"created": created_ms, "completed": created_ms + 4924},
+    }
+    data.update(overrides)
+    return data
