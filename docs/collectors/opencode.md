@@ -11,6 +11,34 @@ OpenCode quota collector with API-key and session-cookie strategies.
 - **Auth:** OpenCode Go API key (`oc_sk_…`), or session cookies (`auth` + `__Host-console_session`)
 - **Local history:** The sidecar extracts per-message usage events from OpenCode's SQLite database; it does not emit rolling quota cards from that database.
 
+### Local history: v1 vs v2 databases
+
+OpenCode v2 migrates `opencode.db` **in place** and leaves the v1 tables behind,
+frozen. The sidecar picks the reader by schema:
+
+| | v1 (≤ 1.x) | v2 |
+|---|---|---|
+| Detected by | no `session_v2` table | `session_v2` table present (1.19 already ships an empty `session_message`, so that is not the signal) |
+| Messages | `message` (`data.role = 'assistant'`) | `session_message` (`type IN ('assistant','compaction')`) |
+| Model / provider | `data.modelID`, `data.providerID` | `data.model.id`, `data.model.providerID` |
+| Effort | `data.variant` | `data.model.variant` (`"default"` = none) |
+| Working dir | `data.path.cwd` | `session_v2.directory` |
+
+Message ids and `time_created` survive the migration, so existing watermarks and
+event ids carry over (no re-ingest, no duplicates). The database is opened
+read-only. A v2 row still streaming (no `time.completed`/`error`, or a `running`
+compaction) is held back — and everything after it — until it settles, because
+ingest is insert-or-ignore; one that stays unsettled for over an hour is treated
+as abandoned and skipped. "Abandoned" means the owning opencode process crashed or
+was killed mid-response; the one-hour threshold (`_V2_PENDING_GRACE_MS`) is
+deliberately generous for a normal turn or compaction, and a row that settles
+only after it has been skipped is not recovered (its `time_created` is already
+behind the watermark). Compactions with no cost and no non-zero token count produce no
+event. `OPENCODE_DB` (opencode's own override) is honoured when set.
+
+`auth.json` is likewise no longer read by OpenCode v2 (credentials moved to the
+`credential` table); see the credential-discovery notes above.
+
 ## Auth Sources
 
 Saved provider credentials take precedence for their account, followed by credentials discovered by the sidecar and then server environment variables. Local files and browser cookies are read by the sidecar; the server does not inspect another machine's filesystem.

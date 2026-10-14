@@ -14,7 +14,11 @@ from scripts.sidecar_pkg.event_extractors.opencode import (
     map_opencode_provider_id,
     parse_opencode_events,
 )
-from tests.fixtures.opencode_fixture import make_opencode_db
+from tests.fixtures.opencode_fixture import (
+    make_opencode_db,
+    make_opencode_v2_db,
+    v2_assistant_data,
+)
 
 
 def _make_db() -> tuple[Path, sqlite3.Connection]:
@@ -1007,3 +1011,197 @@ def test_successful_request_not_marked_as_error():
         assert evts[0].error_reason is None
     finally:
         db_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# opencode v2 (session_message / session_v2)
+# ---------------------------------------------------------------------------
+
+_V2_SINCE = datetime(2020, 1, 1, tzinfo=UTC)
+_V2_T0 = 1791276655802  # a real post-migration created timestamp (ms)
+
+
+def _v2_db(tmp_path, messages, sessions=None) -> Path:
+    path = tmp_path / "opencode.db"
+    make_opencode_v2_db(str(path), messages, sessions)
+    return path
+
+
+def _msg(id_, created, type_="assistant", session="ses_1", **data_overrides):
+    return {
+        "id": id_,
+        "session_id": session,
+        "time_created": created,
+        "type": type_,
+        "data": v2_assistant_data(created, **data_overrides),
+    }
+
+
+def test_v2_reads_session_message_and_ignores_frozen_v1_table(tmp_path):
+    db = _v2_db(
+        tmp_path,
+        [_msg("msg_a", _V2_T0)],
+        [
+            {
+                "id": "ses_1",
+                "directory": "/work/proj",
+                "model": {"id": "grok-4.3", "providerID": "xai"},
+            }
+        ],
+    )
+    evts = parse_opencode_events(db, account_id="user@opencode.test", since=_V2_SINCE)
+    assert [e.event_id for e in evts] == ["msg_a"]  # 'msg_frozen_v1' is not read
+    e = evts[0]
+    assert e.model_id == "grok-4.3"
+    assert e.tokens_input == 32476 and e.tokens_reasoning == 135 and e.tokens_cache_read == 192
+    assert e.cwd == "/work/proj"
+    assert e.latency_ms == 4924
+    assert e.stop_reason == "stop"
+    assert e.effort is None  # migrated "default" variant means no effort
+
+
+def test_v2_variant_maps_to_effort_and_provider_maps(tmp_path):
+    db = _v2_db(
+        tmp_path,
+        [
+            _msg(
+                "msg_a",
+                _V2_T0,
+                model={"providerID": "opencode-go", "id": "kimi", "variant": "High"},
+            )
+        ],
+    )
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.effort == "high"
+    assert e.provider_id == "opencode"
+    assert e.cost_usd == pytest.approx(0.0409734)
+
+
+def test_v2_canonical_provider_still_retagged_and_unpriced(tmp_path):
+    # xai fronts a provider Runway collects directly → shared canonical map applies.
+    db = _v2_db(tmp_path, [_msg("msg_a", _V2_T0)])
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.provider_id == "xai"
+    assert e.cost_usd is None
+
+
+def test_v2_includes_completed_compaction_with_session_model_fallback(tmp_path):
+    comp = {
+        "id": "msg_c",
+        "session_id": "ses_1",
+        "time_created": _V2_T0,
+        "type": "compaction",
+        "data": {
+            "status": "completed",
+            "reason": "auto",
+            "cost": 0.5,
+            "tokens": {"input": 10, "output": 5, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+        },
+    }
+    db = _v2_db(
+        tmp_path,
+        [comp],
+        [{"id": "ses_1", "directory": "/w", "model": {"id": "m1", "providerID": "opencode-go"}}],
+    )
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert (e.model_id, e.provider_id, e.tokens_input, e.cost_usd) == ("m1", "opencode", 10, 0.5)
+
+
+def test_v2_skips_compaction_without_usage(tmp_path):
+    comp = {
+        "id": "msg_c",
+        "session_id": "ses_1",
+        "time_created": _V2_T0,
+        "type": "compaction",
+        "data": {"status": "failed", "reason": "auto"},
+    }
+    assert parse_opencode_events(_v2_db(tmp_path, [comp]), account_id="u", since=_V2_SINCE) == []
+
+
+def test_v2_error_row_becomes_error_event(tmp_path):
+    err = {"name": "APIError", "data": {"statusCode": 429, "message": "slow down"}}
+    db = _v2_db(tmp_path, [_msg("msg_e", _V2_T0, error=err, time={"created": _V2_T0})])
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.kind == "error" and e.error_reason == "rate_limit"
+
+
+def test_v2_holds_back_in_flight_row_and_everything_after_it(tmp_path):
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    streaming = _msg("msg_s", now_ms - 5_000, time={"created": now_ms - 5_000})
+    later = _msg("msg_l", now_ms - 1_000)
+    earlier = _msg("msg_ok", now_ms - 10_000)
+    db = _v2_db(tmp_path, [earlier, streaming, later])
+    evts = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    # The settled row before it is pushed; the watermark must not jump past the
+    # streaming row (ingest is insert-or-ignore, a partial row would freeze).
+    assert [e.event_id for e in evts] == ["msg_ok"]
+
+
+def test_v2_skips_abandoned_incomplete_row_but_keeps_later_ones(tmp_path):
+    old = int(datetime.now(UTC).timestamp() * 1000) - 3 * 3600 * 1000
+    abandoned = _msg("msg_dead", old, time={"created": old})
+    after = _msg("msg_after", old + 1000)
+    db = _v2_db(tmp_path, [abandoned, after])
+    evts = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert [e.event_id for e in evts] == ["msg_after"]
+
+
+def test_v2_respects_since_watermark(tmp_path):
+    db = _v2_db(tmp_path, [_msg("msg_a", _V2_T0), _msg("msg_b", _V2_T0 + 60_000)])
+    since = datetime.fromtimestamp((_V2_T0 + 1) / 1000, tz=UTC)
+    evts = parse_opencode_events(db, account_id="u", since=since)
+    assert [e.event_id for e in evts] == ["msg_b"]
+
+
+def test_v1_db_without_session_v2_still_uses_message_table():
+    db_path, _ = _make_db()
+    try:
+        assert len(parse_opencode_events(db_path, account_id="u", since=_V2_SINCE)) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_parser_opens_db_read_only(tmp_path):
+    db = _v2_db(tmp_path, [_msg("msg_a", _V2_T0)])
+    before = db.stat().st_mtime_ns
+    parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert db.stat().st_mtime_ns == before
+    assert not (tmp_path / "opencode.db-wal").exists()
+
+
+def test_v2_explicit_empty_row_model_does_not_fall_back_to_session_model(tmp_path):
+    db = _v2_db(
+        tmp_path,
+        [_msg("msg_a", _V2_T0, model={})],
+        [
+            {
+                "id": "ses_1",
+                "directory": "/w",
+                "model": {"id": "sess-model", "providerID": "opencode-go"},
+            }
+        ],
+    )
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.model_id == "unknown"
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {},  # nothing recorded
+        {"tokens": {}, "cost": 0},
+        {
+            "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+            "cost": 0,
+        },
+    ],
+)
+def test_v2_compaction_with_zero_usage_emits_nothing(tmp_path, usage):
+    comp = {
+        "id": "msg_c",
+        "session_id": "ses_1",
+        "time_created": _V2_T0,
+        "type": "compaction",
+        "data": {"status": "completed", "reason": "auto", **usage},
+    }
+    assert parse_opencode_events(_v2_db(tmp_path, [comp]), account_id="u", since=_V2_SINCE) == []

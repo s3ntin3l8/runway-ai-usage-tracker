@@ -5,7 +5,14 @@ OpenCode stores messages in a SQLite database. The default location is
 `~/.opencode/opencode.db` — the sidecar's `_discover_opencode_db_path` checks
 both.
 
-Each assistant message row in the `message` table has:
+opencode v2 migrates this DB in place: messages move to `session_message`
+(a `type` column, no `role`; model nested as `model.{id,providerID,variant}`;
+cwd on `session_v2.directory`) and the v1 `message` table is left behind,
+frozen. `session_v2` marks a v2 DB; `_normalize_v2_message` reshapes its rows
+into the v1 form described below so one loop handles both. Message ids and
+`time_created` survive the migration, so watermarks and event ids carry over.
+
+Each assistant message row in the v1 `message` table has:
   - id: TEXT primary key (e.g. "msg_<hash>")
   - session_id: TEXT (direct column, not in JSON)
   - time_created: INTEGER (Unix milliseconds)
@@ -160,6 +167,103 @@ def _classify_opencode_error(err: dict) -> str:
     return str(name).lower() if name else "unknown_error"
 
 
+_V1_QUERY = """
+    SELECT id, session_id, time_created, data
+    FROM message
+    WHERE time_created > ?
+      AND json_extract(data, '$.role') = 'assistant'
+    ORDER BY time_created ASC
+"""
+
+# opencode v2 moved messages into ``session_message`` (type column, no ``role``) and
+# left the v1 ``message`` table behind, frozen. cwd now lives on the session row.
+_V2_QUERY = """
+    SELECT m.id, m.session_id, m.time_created, m.type, m.data, s.directory, s.model
+    FROM session_message m
+    LEFT JOIN session_v2 s ON s.id = m.session_id
+    WHERE m.time_created > ?
+      AND m.type IN ('assistant', 'compaction')
+    ORDER BY m.time_created ASC, m.id ASC
+"""
+
+# A row still streaming longer than this is treated as abandoned (crash / killed
+# session) rather than holding the whole watermark back indefinitely.
+_V2_PENDING_GRACE_MS = 60 * 60 * 1000
+
+
+def _is_v2(cur: sqlite3.Cursor) -> bool:
+    """True when the DB has been migrated to opencode v2.
+
+    ``session_v2`` is the signal: opencode 1.19 already ships an (empty)
+    ``session_message`` table, so that one does not distinguish the majors.
+    """
+    cur.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_v2'")
+    return cur.fetchone() is not None
+
+
+def _v2_row_status(raw: dict, msg_type: str, time_created_ms: int, now_ms: int) -> str:
+    """Classify a v2 row as ``ready``, ``pending`` (hold back) or ``skip``.
+
+    ``pending`` stalls the whole forward window by design (the caller ``break``s,
+    not ``continue``s): ingest is insert-or-ignore and the watermark advances past
+    every pushed event, so anything after an in-flight row must wait too.
+    ``skip`` (unsettled for over an hour) is a known trade-off: if such a row
+    later settles — e.g. a long compaction — its ``time_created`` is already behind
+    the watermark and it is not recovered.
+    """
+    if msg_type == "compaction":
+        settled = raw.get("status") in ("completed", "failed")
+    else:
+        time_obj = raw.get("time") or {}
+        settled = time_obj.get("completed") is not None or isinstance(raw.get("error"), dict)
+    if settled:
+        return "ready"
+    return "pending" if now_ms - int(time_created_ms) < _V2_PENDING_GRACE_MS else "skip"
+
+
+def _has_usage(raw: dict) -> bool:
+    """True when a v2 payload recorded any cost or a non-zero token count."""
+    if raw.get("cost"):
+        return True
+    tokens = raw.get("tokens") or {}
+    cache = tokens.get("cache") or {}
+    counts = [tokens.get(k) for k in ("input", "output", "reasoning")]
+    counts += [cache.get("read"), cache.get("write")]
+    return any(isinstance(n, int | float) and n > 0 for n in counts)
+
+
+def _normalize_v2_message(
+    raw: dict, msg_type: str, directory: str | None, session_model: dict | None
+) -> dict | None:
+    """Reshape a v2 ``session_message`` payload into the v1 ``message.data`` form.
+
+    Lets the shared row loop below stay the single place that maps provider ids,
+    canonical retags, errors and effort. Returns None for rows that carry no usage
+    (a compaction with no cost and no non-zero token count).
+    """
+    if msg_type == "compaction" and not _has_usage(raw):
+        return None
+    # Compactions only sometimes name the model; fall back to the session's.
+    model = (raw["model"] if "model" in raw else session_model) or {}
+    variant = model.get("variant")
+    # Migrated v1 rows get variant "default" where v1 had none — that is "no effort".
+    if isinstance(variant, str) and variant.strip().lower() == "default":
+        variant = None
+    data: dict = {
+        "modelID": model.get("id"),
+        "providerID": model.get("providerID"),
+        "variant": variant,
+        "tokens": raw.get("tokens"),
+        "cost": raw.get("cost"),
+        "finish": raw.get("finish"),
+        "error": raw.get("error"),
+        "time": raw.get("time"),
+    }
+    if directory:
+        data["path"] = {"cwd": directory}
+    return data
+
+
 def parse_opencode_events(
     db_path: Path,
     account_id: str,
@@ -202,34 +306,59 @@ def parse_opencode_events(
 
     events: list[UsageEventPush] = []
     try:
-        conn = sqlite3.connect(str(db_path))
+        # Read-only: opencode keeps this DB open (WAL) from a long-lived process,
+        # and we only ever select from it.
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     except Exception:
         return []
 
     try:
         try:
             cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id, session_id, time_created, data
-                FROM message
-                WHERE time_created > ?
-                  AND json_extract(data, '$.role') = 'assistant'
-                ORDER BY time_created ASC
-                """,
-                (since_ms,),
-            )
+            v2 = _is_v2(cur)
+            if v2:
+                cur.execute(_V2_QUERY, (since_ms,))
+            else:
+                cur.execute(_V1_QUERY, (since_ms,))
             rows = iter_cursor(cur)
         except Exception:
             return []
 
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
         try:
             for row in rows:
-                msg_id, session_id, time_created_ms, data_json = row
-                try:
-                    data = json.loads(data_json) if data_json else {}
-                except Exception:
-                    continue
+                if v2:
+                    (
+                        msg_id,
+                        session_id,
+                        time_created_ms,
+                        msg_type,
+                        data_json,
+                        directory,
+                        model_json,
+                    ) = row
+                    try:
+                        raw = json.loads(data_json) if data_json else {}
+                        session_model = json.loads(model_json) if model_json else None
+                    except Exception:
+                        continue
+                    status = _v2_row_status(raw, msg_type, time_created_ms, now_ms)
+                    if status == "pending":
+                        # Still streaming. Ingest is insert-or-ignore and the watermark
+                        # advances past this row, so pushing it now would freeze a
+                        # partial row forever — hold here until it settles.
+                        break
+                    if status == "skip":
+                        continue
+                    data = _normalize_v2_message(raw, msg_type, directory, session_model)
+                    if data is None:
+                        continue
+                else:
+                    msg_id, session_id, time_created_ms, data_json = row
+                    try:
+                        data = json.loads(data_json) if data_json else {}
+                    except Exception:
+                        continue
 
                 # Convert ms epoch to datetime
                 try:
