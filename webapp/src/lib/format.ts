@@ -4,6 +4,8 @@
 //   - formatNumber: K/M/B with 1 decimal; preserves integers untouched.
 //   - formatTokens: K/M/B with 2 decimals on B and M, 0 decimals on K. Used
 //     where tokens are the primary value.
+// formatAxisNumber / formatAxisCost are a third, axis-tick-only flavour: as
+// short as possible (no trailing zeros) so ticks fit on narrow screens.
 
 export function formatNumber(num: number | null | undefined): string {
   if (num === null || num === undefined || Number.isNaN(num)) return '—';
@@ -107,4 +109,43 @@ export function timeAgo(iso: string | null | undefined): string {
   const ms = Date.now() - then;
   if (ms < 60_000) return 'just now';
   return `${formatDuration(ms)} ago`;
+}
+
+const axisFormatterCache = new Map<string, Intl.NumberFormat>();
+
+function getAxisFormatter(currencyCode?: string): Intl.NumberFormat {
+  const locale = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+  const key = `${locale}|${currencyCode ?? ''}`;
+  let f = axisFormatterCache.get(key);
+  if (!f) {
+    const opts: Intl.NumberFormatOptions = {
+      notation: 'compact',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1,
+    };
+    try {
+      f = new Intl.NumberFormat(
+        locale,
+        currencyCode
+          ? { ...opts, style: 'currency', currency: currencyCode, currencyDisplay: 'narrowSymbol' }
+          : opts,
+      );
+    } catch {
+      // Invalid currency code: deliberately fall back to USD (cached under the
+      // requested key, as getCurrencyFormatter does) rather than throwing mid-render.
+      f = new Intl.NumberFormat('en-US', { ...opts, style: 'currency', currency: 'USD' });
+    }
+    axisFormatterCache.set(key, f);
+  }
+  return f;
+}
+
+// Compact axis tick: 300M, 1.2B, 40K.
+export function formatAxisNumber(v: number): string {
+  return getAxisFormatter().format(v);
+}
+
+// Compact currency axis tick: $300, $1.2K.
+export function formatAxisCost(v: number, currencyCode = 'USD'): string {
+  return getAxisFormatter(currencyCode.toUpperCase()).format(v);
 }

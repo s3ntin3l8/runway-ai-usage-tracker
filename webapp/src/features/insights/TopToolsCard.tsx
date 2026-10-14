@@ -6,6 +6,7 @@ import type { TopToolEntry } from '@/api/types';
 import { RankBar, type RankRow } from '@/components/charts/RankBar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { formatAxisNumber } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { useTopTools } from './queries';
 
@@ -30,7 +31,7 @@ export function TopToolsCard({ range }: { range: DateRangeValue }) {
         ) : !hasData ? (
           <p className="py-16 text-center text-xs text-fg-subtle">No tool usage in this range.</p>
         ) : (
-          <RankBar rows={rows} format={(v) => v.toLocaleString()} />
+          <RankBar rows={rows} format={(v) => v.toLocaleString()} axisFormat={formatAxisNumber} />
         )}
       </CardContent>
     </Card>

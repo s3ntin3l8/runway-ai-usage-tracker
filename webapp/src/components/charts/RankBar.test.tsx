@@ -45,6 +45,25 @@ describe('RankBar', () => {
     expect(series[1].stack).toBe('total');
   });
 
+  it('uses axisFormat for x-axis ticks and hides overlapping labels', () => {
+    render(<RankBar rows={mockRows} format={format} axisFormat={(v) => `~${v}`} />, { wrapper });
+    const axisLabel = (
+      captured.option!.xAxis as {
+        axisLabel: { formatter: (v: number) => string; hideOverlap: boolean };
+      }
+    ).axisLabel;
+    expect(axisLabel.formatter(1500)).toBe('~1500');
+    expect(axisLabel.hideOverlap).toBe(true);
+  });
+
+  it('falls back to format for ticks without axisFormat', () => {
+    render(<RankBar rows={mockRows} format={format} />, { wrapper });
+    const axisLabel = (
+      captured.option!.xAxis as { axisLabel: { formatter: (v: number) => string } }
+    ).axisLabel;
+    expect(axisLabel.formatter(1500)).toBe(format(1500));
+  });
+
   it('renders single bar when no segments', () => {
     const rows: RankRow[] = [
       { label: 'alpha', value: 200 },

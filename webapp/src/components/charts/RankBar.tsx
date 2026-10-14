@@ -24,10 +24,13 @@ export interface RankRow {
 export function RankBar({
   rows,
   format,
+  axisFormat,
   className,
 }: {
   rows: RankRow[];
   format: (v: number) => string;
+  /** Shorter formatter for x-axis ticks (tooltips keep `format`); avoids overlap on narrow screens. */
+  axisFormat?: (v: number) => string;
   className?: string;
 }) {
   const t = useChartTokens();
@@ -38,6 +41,17 @@ export function RankBar({
     // lands at the top via the natural order.
     const sorted = [...rows].filter((r) => r.value > 0).sort((a, b) => a.value - b.value);
     const categoryData = sorted.map((r) => r.label);
+    const tickFormat = axisFormat ?? format;
+    const axisStyle = baseAxisStyle(t);
+    const xAxis = {
+      type: 'value' as const,
+      ...axisStyle,
+      axisLabel: {
+        ...axisStyle.axisLabel,
+        hideOverlap: true,
+        formatter: (v: number) => tickFormat(v),
+      },
+    };
 
     if (!hasStacked) {
       // Simple single-value bars (legacy path).
@@ -54,11 +68,7 @@ export function RankBar({
             return `${p.name}: ${format(p.value)}${subLine}`;
           },
         },
-        xAxis: {
-          type: 'value',
-          ...baseAxisStyle(t),
-          axisLabel: { ...baseAxisStyle(t).axisLabel, formatter: (v: number) => format(v) },
-        },
+        xAxis,
         yAxis: {
           type: 'category',
           data: categoryData,
@@ -133,11 +143,7 @@ export function RankBar({
           return lines.join('<br/>');
         },
       },
-      xAxis: {
-        type: 'value',
-        ...baseAxisStyle(t),
-        axisLabel: { ...baseAxisStyle(t).axisLabel, formatter: (v: number) => format(v) },
-      },
+      xAxis,
       yAxis: {
         type: 'category',
         data: categoryData,
@@ -152,7 +158,7 @@ export function RankBar({
       },
       series,
     };
-  }, [rows, format, t, hasStacked]);
+  }, [rows, format, axisFormat, t, hasStacked]);
 
   return <EChart option={option} className={className ?? 'h-72'} />;
 }
