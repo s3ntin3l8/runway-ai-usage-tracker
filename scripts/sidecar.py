@@ -52,6 +52,13 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from scripts.sidecar_pkg import transport as server_http
+from scripts.sidecar_pkg.opencode_credentials import (
+    key_binding as opencode_key_binding,
+)
+from scripts.sidecar_pkg.opencode_credentials import (
+    load_auth_view,
+    v2_db_for_auth,
+)
 
 
 def _subprocess_creationflags() -> int:
@@ -2183,6 +2190,27 @@ def expand_file_rule_paths(paths: list) -> list:
     return out
 
 
+def _file_rule_paths_with_opencode_v2(paths: list) -> list[tuple[Path, Path | None]]:
+    """``expand_file_rule_paths`` as ``(path, v2_db)`` pairs, plus superseded opencode paths.
+
+    ``v2_db`` is the opencode v2 database that supersedes an opencode ``auth.json``
+    (None for every other file). It is resolved once here, so the file loop reads
+    exactly the database that was detected. A fresh v2 install never writes
+    ``auth.json``, so the file may not exist even though the credentials are in
+    ``opencode.db`` — keep such a path as a virtual candidate; the file loop reads
+    the database instead of the file.
+    """
+    existing = expand_file_rule_paths(paths)
+    out: list[tuple[Path, Path | None]] = [(p, v2_db_for_auth(p)) for p in existing]
+    for path_str in paths:
+        for resolved in resolve_paths(path_str):
+            if resolved not in existing and not resolved.exists():
+                v2_db = v2_db_for_auth(resolved)
+                if v2_db is not None:
+                    out.append((resolved, v2_db))
+    return out
+
+
 # --- Browser Cookie Extraction ---
 
 
@@ -3242,6 +3270,14 @@ def _opencode_local_key_binding(
     if not key:
         return "unknown"
 
+    # opencode v2 owns credentials in its database; account.json is no longer
+    # maintained, so the credential table is the evidence there.
+    if auth_origin and auth_origin.startswith("path:"):
+        origin_auth = Path(auth_origin[len("path:") :].split("#", 1)[0])
+        v2_db = v2_db_for_auth(origin_auth)
+        if v2_db is not None:
+            return opencode_key_binding(v2_db, service, key)
+
     candidates = _opencode_account_json_paths()
     if auth_origin and auth_origin.startswith("path:"):
         sibling = Path(auth_origin[len("path:") :]).parent / "account.json"
@@ -3589,7 +3625,7 @@ class GenericCollector:
                 # kimi-code-env-<hash>.json), freshest match last.
                 # Per rule on purpose: two rules may map one file differently.
                 seen_files: set[str] = set()
-                for path in expand_file_rule_paths(rule.get("paths", [])):
+                for path, v2_db in _file_rule_paths_with_opencode_v2(rule.get("paths", [])):
                     # Distinct spellings of one file (`~/.config/gh` vs the
                     # platform config dir) must yield a single candidate.
                     try:
@@ -3601,15 +3637,23 @@ class GenericCollector:
                     seen_files.add(real)
                     try:
                         fmt = rule.get("format", "json")
-                        # JSONC (the Copilot CLI's config.json carries // header lines)
-                        # may start with a BOM on Windows.
-                        with open(path, encoding="utf-8-sig" if fmt == "jsonc" else None) as f:
-                            if fmt == "yaml":
-                                data = parse_simple_yaml(f.read())
-                            elif fmt == "jsonc":
-                                data = json.loads(_strip_jsonc(f.read()))
-                            else:
-                                data = json.load(f)
+                        if v2_db is not None:
+                            # opencode v2 keeps credentials in its database and never
+                            # reads auth.json again; the file (if any) is a stale leftover.
+                            # The view has the legacy shape, so the mapping is unchanged.
+                            data = load_auth_view(v2_db)
+                            if data is None:
+                                continue
+                        else:
+                            # JSONC (the Copilot CLI's config.json carries // header lines)
+                            # may start with a BOM on Windows.
+                            with open(path, encoding="utf-8-sig" if fmt == "jsonc" else None) as f:
+                                if fmt == "yaml":
+                                    data = parse_simple_yaml(f.read())
+                                elif fmt == "jsonc":
+                                    data = json.loads(_strip_jsonc(f.read()))
+                                else:
+                                    data = json.load(f)
 
                         candidate_tokens: dict[str, Any] = {}
                         for key_path, target in mapping.items():

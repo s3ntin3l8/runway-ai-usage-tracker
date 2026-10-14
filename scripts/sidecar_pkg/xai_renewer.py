@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.sidecar_pkg.oauth_renewal import RefreshRejectedError, atomic_replace_json
+from scripts.sidecar_pkg.opencode_credentials import v2_db_for_auth
 
 __all__ = ["RefreshRejectedError", "XaiRenewer", "grok_scope_entry"]
 
@@ -238,11 +239,31 @@ class XaiRenewer:
     def __init__(self, paths: list[tuple[Path, str]] | None = None) -> None:
         self._paths = paths
         self._rejected: dict[Path, str] = {}  # path -> refresh token the endpoint refused
+        self._v2_noted: set[Path] = set()  # opencode v2 dirs already logged as skipped
 
     def _targets(self) -> list[tuple[Path, str]]:
         if self._paths is not None:
             return self._paths
-        return [(p, "opencode") for p in OPENCODE_PATHS] + [(_grok_path(), "grok")]
+        targets = [(p, "opencode") for p in OPENCODE_PATHS] + [(_grok_path(), "grok")]
+        return [(p, kind) for p, kind in targets if not self._superseded(p, kind)]
+
+    def _superseded(self, path: Path, kind: str) -> bool:
+        """True for an opencode ``auth.json`` that opencode v2 no longer reads.
+
+        v2 holds the login in its own database and refreshes it itself. xAI rotates
+        refresh tokens, so refreshing the stale file's copy (or writing it back)
+        would invalidate the lineage opencode is using. Read-only: never touch it.
+        """
+        if kind != "opencode" or v2_db_for_auth(path) is None:
+            return False
+        if path not in self._v2_noted:
+            self._v2_noted.add(path)
+            logger.info(
+                "xAI keep-alive: opencode v2 owns the login for %s (credentials live in "
+                "opencode.db); leaving it to opencode to renew",
+                path.parent,
+            )
+        return True
 
     def _due_logins(self) -> list[Login]:
         logins = []
