@@ -29,7 +29,11 @@ event ids carry over (no re-ingest, no duplicates). The database is opened
 read-only. A v2 row still streaming (no `time.completed`/`error`, or a `running`
 compaction) is held back — and everything after it — until it settles, because
 ingest is insert-or-ignore; one that stays unsettled for over an hour is treated
-as abandoned and skipped. Compactions without recorded tokens/cost produce no
+as abandoned and skipped. "Abandoned" means the owning opencode process crashed or
+was killed mid-response; the one-hour threshold (`_V2_PENDING_GRACE_MS`) is
+deliberately generous for a normal turn or compaction, and a row that settles
+only after it has been skipped is not recovered (its `time_created` is already
+behind the watermark). Compactions with no cost and no non-zero token count produce no
 event. `OPENCODE_DB` (opencode's own override) is honoured when set.
 
 `auth.json` is likewise no longer read by OpenCode v2 (credentials moved to the

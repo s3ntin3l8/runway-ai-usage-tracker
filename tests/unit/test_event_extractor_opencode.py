@@ -1183,3 +1183,25 @@ def test_v2_explicit_empty_row_model_does_not_fall_back_to_session_model(tmp_pat
     )
     (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
     assert e.model_id == "unknown"
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {},  # nothing recorded
+        {"tokens": {}, "cost": 0},
+        {
+            "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+            "cost": 0,
+        },
+    ],
+)
+def test_v2_compaction_with_zero_usage_emits_nothing(tmp_path, usage):
+    comp = {
+        "id": "msg_c",
+        "session_id": "ses_1",
+        "time_created": _V2_T0,
+        "type": "compaction",
+        "data": {"status": "completed", "reason": "auto", **usage},
+    }
+    assert parse_opencode_events(_v2_db(tmp_path, [comp]), account_id="u", since=_V2_SINCE) == []

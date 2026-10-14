@@ -221,6 +221,17 @@ def _v2_row_status(raw: dict, msg_type: str, time_created_ms: int, now_ms: int) 
     return "pending" if now_ms - int(time_created_ms) < _V2_PENDING_GRACE_MS else "skip"
 
 
+def _has_usage(raw: dict) -> bool:
+    """True when a v2 payload recorded any cost or a non-zero token count."""
+    if raw.get("cost"):
+        return True
+    tokens = raw.get("tokens") or {}
+    cache = tokens.get("cache") or {}
+    counts = [tokens.get(k) for k in ("input", "output", "reasoning")]
+    counts += [cache.get("read"), cache.get("write")]
+    return any(isinstance(n, int | float) and n > 0 for n in counts)
+
+
 def _normalize_v2_message(
     raw: dict, msg_type: str, directory: str | None, session_model: dict | None
 ) -> dict | None:
@@ -228,9 +239,9 @@ def _normalize_v2_message(
 
     Lets the shared row loop below stay the single place that maps provider ids,
     canonical retags, errors and effort. Returns None for rows that carry no usage
-    (e.g. a compaction that recorded neither tokens nor cost).
+    (a compaction with no cost and no non-zero token count).
     """
-    if msg_type == "compaction" and not (raw.get("tokens") or raw.get("cost")):
+    if msg_type == "compaction" and not _has_usage(raw):
         return None
     # Compactions only sometimes name the model; fall back to the session's.
     model = (raw["model"] if "model" in raw else session_model) or {}
