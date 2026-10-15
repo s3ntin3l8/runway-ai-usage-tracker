@@ -23,17 +23,20 @@ No macOS payload was installed or executed on dev-01.
 | A source | `66bd9a52efd941884d98101c7e455f3c242453b2` |
 | Publishing workflow | [38768548667 — successful](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/38768548667) |
 | ZIP | `Runway-Sidecar-macOS-edge.zip` |
+| ZIP GitHub asset ID / bytes | `644455518` / `92808123` |
 | ZIP SHA-256 | `9e929858e8770ea7634285f9d64a57466e53fde11409a62c1de091f0f08bc12a` |
 | DMG | `Runway-Sidecar-macOS-edge.dmg` |
+| DMG GitHub asset ID / bytes | `644455487` / `36864608` |
 | DMG SHA-256 | `c3b35e68f21e29ec5cfb3cf3346790eb89127b8400dcac73b354b112418e3463` |
 | Signing identity | `https://github.com/s3ntin3l8/runway-ai-usage-tracker/.github/workflows/sidecar-build.yml@refs/heads/main` |
 | OIDC issuer | `https://token.actions.githubusercontent.com` |
 
-Dev-01 retains the ZIP and DMG, both checksum files and bundles, signed
+Dev-01 only: the host retains the ZIP and DMG, both checksum files and bundles, signed
 `SHA256SUMS.txt` plus its bundle, and `capture.json` under
 `/home/bjoern/.local/share/runway-validation/macos-603/A-66bd9a52/`.
 The metadata includes the UTC capture time and exact release/asset identifiers.
-The Mac operator's local copies remain independent of this dev-01 set. No private
+The path is host-specific, not a portable reference. The Mac operator's local
+copies remain independent of this dev-01 set. No private
 keys, configuration bodies, profiles or control tokens are part of this record.
 Sigstore verification is not Apple notarization.
 

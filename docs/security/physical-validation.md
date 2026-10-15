@@ -5,7 +5,10 @@ matrix and recorded Windows native/Chrome/Edge runs are complete for their state
 configurations and limitations. The [macOS build A record](evidence/603-macos-2026-10-15/README.md)
 preserves the starting signed payloads; capture is not physical acceptance.
 Automated browser/proxy and frozen verifier checks complement the recorded
-physical results. Record failures and unavailable cases honestly; #603 stays open
+physical results. Windows evidence: [genuine native cycles](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6144591960),
+[reconciliation and recovery](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6150006342),
+and [public-origin Chrome/Edge LNA](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6134442120).
+Record failures and unavailable cases honestly; #603 stays open
 until the required matrix passes or a tracked limitation is explicitly agreed.
 
 ## Record and isolate
@@ -75,8 +78,9 @@ TLS direct probes, separate matching-port HTTP rebinding fixtures, scoped real
 DNS resolver setup, body-free exports, source restrictions and teardown. Helper
 readiness and DNS diagnostics are not physical browser acceptance.
 
-Use Edge/Chrome on Windows, and Safari, Chrome and Firefox on macOS. Windows
-Firefox is [explicitly excluded by the operator](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6147075608),
+Use Edge/Chrome on Windows, and Safari, Chrome and Firefox on macOS.
+
+Windows Firefox is [explicitly excluded by the operator](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6147075608),
 not passed; record macOS browser availability separately.
 Test dashboard and sidecar settings independently. Record Local Network Access
 prompts and permission denied/granted states where the browser supports them.
