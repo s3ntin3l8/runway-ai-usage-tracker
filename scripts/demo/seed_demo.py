@@ -441,9 +441,9 @@ def main() -> None:
     print(f"seed_demo: {len(cards)} cards, {HISTORY_DAYS} days of history and events")
 
 
-# Findings a demo legitimately has: it has no alert webhook (that needs a real
-# Discord/Slack URL), and providers without a price table carry reported costs.
-EXPECTED_FINDINGS = {"alert_channels", "unpriced_usage"}
+# The one finding a demo legitimately has: no alert webhook (that needs a real
+# Discord/Slack URL).
+EXPECTED_FINDINGS = {"alert_channels"}
 
 
 def verify() -> None:
