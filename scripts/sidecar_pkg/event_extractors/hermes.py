@@ -36,6 +36,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.models.schemas import UsageEventPush  # noqa: E402
+from app.services.model_normalization import normalize_gemini_model  # noqa: E402
 from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
     SHARED_CANONICAL_PROVIDER_MAP,
     CanonicalProviderTuple,
@@ -470,7 +471,13 @@ def parse_hermes_events(
                             account_source=event_account_source,
                             event_id=event_id,
                             ts=ts.isoformat(),
-                            model_id=model,
+                            # Gemini rows are priced by versioned bucket (flash-2.5, ...);
+                            # the raw id stays in event_id so the idempotency key is stable.
+                            model_id=(
+                                normalize_gemini_model(model)
+                                if target_provider_id == "gemini"
+                                else model
+                            ),
                             session_id=session_id,
                             subagent_type=task or None,
                             cwd=row["cwd"] or None,
