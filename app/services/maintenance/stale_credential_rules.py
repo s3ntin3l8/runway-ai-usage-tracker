@@ -31,18 +31,27 @@ still needed is loud, not silent: the credential reappears under "Needs mapping"
 Known gap: `stale_credential_sources` deletes the very rows this check reads as
 evidence. Both use the same window, so the outcome is the same.
 
+Superseded rules: a provider whose login re-keys itself (`SUPERSEDING_KEYED_PROVIDERS`,
+xAI) gets a new `base#<fp>` origin on every rotation and the old credential rows are
+deleted on ingest, so a rule on the old fingerprint would read as "never matched" even
+though its credential is still reported under the new one. Such a rule is labelled
+*superseded* and the apply step moves it onto the current origin (keeping the operator's
+mapping) unless a rule already covers that origin, in which case it is deleted.
+
 `apply_stale_rules` re-derives what `plan_stale_rules` reported and owns its commit.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, col, select
 
 from app.models.db import CredentialSource, CredentialTag, SidecarRegistry
+from app.services.account_identity import split_keyed_origin
 from app.services.credential_inventory import _resolve_tag
+from app.services.credential_sources import SUPERSEDING_KEYED_PROVIDERS
 from app.services.credential_tags import live_sidecar_ids
 from app.services.maintenance.stale_credential_sources import STALE_AFTER
 
@@ -60,6 +69,11 @@ class StaleRule:
     account_id: str
     sidecar_id: str | None
     last_matched_at: datetime | None
+    # Set when the rule's login re-keyed itself: the origin that replaced it.
+    current_origin: str | None = None
+    # What the fix does with it: "delete", or "move" onto `current_origin`. Decided
+    # once at plan time so the preview, the summary and apply cannot disagree.
+    action: str = "delete"
 
     @property
     def scope(self) -> str:
@@ -77,9 +91,12 @@ class StaleRulesPlan:
 
     @property
     def counts(self) -> dict[str, int]:
+        plain = [r for r in self.rules if r.current_origin is None]
         return {
-            "never_matched": sum(r.last_matched_at is None for r in self.rules),
-            "not_matched_recently": sum(r.last_matched_at is not None for r in self.rules),
+            "never_matched": sum(r.last_matched_at is None for r in plain),
+            "not_matched_recently": sum(r.last_matched_at is not None for r in plain),
+            "superseded": sum(r.current_origin is not None for r in self.rules),
+            "to_move": sum(r.action == "move" for r in self.rules),
         }
 
 
@@ -107,6 +124,69 @@ def rule_usage(session: Session) -> dict[int, datetime]:
         if winner.id not in usage or seen > usage[winner.id]:
             usage[winner.id] = seen
     return usage
+
+
+def _superseding_sources(
+    session: Session, now: datetime
+) -> dict[tuple[str, str], list[CredentialSource]]:
+    """Fresh machine-reported rows of re-keying providers, by ``(provider, base origin)``."""
+    out: dict[tuple[str, str], list[CredentialSource]] = {}
+    rows = session.exec(
+        select(CredentialSource).where(
+            col(CredentialSource.provider_id).in_(SUPERSEDING_KEYED_PROVIDERS),
+            col(CredentialSource.sidecar_id).is_not(None),
+        )
+    ).all()
+    for row in rows:
+        if row.source_id.startswith("config:") or row.source_type == "server":
+            continue
+        if now - _aware(row.last_seen) > STALE_AFTER:
+            continue
+        base, fingerprint = split_keyed_origin(row.credential_origin or "")
+        if fingerprint is not None:
+            out.setdefault((row.provider_id, base), []).append(row)
+    return out
+
+
+def _replacement_rows(
+    tag: CredentialTag, sources: dict[tuple[str, str], list[CredentialSource]]
+) -> list[CredentialSource]:
+    """Rows of the freshest origin that replaced ``tag``'s fingerprint, in its scope."""
+    base, fingerprint = split_keyed_origin(tag.credential_origin)
+    if fingerprint is None:
+        return []
+    candidates = [
+        row
+        for row in sources.get((tag.provider_id, base), [])
+        if row.credential_origin != tag.credential_origin
+        and (tag.sidecar_id is None or row.sidecar_id == tag.sidecar_id)
+    ]
+    if not candidates:
+        return []
+    freshest = max(candidates, key=lambda row: _aware(row.last_seen))
+    return [row for row in candidates if row.credential_origin == freshest.credential_origin]
+
+
+def _decide(
+    tag: CredentialTag,
+    replacement: list[CredentialSource],
+    tags: dict[tuple[str, str], list[CredentialTag]],
+) -> str:
+    """``"move"`` the rule onto the replacement origin, or ``"delete"`` it.
+
+    Delete when a rule already stands in that scope there (re-keying would hit the
+    unique index) or when every replacement row already resolves to a rule for the
+    same account. Move otherwise, which keeps an operator mapping that nothing else
+    carries — including one that deliberately overrides a different account's rule.
+    """
+    new_origin = replacement[0].credential_origin or ""
+    if any(t.sidecar_id == tag.sidecar_id for t in tags.get((tag.provider_id, new_origin), [])):
+        return "delete"
+    for row in replacement:
+        winner = _resolve_tag(tags, row)
+        if winner is None or winner.account_id != tag.account_id:
+            return "move"
+    return "delete"
 
 
 def _judgeable(tag: CredentialTag) -> bool:
@@ -144,6 +224,7 @@ def find_stale_rules(
 
     if usage is None:
         usage = rule_usage(session)
+    sources = _superseding_sources(session, now)
     query = select(CredentialTag)
     if provider_id is not None:
         query = query.where(col(CredentialTag.provider_id) == provider_id)
@@ -158,6 +239,7 @@ def find_stale_rules(
         last = usage.get(tag.id)
         if last is not None and now - last <= STALE_AFTER:
             continue
+        replacement = _replacement_rows(tag, sources)
         stale.append(
             StaleRule(
                 row_id=tag.id,
@@ -166,9 +248,45 @@ def find_stale_rules(
                 account_id=tag.account_id,
                 sidecar_id=tag.sidecar_id,
                 last_matched_at=last,
+                current_origin=replacement[0].credential_origin if replacement else None,
             )
         )
-    return sorted(stale, key=lambda r: (r.provider_id, r.credential_origin, r.sidecar_id or ""))
+    stale.sort(key=lambda r: (r.provider_id, r.credential_origin, r.sidecar_id or ""))
+    return _with_actions(session, stale, sources)
+
+
+def _with_actions(
+    session: Session, stale: list[StaleRule], sources: dict[tuple[str, str], list[CredentialSource]]
+) -> list[StaleRule]:
+    """Decide move/delete for the superseded rules, in order, against the rules that
+    would remain: plain stale rules are gone, and each superseded one has already
+    moved or been deleted by the time the next is considered."""
+    if not any(r.current_origin for r in stale):
+        return stale
+    stale_ids = {r.row_id for r in stale}
+    tags: dict[tuple[str, str], list[CredentialTag]] = {}
+    by_id: dict[int, CredentialTag] = {}
+    for tag in session.exec(select(CredentialTag)).all():
+        if tag.id is None:
+            continue
+        by_id[tag.id] = tag
+        if tag.id not in stale_ids:
+            tags.setdefault((tag.provider_id, tag.credential_origin), []).append(tag)
+
+    out: list[StaleRule] = []
+    for rule in stale:
+        current = by_id.get(rule.row_id)
+        replacement = _replacement_rows(current, sources) if current and rule.current_origin else []
+        if current is None or not replacement:
+            out.append(rule)
+            continue
+        action = _decide(current, replacement, tags)
+        if action == "move":
+            # Later rules see this one at its new home (the model is never mutated).
+            new_key = (rule.provider_id, replacement[0].credential_origin or "")
+            tags.setdefault(new_key, []).append(current)
+        out.append(replace(rule, action=action))
+    return out
 
 
 def plan_stale_rules(
@@ -180,11 +298,20 @@ def plan_stale_rules(
 
 
 def apply_stale_rules(session: Session, provider_id: str) -> StaleRulesPlan:
-    """Delete exactly what :func:`plan_stale_rules` reports right now. Commits."""
+    """Do exactly what :func:`plan_stale_rules` reports right now. Commits.
+
+    Each rule is deleted, or — when the plan says ``move`` — re-keyed onto the origin
+    that replaced it.
+    """
     plan = plan_stale_rules(session, provider_id)
     for stale in plan.rules:
         row = session.get(CredentialTag, stale.row_id)
-        if row is not None:
+        if row is None:
+            continue
+        if stale.action == "move" and stale.current_origin:
+            row.credential_origin = stale.current_origin
+            session.add(row)
+        else:
             session.delete(row)
     if plan.rules:
         session.commit()

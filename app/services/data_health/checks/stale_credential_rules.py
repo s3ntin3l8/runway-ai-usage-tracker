@@ -32,11 +32,14 @@ from app.services.maintenance.stale_credential_rules import (
 def _samples(plan: StaleRulesPlan) -> list[Finding]:
     def sample(rule: StaleRule) -> Finding:
         origin = describe_origin_full(rule.credential_origin)
-        seen = (
-            f"last matched {rule.last_matched_at:%Y-%m-%d}"
-            if rule.last_matched_at
-            else "never matched"
-        )
+        if rule.current_origin and rule.action == "move":
+            seen = "superseded by a newer login — moves onto it"
+        elif rule.current_origin:
+            seen = "superseded; the newer login is already covered"
+        elif rule.last_matched_at:
+            seen = f"last matched {rule.last_matched_at:%Y-%m-%d}"
+        else:
+            seen = "never matched"
         return Finding(
             label=f"{origin.label} → {rule.account_id} ({rule.scope}; {seen})",
             detail={
@@ -46,6 +49,7 @@ def _samples(plan: StaleRulesPlan) -> list[Finding]:
                 "last_matched_at": rule.last_matched_at.isoformat()
                 if rule.last_matched_at
                 else None,
+                **({"current_origin": rule.current_origin} if rule.current_origin else {}),
             },
         )
 
@@ -53,7 +57,16 @@ def _samples(plan: StaleRulesPlan) -> list[Finding]:
 
 
 def _summary(plan: StaleRulesPlan) -> str:
-    return f"Delete {plan.total} assignment rule(s) for {plan.provider_id} that no machine matches"
+    moved = plan.counts["to_move"]
+    if not moved:
+        return (
+            f"Delete {plan.total} assignment rule(s) for {plan.provider_id} that no machine matches"
+        )
+    deleted = plan.total - moved
+    parts = [f"move {moved} rule(s) onto the login that replaced them"]
+    if deleted:
+        parts.append(f"delete {deleted} that no machine matches or that are already covered")
+    return f"For {plan.provider_id}: " + ", ".join(parts)
 
 
 class StaleCredentialRulesCheck(Check):
@@ -70,7 +83,8 @@ class StaleCredentialRulesCheck(Check):
     )
     recommended_action = (
         "Delete the rule. If the credential is still unidentified it comes back under "
-        "“Needs mapping”."
+        "“Needs mapping”. A rule on a login that has since renewed under a new fingerprint "
+        "is moved onto the new one instead."
     )
     severity = Severity.WARN
 

@@ -94,6 +94,21 @@ describe('FixDialog', () => {
     expect(screen.getByText('2')).toBeInTheDocument();
   });
 
+  it('lets long sample values wrap instead of overflowing the dialog', async () => {
+    const origin = 'path:/home/bjoern/.local/share/opencode/auth.json#5b5b581893f9';
+    vi.mocked(api.previewDataHealthFix).mockResolvedValue({
+      check_id: 'config_default_keyed',
+      group_key: 'xai',
+      summary: 'Delete 1 assignment rule(s)',
+      counts: {},
+      samples: [{ label: 'auth.json → alice (dev-01)', detail: { credential_origin: origin } }],
+    });
+    renderDialog();
+    await userEvent.click(screen.getByRole('button', { name: /preview/i }));
+    const value = await screen.findByText(origin);
+    expect(value).toHaveClass('break-all', 'min-w-0');
+  });
+
   it('keeps Apply disabled until a preview has run and confirm is checked', async () => {
     vi.mocked(api.previewDataHealthFix).mockResolvedValue({
       check_id: 'config_default_keyed',

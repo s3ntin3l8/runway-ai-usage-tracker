@@ -52,7 +52,12 @@ def test_a_machine_rule_with_no_matching_source_is_stale(session):
     (group,) = _check().detect(session).groups
 
     assert group.key == "github"
-    assert group.detail == {"never_matched": 1, "not_matched_recently": 0}
+    assert group.detail == {
+        "never_matched": 1,
+        "not_matched_recently": 0,
+        "superseded": 0,
+        "to_move": 0,
+    }
 
 
 def test_a_rule_that_a_recent_source_matches_is_kept(session):
@@ -99,7 +104,12 @@ def test_a_rule_last_matched_before_the_window_is_stale_with_its_last_match(sess
 
     (group,) = _check().detect(session).groups
 
-    assert group.detail == {"never_matched": 0, "not_matched_recently": 1}
+    assert group.detail == {
+        "never_matched": 0,
+        "not_matched_recently": 1,
+        "superseded": 0,
+        "to_move": 0,
+    }
 
 
 @pytest.mark.parametrize(
@@ -172,7 +182,12 @@ def test_apply_deletes_only_what_the_plan_reported(session):
 
     result, _ = _check().apply(session, "github", {})
 
-    assert result.counts == {"never_matched": 1, "not_matched_recently": 0}
+    assert result.counts == {
+        "never_matched": 1,
+        "not_matched_recently": 0,
+        "superseded": 0,
+        "to_move": 0,
+    }
     left = {t.id for t in session.exec(select(CredentialTag)).all()}
     assert left == {kept.id}
     assert stale.id not in left
@@ -196,3 +211,191 @@ def test_samples_carry_no_credential_values(session):
         "sidecar_id",
         "last_matched_at",
     }
+
+
+# --- superseded rules: an xAI login re-keyed itself under a new fingerprint ----------
+
+XAI_BASE = "path:/home/u/.local/share/opencode/auth.json"
+OLD = f"{XAI_BASE}#5b5b581893f9"
+NEW = f"{XAI_BASE}#33f8cb56a55b"
+
+
+def _xai_rule(session, origin: str = OLD, **overrides):
+    overrides.setdefault("set_at", _ago(30))
+    return make_tag(
+        session, provider_id="xai", credential_origin=origin, account_id="me", **overrides
+    )
+
+
+def _xai_source(session, origin: str = NEW, sidecar_id: str = "dev-01", **overrides):
+    return make_source(
+        session,
+        provider_id="xai",
+        account_id="me",
+        source_id=f"sidecar:{sidecar_id}:{origin}",
+        credential_origin=origin,
+        sidecar_id=sidecar_id,
+        **overrides,
+    )
+
+
+def test_a_rule_on_a_rotated_xai_fingerprint_is_labelled_superseded(session):
+    _machine(session, "dev-01")
+    _xai_rule(session, sidecar_id="dev-01")
+    _xai_source(session)
+
+    (group,) = _check().detect(session).groups
+
+    assert group.detail == {
+        "never_matched": 0,
+        "not_matched_recently": 0,
+        "superseded": 1,
+        "to_move": 1,
+    }
+    (sample,) = group.samples
+    assert "superseded by a newer login" in sample.label
+    assert sample.detail["current_origin"] == NEW
+
+
+def test_apply_moves_a_superseded_rule_onto_the_current_origin(session):
+    _machine(session, "dev-01")
+    rule = _xai_rule(session, sidecar_id="dev-01", set_by="operator")
+    _xai_source(session)
+
+    result, _ = _check().apply(session, "xai", {})
+
+    assert "move 1 rule(s)" in result.summary
+    session.expire_all()
+    moved = session.get(CredentialTag, rule.id)
+    assert moved is not None and moved.credential_origin == NEW
+    # It now matches the live credential, so the check is clean.
+    assert _check().detect(session).total_count == 0
+
+
+def test_apply_deletes_a_superseded_rule_when_the_current_origin_is_already_covered(session):
+    _machine(session, "dev-01")
+    rule = _xai_rule(session, sidecar_id="dev-01")
+    covering = _xai_rule(session, NEW, sidecar_id="dev-01", set_by="rotation")
+    _xai_source(session)
+
+    _check().apply(session, "xai", {})
+
+    left = {t.id for t in session.exec(select(CredentialTag)).all()}
+    assert left == {covering.id}
+    assert rule.id not in left
+
+
+def test_an_all_machines_superseded_rule_is_moved_when_one_machine_is_uncovered(session):
+    _machine(session, "dev-01")
+    _machine(session, "mgmt")
+    rule = _xai_rule(session)  # all machines
+    _xai_rule(session, NEW, sidecar_id="dev-01", set_by="rotation")
+    _xai_source(session, sidecar_id="dev-01")
+    _xai_source(session, sidecar_id="mgmt")
+
+    _check().apply(session, "xai", {})
+
+    session.expire_all()
+    moved = session.get(CredentialTag, rule.id)
+    assert moved is not None and moved.credential_origin == NEW
+
+
+def test_a_non_superseding_provider_keeps_the_plain_never_matched_label(session):
+    """Only providers whose one login re-keys itself are treated as superseded —
+    for others a sibling fingerprint at the same path is a different key."""
+    _machine(session, "dev-01")
+    _rule(session, f"{ORIGIN}#5b5b581893f9", sidecar_id="dev-01")
+    _source(session, f"{ORIGIN}#33f8cb56a55b")
+
+    (group,) = _check().detect(session).groups
+
+    assert group.detail == {
+        "never_matched": 1,
+        "not_matched_recently": 0,
+        "superseded": 0,
+        "to_move": 0,
+    }
+
+
+def test_a_stale_xai_rule_with_no_replacement_is_still_plainly_stale(session):
+    _machine(session, "dev-01")
+    _xai_rule(session, sidecar_id="dev-01")
+
+    (group,) = _check().detect(session).groups
+
+    assert group.detail == {
+        "never_matched": 1,
+        "not_matched_recently": 0,
+        "superseded": 0,
+        "to_move": 0,
+    }
+
+
+def test_preview_says_delete_not_move_when_the_new_login_is_already_covered(session):
+    _machine(session, "dev-01")
+    _xai_rule(session, sidecar_id="dev-01")
+    _xai_rule(session, NEW, sidecar_id="dev-01", set_by="rotation")
+    _xai_source(session)
+
+    plan = _check().plan(session, "xai", {})
+
+    assert plan.counts["to_move"] == 0
+    assert plan.summary.startswith("Delete 1 assignment rule")
+    assert "already covered" in plan.samples[0].label
+
+
+def test_a_different_account_on_the_new_origin_does_not_swallow_the_operator_mapping(session):
+    """Same scope + different account: re-keying would collide, so it is deleted.
+    A broader rule for another account is overridden by moving a machine rule."""
+    _machine(session, "dev-01")
+    mine = _xai_rule(session, sidecar_id="dev-01")
+    make_tag(
+        session,
+        provider_id="xai",
+        credential_origin=NEW,
+        account_id="someone-else",
+        set_by="operator",
+        set_at=_ago(1),
+    )  # all machines, other account
+    _xai_source(session)
+
+    (rule,) = find_stale_rules(session, provider_id="xai")
+    assert rule.row_id == mine.id and rule.action == "move"
+    _check().apply(session, "xai", {})
+    session.expire_all()
+    assert session.get(CredentialTag, mine.id).credential_origin == NEW
+
+
+def test_two_superseded_rules_converging_on_one_origin_keep_exactly_one(session):
+    _machine(session, "dev-01")
+    first = _xai_rule(session, sidecar_id="dev-01")
+    second = _xai_rule(session, f"{XAI_BASE}#aaaaaaaaaaaa", sidecar_id="dev-01")
+    _xai_source(session)
+
+    plan = _check().plan(session, "xai", {})
+    assert plan.counts["to_move"] == 1
+
+    _check().apply(session, "xai", {})
+    left = session.exec(select(CredentialTag)).all()
+    assert [(t.credential_origin, t.id) for t in left] == [(NEW, min(first.id, second.id))]
+
+
+def test_a_machine_rule_is_not_superseded_by_a_login_on_another_machine(session):
+    _machine(session, "dev-01")
+    _machine(session, "mgmt")
+    _xai_rule(session, sidecar_id="dev-01")
+    _xai_source(session, sidecar_id="mgmt")
+
+    (group,) = _check().detect(session).groups
+
+    assert group.detail["superseded"] == 0 and group.detail["never_matched"] == 1
+
+
+def test_a_replacement_not_seen_within_the_window_is_ignored(session):
+    _machine(session, "dev-01")
+    _xai_rule(session, sidecar_id="dev-01")
+    _xai_source(session, last_seen=_ago(30))
+
+    (group,) = _check().detect(session).groups
+
+    assert group.detail["superseded"] == 0
