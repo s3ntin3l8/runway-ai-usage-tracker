@@ -90,6 +90,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.models.schemas import UsageEventPush  # noqa: E402
+from app.services.model_normalization import is_openrouter_model_id  # noqa: E402
 from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
     SHARED_CANONICAL_PROVIDER_MAP,
     CanonicalProviderTuple,
@@ -430,6 +431,11 @@ def parse_opencode_events(
                 # consultation here is the only way to retarget the event onto the
                 # labeled quota card.
                 canonical = map_opencode_canonical(oc_provider_id)
+                if canonical is None and is_openrouter_model_id(model_id):
+                    # The gateway tag says "opencode"/BYOK, but only OpenRouter serves
+                    # `vendor/model:free` or `openrouter/...` ids — fold it like a
+                    # message tagged providerID="openrouter".
+                    canonical = map_opencode_canonical("openrouter")
                 if canonical is not None:
                     canonical_provider_id, account_override = canonical
                     runway_provider_id = canonical_provider_id

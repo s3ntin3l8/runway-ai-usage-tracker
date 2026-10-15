@@ -37,6 +37,7 @@ applied until it's fixed — the dependency order below reflects that.
 |---|---|---|---|
 | `config_default_keyed` · Error | Provider account uses a generic ID | A provider config is keyed as `default` even though its label identifies a specific account. | Re-key to the identified account. The preview explains collisions and retained or moved data before confirmation. |
 | `legacy_provider_ids` · Error | Usage uses an old provider ID | Events use a provider ID Runway now folds into a canonical provider (for example, `opencode-xai` → `xai`). | Retag to the canonical provider; collisions keep the richer event. |
+| `openrouter_model_events` · Error | OpenRouter usage is filed under OpenCode | Events under `opencode`, `opencode-free` or `opencode-byok` whose model id only OpenRouter serves — `<vendor>/<model>:free` or `openrouter/...`. OpenCode tags the *gateway*, not the backend, so older sidecars and BYOK setups filed these under the wrong provider; the BYOK ones sit on `default`, which `lone_default_events` cannot move to another provider. A bare local id such as `qwen/qwen3-coder-30b` is not matched. Fixable only when there is exactly one non-default OpenRouter account. | Preview shows how many events move and how many are duplicates. The fix moves them onto that OpenRouter account and drops the losing copy of any message that also exists under a sibling provider or OpenRouter (the same tie-break as `legacy_provider_ids`), then rebuilds rollups and windows. The sidecar now routes new messages the same way. |
 | `lone_default_events` · Error | Usage is assigned to a generic account | Usage events or quota history remain under `default` while a specific target identity is known from configured or discovered account data. This can also appear when a default config remains active. | Preview the proposed move and explicitly confirm before moving history to the selected account. |
 | `orphan_credential_tags` · Warning | Credential tags point to a missing account | A tag still points at `default` after its provider config was re-keyed or removed. | Delete the tag or repoint it to a configured account. |
 | `orphan_credential_sources` · Warning | Credential sources point to a missing account | A stored credential source no longer has anything behind it — its configuration was re-keyed or removed, or the source is filed under two accounts and only one of them still has evidence. | Delete the stranded row; the copy under the real account is kept. |
@@ -49,9 +50,10 @@ applied until it's fixed — the dependency order below reflects that.
 | `pending_events` · Info | Events need account assignment | Events await evidence-backed or manual account assignment. | Open Fleet and decide the account for each event. |
 | `alert_channels` · Warn | Credential alerts have no delivery channel | No active webhook has credential alerts on, so an expired, rejected or failing credential notifies nobody. Not fixable here (it needs your webhook URL); Home shows a banner linking to Settings → Alerts. | Add a Discord or Slack webhook with credential alerts enabled. |
 
-`config_default_keyed` blocks `lone_default_events`, `orphan_credential_tags`
-and `orphan_credential_sources`; `legacy_provider_ids` blocks `unpriced_models`
-and `rollup_drift` — fix the blocking check first if you see a **Blocked**
+`config_default_keyed` blocks `lone_default_events`, `orphan_credential_tags`,
+`orphan_credential_sources` and `openrouter_model_events`; `legacy_provider_ids`
+blocks `openrouter_model_events`, `unpriced_models` and `rollup_drift`;
+`openrouter_model_events` blocks `lone_default_events` — fix the blocking check first if you see a **Blocked**
 badge. The expanded check names the prerequisite that needs attention. (The
 re-key now carries a provider's credential sources with it, so resolving
 `config_default_keyed` first is usually what clears the credential-source
