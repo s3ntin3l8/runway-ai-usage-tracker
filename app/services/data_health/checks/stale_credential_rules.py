@@ -32,8 +32,10 @@ from app.services.maintenance.stale_credential_rules import (
 def _samples(plan: StaleRulesPlan) -> list[Finding]:
     def sample(rule: StaleRule) -> Finding:
         origin = describe_origin_full(rule.credential_origin)
-        if rule.current_origin:
-            seen = "superseded by a newer login"
+        if rule.current_origin and rule.action == "move":
+            seen = "superseded by a newer login — moves onto it"
+        elif rule.current_origin:
+            seen = "superseded; the newer login is already covered"
         elif rule.last_matched_at:
             seen = f"last matched {rule.last_matched_at:%Y-%m-%d}"
         else:
@@ -55,15 +57,15 @@ def _samples(plan: StaleRulesPlan) -> list[Finding]:
 
 
 def _summary(plan: StaleRulesPlan) -> str:
-    superseded = plan.counts["superseded"]
-    if not superseded:
+    moved = plan.counts["to_move"]
+    if not moved:
         return (
             f"Delete {plan.total} assignment rule(s) for {plan.provider_id} that no machine matches"
         )
-    stale = plan.total - superseded
-    parts = [f"move {superseded} rule(s) onto the login that replaced them"]
-    if stale:
-        parts.append(f"delete {stale} that no machine matches")
+    deleted = plan.total - moved
+    parts = [f"move {moved} rule(s) onto the login that replaced them"]
+    if deleted:
+        parts.append(f"delete {deleted} that no machine matches or that are already covered")
     return f"For {plan.provider_id}: " + ", ".join(parts)
 
 

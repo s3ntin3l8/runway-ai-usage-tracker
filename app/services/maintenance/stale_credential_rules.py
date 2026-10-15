@@ -43,7 +43,7 @@ mapping) unless a rule already covers that origin, in which case it is deleted.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, col, select
@@ -71,6 +71,9 @@ class StaleRule:
     last_matched_at: datetime | None
     # Set when the rule's login re-keyed itself: the origin that replaced it.
     current_origin: str | None = None
+    # What the fix does with it: "delete", or "move" onto `current_origin`. Decided
+    # once at plan time so the preview, the summary and apply cannot disagree.
+    action: str = "delete"
 
     @property
     def scope(self) -> str:
@@ -93,6 +96,7 @@ class StaleRulesPlan:
             "never_matched": sum(r.last_matched_at is None for r in plain),
             "not_matched_recently": sum(r.last_matched_at is not None for r in plain),
             "superseded": sum(r.current_origin is not None for r in self.rules),
+            "to_move": sum(r.action == "move" for r in self.rules),
         }
 
 
@@ -163,6 +167,28 @@ def _replacement_rows(
     return [row for row in candidates if row.credential_origin == freshest.credential_origin]
 
 
+def _decide(
+    tag: CredentialTag,
+    replacement: list[CredentialSource],
+    tags: dict[tuple[str, str], list[CredentialTag]],
+) -> str:
+    """``"move"`` the rule onto the replacement origin, or ``"delete"`` it.
+
+    Delete when a rule already stands in that scope there (re-keying would hit the
+    unique index) or when every replacement row already resolves to a rule for the
+    same account. Move otherwise, which keeps an operator mapping that nothing else
+    carries — including one that deliberately overrides a different account's rule.
+    """
+    new_origin = replacement[0].credential_origin or ""
+    if any(t.sidecar_id == tag.sidecar_id for t in tags.get((tag.provider_id, new_origin), [])):
+        return "delete"
+    for row in replacement:
+        winner = _resolve_tag(tags, row)
+        if winner is None or winner.account_id != tag.account_id:
+            return "move"
+    return "delete"
+
+
 def _judgeable(tag: CredentialTag) -> bool:
     return (
         tag.id is not None
@@ -225,7 +251,42 @@ def find_stale_rules(
                 current_origin=replacement[0].credential_origin if replacement else None,
             )
         )
-    return sorted(stale, key=lambda r: (r.provider_id, r.credential_origin, r.sidecar_id or ""))
+    stale.sort(key=lambda r: (r.provider_id, r.credential_origin, r.sidecar_id or ""))
+    return _with_actions(session, stale, sources)
+
+
+def _with_actions(
+    session: Session, stale: list[StaleRule], sources: dict[tuple[str, str], list[CredentialSource]]
+) -> list[StaleRule]:
+    """Decide move/delete for the superseded rules, in order, against the rules that
+    would remain: plain stale rules are gone, and each superseded one has already
+    moved or been deleted by the time the next is considered."""
+    if not any(r.current_origin for r in stale):
+        return stale
+    stale_ids = {r.row_id for r in stale}
+    tags: dict[tuple[str, str], list[CredentialTag]] = {}
+    by_id: dict[int, CredentialTag] = {}
+    for tag in session.exec(select(CredentialTag)).all():
+        if tag.id is None:
+            continue
+        by_id[tag.id] = tag
+        if tag.id not in stale_ids:
+            tags.setdefault((tag.provider_id, tag.credential_origin), []).append(tag)
+
+    out: list[StaleRule] = []
+    for rule in stale:
+        current = by_id.get(rule.row_id)
+        replacement = _replacement_rows(current, sources) if current and rule.current_origin else []
+        if current is None or not replacement:
+            out.append(rule)
+            continue
+        action = _decide(current, replacement, tags)
+        if action == "move":
+            # Later rules see this one at its new home (the model is never mutated).
+            new_key = (rule.provider_id, replacement[0].credential_origin or "")
+            tags.setdefault(new_key, []).append(current)
+        out.append(replace(rule, action=action))
+    return out
 
 
 def plan_stale_rules(
@@ -237,30 +298,19 @@ def plan_stale_rules(
 
 
 def apply_stale_rules(session: Session, provider_id: str) -> StaleRulesPlan:
-    """Fix exactly what :func:`plan_stale_rules` reports right now. Commits.
+    """Do exactly what :func:`plan_stale_rules` reports right now. Commits.
 
-    A plain stale rule is deleted. A superseded one is moved onto the origin that
-    replaced it, unless some rule already resolves that origin everywhere the old
-    rule reached — then it is deleted like the others.
+    Each rule is deleted, or — when the plan says ``move`` — re-keyed onto the origin
+    that replaced it.
     """
-    now = datetime.now(UTC)
-    plan = plan_stale_rules(session, provider_id, now=now)
-    sources = _superseding_sources(session, now)
-    tags: dict[tuple[str, str], list[CredentialTag]] = {}
-    for tag in session.exec(select(CredentialTag)).all():
-        tags.setdefault((tag.provider_id, tag.credential_origin), []).append(tag)
-
+    plan = plan_stale_rules(session, provider_id)
     for stale in plan.rules:
         row = session.get(CredentialTag, stale.row_id)
         if row is None:
             continue
-        replacement = _replacement_rows(row, sources) if stale.current_origin else []
-        if replacement and any(_resolve_tag(tags, source) is None for source in replacement):
-            old_key = (row.provider_id, row.credential_origin)
-            tags[old_key] = [t for t in tags.get(old_key, []) if t.id != row.id]
-            row.credential_origin = stale.current_origin or row.credential_origin
+        if stale.action == "move" and stale.current_origin:
+            row.credential_origin = stale.current_origin
             session.add(row)
-            tags.setdefault((row.provider_id, row.credential_origin), []).append(row)
         else:
             session.delete(row)
     if plan.rules:
