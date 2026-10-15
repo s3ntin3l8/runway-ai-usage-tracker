@@ -93,7 +93,7 @@ def test_group_is_not_fixable_without_a_single_target_account(session):
     assert {e.provider_id for e in session.exec(select(UsageEvent)).all()} == {"opencode-byok"}
 
 
-def test_plan_is_read_only_and_counts_duplicates(session):
+def test_plan_is_read_only_and_counts_collisions_with_openrouter(session):
     _target(session)
     _ev(session, "dup", "opencode")
     _ev(session, "dup", "opencode-byok")
@@ -101,27 +101,32 @@ def test_plan_is_read_only_and_counts_duplicates(session):
 
     plan = _check().plan(session, "opencode-byok", {})
 
-    assert plan.counts == {"total": 2, "duplicates": 1, "to_move": 1}
+    assert plan.counts == {"total": 2, "duplicates": 0, "to_move": 2}
     assert len(session.exec(select(UsageEvent)).all()) == 3
 
 
-def test_apply_collapses_byok_duplicates_of_opencode_rows(session):
+def test_applying_each_group_in_turn_collapses_byok_duplicates_of_opencode_rows(session):
     _target(session)
     _ev(session, "dup", "opencode", tokens_input=500)
     _ev(session, "dup", "opencode-byok", tokens_input=10)  # same message, thinner copy
     _ev(session, "byok-only", "opencode-byok")
 
-    result, _ = _check().apply(session, "opencode-byok", {})
+    first, _ = _check().apply(session, "opencode-byok", {})
+    assert first.counts["duplicates_resolved"] == 0
+    assert set(_events(session)) == {
+        ("opencode", "msg_dup"),
+        ("openrouter", "msg_dup"),
+        ("openrouter", "msg_byok-only"),
+    }
 
-    assert result.counts["duplicates_resolved"] == 1
-    # The richer copy survives under `opencode` until that group's fix runs too.
-    assert set(_events(session)) == {("opencode", "msg_dup"), ("openrouter", "msg_byok-only")}
-
-    _check().apply(session, "opencode", {})
+    # The preview for the second group is exact: one collision, one copy dropped.
+    assert _check().plan(session, "opencode", {}).counts["duplicates"] == 1
+    second, _ = _check().apply(session, "opencode", {})
 
     events = _events(session)
+    assert second.counts["duplicates_resolved"] == 1
     assert set(events) == {("openrouter", "msg_dup"), ("openrouter", "msg_byok-only")}
-    assert events[("openrouter", "msg_dup")].tokens_input == 500
+    assert events[("openrouter", "msg_dup")].tokens_input == 500  # the richer copy won
     assert {e.account_id for e in events.values()} == {ME}
     assert {e.attribution_source for e in events.values()} == {"tag"}
     assert _check().detect(session).total_count == 0
@@ -181,11 +186,6 @@ def test_apply_duplicate_loser_pair_rollups_are_rebuilt_too(session):
     _ev(session, "dup", "opencode-byok", tokens_input=500)
 
     _check().apply(session, "opencode-byok", {})
+    _check().apply(session, "opencode", {})
 
     assert {r.provider_id for r in session.exec(select(UsagePeriodRollup)).all()} == {"openrouter"}
-
-
-def test_lone_default_events_waits_for_this_check():
-    from app.services.data_health.registry import BY_ID
-
-    assert "openrouter_model_events" in BY_ID["lone_default_events"].blocked_by

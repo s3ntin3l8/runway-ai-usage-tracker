@@ -110,6 +110,12 @@ _OC_PROVIDER_MAP: dict[str, str] = {
 }
 
 
+# providerIDs that name an OpenCode gateway rather than a backend: the three provider
+# ids the Data Health `openrouter_model_events` check scans (opencode-free, opencode,
+# opencode-byok) come from exactly these.
+_OC_GATEWAY_PROVIDER_IDS = frozenset({"", "opencode", "opencode-go", "open-design-byok"})
+
+
 def map_opencode_provider_id(oc_provider_id: str) -> str:
     """Map an OpenCode `providerID` to a runway `provider_id`.
 
@@ -431,10 +437,15 @@ def parse_opencode_events(
                 # consultation here is the only way to retarget the event onto the
                 # labeled quota card.
                 canonical = map_opencode_canonical(oc_provider_id)
-                if canonical is None and is_openrouter_model_id(model_id):
+                if (
+                    canonical is None
+                    and oc_provider_id in _OC_GATEWAY_PROVIDER_IDS
+                    and is_openrouter_model_id(model_id)
+                ):
                     # The gateway tag says "opencode"/BYOK, but only OpenRouter serves
                     # `vendor/model:free` or `openrouter/...` ids — fold it like a
-                    # message tagged providerID="openrouter".
+                    # message tagged providerID="openrouter". Limited to the generic
+                    # gateways so a local/other backend's own ids are never claimed.
                     canonical = map_opencode_canonical("openrouter")
                 if canonical is not None:
                     canonical_provider_id, account_override = canonical

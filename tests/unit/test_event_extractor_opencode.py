@@ -396,7 +396,7 @@ def test_byok_provider_gets_its_own_id():
         db_path.unlink(missing_ok=True)
 
 
-@pytest.mark.parametrize("gateway", ["open-design-byok", "opencode", "some-new-backend"])
+@pytest.mark.parametrize("gateway", ["open-design-byok", "opencode", "opencode-go"])
 @pytest.mark.parametrize("model_id", ["tencent/hy3:free", "openrouter/free"])
 def test_openrouter_served_model_ids_fold_onto_openrouter(gateway, model_id):
     """Only OpenRouter serves `vendor/model:free` / `openrouter/...` ids, whatever
@@ -429,6 +429,19 @@ def test_openrouter_model_without_a_hint_is_held_back_as_default():
         assert evt.provider_id == "openrouter"
         assert evt.account_id == "default"
         assert evt.account_source == "default"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_other_backends_keep_their_own_provider_even_with_a_free_suffix():
+    msg = _byok_message("msg_other_001", "tencent/hy3:free")
+    msg["data"]["providerID"] = "ollama-cloud"
+    db_path = _build_db([msg])
+    try:
+        (evt,) = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert evt.provider_id != "openrouter"
     finally:
         db_path.unlink(missing_ok=True)
 

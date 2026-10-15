@@ -9,10 +9,11 @@ which `lone_default_events` cannot fix: it keeps the provider and `opencode-byok
 no other account.
 
 The same message is often present under two of those providers (an `opencode` row and
-an `opencode-byok` one), and the `(provider_id, event_id)` unique index only separates
-them while their provider ids differ. Retagging both onto `openrouter` would collide,
-so duplicates are resolved first — within the source set, then against rows already
-under `openrouter` — with the same tie-break as `legacy_retag.pick_winner`.
+an `opencode-byok` one). The `(provider_id, event_id)` unique index only separates them
+while their provider ids differ, so each fix resolves the collisions between *its own*
+rows and the rows already under `openrouter` — with the same tie-break as
+`legacy_retag.pick_winner` — before moving them. Applying the groups one after another
+therefore dedupes the whole set, and each preview is exact for what its apply does.
 
 The target account must be unambiguous: exactly one non-default `openrouter` account.
 """
@@ -72,7 +73,7 @@ class OpenRouterRetagPlan:
     provider_id: str = ""
     target_account: str | None = None
     total: int = 0
-    duplicates: int = 0  # an event_id that also exists elsewhere in the set / under openrouter
+    duplicates: int = 0  # event_ids that already exist under openrouter (one copy is dropped)
     retagged: int = 0  # total minus duplicates dropped
     by_model: dict[str, int] = field(default_factory=dict)
     samples: list[UsageEvent] = field(default_factory=list)
@@ -87,38 +88,18 @@ class OpenRouterRetagResult:
     windows_rebuilt: int = 0
 
 
-def _duplicate_event_ids(session: Session, provider_id: str | None = None) -> set[str]:
-    """Event ids that would collide once the source rows move to `openrouter`.
-
-    With `provider_id` set, the ids of that provider's rows only (the preview is
-    per source provider); without, the whole source set (what apply resolves).
-    """
-    scope = _source_where(provider_id)
-    in_openrouter = {
+def _duplicate_event_ids(session: Session, provider_id: str) -> set[str]:
+    """Event ids of `provider_id`'s rows that already exist under `openrouter`."""
+    return {
         row[0]
         for row in session.execute(
             select(UsageEvent.event_id)
-            .where(*scope)
+            .where(*_source_where(provider_id))
             .intersect(
                 select(UsageEvent.event_id).where(col(UsageEvent.provider_id) == TARGET_PROVIDER_ID)
             )
         )
     }
-    # An id present under two source providers (counted against the whole set, so a
-    # per-provider preview still sees the sibling copy).
-    sibling_ids = {
-        row[0]
-        for row in session.execute(
-            select(UsageEvent.event_id)
-            .where(*_source_where())
-            .group_by(col(UsageEvent.event_id))
-            .having(func.count() > 1)
-        )
-    }
-    if provider_id is None:
-        return in_openrouter | sibling_ids
-    own = {row[0] for row in session.execute(select(UsageEvent.event_id).where(*scope))}
-    return in_openrouter | (sibling_ids & own)
 
 
 def plan_openrouter_retag(
@@ -157,36 +138,40 @@ def plan_openrouter_retag(
     )
 
 
-def _resolve_duplicates(session: Session) -> tuple[int, set[tuple[str, str]]]:
-    """Delete the losing copy of every colliding event. Returns the count and the
-    (provider, account) pairs the deleted rows belonged to, whose rollups go stale."""
+def _resolve_duplicates(session: Session, provider_id: str) -> tuple[int, set[tuple[str, str]]]:
+    """Delete the losing copy of every event that exists both under `provider_id` and
+    under `openrouter`. Returns the count and the (provider, account) pairs of the
+    deleted rows, whose rollups go stale."""
     resolved = 0
     pairs: set[tuple[str, str]] = set()
-    ids = sorted(_duplicate_event_ids(session))
+    ids = sorted(_duplicate_event_ids(session, provider_id))
     for start in range(0, len(ids), _BATCH):
         batch = ids[start : start + _BATCH]
-        groups: dict[str, list[UsageEvent]] = {}
-        # Source rows plus any copy already under openrouter (whatever its model id).
-        rows = session.exec(
-            select(UsageEvent).where(
-                col(UsageEvent.event_id).in_(batch),
-                or_(
-                    and_(*_source_where()),
-                    col(UsageEvent.provider_id) == TARGET_PROVIDER_ID,
-                ),
+        mine = {
+            ev.event_id: ev
+            for ev in session.exec(
+                select(UsageEvent).where(
+                    *_source_where(provider_id), col(UsageEvent.event_id).in_(batch)
+                )
             )
-        )
-        for ev in rows:
-            groups.setdefault(ev.event_id, []).append(ev)
-        for copies in groups.values():
-            if len(copies) < 2:
+        }
+        theirs = {
+            ev.event_id: ev
+            for ev in session.exec(
+                select(UsageEvent).where(
+                    col(UsageEvent.provider_id) == TARGET_PROVIDER_ID,
+                    col(UsageEvent.event_id).in_(batch),
+                )
+            )
+        }
+        for event_id in batch:
+            a, b = mine.get(event_id), theirs.get(event_id)
+            if a is None or b is None:
                 continue  # raced away since the scan; the next scan picks it up
-            winner = copies[0]
-            for other in copies[1:]:
-                winner, loser = pick_winner(winner, other)
-                pairs.add((loser.provider_id, loser.account_id))
-                session.delete(loser)
-                resolved += 1
+            _winner, loser = pick_winner(a, b)
+            pairs.add((loser.provider_id, loser.account_id))
+            session.delete(loser)
+            resolved += 1
         session.commit()
         session.expunge_all()
     return resolved, pairs
@@ -195,18 +180,19 @@ def _resolve_duplicates(session: Session) -> tuple[int, set[tuple[str, str]]]:
 def apply_openrouter_retag(session: Session, provider_id: str) -> OpenRouterRetagResult:
     """Move every OpenRouter-served event under `provider_id` onto `openrouter`.
 
-    Duplicates across the whole source set are resolved first (so `provider_id`'s
-    fix never leaves a sibling provider's copy to collide later), then the rest are
-    retagged to the single target account with the source-reported cost preserved
+    Collisions with rows already under `openrouter` are resolved first, then the rest
+    are retagged to the single target account with the source-reported cost preserved
     (`cost_reported_usd`) the way `legacy_retag` does. Every write is chunked and
-    committed per batch, and the whole thing is resumable. Rollups for every touched
+    committed per batch, so the fixer never holds the writer lock for one giant
+    transaction; an interrupted run can be repeated, and `rollup_drift` repairs the
+    rollups of anything moved before the interruption. Rollups for every touched
     (provider, account) pair and the closed windows of every touched provider are
     rebuilt from events afterwards.
     """
     target = resolve_target(session)
     result = OpenRouterRetagResult(target_account=target)
 
-    result.duplicates_resolved, touched_pairs = _resolve_duplicates(session)
+    result.duplicates_resolved, touched_pairs = _resolve_duplicates(session, provider_id)
     touched_pairs.add((TARGET_PROVIDER_ID, target))
     for source_provider, account in session.execute(
         select(UsageEvent.provider_id, UsageEvent.account_id)
