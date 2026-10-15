@@ -366,7 +366,7 @@ def test_unrecognized_provider_never_collapses_into_go():
     assert map_opencode_provider_id("some-new-backend") != "opencode"
 
 
-def _byok_message(msg_id: str) -> dict:
+def _byok_message(msg_id: str, model_id: str = "my-local-model") -> dict:
     return {
         "id": msg_id,
         "session_id": "ses_byok",
@@ -376,7 +376,7 @@ def _byok_message(msg_id: str) -> dict:
             "path": {"cwd": "/home/user/project"},
             "cost": 0,
             "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
-            "modelID": "tencent/hy3:free",
+            "modelID": model_id,
             "providerID": "open-design-byok",
             "time": {"created": 1746709260000, "completed": 1746709262000},
         },
@@ -392,6 +392,67 @@ def test_byok_provider_gets_its_own_id():
         assert len(evts) == 1
         assert evts[0].provider_id == "opencode-byok"
         assert evts[0].kind == "message"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("gateway", ["open-design-byok", "opencode", "opencode-go"])
+@pytest.mark.parametrize("model_id", ["tencent/hy3:free", "openrouter/free"])
+def test_openrouter_served_model_ids_fold_onto_openrouter(gateway, model_id):
+    """Only OpenRouter serves `vendor/model:free` / `openrouter/...` ids, whatever
+    gateway OpenCode tagged the message with."""
+    msg = _byok_message("msg_or_001", model_id)
+    msg["data"]["providerID"] = gateway
+    msg["data"]["cost"] = 0.5
+    db_path = _build_db([msg])
+    try:
+        (evt,) = parse_opencode_events(
+            db_path,
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            canonical_hints={"openrouter": {"provider:openrouter": "me@example.com"}},
+        )
+        assert evt.provider_id == "openrouter"
+        assert evt.account_id == "me@example.com"
+        assert evt.account_source == "tag"
+        assert evt.cost_usd is None  # the server reprices canonical-provider events
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_openrouter_model_without_a_hint_is_held_back_as_default():
+    db_path = _build_db([_byok_message("msg_or_002", "tencent/hy3:free")])
+    try:
+        (evt,) = parse_opencode_events(
+            db_path, account_id="me@example.com", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert evt.provider_id == "openrouter"
+        assert evt.account_id == "default"
+        assert evt.account_source == "default"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_other_backends_keep_their_own_provider_even_with_a_free_suffix():
+    msg = _byok_message("msg_other_001", "tencent/hy3:free")
+    msg["data"]["providerID"] = "ollama-cloud"
+    db_path = _build_db([msg])
+    try:
+        (evt,) = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert evt.provider_id != "openrouter"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_vendor_prefixed_local_model_is_not_treated_as_openrouter():
+    db_path = _build_db([_byok_message("msg_local_001", "qwen/qwen3-coder-30b")])
+    try:
+        (evt,) = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert evt.provider_id == "opencode-byok"
     finally:
         db_path.unlink(missing_ok=True)
 
