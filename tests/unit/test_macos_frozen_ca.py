@@ -116,6 +116,8 @@ def tls_endpoint(tmp_path, monkeypatch):
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    # Track initial absence too: the runtime hook writes directly to os.environ.
+    monkeypatch.setenv("SSL_CERT_FILE", os.environ.get("SSL_CERT_FILE", ""))
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
     monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
     empty = tmp_path / "empty-ca-directory"
