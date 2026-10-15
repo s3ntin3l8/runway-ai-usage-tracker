@@ -8,7 +8,7 @@ Collects the consumer Grok subscription's credit balance and on-demand usage thr
 
 The collector reads the access bearer from `xai_access`. The sidecar can obtain it from:
 
-- OpenCode `auth.json`, mapping `xai.access` to `xai_access` and `xai.refresh` to `xai_refresh`. On opencode v2 the same fields are read from the `credential` table in `opencode.db` (see [OpenCode](opencode.md)); the sidecar never renews or writes that login.
+- OpenCode `auth.json`, mapping `xai.access` to `xai_access` and `xai.refresh` to `xai_refresh`. On opencode v2 the same fields are read from the `credential` table in `opencode.db` (see [OpenCode](opencode.md)); with keep-alive on, the sidecar renews that row in place (compare-and-swap) and never touches the stale `auth.json` (see [Sidecar](../sidecar.md)).
 - Grok CLI `~/.grok/auth.json` (or `$GROK_HOME/auth.json`), selecting an xAI OIDC scope entry and mapping `key` to `xai_access` and `refresh_token` to `xai_refresh`.
 - `GROK_OAUTH_TOKEN`, mapped to `xai_access`.
 - A bearer pasted into provider settings, stored as `provider_configs.api_key` and mirrored into the token cache's `xai_access` slot.

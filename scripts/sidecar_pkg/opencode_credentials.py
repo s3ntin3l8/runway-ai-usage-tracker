@@ -8,7 +8,10 @@ keep serving a dead copy. This module presents the table in the legacy shape
 ``xai.access``, ...) keeps resolving unchanged, with the same origin string.
 
 Sidecar-only: ``registry.json`` has no ``sqlite`` rule type on purpose, so the
-server can never evaluate it. The database is opened read-only and never written.
+server can never evaluate it. Every read opens the database read-only. The one write
+is ``update_oauth_value``, the xAI keep-alive's compare-and-swap of a renewed login:
+opencode only refreshes inside a model call (no background timer) and re-reads the
+row from the database on every use, so a row updated here is picked up as-is.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +36,12 @@ _EXPECTED_DB_ERRORS = (OSError, sqlite3.Error, ValueError)
 
 def _connect_ro(db_path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+
+
+def _connect_rw(db_path: Path) -> sqlite3.Connection:
+    # isolation_level=None: we issue BEGIN IMMEDIATE ourselves. The timeout waits out
+    # opencode's own (short) write transactions on the WAL database.
+    return sqlite3.connect(str(db_path), timeout=5, isolation_level=None)
 
 
 def sibling_db(auth_path: Path) -> Path | None:
@@ -156,3 +166,103 @@ def key_binding(db_path: Path, service: str, discovered_key: str) -> str:
     if ambiguous or active_key != discovered_key.strip():
         return "ambiguous"
     return "single"
+
+
+def read_oauth_row(db_path: Path, integration: str) -> tuple[str, dict[str, Any]] | None:
+    """``(row_id, value)`` of the integration's OAuth credential, or None.
+
+    Same row choice as ``load_auth_view`` (the ``active`` row, else the newest). None
+    when that row is not OAuth (a stored API key is not a renewable login) or when
+    several different candidates leave it ambiguous which account is meant.
+    """
+    try:
+        conn = _connect_ro(db_path)
+        try:
+            rows = list(
+                conn.execute(
+                    "SELECT id, value, active, time_updated FROM credential "
+                    "WHERE integration_id = ?",
+                    (integration,),
+                )
+            )
+        finally:
+            conn.close()
+    except _EXPECTED_DB_ERRORS:
+        return None
+    picked, ambiguous = _pick([(raw, active, updated) for _, raw, active, updated in rows])
+    if picked is None or ambiguous or picked.get("type") != "oauth":
+        return None
+    for row_id, raw, _active, _updated in rows:
+        try:
+            if json.loads(raw) == picked:
+                return row_id, picked
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+_WRITE_ATTEMPTS = 3
+_WRITE_RETRY_SECONDS = 2.0
+
+
+def update_oauth_value(
+    db_path: Path, row_id: str, expected_refresh: str, updates: dict[str, Any]
+) -> str:
+    """Compare-and-swap renewed tokens into the credential row.
+
+    ``updates`` (``access`` / ``refresh`` / ``expires``) are merged into the row as it is
+    *inside* the transaction, so any other field opencode changed meanwhile survives.
+    Returns ``"written"``, ``"superseded"`` (the row's refresh token is no longer
+    ``expected_refresh`` — opencode renewed first, so ours is stale) or ``"failed"``.
+    ``BEGIN IMMEDIATE`` makes the re-read and the write one atomic step; a busy database
+    is retried a few times because xAI has already rotated the token we are saving.
+    """
+    for attempt in range(_WRITE_ATTEMPTS):
+        outcome = _try_update(db_path, row_id, expected_refresh, updates)
+        if outcome != "busy":
+            return outcome
+        if attempt < _WRITE_ATTEMPTS - 1:
+            time.sleep(_WRITE_RETRY_SECONDS)
+    return "failed"
+
+
+def _try_update(db_path: Path, row_id: str, expected_refresh: str, updates: dict[str, Any]) -> str:
+    try:
+        conn = _connect_rw(db_path)
+    except _EXPECTED_DB_ERRORS:
+        return "failed"
+    try:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError:
+            logger.debug("opencode.db busy: %s", db_path, exc_info=True)
+            return "busy"
+        committed = superseded = False
+        try:
+            row = conn.execute("SELECT value FROM credential WHERE id = ?", (row_id,)).fetchone()
+            current = json.loads(row[0]) if row else None
+            if not isinstance(current, dict) or current.get("refresh") != expected_refresh:
+                superseded = True
+            else:
+                conn.execute(
+                    "UPDATE credential SET value = ?, time_updated = ? WHERE id = ?",
+                    (
+                        json.dumps({**current, **updates}, separators=(",", ":")),
+                        int(time.time() * 1000),
+                        row_id,
+                    ),
+                )
+                conn.execute("COMMIT")
+                committed = True
+        finally:
+            # Any exit that did not commit (superseded, error, interrupt) releases the lock.
+            if not committed and conn.in_transaction:
+                conn.execute("ROLLBACK")
+        if superseded:
+            return "superseded"
+    except (*_EXPECTED_DB_ERRORS, TypeError):
+        logger.debug("opencode credential update failed: %s", db_path, exc_info=True)
+        return "failed"
+    finally:
+        conn.close()
+    return "written"

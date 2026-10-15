@@ -28,7 +28,11 @@ from pathlib import Path
 from typing import Any
 
 from scripts.sidecar_pkg.oauth_renewal import RefreshRejectedError, atomic_replace_json
-from scripts.sidecar_pkg.opencode_credentials import v2_db_for_auth
+from scripts.sidecar_pkg.opencode_credentials import (
+    read_oauth_row,
+    update_oauth_value,
+    v2_db_for_auth,
+)
 
 __all__ = ["RefreshRejectedError", "XaiRenewer", "grok_scope_entry"]
 
@@ -70,10 +74,13 @@ class Login:
     """The xAI tokens found in one auth file."""
 
     path: Path
-    kind: str  # "opencode" | "grok"
+    kind: str  # "opencode" | "opencode-db" | "grok"
     access: str
     refresh: str
     expires_ms: float | None  # the file's own expiry field, when it has one
+    row_id: str | None = None  # opencode-db: the credential row to compare-and-swap
+    # opencode-db: the newer refresh token left in the superseded auth.json, if any.
+    fallback_refresh: str | None = None
 
 
 def grok_scope_entry(data: Any) -> dict[str, Any] | None:
@@ -106,7 +113,38 @@ def _grok_entry(data: Any) -> dict[str, Any] | None:
     return entry if entry and entry.get("key") and entry.get("refresh_token") else None
 
 
+def _read_v2_login(db: Path) -> Login | None:
+    """The xAI login in opencode v2's credential table, plus the heal fallback."""
+    found = read_oauth_row(db, "xai")
+    if found is None:
+        return None
+    row_id, value = found
+    access, refresh, expires = value.get("access"), value.get("refresh"), value.get("expires")
+    if not isinstance(access, str) or not isinstance(refresh, str) or not refresh:
+        return None
+    expires_ms = float(expires) if isinstance(expires, int | float) else None
+    login = Login(
+        path=db,
+        kind="opencode-db",
+        access=access,
+        refresh=refresh,
+        expires_ms=expires_ms,
+        row_id=row_id,
+    )
+    # Before v2 took over, the keep-alive kept rotating auth.json, so that stale file can
+    # hold the live lineage while the database's token was consumed. Offer it as a fallback
+    # only when it is a different, newer login than the row's.
+    stale = read_login(db.parent / "auth.json", "opencode")
+    if stale is not None and stale.refresh != refresh:
+        stale_exp, row_exp = login_expiry(stale), login_expiry(login)
+        if stale_exp is not None and (row_exp is None or stale_exp > row_exp):
+            login.fallback_refresh = stale.refresh
+    return login
+
+
 def read_login(path: Path, kind: str) -> Login | None:
+    if kind == "opencode-db":
+        return _read_v2_login(path)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -184,6 +222,31 @@ def request_refresh(refresh_token: str) -> dict[str, Any]:
     return data
 
 
+def _write_back_v2(login: Login, token_response: dict[str, Any]) -> str:
+    """Compare-and-swap the renewed tokens into opencode v2's credential row.
+
+    Only ``access`` / ``refresh`` / ``expires`` change; ``type``, ``methodID`` and
+    ``metadata`` survive. A row whose refresh token moved is left alone (``"superseded"``).
+    """
+    found = read_oauth_row(login.path, "xai")
+    if found is None or login.row_id is None:
+        return "failed"
+    row_id, value = found
+    if row_id != login.row_id or value.get("refresh") != login.refresh:
+        return "superseded"
+    new_access = str(token_response["access_token"])
+    updates: dict[str, Any] = {
+        "access": new_access,
+        "refresh": str(token_response.get("refresh_token") or login.refresh),
+    }
+    exp = jwt_expiry_epoch(new_access)
+    if exp is None and token_response.get("expires_in"):
+        exp = time.time() + float(token_response["expires_in"])
+    if exp is not None:
+        updates["expires"] = int(exp * 1000)
+    return update_oauth_value(login.path, row_id, login.refresh, updates)
+
+
 def write_back(login: Login, token_response: dict[str, Any]) -> str:
     """Write the renewed tokens into the file: ``"written"``, ``"superseded"`` (the file
     moved on meanwhile — nothing to do) or ``"failed"`` (could not read/write it).
@@ -192,6 +255,8 @@ def write_back(login: Login, token_response: dict[str, Any]) -> str:
     exchanged, the CLI renewed concurrently and our result is stale — drop it.
     Only the xAI entry changes; every other key survives, and the file keeps its mode.
     """
+    if login.kind == "opencode-db":
+        return _write_back_v2(login, token_response)
     try:
         data = json.loads(login.path.read_text(encoding="utf-8"))
         mode = login.path.stat().st_mode & 0o777
@@ -245,25 +310,35 @@ class XaiRenewer:
         if self._paths is not None:
             return self._paths
         targets = [(p, "opencode") for p in OPENCODE_PATHS] + [(_grok_path(), "grok")]
-        return [(p, kind) for p, kind in targets if not self._superseded(p, kind)]
+        out: list[tuple[Path, str]] = []
+        for path, kind in targets:
+            v2_db = self._v2_db(path, kind)
+            if kind != "opencode":
+                out.append((path, kind))
+            elif v2_db is not None and v2_db not in [p for p, _ in out]:
+                out.append((v2_db, "opencode-db"))
+            elif v2_db is None:
+                out.append((path, kind))
+        return out
 
-    def _superseded(self, path: Path, kind: str) -> bool:
-        """True for an opencode ``auth.json`` that opencode v2 no longer reads.
+    def _v2_db(self, path: Path, kind: str) -> Path | None:
+        """The opencode v2 database that supersedes an opencode ``auth.json``, if any.
 
-        v2 holds the login in its own database and refreshes it itself. xAI rotates
-        refresh tokens, so refreshing the stale file's copy (or writing it back)
-        would invalidate the lineage opencode is using. Read-only: never touch it.
+        v2 keeps the login in ``opencode.db`` and the file is stale, so the file itself
+        is never refreshed or written (xAI rotates refresh tokens: that would fork the
+        lineage). The renewer works on the database row instead.
         """
-        if kind != "opencode" or v2_db_for_auth(path) is None:
-            return False
-        if path not in self._v2_noted:
+        if kind != "opencode":
+            return None
+        db = v2_db_for_auth(path)
+        if db is not None and path not in self._v2_noted:
             self._v2_noted.add(path)
             logger.info(
-                "xAI keep-alive: opencode v2 owns the login for %s (credentials live in "
-                "opencode.db); leaving it to opencode to renew",
-                path.parent,
+                "xAI keep-alive: opencode v2 keeps the login in %s; renewing it there "
+                "(the stale auth.json is left alone)",
+                db,
             )
-        return True
+        return db
 
     def _due_logins(self) -> list[Login]:
         logins = []
@@ -284,11 +359,35 @@ class XaiRenewer:
         with _RENEW_LOCK:
             return self._renew_due_logins()
 
+    def _refresh(self, login: Login) -> dict[str, Any]:
+        """Exchange the login's refresh token, healing a split v2 lineage once.
+
+        If xAI rejects the database's token but the superseded auth.json holds a newer
+        one, that is the live lineage: exchange it instead (the result is then written
+        into the database by the caller's compare-and-swap).
+        """
+        try:
+            return request_refresh(login.refresh)
+        except RefreshRejectedError:
+            if not login.fallback_refresh:
+                raise
+        response = request_refresh(login.fallback_refresh)
+        # xAI may keep the refresh token; it must be the one just exchanged, never the
+        # database's rejected one that write_back would otherwise fall back to.
+        response.setdefault("refresh_token", login.fallback_refresh)
+        if not response["refresh_token"]:
+            response["refresh_token"] = login.fallback_refresh
+        logger.info(
+            "xAI keep-alive: adopting the newer login from the superseded auth.json "
+            "into opencode.db"
+        )
+        return response
+
     def _renew_due_logins(self) -> bool:
         ok = True
         for login in self._due_logins():
             try:
-                response = request_refresh(login.refresh)
+                response = self._refresh(login)
             except RefreshRejectedError as exc:
                 # Logged out / revoked lineage: stop prodding it until the sidecar restarts.
                 self._rejected[login.path] = login.refresh
