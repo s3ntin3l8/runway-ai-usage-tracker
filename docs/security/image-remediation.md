@@ -87,3 +87,40 @@ requiring certificate identity
 and issuer `https://token.actions.githubusercontent.com`. Certificate chain,
 transparency evidence and index digest claims were checked. A separate registry
 inspection confirmed the public versioned tag matches the index above.
+
+## Util-linux applicability review, 2026-10-15
+
+[Issue #640](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640)
+tracks two new High advisories blocking both candidate architectures in
+[run 38774514983](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/38774514983).
+The original unfiltered reports and policy decisions remain in the
+`image-security-amd64` and `image-security-arm64` artifacts. Each has 16 blocked
+matches across eight util-linux binary packages, with no Python findings.
+
+Debian Bookworm's installed `2.38.1-5+deb12u3` remains vulnerable; `bsdutils`
+includes epoch `1:`. The Debian tracker lists fixes in newer distribution
+versions, not a Bookworm update at review time. These exact package/version and
+architecture assessments expire after seven days, on 2026-10-22; #640 remains
+open to reassess the upstream fix and applicability before expiry.
+
+| Advisory | Runtime applicability decision |
+| --- | --- |
+| [CVE-2026-53613](https://security-tracker.debian.org/tracker/CVE-2026-53613), [upstream](https://github.com/util-linux/util-linux/security/advisories/GHSA-8gj5-72r3-428g) | Exploitation needs a privileged mount path and a user/users fstab entry whose target has an attacker-writable ancestor. The Dockerfile runs as UID 1000 and removes inherited setuid/setgid permissions; the server invokes no mount/libmount operations. Privileged containers, additional capabilities, a host Docker socket, or custom user-mount fstab entries invalidate this assessment. |
+| [CVE-2026-53615](https://security-tracker.debian.org/tracker/CVE-2026-53615), [upstream](https://github.com/util-linux/util-linux/security/advisories/GHSA-h4rw-gv36-wmp5) | The affected path probes crafted DOS extended partitions through libblkid. The server accepts usage/configuration data and has no blkid/libblkid calls, disk-image upload/probing, block-device input, or downstream partition consumer. Adding those operations invalidates this assessment. |
+
+Source inspection covered `app/`, its direct requirements, the Dockerfile and
+the supplied Compose configuration. Static SPA mounting is an HTTP route, not a
+filesystem mount. The exceptions do not assert these packages are patched or
+cover deployments with different privileges or input paths. The existing
+High/Critical gate, 24-hour database limit, unfiltered report retention and
+per-version/per-architecture matching remain in force.
+
+An isolated local amd64 candidate built from source `66bd9a52` passed the server
+import check with no network, a read-only root and temporary configuration under
+`/tmp`. Its inventory showed UID 1000, no active fstab entries, no inherited
+setuid/setgid files, and no loaded libmount/libblkid libraries. Installed util-linux
+and library versions matched the scanned versions above. This is an amd64
+runtime observation; fresh CI scans independently check both architectures.
+Re-evaluating both retained unfiltered reports with the proposed exceptions
+accepted exactly the 16 new matches per architecture; changing one affected
+package to an unreviewed version remained blocked.
