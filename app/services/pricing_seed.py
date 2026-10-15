@@ -551,8 +551,9 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 0.0,
         "notes": "Gemini 3.1 Flash-Lite",
     },
-    # Raw-id alias: the Hermes extractor emitted un-normalized Gemini model ids
-    # (now normalized, but events ingested earlier still carry the raw id).
+    # Raw-id aliases: the Hermes extractor used to emit un-normalized Gemini model
+    # ids (it now normalizes them), so events ingested earlier still carry the raw
+    # id. Same rates as the canonical flash-2.5 / pro-2.5 / flash-lite-2.5 rows.
     {
         "provider_id": "gemini",
         "model_id": "gemini-2.5-flash",
@@ -563,10 +564,32 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 0.0,
         "notes": "Gemini 2.5 Flash — raw-id alias of flash-2.5",
     },
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-2.5-pro",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.125,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 2.5 Pro — raw-id alias of pro-2.5",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-2.5-flash-lite",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.10,
+        "output_per_mtok": 0.40,
+        "cache_read_per_mtok": 0.01,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 2.5 Flash-Lite — raw-id alias of flash-lite-2.5",
+    },
     # Gemini 4 Argon (https://ai.google.dev/gemini-api/docs/pricing, checked
     # 2026-10-15). No >200K tier. The launch price is a 50% promo through
     # 2026-11-30; the list price applies from 2026-12-01. The id passes through
-    # both the Gemini and Antigravity normalizers unchanged. The promo row's
+    # both the Gemini and Antigravity normalizers unchanged. The `gemini` rows serve
+    # the Gemini/Hermes pipeline; the `antigravity` rows are for the separate
+    # Antigravity extractor (Hermes never emits that provider). The promo row's
     # effective_from is the earliest date we have seen it, not a confirmed launch.
     {
         "provider_id": "gemini",

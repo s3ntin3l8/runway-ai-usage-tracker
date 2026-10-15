@@ -1,5 +1,6 @@
 from datetime import date
 
+import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -766,14 +767,22 @@ def test_seed_gemini_4_argon_promo_then_list_price():
         )
 
 
-def test_seed_gemini_raw_2_5_flash_alias_matches_flash_2_5():
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
+    [
+        ("gemini-2.5-flash", "flash-2.5"),
+        ("gemini-2.5-pro", "pro-2.5"),
+        ("gemini-2.5-flash-lite", "flash-lite-2.5"),
+    ],
+)
+def test_seed_gemini_raw_2_5_aliases_match_their_canonical_rows(raw, canonical):
     s = _make_session()
     seed_pricing_table(s)
-    alias = _row(s, "gemini", "gemini-2.5-flash", date(2026, 10, 2))
-    canonical = _row(s, "gemini", "flash-2.5", date(2026, 10, 2))
-    assert alias is not None and canonical is not None
+    alias = _row(s, "gemini", raw, date(2026, 10, 2))
+    base = _row(s, "gemini", canonical, date(2026, 10, 2))
+    assert alias is not None and base is not None
     assert (alias.input_per_mtok, alias.output_per_mtok, alias.cache_read_per_mtok) == (
-        canonical.input_per_mtok,
-        canonical.output_per_mtok,
-        canonical.cache_read_per_mtok,
+        base.input_per_mtok,
+        base.output_per_mtok,
+        base.cache_read_per_mtok,
     )
