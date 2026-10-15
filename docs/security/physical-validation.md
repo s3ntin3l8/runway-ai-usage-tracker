@@ -1,9 +1,12 @@
 # Physical security acceptance — issue #603
 
-Status: **pending physical execution**. Linux browser/nginx and frozen verifier CI
-are complementary evidence, not certification of Windows/macOS installation,
-Local Network Access behavior, or an actual Authentik deployment. Record failures
-and unavailable cases honestly; #603 stays open until the matrix is complete.
+Status: **physical macOS execution pending**. The actual Authentik/Traefik TLS
+matrix and recorded Windows native/Chrome/Edge runs are complete for their stated
+configurations and limitations. The [macOS build A record](evidence/603-macos-2026-10-15/README.md)
+preserves the starting signed payloads; capture is not physical acceptance.
+Automated browser/proxy and frozen verifier checks complement the recorded
+physical results. Record failures and unavailable cases honestly; #603 stays open
+until the required matrix passes or a tracked limitation is explicitly agreed.
 
 ## Record and isolate
 
@@ -72,7 +75,9 @@ TLS direct probes, separate matching-port HTTP rebinding fixtures, scoped real
 DNS resolver setup, body-free exports, source restrictions and teardown. Helper
 readiness and DNS diagnostics are not physical browser acceptance.
 
-Use Edge/Chrome and Firefox on Windows, and Safari, Chrome and Firefox on macOS.
+Use Edge/Chrome on Windows, and Safari, Chrome and Firefox on macOS. Windows
+Firefox is [explicitly excluded by the operator](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6147075608),
+not passed; record macOS browser availability separately.
 Test dashboard and sidecar settings independently. Record Local Network Access
 prompts and permission denied/granted states where the browser supports them.
 
@@ -117,8 +122,9 @@ prompts and permission denied/granted states where the browser supports them.
 The [2026-10-12 execution record](evidence/603-authentik-traefik-2026-10-12/README.md)
 contains the completed actual Authentik/Traefik TLS matrix on an isolated synthetic
 application, including sanitized configuration, results, immediate-peer logs and
-teardown. Native installation and physical browser LNA/DNS rebinding acceptance
-remain pending in #603.
+teardown. Recorded Windows execution is linked from #603; the remaining physical macOS
+installation and browser acceptance stays pending. The Windows full-gate follow-up
+is complete through #631 (closing #621), with its explicit privilege/platform skips.
 
 Create a separate Runway test hostname, Authentik application and Proxy Provider
 in forward-auth single-application mode, reusing your existing Traefik installation.
