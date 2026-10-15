@@ -8,7 +8,10 @@ keep serving a dead copy. This module presents the table in the legacy shape
 ``xai.access``, ...) keeps resolving unchanged, with the same origin string.
 
 Sidecar-only: ``registry.json`` has no ``sqlite`` rule type on purpose, so the
-server can never evaluate it. The database is opened read-only and never written.
+server can never evaluate it. Every read opens the database read-only. The one write
+is ``update_oauth_value``, the xAI keep-alive's compare-and-swap of a renewed login:
+opencode only refreshes inside a model call (no background timer) and re-reads the
+row from the database on every use, so a row updated here is picked up as-is.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +36,12 @@ _EXPECTED_DB_ERRORS = (OSError, sqlite3.Error, ValueError)
 
 def _connect_ro(db_path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+
+
+def _connect_rw(db_path: Path) -> sqlite3.Connection:
+    # isolation_level=None: we issue BEGIN IMMEDIATE ourselves. The timeout waits out
+    # opencode's own (short) write transactions on the WAL database.
+    return sqlite3.connect(str(db_path), timeout=5, isolation_level=None)
 
 
 def sibling_db(auth_path: Path) -> Path | None:
@@ -156,3 +166,80 @@ def key_binding(db_path: Path, service: str, discovered_key: str) -> str:
     if ambiguous or active_key != discovered_key.strip():
         return "ambiguous"
     return "single"
+
+
+def read_oauth_row(db_path: Path, integration: str) -> tuple[str, dict[str, Any]] | None:
+    """``(row_id, value)`` of the integration's OAuth credential, or None.
+
+    Same row choice as ``load_auth_view`` (the ``active`` row, else the newest);
+    API-key rows are ignored, so a stored key never masquerades as a renewable login.
+    """
+    try:
+        conn = _connect_ro(db_path)
+        try:
+            rows = list(
+                conn.execute(
+                    "SELECT id, value, active, time_updated FROM credential "
+                    "WHERE integration_id = ?",
+                    (integration,),
+                )
+            )
+        finally:
+            conn.close()
+    except _EXPECTED_DB_ERRORS:
+        return None
+    ids: list[str] = []
+    candidates: list[tuple[str, Any, int]] = []
+    for row_id, raw, active, updated in rows:
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, dict) and value.get("type") == "oauth":
+            ids.append(row_id)
+            candidates.append((raw, active, updated))
+    picked, _ = _pick(candidates)
+    if picked is None:
+        return None
+    for row_id, (raw, _a, _u) in zip(ids, candidates, strict=True):
+        if json.loads(raw) == picked:
+            return row_id, picked
+    return None
+
+
+def update_oauth_value(
+    db_path: Path, row_id: str, expected_refresh: str, new_value: dict[str, Any]
+) -> str:
+    """Compare-and-swap a renewed login into the credential row.
+
+    Returns ``"written"``, ``"superseded"`` (the row's refresh token is no longer
+    ``expected_refresh`` — opencode renewed first, so ours is stale) or ``"failed"``.
+    ``BEGIN IMMEDIATE`` makes the re-read and the write one atomic step.
+    """
+    try:
+        conn = _connect_rw(db_path)
+    except _EXPECTED_DB_ERRORS:
+        return "failed"
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute("SELECT value FROM credential WHERE id = ?", (row_id,)).fetchone()
+            current = json.loads(row[0]) if row else None
+            if not isinstance(current, dict) or current.get("refresh") != expected_refresh:
+                conn.execute("ROLLBACK")
+                return "superseded"
+            conn.execute(
+                "UPDATE credential SET value = ?, time_updated = ? WHERE id = ?",
+                (json.dumps(new_value, separators=(",", ":")), int(time.time() * 1000), row_id),
+            )
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+    except (*_EXPECTED_DB_ERRORS, TypeError):
+        logger.debug("opencode credential update failed: %s", db_path, exc_info=True)
+        return "failed"
+    finally:
+        conn.close()
+    return "written"

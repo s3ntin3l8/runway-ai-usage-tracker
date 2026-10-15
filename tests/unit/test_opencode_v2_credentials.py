@@ -222,50 +222,226 @@ class TestSidecarFileRule:
         assert sc._opencode_local_key_binding(KEY_STALE, auth_origin=origin) == "ambiguous"
 
 
-class TestXaiRenewerReadOnlyOnV2:
-    def _targets(self, monkeypatch: pytest.MonkeyPatch, oc_dir: Path, tmp_path: Path):
+def _jwt(exp: float) -> str:
+    import base64
+
+    def seg(obj: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    return f"{seg({'alg': 'none'})}.{seg({'exp': exp})}.sig"
+
+
+def _xai_row(access: str, refresh: str, expires_ms: int, **extra: Any) -> dict[str, Any]:
+    value = {
+        "type": "oauth",
+        "methodID": "device",
+        "refresh": refresh,
+        "access": access,
+        "expires": expires_ms,
+        "metadata": {"keep": True},
+    }
+    return {"integration": "xai", "value": value, **extra}
+
+
+def _xai_value(db: Path) -> dict[str, Any]:
+    conn = sqlite3.connect(db)
+    try:
+        return json.loads(
+            conn.execute("SELECT value FROM credential WHERE integration_id='xai'").fetchone()[0]
+        )
+    finally:
+        conn.close()
+
+
+class TestXaiRenewerOnV2:
+    @pytest.fixture
+    def setup(self, oc_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        import time
+
+        from scripts.sidecar_pkg import xai_renewer
+
+        auth = oc_dir / "auth.json"
+        monkeypatch.setattr(xai_renewer, "OPENCODE_PATHS", (auth,))
+        monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok"))
+        now = time.time()
+        calls: list[str] = []
+        monkeypatch.setattr(
+            xai_renewer,
+            "request_refresh",
+            lambda refresh: (
+                calls.append(refresh)
+                or {"access_token": _jwt(now + 21600), "refresh_token": "r-new"}
+            ),
+        )
+        return auth, calls, now
+
+    def _write_file(self, auth: Path, refresh: str, exp: float) -> bytes:
+        auth.write_text(
+            json.dumps({"xai": {"access": _jwt(exp), "refresh": refresh, "expires": exp * 1000}}),
+            encoding="utf-8",
+        )
+        return auth.read_bytes()
+
+    def test_db_row_is_the_target_and_the_file_is_not(self, setup, oc_dir: Path) -> None:
+        auth, _, now = setup
+        self._write_file(auth, "r-file", now + 5)
+        db = _make_db(oc_dir, [])
+        kinds = [(p, k) for p, k in XaiRenewer()._targets() if k != "grok"]
+        assert kinds == [(db, "opencode-db")]
+
+    def test_v1_opencode_login_is_still_renewed_in_the_file(
+        self, oc_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from scripts.sidecar_pkg import xai_renewer
 
         monkeypatch.setattr(xai_renewer, "OPENCODE_PATHS", (oc_dir / "auth.json",))
         monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok"))
-        return XaiRenewer()._targets()
-
-    def test_superseded_opencode_login_is_not_a_target(
-        self, oc_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (oc_dir / "auth.json").write_text(
-            json.dumps({"xai": {"access": "a", "refresh": "r", "expires": 1}}), encoding="utf-8"
-        )
-        _make_db(oc_dir, [])
-        targets = self._targets(monkeypatch, oc_dir, tmp_path)
-        assert [kind for _, kind in targets] == ["grok"]
-
-    def test_v1_opencode_login_is_still_renewed(
-        self, oc_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
         _make_db(oc_dir, [], v2=False)
-        targets = self._targets(monkeypatch, oc_dir, tmp_path)
-        assert "opencode" in {kind for _, kind in targets}
+        assert "opencode" in {kind for _, kind in XaiRenewer()._targets()}
 
-    def test_superseded_file_is_never_written(
-        self, oc_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        auth = oc_dir / "auth.json"
-        auth.write_text(
-            json.dumps({"xai": {"access": "a", "refresh": "r", "expires": 1}}), encoding="utf-8"
+    def test_renews_into_the_row_and_leaves_the_rest(self, setup, oc_dir: Path) -> None:
+        auth, calls, now = setup
+        before = self._write_file(auth, "r-file", now + 5)
+        db = _make_db(
+            oc_dir,
+            [
+                _key("opencode-go", KEY_NEW),
+                _xai_row(_jwt(now + 60), "r-db", int((now + 60) * 1000), updated=5),
+            ],
         )
-        _make_db(oc_dir, [])
-        before = auth.read_bytes()
-        from scripts.sidecar_pkg import xai_renewer
-
-        monkeypatch.setattr(xai_renewer, "OPENCODE_PATHS", (auth,))
-        monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok"))
-
-        def _boom(*_a: Any, **_k: Any) -> dict[str, Any]:
-            raise AssertionError("must not refresh a login opencode v2 owns")
-
-        monkeypatch.setattr(xai_renewer, "request_refresh", _boom)
-        renewer = XaiRenewer()
-        assert renewer.due() is False
-        assert renewer.renew() is True
+        assert XaiRenewer().renew() is True
+        value = _xai_value(db)
+        assert calls == ["r-db"]
+        assert value["refresh"] == "r-new"
+        assert value["methodID"] == "device" and value["metadata"] == {"keep": True}
+        assert value["expires"] > (now + 3600) * 1000
+        conn = sqlite3.connect(db)
+        try:
+            go = conn.execute("SELECT value FROM credential WHERE integration_id='opencode-go'")
+            assert json.loads(go.fetchone()[0])["key"] == KEY_NEW
+            assert (
+                conn.execute(
+                    "SELECT time_updated FROM credential WHERE integration_id='xai'"
+                ).fetchone()[0]
+                > 5
+            )
+        finally:
+            conn.close()
         assert auth.read_bytes() == before
+
+    def test_not_due_while_valid(self, setup, oc_dir: Path) -> None:
+        _, calls, now = setup
+        _make_db(oc_dir, [_xai_row(_jwt(now + 7200), "r-db", int((now + 7200) * 1000))])
+        assert XaiRenewer().due() is False
+        assert XaiRenewer().renew() is True
+        assert calls == []
+
+    def test_cas_loses_to_a_concurrent_opencode_renewal(self, setup, oc_dir: Path) -> None:
+        from scripts.sidecar_pkg import xai_renewer as xr
+
+        _, _, now = setup
+        db = _make_db(oc_dir, [_xai_row(_jwt(now + 60), "r-db", int((now + 60) * 1000))])
+        login = xr.read_login(db, "opencode-db")
+        assert login is not None
+        conn = sqlite3.connect(db)
+        value = _xai_value(db) | {"refresh": "r-opencode"}
+        conn.execute("UPDATE credential SET value=?", (json.dumps(value),))
+        conn.commit()
+        conn.close()
+        assert xr.write_back(login, {"access_token": _jwt(now + 99), "refresh_token": "x"}) == (
+            "superseded"
+        )
+        assert _xai_value(db)["refresh"] == "r-opencode"
+
+    def test_api_key_row_is_not_a_login(self, setup, oc_dir: Path) -> None:
+        _, calls, _ = setup
+        _make_db(oc_dir, [_key("xai", "xai-api-key")])
+        assert XaiRenewer().due() is False
+        assert calls == []
+
+    def test_rejection_backs_off_until_a_relogin(
+        self, setup, oc_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scripts.sidecar_pkg import xai_renewer as xr
+
+        _, _, now = setup
+        db = _make_db(oc_dir, [_xai_row(_jwt(now + 60), "r-db", int((now + 60) * 1000))])
+        attempts: list[str] = []
+
+        def reject(refresh: str) -> dict[str, Any]:
+            attempts.append(refresh)
+            raise xr.RefreshRejectedError("HTTP 400 invalid_grant")
+
+        monkeypatch.setattr(xr, "request_refresh", reject)
+        renewer = XaiRenewer()
+        assert renewer.renew() is False
+        assert renewer.due() is False
+        assert attempts == ["r-db"]
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE credential SET value=?",
+            (json.dumps(_xai_value(db) | {"refresh": "r-relogin"}),),
+        )
+        conn.commit()
+        conn.close()
+        assert renewer.due() is True
+
+    def test_heals_from_a_newer_superseded_file_lineage(self, setup, oc_dir: Path, monkeypatch):
+        from scripts.sidecar_pkg import xai_renewer as xr
+
+        auth, _, now = setup
+        before = self._write_file(auth, "r-file", now + 300)
+        db = _make_db(oc_dir, [_xai_row(_jwt(now - 9999), "r-db", int((now - 9999) * 1000))])
+        seen: list[str] = []
+
+        def refresh(token: str) -> dict[str, Any]:
+            seen.append(token)
+            if token == "r-db":
+                raise xr.RefreshRejectedError("HTTP 400 invalid_grant")
+            return {"access_token": _jwt(now + 21600), "refresh_token": "r-healed"}
+
+        monkeypatch.setattr(xr, "request_refresh", refresh)
+        assert XaiRenewer().renew() is True
+        assert seen == ["r-db", "r-file"]
+        assert _xai_value(db)["refresh"] == "r-healed"
+        assert auth.read_bytes() == before
+
+    def test_older_file_lineage_is_not_a_fallback(self, setup, oc_dir: Path) -> None:
+        from scripts.sidecar_pkg import xai_renewer as xr
+
+        auth, _, now = setup
+        self._write_file(auth, "r-file", now - 99999)
+        db = _make_db(oc_dir, [_xai_row(_jwt(now + 60), "r-db", int((now + 60) * 1000))])
+        login = xr.read_login(db, "opencode-db")
+        assert login is not None and login.fallback_refresh is None
+
+    def test_both_lineages_rejected_blocks_and_warns(
+        self, setup, oc_dir: Path, monkeypatch: pytest.MonkeyPatch, caplog
+    ) -> None:
+        from scripts.sidecar_pkg import xai_renewer as xr
+
+        auth, _, now = setup
+        self._write_file(auth, "r-file", now + 300)
+        db = _make_db(oc_dir, [_xai_row(_jwt(now - 9), "r-db", int((now - 9) * 1000))])
+
+        def reject(_refresh: str) -> dict[str, Any]:
+            raise xr.RefreshRejectedError("HTTP 400")
+
+        monkeypatch.setattr(xr, "request_refresh", reject)
+        renewer = XaiRenewer()
+        assert renewer.renew() is False
+        assert renewer.due() is False
+        assert _xai_value(db)["refresh"] == "r-db"
+        assert "log in again" in caplog.text
+
+    def test_locked_db_fails_with_a_warning(
+        self, setup, oc_dir: Path, caplog: pytest.LogCaptureFixture, monkeypatch
+    ) -> None:
+        _, _, now = setup
+        db = _make_db(oc_dir, [_xai_row(_jwt(now + 60), "r-db", int((now + 60) * 1000))])
+        monkeypatch.setattr(
+            oc, "_connect_rw", lambda _p: (_ for _ in ()).throw(sqlite3.OperationalError("locked"))
+        )
+        assert XaiRenewer().renew() is False
+        assert "could not write" in caplog.text
+        assert _xai_value(db)["refresh"] == "r-db"
