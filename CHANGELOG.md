@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.10](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.9...v3.0.0-beta.10) (2026-10-14)
+
+
+### Bug Fixes
+
+* make the full validation gate portable on Windows ([#631](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/631)) ([adf7af9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/adf7af90586f8550816e96a082a98d33590e0549))
+* repair native Windows updater and settings boundaries ([#622](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/622)) ([85c0dfe](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/85c0dfe32aa454e53384035edad8c75137b400ff))
+* **sidecar:** read opencode v2 credential table; stop renewing v2 xAI login ([#636](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/636)) ([c878174](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c878174afef7671b1182f52844957c125d808f59))
+* **sidecar:** read opencode v2 session_message usage ([#634](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/634)) ([af92be9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/af92be93df1ae2d6702077655dd8a37388f698ea))
+* **webapp:** readable rank-bar axes and wrapping data-health rows on mobile ([#632](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/632)) ([6367464](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/63674643f4d38ab08d55291f0f8adc90d6287df8))
+* **windows:** preserve rollback state after failed native swap and rollback ([#629](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/629)) ([655ac61](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/655ac61960c7df7505310ffda3f9f1e2cb7ef652))
+
 ## [3.0.0-beta.9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.8...v3.0.0-beta.9) (2026-10-12)
 
 
