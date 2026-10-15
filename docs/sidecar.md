@@ -474,15 +474,17 @@ env | grep -E "(GITHUB|ZAI|KIMI|CLAUDE)"
 ### TLS / certificate errors (`CERTIFICATE_VERIFY_FAILED`)
 The error `<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] ...>` on an `https://`
 `api_url` means the sidecar couldn't verify the server's certificate against a
-trusted CA. Builds from **v…+** bundle [`certifi`](https://pypi.org/project/certifi/),
+trusted CA. Frozen builds bundle [`certifi`](https://pypi.org/project/certifi/),
 so a valid public (e.g. Let's Encrypt) cert verifies out of the box. If you hit
 this:
 
-- **Older frozen build (macOS), valid public cert** — point the bundled OpenSSL
-  at the system CA store, then relaunch the app:
-  ```sh
-  launchctl setenv SSL_CERT_FILE /etc/ssl/cert.pem
-  ```
+- **Frozen macOS updates / Sigstore TUF refresh** — the app selects its bundled
+  CA file at startup for OpenSSL clients, including TUF's urllib3 fetcher. An
+  explicit `SSL_CERT_FILE` is preserved, including an invalid path that causes
+  verification to fail. Older builds affected by [#642](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/642)
+  may need a manually downloaded and independently verified fixed app before
+  normal updates work. A successful diagnostic with a CA override is not proof
+  that an older build's default trust is fixed.
 - **Self-signed / internal-CA server** — give the sidecar your CA chain:
   - config `~/.config/runway/sidecar/config.json`: `"ca_bundle": "/path/to/ca.pem"`
   - or env: `RUNWAY_CA_BUNDLE=/path/to/ca.pem` (`SSL_CERT_FILE` also honoured)
@@ -491,8 +493,11 @@ this:
   authenticates payloads, but the channel is no longer confidential — prefer a
   real CA bundle.
 
-These knobs apply only to the push to *your* Runway server; the sidecar's GitHub
-self-update always verifies GitHub's public cert regardless.
+The ingest-specific `ca_bundle` / `RUNWAY_CA_BUNDLE` and insecure settings do not
+configure Sigstore's TUF refresh or its signature policy. Update signatures still
+require the exact signing identity, issuer, chain and transparency evidence;
+trust-refresh failures refuse installation. `SSL_CERT_FILE` is an explicit
+process-wide trust override, not an ingest-only setting.
 
 ### Daemon not starting
 - Check PID file: `cat ~/.config/runway/sidecar/sidecar.pid`
