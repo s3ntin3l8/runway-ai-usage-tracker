@@ -237,25 +237,29 @@ def _try_update(db_path: Path, row_id: str, expected_refresh: str, updates: dict
         except sqlite3.OperationalError:
             logger.debug("opencode.db busy: %s", db_path, exc_info=True)
             return "busy"
+        committed = superseded = False
         try:
             row = conn.execute("SELECT value FROM credential WHERE id = ?", (row_id,)).fetchone()
             current = json.loads(row[0]) if row else None
             if not isinstance(current, dict) or current.get("refresh") != expected_refresh:
+                superseded = True
+            else:
+                conn.execute(
+                    "UPDATE credential SET value = ?, time_updated = ? WHERE id = ?",
+                    (
+                        json.dumps({**current, **updates}, separators=(",", ":")),
+                        int(time.time() * 1000),
+                        row_id,
+                    ),
+                )
+                conn.execute("COMMIT")
+                committed = True
+        finally:
+            # Any exit that did not commit (superseded, error, interrupt) releases the lock.
+            if not committed and conn.in_transaction:
                 conn.execute("ROLLBACK")
-                return "superseded"
-            conn.execute(
-                "UPDATE credential SET value = ?, time_updated = ? WHERE id = ?",
-                (
-                    json.dumps({**current, **updates}, separators=(",", ":")),
-                    int(time.time() * 1000),
-                    row_id,
-                ),
-            )
-            conn.execute("COMMIT")
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
+        if superseded:
+            return "superseded"
     except (*_EXPECTED_DB_ERRORS, TypeError):
         logger.debug("opencode credential update failed: %s", db_path, exc_info=True)
         return "failed"
