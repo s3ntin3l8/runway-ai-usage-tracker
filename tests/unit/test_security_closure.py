@@ -198,16 +198,22 @@ def test_download_overflow_removes_partial_bytes(monkeypatch, tmp_path):
     assert not (tmp_path / "payload.zip").exists()
 
 
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
 @pytest.mark.parametrize(
     "broken", ["valid", "tampered", "missing-bundle", "malformed-bundle", "oversized", None]
 )
-def test_frozen_smoke_requires_expected_results(monkeypatch, tmp_path, broken):
+def test_frozen_smoke_requires_expected_results(monkeypatch, tmp_path, broken, platform):
     import subprocess
 
     binary, payload, bundle = (tmp_path / name for name in ("binary", "payload", "bundle"))
     for path in (binary, payload, bundle):
         path.write_bytes(b"fixture")
     calls = []
+    monkeypatch.setattr(packaging.sys, "platform", platform)
+    ca_variables = ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+    for variable in ca_variables:
+        monkeypatch.setenv(variable, "/developer/override.pem")
+    monkeypatch.setenv("HOME", "/developer/home")
 
     def run(command, **kwargs):
         calls.append(command)
@@ -234,6 +240,15 @@ def test_frozen_smoke_requires_expected_results(monkeypatch, tmp_path, broken):
         if broken == name:
             code = 1 if name == "valid" else 0
         assert kwargs["env"]["RUNWAY_CONFIG_DIR"] != str(tmp_path)
+        if platform == "darwin":
+            assert all(variable not in kwargs["env"] for variable in ca_variables)
+            assert kwargs["env"]["HOME"] != "/developer/home"
+            assert Path(kwargs["env"]["HOME"]).is_dir()
+        else:
+            assert all(
+                kwargs["env"][variable] == "/developer/override.pem" for variable in ca_variables
+            )
+            assert kwargs["env"]["HOME"] == "/developer/home"
         return subprocess.CompletedProcess(command, code, "", diagnostic)
 
     monkeypatch.setattr(packaging.subprocess, "run", run)

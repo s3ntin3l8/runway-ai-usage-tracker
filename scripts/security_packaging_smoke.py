@@ -31,6 +31,19 @@ def smoke(binary: Path, payload: Path, bundle: Path, report: Path) -> None:
         with tempfile.TemporaryDirectory(prefix="runway-packaging-") as temp:
             directory = Path(temp)
             env = {**os.environ, "RUNWAY_CONFIG_DIR": temp}
+            if sys.platform == "darwin":
+                # Exercise rthook_macos_ca.py, not a developer's CA override
+                # or existing Sigstore cache. Never change the host trust store.
+                home = directory / "home"
+                home.mkdir()
+                env["HOME"] = str(home)
+                for variable in (
+                    "SSL_CERT_FILE",
+                    "SSL_CERT_DIR",
+                    "REQUESTS_CA_BUNDLE",
+                    "CURL_CA_BUNDLE",
+                ):
+                    env.pop(variable, None)
             tampered = directory / "tampered.txt"
             tampered.write_text("tampered update")
             malformed = directory / "malformed.json"
