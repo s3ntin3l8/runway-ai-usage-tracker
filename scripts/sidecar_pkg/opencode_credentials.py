@@ -171,8 +171,9 @@ def key_binding(db_path: Path, service: str, discovered_key: str) -> str:
 def read_oauth_row(db_path: Path, integration: str) -> tuple[str, dict[str, Any]] | None:
     """``(row_id, value)`` of the integration's OAuth credential, or None.
 
-    Same row choice as ``load_auth_view`` (the ``active`` row, else the newest);
-    API-key rows are ignored, so a stored key never masquerades as a renewable login.
+    Same row choice as ``load_auth_view`` (the ``active`` row, else the newest). None
+    when that row is not OAuth (a stored API key is not a renewable login) or when
+    several different candidates leave it ambiguous which account is meant.
     """
     try:
         conn = _connect_ro(db_path)
@@ -188,40 +189,54 @@ def read_oauth_row(db_path: Path, integration: str) -> tuple[str, dict[str, Any]
             conn.close()
     except _EXPECTED_DB_ERRORS:
         return None
-    ids: list[str] = []
-    candidates: list[tuple[str, Any, int]] = []
-    for row_id, raw, active, updated in rows:
+    picked, ambiguous = _pick([(raw, active, updated) for _, raw, active, updated in rows])
+    if picked is None or ambiguous or picked.get("type") != "oauth":
+        return None
+    for row_id, raw, _active, _updated in rows:
         try:
-            value = json.loads(raw)
+            if json.loads(raw) == picked:
+                return row_id, picked
         except (TypeError, ValueError):
             continue
-        if isinstance(value, dict) and value.get("type") == "oauth":
-            ids.append(row_id)
-            candidates.append((raw, active, updated))
-    picked, _ = _pick(candidates)
-    if picked is None:
-        return None
-    for row_id, (raw, _a, _u) in zip(ids, candidates, strict=True):
-        if json.loads(raw) == picked:
-            return row_id, picked
     return None
 
 
-def update_oauth_value(
-    db_path: Path, row_id: str, expected_refresh: str, new_value: dict[str, Any]
-) -> str:
-    """Compare-and-swap a renewed login into the credential row.
+_WRITE_ATTEMPTS = 3
+_WRITE_RETRY_SECONDS = 2.0
 
+
+def update_oauth_value(
+    db_path: Path, row_id: str, expected_refresh: str, updates: dict[str, Any]
+) -> str:
+    """Compare-and-swap renewed tokens into the credential row.
+
+    ``updates`` (``access`` / ``refresh`` / ``expires``) are merged into the row as it is
+    *inside* the transaction, so any other field opencode changed meanwhile survives.
     Returns ``"written"``, ``"superseded"`` (the row's refresh token is no longer
     ``expected_refresh`` — opencode renewed first, so ours is stale) or ``"failed"``.
-    ``BEGIN IMMEDIATE`` makes the re-read and the write one atomic step.
+    ``BEGIN IMMEDIATE`` makes the re-read and the write one atomic step; a busy database
+    is retried a few times because xAI has already rotated the token we are saving.
     """
+    for attempt in range(_WRITE_ATTEMPTS):
+        outcome = _try_update(db_path, row_id, expected_refresh, updates)
+        if outcome != "busy":
+            return outcome
+        if attempt < _WRITE_ATTEMPTS - 1:
+            time.sleep(_WRITE_RETRY_SECONDS)
+    return "failed"
+
+
+def _try_update(db_path: Path, row_id: str, expected_refresh: str, updates: dict[str, Any]) -> str:
     try:
         conn = _connect_rw(db_path)
     except _EXPECTED_DB_ERRORS:
         return "failed"
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError:
+            logger.debug("opencode.db busy: %s", db_path, exc_info=True)
+            return "busy"
         try:
             row = conn.execute("SELECT value FROM credential WHERE id = ?", (row_id,)).fetchone()
             current = json.loads(row[0]) if row else None
@@ -230,7 +245,11 @@ def update_oauth_value(
                 return "superseded"
             conn.execute(
                 "UPDATE credential SET value = ?, time_updated = ? WHERE id = ?",
-                (json.dumps(new_value, separators=(",", ":")), int(time.time() * 1000), row_id),
+                (
+                    json.dumps({**current, **updates}, separators=(",", ":")),
+                    int(time.time() * 1000),
+                    row_id,
+                ),
             )
             conn.execute("COMMIT")
         except BaseException:

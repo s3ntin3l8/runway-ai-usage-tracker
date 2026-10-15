@@ -235,14 +235,16 @@ def _write_back_v2(login: Login, token_response: dict[str, Any]) -> str:
     if row_id != login.row_id or value.get("refresh") != login.refresh:
         return "superseded"
     new_access = str(token_response["access_token"])
-    value["access"] = new_access
-    value["refresh"] = str(token_response.get("refresh_token") or login.refresh)
+    updates: dict[str, Any] = {
+        "access": new_access,
+        "refresh": str(token_response.get("refresh_token") or login.refresh),
+    }
     exp = jwt_expiry_epoch(new_access)
     if exp is None and token_response.get("expires_in"):
         exp = time.time() + float(token_response["expires_in"])
     if exp is not None:
-        value["expires"] = int(exp * 1000)
-    return update_oauth_value(login.path, row_id, login.refresh, value)
+        updates["expires"] = int(exp * 1000)
+    return update_oauth_value(login.path, row_id, login.refresh, updates)
 
 
 def write_back(login: Login, token_response: dict[str, Any]) -> str:
@@ -370,6 +372,11 @@ class XaiRenewer:
             if not login.fallback_refresh:
                 raise
         response = request_refresh(login.fallback_refresh)
+        # xAI may keep the refresh token; it must be the one just exchanged, never the
+        # database's rejected one that write_back would otherwise fall back to.
+        response.setdefault("refresh_token", login.fallback_refresh)
+        if not response["refresh_token"]:
+            response["refresh_token"] = login.fallback_refresh
         logger.info(
             "xAI keep-alive: adopting the newer login from the superseded auth.json "
             "into opencode.db"

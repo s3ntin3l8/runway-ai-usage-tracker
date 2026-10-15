@@ -445,3 +445,72 @@ class TestXaiRenewerOnV2:
         assert XaiRenewer().renew() is False
         assert "could not write" in caplog.text
         assert _xai_value(db)["refresh"] == "r-db"
+
+    def test_heal_without_a_rotated_token_keeps_the_exchanged_one(
+        self, setup, oc_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scripts.sidecar_pkg import xai_renewer as xr
+
+        auth, _, now = setup
+        self._write_file(auth, "r-file", now + 300)
+        db = _make_db(oc_dir, [_xai_row(_jwt(now - 9999), "r-db", int((now - 9999) * 1000))])
+
+        def refresh(token: str) -> dict[str, Any]:
+            if token == "r-db":
+                raise xr.RefreshRejectedError("HTTP 400")
+            return {"access_token": _jwt(now + 21600)}
+
+        monkeypatch.setattr(xr, "request_refresh", refresh)
+        assert XaiRenewer().renew() is True
+        assert _xai_value(db)["refresh"] == "r-file"
+
+
+class TestUpdateOauthValue:
+    def _db(self, oc_dir: Path) -> Path:
+        return _make_db(oc_dir, [_xai_row("a", "r-1", 1)])
+
+    def test_merges_into_the_row_as_it_is_in_the_transaction(self, oc_dir: Path) -> None:
+        db = self._db(oc_dir)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE credential SET value=?",
+            (json.dumps(_xai_value(db) | {"metadata": {"changed": True}}),),
+        )
+        conn.commit()
+        conn.close()
+        assert oc.update_oauth_value(db, "cred_0", "r-1", {"access": "b", "refresh": "r-2"}) == (
+            "written"
+        )
+        value = _xai_value(db)
+        assert value["metadata"] == {"changed": True} and value["access"] == "b"
+
+    def test_superseded_inside_the_transaction_changes_nothing(self, oc_dir: Path) -> None:
+        db = self._db(oc_dir)
+        assert oc.update_oauth_value(db, "cred_0", "r-other", {"refresh": "x"}) == "superseded"
+        assert _xai_value(db)["refresh"] == "r-1"
+        assert oc.update_oauth_value(db, "cred_missing", "r-1", {"refresh": "x"}) == "superseded"
+
+    def test_busy_database_is_retried_then_fails(
+        self, oc_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = self._db(oc_dir)
+        monkeypatch.setattr(
+            oc, "_connect_rw", lambda p: sqlite3.connect(p, timeout=0.05, isolation_level=None)
+        )
+        monkeypatch.setattr(oc, "_WRITE_RETRY_SECONDS", 0)
+        holder = sqlite3.connect(db, isolation_level=None)
+        holder.execute("BEGIN IMMEDIATE")
+        try:
+            assert oc.update_oauth_value(db, "cred_0", "r-1", {"refresh": "x"}) == "failed"
+        finally:
+            holder.execute("ROLLBACK")
+            holder.close()
+        assert oc.update_oauth_value(db, "cred_0", "r-1", {"refresh": "x"}) == "written"
+
+    def test_read_oauth_row_skips_api_keys_and_ambiguity(self, oc_dir: Path) -> None:
+        db = _make_db(oc_dir, [_key("xai", "k", active=1), _xai_row("a", "r", 1)])
+        assert oc.read_oauth_row(db, "xai") is None
+        db2 = _make_db(
+            oc_dir / "b", [_xai_row("a", "r-a", 1, updated=2), _xai_row("b", "r-b", 1, updated=3)]
+        )
+        assert oc.read_oauth_row(db2, "xai") is None
