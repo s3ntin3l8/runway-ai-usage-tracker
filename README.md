@@ -109,8 +109,23 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 | `make web` / `make web-dev` | Build the SPA for production (`webapp/dist`) / run the live Vite dev server on :5173 (HMR) |
 | `make web-test` | Run the frontend unit tests (vitest) |
 | `make logo` | Regenerate every brand surface (favicon, PWA icons, sidecar tray) from the canonical `assets/logo.svg` — see [Branding](docs/branding.md) |
+| `make demo` | Throwaway demo with synthetic data on 127.0.0.1:3965; nothing from your `.env`, `~/.config/runway` or HOME is read, and Ctrl-C deletes it |
+| `make screenshots` | Regenerate `assets/screenshots/` (dark + light) and the PWA manifest copies from that demo |
+| `make screenshots-landing OUT=…` | 2x stills and a short loop (needs `ffmpeg`) for the project landing page |
 | `make secrets` | Scan for secrets against `.secrets.baseline` |
 | `make clean` | Remove virtual environments and build artifacts |
+
+The demo's isolation is enforced by `scripts/demo/env.py` (tested in
+`tests/unit/test_demo_env.py`):
+
+- A clean environment with only `PATH` and locale inherited.
+- `HOME`, the XDG dirs and `RUNWAY_CONFIG_DIR` all live in one scratch directory.
+- The server runs from a directory without a `.env`.
+- A dedicated loopback port that must be free.
+
+The seeder (`scripts/demo/seed_demo.py`) feeds synthetic provider responses
+through the collectors' own parsers and events through `EventIngestor`, then
+fails if Runway's data-health scan finds anything wrong with the result.
 
 ### Docker (Server Runtime)
 
