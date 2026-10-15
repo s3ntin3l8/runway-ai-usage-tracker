@@ -10,14 +10,14 @@ export function SampleTable({ samples }: { samples: DataHealthFinding[] }) {
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-edge bg-surface-1 p-2.5">
       {samples.map((sample, i) => (
-        <div key={`${sample.label}-${i}`} className="flex flex-col gap-0.5">
-          <span className="text-[12px] font-medium text-fg">{sample.label}</span>
+        <div key={`${sample.label}-${i}`} className="flex min-w-0 flex-col gap-0.5">
+          <span className="break-words text-[12px] font-medium text-fg">{sample.label}</span>
           {Object.keys(sample.detail).length > 0 && (
             <dl className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-fg-subtle">
               {Object.entries(sample.detail).map(([key, value]) => (
-                <div key={key} className="flex gap-1">
-                  <dt className="font-medium">{key}:</dt>
-                  <dd className="font-mono">{formatDetailValue(value)}</dd>
+                <div key={key} className="flex min-w-0 max-w-full gap-1">
+                  <dt className="shrink-0 font-medium">{key}:</dt>
+                  <dd className="min-w-0 break-all font-mono">{formatDetailValue(value)}</dd>
                 </div>
               ))}
             </dl>
