@@ -102,7 +102,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[os.path.join(_ROOT, "sidecar_app", "rthook_macos_ca.py")],
     excludes=["tkinter", "matplotlib"],
     noarchive=False,
 )
