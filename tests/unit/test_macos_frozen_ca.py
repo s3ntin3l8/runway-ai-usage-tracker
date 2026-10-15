@@ -134,7 +134,8 @@ def tls_endpoint(tmp_path, monkeypatch):
 
 
 def fetch(port, host="localhost"):
-    return Urllib3Fetcher(socket_timeout=2).download_bytes(f"https://{host}:{port}/root.json", 4096)
+    # Keep TUF's normal timeout: Windows localhost/TLS setup can exhaust two seconds.
+    return Urllib3Fetcher().download_bytes(f"https://{host}:{port}/root.json", 4096)
 
 
 def tls_rejection(port, host="localhost"):
