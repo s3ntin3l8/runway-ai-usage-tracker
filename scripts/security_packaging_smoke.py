@@ -32,7 +32,7 @@ def smoke(binary: Path, payload: Path, bundle: Path, report: Path) -> None:
             directory = Path(temp)
             env = {**os.environ, "RUNWAY_CONFIG_DIR": temp}
             if sys.platform == "darwin":
-                # Exercise the packaged default, not a developer's CA override
+                # Exercise rthook_macos_ca.py, not a developer's CA override
                 # or existing Sigstore cache. Never change the host trust store.
                 home = directory / "home"
                 home.mkdir()

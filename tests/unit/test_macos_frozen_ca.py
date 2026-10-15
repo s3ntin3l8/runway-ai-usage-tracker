@@ -2,6 +2,7 @@
 
 import os
 import runpy
+import socket
 import ssl
 import sys
 import threading
@@ -37,6 +38,7 @@ def tls_endpoint(tmp_path, monkeypatch):
     """Private test root and localhost leaf: the machine never trusts this root."""
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Runway synthetic CA")])
+    ca_ski = x509.SubjectKeyIdentifier.from_public_key(key.public_key())
     now = datetime.now(UTC)
     ca = (
         x509.CertificateBuilder()
@@ -47,6 +49,24 @@ def tls_endpoint(tmp_path, monkeypatch):
         .not_valid_before(now - timedelta(days=1))
         .not_valid_after(now + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(ca_ski, critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ca_ski), critical=False
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
         .sign(key, hashes.SHA256())
     )
     leaf_key = ec.generate_private_key(ec.SECP256R1())
@@ -59,6 +79,12 @@ def tls_endpoint(tmp_path, monkeypatch):
         .not_valid_before(now - timedelta(days=1))
         .not_valid_after(now + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()), critical=False
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ca_ski), critical=False
+        )
         .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .sign(key, hashes.SHA256())
@@ -85,6 +111,7 @@ def tls_endpoint(tmp_path, monkeypatch):
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(leaf_path, key_path)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -124,12 +151,21 @@ def test_tuf_default_fetcher_needs_the_bundled_ca_bootstrap(tls_endpoint, monkey
     assert fetch(port) == b"synthetic TUF transport fixture"
 
 
-def test_bootstrap_keeps_hostname_verification_with_insecure_ingest_env(tls_endpoint, monkeypatch):
+def test_bootstrap_does_not_disable_tuf_hostname_verification(tls_endpoint, monkeypatch):
     _, port = tls_endpoint
     monkeypatch.setenv("RUNWAY_INSECURE", "1")
     bootstrap(monkeypatch)
     assert fetch(port)
     tls_rejection(port, "127.0.0.1")
+
+
+def test_fixture_chain_passes_strict_openssl_validation(tls_endpoint):
+    ca_path, port = tls_endpoint
+    context = ssl.create_default_context(cafile=str(ca_path))
+    context.verify_flags |= ssl.VERIFY_X509_STRICT
+    with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
+        with context.wrap_socket(connection, server_hostname="localhost") as tls:
+            assert tls.getpeercert()
 
 
 @pytest.mark.parametrize("explicit", [False, True])
@@ -166,3 +202,4 @@ def test_other_runtimes_are_unchanged(monkeypatch, platform, frozen):
 def test_macos_spec_wires_bootstrap_before_application_entrypoint():
     spec = (ROOT / "sidecar_app/spec/macos.spec").read_text()
     assert 'runtime_hooks=[os.path.join(_ROOT, "sidecar_app", "rthook_macos_ca.py")]' in spec
+    assert '"certifi",' in spec  # Its PyInstaller hook collects the CA data file.

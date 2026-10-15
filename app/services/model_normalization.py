@@ -7,6 +7,20 @@ can re-normalize a redirected event's raw model id for its target provider.
 import re
 
 
+def is_openrouter_model_id(model_id: str | None) -> bool:
+    """True for a model id only OpenRouter can have served.
+
+    ``openrouter/<...>`` (its router aliases) and ``<vendor>/<model>:free`` (its
+    free-tier naming). A bare local id such as ``qwen/qwen3-coder-30b`` (LM Studio,
+    Ollama) is vendor-prefixed but not an OpenRouter signal, so it does not count.
+    The SQL twin is ``maintenance.openrouter_retag.model_clause`` — keep them in sync.
+    """
+    lower = (model_id or "").strip().lower()
+    if lower.startswith("openrouter/"):
+        return True
+    return "/" in lower and lower.endswith(":free")
+
+
 def normalize_gemini_model(model_name: str) -> str:
     """Map raw Gemini model strings to versioned cost buckets.
 
