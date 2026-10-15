@@ -162,6 +162,7 @@ def test_bootstrap_does_not_disable_tuf_hostname_verification(tls_endpoint, monk
 def test_fixture_chain_passes_strict_openssl_validation(tls_endpoint):
     ca_path, port = tls_endpoint
     context = ssl.create_default_context(cafile=str(ca_path))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.verify_flags |= ssl.VERIFY_X509_STRICT
     with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
         with context.wrap_socket(connection, server_hostname="localhost") as tls:
