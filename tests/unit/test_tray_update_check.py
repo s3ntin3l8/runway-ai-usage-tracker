@@ -48,6 +48,25 @@ def test_failed_manual_check_does_not_change_menu_state(monkeypatch):
     )
 
 
+def test_failed_channel_resolution_notifies_instead_of_crashing(monkeypatch):
+    instance = tray.SidecarTray.__new__(tray.SidecarTray)
+    instance.set_update_available = Mock()
+    icon = Mock()
+    check = Mock()
+    monkeypatch.setattr("scripts.sidecar_pkg.update_check.check_once", check)
+    monkeypatch.setattr(
+        "sidecar_app.updater._resolve_channel", Mock(side_effect=OSError("bad config"))
+    )
+
+    instance._check_updates_now(icon)
+
+    check.assert_not_called()
+    instance.set_update_available.assert_not_called()
+    icon.notify.assert_called_once_with(
+        "Could not check for updates. Try again or view releases.", "Runway Sidecar"
+    )
+
+
 def test_menu_check_dispatches_checker_and_keeps_releases_separate(monkeypatch):
     instance = tray.SidecarTray.__new__(tray.SidecarTray)
     instance._daemon = Mock(status="ok", stats_summary="")
@@ -74,6 +93,7 @@ def test_menu_check_dispatches_checker_and_keeps_releases_separate(monkeypatch):
     assert thread_factory.call_args.kwargs["daemon"] is True
     worker.start.assert_called_once_with()
     open_browser.assert_not_called()
+    icon.notify.assert_called_once_with("An update check is already running.", "Runway Sidecar")
     thread_factory.call_args.kwargs["target"]()
     instance._check_updates_now.assert_called_once_with(icon)
     assert not instance._manual_check_lock.locked()

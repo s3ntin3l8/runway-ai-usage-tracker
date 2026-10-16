@@ -246,6 +246,7 @@ class SidecarTray:
     def _start_update_check(self, icon: pystray.Icon) -> None:
         """Run at most one manual check while its network request is in flight."""
         if not self._manual_check_lock.acquire(blocking=False):
+            _notify(icon, "An update check is already running.")
             return
 
         def _run() -> None:
