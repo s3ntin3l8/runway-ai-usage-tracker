@@ -1,20 +1,28 @@
 """pystray-based system tray icon for the Runway sidecar."""
 
+import logging
+import math
 import pathlib
 import queue
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from collections.abc import Callable
 
 import pystray
 from PIL import Image, ImageDraw
 
+if sys.platform == "darwin":
+    from PyObjCTools.AppHelper import callAfter as _call_after  # noqa: N813 — PyObjC API
+
 from sidecar_app.autostart import install_login_item, is_login_item_installed, remove_login_item
 from sidecar_app.daemon import TrayDaemon
 
 RELEASES_URL = "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases"
+_MANUAL_CHECK_COOLDOWN_SECONDS = 60
+logger = logging.getLogger(__name__)
 
 # Logo used as the base tray icon — rendered from assets/logo.svg by `make logo`
 # (sidecar_app/assets/generate_app_icons.py); bundled via the specs' assets dir.
@@ -160,6 +168,11 @@ def _notify(icon: "pystray.Icon | None", message: str, title: str = "Runway Side
         pass  # notifications not supported on all platforms
 
 
+def _open_releases(_icon: pystray.Icon, _item: pystray.MenuItem) -> None:
+    """Open the manual download page from the tray menu."""
+    webbrowser.open(RELEASES_URL)
+
+
 def _open_in_editor(path: pathlib.Path) -> None:
     """Open *path* in the system default editor."""
     if sys.platform == "darwin":
@@ -185,11 +198,13 @@ class SidecarTray:
         self._icon: pystray.Icon | None = None
         self._paused = False
         self._update_available = False
+        self._manual_check_lock = threading.Lock()
+        self._manual_check_started_at: float | None = None
         self._after_start: Callable[[], None] | None = None
         self._on_reload_config: Callable[[], None] | None = None
         self._settings_server: object | None = None  # SettingsServer, set by __main__
-        # Queue for icon/title updates from background threads; drained on the
-        # pystray thread to avoid AppKit/Win32 cross-thread mutation.
+        # All application refreshes use this queue. The drain worker serializes
+        # rendering; on macOS it posts each refresh to the AppKit main loop.
         self._update_queue: queue.Queue[str] = queue.Queue()
         # Version of the kept `.previous` build (None = no rollback offered).
         # Probed once here and after a failed rollback; an update relaunches
@@ -212,9 +227,57 @@ class SidecarTray:
     def set_update_available(self, flag: bool) -> None:
         """Set the update-available flag and refresh the tray title/menu."""
         self._update_available = flag
-        if self._icon is not None:
-            self._icon.title = self._build_title(self._daemon.status)
-            self._icon.update_menu()
+        self._update_icon(self._daemon.status)
+
+    def _check_updates_now(self, icon: pystray.Icon) -> None:
+        """Report the selected channel's latest release without installing it."""
+        try:
+            from scripts.sidecar_pkg.update_check import check_once
+            from sidecar_app import __version__
+            from sidecar_app.updater import _resolve_channel
+
+            available = check_once(__version__, _resolve_channel(), strict=True)
+        except Exception:
+            logger.warning("Manual update check failed", exc_info=True)
+            _notify(
+                icon,
+                "Could not check for updates. Wait a minute before retrying, or view releases.",
+            )
+            return
+
+        self.set_update_available(bool(available))
+        if available:
+            _notify(icon, f"Update available: {available}")
+        else:
+            _notify(icon, "Runway Sidecar is up to date.")
+
+    def _start_update_check(self, icon: pystray.Icon) -> None:
+        """Run at most one manual check per minute, with no overlapping requests."""
+        if not self._manual_check_lock.acquire(blocking=False):
+            _notify(icon, "An update check is already running.")
+            return
+        now = time.monotonic()
+        if self._manual_check_started_at is not None:
+            remaining = _MANUAL_CHECK_COOLDOWN_SECONDS - (now - self._manual_check_started_at)
+            if remaining > 0:
+                self._manual_check_lock.release()
+                _notify(icon, f"Please wait {math.ceil(remaining)} seconds before checking again.")
+                return
+        self._manual_check_started_at = now
+
+        def _run() -> None:
+            try:
+                self._check_updates_now(icon)
+            finally:
+                self._manual_check_lock.release()
+
+        try:
+            threading.Thread(target=_run, name="runway-manual-update-check", daemon=True).start()
+        except Exception:
+            self._manual_check_started_at = None
+            self._manual_check_lock.release()
+            logger.warning("Could not start manual update check", exc_info=True)
+            _notify(icon, "Could not check for updates. Try again or view releases.")
 
     def run(self, after_start: Callable[[], None] | None = None) -> None:
         """Build the pystray icon and start the event loop (blocks)."""
@@ -234,26 +297,52 @@ class SidecarTray:
 
     def _on_tray_ready(self, icon: pystray.Icon) -> None:
         """Called by pystray once the icon is running; fires the after_start hook."""
-        icon.visible = True
+        # pystray invokes setup on a worker. AppKit operations belong on the
+        # main loop, including making the initial status item visible.
+        if sys.platform == "darwin":
+            _call_after(setattr, icon, "visible", True)
+        else:
+            icon.visible = True
         if self._after_start:
             self._after_start()
-        # Drain any status updates that arrived before the icon was ready, then
-        # keep draining on a background thread so all pystray mutations happen
-        # from the pystray-owned thread (required by AppKit / Win32).
-        threading.Thread(target=self._drain_updates, daemon=True).start()
+        threading.Thread(
+            target=self._drain_updates, name="runway-tray-refresh", daemon=True
+        ).start()
 
     def _drain_updates(self) -> None:
-        """Consume status updates from the queue and apply them to the icon."""
+        """Serialize refreshes; dispatch AppKit work onto the main run loop.
+
+        Windows' pystray backend supports worker-thread updates, so the drain
+        worker renders there directly. It is not the native message-loop thread.
+        pystray also refreshes its own menu on native menu activation.
+        """
         while self._icon is not None:
             try:
                 status = self._update_queue.get(timeout=1)
             except queue.Empty:
                 continue
-            if self._icon is None:
-                break
-            self._icon.icon = _build_status_icon(status)
-            self._icon.title = self._build_title(status)
-            self._icon.update_menu()
+            try:
+                if sys.platform == "darwin":
+                    _call_after(self._apply_status_update, status)
+                else:
+                    self._apply_status_update(status)
+            except Exception:
+                logger.exception("Could not dispatch tray refresh")
+
+    def _apply_status_update(self, status: str) -> None:
+        """Render a queued refresh, ignoring callbacks delivered after shutdown."""
+        icon = self._icon
+        if icon is None:
+            return
+        try:
+            image = _build_status_icon(status)
+            if self._icon is not icon:
+                return
+            icon.icon = image
+            icon.title = self._build_title(status)
+            icon.update_menu()
+        except Exception:
+            logger.exception("Could not refresh tray")
 
     def _build_title(self, status: str) -> str:
         """Return the tray tooltip title with live stats and optional update notice."""
@@ -264,7 +353,7 @@ class SidecarTray:
         return f"{base}\n{stats}"
 
     def _update_icon(self, status: str) -> None:
-        """Enqueue a status change; the drain thread applies it on the pystray thread."""
+        """Enqueue an application refresh from a daemon, update worker, or menu."""
         if self._icon is None:
             return
         self._update_queue.put(status)
@@ -299,14 +388,15 @@ class SidecarTray:
             else:
                 self._daemon.pause()
                 self._paused = True
-            icon.update_menu()
+            self._update_icon(self._daemon.status)
 
         def on_reload_config(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             if self._on_reload_config is not None:
                 self._on_reload_config()
 
         def on_check_updates(icon: pystray.Icon, item: pystray.MenuItem) -> None:
-            webbrowser.open(RELEASES_URL)
+            """Check the selected release channel without installing automatically."""
+            self._start_update_check(icon)
 
         def on_install_update(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             """Download, verify and install the available update on a worker thread."""
@@ -325,7 +415,7 @@ class SidecarTray:
                     try:
                         icon.notify(
                             "Could not install the update automatically — "
-                            "use Check for Updates… to download it.",
+                            "use View Releases… to download it.",
                             "Runway Sidecar",
                         )
                     except Exception:
@@ -356,7 +446,7 @@ class SidecarTray:
                 if not ok:
                     _notify(icon, "Could not roll back — see the sidecar log for details.")
                     self._refresh_rollback()
-                    icon.update_menu()
+                    self._update_icon(self._daemon.status)
 
             threading.Thread(target=_run, name="runway-rollback", daemon=True).start()
 
@@ -372,7 +462,7 @@ class SidecarTray:
                 return
             else:
                 install_login_item()
-            icon.update_menu()
+            self._update_icon(self._daemon.status)
 
         def on_about(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             from sidecar_app import __version__
@@ -402,6 +492,7 @@ class SidecarTray:
             pystray.MenuItem("Reload Config", on_reload_config),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Check for Updates…", on_check_updates),
+            pystray.MenuItem("View Releases…", _open_releases),
             pystray.MenuItem(
                 "Download & Install Update",
                 on_install_update,

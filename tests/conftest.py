@@ -23,6 +23,8 @@ os.environ["APP_HOST"] = "127.0.0.1"
 os.environ.pop("ADMIN_API_KEY", None)
 os.environ.pop("CORS_ORIGINS", None)
 os.environ.pop("TLS_TERMINATED", None)
+# pystray's dummy backend allows tray menu tests on headless Linux CI.
+os.environ["PYSTRAY_BACKEND"] = "dummy"
 
 import httpx
 import pytest

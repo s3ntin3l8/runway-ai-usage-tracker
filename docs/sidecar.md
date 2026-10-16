@@ -116,7 +116,8 @@ The sidecar runs as a background app with a menu icon showing its status:
 - **Launch at Login**: Register the app to start automatically on system boot
 - **Edit Config**: Open the config file in your default editor
 - **View Logs**: Open the log file for debugging
-- **Check for Updates…**: Open the releases page to download a newer version manually
+- **Check for Updates…**: Check the selected update channel now and report whether an update is available or the check failed
+- **View Releases…**: Open the releases page for a manual download
 - **Download & Install Update**: Appears only when an update is available — downloads, verifies, installs, and relaunches in place
 - **Roll Back to vX.Y.Z**: Appears only after a self-update. It restores the build that update replaced and relaunches.
 - **Quit**: Exit the app
@@ -128,6 +129,11 @@ Click **Launch at Login** in the menu to register the sidecar as a login item (m
 ### Updates
 
 The sidecar checks for updates daily. When a newer version is available, the menu title shows **(update available)**.
+Use **Check for Updates…** to check immediately without installing. If the check finds
+an update, **Download & Install Update** appears; **View Releases…** opens the
+manual download page.
+Manual check attempts, including failed lookups, run at most once a minute; repeated
+clicks show an in-progress or cooldown notice. The scheduled daily checker runs independently.
 
 You can install the update without leaving the app:
 - **Tray app**: click **Download & Install Update** (shown once an update is detected). It downloads the matching release asset, verifies its `.sha256` checksum and mandatory Sigstore `.sigstore.json` bundle, swaps the binary/`.app`, and relaunches.
@@ -150,7 +156,7 @@ Remote server URLs require HTTPS; canonical loopback HTTP remains supported. Sig
 - **Rollback:** the build an update replaced is kept next to the install as `<name>.previous` (e.g. `Runway Sidecar.app.previous`, `RunwaySidecar.exe.previous`), with its version in `<name>.previous.version`. If a new build misbehaves, use the tray's **Roll Back to vX.Y.Z** item (shown only when a backup exists) or `runway-sidecar-cli --rollback`. A rollback keeps the newer build as the backup, so you can undo it. Only one backup is kept.
 - On Windows, installs made with the setup.exe also get their *Apps & Features* version refreshed after each self-update or rollback.
 - Self-update always downloads the portable `.zip` / `.tar.gz` payload, never the `.dmg` / `-setup.exe`, and swaps it in place. It works on every platform and all release channels.
-- If the install path isn't writable (e.g. `/Applications` for a non-admin macOS account, or `/usr/local/bin`), the update is skipped with a log message and you install the new DMG / setup.exe via **Check for Updates…**. The Windows installer's per-user location is always writable.
+- If the install path isn't writable (e.g. `/Applications` for a non-admin macOS account, or `/usr/local/bin`), the update is skipped with a log message and you install the new DMG / setup.exe via **View Releases…**. The Windows installer's per-user location is always writable.
 - **Restart under systemd:** the headless CLI restarts itself after an update. When its systemd unit has `Restart=always` (or `on-failure`) and the CLI is the unit's main process, it exits and lets systemd start it again (`RestartSec` applies), which leaves a clean process tree and frees the old runtime. This also works when an update by an older build left a chain of idle bootloaders between the unit and the daemon: the next update exits through the whole chain and systemd starts a clean tree. Without that supervisor (or with `Restart=no`) it re-executes in place instead, and the previous bootloader process stays idle until the next restart. Those idle processes pile up, one per update at about 2 MB each, so run unattended installs under a unit with `Restart=always` or restart them occasionally.
 - **Temp files:** a packaged Linux/Windows build unpacks into a `_MEI*` directory under its temp dir (`TMPDIR`, e.g. `/opt/runway-sidecar/tmp` in the example unit) and removes it on a clean exit. A killed process cannot, so at startup the sidecar deletes `_MEI*` directories whose recorded owner process is gone (only ones it marked itself), `runway-update-*` download folders older than an hour, and finishes a rollback that was interrupted. Directories left by builds from before this check are not marked and are never touched; delete them by hand once.
 
