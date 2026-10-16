@@ -163,6 +163,12 @@ def _edge_update(embedded_sha: str, *, strict: bool = False) -> str | None:
     *embedded_sha* is the short sha stamped into an edge build; the tag ref
     returns the full 40-char sha, so a prefix match means "same build."
     """
+    embedded_sha = embedded_sha.strip()
+    if not embedded_sha:
+        if strict:
+            raise ValueError("edge build has no embedded commit SHA")
+        logger.warning("Skipping edge update check: build has no embedded commit SHA")
+        return None
     try:
         ref = _get_json(_EDGE_REFS_URL)
         if not isinstance(ref, dict) or not isinstance(ref.get("object"), dict):
