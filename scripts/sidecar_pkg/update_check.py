@@ -80,7 +80,10 @@ def _get_json(url: str) -> Any:
 def _stable_update(current: str, *, strict: bool = False) -> str | None:
     """Latest stable tag (without ``v``) if it is newer than *current*, else None."""
     try:
-        latest = str(_get_json(_LATEST_URL).get("tag_name", "")).lstrip("v").strip()
+        release = _get_json(_LATEST_URL)
+        if not isinstance(release, dict):
+            raise ValueError("stable release response is not an object")
+        latest = str(release.get("tag_name", "")).lstrip("v").strip()
     except (error.URLError, OSError, ValueError, KeyError):
         if strict:
             raise
@@ -139,10 +142,6 @@ def _beta_update(current: str, *, strict: bool = False) -> str | None:
     if not release:
         return None
     latest = str(release.get("tag_name", "")).lstrip("vV").strip()
-    if not latest:
-        if strict:
-            raise ValueError("beta release has no tag")
-        return None
     try:
         from packaging.version import InvalidVersion, Version
 
@@ -165,12 +164,15 @@ def _edge_update(embedded_sha: str, *, strict: bool = False) -> str | None:
     returns the full 40-char sha, so a prefix match means "same build."
     """
     try:
-        latest_sha = str(_get_json(_EDGE_REFS_URL).get("object", {}).get("sha", "")).strip()
+        ref = _get_json(_EDGE_REFS_URL)
+        if not isinstance(ref, dict) or not isinstance(ref.get("object"), dict):
+            raise ValueError("edge ref response has no object")
+        latest_sha = str(ref["object"].get("sha", "")).strip()
     except (error.URLError, OSError, ValueError, KeyError):
         if strict:
             raise
         return None
-    if not latest_sha or not embedded_sha:
+    if not latest_sha:
         if strict:
             raise ValueError("edge ref has no commit SHA")
         return None

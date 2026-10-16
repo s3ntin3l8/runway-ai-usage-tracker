@@ -4,10 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-pytest.importorskip("pystray")
-pytest.importorskip("PIL")
-
-from sidecar_app import __version__, tray  # noqa: E402
+from sidecar_app import __version__, tray
 
 
 @pytest.mark.parametrize(
@@ -57,6 +54,7 @@ def test_menu_check_dispatches_checker_and_keeps_releases_separate(monkeypatch):
     instance._config = {}
     instance._paused = False
     instance._update_available = False
+    instance._manual_check_lock = tray.threading.Lock()
     instance._rollback_version = None
     instance._settings_server = None
     instance._on_reload_config = None
@@ -70,14 +68,18 @@ def test_menu_check_dispatches_checker_and_keeps_releases_separate(monkeypatch):
 
     items = {item.text: item for item in instance._build_menu().items if isinstance(item.text, str)}
     items["Check for Updates…"]._action(icon, items["Check for Updates…"])
-    thread_factory.assert_called_once_with(
-        target=instance._check_updates_now,
-        args=(icon,),
-        name="runway-manual-update-check",
-        daemon=True,
-    )
+    items["Check for Updates…"]._action(icon, items["Check for Updates…"])
+    thread_factory.assert_called_once()
+    assert thread_factory.call_args.kwargs["name"] == "runway-manual-update-check"
+    assert thread_factory.call_args.kwargs["daemon"] is True
     worker.start.assert_called_once_with()
     open_browser.assert_not_called()
+    thread_factory.call_args.kwargs["target"]()
+    instance._check_updates_now.assert_called_once_with(icon)
+    assert not instance._manual_check_lock.locked()
+
+    items["Check for Updates…"]._action(icon, items["Check for Updates…"])
+    assert thread_factory.call_count == 2
 
     items["View Releases…"]._action(icon, items["View Releases…"])
     open_browser.assert_called_once_with(tray.RELEASES_URL)

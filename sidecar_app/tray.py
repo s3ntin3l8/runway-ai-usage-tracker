@@ -192,6 +192,7 @@ class SidecarTray:
         self._icon: pystray.Icon | None = None
         self._paused = False
         self._update_available = False
+        self._manual_check_lock = threading.Lock()
         self._after_start: Callable[[], None] | None = None
         self._on_reload_config: Callable[[], None] | None = None
         self._settings_server: object | None = None  # SettingsServer, set by __main__
@@ -225,11 +226,11 @@ class SidecarTray:
 
     def _check_updates_now(self, icon: pystray.Icon) -> None:
         """Report the selected channel's latest release without installing it."""
-        from scripts.sidecar_pkg.update_check import check_once
-        from sidecar_app import __version__
-        from sidecar_app.updater import _resolve_channel
-
         try:
+            from scripts.sidecar_pkg.update_check import check_once
+            from sidecar_app import __version__
+            from sidecar_app.updater import _resolve_channel
+
             available = check_once(__version__, _resolve_channel(), strict=True)
         except Exception:
             logger.warning("Manual update check failed", exc_info=True)
@@ -241,6 +242,24 @@ class SidecarTray:
             _notify(icon, f"Update available: {available}")
         else:
             _notify(icon, "Runway Sidecar is up to date.")
+
+    def _start_update_check(self, icon: pystray.Icon) -> None:
+        """Run at most one manual check while its network request is in flight."""
+        if not self._manual_check_lock.acquire(blocking=False):
+            return
+
+        def _run() -> None:
+            try:
+                self._check_updates_now(icon)
+            finally:
+                self._manual_check_lock.release()
+
+        try:
+            threading.Thread(target=_run, name="runway-manual-update-check", daemon=True).start()
+        except Exception:
+            self._manual_check_lock.release()
+            logger.warning("Could not start manual update check", exc_info=True)
+            _notify(icon, "Could not check for updates. Try again or view releases.")
 
     def run(self, after_start: Callable[[], None] | None = None) -> None:
         """Build the pystray icon and start the event loop (blocks)."""
@@ -333,12 +352,7 @@ class SidecarTray:
 
         def on_check_updates(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             """Check the selected release channel without installing automatically."""
-            threading.Thread(
-                target=self._check_updates_now,
-                args=(icon,),
-                name="runway-manual-update-check",
-                daemon=True,
-            ).start()
+            self._start_update_check(icon)
 
         def on_install_update(icon: pystray.Icon, item: pystray.MenuItem) -> None:
             """Download, verify and install the available update on a worker thread."""
@@ -357,7 +371,7 @@ class SidecarTray:
                     try:
                         icon.notify(
                             "Could not install the update automatically — "
-                            "use Check for Updates… to download it.",
+                            "use View Releases… to download it.",
                             "Runway Sidecar",
                         )
                     except Exception:

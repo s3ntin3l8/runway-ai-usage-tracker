@@ -10,7 +10,7 @@ import pytest
 from scripts.sidecar_pkg.update_check import check_once, parse_channel
 
 
-def _urlopen_returning(payload: dict):
+def _urlopen_returning(payload: object):
     cm = MagicMock()
     reader = io.BytesIO(json.dumps(payload).encode())
     cm.__enter__ = MagicMock(return_value=reader)
@@ -91,6 +91,21 @@ class TestCheckOnceStable:
             with pytest.raises(OSError, match="no network"):
                 check_once("1.1.0", strict=True)
 
+    @pytest.mark.parametrize("payload", [[], "unexpected"])
+    def test_malformed_stable_response_is_tolerated_or_reported(self, payload):
+        opener = _make_urlopen({"releases/latest": payload})
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            assert check_once("1.1.0") is None
+            with pytest.raises(ValueError, match="not an object"):
+                check_once("1.1.0", strict=True)
+
+    def test_manual_check_reports_missing_stable_tag(self):
+        opener = _make_urlopen({"releases/latest": {}})
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            assert check_once("1.1.0") is None
+            with pytest.raises(ValueError, match="no tag"):
+                check_once("1.1.0", strict=True)
+
 
 class TestCheckOnceEdge:
     def test_reports_new_edge_build(self):
@@ -109,6 +124,13 @@ class TestCheckOnceEdge:
         opener = _make_urlopen({"git/refs/tags/edge": {"object": {}}})
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             with pytest.raises(ValueError, match="no commit SHA"):
+                check_once("1.1.0+edge.aaa1111", strict=True)
+
+    def test_nonobject_edge_ref_is_tolerated_or_reported(self):
+        opener = _make_urlopen({"git/refs/tags/edge": []})
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            assert check_once("1.1.0+edge.aaa1111") is None
+            with pytest.raises(ValueError, match="no object"):
                 check_once("1.1.0+edge.aaa1111", strict=True)
 
     def test_stable_binary_on_edge_channel_falls_back_to_stable(self):
