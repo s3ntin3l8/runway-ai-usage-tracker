@@ -551,6 +551,86 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 0.0,
         "notes": "Gemini 3.1 Flash-Lite",
     },
+    # Raw-id aliases: the Hermes extractor used to emit un-normalized Gemini model
+    # ids (it now normalizes them), so events ingested earlier still carry the raw
+    # id. Same rates as the canonical flash-2.5 / pro-2.5 / flash-lite-2.5 rows.
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-2.5-flash",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.30,
+        "output_per_mtok": 2.50,
+        "cache_read_per_mtok": 0.03,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 2.5 Flash — raw-id alias of flash-2.5",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-2.5-pro",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 1.25,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.125,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 2.5 Pro — raw-id alias of pro-2.5",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-2.5-flash-lite",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 0.10,
+        "output_per_mtok": 0.40,
+        "cache_read_per_mtok": 0.01,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 2.5 Flash-Lite — raw-id alias of flash-lite-2.5",
+    },
+    # Gemini 4 Argon (https://ai.google.dev/gemini-api/docs/pricing, checked
+    # 2026-10-15). No >200K tier. The launch price is a 50% promo through
+    # 2026-11-30; the list price applies from 2026-12-01. The id passes through
+    # both the Gemini and Antigravity normalizers unchanged. The `gemini` rows serve
+    # the Gemini/Hermes pipeline; the `antigravity` rows are for the separate
+    # Antigravity extractor (Hermes never emits that provider). The promo row's
+    # effective_from is the earliest date we have seen it, not a confirmed launch.
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-4-argon",
+        "effective_from": "2026-10-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 4 Argon, promo price through 2026-11-30",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-4-argon",
+        "effective_from": "2026-12-01",
+        "input_per_mtok": 4.00,
+        "output_per_mtok": 20.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 4 Argon, list price from 2026-12-01",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "gemini-4-argon",
+        "effective_from": "2026-10-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 4 Argon, promo price through 2026-11-30",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "gemini-4-argon",
+        "effective_from": "2026-12-01",
+        "input_per_mtok": 4.00,
+        "output_per_mtok": 20.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 4 Argon, list price from 2026-12-01",
+    },
     # OpenCode (cost is on each event already; pricing rows here are fallback only)
     # ── MiniMax ──────────────────────────────────────────────────────────────────
     # Pay-as-you-go API rates (USD/Mtok), used to give Coding-Plan subscription
@@ -993,8 +1073,8 @@ PRICING_SEED: list[dict] = [
     # 2026-09-26. USD per 1M tokens. Keyed on provider_id="deepseek" — the
     # direct BYOK provider (see collectors/deepseek.py and the extractor's
     # _OC_CANONICAL_MAP "deepseek" entry). OpenCode-routed deepseek models on
-    # the Go subscription stay on provider_id="opencode" with their
-    # logged cost and never reach these rows.
+    # the Go subscription stay on provider_id="opencode" and are priced by the
+    # separate opencode rows at the end of this list.
     # - OFF-PEAK rates are seeded: DeepSeek charges 2x during peak hours
     #   (01:00-04:00 & 06:00-10:00 UTC, Mon-Fri excl. CN holidays), but
     #   provider_pricing has no time-of-day column (same class of limitation
@@ -1052,6 +1132,44 @@ PRICING_SEED: list[dict] = [
         "cache_read_per_mtok": 0.022,
         "cache_create_per_mtok": 0.66,
         "notes": "DeepSeek-V4-Pro-0813, off-peak",
+    },
+    # ── OpenCode-routed DeepSeek ─────────────────────────────────────────────
+    # OpenCode Zen list prices (https://opencode.ai/v2/docs/console/models,
+    # checked 2026-10-15). Go-subscription events frequently arrive with no
+    # logged cost, so these give them a notional "what it would have cost" figure
+    # (the same idea as the MiniMax/Kimi rows). A cost the event does report still
+    # wins. effective_from is backdated like the deepseek rows above.
+    {
+        "provider_id": "opencode",
+        "model_id": "deepseek-v4.1-flash",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.30,
+        "output_per_mtok": 1.20,
+        "cache_read_per_mtok": 0.006,
+        "cache_create_per_mtok": 0.0,
+        "notes": "OpenCode Zen DeepSeek V4.1 Flash — canonical id; deepseek-v4-flash "
+        "below is its alias, keep the two rates in sync",
+    },
+    {
+        "provider_id": "opencode",
+        "model_id": "deepseek-v4-flash",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.30,
+        "output_per_mtok": 1.20,
+        "cache_read_per_mtok": 0.006,
+        "cache_create_per_mtok": 0.0,
+        "notes": "OpenCode Zen DeepSeek Flash (legacy name of V4.1 Flash) — alias of "
+        "deepseek-v4.1-flash above, keep the two rates in sync",
+    },
+    {
+        "provider_id": "opencode",
+        "model_id": "deepseek-v4-pro",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 1.74,
+        "output_per_mtok": 3.48,
+        "cache_read_per_mtok": 0.145,
+        "cache_create_per_mtok": 0.0,
+        "notes": "OpenCode Zen DeepSeek V4 Pro",
     },
 ]
 

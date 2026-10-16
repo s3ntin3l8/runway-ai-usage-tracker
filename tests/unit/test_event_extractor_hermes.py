@@ -739,6 +739,49 @@ def test_hermes_entrypoint_distinguishes_source(tmp_path):
     assert api_ev.entrypoint == "hermes"
 
 
+def test_gemini_model_ids_are_normalized_to_pricing_buckets(tmp_path):
+    """Gemini events carry the versioned bucket (flash-2.5), not the raw id,
+    so the cost calculator finds a pricing row; event_id keeps the raw model."""
+    conn = make_hermes_db(":memory:")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            cwd, git_branch, started_at, ended_at, input_tokens, output_tokens,
+            estimated_cost_usd, actual_cost_usd
+        ) VALUES (
+            'sess-gem-01', 'api_server', 'default', 'gemini-2.5-flash',
+            'gemini', 'https://generativelanguage.googleapis.com', '/home', 'main',
+            1780004000.0, 1780004500.0, 100, 50, 0.0, 0.0
+        )
+    """)
+    cur.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-gem-01', 'gemini-2.5-flash', 'gemini',
+            'https://generativelanguage.googleapis.com', '',
+            '', 1, 100, 50, 0, 0, 0, 0.0, 0.0, 'none', 'none', 1780004000.0, 1780004500.0
+        )
+    """)
+    conn.commit()
+
+    db_path = tmp_path / "gemini_state.db"
+    file_conn = sqlite3.connect(str(db_path))
+    conn.backup(file_conn)
+    file_conn.close()
+    conn.close()
+
+    events = parse_hermes_events([db_path], "default", datetime(2020, 1, 1, tzinfo=UTC))
+    gem_ev = next(e for e in events if e.session_id == "sess-gem-01")
+    assert gem_ev.provider_id == "gemini"
+    assert gem_ev.model_id == "flash-2.5"
+    assert "|gemini-2.5-flash|" in gem_ev.event_id
+
+
 def test_watermark_state_key_scoped_by_account_id(tmp_path):
     """Watermark state keys are scoped by account_id so multiple accounts
     iterating through scoped_accounts do not advance each other's watermarks."""
