@@ -167,6 +167,7 @@ def _edge_update(embedded_sha: str, *, strict: bool = False) -> str | None:
     if not embedded_sha:
         if strict:
             raise ValueError("edge build has no embedded commit SHA")
+        logger.warning("Skipping edge update check: build has no embedded commit SHA")
         return None
     try:
         ref = _get_json(_EDGE_REFS_URL)

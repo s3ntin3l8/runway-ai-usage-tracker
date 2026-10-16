@@ -14,6 +14,9 @@ from collections.abc import Callable
 import pystray
 from PIL import Image, ImageDraw
 
+if sys.platform == "darwin":
+    from PyObjCTools.AppHelper import callAfter as _call_after  # noqa: N813 — PyObjC API
+
 from sidecar_app.autostart import install_login_item, is_login_item_installed, remove_login_item
 from sidecar_app.daemon import TrayDaemon
 
@@ -236,7 +239,10 @@ class SidecarTray:
             available = check_once(__version__, _resolve_channel(), strict=True)
         except Exception:
             logger.warning("Manual update check failed", exc_info=True)
-            _notify(icon, "Could not check for updates. Try again or view releases.")
+            _notify(
+                icon,
+                "Could not check for updates. Wait a minute before retrying, or view releases.",
+            )
             return
 
         self.set_update_available(bool(available))
@@ -294,9 +300,7 @@ class SidecarTray:
         # pystray invokes setup on a worker. AppKit operations belong on the
         # main loop, including making the initial status item visible.
         if sys.platform == "darwin":
-            from PyObjCTools.AppHelper import callAfter
-
-            callAfter(setattr, icon, "visible", True)
+            _call_after(setattr, icon, "visible", True)
         else:
             icon.visible = True
         if self._after_start:
@@ -317,24 +321,28 @@ class SidecarTray:
                 status = self._update_queue.get(timeout=1)
             except queue.Empty:
                 continue
-            if sys.platform == "darwin":
-                from PyObjCTools.AppHelper import callAfter
-
-                callAfter(self._apply_status_update, status)
-            else:
-                self._apply_status_update(status)
+            try:
+                if sys.platform == "darwin":
+                    _call_after(self._apply_status_update, status)
+                else:
+                    self._apply_status_update(status)
+            except Exception:
+                logger.exception("Could not dispatch tray refresh")
 
     def _apply_status_update(self, status: str) -> None:
         """Render a queued refresh, ignoring callbacks delivered after shutdown."""
         icon = self._icon
         if icon is None:
             return
-        image = _build_status_icon(status)
-        if self._icon is not icon:
-            return
-        icon.icon = image
-        icon.title = self._build_title(status)
-        icon.update_menu()
+        try:
+            image = _build_status_icon(status)
+            if self._icon is not icon:
+                return
+            icon.icon = image
+            icon.title = self._build_title(status)
+            icon.update_menu()
+        except Exception:
+            logger.exception("Could not refresh tray")
 
     def _build_title(self, status: str) -> str:
         """Return the tray tooltip title with live stats and optional update notice."""

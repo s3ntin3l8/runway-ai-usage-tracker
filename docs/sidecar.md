@@ -132,8 +132,8 @@ The sidecar checks for updates daily. When a newer version is available, the men
 Use **Check for Updates…** to check immediately without installing. If the check finds
 an update, **Download & Install Update** appears; **View Releases…** opens the
 manual download page.
-Manual checks run at most once a minute; repeated clicks show an in-progress or
-cooldown notice. The scheduled daily checker continues independently.
+Manual check attempts, including failed lookups, run at most once a minute; repeated
+clicks show an in-progress or cooldown notice. The scheduled daily checker runs independently.
 
 You can install the update without leaving the app:
 - **Tray app**: click **Download & Install Update** (shown once an update is detected). It downloads the matching release asset, verifies its `.sha256` checksum and mandatory Sigstore `.sigstore.json` bundle, swaps the binary/`.app`, and relaunches.

@@ -44,7 +44,8 @@ def test_failed_manual_check_does_not_change_menu_state(monkeypatch):
 
     instance.set_update_available.assert_not_called()
     icon.notify.assert_called_once_with(
-        "Could not check for updates. Try again or view releases.", "Runway Sidecar"
+        "Could not check for updates. Wait a minute before retrying, or view releases.",
+        "Runway Sidecar",
     )
 
 
@@ -63,7 +64,8 @@ def test_failed_channel_resolution_notifies_instead_of_crashing(monkeypatch):
     check.assert_not_called()
     instance.set_update_available.assert_not_called()
     icon.notify.assert_called_once_with(
-        "Could not check for updates. Try again or view releases.", "Runway Sidecar"
+        "Could not check for updates. Wait a minute before retrying, or view releases.",
+        "Runway Sidecar",
     )
 
 
@@ -107,11 +109,15 @@ def test_menu_check_dispatches_checker_and_keeps_releases_separate(monkeypatch):
     open_browser.assert_called_once_with(tray.RELEASES_URL)
 
 
-def test_manual_check_can_retry_after_cooldown(monkeypatch):
+@pytest.mark.parametrize("lookup_fails", [False, True])
+def test_manual_check_can_retry_after_cooldown(monkeypatch, lookup_fails):
     instance = tray.SidecarTray.__new__(tray.SidecarTray)
     instance._manual_check_lock = tray.threading.Lock()
     instance._manual_check_started_at = None
-    instance._check_updates_now = Mock()
+    instance.set_update_available = Mock()
+    check = Mock(return_value=None, side_effect=OSError("offline") if lookup_fails else None)
+    monkeypatch.setattr("scripts.sidecar_pkg.update_check.check_once", check)
+    monkeypatch.setattr("sidecar_app.updater._resolve_channel", lambda: "edge")
     worker = Mock()
     thread_factory = Mock(return_value=worker)
     monkeypatch.setattr(tray.threading, "Thread", thread_factory)
@@ -123,9 +129,12 @@ def test_manual_check_can_retry_after_cooldown(monkeypatch):
     monkeypatch.setattr("time.monotonic", lambda: 159.0)
     instance._start_update_check(icon)
     assert thread_factory.call_count == 1
+    assert check.call_count == 1
     monkeypatch.setattr("time.monotonic", lambda: 160.0)
     instance._start_update_check(icon)
     assert thread_factory.call_count == 2
+    thread_factory.call_args.kwargs["target"]()
+    assert check.call_count == 2
 
 
 def test_failed_worker_start_allows_immediate_retry(monkeypatch):

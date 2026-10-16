@@ -4,7 +4,7 @@ import queue
 import sys
 import threading
 import time
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
@@ -84,15 +84,12 @@ def test_macos_refreshes_wait_for_main_loop_dispatch(instance, monkeypatch):
     monkeypatch.setattr(tray.sys, "platform", "darwin")
     scheduled = queue.Queue()
     dispatched = threading.Event()
-    helper = ModuleType("PyObjCTools.AppHelper")
 
     def call_after(callback, *args):
         scheduled.put((callback, args))
         dispatched.set()
 
-    helper.callAfter = call_after
-    monkeypatch.setitem(sys.modules, "PyObjCTools", ModuleType("PyObjCTools"))
-    monkeypatch.setitem(sys.modules, "PyObjCTools.AppHelper", helper)
+    monkeypatch.setattr(tray, "_call_after", call_after, raising=False)
     icon = RecordingIcon()
     instance._icon = icon
     instance.set_update_available(True)
@@ -109,6 +106,53 @@ def test_macos_refreshes_wait_for_main_loop_dispatch(instance, monkeypatch):
         instance._icon = None
         callback(*args)
         assert icon.operations == []
+    finally:
+        instance._icon = None
+        worker.join(2)
+        assert not worker.is_alive()
+
+
+def test_render_failure_is_logged_and_the_next_refresh_succeeds(instance, monkeypatch, caplog):
+    icon = RecordingIcon()
+    instance._icon = icon
+    build_icon = tray._build_status_icon
+    attempts = []
+
+    def fail_once(status):
+        attempts.append(status)
+        if len(attempts) == 1:
+            raise OSError("unreadable logo")
+        return build_icon(status)
+
+    monkeypatch.setattr(tray, "_build_status_icon", fail_once)
+    instance._apply_status_update("warn")
+    assert not icon.refreshed.is_set()
+    assert "Could not refresh tray" in caplog.text
+    instance._apply_status_update("ok")
+    assert icon.refreshed.is_set()
+    assert icon.title == "Runway Sidecar — Healthy\n"
+
+
+def test_dispatch_failure_does_not_stop_the_drain_worker(instance, monkeypatch, caplog):
+    monkeypatch.setattr(tray.sys, "platform", "darwin")
+    dispatched = threading.Event()
+    attempts = []
+
+    def fail_once(callback, *args):
+        attempts.append(args)
+        if len(attempts) == 1:
+            raise RuntimeError("dispatch unavailable")
+        dispatched.set()
+
+    monkeypatch.setattr(tray, "_call_after", fail_once, raising=False)
+    instance._icon = RecordingIcon()
+    instance._update_icon("warn")
+    instance._update_icon("ok")
+    worker = threading.Thread(target=instance._drain_updates)
+    worker.start()
+    try:
+        assert dispatched.wait(2), "a failed dispatch must not kill the refresh worker"
+        assert "Could not dispatch tray refresh" in caplog.text
     finally:
         instance._icon = None
         worker.join(2)
