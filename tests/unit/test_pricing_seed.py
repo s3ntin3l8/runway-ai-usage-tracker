@@ -1,5 +1,6 @@
 from datetime import date
 
+import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -712,3 +713,76 @@ def test_seed_xai_unpriced_ids_have_no_row():
             )
         ).first()
         assert row is None, f"{model_id} should have no pricing row"
+
+
+def _row(s, provider_id, model_id, on):
+    from datetime import datetime
+
+    from app.services.cost_calculator import resolve_price_row
+
+    return resolve_price_row(s, provider_id, model_id, datetime.combine(on, datetime.min.time()))
+
+
+def test_seed_opencode_deepseek_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    for model_id, inp, out, cache in (
+        ("deepseek-v4.1-flash", 0.30, 1.20, 0.006),
+        ("deepseek-v4-flash", 0.30, 1.20, 0.006),
+        ("deepseek-v4-pro", 1.74, 3.48, 0.145),
+    ):
+        row = _row(s, "opencode", model_id, date(2026, 9, 1))
+        assert row is not None, model_id
+        assert (row.input_per_mtok, row.output_per_mtok, row.cache_read_per_mtok) == (
+            inp,
+            out,
+            cache,
+        )
+
+
+def test_seed_opencode_deepseek_does_not_shadow_byok_deepseek_rows():
+    s = _make_session()
+    seed_pricing_table(s)
+    byok = _row(s, "deepseek", "deepseek-v4-pro", date(2026, 9, 1))
+    assert byok is not None and byok.input_per_mtok == 0.66
+
+
+def test_seed_gemini_4_argon_promo_then_list_price():
+    s = _make_session()
+    seed_pricing_table(s)
+    for provider in ("gemini", "antigravity"):
+        promo = _row(s, provider, "gemini-4-argon", date(2026, 11, 30))
+        assert promo is not None
+        assert (promo.input_per_mtok, promo.output_per_mtok, promo.cache_read_per_mtok) == (
+            2.00,
+            10.00,
+            0.10,
+        )
+        listed = _row(s, provider, "gemini-4-argon", date(2026, 12, 1))
+        assert listed is not None
+        assert (listed.input_per_mtok, listed.output_per_mtok, listed.cache_read_per_mtok) == (
+            4.00,
+            20.00,
+            0.20,
+        )
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
+    [
+        ("gemini-2.5-flash", "flash-2.5"),
+        ("gemini-2.5-pro", "pro-2.5"),
+        ("gemini-2.5-flash-lite", "flash-lite-2.5"),
+    ],
+)
+def test_seed_gemini_raw_2_5_aliases_match_their_canonical_rows(raw, canonical):
+    s = _make_session()
+    seed_pricing_table(s)
+    alias = _row(s, "gemini", raw, date(2026, 10, 2))
+    base = _row(s, "gemini", canonical, date(2026, 10, 2))
+    assert alias is not None and base is not None
+    assert (alias.input_per_mtok, alias.output_per_mtok, alias.cache_read_per_mtok) == (
+        base.input_per_mtok,
+        base.output_per_mtok,
+        base.cache_read_per_mtok,
+    )
