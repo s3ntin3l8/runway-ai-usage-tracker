@@ -21,7 +21,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,7 +40,9 @@ def _wait_for_http(url: str, timeout: float = 60.0) -> None:
             with urllib.request.urlopen(url, timeout=2) as res:  # noqa: S310 — loopback URL we built
                 if res.status < 500:
                     return
-        except (urllib.error.URLError, ConnectionError) as e:
+        # OSError covers URLError, ConnectionError and the bare TimeoutError a
+        # slow loopback accept raises during boot.
+        except OSError as e:
             last = e
         time.sleep(0.5)
     raise RuntimeError(f"timed out waiting for {url}: {last}")
@@ -64,13 +65,18 @@ class Demo:
 
     def stop(self) -> None:
         if self.server.poll() is None:
-            # Own session (start_new_session) so the whole group goes.
-            os.killpg(self.server.pid, signal.SIGTERM)
+            # Own session (start_new_session) so the whole group goes. The
+            # server can exit between poll() and killpg (e.g. it lost a port
+            # race); a ProcessLookupError then must not mask the real error.
             try:
-                self.server.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.server.pid, signal.SIGKILL)
-                self.server.wait()
+                os.killpg(self.server.pid, signal.SIGTERM)
+                try:
+                    self.server.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(self.server.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self.server.wait()
         if self.keep:
             print(f"[demo] kept {self.demo_dir}")
             return

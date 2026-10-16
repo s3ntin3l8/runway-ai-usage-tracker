@@ -144,7 +144,9 @@ def chatgpt_cards() -> list[dict[str, Any]]:
     }
     client = MagicMock()
     client.request = AsyncMock(return_value=resp)
-    return c._tag_results(asyncio.run(c._fetch_api_data(client, "demo", None, "api")))
+    return c._tag_results(
+        asyncio.run(c._fetch_api_data(client, "demo", None, "api", input_source="sidecar"))
+    )
 
 
 def gemini_cards() -> list[dict[str, Any]]:
