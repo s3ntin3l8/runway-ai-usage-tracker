@@ -83,6 +83,14 @@ class TestCheckOnceStable:
         ):
             assert check_once("1.1.0") is None
 
+    def test_manual_check_reports_network_failure(self):
+        with patch(
+            "scripts.sidecar_pkg.update_check.request.urlopen",
+            side_effect=OSError("no network"),
+        ):
+            with pytest.raises(OSError, match="no network"):
+                check_once("1.1.0", strict=True)
+
 
 class TestCheckOnceEdge:
     def test_reports_new_edge_build(self):
@@ -96,6 +104,12 @@ class TestCheckOnceEdge:
         opener = _make_urlopen({"git/refs/tags/edge": {"object": {"sha": "aaa1111ffffffff"}}})
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             assert check_once("1.1.0+edge.aaa1111") is None
+
+    def test_manual_check_reports_malformed_edge_ref(self):
+        opener = _make_urlopen({"git/refs/tags/edge": {"object": {}}})
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            with pytest.raises(ValueError, match="no commit SHA"):
+                check_once("1.1.0+edge.aaa1111", strict=True)
 
     def test_stable_binary_on_edge_channel_falls_back_to_stable(self):
         # A stable build (no embedded sha) asked to track edge can't diff shas,
@@ -127,6 +141,12 @@ class TestCheckOnceBeta:
         opener = _make_urlopen({"releases?per_page=100": []})
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             assert check_once("3.0.0-beta.1", channel="beta") is None
+
+    def test_manual_check_reports_malformed_release_list(self):
+        opener = _make_urlopen({"releases?per_page=100": {"unexpected": "object"}})
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            with pytest.raises(ValueError, match="not a list"):
+                check_once("3.0.0-beta.1", channel="beta", strict=True)
 
 
 class TestRecheckAfterFirstCheckIn:
