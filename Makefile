@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-cov lint format web web-dev web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-cov lint format web web-dev web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -19,6 +19,15 @@ install-hooks: ## Install pre-commit hooks for commit and push stages
 
 install: ## Set up venv, install Python and Node dependencies
 	python3 scripts/dev_checks.py install
+
+demo: ## Throwaway isolated demo with synthetic data (scratch DB/HOME, clean env, no .env, loopback :3965); Ctrl-C deletes it
+	$(PYTHON) -m scripts.demo.instance
+
+screenshots: ## Regenerate README (dark + light) and PWA manifest screenshots from an isolated demo
+	$(PYTHON) -m scripts.demo.capture
+
+screenshots-landing: ## Landing-page stills + loop into OUT (default ./landing-shots); loop needs ffmpeg
+	$(PYTHON) -m scripts.demo.capture --profile landing --out "$(or $(OUT),landing-shots)"
 
 dev: ## Run development server (hot reload). Data → ./data (gitignored) unless RUNWAY_CONFIG_DIR is set.
 	$(LOAD_ENV); \

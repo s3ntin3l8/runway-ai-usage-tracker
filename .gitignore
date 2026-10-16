@@ -113,3 +113,4 @@ webapp/test-results/
 
 # Raw physical validation profiles, registry backups and runtime control files.
 /evidence/
+landing-shots/

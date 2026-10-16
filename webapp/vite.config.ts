@@ -87,7 +87,7 @@ export default defineConfig({
         screenshots: [
           {
             src: 'screenshots/dashboard.png',
-            sizes: '1440x969',
+            sizes: '1440x900',
             type: 'image/png',
             form_factor: 'wide',
             label: 'Dashboard',
@@ -108,7 +108,7 @@ export default defineConfig({
           },
           {
             src: 'screenshots/settings.png',
-            sizes: '1440x931',
+            sizes: '1440x900',
             type: 'image/png',
             form_factor: 'wide',
             label: 'Settings',

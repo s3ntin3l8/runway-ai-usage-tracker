@@ -24,7 +24,7 @@ motif), on a premium dark disc.
 | Sidecar app icon | `installer/assets/app.icns` (macOS bundle, 16–1024 incl. @2x), `installer/assets/app.ico` (Windows exe + installer, 16–256) | Packed by `installer/generate_app_icons.py` (Pillow) from `installer/assets/app-icon-1024.png`, which `render-brand-rasters.mjs` renders from `assets/logo.svg`. Referenced by `sidecar_app/spec/{macos,windows}.spec` and `installer/windows/runway-sidecar.nsi`. |
 | macOS DMG window background | `installer/assets/dmg-background{,@2x}.png` | Rendered from the canonical `assets/installer/dmg-background.svg` (760×480, plus 2× for Retina). Icon slots are fixed at (180,320) / (580,320) — keep the SVG and the `create-dmg` coordinates in sync. |
 | Windows installer art | `installer/assets/installer-sidebar.bmp` (164×314 welcome/finish), `installer/assets/installer-header.bmp` (150×57 page header) | Rendered from `assets/installer/nsis-{sidebar,header}.svg`, flattened to 24-bit BMP (the only format NSIS accepts) by `generate_app_icons.py`. |
-| PWA install-dialog screenshots | `webapp/public/screenshots/{dashboard,history,fleet,settings}.png` | Hand-copied subset of `assets/screenshots/*.png` (dark variants). Referenced by the manifest `screenshots` field in `webapp/vite.config.ts`. Re-copy if those captures are refreshed. |
+| PWA install-dialog screenshots | `webapp/public/screenshots/{dashboard,history,fleet,settings}.png` | Dark copies of `assets/screenshots/*.png`, written by `make screenshots` together with the README set (1440×900, matching the manifest `screenshots` sizes in `webapp/vite.config.ts`). |
 
 ## Regenerating
 
