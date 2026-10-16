@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scripts.sidecar_pkg.update_check import check_once, parse_channel
+from scripts.sidecar_pkg.update_check import _edge_update, check_once, parse_channel
 
 
 def _urlopen_returning(payload: object):
@@ -108,6 +108,17 @@ class TestCheckOnceStable:
 
 
 class TestCheckOnceEdge:
+    @pytest.mark.parametrize("embedded_sha", ["", " ", "\t\n"])
+    def test_empty_embedded_sha_is_tolerated_or_reported_without_network(self, embedded_sha):
+        response = _make_urlopen({"git/refs/tags/edge": {"object": {"sha": "bbbbbbb2222ffff"}}})
+        with patch(
+            "scripts.sidecar_pkg.update_check.request.urlopen", side_effect=response
+        ) as opener:
+            assert _edge_update(embedded_sha) is None
+            with pytest.raises(ValueError, match="embedded commit SHA"):
+                _edge_update(embedded_sha, strict=True)
+        opener.assert_not_called()
+
     def test_reports_new_edge_build(self):
         opener = _make_urlopen({"git/refs/tags/edge": {"object": {"sha": "bbbbbbb2222ffff"}}})
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):

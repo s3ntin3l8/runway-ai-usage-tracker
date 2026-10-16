@@ -74,6 +74,7 @@ def test_menu_check_dispatches_checker_and_keeps_releases_separate(monkeypatch):
     instance._paused = False
     instance._update_available = False
     instance._manual_check_lock = tray.threading.Lock()
+    instance._manual_check_started_at = None
     instance._rollback_version = None
     instance._settings_server = None
     instance._on_reload_config = None
@@ -86,8 +87,8 @@ def test_menu_check_dispatches_checker_and_keeps_releases_separate(monkeypatch):
     icon = Mock()
 
     items = {item.text: item for item in instance._build_menu().items if isinstance(item.text, str)}
-    items["Check for Updates…"]._action(icon, items["Check for Updates…"])
-    items["Check for Updates…"]._action(icon, items["Check for Updates…"])
+    items["Check for Updates…"](icon)
+    items["Check for Updates…"](icon)
     thread_factory.assert_called_once()
     assert thread_factory.call_args.kwargs["name"] == "runway-manual-update-check"
     assert thread_factory.call_args.kwargs["daemon"] is True
@@ -98,8 +99,47 @@ def test_menu_check_dispatches_checker_and_keeps_releases_separate(monkeypatch):
     instance._check_updates_now.assert_called_once_with(icon)
     assert not instance._manual_check_lock.locked()
 
-    items["Check for Updates…"]._action(icon, items["Check for Updates…"])
+    items["Check for Updates…"](icon)
+    assert thread_factory.call_count == 1
+    assert "wait" in icon.notify.call_args.args[0].lower()
+
+    items["View Releases…"](icon)
+    open_browser.assert_called_once_with(tray.RELEASES_URL)
+
+
+def test_manual_check_can_retry_after_cooldown(monkeypatch):
+    instance = tray.SidecarTray.__new__(tray.SidecarTray)
+    instance._manual_check_lock = tray.threading.Lock()
+    instance._manual_check_started_at = None
+    instance._check_updates_now = Mock()
+    worker = Mock()
+    thread_factory = Mock(return_value=worker)
+    monkeypatch.setattr(tray.threading, "Thread", thread_factory)
+    monkeypatch.setattr("time.monotonic", lambda: 100.0)
+    icon = Mock()
+
+    instance._start_update_check(icon)
+    thread_factory.call_args.kwargs["target"]()
+    monkeypatch.setattr("time.monotonic", lambda: 159.0)
+    instance._start_update_check(icon)
+    assert thread_factory.call_count == 1
+    monkeypatch.setattr("time.monotonic", lambda: 160.0)
+    instance._start_update_check(icon)
     assert thread_factory.call_count == 2
 
-    items["View Releases…"]._action(icon, items["View Releases…"])
-    open_browser.assert_called_once_with(tray.RELEASES_URL)
+
+def test_failed_worker_start_allows_immediate_retry(monkeypatch):
+    instance = tray.SidecarTray.__new__(tray.SidecarTray)
+    instance._manual_check_lock = tray.threading.Lock()
+    instance._manual_check_started_at = None
+    worker = Mock()
+    worker.start.side_effect = RuntimeError("no threads available")
+    thread_factory = Mock(return_value=worker)
+    monkeypatch.setattr(tray.threading, "Thread", thread_factory)
+    icon = Mock()
+
+    instance._start_update_check(icon)
+    assert not instance._manual_check_lock.locked()
+    worker.start.side_effect = None
+    instance._start_update_check(icon)
+    assert thread_factory.call_count == 2
