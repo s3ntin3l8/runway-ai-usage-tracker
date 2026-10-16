@@ -471,8 +471,10 @@ def parse_hermes_events(
                             account_source=event_account_source,
                             event_id=event_id,
                             ts=ts.isoformat(),
-                            # Gemini rows are priced by versioned bucket (flash-2.5, ...);
-                            # the raw id stays in event_id so the idempotency key is stable.
+                            # Only the Gemini pricing rows are keyed on the versioned bucket
+                            # (flash-2.5, ...), so a raw id would miss the lookup; other
+                            # providers (OpenCode, Antigravity) price on the raw model id.
+                            # The raw id stays in event_id so the idempotency key is stable.
                             model_id=(
                                 normalize_gemini_model(model)
                                 if target_provider_id == "gemini"

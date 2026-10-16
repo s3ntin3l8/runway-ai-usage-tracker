@@ -1147,7 +1147,8 @@ PRICING_SEED: list[dict] = [
         "output_per_mtok": 1.20,
         "cache_read_per_mtok": 0.006,
         "cache_create_per_mtok": 0.0,
-        "notes": "OpenCode Zen DeepSeek V4.1 Flash",
+        "notes": "OpenCode Zen DeepSeek V4.1 Flash — canonical id; deepseek-v4-flash "
+        "below is its alias, keep the two rates in sync",
     },
     {
         "provider_id": "opencode",
@@ -1157,7 +1158,8 @@ PRICING_SEED: list[dict] = [
         "output_per_mtok": 1.20,
         "cache_read_per_mtok": 0.006,
         "cache_create_per_mtok": 0.0,
-        "notes": "OpenCode Zen DeepSeek Flash (legacy name of V4.1 Flash)",
+        "notes": "OpenCode Zen DeepSeek Flash (legacy name of V4.1 Flash) — alias of "
+        "deepseek-v4.1-flash above, keep the two rates in sync",
     },
     {
         "provider_id": "opencode",
