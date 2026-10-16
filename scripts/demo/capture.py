@@ -41,7 +41,7 @@ def main() -> None:
         if args.out:
             extra["SCREENSHOTS_OUT_DIR"] = str(Path(args.out).resolve())
         env = demo_env(demo.demo_dir, extra)
-        assert_demo_env(env, demo.demo_dir)
+        assert_demo_env(env, demo.demo_dir, cwd=ROOT / "webapp")
         subprocess.run(
             ["node", "scripts/screenshots.mjs"], cwd=ROOT / "webapp", env=env, check=True
         )

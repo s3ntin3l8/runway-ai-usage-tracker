@@ -92,10 +92,9 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
             "PYTHONPATH": str(ROOT),
             "APP_HOST": "127.0.0.1",
             "APP_PORT": str(DEMO_PORT),
+            # The poller still runs, but its collectors only find the scratch
+            # HOME's empty credential stores, so the seeded cards stay as seeded.
             "LOG_LEVEL": "WARNING",
-            # Collectors would only find empty credential stores in the scratch
-            # HOME; keep the poller from replacing seeded cards with error cards.
-            "RUNWAY_DEMO": "1",
         },
     )
     server: subprocess.Popen[bytes] | None = None
@@ -145,7 +144,7 @@ def main() -> None:
     try:
         demo.server.wait()
     except KeyboardInterrupt:
-        pass
+        pass  # Ctrl-C is the documented way to stop; teardown runs below.
     finally:
         demo.stop()
     sys.exit(0)
