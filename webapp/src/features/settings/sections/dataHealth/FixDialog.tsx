@@ -212,9 +212,9 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                 <SampleTable samples={preview.data.samples} />
                 <dl className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-fg-subtle">
                   {Object.entries(preview.data.counts).map(([key, value]) => (
-                    <div key={key} className="flex gap-1">
-                      <dt className="font-medium">{key}:</dt>
-                      <dd className="font-mono">{String(value)}</dd>
+                    <div key={key} className="flex min-w-0 gap-1">
+                      <dt className="shrink-0 font-medium">{key}:</dt>
+                      <dd className="min-w-0 break-all font-mono">{String(value)}</dd>
                     </div>
                   ))}
                 </dl>

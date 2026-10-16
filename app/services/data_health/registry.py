@@ -16,6 +16,7 @@ from app.services.data_health.checks.lone_default_events import LoneDefaultEvent
 from app.services.data_health.checks.misidentified_gauge_series import (
     MisidentifiedGaugeSeriesCheck,
 )
+from app.services.data_health.checks.openrouter_model_events import OpenRouterModelEventsCheck
 from app.services.data_health.checks.orphan_credential_sources import OrphanCredentialSourcesCheck
 from app.services.data_health.checks.orphan_credential_tags import OrphanCredentialTagsCheck
 from app.services.data_health.checks.orphan_gauge_series import OrphanGaugeSeriesCheck
@@ -28,6 +29,7 @@ from app.services.data_health.checks.unpriced_models import UnpricedModelsCheck
 REGISTRY: list[Check] = [
     ConfigDefaultKeyedCheck(),
     LegacyProviderIdsCheck(),
+    OpenRouterModelEventsCheck(),
     LoneDefaultEventsCheck(),
     OrphanCredentialTagsCheck(),
     OrphanCredentialSourcesCheck(),
