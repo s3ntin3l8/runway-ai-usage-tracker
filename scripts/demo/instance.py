@@ -75,6 +75,7 @@ class Demo:
                 except subprocess.TimeoutExpired:
                     os.killpg(self.server.pid, signal.SIGKILL)
             except ProcessLookupError:
+                # Already exited on its own; wait() below just reaps it.
                 pass
             self.server.wait()
         if self.keep:
