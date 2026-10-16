@@ -77,13 +77,20 @@ def _get_json(url: str) -> Any:
         return json.loads(bounded_read(resp, MAX_METADATA_BYTES).decode())
 
 
-def _stable_update(current: str) -> str | None:
+def _stable_update(current: str, *, strict: bool = False) -> str | None:
     """Latest stable tag (without ``v``) if it is newer than *current*, else None."""
     try:
-        latest = str(_get_json(_LATEST_URL).get("tag_name", "")).lstrip("v").strip()
+        release = _get_json(_LATEST_URL)
+        if not isinstance(release, dict):
+            raise ValueError("stable release response is not an object")
+        latest = str(release.get("tag_name", "")).lstrip("v").strip()
     except (error.URLError, OSError, ValueError, KeyError):
+        if strict:
+            raise
         return None
     if not latest:
+        if strict:
+            raise ValueError("stable release has no tag")
         return None
     try:
         from packaging.version import InvalidVersion, Version
@@ -91,8 +98,12 @@ def _stable_update(current: str) -> str | None:
         try:
             return latest if Version(latest) > Version(current) else None
         except InvalidVersion:
+            if strict:
+                raise
             return None
     except Exception:
+        if strict:
+            raise
         return None
 
 
@@ -117,64 +128,82 @@ def latest_beta_release(releases: object) -> dict | None:
         return None
 
 
-def _beta_update(current: str) -> str | None:
+def _beta_update(current: str, *, strict: bool = False) -> str | None:
     """Latest beta version if newer than *current*, else None."""
     try:
-        release = latest_beta_release(_get_json(_BETA_RELEASES_API_URL))
+        releases = _get_json(_BETA_RELEASES_API_URL)
     except (error.URLError, OSError, ValueError, KeyError):
+        if strict:
+            raise
         return None
+    if strict and not isinstance(releases, list):
+        raise ValueError("beta releases response is not a list")
+    release = latest_beta_release(releases)
     if not release:
         return None
     latest = str(release.get("tag_name", "")).lstrip("vV").strip()
-    if not latest:
-        return None
     try:
         from packaging.version import InvalidVersion, Version
 
         try:
             return latest if Version(latest) > Version(current) else None
         except InvalidVersion:
+            if strict:
+                raise
             return None
     except Exception:
+        if strict:
+            raise
         return None
 
 
-def _edge_update(embedded_sha: str) -> str | None:
+def _edge_update(embedded_sha: str, *, strict: bool = False) -> str | None:
     """Current ``edge`` tag commit sha if it differs from *embedded_sha*, else None.
 
     *embedded_sha* is the short sha stamped into an edge build; the tag ref
     returns the full 40-char sha, so a prefix match means "same build."
     """
     try:
-        latest_sha = str(_get_json(_EDGE_REFS_URL).get("object", {}).get("sha", "")).strip()
+        ref = _get_json(_EDGE_REFS_URL)
+        if not isinstance(ref, dict) or not isinstance(ref.get("object"), dict):
+            raise ValueError("edge ref response has no object")
+        latest_sha = str(ref["object"].get("sha", "")).strip()
     except (error.URLError, OSError, ValueError, KeyError):
+        if strict:
+            raise
         return None
-    if not latest_sha or not embedded_sha:
+    if not latest_sha:
+        if strict:
+            raise ValueError("edge ref has no commit SHA")
         return None
     return latest_sha[:12] if not latest_sha.startswith(embedded_sha) else None
 
 
-def check_once(current_version: str, channel: str | None = None) -> str | None:
+def check_once(
+    current_version: str, channel: str | None = None, *, strict: bool = False
+) -> str | None:
     """Run one update check.
 
     *channel* overrides the version-inferred channel (used to honour the
     dashboard-synced setting). Returns a short human-readable description of the
-    available update, or None when up to date / the check failed.
+    available update, or None when up to date / the check failed. With *strict*,
+    lookup and malformed-metadata errors propagate so an explicit user check can
+    distinguish a failure from an up-to-date result.
     """
     own_channel, embedded_sha = parse_channel(current_version)
     active = (channel or own_channel or "stable").lower()
 
     if active == "edge" and embedded_sha:
-        sha = _edge_update(embedded_sha)
+        sha = _edge_update(embedded_sha, strict=strict)
         return f"edge build {sha}" if sha else None
 
     if active == "beta":
-        beta = _beta_update(current_version)
+        beta = _beta_update(current_version, strict=strict)
         return f"v{beta}" if beta else None
 
     # Stable channel, or a stable binary that opted into edge (no sha to diff —
     # fall back to offering stable releases so it is never left blind).
-    newer = _stable_update(current_version)
+    newer = _stable_update(current_version, strict=strict)
     return f"v{newer}" if newer else None
 
 
