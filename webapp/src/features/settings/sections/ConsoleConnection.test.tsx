@@ -103,7 +103,6 @@ it('shows one Claude settings entry and switches to independent Console account 
   expect(within(dialog).queryByText('Subscription login')).not.toBeInTheDocument();
 });
 
-
 function StatefulPicker({ cookie = 'sample-session', initial = orgId }: { cookie?: string; initial?: string }) {
   const [selected, setSelected] = useState(initial);
   return <>
@@ -125,6 +124,7 @@ it('preserves an explicit organization choice when reloading with the same cooki
   await waitFor(() => expect(screen.getByRole('button', { name: 'Load Console organizations' })).toBeEnabled());
   expect(screen.getByLabelText('API organization')).toHaveValue(orgId);
   expect(screen.getByLabelText('Selected organization')).toHaveTextContent(orgId);
+  expect(screen.queryByText(/Previously selected organization/)).not.toBeInTheDocument();
 });
 
 it.each([
@@ -139,6 +139,11 @@ it.each([
   await screen.findByRole('option', { name: 'One' });
   await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
   await waitFor(() => expect(screen.getByLabelText('Selected organization')).toBeEmptyDOMElement());
+  expect(screen.getByText('Previously selected organization is no longer accessible.')).toBeInTheDocument();
+  if (organizations.length > 0) {
+    await userEvent.selectOptions(screen.getByLabelText('API organization'), 'other');
+    expect(screen.queryByText(/Previously selected organization/)).not.toBeInTheDocument();
+  }
 });
 
 it('clears a selected organization when the cookie changes', async () => {
@@ -164,4 +169,19 @@ it('preserves a choice made while a refresh is in flight', async () => {
   await act(async () => resolve({ organizations: multipleOrgs }));
   expect(screen.getByLabelText('API organization')).toHaveValue('other');
   expect(screen.getByLabelText('Selected organization')).toHaveTextContent('other');
+});
+
+
+it('auto-selects the sole remaining organization and explains a removed selection', async () => {
+  vi.mocked(api.discoverConsoleOrganizations)
+    .mockResolvedValueOnce({ organizations: multipleOrgs })
+    .mockResolvedValueOnce({ organizations: [{ id: 'other', name: 'Two' }] });
+  const view = renderWithProviders(<StatefulPicker cookie="sample-session" />);
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await screen.findByRole('option', { name: 'One' });
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await waitFor(() => expect(screen.getByLabelText('API organization')).toHaveValue('other'));
+  expect(screen.getByText('Previously selected organization is no longer accessible.')).toBeInTheDocument();
+  view.rerender(<StatefulPicker cookie="replacement-session" />);
+  expect(screen.queryByText(/Previously selected organization/)).not.toBeInTheDocument();
 });
