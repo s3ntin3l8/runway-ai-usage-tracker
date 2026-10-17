@@ -59,18 +59,26 @@ class TrayDaemon:
         runner = self._runner
         parts: list[str] = []
 
-        last_at = runner.last_cycle_at
-        if last_at is not None:
-            age = int(time.time() - last_at)
-            if age < 60:
-                parts.append(f"Last sync: {age}s ago")
-            else:
-                parts.append(f"Last sync: {age // 60}m ago")
-        else:
-            parts.append("Last sync: never")
+        with runner._lock:
+            last_sync = runner.last_sync_at
+            last_upload = runner.last_upload_at
+            metrics = runner.last_metrics_count
+            events = runner.last_events_count
 
-        count = runner.last_metrics_count
-        parts.append(f"{count} metric{'s' if count != 1 else ''}")
+        now = time.time()
+        for label, last_at in (("Last sync", last_sync), ("Last upload", last_upload)):
+            if last_at is None:
+                parts.append(f"{label}: never")
+            else:
+                age = max(0, int(now - last_at))
+                elapsed = f"{age}s" if age < 60 else f"{age // 60}m"
+                parts.append(f"{label}: {elapsed} ago")
+
+        if last_upload is not None:
+            parts.append(
+                f"{metrics} metric{'s' if metrics != 1 else ''}, "
+                f"{events} event{'s' if events != 1 else ''}"
+            )
 
         err = runner.last_error
         if err:
@@ -90,6 +98,9 @@ class TrayDaemon:
                 "status": status,
                 "last_cycle_at": self._runner.last_cycle_at,
                 "last_metrics_count": self._runner.last_metrics_count,
+                "last_events_count": self._runner.last_events_count,
+                "last_upload_at": self._runner.last_upload_at,
+                "last_sync_at": self._runner.last_sync_at,
             }
         if self.on_status_change is not None:
             self.on_status_change(status)

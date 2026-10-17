@@ -62,6 +62,7 @@ a = Analysis(
         # Declared explicitly (guarded by tests/unit/test_sidecar_release_contract.py) so a
         # lazily imported module can never be left out of a frozen build.
         "scripts.sidecar_pkg.credentials",
+        "scripts.sidecar_pkg.claude_desktop",
         "scripts.sidecar_pkg.event_extractors.anthropic",
         "scripts.sidecar_pkg.event_extractors.antigravity",
         "scripts.sidecar_pkg.event_extractors.chatgpt",

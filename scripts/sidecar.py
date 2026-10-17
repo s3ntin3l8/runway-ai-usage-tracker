@@ -2511,6 +2511,17 @@ class BrowserCookieExtractor:
         dotted = "." + bare
         like_subdomain = "%." + bare
 
+        # Desktop uses its own Electron store and Keychain service. Keep this
+        # scoped to Claude's session cookie; other provider rules never read it.
+        if platform.system() == "Darwin" and bare == "claude.ai" and name == "sessionKey":
+            from scripts.sidecar_pkg.claude_desktop import read_session_cookie
+
+            desktop_cookie = read_session_cookie(
+                Path.home() / "Library/Application Support/Claude/Cookies"
+            )
+            if desktop_cookie:
+                return desktop_cookie
+
         for target in BrowserCookieExtractor.get_all_paths():
             try:
                 if target["type"] == "safari":
@@ -5070,7 +5081,10 @@ class DaemonRunner:
 
         # Readable state attributes
         self.last_cycle_at: float | None = None
+        self.last_sync_at: float | None = None
+        self.last_upload_at: float | None = None
         self.last_metrics_count: int = 0
+        self.last_events_count: int = 0
         self.last_http_code: int | None = None
         self.last_error: str | None = None
 
@@ -5254,11 +5268,16 @@ class DaemonRunner:
 
             with self._lock:
                 self.last_cycle_at = time.time()
-                self.last_metrics_count = len(metrics)
                 self.last_http_code = code
+                if success:
+                    self.last_sync_at = self.last_cycle_at
+                    if not events_failed and (metrics or events):
+                        self.last_upload_at = self.last_cycle_at
+                        self.last_metrics_count = len(metrics)
+                        self.last_events_count = len(events)
 
             if success:
-                if metrics or events:
+                if (metrics or events) and not events_failed:
                     logging.info(f"Successfully sent {len(metrics)} metrics, {len(events)} events")
                 else:
                     logging.debug("Heartbeat successful")
@@ -5299,8 +5318,12 @@ class DaemonRunner:
                         logging.warning(f"Failed to advance event watermark: {e}")
 
                 with self._lock:
-                    self.last_error = None
-                    self._status_reason = "success"
+                    self.last_error = (
+                        "Server failed to store usage events; retry pending."
+                        if events_failed
+                        else None
+                    )
+                    self._status_reason = "error" if events_failed else "success"
                 self._fire_status_change()
 
                 self._apply_ingest_instructions(
