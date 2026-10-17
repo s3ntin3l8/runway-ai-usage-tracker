@@ -240,3 +240,19 @@ def test_desktop_cookie_source_is_logged_without_value(desktop, monkeypatch, cap
     )
     assert "source: Claude Desktop" in caplog.text
     assert "sk-ant-synthetic" not in caplog.text
+
+
+def test_desktop_cookie_precedes_readable_browser_cookie(desktop, monkeypatch):
+    write_cookie(desktop)
+    storage_key(monkeypatch)
+    browser_paths = Mock(return_value=[{"type": "safari", "path": desktop}])
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", browser_paths)
+    monkeypatch.setattr(
+        sidecar.BrowserCookieExtractor,
+        "parse_safari",
+        lambda path: [{"domain": "claude.ai", "name": "sessionKey", "value": "browser-cookie"}],
+    )
+    assert (
+        sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") == "sk-ant-synthetic"
+    )
+    browser_paths.assert_not_called()

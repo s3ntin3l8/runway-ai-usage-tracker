@@ -15,8 +15,6 @@ class TrayDaemon:
     def __init__(self, config: dict) -> None:
         self._config = config
         self._runner: DaemonRunner = DaemonRunner(config, on_status_change=self._on_runner_status)
-        self._lock = threading.Lock()
-        self._last_stats: dict = {}
         self.on_status_change: Callable[[str], None] | None = None
 
     # ------------------------------------------------------------------
@@ -93,7 +91,5 @@ class TrayDaemon:
 
     def _on_runner_status(self, status: str) -> None:
         """Invoked by DaemonRunner on each status change; forwards to tray."""
-        with self._lock:
-            self._last_stats = {"status": status, **self._runner.stats_snapshot()}
         if self.on_status_change is not None:
             self.on_status_change(status)

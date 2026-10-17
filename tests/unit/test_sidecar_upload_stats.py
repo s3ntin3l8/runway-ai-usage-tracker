@@ -127,3 +127,26 @@ def test_stats_snapshot_does_not_change_when_runner_changes(daemon):
     daemon._runner.last_error = "later failure"
     assert stats["last_error"] is None
     assert daemon._runner.stats_snapshot()["last_error"] == "later failure"
+
+
+@pytest.mark.parametrize("previous_upload", [False, True])
+def test_empty_acknowledged_queue_payload_preserves_upload(monkeypatch, tmp_path, previous_upload):
+    monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
+    monkeypatch.setattr(sidecar, "get_queue_dir", lambda: tmp_path / "queue")
+    assert sidecar.queue_push({"metrics": [], "events": []})
+    tray = TrayDaemon({"api_url": "http://localhost:9999", "api_key": "test"})
+    if previous_upload:
+        tray._runner._record_upload(4, 21)
+    before = tray._runner.stats_snapshot()
+    monkeypatch.setattr(
+        sidecar, "run_collection", lambda *a, **kw: sidecar.CollectionResult([], [], 0, [])
+    )
+    post = Mock(return_value=(True, {}, 200))
+    monkeypatch.setattr(sidecar, "http_post_signed_with_retry", post)
+    assert tray._runner.run_once()
+    assert post.call_count == 2
+    assert not list((tmp_path / "queue").glob("*.jsonl"))
+    after = tray._runner.stats_snapshot()
+    for field in ("last_upload_at", "last_metrics_count", "last_events_count"):
+        assert after[field] == before[field]
+    assert after["last_sync_at"] is not None

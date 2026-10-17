@@ -17,12 +17,15 @@ from pathlib import Path
 _KEY_CACHE: dict[str, tuple[float, bytes | None]] = {}
 _KEY_LOCK = threading.Lock()
 _WARNED: set[str] = set()
+_WARN_LOCK = threading.Lock()
 
 
 def _warn_once(reason: str) -> None:
-    if reason not in _WARNED:
+    with _WARN_LOCK:
+        if reason in _WARNED:
+            return
         _WARNED.add(reason)
-        logging.warning("Claude Desktop credential unavailable: %s", reason)
+    logging.warning("Claude Desktop credential unavailable: %s", reason)
 
 
 def _storage_key(path: Path) -> bytes | None:
