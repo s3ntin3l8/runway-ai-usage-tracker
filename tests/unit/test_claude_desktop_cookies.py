@@ -15,6 +15,9 @@ from scripts import sidecar
 
 @pytest.fixture
 def desktop(monkeypatch, tmp_path):
+    from scripts.sidecar_pkg import macos_cookies
+
+    monkeypatch.setattr(macos_cookies, "_KEY_CACHE", {})
     monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(sidecar.Path, "home", lambda: tmp_path)
     path = tmp_path / "Library/Application Support/Claude/Cookies"
@@ -65,7 +68,7 @@ def test_unavailable_keychain_is_backed_off_and_logs_no_secret(desktop, monkeypa
     for _ in range(2):
         assert sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") is None
     assert lookup.call_count == 1
-    assert "Claude Desktop" in caplog.text
+    assert "Keychain access unavailable" in caplog.text
     assert "sensitive stderr" not in caplog.text
 
 
@@ -187,7 +190,7 @@ def test_keychain_command_failure_is_reported_and_backed_off(desktop, monkeypatc
     for _ in range(2):
         assert sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") is None
     assert lookup.call_count == 1
-    assert "Keychain command did not complete" in caplog.text
+    assert "Keychain access unavailable" in caplog.text
     assert "sensitive" not in caplog.text
 
 
@@ -283,3 +286,24 @@ def test_desktop_opt_out_preserves_browser_without_keychain(desktop, monkeypatch
     assert (
         sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") == "synthetic-browser"
     )
+
+
+@pytest.fixture(autouse=True)
+def isolate_host_credentials(monkeypatch, tmp_path):
+    """Synthetic tests must never inspect host browser stores or Keychain."""
+    import subprocess
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    original_run = subprocess.run
+
+    def guarded_run(command, *args, **kwargs):
+        if (
+            isinstance(command, (list, tuple))
+            and command
+            and Path(str(command[0])).name == "security"
+        ):
+            raise AssertionError("Live Keychain access is forbidden in unit tests")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
