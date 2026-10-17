@@ -35,7 +35,9 @@ jobs:
 
   windows-native-gate:
     runs-on: windows-latest
-    timeout-minutes: 20
+    # Pytest alone has taken ~17.5 minutes on hosted Windows runners; allow
+    # room for setup, lint, and frontend tests as well as runner variance.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -43,6 +45,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
