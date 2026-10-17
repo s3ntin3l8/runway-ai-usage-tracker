@@ -253,6 +253,11 @@ __REGISTRY__: dict[str, Any] = {
                 },
             ],
         },
+        "anthropic_console": {
+            "name": "Claude Console",
+            "icon": "🟠",
+            "rules": [],
+        },
         "openrouter": {
             "name": "OpenRouter",
             "icon": "🚀",

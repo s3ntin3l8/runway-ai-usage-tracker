@@ -1,3 +1,4 @@
+import { claudeConnectionLabel } from '@/lib/providerFamilies';
 // Per-provider detail dialog. Shows the master enabled toggle + a vertical
 // list of account rows for one ProviderConfig. Each row exposes a "⋮" menu
 // with Edit / Remove actions. The "Add account" footer button is wired in
@@ -26,6 +27,8 @@ function credentialProblemTitle(status: string | undefined): string | undefined 
 
 interface ProviderDetailDialogProps {
   provider: ProviderConfig | null;
+  connections?: ProviderConfig[];
+  onSelectConnection?: (providerId: string) => void;
   onClose: () => void;
   onAccountDeleted?: (providerId: string, accountId: string) => void;
   // PR #287 — when the user clicks "Add account" inside the dialog,
@@ -39,6 +42,8 @@ interface ProviderDetailDialogProps {
 
 export function ProviderDetailDialog({
   provider,
+  connections,
+  onSelectConnection,
   onClose,
   onAccountDeleted,
   onAddAccount,
@@ -147,7 +152,7 @@ export function ProviderDetailDialog({
             onClose();
           }
         }}
-        title={provider?.name ?? ''}
+        title={connections && connections.length > 1 ? 'Claude' : (provider?.name ?? '')}
         description={
           provider
             ? visibleAccounts.length === 0
@@ -161,6 +166,16 @@ export function ProviderDetailDialog({
       >
         {provider ? (
           <div className="flex flex-col gap-3">
+            {connections && connections.length > 1 ? (
+              <label className="flex flex-col gap-1.5 text-sm">
+                Claude connection
+                <select aria-label="Claude connection" value={provider.provider_id}
+                  className="rounded-md border border-edge bg-surface-1 p-2 text-fg"
+                  onChange={(e) => onSelectConnection?.(e.target.value)}>
+                  {connections.map((p) => <option key={p.provider_id} value={p.provider_id}>{claudeConnectionLabel(p.provider_id)}</option>)}
+                </select>
+              </label>
+            ) : null}
             <div className="flex items-center justify-between rounded-sm border border-edge bg-surface-2 px-3 py-2">
               <div className="flex items-center gap-2">
                 <ProviderGlyph providerId={provider.provider_id} name={provider.name} />

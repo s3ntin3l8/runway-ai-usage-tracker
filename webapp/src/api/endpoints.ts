@@ -423,6 +423,11 @@ export const fetchArchivedProviders = () =>
 // so callers (the wizard's debounce effect) can actually cancel an
 // in-flight request — without it, abort() is decorative and the request
 // races the next debounce.
+export const discoverConsoleOrganizations = (sessionCookie: string, signal?: AbortSignal) =>
+  api<{ organizations: { id: string; name: string }[] }>('/api/v1/system/provider-config/console-organizations', {
+    method: 'POST', body: JSON.stringify({ session_cookie: sessionCookie }), signal,
+  });
+
 export const previewAccount = (body: AccountPreviewRequest, signal?: AbortSignal) =>
   api<AccountPreviewResponse>('/api/v1/system/provider-config/preview-account', {
     method: 'POST',
