@@ -3,6 +3,7 @@
 import hashlib
 import sqlite3
 import subprocess
+from contextlib import closing
 from unittest.mock import Mock
 
 import pytest
@@ -18,7 +19,7 @@ def desktop(monkeypatch, tmp_path):
     monkeypatch.setattr(sidecar.Path, "home", lambda: tmp_path)
     path = tmp_path / "Library/Application Support/Claude/Cookies"
     path.parent.mkdir(parents=True)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute("CREATE TABLE meta (key TEXT, value TEXT)")
         conn.execute("INSERT INTO meta VALUES ('version', '24')")
         conn.execute(
@@ -36,7 +37,7 @@ def write_cookie(path, *, host=".claude.ai", digest_host=None, expired=False, co
     encrypted = b"v10" + encryptor.update(padded) + encryptor.finalize()
     if corrupt:
         encrypted = b"v10invalid"
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             "INSERT INTO cookies VALUES (?, ?, ?, ?)",
             (host, "sessionKey", encrypted, 1 if expired else 0),
@@ -140,7 +141,7 @@ def test_quota_history_cannot_become_fresh_token_usage(desktop, monkeypatch, sam
 
 def test_malformed_cookie_blob_does_not_abort_provider_collection(desktop, monkeypatch):
     write_cookie(desktop)
-    with sqlite3.connect(desktop) as conn:
+    with closing(sqlite3.connect(desktop)) as conn, conn:
         conn.execute("UPDATE cookies SET encrypted_value = NULL")
     lookup = storage_key(monkeypatch)
     assert sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") is None
