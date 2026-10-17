@@ -79,19 +79,26 @@ def profiles(base: Path) -> list[Path]:
         names.update(state.get("profile", {}).get("info_cache", {}))
     except (OSError, ValueError, TypeError, AttributeError):
         pass
-    names.update(
-        p.name
-        for p in base.iterdir()
-        if p.is_dir() and (p.name == "Default" or p.name.startswith("Profile "))
-    )
-    return [
-        base / name
-        for name in sorted(names)
-        if isinstance(name, str)
-        and name not in {".", ".."}
-        and Path(name).name == name
-        and (base / name).is_dir()
-    ]
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        entries = []
+    for entry in entries:
+        try:
+            if entry.is_dir() and (entry.name == "Default" or entry.name.startswith("Profile ")):
+                names.add(entry.name)
+        except OSError:
+            continue
+    result = []
+    for name in sorted(names):
+        if not isinstance(name, str) or name in {".", ".."} or Path(name).name != name:
+            continue
+        try:
+            if (base / name).is_dir():
+                result.append(base / name)
+        except OSError:
+            continue
+    return result
 
 
 def read_cookies(path: Path, service: str, domain: str, name: str) -> list[str]:

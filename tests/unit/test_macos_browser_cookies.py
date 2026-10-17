@@ -252,12 +252,11 @@ def test_existing_plaintext_browser_candidates_are_preserved(tmp_path, monkeypat
     candidates = sidecar.BrowserCookieExtractor.get_macos_candidates(
         "anthropic", ["claude.ai"], "sessionKey"
     )
-    assert candidates == [
-        (
-            f"synthetic-{browser_type}",
-            f"cookie:anthropic/{browser_type.title()}/Default/cookies.sqlite",
-        )
-    ]
+    assert len(candidates) == 1
+    assert candidates[0][0] == f"synthetic-{browser_type}"
+    assert candidates[0][1].startswith(
+        f"cookie:anthropic/{browser_type.title()}/Default/cookies.sqlite#"
+    )
 
 
 def test_legacy_console_cookie_cannot_become_subscription(tmp_path, monkeypatch, helper):
@@ -291,3 +290,117 @@ def test_legacy_console_cookie_cannot_become_subscription(tmp_path, monkeypatch,
         )
         == 1
     )
+
+
+def test_different_console_sessions_in_same_store_have_distinct_final_origins(
+    tmp_path, monkeypatch, helper
+):
+    path = tmp_path / "Cookies"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE meta (key TEXT, value TEXT)")
+        conn.execute("INSERT INTO meta VALUES ('version', '24')")
+        conn.execute(
+            "CREATE TABLE cookies (host_key TEXT, name TEXT, encrypted_value BLOB, expires_utc INTEGER)"
+        )
+        for host, value in [
+            (".platform.claude.com", b"session-one"),
+            (".platform.claude.com", b"session-two"),
+            (".console.anthropic.com", b"session-three"),
+        ]:
+            conn.execute(
+                "INSERT INTO cookies VALUES (?, ?, ?, 0)",
+                (host, "sessionKey", encrypted(host, value)),
+            )
+    monkeypatch.setattr(
+        sidecar.BrowserCookieExtractor,
+        "get_all_paths",
+        lambda: [{"browser": "Chrome", "type": "chromium", "path": path}],
+    )
+    candidates = sidecar.BrowserCookieExtractor.get_macos_candidates(
+        "anthropic_console", ["platform.claude.com", "console.anthropic.com"], "sessionKey"
+    )
+    assert len(candidates) == 3
+    assert len({origin for _, origin in candidates}) == 3
+    assert all("#" in origin and value not in origin for value, origin in candidates)
+
+
+@pytest.mark.parametrize(
+    "provider,field", [("anthropic", "cookie_sessionKey"), ("anthropic_console", "session_cookie")]
+)
+def test_cookie_rotation_cannot_inherit_base_or_provider_tag(monkeypatch, provider, field):
+    monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
+    base = f"cookie:{provider}/Chrome/Default/Cookies"
+    origin = base + "#0123456789ab"
+    monkeypatch.setattr(
+        sidecar.BrowserCookieExtractor, "get_macos_candidates", lambda *_: [("new-session", origin)]
+    )
+    config = {
+        "rules": [
+            {
+                "type": "cookie",
+                "name": "sessionKey",
+                "domains": ["claude.ai"],
+                "mapping": {"value": field},
+            }
+        ]
+    }
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        provider,
+        config,
+        account_label_hints={
+            provider: {base: "old@example.com", f"provider:{provider}": "old@example.com"}
+        },
+    )
+    assert len(cards) == 1
+    assert cards[0]["metadata"]["identity_pending"] is True
+    assert cards[0]["account_id"] is None
+    assert blocked
+    tagged, blocked = sidecar.GenericCollector.collect_provider(
+        provider, config, account_label_hints={provider: {origin: "new@example.com"}}
+    )
+    assert tagged[0]["account_id"] == "new@example.com"
+    assert blocked == []
+
+
+@pytest.mark.parametrize("failure", ["iterdir", "stat"])
+def test_unreadable_browser_store_does_not_hide_healthy_browser(tmp_path, monkeypatch, failure):
+    chrome = tmp_path / "Library/Application Support/Google/Chrome"
+    edge = tmp_path / "Library/Application Support/Microsoft Edge"
+    for base in [chrome, edge]:
+        path = base / "Default/Network/Cookies"
+        path.parent.mkdir(parents=True)
+        path.touch()
+    original_iterdir = type(chrome).iterdir
+    original_stat = type(chrome).stat
+
+    def guarded_iterdir(path):
+        if path == chrome and failure == "iterdir":
+            raise PermissionError("synthetic inaccessible browser")
+        return original_iterdir(path)
+
+    def guarded_stat(path, *args, **kwargs):
+        if path == chrome / "Default/Network/Cookies" and failure == "stat":
+            raise PermissionError("synthetic disappearing store")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(chrome), "iterdir", guarded_iterdir)
+    monkeypatch.setattr(type(chrome), "stat", guarded_stat)
+    paths = sidecar.BrowserCookieExtractor.get_all_paths()
+    assert any(target["browser"] == "Edge" for target in paths)
+
+
+def test_desktop_session_rotation_has_distinct_final_origins(monkeypatch):
+    from scripts.sidecar_pkg import claude_desktop
+
+    values = iter(["desktop-session-one", "desktop-session-two"])
+    monkeypatch.setattr(claude_desktop, "read_session_cookie", lambda _: next(values))
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [])
+    first = sidecar.BrowserCookieExtractor.get_macos_candidates(
+        "anthropic", ["claude.ai"], "sessionKey"
+    )
+    second = sidecar.BrowserCookieExtractor.get_macos_candidates(
+        "anthropic", ["claude.ai"], "sessionKey"
+    )
+    assert first[0][1] != second[0][1]
+    assert first[0][1].startswith("cookie:anthropic/Claude Desktop/Default/Cookies#")
+    assert second[0][1].startswith("cookie:anthropic/Claude Desktop/Default/Cookies#")

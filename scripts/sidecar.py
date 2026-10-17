@@ -2362,7 +2362,10 @@ class BrowserCookieExtractor:
                     dirs.append(home / lp)
 
             for base in dirs:
-                if not base.exists():
+                try:
+                    if not base.exists():
+                        continue
+                except OSError:
                     continue
                 if system == "Darwin":
                     from scripts.sidecar_pkg.macos_cookies import profiles
@@ -2372,21 +2375,25 @@ class BrowserCookieExtractor:
                         # Keep distinct stores; collapse aliases of the same database.
                         for store in ("Network/Cookies", "Cookies"):
                             p = profile_path / store
-                            if p.is_file():
-                                stat = p.stat()
-                                identity = (stat.st_dev, stat.st_ino)
-                                if identity in seen_stores:
+                            try:
+                                if not p.is_file():
                                     continue
-                                seen_stores.add(identity)
-                                results.append(
-                                    {
-                                        "browser": v["name"],
-                                        "type": "chromium",
-                                        "path": p,
-                                        "profile": profile_path.name,
-                                        "store": store,
-                                    }
-                                )
+                                stat = p.stat()
+                            except OSError:
+                                continue
+                            identity = (stat.st_dev, stat.st_ino)
+                            if identity in seen_stores:
+                                continue
+                            seen_stores.add(identity)
+                            results.append(
+                                {
+                                    "browser": v["name"],
+                                    "type": "chromium",
+                                    "path": p,
+                                    "profile": profile_path.name,
+                                    "store": store,
+                                }
+                            )
                 else:
                     for profile in ["Default", "Profile 1", "Profile 2"]:
                         for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
@@ -2483,6 +2490,7 @@ class BrowserCookieExtractor:
     @staticmethod
     def get_macos_candidates(provider, domains, name):
         """Return independently attributable macOS sources, never merge accounts."""
+        from scripts.sidecar_pkg.identity import credential_fingerprint, keyed_credential_origin
         from scripts.sidecar_pkg.macos_cookies import read_cookies
 
         candidates = []
@@ -2499,7 +2507,11 @@ class BrowserCookieExtractor:
 
             value = read_session_cookie(Path.home() / "Library/Application Support/Claude/Cookies")
             if value:
-                candidates.append((value, f"cookie:{provider}/Claude Desktop/Default/Cookies"))
+                origin = keyed_credential_origin(
+                    f"cookie:{provider}/Claude Desktop/Default/Cookies",
+                    credential_fingerprint(value),
+                )
+                candidates.append((value, origin))
         for target in BrowserCookieExtractor.get_all_paths():
             browser = target["browser"]
             service = (
@@ -2540,8 +2552,13 @@ class BrowserCookieExtractor:
                 except (OSError, sqlite3.Error, ValueError, TypeError):
                     continue
                 for value in values:
-                    candidate = (value, origin)
-                    if value and candidate not in candidates:
+                    if not value:
+                        continue
+                    candidate = (
+                        value,
+                        keyed_credential_origin(origin, credential_fingerprint(value)),
+                    )
+                    if candidate not in candidates:
                         candidates.append(candidate)
         return candidates
 
@@ -4243,8 +4260,14 @@ class GenericCollector:
 
                 local_account_id = tokens.get("account_id")
                 source_identity_strong = bool(local_account_id and local_account_id != "default")
-                accepts_legacy_provider_hint = provider_id not in {"chatgpt", "anthropic"} or (
-                    candidate_kind in {"file", "keychain"}
+                strict_cookie_identity = (
+                    candidate_kind == "cookie"
+                    and provider_id in {"anthropic", "anthropic_console"}
+                    and platform.system() == "Darwin"
+                )
+                accepts_legacy_provider_hint = not strict_cookie_identity and (
+                    provider_id not in {"chatgpt", "anthropic"}
+                    or (candidate_kind in {"file", "keychain"})
                 )
                 # Credential-identity cascade for the token card (#347),
                 # most specific first:
@@ -4275,7 +4298,11 @@ class GenericCollector:
                         )
                     )
                     source_identity_strong = source_identity_strong or hint_account_id is not None
-                if hint_account_id is None and fingerprint is not None:
+                if (
+                    hint_account_id is None
+                    and fingerprint is not None
+                    and not strict_cookie_identity
+                ):
                     hint_account_id = provider_hints.get(base_origin)
                     source_identity_strong = source_identity_strong or hint_account_id is not None
                 if hint_account_id is None and accepts_legacy_provider_hint:
