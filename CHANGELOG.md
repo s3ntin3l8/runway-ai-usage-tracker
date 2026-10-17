@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.11](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.10...v3.0.0-beta.11) (2026-10-17)
+
+
+### Features
+
+* demo seeder and reproducible screenshot pipeline ([#647](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/647)) ([dd6bb8b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/dd6bb8b7513d09de2c5deb2ab5d2bae5b7b10555))
+* **sidecar:** collect exact Cowork token history on macOS ([#664](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/664)) ([683dfda](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/683dfda17e830aeb4e2ae844237a0a167898d491))
+
+
+### Bug Fixes
+
+* **ci:** give Windows native gate time to finish ([#661](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/661)) ([eebc338](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/eebc338e100a82f9a4bf2fe9312d98913679bcd4))
+* **data-health:** move OpenRouter-served OpenCode events onto openrouter ([#645](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/645)) ([ea6f760](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ea6f760fc02f33893eed05f5dc7009463a8d6f4b))
+* **data-health:** wrap long values in fix dialog; move rotated xAI rules instead of deleting ([#644](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/644)) ([53dbf44](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/53dbf443a11c3bba26c85f1a806bee77018fb64f))
+* **macos:** configure bundled CA trust before frozen networking ([#646](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/646)) ([dca10f4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/dca10f40ca92f93adf29bc14efdc8aac159e1512))
+* **pricing:** seed opencode DeepSeek and Gemini 4 Argon; normalize Hermes Gemini ids ([#643](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/643)) ([86cbffc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/86cbffcfe83e62059ffa60cb567e2b0a1b57525c))
+* **sidecar:** make tray update check poll selected channel ([#650](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/650)) ([6bcc143](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6bcc143fcca5c481d419f4b2f6e8512cf0a356ad))
+* **sidecar:** preserve upload stats and discover Claude Desktop credentials ([#659](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/659)) ([24b1721](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/24b17217f45bbbd03088aad308650fcfbe26bfd8))
+* **sidecar:** renew opencode v2 xAI login in opencode.db; heal split lineage ([#637](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/637)) ([66bd9a5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/66bd9a52efd941884d98101c7e455f3c242453b2))
+* **sidecar:** serialize tray refreshes and throttle manual checks ([#653](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/653)) ([e5e9743](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e5e97436a388c77a800d63cf2cfca5c5a678e4c1))
+
 ## [3.0.0-beta.10](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.9...v3.0.0-beta.10) (2026-10-14)
 
 
