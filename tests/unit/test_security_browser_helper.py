@@ -182,12 +182,6 @@ def test_http_arm_requires_real_host_and_origin_and_records_no_bodies(helper):
             assert request("GET", "/", {"Host": "wrong.example"})[0] == 403
             assert request("PUT", "/api/v1/system/dashboard-layout", {"Host": host})[0] == 405
             assert request("PUT", "/", {"Host": "wrong.example"})[0] == 403
-            # Admitting the helper's own /32 does not admit another LAN peer.
-            with socket.socket() as forbidden:
-                forbidden.bind(("127.0.0.2", 0))
-                forbidden.settimeout(1)
-                forbidden.connect(server.server_address)
-                assert forbidden.recv(1) == b""
         finally:
             server.shutdown()
             thread.join()
@@ -198,7 +192,8 @@ def test_page_marker_control_is_not_a_false_positive_on_its_own_html():
     assert "helperResponse" in PAGE
 
 
-def test_actual_tls_routes_serve_target_pages_with_certificate_verification(helper, tmp_path):
+@pytest.fixture
+def tls_certificate(tmp_path):
     # Test-only CA, trusted by this Python context only; no host/browser trust changes.
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "tls.example")])
@@ -225,19 +220,54 @@ def test_actual_tls_routes_serve_target_pages_with_certificate_verification(help
         )
     )
     keyfile.chmod(0o600)
-    with https_server(helper, 0, certfile, keyfile) as server:
+    return certfile, keyfile
+
+
+@pytest.mark.parametrize("transport", ["http", "https"])
+def test_http_transports_refuse_non_allowlisted_peer_before_request(
+    helper, tls_certificate, transport
+):
+    # Keep the real peer on the helper's existing 127.0.0.1. The permitted /32
+    # belongs only to this negative fixture; nothing needs to bind that address.
+    denied_helper = Helper(
+        list(helper.fixtures.values()),
+        helper.bind,
+        ["127.0.0.2/32"],
+        helper.log,
+        helper.tls_hostname,
+    )
+    if transport == "https":
+        server = https_server(denied_helper, 0, *tls_certificate)
+    else:
+        server = http_server(denied_helper, 0, denied_helper.names["sidecar"])
+    with server:
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
         thread.start()
-        stalled = socket.create_connection(server.server_address, timeout=2)
-        forbidden = socket.socket()
-        forbidden.bind(("127.0.0.2", 0))
-        forbidden.settimeout(1)
-        forbidden.connect(server.server_address)
-        assert forbidden.recv(1) == b""
-        forbidden.close()
-        context = ssl.create_default_context(cafile=str(certfile))
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
         try:
+            with socket.create_connection(server.server_address, timeout=1) as forbidden:
+                assert forbidden.getsockname()[0] == "127.0.0.1"
+                # No HTTP bytes or TLS ClientHello: denial must happen at the
+                # peer allow-list, not later from a malformed request/handshake.
+                assert forbidden.recv(1) == b""
+        finally:
+            server.shutdown()
+            thread.join(timeout=1)
+            assert not thread.is_alive()
+
+
+def test_actual_tls_routes_serve_target_pages_with_certificate_verification(
+    helper, tls_certificate
+):
+    certfile, keyfile = tls_certificate
+    with https_server(helper, 0, certfile, keyfile) as server, ExitStack() as connections:
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+        thread.start()
+        try:
+            # Hold a stalled handshake open through the requests and shutdown.
+            # Both connection setup and TLS setup are inside the cleanup guard.
+            connections.enter_context(socket.create_connection(server.server_address, timeout=2))
+            context = ssl.create_default_context(cafile=str(certfile))
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             for fixture in helper.names.values():
                 with socket.create_connection(server.server_address, timeout=2) as plain:
                     with context.wrap_socket(plain, server_hostname="tls.example") as client:
@@ -257,7 +287,6 @@ def test_actual_tls_routes_serve_target_pages_with_certificate_verification(help
             thread.join(timeout=1)
             assert not thread.is_alive()
             assert time.monotonic() - started < 1
-            stalled.close()
 
 
 @pytest.mark.parametrize("bind_errno", [errno.EACCES, errno.EADDRINUSE])
