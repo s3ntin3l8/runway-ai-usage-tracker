@@ -70,7 +70,8 @@ sidecar config in `cowork-progress.json`.
 Desktop Code usually writes ordinary Claude Code project logs and is collected by
 the existing path. On the investigated Mac, 83 of 86 Desktop Code session manifests
 matched those logs; the unmatched manifests do not establish missing token usage.
-No parallel Desktop Code collector is added.
+No parallel Desktop Code collector is added. Three unmatched manifests (two with
+completed turns) need a separate source/lifecycle investigation tracked in #665.
 
 Ordinary Desktop Chat token accounting is not established. The inspected Desktop
 2.42304.0 includes agent usage-ledger code, but no real ledger files were found;
@@ -87,4 +88,5 @@ shell export does not configure a separately launched tray application. This doe
 not suppress Keychain access required by other credential sources.
 
 Tracking: #655 (tray), #656 (Cowork and Desktop Code), #662 (ordinary Chat tokens),
-#663 (macOS credential inventory/fallback). Quota collection stays server-side.
+#663 (macOS credential inventory/fallback), #665 (unmatched Desktop Code sources).
+Quota collection stays server-side.

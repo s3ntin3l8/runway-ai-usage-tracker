@@ -260,9 +260,6 @@ def test_desktop_cookie_precedes_readable_browser_cookie(desktop, monkeypatch):
 
 
 def test_desktop_opt_out_preserves_browser_without_keychain(desktop, monkeypatch):
-    import sqlite3
-    from contextlib import closing
-
     from scripts import sidecar
     from scripts.sidecar_pkg import claude_desktop
 
