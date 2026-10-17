@@ -80,6 +80,8 @@ a = Analysis(
         # lazily imported module can never be left out of a frozen build.
         "scripts.sidecar_pkg.credentials",
         "scripts.sidecar_pkg.claude_desktop",
+        "cryptography.hazmat.primitives.padding",
+        "cryptography.hazmat.primitives.ciphers",
         "scripts.sidecar_pkg.event_extractors.anthropic",
         "scripts.sidecar_pkg.event_extractors.antigravity",
         "scripts.sidecar_pkg.event_extractors.chatgpt",

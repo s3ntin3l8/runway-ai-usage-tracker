@@ -5,7 +5,8 @@
 The tray separates the last successful server sync (including an idle heartbeat)
 from the last successful data upload. The metric and event counts belong to that
 upload, not to the process lifetime and not to a token total. Idle heartbeats and
-failed uploads do not replace them. A server-side event-storage error does not
+failed uploads do not replace them. Successful offline-queue replay updates the
+last-upload time and counts for the last acknowledged replayed payload. A server-side event-storage error does not
 count as successful event delivery.
 
 ## Claude Desktop and Claude Code
@@ -23,7 +24,11 @@ Expired cookies are ignored. Chromium v24 host binding and PKCS7 padding are
 validated before forwarding a value. Keychain successes and failures are cached
 in memory for ten minutes to avoid a Keychain lookup on every provider poll.
 Warnings report the failed stage without cookie values or Keychain output.
-If access is unavailable, existing browser credential sources remain available.
+For `claude.ai` sessionKey, Desktop is tried before browser stores. A successful
+read logs its source (Desktop or browser name), without the cookie value. If the
+Desktop account differs from a browser account, this precedence selects the
+Desktop cookie for server identity verification. If Desktop credentials or an
+optional helper/crypto dependency are unavailable, browser sources remain available.
 Keychain access may require macOS permission; no ACLs are changed automatically.
 
 ### Quotas are not token events

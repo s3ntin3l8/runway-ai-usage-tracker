@@ -99,6 +99,9 @@ def read_session_cookie(path: Path) -> str | None:
                 value = plaintext.decode("utf-8")
                 if value:
                     return value
+            except ImportError:
+                _warn_once("cookie decryption dependency unavailable")
+                return None
             except (ValueError, UnicodeError):
                 _warn_once("cookie decryption failed")
     except (OSError, sqlite3.Error, ValueError, TypeError):

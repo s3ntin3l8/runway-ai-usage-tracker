@@ -188,3 +188,55 @@ def test_keychain_command_failure_is_reported_and_backed_off(desktop, monkeypatc
     assert lookup.call_count == 1
     assert "Keychain command did not complete" in caplog.text
     assert "sensitive" not in caplog.text
+
+
+@pytest.mark.parametrize("missing", ["helper", "padding", "ciphers"])
+def test_missing_desktop_dependency_preserves_browser_fallback(desktop, monkeypatch, missing):
+    import builtins
+
+    write_cookie(desktop)
+    storage_key(monkeypatch)
+    browser_db = desktop.parent / "synthetic-browser.sqlite"
+    with sqlite3.connect(browser_db) as conn:
+        conn.execute("CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT)")
+        conn.execute(
+            "INSERT INTO moz_cookies VALUES ('.claude.ai', 'sessionKey', 'synthetic-browser-cookie')"
+        )
+    monkeypatch.setattr(
+        sidecar.BrowserCookieExtractor,
+        "get_all_paths",
+        lambda: [
+            {"browser": "Firefox", "type": "firefox", "path": browser_db},
+        ],
+    )
+    original_import = builtins.__import__
+
+    def guarded_import(name, global_ns=None, local_ns=None, fromlist=(), level=0):
+        if (
+            (missing == "helper" and name == "scripts.sidecar_pkg.claude_desktop")
+            or (
+                missing == "padding"
+                and name == "cryptography.hazmat.primitives"
+                and "padding" in fromlist
+            )
+            or (missing == "ciphers" and name == "cryptography.hazmat.primitives.ciphers")
+        ):
+            raise ImportError("synthetic missing dependency")
+        return original_import(name, global_ns, local_ns, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    assert (
+        sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey")
+        == "synthetic-browser-cookie"
+    )
+
+
+def test_desktop_cookie_source_is_logged_without_value(desktop, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    write_cookie(desktop)
+    storage_key(monkeypatch)
+    assert (
+        sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") == "sk-ant-synthetic"
+    )
+    assert "source: Claude Desktop" in caplog.text
+    assert "sk-ant-synthetic" not in caplog.text

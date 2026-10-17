@@ -59,11 +59,11 @@ class TrayDaemon:
         runner = self._runner
         parts: list[str] = []
 
-        with runner._lock:
-            last_sync = runner.last_sync_at
-            last_upload = runner.last_upload_at
-            metrics = runner.last_metrics_count
-            events = runner.last_events_count
+        snapshot = runner.stats_snapshot()
+        last_sync = snapshot["last_sync_at"]
+        last_upload = snapshot["last_upload_at"]
+        metrics = snapshot["last_metrics_count"]
+        events = snapshot["last_events_count"]
 
         now = time.time()
         for label, last_at in (("Last sync", last_sync), ("Last upload", last_upload)):
@@ -80,7 +80,7 @@ class TrayDaemon:
                 f"{events} event{'s' if events != 1 else ''}"
             )
 
-        err = runner.last_error
+        err = snapshot["last_error"]
         if err:
             # Truncate long errors
             parts.append(f"Error: {err[:60]}")
@@ -94,13 +94,6 @@ class TrayDaemon:
     def _on_runner_status(self, status: str) -> None:
         """Invoked by DaemonRunner on each status change; forwards to tray."""
         with self._lock:
-            self._last_stats = {
-                "status": status,
-                "last_cycle_at": self._runner.last_cycle_at,
-                "last_metrics_count": self._runner.last_metrics_count,
-                "last_events_count": self._runner.last_events_count,
-                "last_upload_at": self._runner.last_upload_at,
-                "last_sync_at": self._runner.last_sync_at,
-            }
+            self._last_stats = {"status": status, **self._runner.stats_snapshot()}
         if self.on_status_change is not None:
             self.on_status_change(status)
