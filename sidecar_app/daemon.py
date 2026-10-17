@@ -15,8 +15,6 @@ class TrayDaemon:
     def __init__(self, config: dict) -> None:
         self._config = config
         self._runner: DaemonRunner = DaemonRunner(config, on_status_change=self._on_runner_status)
-        self._lock = threading.Lock()
-        self._last_stats: dict = {}
         self.on_status_change: Callable[[str], None] | None = None
 
     # ------------------------------------------------------------------
@@ -59,20 +57,28 @@ class TrayDaemon:
         runner = self._runner
         parts: list[str] = []
 
-        last_at = runner.last_cycle_at
-        if last_at is not None:
-            age = int(time.time() - last_at)
-            if age < 60:
-                parts.append(f"Last sync: {age}s ago")
+        snapshot = runner.stats_snapshot()
+        last_sync = snapshot["last_sync_at"]
+        last_upload = snapshot["last_upload_at"]
+        metrics = snapshot["last_metrics_count"]
+        events = snapshot["last_events_count"]
+
+        now = time.time()
+        for label, last_at in (("Last sync", last_sync), ("Last upload", last_upload)):
+            if last_at is None:
+                parts.append(f"{label}: never")
             else:
-                parts.append(f"Last sync: {age // 60}m ago")
-        else:
-            parts.append("Last sync: never")
+                age = max(0, int(now - last_at))
+                elapsed = f"{age}s" if age < 60 else f"{age // 60}m"
+                parts.append(f"{label}: {elapsed} ago")
 
-        count = runner.last_metrics_count
-        parts.append(f"{count} metric{'s' if count != 1 else ''}")
+        if last_upload is not None:
+            parts.append(
+                f"{metrics} metric{'s' if metrics != 1 else ''}, "
+                f"{events} event{'s' if events != 1 else ''}"
+            )
 
-        err = runner.last_error
+        err = snapshot["last_error"]
         if err:
             # Truncate long errors
             parts.append(f"Error: {err[:60]}")
@@ -85,11 +91,5 @@ class TrayDaemon:
 
     def _on_runner_status(self, status: str) -> None:
         """Invoked by DaemonRunner on each status change; forwards to tray."""
-        with self._lock:
-            self._last_stats = {
-                "status": status,
-                "last_cycle_at": self._runner.last_cycle_at,
-                "last_metrics_count": self._runner.last_metrics_count,
-            }
         if self.on_status_change is not None:
             self.on_status_change(status)

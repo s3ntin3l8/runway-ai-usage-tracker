@@ -1645,7 +1645,7 @@ def _replay_queue_lines(
     api_key: str,
     stop_event: threading.Event | None,
     config: dict[str, Any] | None,
-    on_sent: Callable[[], None] | None = None,
+    on_sent: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[int, bool]:
     """Replay one entry at a time, streaming failures and the unprocessed suffix."""
     failed_count = 0
@@ -1677,7 +1677,7 @@ def _replay_queue_lines(
                 )
                 if success and not events_failed:
                     if on_sent is not None:
-                        on_sent()
+                        on_sent(payload)
                 else:
                     keep = True
                     if success and events_failed:
@@ -1719,6 +1719,7 @@ def queue_flush(
     api_key: str,
     stop_event: threading.Event | None = None,
     config: dict[str, Any] | None = None,
+    on_upload: Callable[[int, int], None] | None = None,
 ) -> int:
     """Replay the queue with bounded memory and atomic replacement of retained entries."""
     queue_dir = get_queue_dir()
@@ -1737,10 +1738,12 @@ def queue_flush(
 
     count = 0
 
-    def record_sent() -> None:
+    def record_sent(payload: dict[str, Any]) -> None:
         # Count acknowledgements even if a later retention write/read fails.
         nonlocal count
         count += 1
+        if on_upload is not None:
+            on_upload(len(payload.get("metrics") or []), len(payload.get("events") or []))
 
     target_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
     try:
@@ -2511,6 +2514,23 @@ class BrowserCookieExtractor:
         dotted = "." + bare
         like_subdomain = "%." + bare
 
+        # Desktop uses its own Electron store and Keychain service. Keep this
+        # scoped to Claude's session cookie; other provider rules never read it.
+        if platform.system() == "Darwin" and bare == "claude.ai" and name == "sessionKey":
+            try:
+                from scripts.sidecar_pkg.claude_desktop import read_session_cookie
+
+                desktop_cookie = read_session_cookie(
+                    Path.home() / "Library/Application Support/Claude/Cookies"
+                )
+                if desktop_cookie:
+                    logging.info("Claude session cookie source: Claude Desktop")
+                    return desktop_cookie
+            except ImportError:
+                logging.warning(
+                    "Claude Desktop credential helper unavailable; trying browser sources"
+                )
+
         for target in BrowserCookieExtractor.get_all_paths():
             try:
                 if target["type"] == "safari":
@@ -2519,6 +2539,7 @@ class BrowserCookieExtractor:
                         if c["name"] == name and (
                             host == bare or host == dotted or host.endswith(dotted)
                         ):
+                            logging.info("Cookie source: %s", target.get("browser", target["type"]))
                             return c["value"]
                 else:
                     with sqlite3.connect(
@@ -2536,6 +2557,9 @@ class BrowserCookieExtractor:
                             if row:
                                 val = decrypt_chromium_cookie(row[0], target["browser"])
                                 if val:
+                                    logging.info(
+                                        "Cookie source: %s", target.get("browser", target["type"])
+                                    )
                                     return val
                         else:  # Firefox
                             cursor.execute(
@@ -2546,6 +2570,9 @@ class BrowserCookieExtractor:
                             )
                             row = cursor.fetchone()
                             if row:
+                                logging.info(
+                                    "Cookie source: %s", target.get("browser", target["type"])
+                                )
                                 return row[0]
             except Exception:
                 logging.warning(
@@ -5070,7 +5097,10 @@ class DaemonRunner:
 
         # Readable state attributes
         self.last_cycle_at: float | None = None
+        self.last_sync_at: float | None = None
+        self.last_upload_at: float | None = None
         self.last_metrics_count: int = 0
+        self.last_events_count: int = 0
         self.last_http_code: int | None = None
         self.last_error: str | None = None
 
@@ -5113,6 +5143,27 @@ class DaemonRunner:
     # ------------------------------------------------------------------
     # Public methods
     # ------------------------------------------------------------------
+
+    def stats_snapshot(self) -> dict[str, Any]:
+        """Return delivery counters and errors from one consistent read."""
+        with self._lock:
+            return {
+                "last_cycle_at": self.last_cycle_at,
+                "last_sync_at": self.last_sync_at,
+                "last_upload_at": self.last_upload_at,
+                "last_metrics_count": self.last_metrics_count,
+                "last_events_count": self.last_events_count,
+                "last_error": self.last_error,
+            }
+
+    def _record_upload(self, metrics: int, events: int) -> None:
+        """Record a fully acknowledged queued payload, even if its file cleanup fails."""
+        with self._lock:
+            self.last_sync_at = time.time()
+            if metrics or events:
+                self.last_upload_at = self.last_sync_at
+                self.last_metrics_count = metrics
+                self.last_events_count = events
 
     def run_once(self, providers: list[str] | None = None) -> bool:
         """Run one collection+ingest cycle synchronously. Returns True on success."""
@@ -5168,7 +5219,13 @@ class DaemonRunner:
             update_channel, auto_update = _reported_update_settings()
 
             # Try to flush queue first
-            queue_flush(api_url, api_key, stop_event=self._stop_event, config=self._config)
+            queue_flush(
+                api_url,
+                api_key,
+                stop_event=self._stop_event,
+                config=self._config,
+                on_upload=self._record_upload,
+            )
 
             # Spec §7.3: cap each POST at 1000 events. Bootstrap (90-day backfill)
             # commonly produces 5k–50k events; a single payload would exceed the
@@ -5254,11 +5311,16 @@ class DaemonRunner:
 
             with self._lock:
                 self.last_cycle_at = time.time()
-                self.last_metrics_count = len(metrics)
                 self.last_http_code = code
+                if success:
+                    self.last_sync_at = self.last_cycle_at
+                    if not events_failed and (metrics or events):
+                        self.last_upload_at = self.last_cycle_at
+                        self.last_metrics_count = len(metrics)
+                        self.last_events_count = len(events)
 
             if success:
-                if metrics or events:
+                if (metrics or events) and not events_failed:
                     logging.info(f"Successfully sent {len(metrics)} metrics, {len(events)} events")
                 else:
                     logging.debug("Heartbeat successful")
@@ -5299,8 +5361,12 @@ class DaemonRunner:
                         logging.warning(f"Failed to advance event watermark: {e}")
 
                 with self._lock:
-                    self.last_error = None
-                    self._status_reason = "success"
+                    self.last_error = (
+                        "Server failed to store usage events; retry pending."
+                        if events_failed
+                        else None
+                    )
+                    self._status_reason = "error" if events_failed else "success"
                 self._fire_status_change()
 
                 self._apply_ingest_instructions(
