@@ -1380,6 +1380,8 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
     """
     import scripts.sidecar as sc
 
+    monkeypatch.setattr(sc.Path, "home", lambda: tmp_path)
+
     # Pre-populate the cache directly via the module-global (a wrapper
     # test below uses the real ``_get_credential_cache()`` path).
     from scripts.sidecar_pkg.credentials import CredentialCache
@@ -1413,7 +1415,7 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
             self.event_id = eid
 
         def model_dump(self, mode: str = "python") -> dict:
-            return {"event_id": self.event_id}
+            return {"provider_id": "anthropic", "event_id": self.event_id}
 
     def _fake_extractor(
         account_id: str,
@@ -1458,6 +1460,8 @@ def test_run_collection_stamps_local_identity_when_no_server_match(monkeypatch, 
     the mismatch.
     """
     import scripts.sidecar as sc
+
+    monkeypatch.setattr(sc.Path, "home", lambda: tmp_path)
     from scripts.sidecar_pkg.credentials import CredentialCache
 
     cache = CredentialCache()
@@ -1480,7 +1484,7 @@ def test_run_collection_stamps_local_identity_when_no_server_match(monkeypatch, 
             self.event_id = eid
 
         def model_dump(self, mode: str = "python") -> dict:
-            return {"event_id": self.event_id}
+            return {"provider_id": "anthropic", "event_id": self.event_id}
 
     def _fake_extractor(
         account_id: str,
