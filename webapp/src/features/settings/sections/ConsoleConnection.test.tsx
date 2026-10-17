@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import * as api from '@/api/endpoints';
@@ -82,7 +83,7 @@ it('discards stale discovery results when the cookie changes', async () => {
   view.rerender(<ConsoleOrganizationPicker cookie="new-session" value="" onSelect={onSelect} />);
   await act(async () => resolve({ organizations: [{ id: orgId, name: 'Stale organization' }] }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Load Console organizations' })).toBeEnabled());
-  expect(onSelect).not.toHaveBeenCalled();
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith('');
 });
 
 it('shows one Claude settings entry and switches to independent Console account settings', async () => {
@@ -100,4 +101,67 @@ it('shows one Claude settings entry and switches to independent Console account 
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).getByText('Individual Org')).toBeInTheDocument();
   expect(within(dialog).queryByText('Subscription login')).not.toBeInTheDocument();
+});
+
+
+function StatefulPicker({ cookie = 'sample-session', initial = orgId }: { cookie?: string; initial?: string }) {
+  const [selected, setSelected] = useState(initial);
+  return <>
+    <ConsoleOrganizationPicker cookie={cookie} value={selected} onSelect={setSelected} />
+    <output aria-label="Selected organization">{selected}</output>
+  </>;
+}
+
+const multipleOrgs = [{ id: orgId, name: 'One' }, { id: 'other', name: 'Two' }];
+
+it('preserves an explicit organization choice when reloading with the same cookie', async () => {
+  vi.mocked(api.discoverConsoleOrganizations).mockResolvedValue({ organizations: multipleOrgs });
+  renderWithProviders(<StatefulPicker initial="" />);
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await screen.findByRole('option', { name: 'One' });
+  await userEvent.selectOptions(screen.getByLabelText('API organization'), orgId);
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await waitFor(() => expect(api.discoverConsoleOrganizations).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Load Console organizations' })).toBeEnabled());
+  expect(screen.getByLabelText('API organization')).toHaveValue(orgId);
+  expect(screen.getByLabelText('Selected organization')).toHaveTextContent(orgId);
+});
+
+it.each([
+  { organizations: [{ id: 'other', name: 'Two' }, { id: 'third', name: 'Three' }] },
+  { organizations: [] },
+])('clears the selection when the selected organization is absent after refresh (%j)', async ({ organizations }) => {
+  vi.mocked(api.discoverConsoleOrganizations)
+    .mockResolvedValueOnce({ organizations: multipleOrgs })
+    .mockResolvedValueOnce({ organizations });
+  renderWithProviders(<StatefulPicker />);
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await screen.findByRole('option', { name: 'One' });
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await waitFor(() => expect(screen.getByLabelText('Selected organization')).toBeEmptyDOMElement());
+});
+
+it('clears a selected organization when the cookie changes', async () => {
+  vi.mocked(api.discoverConsoleOrganizations).mockResolvedValue({ organizations: multipleOrgs });
+  const view = renderWithProviders(<StatefulPicker cookie="old-session" />);
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await screen.findByRole('option', { name: 'One' });
+  view.rerender(<StatefulPicker cookie="new-session" />);
+  await waitFor(() => expect(screen.getByLabelText('Selected organization')).toBeEmptyDOMElement());
+  expect(screen.queryByLabelText('API organization')).not.toBeInTheDocument();
+});
+
+it('preserves a choice made while a refresh is in flight', async () => {
+  let resolve: (value: { organizations: typeof multipleOrgs }) => void = () => {};
+  vi.mocked(api.discoverConsoleOrganizations)
+    .mockResolvedValueOnce({ organizations: multipleOrgs })
+    .mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  renderWithProviders(<StatefulPicker />);
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await screen.findByRole('option', { name: 'One' });
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  await userEvent.selectOptions(screen.getByLabelText('API organization'), 'other');
+  await act(async () => resolve({ organizations: multipleOrgs }));
+  expect(screen.getByLabelText('API organization')).toHaveValue('other');
+  expect(screen.getByLabelText('Selected organization')).toHaveTextContent('other');
 });

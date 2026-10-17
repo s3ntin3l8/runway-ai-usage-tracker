@@ -4,6 +4,7 @@ import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -1927,8 +1928,6 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
             account_id = canonical_account_id(body.account_label)
 
     if provider_id == "anthropic_console":
-        from uuid import UUID
-
         try:
             account_id = str(UUID(account_id))
         except ValueError as exc:
@@ -2237,8 +2236,6 @@ async def discover_console_organizations(
 
 async def _validate_console_connection(cookie: str, organization_id: str) -> str:
     """Validate membership and billing access; the UUID stays the saved identity."""
-    from uuid import UUID
-
     try:
         org_id = str(UUID(organization_id))
     except ValueError as exc:
@@ -2299,8 +2296,6 @@ async def preview_account_identity(
             raise HTTPException(
                 status_code=422, detail="Enter a Console cookie and select an organization"
             )
-        from uuid import UUID
-
         try:
             organization_id = str(UUID(body.organization_id))
         except ValueError as exc:

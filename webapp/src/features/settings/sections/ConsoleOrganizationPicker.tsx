@@ -12,7 +12,14 @@ export function ConsoleOrganizationPicker({ cookie, value, onSelect }: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inflight = useRef<AbortController | null>(null);
+  const selection = useRef({ value, onSelect });
+  selection.current = { value, onSelect };
+  const previousCookie = useRef(cookie);
   useEffect(() => {
+    if (previousCookie.current !== cookie) {
+      previousCookie.current = cookie;
+      selection.current.onSelect('');
+    }
     setOrganizations([]);
     setError(null);
     setLoading(false);
@@ -29,7 +36,10 @@ export function ConsoleOrganizationPicker({ cookie, value, onSelect }: {
       const data = await discoverConsoleOrganizations(cookie.trim(), ac.signal);
       if (ac.signal.aborted) return;
       setOrganizations(data.organizations);
-      onSelect(data.organizations.length === 1 ? data.organizations[0].id : '');
+      // Use the latest selection: it can change while discovery is in flight.
+      const selected = selection.current.value;
+      selection.current.onSelect(data.organizations.some((org) => org.id === selected)
+        ? selected : data.organizations.length === 1 ? data.organizations[0].id : '');
       if (data.organizations.length === 0) setError('No API organizations are accessible with this Console session.');
     } catch (err) {
       if (!ac.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load organizations');
