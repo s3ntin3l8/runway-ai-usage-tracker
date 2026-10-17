@@ -165,3 +165,26 @@ def test_desktop_cookie_database_is_closed_after_read(desktop, monkeypatch):
     assert len(connections) == 1
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connections[0].execute("SELECT 1")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        subprocess.TimeoutExpired(
+            "security", 5, output="sensitive output", stderr="sensitive error"
+        ),
+        FileNotFoundError("sensitive path"),
+    ],
+)
+def test_keychain_command_failure_is_reported_and_backed_off(desktop, monkeypatch, caplog, failure):
+    from scripts.sidecar_pkg import claude_desktop
+
+    monkeypatch.setattr(claude_desktop, "_WARNED", set())
+    write_cookie(desktop)
+    lookup = Mock(side_effect=failure)
+    monkeypatch.setattr(sidecar.subprocess, "run", lookup)
+    for _ in range(2):
+        assert sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") is None
+    assert lookup.call_count == 1
+    assert "Keychain command did not complete" in caplog.text
+    assert "sensitive" not in caplog.text

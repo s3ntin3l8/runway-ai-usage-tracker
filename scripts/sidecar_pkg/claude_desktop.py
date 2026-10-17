@@ -33,6 +33,7 @@ def _storage_key(path: Path) -> bytes | None:
         if cached and time.monotonic() < cached[0]:
             return cached[1]
         key = None
+        failure_reason = "Keychain access failed (retry in ten minutes)"
         try:
             result = subprocess.run(
                 ["security", "find-generic-password", "-s", "Claude Safe Storage", "-w"],
@@ -45,9 +46,11 @@ def _storage_key(path: Path) -> bytes | None:
                     "sha1", result.stdout.strip().encode(), b"saltysalt", 1003, 16
                 )
         except (OSError, subprocess.SubprocessError):
-            pass
+            # A missing executable or timed-out prompt is a cached failure too.
+            # Do not expose command output or exception text: either may contain secrets.
+            failure_reason = "Keychain command did not complete (retry in ten minutes)"
         if key is None:
-            _warn_once("Keychain access failed (retry in ten minutes)")
+            _warn_once(failure_reason)
         _KEY_CACHE[cache_id] = (time.monotonic() + 600, key)
         return key
 
