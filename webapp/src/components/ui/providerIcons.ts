@@ -26,6 +26,7 @@ import antigravity from '@/assets/providers/antigravity.svg';
 // event_extractors/opencode.py:map_opencode_provider_id.
 const PROVIDER_ICONS: Record<string, string> = {
   anthropic,
+  anthropic_console: anthropic,
   chatgpt: openai,
   gemini,
   github: githubCopilot,

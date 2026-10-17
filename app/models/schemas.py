@@ -1,7 +1,19 @@
 import html
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class CreditBalanceComponent(BaseModel):
+    """One purchased or promotional tranche explaining an upstream balance."""
+
+    kind: Literal["purchased", "subscription", "promotion"]
+    label: str
+    currency: str
+    remaining_value: float
+    granted_value: float | None = None
+    expires_at: str | None = None
+    products: list[str] = Field(default_factory=list)
 
 
 class LimitCard(BaseModel):
@@ -19,6 +31,7 @@ class LimitCard(BaseModel):
     is_unlimited: bool = False
     unit_type: str = "generic"  # "currency", "tokens", "requests", "minutes", "percent", "generic"
     currency: str | None = None  # "USD", "EUR", "CNY", etc.
+    credit_breakdown: list[CreditBalanceComponent] | None = None
     # ISO 8601 timestamp for hover tooltip with absolute time
     reset_at: str | None = None
     # Data collection mechanism (how)

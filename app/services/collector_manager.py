@@ -16,6 +16,7 @@ import httpx
 
 from app.core.utils import IdentityExtractor, has_refresh_credential, scrub_log
 from app.services.collectors.anthropic import AnthropicCollector
+from app.services.collectors.anthropic_console import AnthropicConsoleCollector
 from app.services.collectors.antigravity import AntigravityCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.deepseek import DeepSeekCollector
@@ -77,6 +78,7 @@ class CollectorManager:
         # Registry of available collector classes and their default settings
         self.collector_registry = {
             "anthropic": (AnthropicCollector, "Claude (Anthropic)", 900),
+            "anthropic_console": (AnthropicConsoleCollector, "Claude · Console balance", 900),
             "antigravity": (AntigravityCollector, "Antigravity", 900),
             "gemini": (GeminiCollector, "Gemini", 900),
             "github": (GitHubCollector, "GitHub Copilot", 900),

@@ -76,6 +76,7 @@ The grouped pending-events response reports `total_events` across the full queue
 |--------|-------|-------------|
 | `GET` | `/api/v1/system/health` | Liveness check |
 | `GET` | `/api/v1/system/status` | Collector cache states and error counts |
+| `POST` | `/api/v1/system/provider-config/console-organizations` | Discover API organizations using a supplied Console `session_cookie` (admin; cookie is not persisted) |
 | `GET` | `/api/v1/system/settings` | Non-sensitive runtime configuration |
 | `GET` | `/api/v1/system/audit-log` | Append-only admin-mutation trail |
 | `GET` | `/api/v1/system/token-health` | Health of every credential (cache, dashboard-saved, server env/file): `status` is `valid`/`expiring`/`expired`/`invalid` (provider rejected it)/`failing` (not rejected, but its collections have kept failing for over an hour)/`stale` (sidecar stopped re-reporting it)/`unknown`; `removable` is false for config/server-managed rows. Status uses the same rules as `GET /system/credentials` (expiry, a provider rejection, and staleness), so the two views agree. Values are never returned — only types and origin. **Legacy:** the webapp no longer reads this; credential alerts still build on it because webhook scoping depends on its synthetic account ids (`server`, `config:<account>`), so use `GET /system/credentials` for new clients |
@@ -161,6 +162,15 @@ interface LimitCard {
   is_unlimited?: boolean;
   unit_type?: string;       // "currency" | "tokens" | "requests" | "percent"
   currency?: string;      // "USD" | "EUR" | "CNY"
+  credit_breakdown?: Array<{ // Optional purchased/promotional balance explanation
+    kind: 'purchased' | 'subscription' | 'promotion';
+    label: string;
+    currency: string;
+    remaining_value: number;
+    granted_value?: number | null;
+    expires_at?: string | null; // Expiry, not a quota reset or next grant
+    products: string[];
+  }> | null;
   window_type?: string;    // "daily" | "weekly" | "monthly" | "session" | "rolling" | "unknown"
 
   // Token breakdown (when available)
@@ -272,3 +282,28 @@ Kimi Coding sidecar token cards may include `metadata.cli_device_id` alongside
 `cli_access_token`. It is trimmed printable ASCII, at most 256 characters,
 and is accepted only for a `kimi_coding` CLI bundle. It is device metadata,
 not an authentication value, and is never returned by the credential inventory.
+
+
+### Claude Console connections
+
+Settings groups Subscription quotas (`anthropic`) and Console API credits
+(`anthropic_console`) under Claude. Each connection has its own credentials,
+collection health, and dashboard card. Console balances use the existing PAYG
+currency layout; the reported total includes purchased and promotional credits.
+`credit_breakdown` explains those credits without increasing the total. Grant
+usage is `granted_value - remaining_value`; the total has no quota percentage.
+
+`POST /api/v1/system/provider-config/console-organizations` accepts
+`{"session_cookie": "<Console sessionKey or Cookie header>"}` and returns
+`{"organizations": [{"id": "<organization UUID>", "name": "<organization name>"}]}`.
+Only API-capable organizations are returned. An empty list means no accessible
+API organizations, not a zero credit balance.
+
+For account preview, send `provider_id: "anthropic_console"`, `session_cookie`,
+and `organization_id` to `/api/v1/system/provider-config/preview-account`.
+Successful preview reports `label_source: "organization"`; membership and
+billing access are verified. Save to
+`PUT /api/v1/system/provider-config/anthropic_console/{organization UUID}` using
+the usual `session_cookie` field. Organization identity remains stable across
+cookie replacement and display-label changes. API responses expose only the
+credential's configured status. Clear it using `clear_session_cookie: true`.

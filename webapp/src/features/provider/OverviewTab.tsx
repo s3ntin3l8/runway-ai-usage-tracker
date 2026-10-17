@@ -1,3 +1,4 @@
+import { CreditBreakdown } from '@/components/ui/CreditBreakdown';
 // Overview: "how am I doing right now?" — a KPI strip, any anomaly/error
 // alerts, the quota-window gauges, and a compact fill trajectory for the
 // critical window so the answer to "am I on pace?" is visible without a tab
@@ -121,6 +122,15 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
       {entry.server_collector_available && entry.critical_gauge.data_source === 'local' ? (
         <Card role="status" className="border-warning/30 bg-warning-muted px-4 py-2.5 text-[13px] text-fg">
           Usage events are available, but quota data has not been collected. Check the provider credentials in Settings or use Debug to inspect collection.
+        </Card>
+      ) : null}
+
+      {kind === 'spend' && entry.critical_gauge.credit_breakdown ? (
+        <Card>
+          <CardHeader><CardTitle>Console balance · {entry.critical_gauge.remaining}</CardTitle></CardHeader>
+          <CardContent>
+            <CreditBreakdown entries={entry.critical_gauge.credit_breakdown} />
+          </CardContent>
         </Card>
       ) : null}
 
