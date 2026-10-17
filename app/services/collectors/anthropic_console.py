@@ -144,8 +144,13 @@ def parse_console_balance(data: Any, *, now: datetime | None = None) -> dict[str
                 if expiry <= now:
                     continue
             remaining = _money(tranche, "remaining", "remaining_amount_minor_units")
-            granted = _money(tranche, "granted", "granted_amount_minor_units")
-            if remaining < 0 or granted < remaining:
+            granted = (
+                _money(tranche, "granted", "granted_amount_minor_units")
+                if tranche.get("granted") is not None
+                or tranche.get("granted_amount_minor_units") is not None
+                else None
+            )
+            if remaining < 0 or (granted is not None and granted < remaining):
                 raise ValueError("Invalid credit grant amounts")
             kind = (
                 "subscription"

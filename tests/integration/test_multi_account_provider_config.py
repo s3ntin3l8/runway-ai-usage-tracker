@@ -2338,3 +2338,32 @@ def test_console_unchanged_cookie_allows_settings_edits_during_outage(client, se
     validate.assert_not_awaited()
     session.refresh(row)
     assert row.session_cookie is None
+
+
+def test_console_preview_normalizes_org_before_duplicate_check(client, monkeypatch):
+    _mock_console_access(monkeypatch)
+    noncanonical = CONSOLE_ORG_ID.replace("-", "")
+    payload = {
+        "provider_id": "anthropic_console",
+        "session_cookie": "sample-session",
+        "organization_id": noncanonical,
+    }
+    preview = client.post("/api/v1/system/provider-config/preview-account", json=payload)
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["suggested_account_id"] == CONSOLE_ORG_ID
+    assert (
+        client.put(
+            f"/api/v1/system/provider-config/anthropic_console/{CONSOLE_ORG_ID}",
+            json={"session_cookie": "sample-session"},
+        ).status_code
+        == 200
+    )
+    duplicate = client.post("/api/v1/system/provider-config/preview-account", json=payload)
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()["detail"]["already_exists"] is True
+    assert duplicate.json()["detail"]["suggested_account_id"] == CONSOLE_ORG_ID
+    payload["organization_id"] = "invalid"
+    assert (
+        client.post("/api/v1/system/provider-config/preview-account", json=payload).status_code
+        == 422
+    )

@@ -2299,10 +2299,16 @@ async def preview_account_identity(
             raise HTTPException(
                 status_code=422, detail="Enter a Console cookie and select an organization"
             )
-        label = await _validate_console_connection(body.session_cookie, body.organization_id)
-        already_exists = _row_exists(session, body.provider_id, body.organization_id)
+        from uuid import UUID
+
+        try:
+            organization_id = str(UUID(body.organization_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Select a Console organization") from exc
+        label = await _validate_console_connection(body.session_cookie, organization_id)
+        already_exists = _row_exists(session, body.provider_id, organization_id)
         result = {
-            "suggested_account_id": body.organization_id,
+            "suggested_account_id": organization_id,
             "suggested_label": label,
             "label_source": "organization",
             "already_exists": already_exists,

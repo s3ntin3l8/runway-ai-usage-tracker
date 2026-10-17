@@ -237,3 +237,16 @@ async def test_invalid_retry_after_keeps_default_backoff(retry_after):
         with pytest.raises(ConsoleAPIError) as error:
             await console_get(client, "/api/organizations", "sample-session")
     assert error.value.retry_after == 300
+
+
+@pytest.mark.parametrize("granted", [{}, {"granted": None, "granted_amount_minor_units": None}])
+def test_grant_without_original_amount_keeps_remaining_balance(granted):
+    data = deepcopy(BALANCE)
+    tranche = data["promo_tranches"][0]
+    tranche.pop("granted_amount_minor_units")
+    tranche.update(granted)
+    card = LimitCard(**parse_console_balance(data, now=NOW))
+    assert card.remaining == "$140.00"
+    assert card.credit_breakdown is not None
+    assert card.credit_breakdown[1].remaining_value == 100
+    assert card.credit_breakdown[1].granted_value is None

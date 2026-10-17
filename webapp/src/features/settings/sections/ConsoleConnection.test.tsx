@@ -87,13 +87,14 @@ it('discards stale discovery results when the cookie changes', async () => {
 
 it('shows one Claude settings entry and switches to independent Console account settings', async () => {
   const configuredQuota = { ...quota, accounts: [{ account_id: 'alice@example.com', account_label: 'Subscription login', enabled: true }], account_count: 1 };
-  const configuredConsole = { ...consoleProvider, accounts: [{ account_id: orgId, account_label: 'Individual Org', enabled: true, session_cookie_set: true }], account_count: 1 };
+  const configuredConsole = { ...consoleProvider, accounts: [{ account_id: orgId, account_label: 'Individual Org', enabled: false, session_cookie_set: true }], account_count: 1 };
   vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [configuredQuota, configuredConsole] });
   vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: ['anthropic_console', 'anthropic'], card_orders: {} });
   vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({ items: [], counts_by_sidecar: {} });
   vi.mocked(api.fetchCredentialInventory).mockResolvedValue({ providers: [], machines: [], unmapped_count: 0, rule_count: 0, pending_usage_events: 0 });
   renderWithProviders(<ProvidersSection />);
   const open = await screen.findByRole('button', { name: /Claude 2 accounts/ });
+  expect(within(open).getByText('connections: partial')).toBeInTheDocument();
   await userEvent.click(open);
   await userEvent.selectOptions(screen.getByLabelText('Claude connection'), 'anthropic_console');
   const dialog = screen.getByRole('dialog');

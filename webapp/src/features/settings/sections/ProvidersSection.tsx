@@ -316,6 +316,7 @@ function ProvidersSectionV2({
                   <SortableProviderCard
                     key={p.provider_id}
                     provider={p}
+                    family={providers.filter((member) => providerFamilyId(member.provider_id) === p.provider_id).length > 1}
                     credentialProblem={credentialProblems.get(p.provider_id) ?? (p.provider_id === 'anthropic' ? credentialProblems.get('anthropic_console') : undefined)}
                     onOpen={() => setDetailProviderId(
                       providers.find((member) => member.provider_id === p.provider_id)?.provider_id ??
@@ -456,10 +457,12 @@ function ProvidersSectionV2({
 
 function SortableProviderCard({
   provider,
+  family = false,
   credentialProblem,
   onOpen,
 }: {
   provider: ProviderConfig;
+  family?: boolean;
   /** `invalid` / `expired` when an account's credentials are rejected or dead. */
   credentialProblem?: string;
   onOpen: () => void;
@@ -557,6 +560,7 @@ function SortableProviderCard({
                       : 'neutral'
               }
             >
+              {family ? 'connections: ' : null}
               {activeAccounts.length === 0
                 ? 'unconfigured'
                 : allEnabled
