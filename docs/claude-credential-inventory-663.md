@@ -197,3 +197,29 @@ their source and account/organization associations separate, and the server
 successfully verifies subscription usage and Console credits without pasted
 cookies. Browser sign-in, session expiry and revocation still exist; automatic
 discovery cannot guarantee access to a missing or rejected session.
+
+## Follow-up HTTP diagnosis and issue boundaries
+
+A later authorized Chrome-only read recovered the same subscription session
+type with strict padding and host binding validation. Using that one in-memory
+cookie, the minimal request returned HTTP 403, `text/html`, with
+`cf-mitigated: challenge` and challenge-page markers. The exact headers from
+the existing subscription collector returned HTTP 200 JSON for organizations
+and account. Two organizations were listed: one usage endpoint returned HTTP
+200 with quota fields; the other returned HTTP 403 JSON with an error and no
+challenge indicators. No account IDs, organization IDs or response bodies
+were retained.
+
+This resolves the earlier minimal-request 403 as a browser challenge for that
+request, not proof of an invalid session. The second organization's JSON 403
+is a distinct access failure and does not invalidate the successful quota
+request. Both native cookie types are recoverable and have demonstrated their
+respective API access; end-to-end automatic sidecar ingestion still requires
+the implementation acceptance evidence.
+
+Implementation is tracked in #671. Remaining native-source acceptance is
+tracked in #672, including Desktop access and untested stores/access scenarios.
+Claude Code service/layout discovery remains in #673, independently of #526
+renewal/write-back. #663 and #666 may close with the feature PR only after the
+completed scope and native acceptance are linked. #672, #673, #526, #534 and
+#656 remain open; no untested source is being declared working.
