@@ -1933,11 +1933,20 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
             account_id = str(UUID(account_id))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Select a Console organization") from exc
-        if body.session_cookie and not body.clear_session_cookie:
+        existing_console = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == provider_id,
+                ProviderConfig.account_id == account_id,
+            )
+        ).first()
+        if (
+            body.session_cookie
+            and not body.clear_session_cookie
+            and (existing_console is None or body.session_cookie != existing_console.session_cookie)
+        ):
             label = await _validate_console_connection(body.session_cookie, account_id)
             if body.account_label is None:
                 body.account_label = label
-        existing_console = _row_exists(session, provider_id, account_id)
         if not existing_console and (not body.session_cookie or body.clear_session_cookie):
             raise HTTPException(status_code=422, detail="Enter a Console session cookie")
         if not existing_console and body.billing_type is None:

@@ -2295,3 +2295,46 @@ def test_console_creation_requires_accessible_org_and_billing(client, monkeypatc
     assert client.put(path, json={"session_cookie": "sample-session"}).status_code == 403
     monkeypatch.setattr(system, "console_organizations", AsyncMock(return_value=[]))
     assert client.put(path, json={"session_cookie": "sample-session"}).status_code == 403
+
+
+def test_console_unchanged_cookie_allows_settings_edits_during_outage(client, session, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.endpoints import system
+    from app.models.db import ProviderConfig
+
+    _mock_console_access(monkeypatch)
+    path = f"/api/v1/system/provider-config/anthropic_console/{CONSOLE_ORG_ID}"
+    assert client.put(path, json={"session_cookie": "sample-session"}).status_code == 200
+    validate = AsyncMock(side_effect=HTTPException(status_code=502, detail="Console unavailable"))
+    monkeypatch.setattr(system, "_validate_console_connection", validate)
+
+    response = client.put(
+        path,
+        json={"session_cookie": "sample-session", "enabled": False, "poll_interval_seconds": 1200},
+    )
+    assert response.status_code == 200, response.text
+    validate.assert_not_awaited()
+    row = session.exec(
+        select(ProviderConfig).where(ProviderConfig.provider_id == "anthropic_console")
+    ).one()
+    session.refresh(row)
+    assert row.enabled is False
+    assert row.poll_interval_seconds == 1200
+    assert row.session_cookie == "sample-session"
+
+    assert client.put(path, json={"session_cookie": "replacement-session"}).status_code == 502
+    validate.assert_awaited_once_with("replacement-session", CONSOLE_ORG_ID)
+    session.refresh(row)
+    assert row.session_cookie == "sample-session"
+
+    validate.reset_mock()
+    assert (
+        client.put(
+            path, json={"session_cookie": "sample-session", "clear_session_cookie": True}
+        ).status_code
+        == 200
+    )
+    validate.assert_not_awaited()
+    session.refresh(row)
+    assert row.session_cookie is None

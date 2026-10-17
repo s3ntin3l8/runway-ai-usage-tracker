@@ -11,6 +11,7 @@ from app.models.schemas import LimitCard
 from app.services.collectors.anthropic_console import (
     AnthropicConsoleCollector,
     ConsoleAPIError,
+    console_get,
     console_headers,
     console_organizations,
     parse_console_balance,
@@ -53,7 +54,7 @@ def test_total_is_not_sum_of_balance_and_grants():
     assert grant.remaining_value == 100
     assert grant.granted_value == 100
     assert grant.products == ["agent_sdk", "api"]
-    assert grant.expires_at == "2030-01-16T00:00:00Z"
+    assert grant.expires_at == "2030-01-16T00:00:00+00:00"
 
 
 @pytest.mark.parametrize("remaining", [0, 2500, 10000])
@@ -215,3 +216,24 @@ async def test_failed_console_poll_retains_last_good_balance():
             second = await smart.collect(client)
     assert first[0]["remaining"] == second[0]["remaining"] == "$140.00"
     assert smart.last_collection_state == "failed"
+
+
+@pytest.mark.parametrize("expires", ["2030-01-16T02:00:00+02:00", "2030-01-16T00:00:00"])
+def test_grant_expiry_is_normalized_to_utc(expires):
+    data = deepcopy(BALANCE)
+    data["promo_tranches"][0]["expires_at"] = expires
+    card = parse_console_balance(data, now=NOW)
+    assert card["credit_breakdown"][1]["expires_at"] == "2030-01-16T00:00:00+00:00"
+    assert card["credit_breakdown"][0]["expires_at"] is None
+
+
+@pytest.mark.parametrize("retry_after", ["invalid", "NaN", "Infinity", "-1"])
+async def test_invalid_retry_after_keeps_default_backoff(retry_after):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(429, headers={"Retry-After": retry_after})
+        )
+    ) as client:
+        with pytest.raises(ConsoleAPIError) as error:
+            await console_get(client, "/api/organizations", "sample-session")
+    assert error.value.retry_after == 300

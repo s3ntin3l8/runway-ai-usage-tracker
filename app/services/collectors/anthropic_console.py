@@ -65,6 +65,7 @@ async def console_get(client: httpx.AsyncClient, path: str, cookie: str) -> Any:
             if math.isfinite(wait):
                 error.retry_after = max(300.0, wait)
         except ValueError:
+            # Keep the default backoff when Console sends an invalid Retry-After.
             pass
         raise error
     if response.status_code != 200:
@@ -135,6 +136,7 @@ def parse_console_balance(data: Any, *, now: datetime | None = None) -> dict[str
             if not isinstance(tranche, dict):
                 raise ValueError("Invalid Console credit grant")
             expires = tranche.get("expires_at")
+            expiry = None
             if expires:
                 expiry = parse_iso8601_utc(expires)
                 if expiry is None:
@@ -168,7 +170,7 @@ def parse_console_balance(data: Any, *, now: datetime | None = None) -> dict[str
                     "currency": str(tranche.get("currency") or currency).upper(),
                     "remaining_value": remaining,
                     "granted_value": granted,
-                    "expires_at": expires,
+                    "expires_at": expiry.isoformat() if expiry else None,
                     "products": products,
                 }
             )
