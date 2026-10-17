@@ -18,6 +18,16 @@ export interface ByModelEntry {
   tokens?: TokenUsage;
 }
 
+export interface CreditBalanceComponent {
+  kind: 'purchased' | 'subscription' | 'promotion';
+  label: string;
+  currency: string;
+  remaining_value: number;
+  granted_value?: number | null;
+  expires_at?: string | null;
+  products: string[];
+}
+
 export interface LimitCard {
   service_name: string;
   icon?: string;
@@ -32,6 +42,7 @@ export interface LimitCard {
   is_unlimited?: boolean;
   unit_type?: string; // "currency" | "tokens" | "requests" | "minutes" | "percent" | "generic"
   currency?: string | null;
+  credit_breakdown?: CreditBalanceComponent[] | null;
   reset_at?: string | null;
   data_source?: string;
   input_source?: string;
@@ -869,10 +880,11 @@ export interface ProviderConfig {
 // Wizard (#287) preview-endpoint types — keep in sync with
 // `_AccountPreviewRequest` / preview_account_identity response in
 // `app/api/endpoints/system.py`.
-export type AccountPreviewLabelSource = 'email' | 'credential_hash' | 'default';
+export type AccountPreviewLabelSource = 'email' | 'credential_hash' | 'default' | 'organization';
 
 export interface AccountPreviewRequest {
   provider_id: string;
+  organization_id?: string;
   api_key?: string | null;
   session_cookie?: string | null;
 }

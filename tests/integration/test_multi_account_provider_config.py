@@ -2198,3 +2198,172 @@ def test_encryption_failure_returns_retry_message_without_storing_secret(
     session.rollback()
     rows = session.exec(select(ProviderConfig)).all()
     assert all(not row.api_key_encrypted for row in rows)
+
+
+CONSOLE_ORG_ID = "11111111-1111-4111-8111-111111111111"
+
+
+def _mock_console_access(monkeypatch):
+    from app.api.endpoints import system
+
+    orgs = [{"id": CONSOLE_ORG_ID, "name": "API organization"}]
+    monkeypatch.setattr(system, "console_organizations", AsyncMock(return_value=orgs))
+    monkeypatch.setattr(
+        system, "console_get", AsyncMock(return_value={"amount": 10000, "currency": "USD"})
+    )
+
+
+def test_console_discovery_preview_and_save_keep_organization_identity(
+    client, session, monkeypatch
+):
+    from app.models.db import ProviderConfig
+    from app.services.account_identity import resolve_account_id
+
+    _mock_console_access(monkeypatch)
+    response = client.post(
+        "/api/v1/system/provider-config/console-organizations",
+        json={"session_cookie": "sample-session"},
+    )
+    assert response.status_code == 200
+    assert response.json()["organizations"][0]["id"] == CONSOLE_ORG_ID
+    preview = client.post(
+        "/api/v1/system/provider-config/preview-account",
+        json={
+            "provider_id": "anthropic_console",
+            "session_cookie": "sample-session",
+            "organization_id": CONSOLE_ORG_ID,
+        },
+    )
+    assert preview.status_code == 200
+    assert preview.json()["label_source"] == "organization"
+    assert preview.json()["suggested_account_id"] == CONSOLE_ORG_ID
+    path = f"/api/v1/system/provider-config/anthropic_console/{CONSOLE_ORG_ID}"
+    saved = client.put(
+        path, json={"session_cookie": "sample-session", "account_label": "alias@example.com"}
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["account_id"] == CONSOLE_ORG_ID
+    assert (
+        resolve_account_id("anthropic_console", CONSOLE_ORG_ID, "alias@example.com")
+        == CONSOLE_ORG_ID
+    )
+    row = session.exec(
+        select(ProviderConfig).where(ProviderConfig.provider_id == "anthropic_console")
+    ).one()
+    assert row.billing_type == "pay_as_you_go"
+    assert row.session_cookie == "sample-session"
+    assert (
+        client.post(
+            "/api/v1/system/provider-config/preview-account",
+            json={
+                "provider_id": "anthropic_console",
+                "session_cookie": "replacement-session",
+                "organization_id": CONSOLE_ORG_ID,
+            },
+        ).status_code
+        == 409
+    )
+    assert client.put(path, json={"session_cookie": "replacement-session"}).status_code == 200
+    assert client.put(path, json={"clear_session_cookie": True}).status_code == 200
+    session.refresh(row)
+    assert row.session_cookie is None
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    console = next(p for p in listing if p["provider_id"] == "anthropic_console")
+    assert console["supports_session_cookie"] and not console["supports_api_key"]
+    assert "replacement-session" not in str(console)
+
+
+def test_console_creation_requires_accessible_org_and_billing(client, monkeypatch):
+    from app.api.endpoints import system
+    from app.services.collectors.anthropic_console import ConsoleAPIError
+
+    _mock_console_access(monkeypatch)
+    path = f"/api/v1/system/provider-config/anthropic_console/{CONSOLE_ORG_ID}"
+    assert client.put(path, json={}).status_code == 422
+    assert (
+        client.put(
+            "/api/v1/system/provider-config/anthropic_console/default",
+            json={"session_cookie": "sample-session"},
+        ).status_code
+        == 422
+    )
+    monkeypatch.setattr(
+        system,
+        "console_get",
+        AsyncMock(side_effect=ConsoleAPIError("Billing access denied", "auth_failed", 403)),
+    )
+    assert client.put(path, json={"session_cookie": "sample-session"}).status_code == 403
+    monkeypatch.setattr(system, "console_organizations", AsyncMock(return_value=[]))
+    assert client.put(path, json={"session_cookie": "sample-session"}).status_code == 403
+
+
+def test_console_unchanged_cookie_allows_settings_edits_during_outage(client, session, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.endpoints import system
+    from app.models.db import ProviderConfig
+
+    _mock_console_access(monkeypatch)
+    path = f"/api/v1/system/provider-config/anthropic_console/{CONSOLE_ORG_ID}"
+    assert client.put(path, json={"session_cookie": "sample-session"}).status_code == 200
+    validate = AsyncMock(side_effect=HTTPException(status_code=502, detail="Console unavailable"))
+    monkeypatch.setattr(system, "_validate_console_connection", validate)
+
+    response = client.put(
+        path,
+        json={"session_cookie": "sample-session", "enabled": False, "poll_interval_seconds": 1200},
+    )
+    assert response.status_code == 200, response.text
+    validate.assert_not_awaited()
+    row = session.exec(
+        select(ProviderConfig).where(ProviderConfig.provider_id == "anthropic_console")
+    ).one()
+    session.refresh(row)
+    assert row.enabled is False
+    assert row.poll_interval_seconds == 1200
+    assert row.session_cookie == "sample-session"
+
+    assert client.put(path, json={"session_cookie": "replacement-session"}).status_code == 502
+    validate.assert_awaited_once_with("replacement-session", CONSOLE_ORG_ID)
+    session.refresh(row)
+    assert row.session_cookie == "sample-session"
+
+    validate.reset_mock()
+    assert (
+        client.put(
+            path, json={"session_cookie": "sample-session", "clear_session_cookie": True}
+        ).status_code
+        == 200
+    )
+    validate.assert_not_awaited()
+    session.refresh(row)
+    assert row.session_cookie is None
+
+
+def test_console_preview_normalizes_org_before_duplicate_check(client, monkeypatch):
+    _mock_console_access(monkeypatch)
+    noncanonical = CONSOLE_ORG_ID.replace("-", "")
+    payload = {
+        "provider_id": "anthropic_console",
+        "session_cookie": "sample-session",
+        "organization_id": noncanonical,
+    }
+    preview = client.post("/api/v1/system/provider-config/preview-account", json=payload)
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["suggested_account_id"] == CONSOLE_ORG_ID
+    assert (
+        client.put(
+            f"/api/v1/system/provider-config/anthropic_console/{CONSOLE_ORG_ID}",
+            json={"session_cookie": "sample-session"},
+        ).status_code
+        == 200
+    )
+    duplicate = client.post("/api/v1/system/provider-config/preview-account", json=payload)
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()["detail"]["already_exists"] is True
+    assert duplicate.json()["detail"]["suggested_account_id"] == CONSOLE_ORG_ID
+    payload["organization_id"] = "invalid"
+    assert (
+        client.post("/api/v1/system/provider-config/preview-account", json=payload).status_code
+        == 422
+    )

@@ -1,3 +1,4 @@
+import { groupProviderFamilies, providerFamilyId } from '@/lib/providerFamilies';
 // Provider configuration with multi-account rendering.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -126,6 +127,7 @@ function ProvidersSectionV2({
   saveOrder: UseProvidersResult['saveOrder'];
 }) {
   const providers = configs.data?.providers ?? [];
+  const familyProviders = useMemo(() => groupProviderFamilies(providers), [providers]);
   const isDesktop = useIsDesktop();
   // Hold only the provider_id — resolving the object from `configs.data`
   // each render keeps the open dialog in sync after invalidateQueries
@@ -168,30 +170,32 @@ function ProvidersSectionV2({
   const [search, setSearch] = useState('');
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return providers;
-    return providers.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.provider_id.toLowerCase().includes(q),
+    if (!q) return familyProviders;
+    return familyProviders.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.provider_id.toLowerCase().includes(q) ||
+        providers.some((member) => providerFamilyId(member.provider_id) === p.provider_id && member.name.toLowerCase().includes(q)),
     );
-  }, [providers, search]);
+  }, [providers, familyProviders, search]);
 
   // Apply persisted provider_order from dashboard_layout, falling back to
   // server order. Memoized to keep the dnd-kit sensors stable across renders.
   const ordered = useMemo(() => {
     const saved = layout.data?.provider_order ?? [];
-    if (saved.length === 0) return providers;
-    const byId = new Map(providers.map((p) => [p.provider_id, p]));
+    if (saved.length === 0) return familyProviders;
+    const byId = new Map(familyProviders.map((p) => [p.provider_id, p]));
     const result: ProviderConfig[] = [];
     for (const id of saved) {
-      const p = byId.get(id);
+      const familyId = providerFamilyId(id);
+      const p = byId.get(familyId);
       if (p) {
         result.push(p);
-        byId.delete(id);
+        byId.delete(familyId);
       }
     }
     // Append any providers not in the saved order (newly registered).
     for (const p of byId.values()) result.push(p);
     return result;
-  }, [providers, layout.data]);
+  }, [familyProviders, layout.data]);
 
   // Sensors for drag-to-reorder on the provider cards.
   const sensors = useSensors(
@@ -312,8 +316,12 @@ function ProvidersSectionV2({
                   <SortableProviderCard
                     key={p.provider_id}
                     provider={p}
-                    credentialProblem={credentialProblems.get(p.provider_id)}
-                    onOpen={() => setDetailProviderId(p.provider_id)}
+                    family={providers.filter((member) => providerFamilyId(member.provider_id) === p.provider_id).length > 1}
+                    credentialProblem={credentialProblems.get(p.provider_id) ?? (p.provider_id === 'anthropic' ? credentialProblems.get('anthropic_console') : undefined)}
+                    onOpen={() => setDetailProviderId(
+                      providers.find((member) => member.provider_id === p.provider_id)?.provider_id ??
+                      providers.find((member) => providerFamilyId(member.provider_id) === p.provider_id)?.provider_id ?? null
+                    )}
                   />
                 ))}
             </SortableContext>
@@ -409,7 +417,11 @@ function ProvidersSectionV2({
       ) : null}
 
       <ProviderDetailDialog
+        key={detailProviderId}
         provider={detailProvider}
+        connections={detailProvider && providerFamilyId(detailProvider.provider_id) === 'anthropic'
+          ? providers.filter((p) => providerFamilyId(p.provider_id) === 'anthropic') : undefined}
+        onSelectConnection={setDetailProviderId}
         onClose={() => setDetailProviderId(null)}
         onAccountDeleted={(providerId) => {
           if (detailProviderId === providerId) {
@@ -445,10 +457,12 @@ function ProvidersSectionV2({
 
 function SortableProviderCard({
   provider,
+  family = false,
   credentialProblem,
   onOpen,
 }: {
   provider: ProviderConfig;
+  family?: boolean;
   /** `invalid` / `expired` when an account's credentials are rejected or dead. */
   credentialProblem?: string;
   onOpen: () => void;
@@ -546,6 +560,7 @@ function SortableProviderCard({
                       : 'neutral'
               }
             >
+              {family ? 'connections: ' : null}
               {activeAccounts.length === 0
                 ? 'unconfigured'
                 : allEnabled

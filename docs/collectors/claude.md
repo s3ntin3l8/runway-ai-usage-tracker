@@ -155,3 +155,38 @@ If automatic cookie extraction fails (e.g. in Docker or Headless mode), you can 
 - **Hardening**: Runway mimics your specific browser's fingerprint (User-Agent and Client Hints) to ensure the session remains valid.
 
 *Last updated: 2026-05-21*
+
+
+## Console API credits (separate connection)
+
+Choose **Claude → Console API credits** when adding a connection. Sign in at
+`https://platform.claude.com`, use browser developer tools to copy the Console
+`sessionKey` cookie, then paste it into **Console session cookie**. A bare value
+or a full Cookie header is accepted. Load organizations, select the API
+organization receiving your credits, and save. With one accessible organization
+it is selected automatically. Add another connection to track another organization.
+
+This uses the internal `anthropic_console` collector, independently of the
+subscription collector. Live tests found the quota cookie unable to access
+Console billing and the Console cookie unable to access subscription quotas;
+API keys did not work for the balance endpoint. Keep the quota credential in its
+existing connection. Console cookies are stored using Runway's existing
+credential encryption mechanism and must be replaced when the session expires.
+
+The collector reads
+`GET https://platform.claude.com/api/organizations/{organization UUID}/prepaid/credits`
+every 15 minutes by default, tagged `data_source=web`, `input_source=config`.
+The card shows the full reported balance in the existing pay-as-you-go layout.
+Purchased credits and unexpired promotional grants explain the total; subscription
+credits are identified by `program_id=subscription_api_credit`. Grant expiry is
+shown as expiry, not as the next monthly-credit date. Credits can have product
+restrictions, shown in the connection overview. No token events or actual API
+spending are inferred from balance movements.
+
+A zero balance is valid. Authentication, permission, transport and parsing failures
+retain last-good data under the normal cache/staleness policy and do not affect
+subscription quotas. This endpoint is private and its schema can change.
+
+Native macOS automatic Console-cookie discovery is tracked in
+[#666](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/666); it is not
+part of manual-cookie setup. The server never reads browser stores or Keychain.
