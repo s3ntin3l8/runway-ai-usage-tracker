@@ -76,6 +76,7 @@ a = Analysis(
         # lazily imported module can never be left out of a frozen build.
         "scripts.sidecar_pkg.credentials",
         "scripts.sidecar_pkg.claude_desktop",
+        "scripts.sidecar_pkg.cowork_events",
         "cryptography.hazmat.primitives.padding",
         "cryptography.hazmat.primitives.ciphers",
         "scripts.sidecar_pkg.event_extractors.anthropic",

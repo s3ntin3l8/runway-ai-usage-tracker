@@ -257,3 +257,29 @@ def test_desktop_cookie_precedes_readable_browser_cookie(desktop, monkeypatch):
         sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") == "sk-ant-synthetic"
     )
     browser_paths.assert_not_called()
+
+
+def test_desktop_opt_out_preserves_browser_without_keychain(desktop, monkeypatch):
+    from scripts import sidecar
+    from scripts.sidecar_pkg import claude_desktop
+
+    monkeypatch.setenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "off")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Desktop credential access must be skipped")
+
+    monkeypatch.setattr(claude_desktop, "read_session_cookie", forbidden)
+    browser = desktop.parent / "firefox.sqlite"
+    with closing(sqlite3.connect(browser)) as conn, conn:
+        conn.execute("CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT)")
+        conn.execute(
+            "INSERT INTO moz_cookies VALUES ('.claude.ai', 'sessionKey', 'synthetic-browser')"
+        )
+    monkeypatch.setattr(
+        sidecar.BrowserCookieExtractor,
+        "get_all_paths",
+        lambda: [{"browser": "Firefox", "type": "firefox", "path": browser}],
+    )
+    assert (
+        sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") == "synthetic-browser"
+    )

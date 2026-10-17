@@ -1552,6 +1552,8 @@ def queue_push(payload: dict[str, Any], max_size_mb: float | None = None) -> boo
             return False
         with open(queue_file, "a") as f:
             f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
     else:
         dir_fd = _secure_queue_dir()
         try:
@@ -1576,6 +1578,9 @@ def queue_push(payload: dict[str, Any], max_size_mb: float | None = None) -> boo
             )
             with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+            os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
 
@@ -2516,7 +2521,13 @@ class BrowserCookieExtractor:
 
         # Desktop uses its own Electron store and Keychain service. Keep this
         # scoped to Claude's session cookie; other provider rules never read it.
-        if platform.system() == "Darwin" and bare == "claude.ai" and name == "sessionKey":
+        if (
+            platform.system() == "Darwin"
+            and bare == "claude.ai"
+            and name == "sessionKey"
+            and os.getenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "1").strip().lower()
+            not in {"0", "false", "off", "no"}
+        ):
             try:
                 from scripts.sidecar_pkg.claude_desktop import read_session_cookie
 
@@ -4612,6 +4623,7 @@ class CollectionResult:
     events: list[dict[str, Any]]
     error_count: int
     completed_providers: list[str]
+    cowork_batch: Any = None
 
 
 def run_collection(config: dict[str, Any], providers: list[str] | None = None) -> CollectionResult:
@@ -4991,6 +5003,33 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
         if provider_cycle_complete and provider_manifest_complete:
             completed_providers_this_cycle.append(provider_id)
 
+    cowork_batch = None
+    if (
+        _events_enabled
+        and platform.system() == "Darwin"
+        and not credential_scan_only
+        and ("all" in enabled_providers or "anthropic" in enabled_providers)
+    ):
+        try:
+            from scripts.sidecar_pkg.cowork_events import collect_cowork
+
+            cowork_batch = collect_cowork(
+                Path.home() / "Library/Application Support/Claude/local-agent-mode-sessions",
+                get_sidecar_dir() / "cowork-progress.json",
+                server_account_tag_hints.get("anthropic", {}),
+                existing_ids={e["event_id"] for e in all_events if e["provider_id"] == "anthropic"},
+            )
+            all_events.extend(cowork_batch.events)
+            blocked_origins_this_cycle.extend(cowork_batch.blocked)
+            # An unresolved idle source must not disappear from the pending view.
+            if cowork_batch.blocked and "anthropic" in completed_providers_this_cycle:
+                completed_providers_this_cycle.remove("anthropic")
+        except Exception:
+            logging.warning("Cowork token extraction unavailable", exc_info=True)
+            error_count += 1
+            if "anthropic" in completed_providers_this_cycle:
+                completed_providers_this_cycle.remove("anthropic")
+
     # Silent-listener manifest (PR #288): report every credential the
     # sidecar couldn't resolve this cycle, even if zero — silent cycles
     # let the server prune stale pending entries. The POST is gated on
@@ -5070,7 +5109,9 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     except Exception as _e:
         logging.debug(f"manifest: skipped ({_e})")
 
-    return CollectionResult(all_metrics, all_events, error_count, completed_providers_this_cycle)
+    return CollectionResult(
+        all_metrics, all_events, error_count, completed_providers_this_cycle, cowork_batch
+    )
 
 
 class DaemonRunner:
@@ -5282,6 +5323,10 @@ class DaemonRunner:
                 )
                 if not success:
                     break  # don't keep firing batches if the server is rejecting them
+                if collection_result.cowork_batch is not None and not (
+                    isinstance(result, dict) and result.get("events_error")
+                ):
+                    collection_result.cowork_batch.mark_owned(event_batch)
                 latest_successful_result = result
                 if isinstance(result, dict):
                     trigger_requested = trigger_requested or bool(result.get("trigger"))
@@ -5417,6 +5462,8 @@ class DaemonRunner:
             queueable = strip_credentials(payload)
             if queueable.get("metrics") or events:
                 queue_saved = queue_push(queueable, self._config.get("queue_max_size_mb"))
+                if queue_saved and collection_result.cowork_batch is not None:
+                    collection_result.cowork_batch.mark_owned(queueable.get("events", []))
 
             with self._lock:
                 self.last_error = str(result)
