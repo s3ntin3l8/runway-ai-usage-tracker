@@ -60,15 +60,15 @@ SPA_INPUT_GLOBS = (
 
 
 def _spa_inputs(webapp: Path) -> list[Path]:
-    files = [
+    # Directories count too: deleting a file only bumps its parent dir's mtime.
+    paths = [
         p
         for d in SPA_INPUT_DIRS
         if (webapp / d).is_dir()
-        for p in (webapp / d).rglob("*")
-        if p.is_file()
+        for p in (webapp / d, *(webapp / d).rglob("*"))
     ]
-    files += [p for pattern in SPA_INPUT_GLOBS for p in webapp.glob(pattern) if p.is_file()]
-    return files
+    paths += [p for pattern in SPA_INPUT_GLOBS for p in webapp.glob(pattern) if p.is_file()]
+    return paths
 
 
 def spa_is_stale(webapp: Path) -> bool:

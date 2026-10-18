@@ -29,6 +29,8 @@ def webapp(tmp_path: Path) -> Path:
         "tsconfig.app.json",
     ):
         _touch(root / name, 1_000)
+    for d in (root / "src", root / "src" / "components", root / "public"):
+        os.utime(d, (1_000, 1_000))
     _touch(root / "dist" / "index.html", 2_000)
     return root
 
@@ -56,6 +58,18 @@ def test_missing_dist_is_stale(webapp: Path) -> None:
 )
 def test_any_newer_build_input_makes_dist_stale(webapp: Path, changed: str) -> None:
     _touch(webapp / changed, 3_000)
+    assert spa_is_stale(webapp)
+
+
+@pytest.mark.parametrize("parent", ["src/components", "src", "public"])
+def test_a_deleted_build_input_makes_dist_stale(webapp: Path, parent: str) -> None:
+    (webapp / parent).mkdir(parents=True, exist_ok=True)
+    os.utime(webapp / parent, (3_000, 3_000))  # what unlinking a child does
+    assert spa_is_stale(webapp)
+
+
+def test_unlinking_a_source_file_makes_dist_stale(webapp: Path) -> None:
+    (webapp / "src" / "components" / "Chart.tsx").unlink()
     assert spa_is_stale(webapp)
 
 
