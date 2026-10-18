@@ -999,8 +999,7 @@ class CollectorManager:
                     candidate["source_id"],
                     resolved_id,
                     cache_account_id=cache_slot,
-                    expected_generation=getattr(collector, "verified_source_generation", None),
-                    organization_id=getattr(collector, "verified_organization_id", None),
+                    **self._source_proof_kwargs(collector),
                 ):
                     successful_result = self._discard_stale_source_result(smart)
                     continue
@@ -1041,6 +1040,16 @@ class CollectorManager:
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
         )
+
+    @staticmethod
+    def _source_proof_kwargs(collector: Any) -> dict[str, Any]:
+        generation = getattr(collector, "verified_source_generation", None)
+        if generation is None:
+            return {}
+        return {
+            "expected_generation": generation,
+            "organization_id": getattr(collector, "verified_organization_id", None),
+        }
 
     @staticmethod
     def _discard_stale_source_result(smart: SmartCollector) -> list[dict[str, Any]]:
