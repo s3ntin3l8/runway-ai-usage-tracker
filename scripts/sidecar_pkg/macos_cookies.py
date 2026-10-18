@@ -32,6 +32,7 @@ def storage_key(service: str) -> bytes | None:
                     "sha1", result.stdout.strip().encode(), b"saltysalt", 1003, 16
                 )
         except (OSError, subprocess.SubprocessError):
+            # Fall through to cache the failure and suppress further prompts until restart.
             pass
         if key is None:
             logging.warning("Cookie Keychain access unavailable; restart sidecar to retry")
@@ -78,6 +79,7 @@ def profiles(base: Path) -> list[Path]:
         state = json.loads((base / "Local State").read_text())
         names.update(state.get("profile", {}).get("info_cache", {}))
     except (OSError, ValueError, TypeError, AttributeError):
+        # Missing or malformed Local State still permits filesystem profile discovery below.
         pass
     try:
         entries = list(base.iterdir())
@@ -120,5 +122,6 @@ def read_cookies(path: Path, service: str, domain: str, name: str) -> list[str]:
             if value and value not in values:
                 values.append(value)
     except (OSError, sqlite3.Error, ValueError, TypeError):
+        # An unreadable or unsupported store yields only values already validated, if any.
         pass
     return values
