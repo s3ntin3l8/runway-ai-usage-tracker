@@ -72,4 +72,14 @@ describe('TrajectoryChart', () => {
     render(<TrajectoryChart forecast={{ ...base }} />, { wrapper });
     expect((captured.option!.series as Series)[0].data).toEqual([]);
   });
+
+  it('keeps the limit label inside the plot so the grid margin cannot clip it', () => {
+    render(<TrajectoryChart forecast={{ ...base }} />, { wrapper });
+    const used = (captured.option!.series as unknown as {
+      markLine: { label: { formatter: string; position: string }; data: unknown[] };
+    }[])[0];
+    expect(used.markLine.label.formatter).toBe('limit');
+    expect(used.markLine.label.position).toBe('insideEndTop');
+    expect(used.markLine.data).toEqual([{ yAxis: 100 }]);
+  });
 });

@@ -70,8 +70,11 @@ export function TrajectoryChart({
           markLine: {
             symbol: 'none',
             silent: true,
+            // Default 'end' places the label past the line's right end,
+            // outside the plot, where the narrow grid margin clips it.
             label: {
               formatter: 'limit',
+              position: 'insideEndTop',
               color: t.critical,
               fontSize: 10,
               fontFamily: t.fontFamily,
