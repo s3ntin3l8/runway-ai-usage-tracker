@@ -7,6 +7,13 @@ import { formatLocalDateTime } from '@/lib/tz';
 import { EChart } from './EChart';
 import { baseAxisStyle, baseTooltip, useChartTokens } from './theme';
 
+// The 'limit' label sits above the 100% line inside the plot, so the top grid
+// margin is derived from it: glyph + 1px padding each side + ECharts' default
+// 5px label distance + headroom.
+const LIMIT_LABEL_FONT_SIZE = 10;
+const LIMIT_LABEL_PADDING = 1;
+const GRID_TOP = LIMIT_LABEL_FONT_SIZE + 2 * LIMIT_LABEL_PADDING + 5 + 3;
+
 export function TrajectoryChart({
   forecast,
   className,
@@ -30,9 +37,7 @@ export function TrajectoryChart({
         ...baseTooltip(t),
         valueFormatter: (v: number) => `${Number(v).toFixed(1)}%`,
       },
-      // top: room for the 'limit' label above the 100% line (10px glyph +
-      // 5px default label distance) with headroom when the y-max is 100.
-      grid: { left: 40, right: 16, top: 20, bottom: 28 },
+      grid: { left: 40, right: 16, top: GRID_TOP, bottom: 28 },
       xAxis: {
         type: 'time',
         ...baseAxisStyle(t),
@@ -78,8 +83,12 @@ export function TrajectoryChart({
               formatter: 'limit',
               position: 'insideEndTop',
               color: t.critical,
-              fontSize: 10,
+              fontSize: LIMIT_LABEL_FONT_SIZE,
               fontFamily: t.fontFamily,
+              // Inside the plot the projection can cross the label (y-max
+              // above 100); a surface backdrop keeps the text clean.
+              backgroundColor: t.surface,
+              padding: LIMIT_LABEL_PADDING,
             },
             lineStyle: { color: t.critical, type: 'dashed', opacity: 0.6 },
             data: [{ yAxis: 100 }],

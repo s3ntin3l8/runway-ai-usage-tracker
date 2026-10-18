@@ -76,12 +76,19 @@ describe('TrajectoryChart', () => {
   it('keeps the limit label inside the plot so the grid margin cannot clip it', () => {
     render(<TrajectoryChart forecast={{ ...base }} />, { wrapper });
     const used = (captured.option!.series as unknown as {
-      markLine: { label: { formatter: string; position: string }; data: unknown[] };
+      markLine: {
+        label: { formatter: string; position: string; fontSize: number; padding: number };
+        data: unknown[];
+      };
     }[])[0];
     expect(used.markLine.label.formatter).toBe('limit');
     expect(used.markLine.label.position).toBe('insideEndTop');
     expect(used.markLine.data).toEqual([{ yAxis: 100 }]);
     // The label sits above the line, so the top margin must fit it.
-    expect((captured.option!.grid as { top: number }).top).toBeGreaterThanOrEqual(20);
+    // glyph + padding + ECharts' default 5px label distance must fit the margin.
+    const { fontSize, padding } = used.markLine.label;
+    expect((captured.option!.grid as { top: number }).top).toBeGreaterThan(fontSize + 2 * padding + 5);
+    // A backdrop (the surface token) so the projection can't strike through it.
+    expect(used.markLine.label).toHaveProperty('backgroundColor');
   });
 });
