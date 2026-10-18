@@ -27,7 +27,11 @@ function SourcePicker({ sourceId, providerId, onComplete }: Props) {
   if (query.isPending) return <p role="status" className="mt-2 text-sm text-fg-muted">Verifying Claude organizations…</p>;
   if (query.isError) return <div className="mt-2"><p role="alert" className="text-sm text-warning">Could not verify this Claude source. Try again after the next sidecar check.</p><Button onClick={() => query.refetch()}>Retry verification</Button></div>;
   const data = query.data;
-  if (data.complete && !data.selection_required) return <p role="status" className="mt-2 text-sm text-fg-muted">Organization verified. Waiting for the sidecar to finish assigning this source.</p>;
+  if (data.complete && data.organizations.length === 0) return <div className="mt-2 space-y-2">
+    <p role="alert" className="text-sm text-warning">No eligible Claude organization is available for this source. Check that this login has access to the requested Claude service, then retry verification.</p>
+    <Button disabled={query.isFetching} onClick={() => query.refetch()}>Retry verification</Button>
+  </div>;
+  if (data.complete && data.organizations.length === 1 && !data.selection_required) return <p role="status" className="mt-2 text-sm text-fg-muted">Organization verified. Waiting for the sidecar to finish assigning this source.</p>;
   const eligible = data.organizations.some((org) => org.id === selected);
   const id = `claude-org-${providerId}-${sourceId}`;
   return <div className="mt-3 space-y-2">
