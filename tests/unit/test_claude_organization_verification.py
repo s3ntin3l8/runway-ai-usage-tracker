@@ -621,7 +621,7 @@ async def test_manual_cookie_fallback_honors_saved_subscription_organization(cla
     "metadata,count",
     [
         ("{never-output-secret", 0),
-        ('{"secret":"never-output-secret"}', 0),
+        ('{"secret":"never-output-secret"}', 0),  # pragma: allowlist secret - synthetic
         ('["never-output-secret",7]', 0),
         ("null", 0),
         ('[{"id":"one","name":"A"},{"id":"two","name":"B"}]', 2),
