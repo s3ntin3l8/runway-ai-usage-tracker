@@ -3887,3 +3887,75 @@ async def test_ingest_accepts_device_only_in_kimi_cli_bundle(
     assert len(bundles) == 1
     assert bundles[0]["tokens"].get("cli_device_id") == expected
     assert bundles[0]["tokens"][token_key] == "test-bearer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,token_key",
+    [("anthropic", "cookie_sessionKey"), ("anthropic_console", "session_cookie")],
+)
+async def test_claude_same_store_cookie_sources_survive_ingest_and_completed_manifest(
+    client, session, monkeypatch, provider, token_key
+):
+    from app.services.credential_tags import CredentialTagRepo
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    base = f"cookie:{provider}/chrome/Default/store"
+    origins = [base + "#aaaaaaaaaaaa", base + "#bbbbbbbbbbbb"]
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id=provider,
+        credential_origin=base,
+        account_id="old@example.com",
+        sidecar_id="cookie-host",
+        set_by="operator",
+    )
+    session.commit()
+    manifest = {
+        "sidecar_id": "cookie-host",
+        "entries": [{"provider_id": provider, "credential_origin": origin} for origin in origins],
+        "completed_providers": [provider],
+    }
+    assert _post_manifest(client, manifest).status_code == 200
+    payload = {
+        "provider": "sidecar",
+        "sidecar_id": "cookie-host",
+        "metrics": [
+            {
+                "service_name": "Claude",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "provider_id": provider,
+                    token_key: f"cookie-{index}",
+                    "credential_origin": origin,
+                    "identity_pending": True,
+                },
+            }
+            for index, origin in enumerate(origins)
+        ],
+    }
+    raw = json.dumps(payload).encode()
+    ts, sig = _sign(raw)
+    response = client.post(
+        "/api/v1/fleet/ingest",
+        content=raw,
+        headers={"X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200, response.text
+    candidates = await cache.get_pending_sources(provider)
+    assert {c["credential_origin"] for c in candidates} == set(origins)
+    assert len({c["account_slot"] for c in candidates}) == 2
+    assert all(c["account_slot"] != "old@example.com" for c in candidates)
+    assert _post_manifest(client, manifest).status_code == 200
+    assert len(await cache.get_pending_sources(provider)) == 2
+    manifest["entries"] = manifest["entries"][1:]
+    assert _post_manifest(client, manifest).status_code == 200
+    candidates = await cache.get_pending_sources(provider)
+    assert [c["credential_origin"] for c in candidates] == origins[1:]
+    rows = session.exec(
+        select(CredentialSource).where(CredentialSource.provider_id == provider)
+    ).all()
+    assert [row.credential_origin for row in rows] == origins[1:]

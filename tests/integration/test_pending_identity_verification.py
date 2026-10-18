@@ -135,7 +135,9 @@ def _claude_web(*, orgs_status: int = 200, email: str = BOB):
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/api/organizations":
-            return httpx.Response(orgs_status, json=[{"uuid": "org-1", "name": "Org"}])
+            return httpx.Response(
+                orgs_status, json=[{"uuid": "11111111-1111-4111-8111-111111111111", "name": "Org"}]
+            )
         if path == "/api/account":
             return httpx.Response(200, json={"email_address": email})
         if path.endswith("/usage"):
@@ -563,3 +565,24 @@ async def test_a_resolved_claude_holder_is_labelled_with_their_email(world):
             await collector._get_claude_oauth(client, CLAUDE_OAUTH)
 
     assert collector.account_id == BOB and collector.account_label == BOB
+
+
+@pytest.mark.asyncio
+async def test_verified_claude_cookie_does_not_publish_disabled_account(world):
+    from app.models.db import ProviderConfig
+
+    engine, _cache = world
+    await _seed(
+        world, "anthropic", "cookie:anthropic/session", {"cookie_sessionKey": CLAUDE_COOKIE}
+    )
+    with Session(engine) as session:
+        session.add(
+            ProviderConfig(provider_id="anthropic", account_id=BOB, enabled=False, archived=True)
+        )
+        session.commit()
+    result = await _verify("anthropic", _claude_web())
+    assert result == []
+    with Session(engine) as session:
+        config = session.exec(select(ProviderConfig)).one()
+        assert config.enabled is False
+        assert config.archived is True

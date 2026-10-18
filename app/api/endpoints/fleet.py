@@ -430,7 +430,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # token-derived placeholder identity; use a stable host+origin key while
         # identity is pending so token rotations do not create orphan entries.
         cache_account_id = pending_cache_slot(p_id, source_id) if identity_pending else a_id
-        if p_id == "anthropic" and not identity_pending:
+        if p_id in ("anthropic", "anthropic_console") and not identity_pending:
             # A pending source is cache-keyed by its stable source_id. Retire
             # that placeholder even if its durable CredentialSource row was
             # lost; otherwise its OAuth bundle survives beside the resolved one.
@@ -978,6 +978,25 @@ def _entry_reason(
     return reason
 
 
+async def _retire_missing_claude_sources(
+    session: Session, payload: CredentialManifestRequest, keep_by_provider: dict[str, set[str]]
+) -> None:
+    from app.services.collector_manager import manager
+    from app.services.credential_sources import retire_missing_claude_cookie_sources
+
+    retired_sources = retire_missing_claude_cookie_sources(
+        session,
+        sidecar_id=payload.sidecar_id,
+        completed_providers=payload.completed_providers,
+        keep_by_provider=keep_by_provider,
+    )
+    for retired in retired_sources:
+        await token_cache.remove_source(retired.provider_id, retired.account_id, retired.source_id)
+        manager.drop_credential_source_preference(
+            retired.provider_id, retired.account_id, retired.source_id
+        )
+
+
 @router.post("/credentials/manifest")
 @limiter.limit("60/minute")
 async def post_credential_manifest(
@@ -1237,6 +1256,7 @@ async def post_credential_manifest(
         if prune_keep
         else 0
     )
+    await _retire_missing_claude_sources(session, payload, keep_by_provider)
     session.commit()
 
     resolved = _account_tag_hints_for_providers(
@@ -1578,6 +1598,8 @@ async def list_pending_credential_tags(
     auto-hint doesn't oscillate, but they're not "untagged" from the
     operator's perspective.
     """
+    from app.services.credential_sources import sidecar_source_id
+
     visible_rows = visible_pending_rows(session)
     counts_by_sidecar: dict[str, int] = {}
     for r in visible_rows:
@@ -1595,6 +1617,13 @@ async def list_pending_credential_tags(
                 "provider_id": row.provider_id,
                 "credential_origin": row.credential_origin,
                 "claimed_account_id": row.claimed_account_id,
+                **(
+                    {"source_id": sidecar_source_id(row.sidecar_id, row.credential_origin)}
+                    if row.provider_id in ("anthropic", "anthropic_console")
+                    else {}
+                ),
+                "selection_required": len(json.loads(row.claude_organizations_json or "[]")) > 1,
+                "organization_count": len(json.loads(row.claude_organizations_json or "[]")),
                 "first_seen": row.first_seen.isoformat() if row.first_seen else None,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
                 "quota_preview": preview,
@@ -1607,6 +1636,151 @@ async def list_pending_credential_tags(
         "items": items,
         "counts_by_sidecar": counts_by_sidecar,
     }
+
+
+class ClaudeOrganizationSelection(BaseModel):
+    provider_id: Literal["anthropic", "anthropic_console"]
+    organization_id: str
+
+
+async def _pending_claude_source(
+    session: Session, provider_id: str, source_id: str
+) -> tuple[PendingCredentialTag, dict[str, Any]]:
+    from app.services.credential_sources import sidecar_source_id
+
+    if provider_id not in ("anthropic", "anthropic_console"):
+        raise HTTPException(status_code=422, detail="Unsupported Claude provider")
+    row = next(
+        (
+            r
+            for r in session.exec(
+                select(PendingCredentialTag).where(PendingCredentialTag.provider_id == provider_id)
+            ).all()
+            if sidecar_source_id(r.sidecar_id, r.credential_origin) == source_id
+        ),
+        None,
+    )
+    source = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == provider_id, CredentialSource.source_id == source_id
+        )
+    ).first()
+    candidates = await token_cache.get_pending_sources(provider_id)
+    candidate = next((c for c in candidates if c["source_id"] == source_id), None)
+    if (
+        row is None
+        or source is None
+        or candidate is None
+        or source.credential_origin != row.credential_origin
+        or source.sidecar_id != row.sidecar_id
+        or candidate.get("credential_origin") != row.credential_origin
+        or candidate.get("sidecar_id") != row.sidecar_id
+    ):
+        raise HTTPException(status_code=404, detail="Pending Claude source unavailable")
+    if (
+        CredentialTagRepo.get(
+            session,
+            provider_id=provider_id,
+            credential_origin=row.credential_origin,
+            sidecar_id=row.sidecar_id,
+        )
+        is not None
+    ):
+        raise HTTPException(status_code=409, detail="Credential source already assigned")
+    return row, candidate
+
+
+async def _verify_pending_claude_source(
+    provider_id: str, candidate: dict[str, Any], organization_id: str | None = None
+) -> Any:
+    import httpx
+
+    from app.services.claude_verification import verify_claude_cookie
+    from app.services.collectors.anthropic_console import ConsoleAPIError
+
+    tokens = candidate["tokens"]
+    cookie = tokens.get("cookie_sessionKey") or tokens.get("session_cookie")
+    if not cookie:
+        raise HTTPException(status_code=409, detail="Claude cookie unavailable")
+    try:
+        async with (
+            token_cache.using_source(
+                provider_id, candidate["account_slot"], candidate["source_id"]
+            ),
+            httpx.AsyncClient(event_hooks={"response": [token_cache.observe_response]}) as client,
+        ):
+            return await verify_claude_cookie(client, provider_id, cookie, organization_id)
+    except ConsoleAPIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/credentials/{source_id}/claude-organizations")
+async def get_claude_source_organizations(
+    source_id: str,
+    provider_id: Literal["anthropic", "anthropic_console"],
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    row, candidate = await _pending_claude_source(session, provider_id, source_id)
+    result = await _verify_pending_claude_source(provider_id, candidate)
+    # Validate that the exact candidate survived the upstream calls before recording metadata.
+    _current_row, current = await _pending_claude_source(session, provider_id, source_id)
+    if current["tokens"] != candidate["tokens"]:
+        raise HTTPException(status_code=409, detail="Claude source changed; retry")
+    row.claude_organizations_json = json.dumps(result.organizations)
+    row.claude_organizations_complete = result.complete
+    session.add(row)
+    session.commit()
+    return {
+        "organizations": result.organizations,
+        "complete": result.complete,
+        "selection_required": result.selection_required,
+    }
+
+
+@router.post("/credentials/{source_id}/claude-organizations")
+async def select_claude_source_organization(
+    source_id: str,
+    body: ClaudeOrganizationSelection,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, str]:
+    from app.services.claude_verification import organization_uuid
+    from app.services.collector_manager import manager
+    from app.services.collectors.anthropic_console import ConsoleAPIError
+
+    try:
+        organization_id = organization_uuid(body.organization_id)
+    except ConsoleAPIError as exc:
+        raise HTTPException(status_code=422, detail="Invalid Claude organization") from exc
+    _pending_row, candidate = await _pending_claude_source(session, body.provider_id, source_id)
+    result = await _verify_pending_claude_source(body.provider_id, candidate, organization_id)
+    if not result.organization_id or not result.account_id:
+        raise HTTPException(
+            status_code=403, detail="Claude organization is not accessible with this source"
+        )
+    _current_row, current = await _pending_claude_source(session, body.provider_id, source_id)
+    if current["tokens"] != candidate["tokens"]:
+        raise HTTPException(status_code=409, detail="Claude source changed; retry")
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == body.provider_id,
+            ProviderConfig.account_id == result.account_id,
+        )
+    ).first()
+    if row is None:
+        row = ProviderConfig(provider_id=body.provider_id, account_id=result.account_id)
+    row.claude_organization_id = organization_id
+    session.add(row)
+    session.commit()
+    await manager._promote_source_identity(
+        body.provider_id,
+        "default",
+        source_id,
+        result.account_id,
+        cache_account_id=candidate["account_slot"],
+    )
+    return {"status": "ok"}
 
 
 @router.get("/events/pending")

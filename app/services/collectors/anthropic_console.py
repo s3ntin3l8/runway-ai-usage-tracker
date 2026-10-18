@@ -225,6 +225,16 @@ class AnthropicConsoleCollector(BaseCollector):
         if not cookie:
             return []
         try:
+            from app.services.claude_verification import (
+                is_native_claude_source,
+                verify_collector_cookie,
+            )
+
+            if is_native_claude_source(self.PROVIDER_ID):
+                verified = await verify_collector_cookie(self, client, self.PROVIDER_ID, cookie)
+                if not verified.organization_id or verified.usage is None:
+                    return []
+                return [parse_console_balance(verified.usage)]
             org_id = str(UUID(self.account_id or ""))
             data = await console_get(client, f"/api/organizations/{org_id}/prepaid/credits", cookie)
             return [parse_console_balance(data)]

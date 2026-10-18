@@ -74,6 +74,8 @@ def origin_candidates(credential_origin: str) -> list[str]:
     """
     from app.services.account_identity import split_keyed_origin
 
+    if credential_origin.startswith(("cookie:anthropic/", "cookie:anthropic_console/")):
+        return [credential_origin]
     base, fingerprint = split_keyed_origin(credential_origin)
     return [credential_origin, base] if fingerprint else [credential_origin]
 
@@ -274,6 +276,8 @@ class CredentialTagRepo:
         """
         from app.services.account_identity import canonical_account_id, split_keyed_origin
 
+        if credential_origin.startswith(("cookie:anthropic/", "cookie:anthropic_console/")):
+            return None
         base, fingerprint = split_keyed_origin(credential_origin)
         if fingerprint is None:
             return None

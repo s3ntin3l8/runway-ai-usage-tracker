@@ -1769,6 +1769,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     r.strategies, manager.get_supported_strategies(p_id)
                 ),
                 "opencode_workspace_id": r.opencode_workspace_id,
+                "claude_organization_id": r.claude_organization_id,
                 "billing_type": r.billing_type,
                 # `is_orphaned` surfaces the orphaned-bookkeeping-row
                 # bug in the settings UI: #286 highlights
@@ -1813,6 +1814,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "poll_interval_seconds": None,
                     "collection_strategies": None,
                     "opencode_workspace_id": None,
+                    "claude_organization_id": None,
                     "is_orphaned": False,
                     "source": "discovered",
                     "credential_source_labels": _discovery_labels(p_id, c_aid),
@@ -1841,6 +1843,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "poll_interval_seconds": None,
                         "collection_strategies": None,
                         "opencode_workspace_id": None,
+                        "claude_organization_id": None,
                         "is_orphaned": False,
                         "source": "discovered",
                         "credential_source_labels": [],
@@ -1874,6 +1877,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     db.strategies if db else None, manager.get_supported_strategies(p_id)
                 ),
                 "opencode_workspace_id": db.opencode_workspace_id if db else None,
+                "claude_organization_id": db.claude_organization_id if db else None,
                 # Per-account breakdown: DB rows first (config-backed), then
                 # cache/latest_usage-only identities (discovered). The
                 # canonical row above is the first entry whose account_id is

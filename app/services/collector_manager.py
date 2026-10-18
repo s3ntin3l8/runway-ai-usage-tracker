@@ -1020,6 +1020,9 @@ class CollectorManager:
                 # starve the other pending sources of their own verification.
                 successful_result = []
                 continue
+            if not await self._claude_organization_allows_publication(provider_id, collector):
+                successful_result = []
+                continue
             successful_result = result
             break
         # Every source tried but not promoted (a promotion deletes its pending row, so
@@ -1038,6 +1041,43 @@ class CollectorManager:
             successful_result if successful_result is not None else (last_kept_failure_result or [])
         )
 
+    async def _claude_organization_allows_publication(
+        self, provider_id: str, collector: Any
+    ) -> bool:
+        organization_id = getattr(collector, "verified_organization_id", None)
+        if provider_id not in ("anthropic", "anthropic_console") or not organization_id:
+            return True
+        return await asyncio.to_thread(
+            self._persist_claude_organization,
+            provider_id,
+            str(collector.account_id),
+            organization_id,
+        )
+
+    @staticmethod
+    def _persist_claude_organization(
+        provider_id: str, account_id: str, organization_id: str
+    ) -> bool:
+        from sqlmodel import Session, select
+
+        from app.core.db import engine
+        from app.models.db import ProviderConfig
+
+        with Session(engine) as session:
+            row = session.exec(
+                select(ProviderConfig).where(
+                    ProviderConfig.provider_id == provider_id,
+                    ProviderConfig.account_id == account_id,
+                )
+            ).first()
+            if row is None:
+                row = ProviderConfig(provider_id=provider_id, account_id=account_id)
+            if row.claude_organization_id is None:
+                row.claude_organization_id = organization_id
+                session.add(row)
+                session.commit()
+            return row.enabled and not row.archived
+
     @staticmethod
     def _reset_attempt_identity(collector: Any, account_id: str, default_label: Any) -> None:
         """Clear what a previous source attempt taught the shared collector instance."""
@@ -1052,6 +1092,7 @@ class CollectorManager:
         # Proof from one source's response must never be read as another's.
         collector.verified_identity = None
         collector.verified_subject = None
+        collector.verified_organization_id = None
 
     async def _cookie_switched_account(
         self,
@@ -1092,6 +1133,8 @@ class CollectorManager:
             switched = EMAIL_RE.match(account_id) is not None and canonical_account_id(
                 verified
             ) != canonical_account_id(account_id)
+        elif provider_id == "anthropic_console" and isinstance(verified, str):
+            switched = canonical_account_id(verified) != canonical_account_id(account_id)
         else:
             # No email from the provider: fall back to its stable subject, if it gave one.
             switched = isinstance(subject, str) and await asyncio.to_thread(

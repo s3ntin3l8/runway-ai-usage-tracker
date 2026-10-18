@@ -524,6 +524,20 @@ class TokenCache:
         request = getattr(response, "request", None)
         if request is not None and not self._request_uses_active_source(request):
             return
+        # Claude organization denials and browser challenges do not reject the cookie.
+        # Keep unrelated providers and account-level authentication failures unchanged.
+        url = getattr(request, "url", None)
+        if getattr(url, "host", None) in ("claude.ai", "platform.claude.com"):
+            headers = getattr(response, "headers", {})
+            if (
+                "text/html" in headers.get("content-type", "").lower()
+                or headers.get("cf-mitigated") == "challenge"
+            ):
+                return
+            if response.status_code == 403 and getattr(url, "path", "").startswith(
+                "/api/organizations/"
+            ):
+                return
         attempt["auth_failed"] = True
 
     def _request_uses_active_source(self, request: Any) -> bool:

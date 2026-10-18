@@ -148,7 +148,7 @@ def pending_cache_slot(provider_id: str, source_id: str) -> str:
     orphan rows); every other provider files it under ``default``. Ingest and the identity
     handlers (verification, cookie-switch revoke) must agree, so they all ask here.
     """
-    return source_id if provider_id == "anthropic" else "default"
+    return source_id if provider_id in ("anthropic", "anthropic_console") else "default"
 
 
 def is_machine_bound_origin(origin: str | None) -> bool:
@@ -674,3 +674,26 @@ def reset_source_retry(session: Session, *, provider_id: str, source_id: str) ->
             row.next_retry_at = None
             row.failing_since = None
             session.add(row)
+
+
+def retire_missing_claude_cookie_sources(
+    session: Session,
+    *,
+    sidecar_id: str,
+    completed_providers: list[str] | None,
+    keep_by_provider: dict[str, set[str]],
+) -> list[CredentialSource]:
+    """Retire absent exact sessions only after a complete scan, preserving siblings."""
+    completed = set(completed_providers or []) & {"anthropic", "anthropic_console"}
+    rows = [
+        row
+        for row in session.exec(
+            select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
+        ).all()
+        if row.provider_id in completed
+        and str(row.credential_origin or "").startswith(f"cookie:{row.provider_id}/")
+        and row.credential_origin not in keep_by_provider.get(row.provider_id, set())
+    ]
+    for row in rows:
+        session.delete(row)
+    return rows
