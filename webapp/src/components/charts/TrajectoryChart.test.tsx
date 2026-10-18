@@ -11,7 +11,7 @@ vi.mock('./EChart', () => ({
   },
 }));
 
-import { TrajectoryChart } from './TrajectoryChart';
+import { GRID_TOP, TrajectoryChart } from './TrajectoryChart';
 
 function wrapper({ children }: { children: ReactNode }) {
   return <ThemeProvider>{children}</ThemeProvider>;
@@ -74,10 +74,18 @@ describe('TrajectoryChart', () => {
   });
 
   it('keeps the limit label inside the plot so the grid margin cannot clip it', () => {
+    document.documentElement.style.setProperty('--surface-1', '#111113');
     render(<TrajectoryChart forecast={{ ...base }} />, { wrapper });
     const used = (captured.option!.series as unknown as {
       markLine: {
-        label: { formatter: string; position: string; fontSize: number; padding: number };
+        label: {
+          formatter: string;
+          position: string;
+          fontSize: number;
+          padding: number;
+          distance: number;
+          backgroundColor: string;
+        };
         data: unknown[];
       };
     }[])[0];
@@ -85,10 +93,13 @@ describe('TrajectoryChart', () => {
     expect(used.markLine.label.position).toBe('insideEndTop');
     expect(used.markLine.data).toEqual([{ yAxis: 100 }]);
     // The label sits above the line, so the top margin must fit it.
-    // glyph + padding + ECharts' default 5px label distance must fit the margin.
-    const { fontSize, padding } = used.markLine.label;
-    expect((captured.option!.grid as { top: number }).top).toBeGreaterThan(fontSize + 2 * padding + 5);
+    // glyph + padding + label distance + 3px headroom must fit the margin.
+    const { fontSize, padding, distance, backgroundColor } = used.markLine.label;
+    const top = (captured.option!.grid as { top: number }).top;
+    expect(top).toBe(GRID_TOP);
+    expect(top).toBeGreaterThanOrEqual(fontSize + 2 * padding + distance + 3);
     // A backdrop (the surface token) so the projection can't strike through it.
-    expect(used.markLine.label).toHaveProperty('backgroundColor');
+    expect(backgroundColor).toBe('#111113');
+    document.documentElement.style.removeProperty('--surface-1');
   });
 });

@@ -8,11 +8,14 @@ import { EChart } from './EChart';
 import { baseAxisStyle, baseTooltip, useChartTokens } from './theme';
 
 // The 'limit' label sits above the 100% line inside the plot, so the top grid
-// margin is derived from it: glyph + 1px padding each side + ECharts' default
-// 5px label distance + headroom.
+// margin is derived from it: glyph + 1px padding each side + the label's
+// distance from the line + headroom.
 const LIMIT_LABEL_FONT_SIZE = 10;
 const LIMIT_LABEL_PADDING = 1;
-const GRID_TOP = LIMIT_LABEL_FONT_SIZE + 2 * LIMIT_LABEL_PADDING + 5 + 3;
+const LIMIT_LABEL_DISTANCE = 5;
+const GRID_TOP_HEADROOM = 3;
+export const GRID_TOP =
+  LIMIT_LABEL_FONT_SIZE + 2 * LIMIT_LABEL_PADDING + LIMIT_LABEL_DISTANCE + GRID_TOP_HEADROOM;
 
 export function TrajectoryChart({
   forecast,
@@ -89,6 +92,7 @@ export function TrajectoryChart({
               // above 100); a surface backdrop keeps the text clean.
               backgroundColor: t.surface,
               padding: LIMIT_LABEL_PADDING,
+              distance: LIMIT_LABEL_DISTANCE,
             },
             lineStyle: { color: t.critical, type: 'dashed', opacity: 0.6 },
             data: [{ yAxis: 100 }],
