@@ -356,6 +356,7 @@ export interface ProviderConfigUpdate {
   poll_interval_seconds?: number | null;
   collection_strategies?: { id: string; enabled: boolean }[];
   opencode_workspace_id?: string;
+  claude_organization_id?: string | null;
   billing_type?: 'subscription' | 'pay_as_you_go' | 'unknown';
 }
 
@@ -612,3 +613,15 @@ export const getGitHubOAuthStatus = () =>
 
 export const logoutGitHub = () =>
   api<Record<string, unknown>>('/api/v1/auth/github/logout', { method: 'POST' });
+
+export interface ClaudeSourceOrganizations {
+  organizations: { id: string; name: string }[];
+  complete: boolean;
+  selection_required: boolean;
+}
+export const fetchClaudeSourceOrganizations = (providerId: string, sourceId: string) =>
+  api<ClaudeSourceOrganizations>(`/api/v1/fleet/credentials/${encodeURIComponent(sourceId)}/claude-organizations?provider_id=${encodeURIComponent(providerId)}`);
+export const selectClaudeSourceOrganization = (providerId: string, sourceId: string, organizationId: string) =>
+  api<{ status: 'ok' }>(`/api/v1/fleet/credentials/${encodeURIComponent(sourceId)}/claude-organizations`, {
+    method: 'POST', body: JSON.stringify({ provider_id: providerId, organization_id: organizationId }),
+  });
