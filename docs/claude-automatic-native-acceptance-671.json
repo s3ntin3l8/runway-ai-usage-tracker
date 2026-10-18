@@ -37,8 +37,8 @@
   "collectors_after_promotion": 2,
   "active_accounts_after_promotion": 2,
   "result": "passed",
-  "observed_at_utc": "2026-10-18T14:18:07Z",
-  "source_revision": "16e17752",
+  "observed_at_utc": "2026-10-18T14:25:11Z",
+  "source_revision": "c6b96baf",
   "transport": "production HMAC ingest via in-process ASGI; live HTTPS upstreams",
   "environment": {
     "macos": "26.6.2",

@@ -1,7 +1,7 @@
 # Automatic Claude connections: native acceptance (#671)
 
 Observed 2026-10-18 (Europe/Berlin). The latest accepted source-runtime run
-used revision `16e177522c56c2c209964b681dc7e315bd40346c` on macOS 26.6.2
+used revision `c6b96baffb1af922d6b6d344b22cedc1a98a0bdd` on macOS 26.6.2
 (25G83), arm64, Chrome 155.0.8059.80 and Python 3.14.7.
 See the [sanitized evidence](claude-automatic-native-acceptance-671.json).
 
@@ -71,6 +71,15 @@ During an earlier focused unit-test run, a legacy discovery mock allowed an
 unintended Desktop Keychain attempt that returned unavailable. Its exact count
 was not captured, and it is not native acceptance evidence. Affected fixtures
 now use disposable homes and block real `security` invocations by default.
+
+## Repository verification
+
+The final combined `make lint && make test && make web-test` gate passed:
+4,711 Python tests passed (41 skipped) and 1,185 frontend tests passed.
+Ruff, formatting, mypy and dependency auditing passed. The production frontend
+build and generated-registry consistency tests passed. Independent whole-branch
+review approved the source guards, account-switch compatibility and organization
+picker after its zero-eligible-organization state was corrected.
 
 ## Issue boundary
 
