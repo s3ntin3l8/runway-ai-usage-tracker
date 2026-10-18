@@ -48,12 +48,50 @@ def _wait_for_http(url: str, timeout: float = 60.0) -> None:
     raise RuntimeError(f"timed out waiting for {url}: {last}")
 
 
+# Everything `npm run build` reads: a change to any of these makes dist stale.
+SPA_INPUT_DIRS = ("src", "public")
+SPA_INPUT_GLOBS = (
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "vite.config.*",
+    "tsconfig*.json",
+)
+
+
+def _spa_inputs(webapp: Path) -> list[Path]:
+    files = [
+        p
+        for d in SPA_INPUT_DIRS
+        if (webapp / d).is_dir()
+        for p in (webapp / d).rglob("*")
+        if p.is_file()
+    ]
+    files += [p for pattern in SPA_INPUT_GLOBS for p in webapp.glob(pattern) if p.is_file()]
+    return files
+
+
+def spa_is_stale(webapp: Path) -> bool:
+    """True when webapp/dist is missing or older than any of its build inputs.
+
+    A checkout that moves forward (git sets the mtime of every file it
+    rewrites) leaves an older dist behind; serving that would capture
+    screenshots of a SPA that no longer matches the source.
+    """
+    index = webapp / "dist" / "index.html"
+    if not index.exists():
+        return True
+    built = index.stat().st_mtime
+    return any(p.stat().st_mtime > built for p in _spa_inputs(webapp))
+
+
 def ensure_spa_built() -> None:
-    """The server serves webapp/dist; build it once if it's missing."""
-    if (ROOT / "webapp" / "dist" / "index.html").exists():
+    """The server serves webapp/dist; (re)build it when missing or stale."""
+    webapp = ROOT / "webapp"
+    if not spa_is_stale(webapp):
         return
     print("[demo] building the SPA (webapp/dist)...")
-    subprocess.run(["npm", "--prefix", str(ROOT / "webapp"), "run", "build"], check=True)
+    subprocess.run(["npm", "--prefix", str(webapp), "run", "build"], check=True)
 
 
 @dataclass
