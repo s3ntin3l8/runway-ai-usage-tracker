@@ -3959,3 +3959,170 @@ async def test_claude_same_store_cookie_sources_survive_ingest_and_completed_man
         select(CredentialSource).where(CredentialSource.provider_id == provider)
     ).all()
     assert [row.credential_origin for row in rows] == origins[1:]
+
+
+async def _tagged_claude_manifest_source(
+    session, cache, manager, provider, fingerprint, set_by, profile="Default"
+):
+    from app.services.credential_sources import sidecar_source_id
+    from app.services.credential_tags import CredentialTagRepo
+
+    origin = f"cookie:{provider}/chrome/{profile}/Cookies#{fingerprint}"
+    source_id = sidecar_source_id("resolved-host", origin)
+    account = (
+        "11111111-1111-4111-8111-111111111111"
+        if provider == "anthropic_console"
+        else "person@example.com"
+    )
+    session.add(
+        CredentialSource(
+            provider_id=provider,
+            account_id=account,
+            source_id=source_id,
+            source_type="cookie",
+            source_label="resolved-host",
+            sidecar_id="resolved-host",
+            credential_origin=origin,
+        )
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id=provider,
+        account_id=account,
+        sidecar_id="resolved-host",
+        credential_origin=origin,
+        set_by=set_by,
+    )
+    session.commit()
+    await cache.store(
+        provider,
+        {"session_cookie": f"fake-cookie-{fingerprint}"},
+        account_id=account,
+        source_id=source_id,
+        source="resolved-host",
+        source_metadata={
+            "source_type": "cookie",
+            "sidecar_id": "resolved-host",
+            "credential_origin": origin,
+            "identity_pending": False,
+        },
+    )
+    manager.set_credential_source_preference(provider, account, source_id, True, 3)
+    return origin, source_id, account
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["anthropic", "anthropic_console"])
+@pytest.mark.parametrize("set_by", ["identity_verification", "operator"])
+@pytest.mark.parametrize("reported_as", ["entries", "observations"])
+async def test_completed_claude_manifest_keeps_reported_resolved_siblings(
+    client, session, monkeypatch, provider, set_by, reported_as
+):
+    from app.services.collector_manager import CollectorManager
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    manager = CollectorManager()
+    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_manager.manager", manager)
+    first = await _tagged_claude_manifest_source(
+        session, cache, manager, provider, "aaaaaaaaaaaa", set_by
+    )
+    second = await _tagged_claude_manifest_source(
+        session, cache, manager, provider, "bbbbbbbbbbbb", set_by
+    )
+    other_store = await _tagged_claude_manifest_source(
+        session, cache, manager, provider, "cccccccccccc", set_by, profile="Other"
+    )
+    with Session(session.bind) as config_session:
+        first_row = config_session.exec(
+            select(CredentialSource).where(CredentialSource.source_id == first[1])
+        ).one()
+        first_row.enabled = False
+        config_session.add(first_row)
+        config_session.commit()
+    session.expire_all()
+    manager.set_credential_source_preference(provider, first[2], first[1], False, 3)
+    payload = {
+        "sidecar_id": "resolved-host",
+        "completed_providers": [provider],
+        reported_as: [
+            {"provider_id": provider, "credential_origin": origin}
+            for origin, _source, _account in (first, second)
+        ],
+    }
+    assert _post_manifest(client, payload).status_code == 200
+    assert {row.source_id for row in session.exec(select(CredentialSource)).all()} == {
+        first[1],
+        second[1],
+        other_store[1],
+    }
+    assert {c["source_id"] for c in await cache.get_source_candidates(provider, first[2])} == {
+        first[1],
+        second[1],
+        other_store[1],
+    }
+    # A missing observation is not authoritative if scanning did not complete, or for legacy clients.
+    for completed in (None, [], [provider]):
+        incomplete = {"sidecar_id": "resolved-host", "entries": []}
+        if completed is not None:
+            incomplete["completed_providers"] = completed
+        assert _post_manifest(client, incomplete).status_code == 200
+        assert len(session.exec(select(CredentialSource)).all()) == 3
+    payload[reported_as] = payload[reported_as][:1]
+    assert _post_manifest(client, payload).status_code == 200
+    rows = session.exec(select(CredentialSource)).all()
+    assert {row.source_id for row in rows} == {first[1], other_store[1]}
+    assert next(row for row in rows if row.source_id == first[1]).enabled is False
+    assert {c["source_id"] for c in await cache.get_source_candidates(provider, first[2])} == {
+        first[1],
+        other_store[1],
+    }
+    preferences = manager._credential_source_preferences[(provider, first[2])]
+    assert preferences[first[1]] == (False, 3)
+    assert other_store[1] in preferences and second[1] not in preferences
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["anthropic", "anthropic_console"])
+async def test_failed_manifest_commit_retains_claude_cache_and_preferences(
+    client, session, monkeypatch, provider
+):
+    from app.services.collector_manager import CollectorManager
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    manager = CollectorManager()
+    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_manager.manager", manager)
+    origin, source_id, account = await _tagged_claude_manifest_source(
+        session, cache, manager, provider, "aaaaaaaaaaaa", "identity_verification"
+    )
+
+    reported = await _tagged_claude_manifest_source(
+        session, cache, manager, provider, "bbbbbbbbbbbb", "identity_verification"
+    )
+
+    def fail_commit():
+        raise RuntimeError("synthetic commit failure")
+
+    monkeypatch.setattr(session, "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="synthetic commit failure"):
+        _post_manifest(
+            client,
+            {
+                "sidecar_id": "resolved-host",
+                "observations": [{"provider_id": provider, "credential_origin": reported[0]}],
+                "completed_providers": [provider],
+            },
+        )
+    session.rollback()
+    assert {row.source_id for row in session.exec(select(CredentialSource)).all()} == {
+        source_id,
+        reported[1],
+    }
+    assert {c["source_id"] for c in await cache.get_source_candidates(provider, account)} == {
+        source_id,
+        reported[1],
+    }
+    assert manager._credential_source_preferences[(provider, account)][source_id] == (True, 3)

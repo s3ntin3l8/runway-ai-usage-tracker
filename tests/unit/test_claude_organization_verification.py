@@ -532,6 +532,16 @@ async def test_completed_manifest_retires_absent_cookie_but_keeps_same_store_sib
             )
             == []
         )
+        # A legacy unkeyed observation cannot prove an exact-cookie replacement.
+        assert (
+            retire_missing_claude_cookie_sources(
+                session,
+                sidecar_id="host-a",
+                completed_providers=["anthropic"],
+                keep_by_provider={"anthropic": {source.credential_origin.split("#", 1)[0]}},
+            )
+            == []
+        )
         retired = retire_missing_claude_cookie_sources(
             session,
             sidecar_id="host-a",
@@ -604,3 +614,37 @@ async def test_manual_cookie_fallback_honors_saved_subscription_organization(cla
             result = await collector._get_claude_via_web_api(client)
     assert result[0]["used_value"] == 90
     assert collector.verified_organization_id == ORG_B
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "metadata,count",
+    [
+        ("{never-output-secret", 0),
+        ('{"secret":"never-output-secret"}', 0),
+        ('["never-output-secret",7]', 0),
+        ("null", 0),
+        ('[{"id":"one","name":"A"},{"id":"two","name":"B"}]', 2),
+    ],
+)
+async def test_pending_organization_metadata_is_robust_and_not_returned(claude_db, metadata, count):
+    from app.api.endpoints.fleet import list_pending_credential_tags
+    from app.models.db import PendingCredentialTag
+
+    with RealSession(claude_db) as session:
+        session.add(
+            PendingCredentialTag(
+                sidecar_id="host-a",
+                provider_id="anthropic",
+                credential_origin="cookie:anthropic/chrome/Default/store#aaaaaaaaaaaa",
+                claude_organizations_json=metadata,
+            )
+        )
+        session.commit()
+        result = await list_pending_credential_tags(None, session, None)
+    assert len(result["items"]) == 1
+    assert result["items"][0]["organization_count"] == count
+    assert result["items"][0]["selection_required"] is (count > 1)
+    import json
+
+    assert "never-output-secret" not in json.dumps(result)

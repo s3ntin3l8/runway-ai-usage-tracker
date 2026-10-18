@@ -1000,8 +1000,12 @@ class CollectorManager:
                     resolved_id,
                     cache_account_id=cache_slot,
                     **self._source_proof_kwargs(collector),
+                ) and (
+                    rejection_reason := self._promotion_rejection_reason(
+                        provider_id, candidate, collector
+                    )
                 ):
-                    successful_result = self._discard_stale_source_result(smart)
+                    successful_result = self._discard_stale_source_result(smart, rejection_reason)
                     continue
             elif (
                 account_id == "default"
@@ -1042,6 +1046,39 @@ class CollectorManager:
         )
 
     @staticmethod
+    def _promotion_rejection_reason(
+        provider_id: str, candidate: dict[str, Any], collector: Any
+    ) -> str | None:
+        if getattr(collector, "verified_source_generation", None) is not None:
+            return "credential binding changed during collection"
+        # Preserve legacy generic collection when optional source metadata is absent,
+        # while never publishing against a contradictory explicit operator assignment.
+        from sqlmodel import Session
+
+        from app.core.db import engine
+        from app.services.account_identity import canonical_account_id
+        from app.services.credential_tags import CredentialTagRepo
+
+        origin = candidate.get("credential_origin")
+        if not isinstance(origin, str):
+            return None
+        with Session(engine) as session:
+            tag = CredentialTagRepo.get(
+                session,
+                provider_id=provider_id,
+                credential_origin=origin,
+                sidecar_id=candidate.get("sidecar_id"),
+            )
+            if (
+                tag
+                and tag.set_by not in (None, "identity_claim", "identity_verification", "rotation")
+                and canonical_account_id(tag.account_id)
+                != canonical_account_id(collector.account_id)
+            ):
+                return "credential source assigned to another account"
+        return None
+
+    @staticmethod
     def _source_proof_kwargs(collector: Any) -> dict[str, Any]:
         generation = getattr(collector, "verified_source_generation", None)
         if generation is None:
@@ -1052,9 +1089,11 @@ class CollectorManager:
         }
 
     @staticmethod
-    def _discard_stale_source_result(smart: SmartCollector) -> list[dict[str, Any]]:
+    def _discard_stale_source_result(
+        smart: SmartCollector, reason: str = "credential binding changed during collection"
+    ) -> list[dict[str, Any]]:
         """A rejected proof is non-authoritative; a later successful fallback may complete."""
-        smart._set_collection_state("skipped", "credential binding changed during collection")
+        smart._set_collection_state("skipped", reason)
         return []
 
     @staticmethod

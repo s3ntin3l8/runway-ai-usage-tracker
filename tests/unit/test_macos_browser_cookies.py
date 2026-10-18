@@ -364,6 +364,8 @@ def test_cookie_rotation_cannot_inherit_base_or_provider_tag(monkeypatch, provid
 
 @pytest.mark.parametrize("failure", ["iterdir", "stat"])
 def test_unreadable_browser_store_does_not_hide_healthy_browser(tmp_path, monkeypatch, failure):
+    monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(sidecar.Path, "home", classmethod(lambda cls: tmp_path))
     chrome = tmp_path / "Library/Application Support/Google/Chrome"
     edge = tmp_path / "Library/Application Support/Microsoft Edge"
     for base in [chrome, edge]:
@@ -386,7 +388,12 @@ def test_unreadable_browser_store_does_not_hide_healthy_browser(tmp_path, monkey
     monkeypatch.setattr(type(chrome), "iterdir", guarded_iterdir)
     monkeypatch.setattr(type(chrome), "stat", guarded_stat)
     paths = sidecar.BrowserCookieExtractor.get_all_paths()
-    assert any(target["browser"] == "Edge" for target in paths)
+    healthy = [target for target in paths if target["browser"] == "Edge"]
+    assert len(healthy) == 1
+    assert healthy[0]["path"] == edge / "Default/Network/Cookies"
+    assert healthy[0]["profile"] == "Default"
+    assert healthy[0]["store"] == "Network/Cookies"
+    assert not any(target["browser"] == "Chrome" for target in paths)
 
 
 def test_desktop_session_rotation_has_distinct_final_origins(monkeypatch):

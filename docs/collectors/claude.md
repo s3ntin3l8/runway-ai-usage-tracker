@@ -185,6 +185,14 @@ for macOS. Ordinary sign-in, expiry and revocation still apply. Native Chrome
 source-runtime evidence is recorded in
 [automatic connection acceptance](../claude-automatic-native-acceptance-671.md).
 
+A completed provider scan can still be empty when a browser store or Keychain is
+inaccessible. Runway preserves last-good credential sources in that case. It retires
+an absent cookie fingerprint only when another fingerprint from the same browser,
+profile, and store is positively reported after a completed scan. A logout leaving
+that store entirely empty can therefore leave stale source metadata until explicit
+cleanup or later positive replacement evidence. Failed or expired credentials retain
+the existing rejection behavior; an empty scan does not prove logout.
+
 ### Manual fallback
 
 Choose **Claude → Console API credits** when adding a connection. Sign in at

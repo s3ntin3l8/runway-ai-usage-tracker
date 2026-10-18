@@ -978,8 +978,20 @@ def _entry_reason(
     return reason
 
 
+def _reported_manifest_origins(payload: CredentialManifestRequest) -> dict[str, set[str]]:
+    """All positively reported sources, including resolved observation-only credentials."""
+    reported: dict[str, set[str]] = {}
+    for entry in payload.entries:
+        provider, origin = entry.get("provider_id"), entry.get("credential_origin")
+        if isinstance(provider, str) and provider and isinstance(origin, str) and origin:
+            reported.setdefault(provider, set()).add(origin)
+    for observation in payload.observations:
+        reported.setdefault(observation.provider_id, set()).add(observation.credential_origin)
+    return reported
+
+
 async def _retire_missing_claude_sources(
-    session: Session, payload: CredentialManifestRequest, keep_by_provider: dict[str, set[str]]
+    session: Session, payload: CredentialManifestRequest
 ) -> None:
     from app.services.collector_manager import manager
     from app.services.credential_sources import retire_missing_claude_cookie_sources
@@ -988,8 +1000,10 @@ async def _retire_missing_claude_sources(
         session,
         sidecar_id=payload.sidecar_id,
         completed_providers=payload.completed_providers,
-        keep_by_provider=keep_by_provider,
+        keep_by_provider=_reported_manifest_origins(payload),
     )
+    # No cache/preference eviction may escape a failed durable transaction.
+    session.commit()
     for retired in retired_sources:
         await token_cache.remove_source(retired.provider_id, retired.account_id, retired.source_id)
         manager.drop_credential_source_preference(
@@ -1256,8 +1270,7 @@ async def post_credential_manifest(
         if prune_keep
         else 0
     )
-    await _retire_missing_claude_sources(session, payload, keep_by_provider)
-    session.commit()
+    await _retire_missing_claude_sources(session, payload)
 
     resolved = _account_tag_hints_for_providers(
         session, candidate_pids, sidecar_id=payload.sidecar_id
@@ -1580,6 +1593,21 @@ def visible_pending_rows(session: Session) -> list[PendingCredentialTag]:
     return visible
 
 
+def _pending_organization_count(serialized: str | None) -> int:
+    try:
+        organizations = json.loads(serialized or "[]")
+    except (TypeError, ValueError):
+        return 0
+    if not isinstance(organizations, list):
+        return 0
+    return sum(
+        isinstance(org, dict)
+        and isinstance(org.get("id"), str)
+        and isinstance(org.get("name"), str)
+        for org in organizations
+    )
+
+
 @router.get("/credentials/tags/pending")
 async def list_pending_credential_tags(
     sidecar_id: str | None = None,
@@ -1611,6 +1639,7 @@ async def list_pending_credential_tags(
     items = []
     for row in visible_rows:
         preview, observed_at, preview_stale = PendingCredentialTagRepo.read_quota_preview(row)
+        organization_count = _pending_organization_count(row.claude_organizations_json)
         items.append(
             {
                 "sidecar_id": row.sidecar_id,
@@ -1622,8 +1651,8 @@ async def list_pending_credential_tags(
                     if row.provider_id in ("anthropic", "anthropic_console")
                     else {}
                 ),
-                "selection_required": len(json.loads(row.claude_organizations_json or "[]")) > 1,
-                "organization_count": len(json.loads(row.claude_organizations_json or "[]")),
+                "selection_required": organization_count > 1,
+                "organization_count": organization_count,
                 "first_seen": row.first_seen.isoformat() if row.first_seen else None,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
                 "quota_preview": preview,
