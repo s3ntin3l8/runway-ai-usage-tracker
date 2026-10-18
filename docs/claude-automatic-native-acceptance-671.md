@@ -1,7 +1,7 @@
 # Automatic Claude connections: native acceptance (#671)
 
 Observed 2026-10-18 (Europe/Berlin). The latest accepted source-runtime run
-used revision `c6b96baffb1af922d6b6d344b22cedc1a98a0bdd` on macOS 26.6.2
+used revision `3e2a744e` on macOS 26.6.2
 (25G83), arm64, Chrome 155.0.8059.80 and Python 3.14.7.
 See the [sanitized evidence](claude-automatic-native-acceptance-671.json).
 
@@ -13,8 +13,8 @@ provider. HMAC-authenticated manifest and metric ingestion both returned 200.
 Production server collectors then verified the live upstream sessions,
 promoted their distinct source identities, and the background poller persisted
 three valid subscription cards and one valid Console balance card. After a
-second poll and collector synchronization, two resolved accounts remained
-active. Both providers retained `data_source=web` and `input_source=sidecar`;
+resolved-session heartbeat, second poll and collector synchronization, two
+resolved accounts remained active. Both providers retained `data_source=web` and `input_source=sidecar`;
 neither had a remaining pending source.
 
 The accepted run made exactly one `Chrome Safe Storage` lookup, shared by
@@ -37,6 +37,12 @@ this accepted run. Ordinary Chrome sign-in was already present.
   using the production HMAC scheme. HTTP transport to these local routes was
   in-process ASGI; upstream verification used real HTTPS with TLS verification
   and the production collector headers. This was not a mocked upstream test.
+- After promotion, fetched production fleet configuration, rediscovered both
+  sessions using its exact-source account hints, and posted a second signed
+  manifest with no pending entries and both resolved health observations.
+  Checked both durable sources and cache accounts survived, then uploaded the
+  rediscovered token cards through production ingestion. Both requests returned
+  200. This explicitly tests the post-verification heartbeat.
 - Ran the production collector manager and background poller twice, including
   forced source/account reconciliation. Checked persisted `LatestUsage` rows,
   resolved `CredentialSource` rows, active account counts and pending cache
@@ -72,10 +78,32 @@ unintended Desktop Keychain attempt that returned unavailable. Its exact count
 was not captured, and it is not native acceptance evidence. Affected fixtures
 now use disposable homes and block real `security` invocations by default.
 
+## PR review: resolved-session heartbeat regression
+
+Hermes found that source retirement used the pending-only origin map. A
+verified or operator-tagged source could be removed on the next manifest,
+even while still reported. Earlier two-poll acceptance did not exercise that
+next sidecar manifest and therefore missed the defect. The latest native run
+above adds rediscovery and an observation-only resolved heartbeat before the
+second poll, and verifies both sources survive.
+
+Retirement now retains origins from both pending entries and resolved health
+observations. Cache and preference eviction waits until the database commit
+succeeds. Since an empty scan can also mean denied or unavailable store access,
+retirement additionally requires positive fingerprinted replacement evidence
+from the same browser/profile/store in a completed scan. Empty scans preserve
+last-good sources. Authoritative empty-store/logout proof remains tracked in
+#672; this report does not claim automatic logout detection.
+
+The same review identified two Linux/Windows CI failures caused by a test
+using the real host home and OS. Its browser fixtures now explicitly select
+Darwin and a temporary home, and assert the exact healthy Edge store. Native
+Windows automatic-session acceptance remains separate in #675.
+
 ## Repository verification
 
 The final combined `make lint && make test && make web-test` gate passed:
-4,711 Python tests passed (41 skipped) and 1,185 frontend tests passed.
+4,729 Python tests passed (41 skipped) and 1,185 frontend tests passed.
 Ruff, formatting, mypy and dependency auditing passed. The production frontend
 build and generated-registry consistency tests passed. Independent whole-branch
 review approved the source guards, account-switch compatibility and organization

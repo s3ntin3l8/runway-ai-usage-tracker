@@ -36,9 +36,10 @@
   "collectors_before_first_poll": 4,
   "collectors_after_promotion": 2,
   "active_accounts_after_promotion": 2,
+  "resolved_heartbeat_manifest_status": 200,
+  "resolved_heartbeat_ingest_status": 200,
+  "resolved_heartbeat_preserved_both_sources": true,
   "result": "passed",
-  "observed_at_utc": "2026-10-18T14:25:11Z",
-  "source_revision": "c6b96baf",
   "transport": "production HMAC ingest via in-process ASGI; live HTTPS upstreams",
   "environment": {
     "macos": "26.6.2",
@@ -46,5 +47,7 @@
     "architecture": "arm64",
     "chrome": "155.0.8059.80",
     "python": "3.14.7"
-  }
+  },
+  "source_revision": "3e2a744e",
+  "observed_at_utc": "2026-10-18T15:05:54Z"
 }
