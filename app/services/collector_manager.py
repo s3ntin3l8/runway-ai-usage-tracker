@@ -1002,7 +1002,7 @@ class CollectorManager:
                     expected_generation=getattr(collector, "verified_source_generation", None),
                     organization_id=getattr(collector, "verified_organization_id", None),
                 ):
-                    successful_result = []
+                    successful_result = self._discard_stale_source_result(smart)
                     continue
             elif (
                 account_id == "default"
@@ -1020,7 +1020,7 @@ class CollectorManager:
             if not await self._claude_organization_allows_publication(
                 provider_id, collector, candidate
             ):
-                successful_result = []
+                successful_result = self._discard_stale_source_result(smart)
                 continue
             successful_result = self._protect_claude_cards(
                 provider_id, collector, candidate, result
@@ -1041,6 +1041,12 @@ class CollectorManager:
         return (
             successful_result if successful_result is not None else (last_kept_failure_result or [])
         )
+
+    @staticmethod
+    def _discard_stale_source_result(smart: SmartCollector) -> list[dict[str, Any]]:
+        """A rejected proof is non-authoritative; a later successful fallback may complete."""
+        smart._set_collection_state("skipped", "credential binding changed during collection")
+        return []
 
     @staticmethod
     def _protect_claude_cards(

@@ -839,3 +839,141 @@ async def test_poller_revalidates_claude_proof_after_manager_returns(world, monk
             assert session.exec(select(LatestUsage)).all() == []
     finally:
         await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change,fallback",
+    [
+        ("replace", False),
+        ("remove", False),
+        ("reassign", False),
+        ("organization", False),
+        ("replace", True),
+    ],
+)
+async def test_manager_rejected_regular_claude_poll_preserves_last_good(
+    world, monkeypatch, change, fallback
+):
+    from app.models.db import LatestUsage, LatestUsageContribution, ProviderConfig
+    from app.services.poller import BackgroundPoller
+
+    engine, cache = world
+    origin = "cookie:anthropic/chrome/Default/store#aaaaaaaaaaaa"
+    source_id = await _seed(world, "anthropic", origin, {"cookie_sessionKey": CLAUDE_COOKIE})
+    manager = CollectorManager()
+    manager.collector_registry = {"anthropic": manager.collector_registry["anthropic"]}
+
+    def upstream(request):
+        if request.url.path.endswith("/usage"):
+            return httpx.Response(
+                200,
+                json={
+                    "five_hour": {
+                        "utilization": 50
+                        if "fallback-cookie" in request.headers.get("cookie", "")
+                        else 10
+                    }
+                },
+            )
+        return _claude_web()(request)
+
+    manager._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream), event_hooks={"response": [cache.observe_response]}
+    )
+    monkeypatch.setattr("app.services.poller.manager", manager)
+    monkeypatch.setattr("app.services.poller.engine", engine)
+    try:
+        poller = BackgroundPoller()
+        await poller.poll_now()
+        await manager._sync_collectors(force=True)
+        with Session(engine) as session:
+            assert len(session.exec(select(LatestUsageContribution)).all()) == 1
+        if fallback:
+            fallback_origin = "cookie:anthropic/chrome/Other/store#bbbbbbbbbbbb"
+            fallback_id = "sidecar:z-fallback"
+            with Session(engine) as session:
+                session.add(
+                    CredentialSource(
+                        provider_id="anthropic",
+                        account_id=BOB,
+                        source_id=fallback_id,
+                        source_type="cookie",
+                        source_label=SIDECAR,
+                        sidecar_id=SIDECAR,
+                        credential_origin=fallback_origin,
+                        priority=1,
+                    )
+                )
+                CredentialTagRepo.set_tag(
+                    session,
+                    provider_id="anthropic",
+                    credential_origin=fallback_origin,
+                    account_id=BOB,
+                    sidecar_id=SIDECAR,
+                    set_by="identity_verification",
+                )
+                session.commit()
+            await cache.store(
+                "anthropic",
+                {"cookie_sessionKey": "fallback-cookie"},
+                account_id=BOB,
+                source_id=fallback_id,
+                source=SIDECAR,
+                source_metadata={
+                    "source_type": "cookie",
+                    "sidecar_id": SIDECAR,
+                    "credential_origin": fallback_origin,
+                    "identity_pending": False,
+                    "priority": 1,
+                },
+            )
+            await manager._sync_collectors(force=True)
+        smart = manager.smart_collectors[f"anthropic:{BOB}"]
+        collect = smart.collect
+        changed = False
+
+        async def interleaved(client):
+            nonlocal changed
+            result = await collect(client)
+            if changed:
+                return result
+            changed = True
+            if change == "replace":
+                await cache.store(
+                    "anthropic",
+                    {"cookie_sessionKey": "replacement-cookie"},
+                    account_id=BOB,
+                    source_id=source_id,
+                )
+            elif change == "remove":
+                await cache.remove_source("anthropic", BOB, source_id)
+            with Session(engine) as session:
+                if change in ("remove", "reassign"):
+                    source = session.exec(
+                        select(CredentialSource).where(CredentialSource.source_id == source_id)
+                    ).one()
+                    if change == "remove":
+                        session.delete(source)
+                    else:
+                        source.account_id = "operator@example.com"
+                        session.add(source)
+                elif change == "organization":
+                    config = session.exec(select(ProviderConfig)).one()
+                    config.claude_organization_id = "22222222-2222-4222-8222-222222222222"
+                    session.add(config)
+                session.commit()
+            return result
+
+        monkeypatch.setattr(smart, "collect", interleaved)
+        await poller.poll_now()
+        outcome = next(o for o in manager.last_collection_outcomes if o["account_id"] == BOB)
+        assert outcome["state"] == ("complete" if fallback else "skipped")
+        with Session(engine) as session:
+            rows = session.exec(select(LatestUsageContribution)).all()
+            assert len(rows) == 1
+            assert json.loads(rows[0].card_json)["used_value"] == (50 if fallback else 10)
+            latest = session.exec(select(LatestUsage)).one()
+            assert json.loads(latest.card_json)["used_value"] == (50 if fallback else 10)
+    finally:
+        await manager.close()
