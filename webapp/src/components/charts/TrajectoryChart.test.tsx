@@ -81,5 +81,7 @@ describe('TrajectoryChart', () => {
     expect(used.markLine.label.formatter).toBe('limit');
     expect(used.markLine.label.position).toBe('insideEndTop');
     expect(used.markLine.data).toEqual([{ yAxis: 100 }]);
+    // The label sits above the line, so the top margin must fit it.
+    expect((captured.option!.grid as { top: number }).top).toBeGreaterThanOrEqual(20);
   });
 });

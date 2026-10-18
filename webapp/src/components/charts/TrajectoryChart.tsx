@@ -30,7 +30,9 @@ export function TrajectoryChart({
         ...baseTooltip(t),
         valueFormatter: (v: number) => `${Number(v).toFixed(1)}%`,
       },
-      grid: { left: 40, right: 16, top: 16, bottom: 28 },
+      // top: room for the 'limit' label above the 100% line (10px glyph +
+      // 5px default label distance) with headroom when the y-max is 100.
+      grid: { left: 40, right: 16, top: 20, bottom: 28 },
       xAxis: {
         type: 'time',
         ...baseAxisStyle(t),
