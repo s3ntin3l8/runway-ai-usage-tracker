@@ -76,13 +76,23 @@ def spa_is_stale(webapp: Path) -> bool:
 
     A checkout that moves forward (git sets the mtime of every file it
     rewrites) leaves an older dist behind; serving that would capture
-    screenshots of a SPA that no longer matches the source.
+    screenshots of a SPA that no longer matches the source. The check is
+    mtime-based only: an mtime-preserving restore (rsync -a, cp -p, tar)
+    that leaves every input older than dist goes unnoticed.
     """
     index = webapp / "dist" / "index.html"
     if not index.exists():
         return True
     built = index.stat().st_mtime
-    return any(p.stat().st_mtime > built for p in _spa_inputs(webapp))
+    return any(_mtime(p) > built for p in _spa_inputs(webapp))
+
+
+def _mtime(path: Path) -> float:
+    # A dangling symlink has no target to stat; it can't be a build input.
+    try:
+        return path.stat().st_mtime
+    except FileNotFoundError:
+        return 0.0
 
 
 def ensure_spa_built() -> None:

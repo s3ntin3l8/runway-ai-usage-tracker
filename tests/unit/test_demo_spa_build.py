@@ -73,6 +73,13 @@ def test_unlinking_a_source_file_makes_dist_stale(webapp: Path) -> None:
     assert spa_is_stale(webapp)
 
 
+def test_a_dangling_symlink_is_ignored(webapp: Path) -> None:
+    link = webapp / "src" / "gone.tsx"
+    link.symlink_to(webapp / "src" / "missing.tsx")
+    os.utime(webapp / "src", (1_000, 1_000))
+    assert not spa_is_stale(webapp)
+
+
 def test_unrelated_files_do_not_make_dist_stale(webapp: Path) -> None:
     _touch(webapp / "e2e" / "smoke.spec.ts", 3_000)
     _touch(webapp / "node_modules" / "pkg" / "index.js", 3_000)
