@@ -1762,24 +1762,18 @@ async def select_claude_source_organization(
     _current_row, current = await _pending_claude_source(session, body.provider_id, source_id)
     if current["tokens"] != candidate["tokens"]:
         raise HTTPException(status_code=409, detail="Claude source changed; retry")
-    row = session.exec(
-        select(ProviderConfig).where(
-            ProviderConfig.provider_id == body.provider_id,
-            ProviderConfig.account_id == result.account_id,
-        )
-    ).first()
-    if row is None:
-        row = ProviderConfig(provider_id=body.provider_id, account_id=result.account_id)
-    row.claude_organization_id = organization_id
-    session.add(row)
-    session.commit()
-    await manager._promote_source_identity(
+    promoted = await manager._promote_source_identity(
         body.provider_id,
         "default",
         source_id,
         result.account_id,
         cache_account_id=candidate["account_slot"],
+        expected_generation=token_cache.credential_generation(candidate["tokens"]),
+        organization_id=organization_id,
+        allow_selection=True,
     )
+    if not promoted:
+        raise HTTPException(status_code=409, detail="Claude source changed; retry")
     return {"status": "ok"}
 
 

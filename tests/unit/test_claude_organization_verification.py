@@ -541,3 +541,66 @@ async def test_completed_manifest_retires_absent_cookie_but_keeps_same_store_sib
         assert [row.source_id for row in retired] == [source_id]
         session.commit()
         assert session.exec(select(CredentialSource)).one().source_id == "sibling"
+
+
+@pytest.mark.asyncio
+async def test_reconciling_already_promoted_source_keeps_active_account():
+    from app.services.token_cache import token_cache
+
+    await token_cache.store(
+        "anthropic",
+        {"cookie_sessionKey": "test-cookie"},
+        account_id="source-a",
+        source_id="source-a",
+        source_metadata={"identity_pending": True},
+    )
+    assert await token_cache.move_source("anthropic", "source-a", "person@example.com", "source-a")
+    assert await token_cache.move_source(
+        "anthropic", "person@example.com", "person@example.com", "source-a"
+    )
+    assert any(
+        provider == "anthropic" and account == "person@example.com"
+        for provider, account, _label in await token_cache.get_all_active_accounts()
+    )
+
+
+@pytest.mark.asyncio
+async def test_manual_cookie_fallback_honors_saved_subscription_organization(claude_db):
+    from app.models.db import ProviderConfig
+    from app.services.collectors.anthropic import AnthropicCollector
+    from app.services.token_cache import token_cache
+
+    with RealSession(claude_db) as session:
+        session.add(
+            ProviderConfig(
+                provider_id="anthropic",
+                account_id="person@example.com",
+                claude_organization_id=ORG_B,
+            )
+        )
+        session.commit()
+    await token_cache.store(
+        "anthropic",
+        {"cookie_sessionKey": "manual-cookie"},
+        account_id="person@example.com",
+        source_id="manual",
+        source_metadata={"source_type": "config"},
+    )
+
+    def upstream(request):
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": "person@example.com"})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": oid, "name": "Org"} for oid in (ORG_A, ORG_B)]
+            )
+        return httpx.Response(
+            200, json={"five_hour": {"utilization": 90 if ORG_B in request.url.path else 10}}
+        )
+
+    collector = AnthropicCollector(account_id="person@example.com")
+    async with token_cache.using_source("anthropic", "person@example.com", "manual"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            result = await collector._get_claude_via_web_api(client)
+    assert result[0]["used_value"] == 90
+    assert collector.verified_organization_id == ORG_B

@@ -239,9 +239,31 @@ async def verify_collector_cookie(
     if selection:
         persist_pending_organizations(provider, selection[1], result)
     if result.organization_id and result.account_id:
+        collector.verified_source_generation = token_cache.credential_generation(
+            tokens_before or {}
+        )
         collector.verified_identity = result.account_id
         collector.verified_organization_id = result.organization_id
         # Every attempt starts at default; only the exact pinned source may establish it.
         if not collector.account_id or collector.account_id == "default":
             collector.account_id = result.account_id
     return result
+
+
+@dataclass(frozen=True)
+class ClaudeSourceProof:
+    provider_id: str
+    account_id: str
+    source_id: str
+    generation: str
+    organization_id: str
+    credential_origin: str | None
+    sidecar_id: str | None
+
+
+class ClaudeVerifiedCard(dict[str, Any]):
+    """A normal JSON card with private nonsecret proof carried only to the poller."""
+
+    def __init__(self, card: dict[str, Any], proof: ClaudeSourceProof):
+        super().__init__(card)
+        self.claude_source_proof = proof

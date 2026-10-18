@@ -89,13 +89,15 @@ class AnthropicWebMixin:
 
         from app.services.claude_verification import (
             is_native_claude_source,
+            selected_organization,
             subscription_headers,
             verify_collector_cookie,
         )
         from app.services.collectors.anthropic_console import ConsoleAPIError
 
-        if is_native_claude_source("anthropic"):
-            self._current_input_source = "sidecar"
+        native_source = is_native_claude_source("anthropic")
+        if native_source or selected_organization("anthropic", self.account_id):
+            self._current_input_source = "sidecar" if native_source else "config"
             try:
                 verified = await verify_collector_cookie(self, client, "anthropic", session_key)
             except ConsoleAPIError as exc:

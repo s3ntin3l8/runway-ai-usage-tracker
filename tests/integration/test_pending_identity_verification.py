@@ -22,7 +22,6 @@ from app.services.collectors import chatgpt
 from app.services.credential_tags import CredentialTagRepo
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import TokenCache
-from app.services.token_cache import token_cache as global_cache
 
 BOB = "bob@example.com"
 OTHER = "server-owner@example.com"
@@ -43,12 +42,15 @@ def world(monkeypatch):
     )
     SQLModel.metadata.create_all(engine)
     cache = TokenCache()
+    # Load the native verifier before wiring imports, including on isolated -k runs.
+    from app.services import claude_verification  # noqa: F401
+
     for name, module in list(sys.modules.items()):
         # Never the defining module itself.
         if (
             name.startswith("app.")
             and name != "app.services.token_cache"
-            and getattr(module, "token_cache", None) is global_cache
+            and isinstance(getattr(module, "token_cache", None), TokenCache)
         ):
             monkeypatch.setattr(module, "token_cache", cache)
     monkeypatch.setattr("app.core.db.engine", engine)
@@ -586,3 +588,254 @@ async def test_verified_claude_cookie_does_not_publish_disabled_account(world):
         config = session.exec(select(ProviderConfig)).one()
         assert config.enabled is False
         assert config.archived is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["replace", "remove", "reassign"])
+async def test_claude_proof_is_revalidated_after_collector_returns(world, change):
+    engine, cache = world
+    source_id = await _seed(
+        world, "anthropic", "cookie:anthropic/session", {"cookie_sessionKey": CLAUDE_COOKIE}
+    )
+    manager = CollectorManager()
+    key = _verifier(manager, "anthropic")
+    smart = manager.smart_collectors[key]
+    collect = smart.collect
+
+    async def interleaved(client):
+        result = await collect(client)
+        if change == "replace":
+            await cache.store(
+                "anthropic",
+                {"cookie_sessionKey": "different-session"},
+                account_id=source_id,
+                source_id=source_id,
+                source_metadata={"identity_pending": True},
+            )
+        elif change == "remove":
+            await cache.remove_source("anthropic", source_id, source_id)
+            with Session(engine) as session:
+                session.delete(
+                    session.exec(
+                        select(CredentialSource).where(CredentialSource.source_id == source_id)
+                    ).one()
+                )
+                session.commit()
+        else:
+            with Session(engine) as session:
+                source = session.exec(
+                    select(CredentialSource).where(CredentialSource.source_id == source_id)
+                ).one()
+                source.account_id = "operator@example.com"
+                CredentialTagRepo.set_tag(
+                    session,
+                    provider_id="anthropic",
+                    credential_origin=source.credential_origin,
+                    account_id="operator@example.com",
+                    sidecar_id=SIDECAR,
+                    set_by="operator",
+                )
+                session.add(source)
+                session.commit()
+        return result
+
+    smart.collect = interleaved
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_claude_web())) as client:
+        result = await manager._collect_with_source_failover(key, client, {})
+    assert result == []
+    with Session(engine) as session:
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id="anthropic",
+            credential_origin="cookie:anthropic/session",
+            sidecar_id=SIDECAR,
+        )
+        assert tag is None or tag.account_id != "bob@example.com"
+
+
+@pytest.mark.asyncio
+async def test_saved_org_change_after_claude_verification_discards_old_org_cards(world):
+    from app.models.db import ProviderConfig
+
+    engine, _cache = world
+    await _seed(
+        world, "anthropic", "cookie:anthropic/session", {"cookie_sessionKey": CLAUDE_COOKIE}
+    )
+    org_a = "11111111-1111-4111-8111-111111111111"
+    org_b = "22222222-2222-4222-8222-222222222222"
+    with Session(engine) as session:
+        session.add(
+            ProviderConfig(provider_id="anthropic", account_id=BOB, claude_organization_id=org_a)
+        )
+        session.commit()
+    manager = CollectorManager()
+    key = _verifier(manager, "anthropic")
+    smart = manager.smart_collectors[key]
+    collect = smart.collect
+
+    async def interleaved(client):
+        result = await collect(client)
+        with Session(engine) as session:
+            config = session.exec(select(ProviderConfig)).one()
+            config.claude_organization_id = org_b
+            session.add(config)
+            session.commit()
+        return result
+
+    smart.collect = interleaved
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_claude_web())) as client:
+        result = await manager._collect_with_source_failover(key, client, {})
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_does_not_promote_new_pending_generation_using_old_automatic_tag(
+    world,
+):
+    _engine, cache = world
+    source_id = await _seed(
+        world, "anthropic", "cookie:anthropic/session", {"cookie_sessionKey": CLAUDE_COOKIE}
+    )
+    await _verify("anthropic", _claude_web())
+    await cache.store(
+        "anthropic",
+        {"cookie_sessionKey": "replacement-cookie"},
+        account_id=source_id,
+        source_id=source_id,
+        source=SIDECAR,
+        source_metadata={
+            "identity_pending": True,
+            "credential_origin": "cookie:anthropic/session",
+            "sidecar_id": SIDECAR,
+            "source_type": "cookie",
+        },
+    )
+    await CollectorManager().reconcile_token_cache_from_durable_tags()
+    pending = await cache.get_pending_sources("anthropic")
+    assert len(pending) == 1
+    assert pending[0]["tokens"]["cookie_sessionKey"] == "replacement-cookie"
+
+
+@pytest.mark.asyncio
+async def test_claude_pending_sources_survive_real_manager_poller_and_resync(world, monkeypatch):
+    from app.models.db import LatestUsage
+    from app.services.poller import BackgroundPoller
+
+    engine, cache = world
+    monkeypatch.setattr("app.services.token_cache.token_cache", cache)
+    await _seed(
+        world,
+        "anthropic",
+        "cookie:anthropic/chrome/Default/store#aaaaaaaaaaaa",
+        {"cookie_sessionKey": CLAUDE_COOKIE},
+    )
+    await _seed(
+        world,
+        "anthropic_console",
+        "cookie:anthropic_console/chrome/Default/store#bbbbbbbbbbbb",
+        {"session_cookie": "console-cookie"},
+    )
+    manager = CollectorManager()
+    manager.collector_registry = {
+        p: spec
+        for p, spec in manager.collector_registry.items()
+        if p in ("anthropic", "anthropic_console")
+    }
+    org = "11111111-1111-4111-8111-111111111111"
+
+    def upstream(request):
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": BOB})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(200, json=[{"uuid": org, "name": "Org", "capabilities": ["api"]}])
+        if request.url.path.endswith("/prepaid/credits"):
+            return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+        return httpx.Response(200, json=CLAUDE_USAGE)
+
+    monkeypatch.setattr("app.services.poller.manager", manager)
+    monkeypatch.setattr("app.services.poller.engine", engine)
+    manager._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream), event_hooks={"response": [cache.observe_response]}
+    )
+    try:
+        await manager._sync_collectors(force=True)
+        assert len(manager.smart_collectors) == 4
+        poller = BackgroundPoller()
+        await poller.poll_now()
+        await manager._sync_collectors(force=True)
+        assert len(await cache.get_all_active_accounts()) == 2
+        assert f"anthropic:{BOB}" in manager.smart_collectors
+        assert f"anthropic_console:{org}" in manager.smart_collectors
+        await poller.poll_now()
+        await manager._sync_collectors(force=True)
+        assert len(await cache.get_all_active_accounts()) == 2
+        with Session(engine) as session:
+            rows = session.exec(select(LatestUsage)).all()
+            assert {row.provider_id for row in rows} == {"anthropic", "anthropic_console"}
+            for row in rows:
+                card = json.loads(row.card_json)
+                assert not card.get("error_type")
+                assert card["data_source"] == "web"
+                assert card["input_source"] == "sidecar"
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["replace", "remove", "reassign", "organization"])
+async def test_poller_revalidates_claude_proof_after_manager_returns(world, monkeypatch, change):
+    from app.models.db import LatestUsage, ProviderConfig
+    from app.services.poller import BackgroundPoller
+
+    engine, cache = world
+    source_id = await _seed(
+        world,
+        "anthropic",
+        "cookie:anthropic/chrome/Default/store#aaaaaaaaaaaa",
+        {"cookie_sessionKey": CLAUDE_COOKIE},
+    )
+    manager = CollectorManager()
+    manager.collector_registry = {"anthropic": manager.collector_registry["anthropic"]}
+    manager._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(_claude_web()),
+        event_hooks={"response": [cache.observe_response]},
+    )
+    collect_all = manager.collect_all
+
+    async def late_change():
+        result = await collect_all()
+        # Real semaphore stamping + collect_all flattening preserve the private proof.
+        assert result and getattr(result[0], "claude_source_proof", None) is not None
+        assert "claude_source_proof" not in json.dumps(result)
+        if change == "replace":
+            await cache.store(
+                "anthropic",
+                {"cookie_sessionKey": "replacement-cookie"},
+                account_id=BOB,
+                source_id=source_id,
+            )
+        elif change == "remove":
+            await cache.remove_source("anthropic", BOB, source_id)
+        with Session(engine) as session:
+            if change == "remove":
+                session.delete(session.exec(select(CredentialSource)).one())
+            elif change == "reassign":
+                source = session.exec(select(CredentialSource)).one()
+                source.account_id = "operator@example.com"
+                session.add(source)
+            elif change == "organization":
+                config = session.exec(select(ProviderConfig)).one()
+                config.claude_organization_id = "22222222-2222-4222-8222-222222222222"
+                session.add(config)
+            session.commit()
+        return result
+
+    monkeypatch.setattr(manager, "collect_all", late_change)
+    monkeypatch.setattr("app.services.poller.manager", manager)
+    monkeypatch.setattr("app.services.poller.engine", engine)
+    try:
+        await BackgroundPoller().poll_now()
+        with Session(engine) as session:
+            assert session.exec(select(LatestUsage)).all() == []
+    finally:
+        await manager.close()
