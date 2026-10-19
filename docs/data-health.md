@@ -52,7 +52,8 @@ applied until it's fixed — the dependency order below reflects that.
 
 `config_default_keyed` blocks `lone_default_events`, `orphan_credential_tags`,
 `orphan_credential_sources` and `openrouter_model_events`; `legacy_provider_ids`
-blocks `openrouter_model_events`, `unpriced_models` and `rollup_drift` — fix the blocking check first if you see a **Blocked**
+blocks `openrouter_model_events`, `unpriced_models` and `rollup_drift`; and
+`openrouter_model_events` blocks `lone_default_events` and `unpriced_models` — fix the blocking check first if you see a **Blocked**
 badge. The expanded check names the prerequisite that needs attention. (The
 re-key now carries a provider's credential sources with it, so resolving
 `config_default_keyed` first is usually what clears the credential-source

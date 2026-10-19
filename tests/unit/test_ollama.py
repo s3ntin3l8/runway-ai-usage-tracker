@@ -926,6 +926,63 @@ class TestOllamaApiCollector:
         assert cards == []
         assert collector._last_error_reason == "missing_data"
 
+    def test_build_cards_from_api_usage_time_bucketed_totals(self):
+        """Ollama Cloud usage API returning totals and range."""
+        collector = OllamaCollector(account_id="acc_test", account_label="user@example.com")
+        body = {
+            "range": "7d",
+            "scope": "self",
+            "granularity": "day",
+            "totals": {
+                "request_count": 42,
+                "usage_usd": 1.25,
+                "input_tokens": 10000,
+                "cached_input_tokens": 2000,
+                "output_tokens": 5000,
+            },
+            "buckets": [],
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["service_name"] == "Ollama Cloud"
+        assert card["provider_id"] == "ollama"
+        assert card["window_type"] == "weekly"
+        assert card["is_unlimited"] is True
+        assert card["used_value"] == 1.25
+        assert card["remaining"] == "$1.25"
+        assert card["token_usage"] == {
+            "input": 10000,
+            "output": 5000,
+            "cache_read": 2000,
+        }
+        assert "$1.25 spent · 42 requests · Ollama Cloud" in card["detail"]
+        assert card["account_label"] == "user@example.com"
+
+    def test_build_cards_from_api_usage_zero_spend_time_bucketed(self):
+        """Zero spend / 0 request response creates a valid active PAYG card."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "range": "24h",
+            "scope": "self",
+            "granularity": "hour",
+            "totals": {
+                "request_count": 0,
+                "usage_usd": 0,
+                "input_tokens": 0,
+                "cached_input_tokens": 0,
+                "output_tokens": 0,
+            },
+            "buckets": [],
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["window_type"] == "daily"
+        assert card["remaining"] == "PAYG"
+        assert card["used_value"] == 0.0
+        assert card["health"] == "good"
+
 
 def test_the_page_email_is_reported_as_verified_identity(ollama_html):
     """The collector proves which account a cookie is signed into (#462): the server compares

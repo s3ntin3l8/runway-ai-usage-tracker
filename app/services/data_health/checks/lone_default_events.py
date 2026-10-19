@@ -38,7 +38,7 @@ class LoneDefaultEventsCheck(Check):
     impact = "Usage may be missing from the account that actually generated it."
     recommended_action = "Preview and move default history to the correct account. Choose a target when more than one identity exists."
     severity = Severity.ERROR
-    blocked_by = ("config_default_keyed",)
+    blocked_by = ("config_default_keyed", "openrouter_model_events")
 
     def detect(self, session: Session) -> CheckReport:
         active_default_configs = set(

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -244,59 +245,21 @@ def _suppress_residual_error_cards(
             groups[key] = [c for c in gcards if not is_error_card_dict(c)]
 
 
-def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
-    from app.models.db import LatestUsage, ProviderConfig
-
-    records = session.exec(select(LatestUsage)).all()
-    cards: list[dict[str, Any]] = []
-    for r in records:
-        try:
-            cards.append(json.loads(r.card_json))
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    # Filter out archived providers — their latest_usage rows are preserved
-    # (no deletion) but they should not appear in the active fleet view.
-    provider_configs = session.exec(select(ProviderConfig)).all()
-    archived_pairs = {(r.provider_id, r.account_id) for r in provider_configs if r.archived}
-    # Only saved configurations express an opt-out. Providers with no config
-    # rows retain their existing sidecar auto-discovery behavior.
-    configured_provider_ids = {r.provider_id for r in provider_configs}
-    active_config_provider_ids = {
-        r.provider_id for r in provider_configs if r.enabled and not r.archived
-    }
-    inactive_config_provider_ids = configured_provider_ids - active_config_provider_ids
-    billing_types = {
-        (r.provider_id, r.account_id): r.billing_type or "unknown" for r in provider_configs
-    }
-
-    # Group cards by (provider_id, account_id)
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for c in cards:
-        pid = c.get("provider_id") or ""
-        aid = c.get("account_id") or ""
-        if not pid:
-            continue
-        if (pid, aid) in archived_pairs:
-            continue
-        # A stale card under an unresolved/discovered account can outlive the
-        # account that was archived. Keep its durable row for restoration and
-        # history, but don't surface a collection-failure warning when the
-        # operator has disabled every configured account for this provider.
-        if pid in inactive_config_provider_ids and (
-            c.get("stale") is True or c.get("collection_failing") is True
-        ):
-            continue
-        groups.setdefault((pid, aid), []).append(c)
-
-    _suppress_residual_error_cards(groups)
-
-    # Synthesize fleet entries for (provider_id, account_id) pairs that have
-    # ingested events but no LatestUsage card — typical case is OpenCode Free,
-    # where the sidecar pushes events tagged provider_id="opencode-free" but
-    # there's no quota-bearing card to scrape. Render as PAYG-style entries.
-    # Query usage_events directly (not the rollup) so the card survives a
-    # rollup rebuild.
+def _synthesize_passive_fleet_entries(
+    session: Session,
+    groups: dict[tuple[str, str], list[dict[str, Any]]],
+    provider_configs: Sequence[Any],
+    billing_types: dict[tuple[str, str], str],
+    archived_pairs: set[tuple[str, str]],
+    inactive_config_provider_ids: set[str],
+) -> None:
+    """Synthesize fleet entries for (provider_id, account_id) pairs that have
+    ingested events but no LatestUsage card — typical case is OpenCode Free,
+    where the sidecar pushes events tagged provider_id="opencode-free" but
+    there's no quota-bearing card to scrape. Render as PAYG-style entries.
+    Query usage_events directly (not the rollup) so the card survives a
+    rollup rebuild.
+    """
     from app.models.db import UsageEvent
 
     events_pairs = session.exec(
@@ -304,6 +267,10 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         .where(UsageEvent.kind == "message")
         .distinct()
     ).all()
+    disabled_pairs = {
+        (r.provider_id, r.account_id) for r in provider_configs if not r.enabled or r.archived
+    }
+
     # Providers that already have a non-"default" account identity in events.
     # Used to suppress stale "default" synthetics left over from before the
     # sidecar was fixed to emit the real account email.
@@ -311,8 +278,10 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
     for pid, aid in events_pairs:
         if not pid:
             continue
-        if (pid, aid) in archived_pairs:
-            continue  # archived provider; do not synthesize a fleet entry
+        if (pid, aid) in archived_pairs or (pid, aid) in disabled_pairs:
+            continue  # archived or disabled provider account; do not synthesize a fleet entry
+        if pid in inactive_config_provider_ids:
+            continue  # all configured accounts disabled; do not synthesize a fleet entry
         if aid == "default" and pid in pids_with_real_identity:
             continue  # orphan from pre-fix sidecar; real-identity card covers it
         if (pid, aid) in groups:
@@ -359,6 +328,62 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
             synthetic["used_value"] = _ti + _to + _tr
             synthetic["msgs"] = _life["msgs"]
         groups[(pid, aid)] = [synthetic]
+
+
+def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
+    from app.models.db import LatestUsage, ProviderConfig
+
+    records = session.exec(select(LatestUsage)).all()
+    cards: list[dict[str, Any]] = []
+    for r in records:
+        try:
+            cards.append(json.loads(r.card_json))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    # Filter out archived providers — their latest_usage rows are preserved
+    # (no deletion) but they should not appear in the active fleet view.
+    provider_configs = session.exec(select(ProviderConfig)).all()
+    archived_pairs = {(r.provider_id, r.account_id) for r in provider_configs if r.archived}
+    # Only saved configurations express an opt-out. Providers with no config
+    # rows retain their existing sidecar auto-discovery behavior.
+    configured_provider_ids = {r.provider_id for r in provider_configs}
+    active_config_provider_ids = {
+        r.provider_id for r in provider_configs if r.enabled and not r.archived
+    }
+    inactive_config_provider_ids = configured_provider_ids - active_config_provider_ids
+    billing_types = {
+        (r.provider_id, r.account_id): r.billing_type or "unknown" for r in provider_configs
+    }
+
+    # Group cards by (provider_id, account_id)
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for c in cards:
+        pid = c.get("provider_id") or ""
+        aid = c.get("account_id") or ""
+        if not pid:
+            continue
+        if (pid, aid) in archived_pairs:
+            continue
+        # A stale card under an unresolved/discovered account can outlive the
+        # account that was archived. Keep its durable row for restoration and
+        # history, but don't surface a collection-failure warning when the
+        # operator has disabled every configured account for this provider.
+        if pid in inactive_config_provider_ids and (
+            c.get("stale") is True or c.get("collection_failing") is True
+        ):
+            continue
+        groups.setdefault((pid, aid), []).append(c)
+
+    _suppress_residual_error_cards(groups)
+    _synthesize_passive_fleet_entries(
+        session,
+        groups,
+        provider_configs,
+        billing_types,
+        archived_pairs,
+        inactive_config_provider_ids,
+    )
 
     now = datetime.now(UTC)
     # Per-sidecar contribution for the user-local current month, computed live

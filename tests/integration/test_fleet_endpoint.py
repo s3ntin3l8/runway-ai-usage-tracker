@@ -620,3 +620,39 @@ def test_fleet_suppresses_residual_error_cards_when_healthy_card_exists(session:
     assert entry["critical_gauge"]["pct_used"] == 100.0
     # Secondary limits must NOT contain the monthly error card
     assert entry["secondary_limits"] == []
+
+
+def test_fleet_does_not_synthesize_card_for_disabled_provider_account(session: Session):
+    """When a provider account has usage events but is disabled in provider_configs,
+    no synthetic token card is generated."""
+    from app.models.db import ProviderConfig
+
+    # Provider is configured but disabled
+    session.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="user@example.com",
+            enabled=False,
+            archived=False,
+        )
+    )
+    # Usage events exist
+    session.add(
+        UsageEvent(
+            provider_id="kimi_coding",
+            account_id="user@example.com",
+            sidecar_id="local",
+            event_id="evt_1",
+            ts=datetime.now(UTC),
+            kind="message",
+            tokens_input=100,
+            tokens_output=50,
+            cost_usd=0.0,
+        )
+    )
+    session.commit()
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+    fleet = resp.json()["fleet"]
+    assert not any(e["provider_id"] == "kimi_coding" for e in fleet)

@@ -276,13 +276,33 @@ describe('ProviderDetailDialog — account list + menu', () => {
     expect(bobCookie).not.toHaveAttribute('title');
   });
 
-  it('opens the ⋮ menu and exposes Edit + Remove actions', async () => {
+  it('opens the ⋮ menu and exposes Edit + Archive + Remove actions', async () => {
     renderDialog(singleAccount);
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /actions for alice/i }));
 
     expect(within(dialog).getByRole('menuitem', { name: /edit/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole('menuitem', { name: /archive/i })).toBeInTheDocument();
     expect(within(dialog).getByRole('menuitem', { name: /remove/i })).toBeInTheDocument();
+  });
+
+  it('clicking Archive toggles the archived flag on the account via PUT', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderDialog(singleAccount);
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /actions for alice/i }));
+    await userEvent.click(within(dialog).getByRole('menuitem', { name: /archive/i }));
+
+    await waitFor(() =>
+      expect(api.putProviderConfig).toHaveBeenCalledWith('anthropic', 'alice@example.com', {
+        archived: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringMatching(/alice@example.com archived/),
+      ),
+    );
   });
 
   it('clicking Edit opens the ProviderAccountDialog for that account', async () => {

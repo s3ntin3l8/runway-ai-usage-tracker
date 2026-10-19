@@ -223,3 +223,7 @@ def test_apply_requires_an_explicit_target_when_ambiguous(session):
 
     result, _hooks = _check().apply(session, "minimax", {"target": "bob@example.com"})
     assert result.counts["usage_events_moved"] == 1
+
+
+def test_check_blocked_by_includes_openrouter_model_events():
+    assert "openrouter_model_events" in _check().blocked_by

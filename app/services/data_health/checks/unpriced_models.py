@@ -29,11 +29,20 @@ from app.services.data_health.base import (
 from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.maintenance.recost import apply_recost, plan_recost
 
-_EXCLUDED_PROVIDERS = {"opencode-free"}
+_EXCLUDED_PROVIDERS = {"opencode-free", "ollama"}
 
 
 def _is_excluded(provider_id: str, model_id: str) -> bool:
-    return provider_id in _EXCLUDED_PROVIDERS or model_id.endswith(":free")
+    if provider_id in _EXCLUDED_PROVIDERS:
+        return True
+    m = model_id.lower()
+    if m.endswith(":free"):
+        return True
+    if provider_id in ("opencode", "opencode-byok") and m.endswith("-free"):
+        return True
+    if m in ("openrouter/free", "unknown", "") or m.startswith("openrouter/free"):
+        return True
+    return False
 
 
 def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
@@ -147,7 +156,7 @@ class UnpricedModelsCheck(Check):
     impact = "Usage totals may understate spend when no applicable price is available."
     recommended_action = "Review the per-model evidence. Recompute cost when a rate is available, or add a pricing seed for models with no rate."
     severity = Severity.WARN
-    blocked_by = ("legacy_provider_ids",)
+    blocked_by = ("legacy_provider_ids", "openrouter_model_events")
 
     def detect(self, session: Session) -> CheckReport:
         # Classification uses each event's effective pricing date. Grouping by
