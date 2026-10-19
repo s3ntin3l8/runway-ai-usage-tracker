@@ -1,6 +1,7 @@
 """The demo's SPA staleness check (scripts/demo/instance.py)."""
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,10 @@ def webapp(tmp_path: Path) -> Path:
         "tsconfig.app.json",
     ):
         _touch(root / name, 1_000)
-    for d in (root / "src", root / "src" / "components", root / "public"):
+    (root / "dist").mkdir()
+    (root / "e2e").mkdir()
+    (root / "node_modules" / "pkg").mkdir(parents=True)
+    for d in (root, root / "src", root / "src" / "components", root / "public"):
         os.utime(d, (1_000, 1_000))
     _touch(root / "dist" / "index.html", 2_000)
     return root
@@ -62,7 +66,7 @@ def test_any_newer_build_input_makes_dist_stale(webapp: Path, changed: str) -> N
 
 
 @pytest.mark.parametrize("parent", ["src/components", "src", "public"])
-def test_a_deleted_build_input_makes_dist_stale(webapp: Path, parent: str) -> None:
+def test_a_parent_dir_mtime_bump_makes_dist_stale(webapp: Path, parent: str) -> None:
     (webapp / parent).mkdir(parents=True, exist_ok=True)
     os.utime(webapp / parent, (3_000, 3_000))  # what unlinking a child does
     assert spa_is_stale(webapp)
@@ -70,6 +74,16 @@ def test_a_deleted_build_input_makes_dist_stale(webapp: Path, parent: str) -> No
 
 def test_unlinking_a_source_file_makes_dist_stale(webapp: Path) -> None:
     (webapp / "src" / "components" / "Chart.tsx").unlink()
+    assert spa_is_stale(webapp)
+
+
+@pytest.mark.parametrize("removed", ["index.html", "package.json", "vite.config.ts", "public"])
+def test_removing_a_top_level_input_makes_dist_stale(webapp: Path, removed: str) -> None:
+    target = webapp / removed
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
     assert spa_is_stale(webapp)
 
 

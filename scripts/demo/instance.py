@@ -61,7 +61,9 @@ SPA_INPUT_GLOBS = (
 
 def _spa_inputs(webapp: Path) -> list[Path]:
     # Directories count too: deleting a file only bumps its parent dir's mtime.
-    paths = [
+    # webapp itself catches a removed top-level input (index.html, public/, ...).
+    paths = [webapp]
+    paths += [
         p
         for d in SPA_INPUT_DIRS
         if (webapp / d).is_dir()
