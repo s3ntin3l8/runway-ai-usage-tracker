@@ -50,7 +50,7 @@ from `card_json`. The corrected driver passed a synthetic end-to-end preflight b
 the final user-attended run. No credential-store retries occurred within any run.
 
 Final verification: `make lint && make test && make web-test` passed, including
-**4,798 Python tests (41 skipped)** and **1,186 frontend tests**. The production SPA
+**4,799 Python tests (41 skipped)** and **1,186 frontend tests**. The production SPA
 build, generated registry consistency and four frozen spec import/syntax checks passed.
 Secret scanning passed after updating existing baseline line offsets and its timestamp;
 no detections were added or removed. Independent
@@ -90,3 +90,7 @@ driver passed. A fresh native Desktop lookup timed out and was stopped; it is no
 counted as a new successful capture. The standalone Code decoder passed another native
 signed-ingestion, rediscovery and two-poll run after these corrections. The independent
 reviewer found no actionable issue in the corrections; 42 focused tests passed.
+
+The final logging regression confirms that neither a credential value nor its origin
+can leak through the pending-source diagnostic warning. The two remaining origin-bearing
+warning messages were removed after CodeQL identified them.

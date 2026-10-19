@@ -4363,7 +4363,7 @@ class GenericCollector:
                             if not fallback_allowed:
                                 logging.warning(
                                     f"  [{provider_id}] provider-wide account hint withheld "
-                                    f"(origin={origin}) — account.json's active record does not "
+                                    "— account.json's active record does not "
                                     "hold this key; tag this key-scoped origin explicitly in "
                                     "Untagged Credentials instead."
                                 )
@@ -4383,7 +4383,7 @@ class GenericCollector:
                     blocked_entry = {"provider_id": provider_id, "credential_origin": origin}
                     if provider_id in _SERVER_IDENTITY_PROVIDERS:
                         logging.warning(
-                            f"  [{provider_id}] token card blocked (origin={origin}) — "
+                            f"  [{provider_id}] token card blocked — "
                             "no strong identity resolved; sharing only for exact-source "
                             "server identity verification."
                         )

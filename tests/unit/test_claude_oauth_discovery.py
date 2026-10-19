@@ -362,3 +362,23 @@ def test_code_decoder_is_standalone_and_handles_declared_identity_alternatives(m
         },
     )
     assert result[0][0]["account_id"] == "person@example.com"
+
+
+def test_native_credential_origin_is_not_written_to_diagnostic_logs(monkeypatch, caplog):
+    from scripts import sidecar
+    from scripts.sidecar_pkg import claude_desktop
+
+    monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        claude_desktop,
+        "read_oauth_candidates",
+        lambda path: [
+            ({"oauth_token": "private-access", "oauth_read_only": "1"}, "keychain:private-origin")
+        ],
+    )
+    cards, _ = sidecar.GenericCollector.collect_provider(
+        "anthropic", {"rules": [{"type": "claude_desktop_oauth"}]}
+    )
+    assert cards
+    assert "private-access" not in caplog.text
+    assert "private-origin" not in caplog.text
