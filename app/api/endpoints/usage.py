@@ -3,8 +3,11 @@ import json
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from app.models.db import ProviderConfig
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, func, or_
@@ -248,7 +251,7 @@ def _suppress_residual_error_cards(
 def _synthesize_passive_fleet_entries(
     session: Session,
     groups: dict[tuple[str, str], list[dict[str, Any]]],
-    provider_configs: Sequence[Any],
+    provider_configs: Sequence["ProviderConfig"],
     billing_types: dict[tuple[str, str], str],
 ) -> None:
     """Synthesize fleet entries for (provider_id, account_id) pairs that have

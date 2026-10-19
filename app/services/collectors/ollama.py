@@ -475,10 +475,11 @@ class OllamaCollector(BaseCollector):
             }
             return [card]
 
-        # No monthly entry is a valid no-cap plan (for example, free tier or
-        # an activity-only payload). It is a successful empty result, not
-        # malformed quota data.
-        if "limits" in body and not isinstance(body["limits"], dict):
+        # No monthly entry is a valid no-cap plan (for example, free tier,
+        # limits: null, or an activity-only payload). It is a successful empty
+        # result, not malformed quota data.
+        limits_val = body.get("limits")
+        if limits_val is not None and not isinstance(limits_val, dict):
             self._set_error_reason("missing_data")
             return []
 

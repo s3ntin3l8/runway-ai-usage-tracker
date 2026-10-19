@@ -288,20 +288,25 @@ def test_detect_excludes_free_suffixed_models(session):
     assert report.total_count == 0
 
 
-def test_detect_excludes_local_ollama_but_flags_cloud_models(session):
+def test_detect_excludes_opencode_free_provider(session):
     make_event(
         session, event_id="1", provider_id="opencode-free", model_id="anything", cost_usd=0.0
     )
-    make_event(session, event_id="2", provider_id="ollama", model_id="llama3:latest", cost_usd=0.0)
 
     report = _check().detect(session)
     assert report.total_count == 0
 
-    # Paid / cloud ollama models without pricing rows are flagged as needs_seed_row
-    make_event(session, event_id="3", provider_id="ollama", model_id="llama3-cloud", cost_usd=0.0)
-    report_cloud = _check().detect(session)
-    assert report_cloud.total_count == 1
-    assert report_cloud.groups[0].detail["by_model"][0]["classification"] == "needs_seed_row"
+
+def test_detect_flags_unpriced_ollama_cloud_model(session):
+    """OpenCode's ollama-cloud events fold onto canonical 'ollama' and carry plain model IDs
+    (e.g. 'nemotron-3-ultra'); they must be flagged as needs_seed_row."""
+    make_event(
+        session, event_id="1", provider_id="ollama", model_id="nemotron-3-ultra", cost_usd=0.0
+    )
+
+    report = _check().detect(session)
+    assert report.total_count == 1
+    assert report.groups[0].detail["by_model"][0]["classification"] == "needs_seed_row"
 
 
 def test_detect_excludes_events_with_no_tokens(session):

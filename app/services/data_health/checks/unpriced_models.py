@@ -6,9 +6,8 @@ claimed as independently verified; and no rate/no report needs a seed row.
 
 `:free`-suffixed models, `-free`-suffixed models under OpenCode providers
 (`opencode`, `opencode-byok`, `opencode-zen`, `hermes-auto`), `openrouter/free/*`,
-sentinels (`unknown`, empty), local `ollama` models (without `-cloud`), and
-the `opencode-free` provider are excluded outright — priced at $0 on purpose,
-not missing a seed.
+sentinels (`unknown`, empty), and the `opencode-free` provider are excluded
+outright — priced at $0 on purpose, not missing a seed.
 """
 
 from __future__ import annotations
@@ -40,8 +39,6 @@ def _is_excluded(provider_id: str, model_id: str) -> bool:
     if provider_id == "opencode-free":
         return True
     m = model_id.lower()
-    if provider_id == "ollama" and not m.endswith("-cloud"):
-        return True
     if m.endswith(":free"):
         return True
     if provider_id in _OPENCODE_PROVIDERS and m.endswith("-free"):

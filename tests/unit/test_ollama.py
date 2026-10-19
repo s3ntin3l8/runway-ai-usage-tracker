@@ -1019,6 +1019,15 @@ class TestOllamaApiCollector:
         assert collector._no_monthly_cap is True
         assert collector._last_error_reason != "missing_data"
 
+    def test_build_cards_from_api_usage_null_limits_is_no_cap(self):
+        """Explicit null limits is a clean no-cap result (Hermes r4)."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {"limits": None}
+        cards = collector._build_cards_from_api_usage(body)
+        assert cards == []
+        assert collector._no_monthly_cap is True
+        assert collector._last_error_reason != "missing_data"
+
     def test_build_cards_from_api_usage_string_typed_counters(self):
         """String or null values in totals do not raise and parse safely."""
         collector = OllamaCollector(account_id="acc_test")
