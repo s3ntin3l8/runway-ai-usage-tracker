@@ -329,3 +329,36 @@ def test_code_secure_storage_override_uses_only_its_unicode_normalized_service(
         + hashlib.sha256(unicodedata.normalize("NFC", override).encode()).hexdigest()[:8]
     )
     assert service_candidates([tmp_path / "unrelated"]) == [expected]
+
+
+def test_code_decoder_is_standalone_and_handles_declared_identity_alternatives(monkeypatch):
+    import sys
+
+    from scripts.sidecar_pkg import claude_code_keychain as helper
+
+    monkeypatch.setattr(helper, "_DENIED", set())
+    monkeypatch.delenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", raising=False)
+    monkeypatch.setitem(sys.modules, "scripts.sidecar", None)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            json.dumps(
+                {
+                    "claudeAiOauth": {"accessToken": "access"},
+                    "oauthAccount": {"email": "person@example.com"},
+                }
+            ),
+            "",
+        ),
+    )
+    result = helper.read_candidates(
+        [],
+        {
+            "claudeAiOauth.accessToken": "oauth_token",
+            "oauthAccount.emailAddress|oauthAccount.email": "account_id",
+        },
+    )
+    assert result[0][0]["account_id"] == "person@example.com"

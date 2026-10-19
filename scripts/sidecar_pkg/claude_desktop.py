@@ -121,7 +121,10 @@ def read_oauth_candidates(path: Path) -> list[tuple[dict[str, str], str]]:
             }
             # Slot identity includes account, organization, client and scope, never the secret.
             origin = (
-                "keychain:Claude Desktop/oauth/" + hashlib.sha256(slot.encode()).hexdigest()[:24]
+                "keychain:Claude Desktop/oauth/"
+                + hashlib.pbkdf2_hmac("sha256", slot.encode(), b"runway-desktop-slot-v1", 1).hex()[
+                    :24
+                ]
             )
             result.append((tokens, origin))
     return result

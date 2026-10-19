@@ -50,7 +50,7 @@ from `card_json`. The corrected driver passed a synthetic end-to-end preflight b
 the final user-attended run. No credential-store retries occurred within any run.
 
 Final verification: `make lint && make test && make web-test` passed, including
-**4,790 Python tests (41 skipped)** and **1,186 frontend tests**. The production SPA
+**4,798 Python tests (41 skipped)** and **1,186 frontend tests**. The production SPA
 build, generated registry consistency and four frozen spec import/syntax checks passed.
 Secret scanning passed after updating existing baseline line offsets and its timestamp;
 no detections were added or removed. Independent
@@ -73,3 +73,20 @@ did not create artificial native logins in extra directories. Frozen binaries/tr
 browser
 stores and native organization-picker behavior are not established here; existing
 #672 remains open independently. Renewal/write-back remains #526.
+
+
+## CodeQL review corrections
+
+CodeQL identified an import cycle in the Code decoder and classified the Desktop
+slot-name digest as password hashing. The decoder now handles only its declared
+JSON dot paths/identity alternatives without importing the sidecar engine. Desktop
+slot identifiers use the repository's established domain-separated PBKDF2-HMAC
+fingerprinting pattern. Generic diagnostic logs no longer include credential-derived
+values or raw parse failures. No warning suppression was added.
+
+The successful Desktop native capture above was taken at `534e6a30`. After the
+fingerprinting correction, the final synthetic production ingestion/heartbeat/two-poll
+driver passed. A fresh native Desktop lookup timed out and was stopped; it is not
+counted as a new successful capture. The standalone Code decoder passed another native
+signed-ingestion, rediscovery and two-poll run after these corrections. The independent
+reviewer found no actionable issue in the corrections; 42 focused tests passed.

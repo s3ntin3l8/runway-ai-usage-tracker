@@ -3444,7 +3444,7 @@ def _opencode_local_key_binding(
             with open(account_path) as f:
                 data = json.load(f)
         except Exception:
-            logging.debug("OpenCode account.json unreadable: %s", account_path, exc_info=True)
+            logging.debug("OpenCode account metadata unreadable")
             continue
         if not isinstance(data, dict):
             continue
@@ -4143,7 +4143,7 @@ class GenericCollector:
                     )
                     if expiry_dt.timestamp() < time.time():
                         logging.warning(
-                            f"  [{provider_id}] local token expired at {raw_expiry} — "
+                            f"  [{provider_id}] local token expired — "
                             "not pushing (run `agy models` to refresh, or start the "
                             "sidecar with --keep-alive)"
                         )
@@ -4158,14 +4158,14 @@ class GenericCollector:
                             and seconds_left <= _AG_PRE_EXPIRY_WARNING_SECONDS
                         ):
                             logging.warning(
-                                f"  [{provider_id}] local token expires at {raw_expiry} "
+                                f"  [{provider_id}] local token expires at its reported deadline "
                                 f"(within {_AG_PRE_EXPIRY_WARNING_SECONDS // 60} min) — "
                                 "run `agy models` to renew, or start "
                                 "the sidecar with --keep-alive"
                             )
                         tokens["expiry_date"] = str(int(expiry_dt.timestamp() * 1000))
                 except (ValueError, TypeError):
-                    logging.debug(f"  [{provider_id}] could not parse token expiry: {raw_expiry!r}")
+                    logging.debug(f"  [{provider_id}] could not parse token expiry")
 
             if provider_id == "antigravity" and tokens and not tokens.get("account_id"):
                 tokens["account_id"] = _ag_account_email()
@@ -4274,7 +4274,7 @@ class GenericCollector:
 
                 tokens["account_id"] = canonical_account_id(tokens["account_id"])
             if tokens:
-                logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
+                logging.info(f"  [{provider_id}] credential fields extracted: {len(tokens)}")
                 if candidate_kind == "cookie":
                     unit = "cookie"
                     data_source = "web"
@@ -4376,10 +4376,7 @@ class GenericCollector:
                 elif hint_account_id is not None:
                     resolved_account_id = hint_account_id
                     tokens["account_id"] = hint_account_id
-                    logging.info(
-                        f"  [{provider_id}] token card stamped via server hint → "
-                        f"account_id={hint_account_id}"
-                    )
+                    logging.info(f"  [{provider_id}] token card stamped via server hint")
                 else:
                     resolved_account_id = None
                 if resolved_account_id is None or not source_identity_strong:

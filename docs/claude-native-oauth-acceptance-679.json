@@ -24,7 +24,8 @@
       "sidecar"
     ],
     "refresh_requests": 0,
-    "credential_writes": 0
+    "credential_writes": 0,
+    "captured_revision": "534e6a30"
   },
   "limitations": [
     "source-runtime, not frozen binary/tray",
@@ -56,5 +57,10 @@
     ],
     "refresh_requests": 0,
     "credential_writes": 0
+  },
+  "post_capture_security_validation": {
+    "desktop_slot_fingerprinting": "PBKDF2-HMAC-SHA256; final synthetic signed ingestion, heartbeat and two polls passed",
+    "desktop_fresh_native_attempt": "Keychain timeout; not counted as a new passing capture",
+    "code_standalone_decoder": "native signed ingestion, rediscovery and two polls passed after import-cycle removal"
   }
 }

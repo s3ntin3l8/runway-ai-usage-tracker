@@ -43,11 +43,20 @@ def _warn(service: str, reason: str) -> None:
         logging.warning("Claude Code Keychain %s: %s", service, reason)
 
 
+def _mapped_value(data: dict[str, Any], field: str) -> Any:
+    """Only the declared dot paths and identity alternatives used by this layout."""
+    for alternative in field.split("|"):
+        value: Any = data
+        for segment in alternative.split("."):
+            value = value.get(segment) if isinstance(value, dict) else None
+        if value is not None:
+            return value
+    return None
+
+
 def read_candidates(
     directories: list[Path], mapping: dict[str, str]
 ) -> list[tuple[dict[str, Any], str]]:
-    from scripts.sidecar import GenericCollector
-
     if ("*", "*") in _DENIED:
         return []
     try:
@@ -87,7 +96,7 @@ def read_candidates(
             tokens = {
                 target: value
                 for field, target in mapping.items()
-                if (value := GenericCollector.get_nested(data, field)) is not None
+                if (value := _mapped_value(data, field)) is not None
             }
             if not isinstance(tokens.get("oauth_token"), str) or not tokens["oauth_token"]:
                 _warn(service, "access token missing")
