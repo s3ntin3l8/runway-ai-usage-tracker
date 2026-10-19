@@ -94,6 +94,13 @@ def test_a_dangling_symlink_is_ignored(webapp: Path) -> None:
     assert not spa_is_stale(webapp)
 
 
+def test_a_looping_symlink_is_ignored(webapp: Path) -> None:
+    loop = webapp / "src" / "loop.tsx"
+    loop.symlink_to(loop)
+    os.utime(webapp / "src", (1_000, 1_000))
+    assert not spa_is_stale(webapp)
+
+
 def test_unrelated_files_do_not_make_dist_stale(webapp: Path) -> None:
     _touch(webapp / "e2e" / "smoke.spec.ts", 3_000)
     _touch(webapp / "node_modules" / "pkg" / "index.js", 3_000)

@@ -90,10 +90,10 @@ def spa_is_stale(webapp: Path) -> bool:
 
 
 def _mtime(path: Path) -> float:
-    # A dangling symlink has no target to stat; it can't be a build input.
+    # A dangling or looping symlink has no target to stat; it can't be a build input.
     try:
         return path.stat().st_mtime
-    except FileNotFoundError:
+    except OSError:
         return 0.0
 
 
