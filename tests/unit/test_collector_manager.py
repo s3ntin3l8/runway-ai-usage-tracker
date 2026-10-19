@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlmodel import Session as RealSession
 from sqlmodel import select
 
 from app.services.collector_manager import CollectorManager
@@ -2228,3 +2229,117 @@ class TestRenewalWaitReason:
         monkeypatch.setattr("sqlmodel.Session", broken_session)
         assert manager._read_sidecar_keep_alive("host-a") == (None, None)
         assert manager._read_sidecar_keep_alive("") == (None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("promotion_failure", ["missing_row", "operator_same", "operator_other"])
+async def test_non_claude_promotion_failure_keeps_legacy_collected_cards(
+    manager, monkeypatch, promotion_failure
+):
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import SQLModel, create_engine, select
+
+    from app.models.db import CredentialSource
+    from app.services.credential_tags import CredentialTagRepo
+    from app.services.token_cache import TokenCache
+
+    Session = RealSession
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    cache = TokenCache()
+    source_id = "sidecar:legacy-source"
+    origin = "path:/auth.json"
+    if promotion_failure != "missing_row":
+        with Session(engine) as session:
+            session.add(
+                CredentialSource(
+                    provider_id="antigravity",
+                    account_id="default",
+                    source_id=source_id,
+                    source_type="file",
+                    source_label="host",
+                    sidecar_id="host",
+                    credential_origin=origin,
+                )
+            )
+            CredentialTagRepo.set_tag(
+                session,
+                provider_id="antigravity",
+                credential_origin=origin,
+                account_id="verified@example.com",
+                sidecar_id="host",
+                set_by="operator",
+            )
+            session.commit()
+    monkeypatch.setattr("app.core.db.engine", engine)
+    monkeypatch.setattr("sqlmodel.Session", Session)
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    await cache.store(
+        "antigravity",
+        {"oauth_token": "fake"},
+        account_id="default",
+        source_id=source_id,
+        source="host",
+        source_metadata={
+            "identity_pending": True,
+            "source_type": "file",
+            "sidecar_id": "host",
+            "credential_origin": origin,
+        },
+    )
+    collector = SimpleNamespace(
+        PROVIDER_ID="antigravity",
+        account_id="default",
+        account_label=None,
+        credential_account_id="default",
+    )
+    smart = MagicMock(collector=collector)
+    smart.reset = AsyncMock()
+
+    async def collect(_client):
+        collector.account_id = "verified@example.com"
+        if promotion_failure == "operator_other":
+            # An operator reassigned this exact source while collection was in flight.
+            with Session(engine) as session:
+                CredentialTagRepo.set_tag(
+                    session,
+                    provider_id="antigravity",
+                    credential_origin=origin,
+                    account_id="operator@example.com",
+                    sidecar_id="host",
+                    set_by="operator",
+                )
+                source = session.exec(select(CredentialSource)).one()
+                source.account_id = "operator@example.com"
+                session.add(source)
+                session.commit()
+        return [{"service_name": "Antigravity", "remaining": 7}]
+
+    smart.collect = AsyncMock(side_effect=collect)
+    manager.smart_collectors["antigravity:default:identity-pending"] = smart
+    result = await manager._collect_with_source_failover(
+        "antigravity:default:identity-pending", MagicMock(), {}
+    )
+    if promotion_failure == "operator_other":
+        assert result == []
+        smart._set_collection_state.assert_called_once_with(
+            "skipped", "credential source assigned to another account"
+        )
+    else:
+        assert result == [{"service_name": "Antigravity", "remaining": 7}]
+        smart._set_collection_state.assert_not_called()
+    if promotion_failure != "missing_row":
+        with Session(engine) as session:
+            assert CredentialTagRepo.get(
+                session, provider_id="antigravity", credential_origin=origin, sidecar_id="host"
+            ).account_id == (
+                "verified@example.com"
+                if promotion_failure == "operator_same"
+                else "operator@example.com"
+            )
+            assert session.exec(select(CredentialSource)).one().account_id == (
+                "operator@example.com" if promotion_failure == "operator_other" else "default"
+            )
+    engine.dispose()

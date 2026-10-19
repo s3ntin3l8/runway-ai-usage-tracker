@@ -69,7 +69,14 @@
       "supports_session_cookie": true,
       "session_cookie_label": "Console session cookie",
       "session_cookie_help": "Sign in at platform.claude.com, then copy the sessionKey cookie from browser developer tools. This is separate from the Claude.ai cookie used for subscription quotas. Accepts a session key or Cookie header.",
-      "rules": []
+      "rules": [
+        {
+          "type": "cookie",
+          "domains": ["platform.claude.com", "console.anthropic.com"],
+          "name": "sessionKey",
+          "mapping": { "value": "session_cookie" }
+        }
+      ]
     },
     "openrouter": {
       "name": "OpenRouter",

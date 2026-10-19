@@ -651,3 +651,13 @@ describe('stageToBody', () => {
     expect(stageToBody(entry, { ...staged, account_id: '' })).toBeNull();
   });
 });
+
+it('uses source organization verification for Claude browser entries without exposing fingerprints', async () => {
+  vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({ items: [{ ...entry, credential_origin: 'cookie:anthropic/Chrome/Work/Cookies#secretfingerprint', source_id: 'source-a' }], counts_by_sidecar: { laptop: 1 } });
+  vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
+  vi.mocked(api.fetchClaudeSourceOrganizations).mockResolvedValue({ organizations: [], complete: false, selection_required: true });
+  renderWithProviders(<UntaggedCredentialsDialog open onClose={vi.fn()} />);
+  expect(await screen.findByText('Chrome · Work')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Tag' })).not.toBeInTheDocument();
+  expect(await screen.findByText(/verification is incomplete/i)).toBeInTheDocument();
+});

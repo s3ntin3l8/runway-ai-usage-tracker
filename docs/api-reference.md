@@ -76,6 +76,7 @@ The grouped pending-events response reports `total_events` across the full queue
 |--------|-------|-------------|
 | `GET` | `/api/v1/system/health` | Liveness check |
 | `GET` | `/api/v1/system/status` | Collector cache states and error counts |
+| `GET`/`POST` | `/api/v1/fleet/credentials/{source_id}/claude-organizations` | Inspect eligible organizations or select one using an exact pending sidecar source (admin; no credential values returned) |
 | `POST` | `/api/v1/system/provider-config/console-organizations` | Discover API organizations using a supplied Console `session_cookie` (admin; cookie is not persisted) |
 | `GET` | `/api/v1/system/settings` | Non-sensitive runtime configuration |
 | `GET` | `/api/v1/system/audit-log` | Append-only admin-mutation trail |
@@ -283,6 +284,56 @@ Kimi Coding sidecar token cards may include `metadata.cli_device_id` alongside
 and is accepted only for a `kimi_coding` CLI bundle. It is device metadata,
 not an authentication value, and is never returned by the credential inventory.
 
+
+### Automatic Claude browser connections
+
+A pending sidecar browser source for `anthropic` (Subscription) or
+`anthropic_console` (Console API credits) is verified against its own cookie.
+Subscription identity is the authenticated account email; Console identity is
+the organization UUID. A sole eligible organization is selected automatically
+only after a complete verification. Multiple eligible organizations require a
+choice unless the verified account already has a saved organization binding.
+An organization with a JSON permission denial is excluded independently;
+challenges, timeouts, rate limits, and malformed responses prevent automatic
+selection. Existing disabled or archived accounts stay disabled or archived.
+
+`GET /api/v1/fleet/credentials/tags/pending` adds these safe fields to its items:
+
+```json
+{"source_id":"sidecar:<stable hash>","selection_required":true,"organization_count":2}
+```
+
+`source_id` is present for Claude providers and is derived from the exact
+sidecar and credential origin, including the cookie fingerprint. Other providers
+omit it. The organization count starts at zero before verification. Organization
+metadata is nonsecret; cookies remain only in the existing source-pinned cache.
+
+Admin `GET /api/v1/fleet/credentials/{source_id}/claude-organizations?provider_id=anthropic`
+(or `provider_id=anthropic_console`) rechecks the pending source and returns:
+
+```json
+{"organizations":[{"id":"11111111-1111-4111-8111-111111111111","name":"Personal"}],"complete":true,"selection_required":false}
+```
+
+Only organizations with usable quotas or a valid Console credit balance appear.
+`complete:false` means an organization could not be conclusively evaluated; a
+single returned organization must not be treated as an automatic choice.
+
+Admin `POST` to the same path accepts:
+
+```json
+{"provider_id":"anthropic","organization_id":"11111111-1111-4111-8111-111111111111"}
+```
+
+The server verifies membership and quota/billing access using that exact pending
+source, saves `ProviderConfig.claude_organization_id`, promotes the source, and
+returns `{"status":"ok"}`. This nullable configuration field is also returned
+by the provider-config listing. Missing sources or a mismatched source/provider
+return 404; invalid provider IDs or malformed UUIDs return 422; inaccessible
+organizations return 403; changed or already assigned sources return 409.
+Upstream failures use sanitized messages and never include cookie values. Both
+organization routes require the normal admin authentication policy. Existing
+manual Console setup remains available below.
 
 ### Claude Console connections
 

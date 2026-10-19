@@ -1,0 +1,53 @@
+{
+  "native": true,
+  "manual_cookies": false,
+  "stages": {
+    "anthropic": {
+      "discovered_token_cards": 1,
+      "blocked_origins": 1,
+      "resolved_sources": 1,
+      "persisted_cards": 3,
+      "valid_cards": 3,
+      "source_identity_preserved": true,
+      "no_pending_sources": true,
+      "input_source_sidecar": true
+    },
+    "anthropic_console": {
+      "discovered_token_cards": 1,
+      "blocked_origins": 1,
+      "resolved_sources": 1,
+      "persisted_cards": 1,
+      "valid_cards": 1,
+      "source_identity_preserved": true,
+      "no_pending_sources": true,
+      "input_source_sidecar": true
+    }
+  },
+  "keychain_lookups": {
+    "Chrome Safe Storage": 1
+  },
+  "manifest_status": 200,
+  "ingest_status": 200,
+  "tokens_received": 2,
+  "pending_before_sync": {
+    "anthropic": 1,
+    "anthropic_console": 1
+  },
+  "collectors_before_first_poll": 4,
+  "collectors_after_promotion": 2,
+  "active_accounts_after_promotion": 2,
+  "resolved_heartbeat_manifest_status": 200,
+  "resolved_heartbeat_ingest_status": 200,
+  "resolved_heartbeat_preserved_both_sources": true,
+  "result": "passed",
+  "transport": "production HMAC ingest via in-process ASGI; live HTTPS upstreams",
+  "environment": {
+    "macos": "26.6.2",
+    "build": "25G83",
+    "architecture": "arm64",
+    "chrome": "155.0.8059.80",
+    "python": "3.14.7"
+  },
+  "source_revision": "3e2a744e",
+  "observed_at_utc": "2026-10-18T15:05:54Z"
+}

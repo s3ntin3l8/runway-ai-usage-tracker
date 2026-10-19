@@ -148,7 +148,7 @@ def pending_cache_slot(provider_id: str, source_id: str) -> str:
     orphan rows); every other provider files it under ``default``. Ingest and the identity
     handlers (verification, cookie-switch revoke) must agree, so they all ask here.
     """
-    return source_id if provider_id == "anthropic" else "default"
+    return source_id if provider_id in ("anthropic", "anthropic_console") else "default"
 
 
 def is_machine_bound_origin(origin: str | None) -> bool:
@@ -674,3 +674,46 @@ def reset_source_retry(session: Session, *, provider_id: str, source_id: str) ->
             row.next_retry_at = None
             row.failing_since = None
             session.add(row)
+
+
+def retire_missing_claude_cookie_sources(
+    session: Session,
+    *,
+    sidecar_id: str,
+    completed_providers: list[str] | None,
+    keep_by_provider: dict[str, set[str]],
+) -> list[CredentialSource]:
+    """Retire an absent fingerprint only with positive same-store replacement evidence.
+
+    keep_by_provider contains ALL reported origins, never only pending ones. A provider
+    can report completion after an inaccessible store returned no cookies, so an empty
+    report alone cannot prove logout. Preserve that last-good source until positive
+    same-store evidence, rejection, or explicit cleanup makes its state conclusive.
+    """
+    from app.services.account_identity import split_keyed_origin
+
+    completed = set(completed_providers or []) & {"anthropic", "anthropic_console"}
+    reported_stores = {
+        provider: {
+            base
+            for origin in origins
+            if origin.startswith(f"cookie:{provider}/")
+            for base, fingerprint in [split_keyed_origin(origin)]
+            if fingerprint is not None
+        }
+        for provider, origins in keep_by_provider.items()
+    }
+    rows = [
+        row
+        for row in session.exec(
+            select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
+        ).all()
+        if row.provider_id in completed
+        and str(row.credential_origin or "").startswith(f"cookie:{row.provider_id}/")
+        and row.credential_origin not in keep_by_provider.get(row.provider_id, set())
+        and split_keyed_origin(str(row.credential_origin))[0]
+        in reported_stores.get(row.provider_id, set())
+    ]
+    for row in rows:
+        session.delete(row)
+    return rows

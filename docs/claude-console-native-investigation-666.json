@@ -1,0 +1,64 @@
+{
+  "observed_at_utc": "2026-10-17T22:03:21.350779+00:00",
+  "profiles": [
+    {
+      "profile": "Default",
+      "store": "Cookies",
+      "schema_version": 24,
+      "access": "readable",
+      "cookies": [
+        {
+          "domain": ".platform.claude.com",
+          "name": "sessionKey",
+          "encrypted_format": "v10",
+          "plaintext_column_empty": true,
+          "expires_utc": "2026-10-24T13:52:20.380597+00:00",
+          "expired": false,
+          "padding_valid": true,
+          "host_binding_valid": true,
+          "decryption": "success"
+        },
+        {
+          "domain": ".claude.ai",
+          "name": "sessionKey",
+          "encrypted_format": "v10",
+          "plaintext_column_empty": true,
+          "expires_utc": "2026-11-14T15:01:59.783918+00:00",
+          "expired": false
+        }
+      ]
+    },
+    {
+      "profile": "Profile 4",
+      "store": "Cookies",
+      "schema_version": 24,
+      "access": "readable",
+      "cookies": []
+    }
+  ],
+  "keychain": {
+    "attempts": 1,
+    "return_code": 0,
+    "status": "encryption_secret_retrieved",
+    "duration_seconds": 0.015
+  },
+  "requests": [
+    {
+      "profile": "Default",
+      "endpoint": "organizations",
+      "http_status": 200,
+      "schema_valid": true,
+      "api_organization_count": 1
+    },
+    {
+      "profile": "Default",
+      "endpoint": "prepaid/credits",
+      "http_status": 200,
+      "organization_alias": "organization-1",
+      "collector_parser_valid": true,
+      "purchased_tranches_present": true,
+      "promo_tranches_present": true,
+      "subscription_credit_program_present": true
+    }
+  ]
+}

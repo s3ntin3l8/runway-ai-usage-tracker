@@ -182,7 +182,7 @@ _SIDECAR_VERSION = _resolve_sidecar_version()
 # usually carry the email in a JWT claim the sidecar decodes; a cookie or token that
 # doesn't is verified through the usage endpoint, which reports the account's email.)
 _SERVER_IDENTITY_PROVIDERS = frozenset(
-    {"antigravity", "anthropic", "chatgpt", "gemini", "github", "opencode"}
+    {"antigravity", "anthropic", "anthropic_console", "chatgpt", "gemini", "github", "opencode"}
 )
 
 # --- INJECTED REGISTRY ---
@@ -256,7 +256,19 @@ __REGISTRY__: dict[str, Any] = {
         "anthropic_console": {
             "name": "Claude Console",
             "icon": "🟠",
-            "rules": [],
+            "rules": [
+                {
+                    "type": "cookie",
+                    "domains": [
+                        "platform.claude.com",
+                        "console.anthropic.com",
+                    ],
+                    "name": "sessionKey",
+                    "mapping": {
+                        "value": "session_cookie",
+                    },
+                },
+            ],
         },
         "openrouter": {
             "name": "OpenRouter",
@@ -2227,7 +2239,7 @@ def _file_rule_paths_with_opencode_v2(paths: list) -> list[tuple[Path, Path | No
 # --- Browser Cookie Extraction ---
 
 
-def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
+def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome", host=None, schema_version=23):
     """Decrypt a Chromium-based cookie value based on the current platform."""
     if not encrypted_value:
         return None
@@ -2235,45 +2247,14 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome"):
 
     # macOS decryption
     if system == "Darwin":
-        try:
-            service = f"{browser_name} Safe Storage"
-            if "Edge" in browser_name:
-                service = "Microsoft Edge Safe Storage"
+        from scripts.sidecar_pkg.macos_cookies import decrypt
 
-            cmd = ["security", "find-generic-password", "-s", service, "-w"]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=5,
-                creationflags=_subprocess_creationflags(),
-            )
-            if result.returncode != 0:
-                return None
-
-            password = result.stdout.strip()
-            if encrypted_value.startswith(b"v10") or encrypted_value.startswith(b"v11"):
-                import hashlib
-
-                from cryptography.hazmat.primitives.ciphers import (
-                    Cipher,
-                    algorithms,
-                    modes,
-                )
-
-                salt = b"saltysalt"
-                key = hashlib.pbkdf2_hmac("sha1", password.encode("utf-8"), salt, 1003, 16)
-                iv = b" " * 16
-                raw_ciphertext = encrypted_value[3:]
-                cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
-                decryptor = cipher.decryptor()
-                decrypted = decryptor.update(raw_ciphertext) + decryptor.finalize()
-                pad_len = decrypted[-1]
-                if 1 <= pad_len <= 16:
-                    return decrypted[:-pad_len].decode("utf-8")
-        except Exception:
-            logging.debug("macOS cookie decryption failed", exc_info=True)
-        return None
+        service = (
+            "Microsoft Edge Safe Storage"
+            if "Edge" in browser_name
+            else f"{browser_name} Safe Storage"
+        )
+        return decrypt(encrypted_value, service, host, schema_version)
 
     # Windows decryption
     if system == "Windows":
@@ -2381,13 +2362,46 @@ class BrowserCookieExtractor:
                     dirs.append(home / lp)
 
             for base in dirs:
-                if not base.exists():
+                try:
+                    if not base.exists():
+                        continue
+                except OSError:
                     continue
-                for profile in ["Default", "Profile 1", "Profile 2"]:
-                    for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
-                        p = base / rel
-                        if p.exists():
-                            results.append({"browser": v["name"], "type": "chromium", "path": p})
+                if system == "Darwin":
+                    from scripts.sidecar_pkg.macos_cookies import profiles
+
+                    seen_stores = set()
+                    for profile_path in profiles(base):
+                        # Keep distinct stores; collapse aliases of the same database.
+                        for store in ("Network/Cookies", "Cookies"):
+                            p = profile_path / store
+                            try:
+                                if not p.is_file():
+                                    continue
+                                stat = p.stat()
+                            except OSError:
+                                continue
+                            identity = (stat.st_dev, stat.st_ino)
+                            if identity in seen_stores:
+                                continue
+                            seen_stores.add(identity)
+                            results.append(
+                                {
+                                    "browser": v["name"],
+                                    "type": "chromium",
+                                    "path": p,
+                                    "profile": profile_path.name,
+                                    "store": store,
+                                }
+                            )
+                else:
+                    for profile in ["Default", "Profile 1", "Profile 2"]:
+                        for rel in [profile + "/Network/Cookies", profile + "/Cookies"]:
+                            p = base / rel
+                            if p.exists():
+                                results.append(
+                                    {"browser": v["name"], "type": "chromium", "path": p}
+                                )
 
         # 2. Linux Flatpak / Snap
         if system == "Linux":
@@ -2474,6 +2488,81 @@ class BrowserCookieExtractor:
         return results
 
     @staticmethod
+    def get_macos_candidates(provider, domains, name):
+        """Return independently attributable macOS sources, never merge accounts."""
+        from scripts.sidecar_pkg.identity import credential_fingerprint, keyed_credential_origin
+        from scripts.sidecar_pkg.macos_cookies import read_cookies
+
+        candidates = []
+        allowed_domains = (
+            {"claude.ai"}
+            if provider == "anthropic"
+            else {"platform.claude.com", "console.anthropic.com"}
+        )
+        domains = [domain for domain in domains if domain.lstrip(".") in allowed_domains]
+        if provider == "anthropic" and os.getenv(
+            "RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "1"
+        ).strip().lower() not in {"0", "false", "off", "no"}:
+            from scripts.sidecar_pkg.claude_desktop import read_session_cookie
+
+            value = read_session_cookie(Path.home() / "Library/Application Support/Claude/Cookies")
+            if value:
+                origin = keyed_credential_origin(
+                    f"cookie:{provider}/Claude Desktop/Default/Cookies",
+                    credential_fingerprint(value),
+                )
+                candidates.append((value, origin))
+        for target in BrowserCookieExtractor.get_all_paths():
+            browser = target["browser"]
+            service = (
+                "Microsoft Edge Safe Storage" if "Edge" in browser else f"{browser} Safe Storage"
+            )
+            origin = f"cookie:{provider}/{browser}/{target.get('profile', target['path'].parent.name)}/{target.get('store', target['path'].name)}"
+            for domain in domains:
+                bare = domain.lstrip(".")
+                values = []
+                try:
+                    if target["type"] == "chromium":
+                        values = read_cookies(target["path"], service, bare, name)
+                    elif target["type"] == "safari":
+                        values = [
+                            cookie["value"]
+                            for cookie in BrowserCookieExtractor.parse_safari(target["path"])
+                            if cookie.get("name") == name
+                            and (
+                                cookie.get("domain", "").lstrip(".") == bare
+                                or cookie.get("domain", "").endswith("." + bare)
+                            )
+                        ]
+                    elif target["type"] == "firefox":
+                        from contextlib import closing
+
+                        with closing(
+                            sqlite3.connect(
+                                target["path"].resolve().as_uri() + "?mode=ro", uri=True
+                            )
+                        ) as conn:
+                            values = [
+                                row[0]
+                                for row in conn.execute(
+                                    "SELECT value FROM moz_cookies WHERE name = ? AND (host = ? OR host = ? OR host LIKE ?)",
+                                    (name, bare, "." + bare, "%." + bare),
+                                )
+                            ]
+                except (OSError, sqlite3.Error, ValueError, TypeError):
+                    continue
+                for value in values:
+                    if not value:
+                        continue
+                    candidate = (
+                        value,
+                        keyed_credential_origin(origin, credential_fingerprint(value)),
+                    )
+                    if candidate not in candidates:
+                        candidates.append(candidate)
+        return candidates
+
+    @staticmethod
     def parse_safari(path):
         """Minimal safari binary cookie parser."""
         try:
@@ -2557,6 +2646,18 @@ class BrowserCookieExtractor:
                         ):
                             logging.info("Cookie source: %s", target.get("browser", target["type"]))
                             return c["value"]
+                elif target["type"] == "chromium" and platform.system() == "Darwin":
+                    from scripts.sidecar_pkg.macos_cookies import read_cookies
+
+                    browser = target["browser"]
+                    service = (
+                        "Microsoft Edge Safe Storage"
+                        if "Edge" in browser
+                        else f"{browser} Safe Storage"
+                    )
+                    values = read_cookies(target["path"], service, bare, name)
+                    if values:
+                        return values[0]
                 else:
                     with sqlite3.connect(
                         f"file:{str(target['path'])}?mode=ro&uri=1", uri=True
@@ -3821,6 +3922,19 @@ class GenericCollector:
             # 5. Browser Cookies
             elif rule_type == "cookie":
                 name_to_find = rule.get("name")
+                if platform.system() == "Darwin" and provider_id in {
+                    "anthropic",
+                    "anthropic_console",
+                }:
+                    target = mapping.get("value")
+                    if target:
+                        for val, origin in BrowserCookieExtractor.get_macos_candidates(
+                            provider_id, rule.get("domains", []), name_to_find
+                        ):
+                            token_candidates.append(({target: val}, origin, "cookie"))
+                    continue
+                if provider_id == "anthropic_console":
+                    continue
                 for domain in rule.get("domains", []):
                     val = BrowserCookieExtractor.get_cookie(domain, name_to_find)
                     if val:
@@ -4146,8 +4260,14 @@ class GenericCollector:
 
                 local_account_id = tokens.get("account_id")
                 source_identity_strong = bool(local_account_id and local_account_id != "default")
-                accepts_legacy_provider_hint = provider_id not in {"chatgpt", "anthropic"} or (
-                    candidate_kind in {"file", "keychain"}
+                strict_cookie_identity = (
+                    candidate_kind == "cookie"
+                    and provider_id in {"anthropic", "anthropic_console"}
+                    and platform.system() == "Darwin"
+                )
+                accepts_legacy_provider_hint = not strict_cookie_identity and (
+                    provider_id not in {"chatgpt", "anthropic"}
+                    or (candidate_kind in {"file", "keychain"})
                 )
                 # Credential-identity cascade for the token card (#347),
                 # most specific first:
@@ -4178,7 +4298,11 @@ class GenericCollector:
                         )
                     )
                     source_identity_strong = source_identity_strong or hint_account_id is not None
-                if hint_account_id is None and fingerprint is not None:
+                if (
+                    hint_account_id is None
+                    and fingerprint is not None
+                    and not strict_cookie_identity
+                ):
                     hint_account_id = provider_hints.get(base_origin)
                     source_identity_strong = source_identity_strong or hint_account_id is not None
                 if hint_account_id is None and accepts_legacy_provider_hint:

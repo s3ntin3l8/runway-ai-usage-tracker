@@ -518,10 +518,12 @@ class TestSidecarIdentityPrecedence:
                 "mapping": {"value": "cookie_sessionKey"},
             }
         )
+        origin = "cookie:anthropic/chrome/Default/Cookies#0123456789ab"
+        monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(
             sidecar.BrowserCookieExtractor,
-            "get_cookie",
-            staticmethod(lambda _domain, _name: "sk-ant-sid01-x"),
+            "get_macos_candidates",
+            staticmethod(lambda _provider, _domains, _name: [("sk-ant-sid01-x", origin)]),
         )
         cards, blocked = sidecar.GenericCollector.collect_provider("anthropic", config)
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
@@ -533,7 +535,7 @@ class TestSidecarIdentityPrecedence:
                 "credential_origin": f"path:{creds.resolve()}",
                 "account_id": "cli@example.com",
             },
-            {"provider_id": "anthropic", "credential_origin": "cookie:anthropic/session"},
+            {"provider_id": "anthropic", "credential_origin": origin},
         ]
 
     def test_anthropic_keychain_identity_comes_from_its_own_payload(self, monkeypatch):
