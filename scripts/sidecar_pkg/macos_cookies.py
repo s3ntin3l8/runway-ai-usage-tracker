@@ -25,7 +25,7 @@ def storage_key(service: str) -> bytes | None:
                 ["security", "find-generic-password", "-s", service, "-w"],
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=30 if service == "Claude Safe Storage" else 5,
             )
             if result.returncode == 0 and result.stdout.strip():
                 key = hashlib.pbkdf2_hmac(

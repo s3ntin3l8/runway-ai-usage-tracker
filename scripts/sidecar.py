@@ -214,20 +214,31 @@ __REGISTRY__: dict[str, Any] = {
                         "claudeAiOauth.accessToken": "oauth_token",
                         "claudeAiOauth.refreshToken": "refresh_token",
                         "claudeAiOauth.clientId": "client_id",
+                        "claudeAiOauth.expiresAt": "expiry_date",
                         "oauthAccount.emailAddress|oauthAccount.email": "account_id",
                         "oauthAccount.email|oauthAccount.emailAddress": "account_label",
                     },
                 },
                 {
-                    "type": "keychain",
+                    "type": "claude_code_keychain",
                     "service_name": "Claude Code-credentials",
+                    "config_dir_env": "CLAUDE_CONFIG_DIR",
                     "format": "json",
                     "mapping": {
                         "claudeAiOauth.accessToken": "oauth_token",
                         "claudeAiOauth.refreshToken": "refresh_token",
                         "claudeAiOauth.clientId": "client_id",
+                        "claudeAiOauth.expiresAt": "expiry_date",
                         "oauthAccount.emailAddress|oauthAccount.email": "account_id",
                         "oauthAccount.email|oauthAccount.emailAddress": "account_label",
+                    },
+                },
+                {
+                    "type": "claude_desktop_oauth",
+                    "mapping": {
+                        "token": "oauth_token",
+                        "expiresAt": "expiry_date",
+                        "accountUuid": "oauth_account_uuid",
                     },
                 },
                 {
@@ -3862,7 +3873,27 @@ class GenericCollector:
                     except Exception as e:
                         logging.debug(f"Error reading file {path}: {e}")
 
-            # 3. macOS Keychain
+            elif rule_type == "claude_desktop_oauth" and platform.system() == "Darwin":
+                from scripts.sidecar_pkg.claude_desktop import read_oauth_candidates
+
+                token_candidates.extend(
+                    (tokens, origin, "claude_oauth")
+                    for tokens, origin in read_oauth_candidates(
+                        Path.home() / "Library/Application Support/Claude/config.json"
+                    )
+                )
+
+            elif rule_type == "claude_code_keychain" and platform.system() == "Darwin":
+                from scripts.sidecar_pkg.claude_code_keychain import read_candidates
+
+                token_candidates.extend(
+                    (tokens, origin, "claude_oauth")
+                    for tokens, origin in read_candidates(
+                        custom_login_dirs(rule.get("config_dir_env", "CLAUDE_CONFIG_DIR")), mapping
+                    )
+                )
+
+            # 3. Legacy generic macOS Keychain rules
             elif rule_type == "keychain" and platform.system() == "Darwin":
                 try:
                     cmd = [
@@ -4265,9 +4296,13 @@ class GenericCollector:
                     and provider_id in {"anthropic", "anthropic_console"}
                     and platform.system() == "Darwin"
                 )
-                accepts_legacy_provider_hint = not strict_cookie_identity and (
-                    provider_id not in {"chatgpt", "anthropic"}
-                    or (candidate_kind in {"file", "keychain"})
+                accepts_legacy_provider_hint = (
+                    not strict_cookie_identity
+                    and candidate_kind != "claude_oauth"
+                    and (
+                        provider_id not in {"chatgpt", "anthropic"}
+                        or (candidate_kind in {"file", "keychain"})
+                    )
                 )
                 # Credential-identity cascade for the token card (#347),
                 # most specific first:

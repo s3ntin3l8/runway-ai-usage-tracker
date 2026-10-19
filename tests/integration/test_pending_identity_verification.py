@@ -47,7 +47,10 @@ def world(monkeypatch, tmp_path):
     SQLModel.metadata.create_all(engine)
     cache = TokenCache()
     # Load the native verifier before wiring imports, including on isolated -k runs.
-    from app.services import claude_verification  # noqa: F401
+    from app.services import (
+        claude_oauth_verification,  # noqa: F401
+        claude_verification,  # noqa: F401
+    )
 
     for name, module in list(sys.modules.items()):
         # Never the defining module itself.
@@ -1026,3 +1029,89 @@ async def test_manager_rejected_regular_claude_poll_preserves_last_good(
             assert json.loads(latest.card_json)["used_value"] == (50 if fallback else 10)
     finally:
         await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_desktop_oauth_promotes_all_accounts_and_protects_rotated_cards(world):
+    engine, cache = world
+    accounts = {
+        "access-a": ("11111111-1111-4111-8111-111111111111", "alice@example.com"),
+        "access-b": ("22222222-2222-4222-8222-222222222222", "bob@example.com"),
+    }
+    sources = []
+    for token, (uuid, _email) in accounts.items():
+        sid = await _seed(
+            world,
+            "anthropic",
+            f"keychain:Claude Desktop/oauth/{uuid}",
+            {
+                "oauth_token": token,
+                "oauth_read_only": "1",
+                "oauth_account_uuid": uuid,
+                "expiry_date": "4102444800000",
+            },
+        )
+        sources.append(sid)
+
+    def upstream(request):
+        token = request.headers["authorization"].removeprefix("Bearer ")
+        uuid, email = accounts[token]
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json={"account": {"uuid": uuid, "email": email}})
+        assert request.method == "GET" and request.url.path.endswith("/usage")
+        return httpx.Response(200, json=CLAUDE_USAGE)
+
+    manager = CollectorManager()
+    key = _verifier(manager, "anthropic")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        for _ in sources:
+            cards = await manager._collect_with_source_failover(key, client, {})
+            assert cards and all(getattr(c, "claude_source_proof", None) for c in cards)
+    assert await cache.get_pending_sources("anthropic") == []
+    for sid, (token, (_uuid, email)) in zip(sources, accounts.items(), strict=True):
+        account, tag = _outcome(engine, "anthropic", sid)
+        assert account == email and tag.account_id == email
+        candidates = await cache.get_source_candidates("anthropic", email)
+        assert candidates[0]["tokens"]["oauth_token"] == token
+    with Session(engine) as session:
+        assert all(manager.claude_card_proof_valid(session, c) for c in cards)
+    proof = cards[0].claude_source_proof
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "rotated", "oauth_read_only": "1"},
+        account_id=proof.account_id,
+        source_id=proof.source_id,
+    )
+    with Session(engine) as session:
+        assert not manager.claude_card_proof_valid(session, cards[0])
+
+
+@pytest.mark.asyncio
+async def test_desktop_profile_success_quota_denial_stays_pending_and_other_source_works(world):
+    engine, cache = world
+    uuid = "11111111-1111-4111-8111-111111111111"
+    bad = await _seed(
+        world,
+        "anthropic",
+        "keychain:Claude Desktop/oauth/bad",
+        {"oauth_token": "bad", "oauth_account_uuid": uuid, "oauth_read_only": "1"},
+    )
+    good = await _seed(
+        world,
+        "anthropic",
+        "keychain:Claude Desktop/oauth/good",
+        {"oauth_token": "good", "oauth_account_uuid": uuid, "oauth_read_only": "1"},
+    )
+
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json={"account": {"uuid": uuid, "email": BOB}})
+        return httpx.Response(
+            403 if request.headers["authorization"] == "Bearer bad" else 200, json=CLAUDE_USAGE
+        )
+
+    cards = await _verify("anthropic", upstream)
+    assert cards
+    assert _outcome(engine, "anthropic", good)[0] == BOB
+    assert _outcome(engine, "anthropic", bad)[1] is None
+    assert [p["source_id"] for p in await cache.get_pending_sources("anthropic")] == [bad]

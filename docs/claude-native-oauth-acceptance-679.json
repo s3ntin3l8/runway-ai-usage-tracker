@@ -1,0 +1,60 @@
+{
+  "observed_date": "2026-10-19",
+  "platform": "macOS 26.6.2 (25G83)",
+  "architecture": "arm64",
+  "desktop_source_runtime": {
+    "mode": "native",
+    "native_discovery": 7,
+    "keychain_lookups": 1,
+    "signed_http_statuses": [
+      200,
+      200,
+      200,
+      200
+    ],
+    "first_poll_cards": 3,
+    "second_poll_cards": 3,
+    "resolved_sources": 4,
+    "resolved_sources_survived_heartbeat": true,
+    "account_count": 1,
+    "data_sources": [
+      "api"
+    ],
+    "input_sources": [
+      "sidecar"
+    ],
+    "refresh_requests": 0,
+    "credential_writes": 0
+  },
+  "limitations": [
+    "source-runtime, not frozen binary/tray",
+    "local HMAC ingestion used in-process ASGI; upstream calls used real TLS HTTPS",
+    "three cache candidates were not promoted; no success inferred for them",
+    "native arbitrary custom-directory logins were not created"
+  ],
+  "claude_code_source_runtime": {
+    "source": "code",
+    "mode": "native",
+    "native_discovery": 1,
+    "keychain_lookups": 2,
+    "signed_http_statuses": [
+      200,
+      200,
+      200,
+      200
+    ],
+    "first_poll_cards": 3,
+    "second_poll_cards": 3,
+    "resolved_sources": 1,
+    "resolved_sources_survived_heartbeat": true,
+    "account_count": 1,
+    "data_sources": [
+      "api"
+    ],
+    "input_sources": [
+      "sidecar"
+    ],
+    "refresh_requests": 0,
+    "credential_writes": 0
+  }
+}

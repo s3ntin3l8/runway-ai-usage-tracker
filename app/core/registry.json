@@ -26,20 +26,31 @@
             "claudeAiOauth.accessToken": "oauth_token",
             "claudeAiOauth.refreshToken": "refresh_token",
             "claudeAiOauth.clientId": "client_id",
+            "claudeAiOauth.expiresAt": "expiry_date",
             "oauthAccount.emailAddress|oauthAccount.email": "account_id",
             "oauthAccount.email|oauthAccount.emailAddress": "account_label"
           }
         },
         {
-          "type": "keychain",
+          "type": "claude_code_keychain",
           "service_name": "Claude Code-credentials",
+          "config_dir_env": "CLAUDE_CONFIG_DIR",
           "format": "json",
           "mapping": {
             "claudeAiOauth.accessToken": "oauth_token",
             "claudeAiOauth.refreshToken": "refresh_token",
             "claudeAiOauth.clientId": "client_id",
+            "claudeAiOauth.expiresAt": "expiry_date",
             "oauthAccount.emailAddress|oauthAccount.email": "account_id",
             "oauthAccount.email|oauthAccount.emailAddress": "account_label"
+          }
+        },
+        {
+          "type": "claude_desktop_oauth",
+          "mapping": {
+            "token": "oauth_token",
+            "expiresAt": "expiry_date",
+            "accountUuid": "oauth_account_uuid"
           }
         },
         {
