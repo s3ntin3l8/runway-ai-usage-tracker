@@ -983,6 +983,35 @@ class TestOllamaApiCollector:
         assert card["used_value"] == 0.0
         assert card["health"] == "good"
 
+    def test_build_cards_from_api_usage_empty_totals_falls_through(self):
+        """Empty totals dict does not fabricate a card and falls through."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {"range": "7d", "totals": {}}
+        cards = collector._build_cards_from_api_usage(body)
+        assert cards == []
+        assert collector._no_monthly_cap is True
+
+    def test_build_cards_from_api_usage_string_typed_counters(self):
+        """String or null values in totals do not raise and parse safely."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "range": "7d",
+            "totals": {
+                "usage_usd": "invalid",
+                "request_count": "10",
+                "input_tokens": None,
+                "output_tokens": "not-a-number",
+                "cached_input_tokens": 5,
+            },
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["used_value"] == 0.0
+        assert card["token_usage"]["input"] == 0
+        assert card["token_usage"]["output"] == 0
+        assert card["token_usage"]["cache_read"] == 5
+
 
 def test_the_page_email_is_reported_as_verified_identity(ollama_html):
     """The collector proves which account a cookie is signed into (#462): the server compares

@@ -251,7 +251,6 @@ def _synthesize_passive_fleet_entries(
     provider_configs: Sequence[Any],
     billing_types: dict[tuple[str, str], str],
     archived_pairs: set[tuple[str, str]],
-    inactive_config_provider_ids: set[str],
 ) -> None:
     """Synthesize fleet entries for (provider_id, account_id) pairs that have
     ingested events but no LatestUsage card — typical case is OpenCode Free,
@@ -280,8 +279,6 @@ def _synthesize_passive_fleet_entries(
             continue
         if (pid, aid) in archived_pairs or (pid, aid) in disabled_pairs:
             continue  # archived or disabled provider account; do not synthesize a fleet entry
-        if pid in inactive_config_provider_ids:
-            continue  # all configured accounts disabled; do not synthesize a fleet entry
         if aid == "default" and pid in pids_with_real_identity:
             continue  # orphan from pre-fix sidecar; real-identity card covers it
         if (pid, aid) in groups:
@@ -382,7 +379,6 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         provider_configs,
         billing_types,
         archived_pairs,
-        inactive_config_provider_ids,
     )
 
     now = datetime.now(UTC)

@@ -271,10 +271,6 @@ def test_detect_excludes_opencode_free_and_ollama_providers(session):
     assert report.total_count == 0
 
 
-def test_check_blocked_by_includes_openrouter_model_events():
-    assert "openrouter_model_events" in _check().blocked_by
-
-
 def test_detect_excludes_events_with_no_tokens(session):
     make_event(
         session,

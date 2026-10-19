@@ -156,7 +156,7 @@ class UnpricedModelsCheck(Check):
     impact = "Usage totals may understate spend when no applicable price is available."
     recommended_action = "Review the per-model evidence. Recompute cost when a rate is available, or add a pricing seed for models with no rate."
     severity = Severity.WARN
-    blocked_by = ("legacy_provider_ids", "openrouter_model_events")
+    blocked_by = ("legacy_provider_ids",)
 
     def detect(self, session: Session) -> CheckReport:
         # Classification uses each event's effective pricing date. Grouping by

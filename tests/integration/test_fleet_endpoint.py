@@ -656,3 +656,51 @@ def test_fleet_does_not_synthesize_card_for_disabled_provider_account(session: S
     assert resp.status_code == 200
     fleet = resp.json()["fleet"]
     assert not any(e["provider_id"] == "kimi_coding" for e in fleet)
+
+
+def test_fleet_synthesizes_card_for_active_account_even_if_sibling_account_is_disabled(
+    session: Session,
+):
+    """Disabling opencode/alice does not suppress passive synthetic fleet entry for opencode/bob."""
+    from app.models.db import ProviderConfig
+
+    # Alice is disabled
+    session.add(
+        ProviderConfig(
+            provider_id="opencode",
+            account_id="alice@example.com",
+            enabled=False,
+            archived=False,
+        )
+    )
+    # Bob has usage events (discovered/unconfigured account)
+    session.add(
+        UsageEvent(
+            provider_id="opencode",
+            account_id="bob@example.com",
+            sidecar_id="local",
+            event_id="evt_bob_1",
+            ts=datetime.now(UTC),
+            kind="message",
+            tokens_input=200,
+            tokens_output=100,
+            cost_usd=0.0,
+        )
+    )
+    session.commit()
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+    fleet = resp.json()["fleet"]
+    bob_entry = next(
+        (
+            e
+            for e in fleet
+            if e["provider_id"] == "opencode" and e["account_id"] == "bob@example.com"
+        ),
+        None,
+    )
+    assert bob_entry is not None
+    assert not any(
+        e["provider_id"] == "opencode" and e["account_id"] == "alice@example.com" for e in fleet
+    )

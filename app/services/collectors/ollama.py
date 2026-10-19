@@ -108,8 +108,6 @@ class OllamaCollector(BaseCollector):
     WINDOW_USAGE = 800
     TIMEOUT_SECONDS = 15
 
-    COMPLETE_SNAPSHOT = True
-
     # Error handling
     ERROR_TYPE_MAP = {
         "invalid_api_key": "auth_failed",  # pragma: allowlist secret
@@ -368,9 +366,13 @@ class OllamaCollector(BaseCollector):
         now = datetime.now(UTC)
         now_iso = now.isoformat()
 
-        # Format 1: Time-bucketed usage API (returns range, totals, buckets)
+        # Format 1: Time-bucketed usage API (returns range, totals, buckets).
+        # Require at least one recognised counter to avoid fabricating a PAYG
+        # card from an empty dictionary.
         totals = body.get("totals")
-        if isinstance(totals, dict):
+        if isinstance(totals, dict) and any(
+            k in totals for k in ("usage_usd", "request_count", "input_tokens", "output_tokens")
+        ):
             range_val = str(body.get("range", "7d")).lower()
             window_map = {"24h": "daily", "7d": "weekly", "30d": "monthly"}
             window_type = window_map.get(range_val, "weekly")
@@ -378,10 +380,17 @@ class OllamaCollector(BaseCollector):
                 usage_usd = float(totals.get("usage_usd", 0.0) or 0.0)
             except (TypeError, ValueError):
                 usage_usd = 0.0
-            request_count = int(totals.get("request_count", 0) or 0)
-            input_tokens = int(totals.get("input_tokens", 0) or 0)
-            output_tokens = int(totals.get("output_tokens", 0) or 0)
-            cached_tokens = int(totals.get("cached_input_tokens", 0) or 0)
+
+            def _to_int(val: Any) -> int:
+                try:
+                    return int(val or 0)
+                except (TypeError, ValueError):
+                    return 0
+
+            request_count = _to_int(totals.get("request_count"))
+            input_tokens = _to_int(totals.get("input_tokens"))
+            output_tokens = _to_int(totals.get("output_tokens"))
+            cached_tokens = _to_int(totals.get("cached_input_tokens"))
 
             detail = f"${usage_usd:.2f} spent · {request_count} requests · Ollama Cloud"
             card = {

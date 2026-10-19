@@ -792,11 +792,10 @@ def test_seed_opencode_and_anthropic_claude_haiku_rates():
     s = _make_session()
     seed_pricing_table(s)
     for provider_id in ("opencode", "anthropic"):
-        for model_id in ("claude-haiku-4.5", "claude-haiku"):
-            row = _row(s, provider_id, model_id, date(2026, 9, 1))
-            assert row is not None, f"missing {provider_id}/{model_id}"
-            assert (row.input_per_mtok, row.output_per_mtok, row.cache_read_per_mtok) == (
-                1.00,
-                5.00,
-                0.10,
-            )
+        row = _row(s, provider_id, "claude-haiku-4.5", date(2026, 9, 1))
+        assert row is not None, f"missing {provider_id}/claude-haiku-4.5"
+        assert (row.input_per_mtok, row.output_per_mtok, row.cache_read_per_mtok) == (
+            1.00,
+            5.00,
+            0.10,
+        )
