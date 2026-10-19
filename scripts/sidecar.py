@@ -30,7 +30,6 @@ import socket
 import sqlite3
 import ssl
 import stat
-import struct
 import subprocess
 import sys
 import threading
@@ -2486,23 +2485,20 @@ class BrowserCookieExtractor:
                         }
                     )
 
-        # 4. Safari
-        if system == "Darwin" and (home / "Library/Cookies/Cookies.binarycookies").exists():
-            results.append(
-                {
-                    "browser": "Safari",
-                    "type": "safari",
-                    "path": home / "Library/Cookies/Cookies.binarycookies",
-                }
-            )
+        # 4. Safari (legacy, sandbox container and separate profile stores).
+        if system == "Darwin":
+            from scripts.sidecar_pkg.safari_cookies import stores
+
+            results.extend(stores(home))
 
         return results
 
     @staticmethod
-    def get_macos_candidates(provider, domains, name):
+    def get_macos_candidates(provider, domains, name, *, scan_outcomes=None):
         """Return independently attributable macOS sources, never merge accounts."""
+        from scripts.sidecar_pkg.cookie_scan import report_scan
         from scripts.sidecar_pkg.identity import credential_fingerprint, keyed_credential_origin
-        from scripts.sidecar_pkg.macos_cookies import read_cookies
+        from scripts.sidecar_pkg.macos_cookies import scan_cookies
 
         candidates = []
         allowed_domains = (
@@ -2514,14 +2510,15 @@ class BrowserCookieExtractor:
         if provider == "anthropic" and os.getenv(
             "RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "1"
         ).strip().lower() not in {"0", "false", "off", "no"}:
-            from scripts.sidecar_pkg.claude_desktop import read_session_cookie
+            from scripts.sidecar_pkg.claude_desktop import scan_session_cookie
 
-            value = read_session_cookie(Path.home() / "Library/Application Support/Claude/Cookies")
-            if value:
-                origin = keyed_credential_origin(
-                    f"cookie:{provider}/Claude Desktop/Default/Cookies",
-                    credential_fingerprint(value),
-                )
+            base_origin = f"cookie:{provider}/Claude Desktop/Default/Cookies"
+            scanned = scan_session_cookie(
+                Path.home() / "Library/Application Support/Claude/Cookies"
+            )
+            report_scan("Claude Desktop", base_origin, scanned, scan_outcomes)
+            for value in scanned.values:
+                origin = keyed_credential_origin(base_origin, credential_fingerprint(value))
                 candidates.append((value, origin))
         for target in BrowserCookieExtractor.get_all_paths():
             browser = target["browser"]
@@ -2534,17 +2531,20 @@ class BrowserCookieExtractor:
                 values = []
                 try:
                     if target["type"] == "chromium":
-                        values = read_cookies(target["path"], service, bare, name)
+                        scanned = scan_cookies(target["path"], service, bare, name)
+                        values = scanned.values
+                        report_scan(browser, origin, scanned, scan_outcomes)
                     elif target["type"] == "safari":
-                        values = [
-                            cookie["value"]
-                            for cookie in BrowserCookieExtractor.parse_safari(target["path"])
-                            if cookie.get("name") == name
-                            and (
-                                cookie.get("domain", "").lstrip(".") == bare
-                                or cookie.get("domain", "").endswith("." + bare)
-                            )
-                        ]
+                        from scripts.sidecar_pkg.safari_cookies import scan_cookies as scan_safari
+
+                        if target.get("discovery_status") == "inaccessible":
+                            from scripts.sidecar_pkg.cookie_scan import StoreScan
+
+                            scanned = StoreScan("inaccessible")
+                        else:
+                            scanned = scan_safari(target["path"], bare, name)
+                        report_scan(browser, origin, scanned, scan_outcomes)
+                        values = [cookie["value"] for cookie in scanned.values]
                     elif target["type"] == "firefox":
                         from contextlib import closing
 
@@ -2575,42 +2575,10 @@ class BrowserCookieExtractor:
 
     @staticmethod
     def parse_safari(path):
-        """Minimal safari binary cookie parser."""
-        try:
-            with open(path, "rb") as f:
-                if f.read(4) != b"cook":
-                    return []
-                num_pages = struct.unpack(">I", f.read(4))[0]
-                page_sizes = [struct.unpack(">I", f.read(4))[0] for _ in range(num_pages)]
-                all_cookies = []
-                for size in page_sizes:
-                    data = f.read(size)
-                    if len(data) < 12:
-                        continue
-                    num_c = struct.unpack("<I", data[4:8])[0]
-                    off = [
-                        struct.unpack("<I", data[8 + (i * 4) : 12 + (i * 4)])[0]
-                        for i in range(num_c)
-                    ]
-                    for o in off:
-                        c = data[o:]
-                        u_o, n_o = (
-                            struct.unpack("<I", c[16:20])[0],
-                            struct.unpack("<I", c[20:24])[0],
-                        )
-                        v_o = struct.unpack("<I", c[28:32])[0]
+        """Compatibility wrapper; malformed/inaccessible stores yield no cookies."""
+        from scripts.sidecar_pkg.safari_cookies import scan_cookies
 
-                        def r_s(at):
-                            e = c.find(b"\x00", at)
-                            return c[at:e].decode("utf-8", errors="replace") if e != -1 else ""
-
-                        all_cookies.append(
-                            {"domain": r_s(u_o), "name": r_s(n_o), "value": r_s(v_o)}
-                        )
-                return all_cookies
-        except Exception:
-            logging.debug("Failed to parse Safari cookies", exc_info=True)
-            return []
+        return scan_cookies(path).values
 
     @staticmethod
     def get_cookie(domain, name):
