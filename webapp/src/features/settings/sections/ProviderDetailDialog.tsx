@@ -117,15 +117,11 @@ export function ProviderDetailDialog({
     mutationFn: (account: ProviderAccount) => {
       if (!provider) throw new Error('no provider');
       return putProviderConfig(provider.provider_id, account.account_id, {
-        archived: !account.archived,
+        archived: true,
       });
     },
     onSuccess: (_data, account) => {
-      toast.success(
-        account.archived
-          ? `${provider?.name} · ${maskAccountId(account.account_id)} restored`
-          : `${provider?.name} · ${maskAccountId(account.account_id)} archived`,
-      );
+      toast.success(`${provider?.name} · ${maskAccountId(account.account_id)} archived`);
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       queryClient.invalidateQueries({ queryKey: ['usage'] });
       setMenuFor(null);

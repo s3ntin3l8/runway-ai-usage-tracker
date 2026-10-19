@@ -305,6 +305,16 @@ describe('ProviderDetailDialog — account list + menu', () => {
     );
   });
 
+  it('shows an error toast if archiving fails', async () => {
+    vi.mocked(api.putProviderConfig).mockRejectedValue(new Error('network error'));
+    renderDialog(singleAccount);
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /actions for alice/i }));
+    await userEvent.click(within(dialog).getByRole('menuitem', { name: /archive/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('network error'));
+  });
+
   it('clicking Edit opens the ProviderAccountDialog for that account', async () => {
     renderDialog(multiAccount);
     const dialog = await screen.findByRole('dialog');
