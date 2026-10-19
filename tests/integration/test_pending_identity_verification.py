@@ -13,7 +13,6 @@ import sys
 
 import httpx
 import pytest
-from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models.db import CredentialSource, PendingCredentialTag
@@ -35,11 +34,16 @@ SERVER_BEARER = "server-owner-bearer"  # pragma: allowlist secret
 
 
 @pytest.fixture
-def world(monkeypatch):
+def world(monkeypatch, tmp_path):
     """Isolated DB + a fresh TokenCache wired into every module that imported the global."""
+    from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine
+
+    # Real manager workers use concurrent Sessions; sharing one StaticPool
+    # connection lets a reader roll back another worker's uncommitted writes.
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        f"sqlite:///{tmp_path / 'pending-identity.db'}", connect_args=SQLITE_CONNECT_ARGS
     )
+    configure_sqlite_engine(engine)
     SQLModel.metadata.create_all(engine)
     cache = TokenCache()
     # Load the native verifier before wiring imports, including on isolated -k runs.
@@ -56,19 +60,59 @@ def world(monkeypatch):
     monkeypatch.setattr("app.core.db.engine", engine)
     # The shared unit fixtures replace sqlmodel.Session with a mock; this test needs the real one.
     monkeypatch.setattr("sqlmodel.Session", Session)
-    return engine, cache
+    yield engine, cache
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_world_workers_cannot_read_or_rollback_another_transaction(world):
+    """Manager workers need the independent SQLite transactions used in production."""
+    engine, _ = world
+    with Session(engine) as writer:
+        writer.add(
+            PendingCredentialTag(
+                sidecar_id=SIDECAR, provider_id="anthropic_console", credential_origin="uncommitted"
+            )
+        )
+        writer.flush()
+
+        def read_in_worker():
+            with Session(engine) as reader:
+                return reader.exec(select(PendingCredentialTag)).all()
+
+        observed = await asyncio.to_thread(read_in_worker)
+        writer.commit()
+    with Session(engine) as reader:
+        persisted = reader.exec(select(PendingCredentialTag)).all()
+    assert (len(observed), len(persisted)) == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_seed_uses_ingest_pending_slot_for_both_claude_providers(world):
+    engine, cache = world
+    for provider in ("anthropic", "anthropic_console"):
+        source_id = await _seed(world, provider, f"cookie:{provider}/store#aaaaaaaaaaaa", {})
+        pending = await cache.get_pending_sources(provider)
+        assert pending[0]["account_slot"] == source_id
+        with Session(engine) as session:
+            row = session.exec(
+                select(CredentialSource).where(CredentialSource.provider_id == provider)
+            ).one()
+            assert row.account_id == source_id
 
 
 async def _seed(world, provider: str, origin: str, tokens: dict):
-    """A pending sidecar source, filed the way the ingest endpoint files it (Anthropic keys
-    its pending bundles by source id, everything else by ``default``)."""
+    """File a pending sidecar source in the same slot as the ingest endpoint."""
+    from app.services.credential_sources import pending_cache_slot
+
     engine, cache = world
     source_id = f"sidecar:{SIDECAR}:{origin}"
+    account_id = pending_cache_slot(provider, source_id)
     with Session(engine) as session:
         session.add(
             CredentialSource(
                 provider_id=provider,
-                account_id=source_id if provider == "anthropic" else "default",
+                account_id=account_id,
                 source_id=source_id,
                 source_type="cookie",
                 source_label=SIDECAR,
@@ -83,7 +127,7 @@ async def _seed(world, provider: str, origin: str, tokens: dict):
     await cache.store(
         provider,
         tokens,
-        account_id=source_id if provider == "anthropic" else "default",
+        account_id=account_id,
         source_id=source_id,
         source=SIDECAR,
         source_metadata={
@@ -717,11 +761,16 @@ async def test_reconciliation_does_not_promote_new_pending_generation_using_old_
 
 
 @pytest.mark.asyncio
-async def test_claude_pending_sources_survive_real_manager_poller_and_resync(world, monkeypatch):
+async def test_claude_pending_sources_survive_real_manager_poller_and_resync(
+    world, monkeypatch, caplog
+):
     from app.models.db import LatestUsage
     from app.services.poller import BackgroundPoller
 
     engine, cache = world
+    # Verifier worker exceptions are deliberately DEBUG-only before identity is
+    # known. Capture them so a lifecycle failure retains the actual cause.
+    caplog.set_level("DEBUG", logger="app.services.collector_manager")
     monkeypatch.setattr("app.services.token_cache.token_cache", cache)
     await _seed(
         world,
