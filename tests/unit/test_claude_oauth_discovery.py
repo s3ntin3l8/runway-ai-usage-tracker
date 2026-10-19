@@ -364,7 +364,10 @@ def test_code_decoder_is_standalone_and_handles_declared_identity_alternatives(m
     assert result[0][0]["account_id"] == "person@example.com"
 
 
-def test_native_credential_origin_is_not_written_to_diagnostic_logs(monkeypatch, caplog):
+@pytest.mark.parametrize("provider_hint", [None, "ops@example.com"])
+def test_native_credential_origin_is_not_written_to_diagnostic_logs(
+    monkeypatch, caplog, provider_hint
+):
     from scripts import sidecar
     from scripts.sidecar_pkg import claude_desktop
 
@@ -377,8 +380,41 @@ def test_native_credential_origin_is_not_written_to_diagnostic_logs(monkeypatch,
         ],
     )
     cards, _ = sidecar.GenericCollector.collect_provider(
-        "anthropic", {"rules": [{"type": "claude_desktop_oauth"}]}
+        "anthropic",
+        {"rules": [{"type": "claude_desktop_oauth"}]},
+        account_label_hints={"anthropic": {"provider:anthropic": provider_hint}}
+        if provider_hint
+        else None,
     )
     assert cards
     assert "private-access" not in caplog.text
     assert "private-origin" not in caplog.text
+
+
+def test_withheld_provider_hint_does_not_log_credential_origin(monkeypatch, caplog):
+    from scripts import sidecar
+
+    monkeypatch.setenv("RUNWAY_TEST_PRIVATE_KEY", "private-access")
+    monkeypatch.setattr(
+        sidecar, "fingerprinted_credential_origin", lambda *args: "env:private-origin"
+    )
+    monkeypatch.setattr(sidecar, "_opencode_local_key_binding", lambda *args, **kwargs: "ambiguous")
+    cards, blocked = sidecar.GenericCollector.collect_provider(
+        "opencode",
+        {
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "RUNWAY_TEST_PRIVATE_KEY",
+                    "mapping": {"value": "api_key"},
+                }
+            ]
+        },
+        account_label_hints={"opencode": {"provider:opencode": "ops@example.com"}},
+    )
+    assert cards  # Forwarded for exact-source server verification despite the withheld hint.
+    assert blocked == [{"provider_id": "opencode", "credential_origin": "env:private-origin"}]
+    assert "provider-wide account hint withheld" in caplog.text
+    assert "private-origin" not in caplog.text
+    assert "private-access" not in caplog.text
+    assert "ops@example.com" not in caplog.text
