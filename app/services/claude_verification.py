@@ -256,7 +256,7 @@ class ClaudeSourceProof:
     account_id: str
     source_id: str
     generation: str
-    organization_id: str
+    organization_id: str | None
     credential_origin: str | None
     sidecar_id: str | None
 

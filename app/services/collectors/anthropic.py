@@ -139,6 +139,11 @@ class AnthropicCollector(
 
     async def _strategy_oauth_wrap(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Dispatch wrapper: OAuth API (official, token-based)."""
+        native = token_cache.current_source_tokens("anthropic", self.account_id or "default")
+        if native and native.get("oauth_read_only") == "1":
+            from app.services.claude_oauth_verification import collect_native_oauth
+
+            return await collect_native_oauth(self, client)
         token = await self._get_valid_token(client)
         if not token:
             return []

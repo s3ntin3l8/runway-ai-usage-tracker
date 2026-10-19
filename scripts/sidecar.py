@@ -214,20 +214,31 @@ __REGISTRY__: dict[str, Any] = {
                         "claudeAiOauth.accessToken": "oauth_token",
                         "claudeAiOauth.refreshToken": "refresh_token",
                         "claudeAiOauth.clientId": "client_id",
+                        "claudeAiOauth.expiresAt": "expiry_date",
                         "oauthAccount.emailAddress|oauthAccount.email": "account_id",
                         "oauthAccount.email|oauthAccount.emailAddress": "account_label",
                     },
                 },
                 {
-                    "type": "keychain",
+                    "type": "claude_code_keychain",
                     "service_name": "Claude Code-credentials",
+                    "config_dir_env": "CLAUDE_CONFIG_DIR",
                     "format": "json",
                     "mapping": {
                         "claudeAiOauth.accessToken": "oauth_token",
                         "claudeAiOauth.refreshToken": "refresh_token",
                         "claudeAiOauth.clientId": "client_id",
+                        "claudeAiOauth.expiresAt": "expiry_date",
                         "oauthAccount.emailAddress|oauthAccount.email": "account_id",
                         "oauthAccount.email|oauthAccount.emailAddress": "account_label",
+                    },
+                },
+                {
+                    "type": "claude_desktop_oauth",
+                    "mapping": {
+                        "token": "oauth_token",
+                        "expiresAt": "expiry_date",
+                        "accountUuid": "oauth_account_uuid",
                     },
                 },
                 {
@@ -3433,7 +3444,7 @@ def _opencode_local_key_binding(
             with open(account_path) as f:
                 data = json.load(f)
         except Exception:
-            logging.debug("OpenCode account.json unreadable: %s", account_path, exc_info=True)
+            logging.debug("OpenCode account metadata unreadable")
             continue
         if not isinstance(data, dict):
             continue
@@ -3862,7 +3873,27 @@ class GenericCollector:
                     except Exception as e:
                         logging.debug(f"Error reading file {path}: {e}")
 
-            # 3. macOS Keychain
+            elif rule_type == "claude_desktop_oauth" and platform.system() == "Darwin":
+                from scripts.sidecar_pkg.claude_desktop import read_oauth_candidates
+
+                token_candidates.extend(
+                    (tokens, origin, "claude_oauth")
+                    for tokens, origin in read_oauth_candidates(
+                        Path.home() / "Library/Application Support/Claude/config.json"
+                    )
+                )
+
+            elif rule_type == "claude_code_keychain" and platform.system() == "Darwin":
+                from scripts.sidecar_pkg.claude_code_keychain import read_candidates
+
+                token_candidates.extend(
+                    (tokens, origin, "claude_oauth")
+                    for tokens, origin in read_candidates(
+                        custom_login_dirs(rule.get("config_dir_env", "CLAUDE_CONFIG_DIR")), mapping
+                    )
+                )
+
+            # 3. Legacy generic macOS Keychain rules
             elif rule_type == "keychain" and platform.system() == "Darwin":
                 try:
                     cmd = [
@@ -4112,7 +4143,7 @@ class GenericCollector:
                     )
                     if expiry_dt.timestamp() < time.time():
                         logging.warning(
-                            f"  [{provider_id}] local token expired at {raw_expiry} — "
+                            f"  [{provider_id}] local token expired — "
                             "not pushing (run `agy models` to refresh, or start the "
                             "sidecar with --keep-alive)"
                         )
@@ -4127,14 +4158,14 @@ class GenericCollector:
                             and seconds_left <= _AG_PRE_EXPIRY_WARNING_SECONDS
                         ):
                             logging.warning(
-                                f"  [{provider_id}] local token expires at {raw_expiry} "
+                                f"  [{provider_id}] local token expires at its reported deadline "
                                 f"(within {_AG_PRE_EXPIRY_WARNING_SECONDS // 60} min) — "
                                 "run `agy models` to renew, or start "
                                 "the sidecar with --keep-alive"
                             )
                         tokens["expiry_date"] = str(int(expiry_dt.timestamp() * 1000))
                 except (ValueError, TypeError):
-                    logging.debug(f"  [{provider_id}] could not parse token expiry: {raw_expiry!r}")
+                    logging.debug(f"  [{provider_id}] could not parse token expiry")
 
             if provider_id == "antigravity" and tokens and not tokens.get("account_id"):
                 tokens["account_id"] = _ag_account_email()
@@ -4243,7 +4274,7 @@ class GenericCollector:
 
                 tokens["account_id"] = canonical_account_id(tokens["account_id"])
             if tokens:
-                logging.info(f"  [{provider_id}] tokens extracted: {list(tokens.keys())}")
+                logging.info(f"  [{provider_id}] credential fields extracted: {len(tokens)}")
                 if candidate_kind == "cookie":
                     unit = "cookie"
                     data_source = "web"
@@ -4265,9 +4296,13 @@ class GenericCollector:
                     and provider_id in {"anthropic", "anthropic_console"}
                     and platform.system() == "Darwin"
                 )
-                accepts_legacy_provider_hint = not strict_cookie_identity and (
-                    provider_id not in {"chatgpt", "anthropic"}
-                    or (candidate_kind in {"file", "keychain"})
+                accepts_legacy_provider_hint = (
+                    not strict_cookie_identity
+                    and candidate_kind != "claude_oauth"
+                    and (
+                        provider_id not in {"chatgpt", "anthropic"}
+                        or (candidate_kind in {"file", "keychain"})
+                    )
                 )
                 # Credential-identity cascade for the token card (#347),
                 # most specific first:
@@ -4328,7 +4363,7 @@ class GenericCollector:
                             if not fallback_allowed:
                                 logging.warning(
                                     f"  [{provider_id}] provider-wide account hint withheld "
-                                    f"(origin={origin}) — account.json's active record does not "
+                                    "— account.json's active record does not "
                                     "hold this key; tag this key-scoped origin explicitly in "
                                     "Untagged Credentials instead."
                                 )
@@ -4341,17 +4376,14 @@ class GenericCollector:
                 elif hint_account_id is not None:
                     resolved_account_id = hint_account_id
                     tokens["account_id"] = hint_account_id
-                    logging.info(
-                        f"  [{provider_id}] token card stamped via server hint → "
-                        f"account_id={hint_account_id}"
-                    )
+                    logging.info(f"  [{provider_id}] token card stamped via server hint")
                 else:
                     resolved_account_id = None
                 if resolved_account_id is None or not source_identity_strong:
                     blocked_entry = {"provider_id": provider_id, "credential_origin": origin}
                     if provider_id in _SERVER_IDENTITY_PROVIDERS:
                         logging.warning(
-                            f"  [{provider_id}] token card blocked (origin={origin}) — "
+                            f"  [{provider_id}] token card blocked — "
                             "no strong identity resolved; sharing only for exact-source "
                             "server identity verification."
                         )

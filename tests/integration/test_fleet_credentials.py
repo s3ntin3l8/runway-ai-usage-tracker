@@ -4126,3 +4126,72 @@ async def test_failed_manifest_commit_retains_claude_cache_and_preferences(
         reported[1],
     }
     assert manager._credential_source_preferences[(provider, account)][source_id] == (True, 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("assignment", ["identity_verification", "operator"])
+async def test_native_oauth_changed_generation_reenters_pending_despite_old_verified_tag(
+    client, session, monkeypatch, assignment
+):
+    from app.services.credential_sources import sidecar_source_id
+    from app.services.credential_tags import CredentialTagRepo
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    origin = "keychain:Claude Code-credentials"
+    sid = sidecar_source_id("native-host", origin)
+    session.add(
+        CredentialSource(
+            provider_id="anthropic",
+            account_id="old@example.com",
+            source_id=sid,
+            source_type="keychain",
+            source_label="Keychain entry",
+            credential_origin=origin,
+            sidecar_id="native-host",
+        )
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin=origin,
+        account_id="old@example.com",
+        sidecar_id="native-host",
+        set_by=assignment,
+    )
+    session.commit()
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "old", "oauth_read_only": "1"},
+        account_id="old@example.com",
+        source_id=sid,
+        source="native-host",
+        source_metadata={"sidecar_id": "native-host", "credential_origin": origin},
+    )
+    card = {
+        "service_name": "Claude",
+        "remaining": "Token",
+        "unit": "oauth",
+        "account_id": "old@example.com",
+        "metadata": {
+            "provider_id": "anthropic",
+            "credential_origin": origin,
+            "oauth_token": "new-account-token",
+            "oauth_read_only": "1",
+        },
+    }
+    for cycle in range(2):
+        card["metadata"]["observation_cycle"] = cycle
+        response = _ingest(client, "native-host", [card])
+        assert response.status_code == 200
+        pending = await cache.get_pending_sources("anthropic")
+        if assignment == "operator":
+            assert pending == []
+            assigned = await cache.get_source_candidates("anthropic", "old@example.com")
+            assert assigned[0]["tokens"]["oauth_token"] == "new-account-token"
+        else:
+            assert len(pending) == 1
+            assert pending[0]["tokens"]["oauth_token"] == "new-account-token"
+            assert pending[0]["account_slot"] == sid
+            assert not await cache.get_source_candidates("anthropic", "old@example.com")

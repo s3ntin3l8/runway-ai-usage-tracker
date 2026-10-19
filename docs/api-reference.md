@@ -358,3 +358,16 @@ billing access are verified. Save to
 the usual `session_cookie` field. Organization identity remains stable across
 cookie replacement and display-label changes. API responses expose only the
 credential's configured status. Clear it using `clear_session_cookie: true`.
+
+
+### Native Claude OAuth token metadata
+
+Sidecar token cards may additionally carry `oauth_read_only: "1"` and
+`oauth_account_uuid` in `metadata`, alongside `oauth_token` and `expiry_date`
+(milliseconds since Unix epoch, encoded as a string). These fields use the existing
+signed fleet ingestion endpoint; no new endpoint or database migration is required.
+The UUID is a claim to verify against the holder profile, not an account assignment.
+Read-only native sources cannot invoke OAuth refresh. Stable machine-bound origins
+identify each Desktop cache slot or CLI Keychain service; changed inferred credentials
+must re-verify their holder and quota. Refresh secrets are not forwarded by either
+new Keychain discovery rule. Ordinary credential-file fallback remains supported.
