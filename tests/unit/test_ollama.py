@@ -950,7 +950,7 @@ class TestOllamaApiCollector:
         assert card["window_type"] == "weekly"
         assert card["is_unlimited"] is True
         assert card["used_value"] == 1.25
-        assert card["remaining"] == "$1.25"
+        assert card["remaining"] == "—"
         assert card["token_usage"] == {
             "input": 10000,
             "output": 5000,
@@ -979,9 +979,28 @@ class TestOllamaApiCollector:
         assert len(cards) == 1
         card = cards[0]
         assert card["window_type"] == "daily"
-        assert card["remaining"] == "PAYG"
+        assert card["remaining"] == "—"
         assert card["used_value"] == 0.0
         assert card["health"] == "good"
+
+    def test_build_cards_from_api_usage_prefers_limits_when_both_present(self):
+        """When payload carries both limits.monthly and totals, monthly quota is preferred."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "limits": {"monthly": {"usage": 0.25}},
+            "totals": {
+                "request_count": 10,
+                "usage_usd": 5.0,
+                "input_tokens": 1000,
+                "output_tokens": 500,
+            },
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["service_name"] == "Ollama"
+        assert card["remaining"] == "75.0%"
+        assert card["window_type"] == "monthly"
 
     def test_build_cards_from_api_usage_empty_totals_falls_through(self):
         """Empty totals dict does not fabricate a card and falls through."""

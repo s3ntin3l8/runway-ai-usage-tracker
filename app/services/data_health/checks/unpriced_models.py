@@ -4,8 +4,10 @@ that computes to $0 is verified by the configured price table; a source
 reported $0 without a matching computed positive cost is informational, not
 claimed as independently verified; and no rate/no report needs a seed row.
 
-`:free`-suffixed models and the `opencode-free` provider are excluded
-outright — priced at $0 on purpose, not missing a seed.
+`:free`-suffixed models, `-free`-suffixed models under OpenCode providers
+(`opencode`, `opencode-byok`, `opencode-zen`), `openrouter/free/*`,
+sentinels (`unknown`, empty), and providers priced at $0 / local (`opencode-free`,
+`ollama`) are excluded outright — priced at $0 on purpose, not missing a seed.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from typing import Any
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
+from app.services.account_identity import _OPENCODE_ACCOUNT_USAGE_PROVIDER_IDS
 from app.services.cost_calculator import PricingIndex, resolve_price_row
 from app.services.data_health.base import (
     AsyncHook,
@@ -30,6 +33,7 @@ from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.maintenance.recost import apply_recost, plan_recost
 
 _EXCLUDED_PROVIDERS = {"opencode-free", "ollama"}
+_OPENCODE_PROVIDERS = _OPENCODE_ACCOUNT_USAGE_PROVIDER_IDS | {"opencode-byok"}
 
 
 def _is_excluded(provider_id: str, model_id: str) -> bool:
@@ -38,9 +42,9 @@ def _is_excluded(provider_id: str, model_id: str) -> bool:
     m = model_id.lower()
     if m.endswith(":free"):
         return True
-    if provider_id in ("opencode", "opencode-byok") and m.endswith("-free"):
+    if provider_id in _OPENCODE_PROVIDERS and m.endswith("-free"):
         return True
-    if m in ("openrouter/free", "unknown", "") or m.startswith("openrouter/free"):
+    if m.startswith("openrouter/free") or m in ("unknown", ""):
         return True
     return False
 

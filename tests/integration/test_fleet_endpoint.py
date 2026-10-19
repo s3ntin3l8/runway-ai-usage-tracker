@@ -704,3 +704,50 @@ def test_fleet_synthesizes_card_for_active_account_even_if_sibling_account_is_di
     assert not any(
         e["provider_id"] == "opencode" and e["account_id"] == "alice@example.com" for e in fleet
     )
+
+
+def test_fleet_does_not_render_latest_usage_card_for_disabled_provider_account(session: Session):
+    """When a provider account has a LatestUsage card in the database but is disabled,
+    it must not render in the fleet view."""
+    import json
+
+    from app.models.db import LatestUsage, ProviderConfig
+
+    session.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="user@example.com",
+            enabled=False,
+            archived=False,
+        )
+    )
+    card_json = json.dumps(
+        {
+            "provider_id": "kimi_coding",
+            "account_id": "user@example.com",
+            "service_name": "Kimi Coding",
+            "window_type": "monthly",
+            "remaining": "80%",
+            "used_value": 20.0,
+            "pct_used": 20.0,
+            "unit": "%",
+            "health": "good",
+        }
+    )
+    session.add(
+        LatestUsage(
+            provider_id="kimi_coding",
+            account_id="user@example.com",
+            window_type="monthly",
+            card_json=card_json,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200
+    fleet = resp.json()["fleet"]
+    assert not any(
+        e["provider_id"] == "kimi_coding" and e["account_id"] == "user@example.com" for e in fleet
+    )

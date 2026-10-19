@@ -254,6 +254,27 @@ def test_detect_excludes_free_suffixed_models(session):
         session, event_id="3", provider_id="opencode", model_id="openrouter/free", cost_usd=0.0
     )
     make_event(session, event_id="4", provider_id="opencode", model_id="unknown", cost_usd=0.0)
+    make_event(
+        session,
+        event_id="5",
+        provider_id="opencode-zen",
+        model_id="deepseek-v4-flash-free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="6",
+        provider_id="opencode-zen",
+        model_id="mimo-v2.5-free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="7",
+        provider_id="opencode-byok",
+        model_id="gemini-2.5-flash-free",
+        cost_usd=0.0,
+    )
 
     report = _check().detect(session)
 

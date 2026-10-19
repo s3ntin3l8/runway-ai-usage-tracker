@@ -338,10 +338,13 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         except (json.JSONDecodeError, TypeError):
             continue
 
-    # Filter out archived providers — their latest_usage rows are preserved
-    # (no deletion) but they should not appear in the active fleet view.
+    # Filter out archived and disabled providers — their latest_usage rows are
+    # preserved (no deletion) but they should not appear in the active fleet view.
     provider_configs = session.exec(select(ProviderConfig)).all()
     archived_pairs = {(r.provider_id, r.account_id) for r in provider_configs if r.archived}
+    disabled_pairs = {
+        (r.provider_id, r.account_id) for r in provider_configs if not r.enabled or r.archived
+    }
     # Only saved configurations express an opt-out. Providers with no config
     # rows retain their existing sidecar auto-discovery behavior.
     configured_provider_ids = {r.provider_id for r in provider_configs}
@@ -360,7 +363,7 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         aid = c.get("account_id") or ""
         if not pid:
             continue
-        if (pid, aid) in archived_pairs:
+        if (pid, aid) in disabled_pairs:
             continue
         # A stale card under an unresolved/discovered account can outlive the
         # account that was archived. Keep its durable row for restoration and
