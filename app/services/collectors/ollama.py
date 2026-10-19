@@ -426,6 +426,8 @@ class OllamaCollector(BaseCollector):
             window_type = window_map.get(range_val, "weekly")
             try:
                 usage_usd = float(totals.get("usage_usd", 0.0) or 0.0)
+                if not math.isfinite(usage_usd) or usage_usd < 0:
+                    usage_usd = 0.0
             except (TypeError, ValueError):
                 usage_usd = 0.0
 
@@ -473,16 +475,14 @@ class OllamaCollector(BaseCollector):
             }
             return [card]
 
-        # No monthly entry is a valid no-cap plan (for example, free tier).
-        # It is a successful empty result, not malformed quota data.
-        if limits is not None and not isinstance(limits, dict):
+        # No monthly entry is a valid no-cap plan (for example, free tier or
+        # an activity-only payload). It is a successful empty result, not
+        # malformed quota data.
+        if "limits" in body and not isinstance(body["limits"], dict):
             self._set_error_reason("missing_data")
             return []
-        if limits is not None or "range" in body or "totals" in body or not body:
-            self._no_monthly_cap = True
-            return []
 
-        self._set_error_reason("missing_data")
+        self._no_monthly_cap = True
         return []
 
     async def _get_ollama_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:

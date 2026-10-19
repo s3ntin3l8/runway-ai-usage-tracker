@@ -1010,6 +1010,15 @@ class TestOllamaApiCollector:
         assert cards == []
         assert collector._no_monthly_cap is True
 
+    def test_build_cards_from_api_usage_activity_only_payload_is_no_cap(self):
+        """A free-tier payload with only activity and no limits/totals is a valid no-cap result."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {"activity": {"cost": "0.00000"}}
+        cards = collector._build_cards_from_api_usage(body)
+        assert cards == []
+        assert collector._no_monthly_cap is True
+        assert collector._last_error_reason != "missing_data"
+
     def test_build_cards_from_api_usage_string_typed_counters(self):
         """String or null values in totals do not raise and parse safely."""
         collector = OllamaCollector(account_id="acc_test")
@@ -1030,6 +1039,21 @@ class TestOllamaApiCollector:
         assert card["token_usage"]["input"] == 0
         assert card["token_usage"]["output"] == 0
         assert card["token_usage"]["cache_read"] == 5
+
+    def test_build_cards_from_api_usage_nan_usage_usd_guarded(self):
+        """NaN or negative usage_usd is guarded to 0.0 without nan in detail."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "range": "7d",
+            "totals": {
+                "usage_usd": float("nan"),
+                "request_count": 1,
+            },
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        assert cards[0]["used_value"] == 0.0
+        assert "$0.00 spent" in cards[0]["detail"]
 
 
 def test_the_page_email_is_reported_as_verified_identity(ollama_html):

@@ -113,7 +113,7 @@ export function ProviderDetailDialog({
     },
   });
 
-  const toggleArchive = useMutation({
+  const archiveAccount = useMutation({
     mutationFn: (account: ProviderAccount) => {
       if (!provider) throw new Error('no provider');
       return putProviderConfig(provider.provider_id, account.account_id, {
@@ -327,7 +327,7 @@ export function ProviderDetailDialog({
                                     className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2"
                                     onClick={() => {
                                       setMenuFor(null);
-                                      toggleArchive.mutate(account);
+                                      archiveAccount.mutate(account);
                                     }}
                                   >
                                     <Archive className="size-3.5 text-fg-muted" />
