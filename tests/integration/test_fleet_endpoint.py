@@ -709,8 +709,6 @@ def test_fleet_synthesizes_card_for_active_account_even_if_sibling_account_is_di
 def test_fleet_does_not_render_latest_usage_card_for_disabled_provider_account(session: Session):
     """When a provider account has a LatestUsage card in the database but is disabled,
     it must not render in the fleet view."""
-    import json
-
     from app.models.db import LatestUsage, ProviderConfig
 
     session.add(
