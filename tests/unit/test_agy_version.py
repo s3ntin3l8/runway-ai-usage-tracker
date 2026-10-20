@@ -71,6 +71,30 @@ class TestInstalledVersion:
 
         assert agy_version.installed_version() is None
 
+    def test_undecodable_output_does_not_break_the_provider(self, tmp_path, monkeypatch):
+        """The locale codec would raise UnicodeDecodeError (a ValueError).
+
+        That would unwind through collect_provider and drop that provider's
+        cards for the whole cycle, so the decode must not fail. ``0x81`` is
+        undefined in cp1252 and invalid in UTF-8, so it breaks either codec.
+        """
+        import sys
+
+        binary = tmp_path / "agy.py"
+        binary.write_text("import sys\nsys.stdout.buffer.write(b'1.4.3 \\x81')\n", encoding="utf-8")
+        # Run it through the interpreter so it is a real, executable target.
+        launcher = tmp_path / ("agy.bat" if sys.platform == "win32" else "agy")
+        if sys.platform == "win32":
+            launcher.write_text(f'@echo off\r\n"{sys.executable}" "{binary}"\r\n', encoding="utf-8")
+        else:
+            launcher.write_text(
+                f'#!/bin/sh\nexec "{sys.executable}" "{binary}"\n', encoding="utf-8"
+            )
+            launcher.chmod(0o755)
+
+        # Whatever the codec does, the call must return — never raise.
+        assert agy_version._read_version(str(launcher)) is None
+
     def test_reports_the_installed_version(self, monkeypatch):
         monkeypatch.setattr(agy_version, "resolve_agy", lambda: "/usr/bin/agy")
         monkeypatch.setattr(agy_version, "_read_version", lambda _binary: "1.4.3")
@@ -109,6 +133,50 @@ class TestInstalledVersion:
         agy_version.installed_version(now=1000.0)
         agy_version.installed_version(now=1000.0 + agy_version._CACHE_TTL_SECONDS + 1)
         assert len(calls) == 2
+
+    def test_a_failed_read_is_retried_quickly(self, monkeypatch):
+        """A miss must not be cached for the full hour.
+
+        agy may not be on PATH yet at boot, or one read may time out. Caching
+        that miss for an hour would suppress the report — and with it a quota
+        pool — for exactly as long as the issue this fixes took to notice.
+        """
+        calls: list[str] = []
+
+        def fake_read(binary: str) -> str | None:
+            calls.append(binary)
+            return None
+
+        monkeypatch.setattr(agy_version, "resolve_agy", lambda: "/usr/bin/agy")
+        monkeypatch.setattr(agy_version, "_read_version", fake_read)
+        monkeypatch.setattr(agy_version._cache, "value", None)
+
+        assert agy_version.installed_version(now=1000.0) is None
+        # Still inside the failure TTL: the miss is cached, briefly.
+        assert agy_version.installed_version(now=1000.0 + 30) is None
+        assert len(calls) == 1
+
+        # Past the failure TTL: the read is retried.
+        assert (
+            agy_version.installed_version(now=1000.0 + agy_version._FAILURE_CACHE_TTL_SECONDS + 1)
+            is None
+        )
+        assert len(calls) == 2
+
+    def test_a_successful_read_is_cached_for_the_full_hour(self, monkeypatch):
+        calls: list[str] = []
+
+        def fake_read(binary: str) -> str:
+            calls.append(binary)
+            return "1.4.3"
+
+        monkeypatch.setattr(agy_version, "resolve_agy", lambda: "/usr/bin/agy")
+        monkeypatch.setattr(agy_version, "_read_version", fake_read)
+        monkeypatch.setattr(agy_version._cache, "value", None)
+
+        agy_version.installed_version(now=1000.0)
+        agy_version.installed_version(now=1000.0 + agy_version._FAILURE_CACHE_TTL_SECONDS + 1)
+        assert len(calls) == 1
 
     def test_unknown_when_agy_is_not_installed(self, monkeypatch):
         monkeypatch.setattr(agy_version, "resolve_agy", lambda: None)
