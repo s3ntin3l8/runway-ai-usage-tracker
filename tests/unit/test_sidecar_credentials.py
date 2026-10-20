@@ -757,7 +757,7 @@ class TestCredentialCandidateOwnership:
         monkeypatch.setattr(
             sc.BrowserCookieExtractor,
             "get_cookie",
-            staticmethod(lambda _domain, name: f"cookie-{name}"),
+            staticmethod(lambda _domain, name, *_: f"cookie-{name}"),
         )
         config = {
             "name": "ChatGPT",
@@ -933,7 +933,7 @@ class TestCredentialCandidateOwnership:
         monkeypatch.setattr(
             sc.BrowserCookieExtractor,
             "get_cookie",
-            staticmethod(lambda _domain, _name: "browser-cookie"),
+            staticmethod(lambda _domain, _name, *_: "browser-cookie"),
         )
         cards, blocked = sc.GenericCollector.collect_provider(
             "ollama",
