@@ -42,7 +42,10 @@ const SCOPE_LABEL: Record<Scope, string> = {
 function originTitle(t: CredentialTag): string {
   const label = t.origin_label;
   if (!label || label === 'Sidecar credential') return t.credential_origin;
-  return t.origin_app && label !== 'Browser cookie' ? `${t.origin_app} · ${label}` : label;
+  const title = t.origin_app && label !== 'Browser cookie' ? `${t.origin_app} · ${label}` : label;
+  // A cookie says where it came from (the browser and profile) so it can't be
+  // read as another credential file.
+  return t.origin_detail ? `${title} (${t.origin_detail})` : title;
 }
 
 function pick<T extends string>(value: string | null, allowed: readonly T[], fallback: T): T {

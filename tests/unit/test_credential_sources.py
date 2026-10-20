@@ -50,6 +50,31 @@ def test_describe_origin_returns_safe_type_and_label():
     assert describe_origin(None) == ("sidecar", "Sidecar credential")
 
 
+def test_cookie_origin_names_the_browser_and_profile_it_came_from():
+    """A cookie is a browser session, not a file — say which browser holds it."""
+    assert describe_origin_full("cookie:opencode/Chrome/Profile 1/Cookies").detail == (
+        "Chrome · Profile 1"
+    )
+    assert describe_origin_full("cookie:anthropic/Claude Desktop/Default/Cookies").detail == (
+        "Claude Desktop · Default"
+    )
+    # The generic origin names no jar: only the kind is known.
+    assert describe_origin_full("cookie:opencode/session").detail is None
+    assert describe_origin_full("cookie:opencode/session").label == "Browser cookie"
+    # A fingerprint never leaks into the description.
+    assert describe_origin_full("cookie:opencode/Chrome/Default/Cookies#abc123").detail == (
+        "Chrome · Default"
+    )
+
+
+def test_file_and_env_origins_carry_no_extra_detail():
+    assert describe_origin_full("path:/home/alice/.codex/auth.json").detail is None
+    assert describe_origin_full("env:OPENROUTER_API_KEY").detail is None
+    assert describe_origin_full("keychain:Claude Code-credentials").detail == (
+        "Claude Code-credentials"
+    )
+
+
 def test_sidecar_source_id_is_host_scoped_and_stable():
     source_id = sidecar_source_id("host-a", "path:~/.config/auth.json")
     assert source_id == sidecar_source_id("host-a", "path:~/.config/auth.json")

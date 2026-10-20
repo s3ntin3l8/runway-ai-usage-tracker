@@ -72,11 +72,32 @@ export function originTitle(s: CredentialSourceView): string {
   return s.label;
 }
 
+/** "Chrome · Profile 1" — where a cookie came from, when the machine could name it. */
+export function originDetail(s: CredentialSourceView): string | null {
+  return s.origin_detail ?? null;
+}
+
+/**
+ * What kind of source this is, in a sentence. A cookie is the one operators
+ * confuse with a file: it is a browser session, not a file like auth.json.
+ */
+export function originKindHint(s: CredentialSourceView): string | null {
+  if (s.origin_type === 'cookie') {
+    return 'A browser session cookie the machine scraped — not a file like auth.json. Sign in again in that browser to renew it.';
+  }
+  if (s.origin_type === 'keychain') {
+    return 'A secret the machine read from the operating system keychain.';
+  }
+  return null;
+}
+
 /** "Codex CLI · auth.json on dev-01", "GITHUB_TOKEN (server)" — plus the machine, if any. */
 export function originSummary(s: CredentialSourceView): string {
-  if (s.origin_kind === 'machine') return `${originTitle(s)} on ${s.machine_name ?? s.machine_id}`;
-  if (s.origin_kind === 'server') return `${originTitle(s)} (server)`;
-  return originTitle(s);
+  const detail = originDetail(s);
+  const title = detail ? `${originTitle(s)} (${detail})` : originTitle(s);
+  if (s.origin_kind === 'machine') return `${title} on ${s.machine_name ?? s.machine_id}`;
+  if (s.origin_kind === 'server') return `${title} (server)`;
+  return title;
 }
 
 /** "OAuth + refresh", "API key", "Cookie" — the raw token types stay in a tooltip. */

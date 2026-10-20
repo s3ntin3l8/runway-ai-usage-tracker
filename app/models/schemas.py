@@ -528,6 +528,9 @@ class CredentialSourceView(BaseModel):
     label: str  # file name, env var, "Browser cookie", "Manual configuration"
     origin_app: str | None = None  # tool that owns the file: "Codex CLI", "OpenCode", ...
     origin_path: str | None = None  # file path with the home directory collapsed to "~"
+    # Extra context for the origin: the browser and profile a cookie came from
+    # ("Chrome · Profile 1"), the keychain service, ... None when there is none.
+    origin_detail: str | None = None
     login_hint: str | None = None  # how to re-authenticate the owning tool
     machine_id: str | None = None
     machine_name: str | None = None

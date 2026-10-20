@@ -596,6 +596,10 @@ export interface UntaggedCredential {
   // Stable host-side descriptor; phase 1 ships `provider:<id>`,
   // per-rule expansion is the follow-up issue.
   credential_origin: string;
+  /** What the credential is, in words: "Browser cookie", "auth.json", … */
+  origin_label?: string;
+  /** Extra context for the origin: the browser and profile a cookie came from. */
+  origin_detail?: string | null;
   first_seen?: string | null;
   last_seen?: string | null;
   quota_preview_observed_at?: string | null;
@@ -649,6 +653,8 @@ export interface CredentialTag {
   origin_label?: string;
   origin_app?: string | null;
   origin_path?: string | null;
+  /** Extra context for the origin: the browser and profile a cookie came from. */
+  origin_detail?: string | null;
   /** Freshest machine-reported credential this rule resolved; null = never. */
   last_matched_at?: string | null;
   /** True when the `stale_credential_rules` check would list this rule. */
@@ -808,6 +814,8 @@ export interface CredentialSourceSummary {
   source_id: string;
   source_type: 'config' | 'sidecar' | 'env' | 'file' | 'cookie' | 'keychain' | 'server' | string;
   source_label: string;
+  /** Extra context for the origin: the browser and profile a cookie came from. */
+  source_detail?: string | null;
   sidecar_id?: string | null;
   enabled: boolean;
   priority: number;
@@ -960,6 +968,9 @@ export interface CredentialSourceView {
   origin_app?: string | null;
   /** File path with the home directory collapsed to `~`. */
   origin_path?: string | null;
+  /** Extra context for the origin: the browser and profile a cookie came from
+   * ("Chrome · Profile 1"), the keychain service, …; null when there is none. */
+  origin_detail?: string | null;
   /** How to re-authenticate the owning tool ("run `codex login`"). */
   login_hint?: string | null;
   machine_id?: string | null;

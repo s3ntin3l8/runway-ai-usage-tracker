@@ -31,6 +31,7 @@ import {
   type ProviderConfigUpdate,
 } from '@/api/endpoints';
 import type { CollectionStrategy, CredentialSourceSummary, ProviderConfig } from '@/api/types';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { HelperText, Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
@@ -554,6 +555,22 @@ function SortableCredentialSourceRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: source.source_id,
   });
+  // A cookie is a browser session, not a file like auth.json — say so, so the
+  // row can't be read as another credential file.
+  const isCookie = source.source_type === 'cookie';
+  const availability = source.available
+    ? source.health === 'auth_failed'
+      ? 'Authentication failed'
+      : source.health === 'degraded'
+        ? 'Quota collected; some requests were rejected'
+        : source.health === 'untried'
+          ? 'Not yet tried'
+          : 'Available'
+    : source.source_type === 'config'
+      ? 'Manual configuration is not currently available'
+      : source.sidecar_id
+        ? 'Sidecar unavailable or credential expired'
+        : 'Unavailable · awaiting refresh';
   return (
     <li
       ref={setNodeRef}
@@ -571,6 +588,11 @@ function SortableCredentialSourceRow({
       </button>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-medium">
+          {isCookie ? (
+            <Badge variant="outline" className="mr-1">
+              Cookie
+            </Badge>
+          ) : null}
           {source.source_label || source.source_type}
           {source.sidecar_id ? (
             <span className="ml-1 font-normal text-fg-subtle">
@@ -579,20 +601,14 @@ function SortableCredentialSourceRow({
           ) : null}
         </p>
         <p className="text-[11px] text-fg-subtle">
-          {source.available
-            ? source.health === 'auth_failed'
-              ? 'Authentication failed'
-              : source.health === 'degraded'
-                ? 'Quota collected; some requests were rejected'
-                : source.health === 'untried'
-                  ? 'Not yet tried'
-                  : 'Available'
-            : source.source_type === 'config'
-              ? 'Manual configuration is not currently available'
-              : source.sidecar_id
-                ? 'Sidecar unavailable or credential expired'
-                : 'Unavailable · awaiting refresh'}
-          {source.last_seen ? ` · seen ${new Date(source.last_seen).toLocaleString()}` : ''}
+          {[
+            isCookie ? 'Browser session cookie — not a file' : null,
+            source.source_detail,
+            availability,
+            source.last_seen ? `seen ${new Date(source.last_seen).toLocaleString()}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </p>
       </div>
       <Switch

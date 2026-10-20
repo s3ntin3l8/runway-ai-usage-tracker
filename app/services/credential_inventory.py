@@ -510,6 +510,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 label=label,
                 origin_app=described.app if machine_sourced else None,
                 origin_path=described.path if machine_sourced else None,
+                origin_detail=described.detail if machine_sourced else None,
                 login_hint=login_hint(described.app) if machine_sourced else None,
                 machine_id=row.sidecar_id,
                 machine_name=machine_name(row.sidecar_id),

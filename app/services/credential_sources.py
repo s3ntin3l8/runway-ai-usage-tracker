@@ -32,6 +32,7 @@ class OriginDisplay:
     label: str  # "auth.json", "OPENROUTER_API_KEY", "Browser cookie"
     app: str | None = None  # the tool that owns the file: "Codex CLI", "OpenCode" ...
     path: str | None = None  # display path with the home directory collapsed to "~"
+    detail: str | None = None  # extra context: the browser + profile a cookie came from
 
 
 # Owning tool by the file's last one or two path segments. Segments are lowercased with one
@@ -128,13 +129,20 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
             path=_collapse_home(raw) if raw else None,
         )
     if value.startswith("cookie:"):
-        return OriginDisplay("cookie", "Browser cookie", app="Browser")
+        return OriginDisplay(
+            "cookie",
+            "Browser cookie",
+            app="Browser",
+            detail=cookie_origin_detail(value),
+        )
     if value.startswith("keychain:"):
         service = value.split(":", 1)[1].split("#", 1)[0]
         if service.startswith("Claude Desktop/oauth/"):
-            return OriginDisplay("keychain", "Desktop OAuth", app="Claude Desktop")
+            return OriginDisplay(
+                "keychain", "Desktop OAuth", app="Claude Desktop", detail="Claude Desktop"
+            )
         app = "Claude Code" if service.startswith("Claude Code") else None
-        return OriginDisplay("keychain", "Keychain entry", app=app)
+        return OriginDisplay("keychain", "Keychain entry", app=app, detail=service or None)
     return OriginDisplay("sidecar", "Sidecar credential")
 
 
@@ -142,6 +150,51 @@ def describe_origin(origin: str | None) -> tuple[str, str]:
     """Return a UI-safe source kind and label for a sidecar credential origin."""
     display = describe_origin_full(origin)
     return display.kind, display.label
+
+
+# Browsers whose cookie jar a sidecar can read. A cookie origin names the jar it
+# came from ("cookie:opencode/Chrome/Profile 1/Cookies"); the generic one
+# ("cookie:opencode/session") does not, and then only the site is known.
+_BROWSER_TOKENS = (
+    "chrome",
+    "chromium",
+    "firefox",
+    "safari",
+    "edge",
+    "brave",
+    "arc",
+    "opera",
+    "vivaldi",
+    "librewolf",
+    "desktop",
+)
+
+
+def _is_cookie_store(part: str) -> bool:
+    """Whether a path segment names the cookie store itself ("Cookies", "cookies.sqlite")."""
+    lowered = part.lower()
+    return lowered.startswith("cookies") or lowered.endswith("cookies.sqlite")
+
+
+def cookie_origin_detail(origin: str | None) -> str | None:
+    """Where a cookie credential came from: the browser and profile that hold it.
+
+    A cookie origin reads ``cookie:<provider>/<browser>/<profile>/<store>`` when the
+    machine could name the jar, and ``cookie:<provider>/session`` when it could not.
+    The first part is the provider, so only the segments after it are inspected.
+    """
+    if not origin or not origin.startswith("cookie:"):
+        return None
+    rest = origin.removeprefix("cookie:").split("#", 1)[0]
+    parts = [part for part in rest.split("/") if part]
+    for index, part in enumerate(parts[1:], start=1):
+        lowered = part.lower()
+        if not any(token in lowered for token in _BROWSER_TOKENS):
+            continue
+        following = parts[index + 1] if index + 1 < len(parts) else None
+        profile = following if following and not _is_cookie_store(following) else None
+        return " · ".join([part, profile]) if profile else part
+    return None
 
 
 def pending_cache_slot(provider_id: str, source_id: str) -> str:

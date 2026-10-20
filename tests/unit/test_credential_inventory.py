@@ -759,6 +759,34 @@ async def test_a_machine_cookie_or_keychain_entry_is_not_just_a_sidecar_credenti
 
 
 @pytest.mark.asyncio
+async def test_a_cookie_source_says_which_browser_it_came_from(engine, cache):
+    """A cookie is a browser session, not a credential file — the row must say which
+    browser holds it, so it can't be read as another auth.json."""
+    with Session(engine) as s:
+        _source(
+            s,
+            source_id="sidecar:cookie",
+            source_type="cookie",
+            source_label="Browser cookie",
+            credential_origin="cookie:opencode/Chrome/Profile 1/Cookies",
+        )
+        _source(
+            s,
+            source_id="sidecar:generic-cookie",
+            source_type="cookie",
+            source_label="Browser cookie",
+            credential_origin="cookie:opencode/session",
+        )
+    _, by_id = _sources(await build_inventory())
+
+    assert by_id["sidecar:cookie"].origin_detail == "Chrome · Profile 1"
+    # The generic origin names no jar: the kind still says "cookie".
+    assert by_id["sidecar:generic-cookie"].origin_detail is None
+    assert by_id["sidecar:generic-cookie"].origin_type == "cookie"
+    assert by_id["sidecar:generic-cookie"].label == "Browser cookie"
+
+
+@pytest.mark.asyncio
 async def test_never_attempted_source_reads_untried_not_healthy(engine, cache):
     with Session(engine) as s:
         _source(s, source_id="sidecar:never")

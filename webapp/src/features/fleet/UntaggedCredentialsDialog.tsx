@@ -49,6 +49,10 @@ import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialVie
 import { ClaudeSourceOrganizationPicker } from './ClaudeSourceOrganizationPicker';
 import { maskAccountId } from '@/lib/accountDisplay';
 import {
+  describeCredentialOrigin,
+  type CredentialOriginKind,
+} from '@/lib/credentialOrigin';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -211,7 +215,7 @@ export function UntaggedCredentialsDialog({
       title="Untagged credentials"
       description={
         singleEntry
-          ? `${singleEntry.provider_id} · ${claudeSourceLabel(singleEntry)}`
+          ? `${singleEntry.provider_id} · ${sourceLabel(singleEntry)}`
           : providerId
             ? `${providerId} · credentials reported by ${machineNames.get(sidecarId ?? '') ?? sidecarId}`
             : "Choose an account for each credential the sidecar couldn't identify."
@@ -378,18 +382,30 @@ function UntaggedRow({
     <Card
       className="p-3"
       role="group"
-      aria-label={`${claudeSourceLabel(entry)} on ${machineName ?? entry.sidecar_id}`}
+      aria-label={`${sourceLabel(entry)} on ${machineName ?? entry.sidecar_id}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">
-            {entry.provider_id}{' '}
-            <span className="font-mono text-[11px] text-fg-muted">{claudeSourceLabel(entry)}</span>
+            {entry.provider_id}
+            {sourceDescription(entry).label ? (
+              <span className="text-[11px] font-normal text-fg-muted">
+                {' '}
+                {sourceLabel(entry)}
+              </span>
+            ) : null}
           </p>
           <p className="truncate text-[11px] text-fg-subtle">
-            from <span className="font-mono">{machineName ?? entry.sidecar_id}</span>
+            <span className="font-mono">{entry.credential_origin}</span>
+            {' · from '}
+            <span className="font-mono">{machineName ?? entry.sidecar_id}</span>
             {allMachines && <span className="text-accent"> · applies to all machines</span>}
           </p>
+          {sourceDescription(entry).kind === 'cookie' ? (
+            <p className="text-[11px] text-fg-subtle">
+              A browser session cookie the machine scraped — not a credential file.
+            </p>
+          ) : null}
           {entry.claimed_account_id && (
             <p className="text-[11px] text-fg-subtle">
               Discovered login: <span className="font-mono">{entry.claimed_account_id}</span>
@@ -544,8 +560,44 @@ function UntaggedRow({
 function isClaudeBrowserSource(entry: UntaggedCredential): boolean {
   return Boolean(entry.source_id) && entry.credential_origin.startsWith('cookie:') && ['anthropic', 'anthropic_console'].includes(entry.provider_id);
 }
-function claudeSourceLabel(entry: UntaggedCredential): string {
-  if (!isClaudeBrowserSource(entry)) return entry.credential_origin;
-  const [, browser, profile] = entry.credential_origin.split('#', 1)[0].split('/');
-  return browser ? [browser, profile].filter(Boolean).join(' · ') : 'Claude browser login';
+
+/**
+ * The source in words: "Browser cookie", "Keychain entry".
+ *
+ * A file or env origin ("path:/home/u/.codex/auth.json") already says what it
+ * is, so it is left alone. A cookie origin ("cookie:opencode/session") is a
+ * protocol string: it looks like a path and hides the fact that this is a
+ * browser session rather than another credential file — that one gets named.
+ *
+ * `label` is undefined when the source is shown by its raw origin instead.
+ */
+export function sourceDescription(entry: UntaggedCredential): {
+  label?: string;
+  detail?: string;
+  kind: CredentialOriginKind;
+} {
+  const described = describeCredentialOrigin(entry.credential_origin);
+  const kind = entry.credential_origin.startsWith('cookie:')
+    ? 'cookie'
+    : entry.credential_origin.startsWith('keychain:')
+      ? 'keychain'
+      : described.kind;
+  const serverLabel = entry.origin_label;
+  const named =
+    serverLabel !== undefined && serverLabel !== '' && serverLabel !== 'Sidecar credential';
+  const label =
+    kind === 'cookie' || kind === 'keychain'
+      ? named && serverLabel
+        ? serverLabel
+        : described.label
+      : undefined;
+  const detail = entry.origin_detail ?? described.detail;
+  return { label, detail: detail ?? undefined, kind };
+}
+
+/** The source as one line: "Browser cookie · Chrome · Profile 1". */
+export function sourceLabel(entry: UntaggedCredential): string {
+  const { label, detail } = sourceDescription(entry);
+  if (!label) return entry.credential_origin;
+  return detail ? `${label} · ${detail}` : label;
 }
