@@ -2367,3 +2367,29 @@ def test_console_preview_normalizes_org_before_duplicate_check(client, monkeypat
         client.post("/api/v1/system/provider-config/preview-account", json=payload).status_code
         == 422
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["Chrome", "Safari", "Claude Desktop"])
+async def test_cache_only_native_cookie_listing_identifies_client(client, owner):
+    from app.services.token_cache import token_cache
+
+    await token_cache.store(
+        "anthropic",
+        {"cookie_sessionKey": "synthetic-cookie"},
+        account_id="synthetic@example.com",
+        source_id="sidecar:cache-only",
+        source_metadata={
+            "source_type": "cookie",
+            "sidecar_id": "test-mac",
+            "credential_origin": f"cookie:anthropic/{owner}/private-profile/Cookies#private-fingerprint",
+        },
+    )
+    response = client.get("/api/v1/system/provider-configs")
+    assert response.status_code == 200
+    provider = next(p for p in response.json()["providers"] if p["provider_id"] == "anthropic")
+    account = next(a for a in provider["accounts"] if a["account_id"] == "synthetic@example.com")
+    assert account["credential_sources"][0]["source_label"] == f"{owner} cookie"
+    assert "synthetic-cookie" not in response.text
+    assert "private-profile" not in response.text
+    assert "private-fingerprint" not in response.text

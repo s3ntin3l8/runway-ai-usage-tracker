@@ -271,7 +271,7 @@ def test_desktop_opt_out_preserves_browser_without_keychain(desktop, monkeypatch
     def forbidden(*args, **kwargs):
         raise AssertionError("Desktop credential access must be skipped")
 
-    monkeypatch.setattr(claude_desktop, "read_session_cookie", forbidden)
+    monkeypatch.setattr(claude_desktop, "scan_session_cookie", forbidden)
     browser = desktop.parent / "firefox.sqlite"
     with closing(sqlite3.connect(browser)) as conn, conn:
         conn.execute("CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT)")
