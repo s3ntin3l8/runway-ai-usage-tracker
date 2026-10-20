@@ -414,6 +414,16 @@ class TestAntigravityQuotaPools:
             assert pool not in POOL_LABELS, f"{name!r} was folded into {pool!r}"
         assert pool_family("Gemini Pro Models") == "gemini-pro-models"
 
+    def test_a_bare_known_name_does_not_take_a_live_pool_key(self):
+        """A group called "Argon" misses the anchored patterns and slugs to
+        "argon" — the live Argon pool's key. Reserved keys stay reserved."""
+        from app.services.collectors.antigravity_api import POOL_LABELS, pool_family
+
+        for name in ("Argon", "Gemini", "Frontier"):
+            pool = pool_family(name)
+            assert pool not in POOL_LABELS, f"{name!r} took the live pool key {pool!r}"
+            assert pool.startswith("unknown-")
+
     def test_unknown_group_gets_its_own_pool(self):
         """An unrecognised group must not land in an existing pool: two pools
         sharing a variant share a latest_usage slot and overwrite each other."""
@@ -476,10 +486,13 @@ class TestAntigravityQuotaPools:
     async def test_unknown_paid_tier_still_warns_about_a_missing_gemini_pool(
         self, mock_http_client, caplog
     ):
-        """The guard keys on "not free" — a tier id Google adds later must not
-        slip through the allow-list of known paid tiers."""
+        """The guard keys on the tier being known at all — a tier id Google
+        adds later must not slip through an allow-list of known paid tiers."""
         import logging
 
+        from app.services.collectors import antigravity_api
+
+        antigravity_api._WARNED_MISSING_GEMINI_TIERS.clear()
         collector = AntigravityCollector(account_id="user@example.com")
 
         lca = MagicMock(spec=httpx.Response)
@@ -513,12 +526,14 @@ class TestAntigravityQuotaPools:
         assert any("no Gemini pool" in r.getMessage() for r in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_free_tier_does_not_warn_about_a_missing_gemini_pool(
-        self, mock_http_client, caplog
-    ):
-        """A free account has no paid Gemini bucket to miss — no warning."""
+    async def test_free_tier_only_debugs_a_missing_gemini_pool(self, mock_http_client, caplog):
+        """The User-Agent gate is account-independent, so a free account loses
+        its Gemini card the same way — but that is only worth a debug line."""
         import logging
 
+        from app.services.collectors import antigravity_api
+
+        antigravity_api._WARNED_MISSING_GEMINI_TIERS.clear()
         collector = AntigravityCollector(account_id="user@example.com")
 
         lca = MagicMock(spec=httpx.Response)
@@ -545,12 +560,56 @@ class TestAntigravityQuotaPools:
                 collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
             ),
             patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
-            caplog.at_level(logging.WARNING),
+            caplog.at_level(logging.DEBUG),
         ):
             result = await collector._collect_via_api(mock_http_client)
 
         assert result[0]["tier"] == "free"
-        assert not any("no Gemini pool" in r.getMessage() for r in caplog.records)
+        assert any("no Gemini pool" in r.getMessage() for r in caplog.records)
+        # …and it is not a warning (it would spam on every free account).
+        assert not any(
+            r.levelno == logging.WARNING and "no Gemini pool" in r.getMessage()
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_group_without_a_display_name_keeps_its_own_pool(self, mock_http_client):
+        """Two unnamed groups would both fall back to "Unknown" and overwrite
+        each other — the bucket ids make a safe fallback."""
+
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "buckets": [
+                        {"bucketId": "7p-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+                {
+                    "buckets": [
+                        {"bucketId": "9p-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        assert len(result) == 2
+        assert len({c["variant"] for c in result}) == 2
+        assert {c["variant"] for c in result} == {"7p-weekly", "9p-weekly"}
 
 
 class TestAntigravityUserAgent:

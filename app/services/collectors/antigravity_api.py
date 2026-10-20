@@ -65,9 +65,17 @@ def _normalize_group_name(group_name: str) -> str:
 
 
 def _pool_slug(group_name: str) -> str:
-    """Stable variant key for a quota group we do not know yet."""
-    slug = re.sub(r"[^a-z0-9]+", "-", group_name).strip("-")
-    return slug or "unknown"
+    """Stable variant key for a quota group we do not know yet.
+
+    The known pool keys are reserved: a group whose slug would collide with
+    one (e.g. a bare "Argon", which the anchored patterns do not match) is
+    prefixed, so an unknown group can never take a live pool's key — and
+    never slips past the "unknown pool" warning that reports it.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", group_name).strip("-") or "unknown"
+    if slug in POOL_LABELS:
+        slug = f"unknown-{slug}"
+    return slug
 
 
 def pool_family(group_name: str) -> str:
@@ -88,6 +96,23 @@ def pool_family(group_name: str) -> str:
     return _pool_slug(normalized)
 
 
+def group_display_name(group: dict[str, Any]) -> str:
+    """The quota group's display name, or a fallback built from its buckets.
+
+    A group without a display name would otherwise fall back to "Unknown" —
+    and two unnamed groups would slug to the same pool key and overwrite each
+    other. The bucket ids are unique, so they make a safe fallback.
+    """
+    name = str(group.get("displayName") or "").strip()
+    if name:
+        return name
+    for bucket in group.get("buckets", []):
+        bucket_id = str(bucket.get("bucketId") or "").strip()
+        if bucket_id:
+            return bucket_id
+    return "unknown"
+
+
 def pool_label(pool: str) -> str:
     """Human label for a pool key (known pools have a fixed one)."""
     if pool in POOL_LABELS:
@@ -95,8 +120,15 @@ def pool_label(pool: str) -> str:
     return pool.replace("-", " ").title()
 
 
-# Pools we have already warned about (once per process, not once per poll).
+# Pools we have already warned about. Process-global on purpose: the poll
+# runs every minute, and the operator needs the warning once, not once per
+# minute (the first account to poll an unknown pool suppresses it for the
+# others — the pool is unknown for everyone anyway).
 _WARNED_UNKNOWN_POOLS: set[str] = set()
+
+# Tiers we have already warned about for a missing Gemini pool (same
+# once-per-process rationale).
+_WARNED_MISSING_GEMINI_TIERS: set[str] = set()
 
 
 class AntigravityApiMixin:
@@ -313,19 +345,25 @@ class AntigravityApiMixin:
                 ]
 
             results: list[dict[str, Any]] = []
-            pools = {pool_family(g.get("displayName", "")) for g in groups}
-            if tier not in ("free", None) and POOL_GEMINI not in pools:
-                # Every paid tier has a Gemini pool. Its absence means the
-                # backend served us a subset of the pools — almost always an
-                # outdated User-Agent version (see _USER_AGENT). The check
-                # keys on "not free" rather than on a list of paid tier ids,
-                # so a tier Google adds later is covered too.
-                logger.warning(
-                    "Antigravity quota summary returned no Gemini pool for tier %r "
-                    "(pools: %s) — the User-Agent version may be too old",
-                    tier,
-                    sorted(pools),
-                )
+            pools = {pool_family(group_display_name(g)) for g in groups}
+            if tier is not None and POOL_GEMINI not in pools:
+                # The User-Agent gate is account-independent: a free account
+                # loses its Gemini card the same way a paid one does. Its
+                # absence means the backend served us a subset of the pools —
+                # almost always an outdated User-Agent version (see
+                # _USER_AGENT). The check keys on "not None" rather than on a
+                # list of paid tier ids, so a tier Google adds later is
+                # covered too; a free account is only worth a debug line.
+                if tier not in _WARNED_MISSING_GEMINI_TIERS:
+                    _WARNED_MISSING_GEMINI_TIERS.add(tier)
+                    message = (
+                        "Antigravity quota summary returned no Gemini pool for tier %r "
+                        "(pools: %s) — the User-Agent version may be too old"
+                    )
+                    if tier == "free":
+                        logger.debug(message, tier, sorted(pools))
+                    else:
+                        logger.warning(message, tier, sorted(pools))
 
             for group in groups:
                 results.extend(self._group_cards(group, tier, now))
@@ -344,7 +382,8 @@ class AntigravityApiMixin:
         now: datetime,
     ) -> list[dict[str, Any]]:
         """Turn one quota group (one physical pool) into a card per window."""
-        group_name = group.get("displayName", "Unknown")
+        group_name = group_display_name(group)
+        group_description = str(group.get("description") or "").strip()
         pool = pool_family(group_name)
         if pool not in POOL_LABELS and pool not in _WARNED_UNKNOWN_POOLS:
             # A pool we don't know yet: it gets its own variant (never an
@@ -388,10 +427,13 @@ class AntigravityApiMixin:
             # cards of one pool never merge in the accumulator.
             pool_id = f"antigravity:{pool}:{win}"
 
-            # The group name identifies the physical pool; the bucket's
-            # own description ("… it will fully refresh in 3 days …") is
-            # appended when the API sends one.
+            # The group name identifies the physical pool; the group's own
+            # description ("For paid Pro plans, Argon quota is separate.") and
+            # the bucket's ("… it will fully refresh in 3 days …") are appended
+            # when the API sends them.
             detail = f"{group_name} | {display_name}"
+            if group_description:
+                detail = f"{detail} — {group_description}"
             if description:
                 detail = f"{detail} — {description}"
 
