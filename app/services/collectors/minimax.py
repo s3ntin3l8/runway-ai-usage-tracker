@@ -61,6 +61,24 @@ def _hostname(host: str) -> str:
         return ""
 
 
+def _bare_host(host: str) -> str:
+    """*host* as a bare authority: no scheme, no path, no trailing slash.
+
+    The setting is documented as a bare domain, but a value that carries a
+    scheme is accepted and normalised here, so neither host is ever built by
+    pasting a URL into the middle of a path. A port is kept: only the scheme
+    and the path are dropped.
+    """
+    candidate = (host or "").strip()
+    if "://" in candidate:
+        try:
+            parsed = urlsplit(candidate)
+        except ValueError:
+            return candidate.lower()
+        candidate = parsed.netloc or parsed.path.split("/")[0]
+    return candidate.strip("/").lower()
+
+
 class MiniMaxCollector(BaseCollector):
     """
     Collector for MiniMax (Coding Plan) usage.
@@ -75,7 +93,8 @@ class MiniMaxCollector(BaseCollector):
       domain; both the API and dashboard URLs prefix it themselves. The
       open-platform host is derived from it: ``minimaxi.com`` (or any of its
       subdomains) maps to ``www.minimaxi.com``, anything else to
-      ``platform.<host>``.
+      ``platform.<host>``. A value that carries a scheme is normalised to its
+      host, so it is never pasted into the middle of a URL.
     """
 
     PROVIDER_ID = "minimax"
@@ -141,10 +160,17 @@ class MiniMaxCollector(BaseCollector):
         return self._is_valid_credential(key)
 
     def _get_host(self) -> str:
-        """Get host from config or default."""
-        if settings.MINIMAX_HOST:
-            return settings.MINIMAX_HOST
-        return "minimax.io"
+        """Get host from config or default.
+
+        The setting is a bare domain; a value that carries a scheme is
+        normalised to its authority so the hosts built from it stay URLs.
+        """
+        raw = settings.MINIMAX_HOST or "minimax.io"
+        return _bare_host(raw) or "minimax.io"
+
+    def _api_base_url(self) -> str:
+        """Base URL of the API host that serves the coding-plan endpoint."""
+        return f"https://api.{self.host}"
 
     async def _primary_strategy(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Collect usage data from MiniMax via API."""
@@ -186,7 +212,7 @@ class MiniMaxCollector(BaseCollector):
         it is confirmed working; MiniMax also documents a newer `/v1/token_plan/remains`
         path (same host) that we haven't migrated to.
         """
-        base_url = f"https://api.{self.host}"
+        base_url = self._api_base_url()
 
         try:
             headers = {

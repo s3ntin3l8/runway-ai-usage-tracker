@@ -4856,6 +4856,36 @@ class TestMiniMaxCredentialSelection:
         collector.host = "https://minimax.io"
         assert collector._open_platform_base_url() == "https://platform.minimax.io"
 
+    def test_the_host_setting_is_normalised_before_a_host_is_built(self):
+        """A host that carries a scheme must not be pasted into a URL.
+
+        The setting is documented as a bare domain, but a value that arrives
+        with a scheme is normalised to its host, so neither the API host nor
+        the open-platform host ends up with ``https://`` in the middle of it.
+        """
+        with patch("app.services.collectors.minimax.settings") as mock_settings:
+            mock_settings.MINIMAX_HOST = "https://minimax.io"
+            collector = MiniMaxCollector()
+            assert collector._get_host() == "minimax.io"
+            collector.host = collector._get_host()
+            assert collector._api_base_url() == "https://api.minimax.io"
+            assert collector._open_platform_base_url() == "https://platform.minimax.io"
+
+            mock_settings.MINIMAX_HOST = "minimaxi.com"
+            collector = MiniMaxCollector()
+            assert collector._get_host() == "minimaxi.com"
+            collector.host = collector._get_host()
+            assert collector._api_base_url() == "https://api.minimaxi.com"
+            assert collector._open_platform_base_url() == "https://www.minimaxi.com"
+
+            # The default is unchanged, and a port is kept.
+            mock_settings.MINIMAX_HOST = ""
+            collector = MiniMaxCollector()
+            assert collector._get_host() == "minimax.io"
+            mock_settings.MINIMAX_HOST = "https://minimax.io:8443"
+            collector = MiniMaxCollector()
+            assert collector._get_host() == "minimax.io:8443"
+
 
 class TestHttpTimeouts:
     """I2: All collector HTTP calls must pass an explicit timeout."""

@@ -20,6 +20,8 @@ MiniMax coding-plan quota collector.
 Set `MINIMAX_HOST=minimaxi.com` to switch to the China host
 (`https://api.minimaxi.com/v1/coding_plan/remains`). `MINIMAX_HOST` must be a **bare domain**
 — the collector prefixes it with `api.` (and, for the dashboard link, `platform.`) itself.
+A value that arrives with a scheme is normalised to its host, so it is never pasted into
+the middle of a URL.
 **Auth:** Bearer token.
 
 **Response** (real payload, one entry per quota bucket in `model_remains[]` — not one per
