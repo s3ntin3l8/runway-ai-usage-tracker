@@ -172,6 +172,12 @@ warn_no_return = true
 warn_unreachable = false
 strict_equality = false
 ignore_missing_imports = true
+# Honour .gitignore the way ruff already does. The PyInstaller `build/` and
+# `dist/` bundles copy Python assets (e.g. assets/generate_icons.py) into two
+# different trees, so mypy sees the same module name twice and aborts the whole
+# run with "Duplicate module named". CI never builds those trees, so only
+# contributors who ran `make sidecar-app` locally hit it.
+exclude_gitignore = true
 exclude = ["tests", "scripts", "sidecar_app", "scratch", "evidence"]
 
 [[tool.mypy.overrides]]
