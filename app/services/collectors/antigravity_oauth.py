@@ -35,6 +35,12 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
     # must never log as though the server refreshed the token.
     REFRESHABLE = False
 
+    # The installed agy CLI's version, as the sidecar reported it next to the
+    # token (#687). The Code Assist API gates the quota pools it serves on the
+    # User-Agent version, so the collector needs the real one. None when no
+    # sidecar reported a version.
+    _agy_version: str | None = None
+
     async def _get_current_token(self) -> str | None:
         """Return the current access token from the token cache."""
         cache_data = await token_cache.get_with_metadata("antigravity", account_id=self.account_id)
@@ -95,6 +101,12 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
             self._current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
+            # The agy version the sidecar reported with this token (#687). It
+            # rides along with the credential bundle, so every read path sees
+            # it — including the borrowed-entry fallback above. Assign it
+            # unconditionally: a bundle without a version must not leave a
+            # stale, higher one behind for this collector's whole lifetime.
+            self._agy_version = tokens.get("agy_version") or None
             cached_label = metadata.get("account_label")
             if cached_label and (not self.account_label or self.account_label == "Default"):
                 self.account_label = cached_label
