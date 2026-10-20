@@ -121,6 +121,19 @@ jobs:
       - run: python -m pip install -e '.[desktop,sidecar]' pyinstaller
       - run: python sidecar_app/assets/generate_icons.py
       - run: pyinstaller --noconfirm sidecar_app/spec/${{ matrix.spec }}.spec
+      - name: Prepare NSIS (Windows)
+        if: runner.os == 'Windows'
+        run: python -m scripts.prepare_nsis
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python sidecar_app/spec/win_version.py | ForEach-Object {
+            $k, $v = $_ -split '=', 2
+            Set-Variable -Name $k -Value $v
+          }
+          makensis -V2 "-DVERSION=$VERSION" "-DPRODUCT_VERSION_QUAD=$PRODUCT_VERSION_QUAD" installer/windows/runway-sidecar.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify standard signed fixture
         run: python -m scripts.security_packaging_smoke --binary '${{ matrix.binary }}' --report fixture-evidence.json
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
