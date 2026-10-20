@@ -132,8 +132,8 @@ def pool_label(pool: str, group_name: str = "") -> str:
 
     Known pools have a fixed label. An unmapped pool keeps the API's own
     spelling of its name ("Claude & GPT models" stays "Claude & GPT models",
-    not the title-cased "Claude Gpt Models") — falling back to the readable
-    part of the pool key when the group had no name at all.
+    not the title-cased "Claude Gpt Models"). Without a name (a group the API
+    sent unnamed) the readable part of the pool key is used.
     """
     if pool in POOL_LABELS:
         return POOL_LABELS[pool]
@@ -406,6 +406,10 @@ class AntigravityApiMixin:
         now: datetime,
     ) -> list[dict[str, Any]]:
         """Turn one quota group (one physical pool) into a card per window."""
+        # The name the API sent (may be empty) — the label of an unmapped pool
+        # keeps the API's own spelling. The pool *identity* falls back to the
+        # bucket ids when the name is missing.
+        raw_name = str(group.get("displayName") or "").strip()
         group_name = group_display_name(group)
         group_description = str(group.get("description") or "").strip()
         pool = pool_family(group_name)
@@ -462,7 +466,7 @@ class AntigravityApiMixin:
                 detail = f"{detail} — {description}"
 
             card: dict[str, Any] = {
-                "service_name": pool_label(pool, group_name),
+                "service_name": pool_label(pool, raw_name),
                 "icon": "🛸",
                 "remaining": f"{pct_used:.1f}%",
                 "unit": "used",

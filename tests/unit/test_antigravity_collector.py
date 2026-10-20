@@ -581,6 +581,41 @@ class TestAntigravityQuotaPools:
         )
 
     @pytest.mark.asyncio
+    async def test_unmapped_pool_keeps_the_api_spelling_of_its_name(self, mock_http_client):
+        """The card name keeps the API's own spelling — a title-cased slug
+        would mangle acronyms ("Claude & GPT models" → "Claude Gpt Models")."""
+        from app.services.collectors import antigravity_api
+
+        antigravity_api._WARNED_UNKNOWN_POOLS.clear()
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "displayName": "Claude & GPT models",
+                    "buckets": [
+                        {"bucketId": "3p2-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        assert result[0]["service_name"] == "Claude & GPT models"
+
+    @pytest.mark.asyncio
     async def test_group_without_a_display_name_keeps_its_own_pool(self, mock_http_client):
         """Two unnamed groups would both fall back to "Unknown" and overwrite
         each other — the bucket ids make a safe fallback."""
