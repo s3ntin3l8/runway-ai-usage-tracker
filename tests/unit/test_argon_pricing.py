@@ -254,6 +254,30 @@ def test_the_plan_reports_the_drift_on_a_partially_repaired_database():
     assert plan.rebuild_pairs == 1
 
 
+def test_an_event_before_the_promo_row_stays_unpriced():
+    """The promo row starts 2026-10-01, so an earlier event has no applicable row.
+
+    The model id is still canonicalised — only the price is missing, which is
+    what the operators have to watch for when they backdate the seed row.
+    """
+    session = _session()
+    seed_pricing_table(session)
+    _event(session, ts=datetime(2026, 9, 15, 12, 0, tzinfo=UTC))
+
+    plan = plan_argon_retag(session)
+    assert plan.total == 1
+    assert plan.unpriced == 1
+    assert plan.repriced == 0
+
+    result = apply_argon_retag(session)
+    assert result.unpriced == 1
+    assert result.repriced == 0
+    ev = session.exec(select(UsageEvent)).first()
+    assert ev is not None
+    assert ev.model_id == ARGON_MODEL_ID
+    assert ev.cost_usd == 0.0
+
+
 def test_the_plan_promises_no_rebuild_on_a_repaired_database():
     """The preview must agree with what an apply would actually do."""
     session = _session()
