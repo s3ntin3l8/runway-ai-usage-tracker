@@ -106,6 +106,17 @@ PRICING_SEED: list[dict] = [
         "cache_create_1h_per_mtok": 2.00,  # 1h TTL writes: 2x input
         "notes": "Haiku 4.5 effective rate",
     },
+    {
+        "provider_id": "anthropic",
+        "model_id": "claude-haiku-4.5",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 5.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 1.25,
+        "cache_create_1h_per_mtok": 2.00,
+        "notes": "Haiku 4.5 full name alias",
+    },
     # OpenAI ChatGPT / Codex (GPT-5 series)
     {
         "provider_id": "chatgpt",
@@ -586,8 +597,9 @@ PRICING_SEED: list[dict] = [
     },
     # Gemini 4 Argon (https://ai.google.dev/gemini-api/docs/pricing, checked
     # 2026-10-15). No >200K tier. The launch price is a 50% promo through
-    # 2026-11-30; the list price applies from 2026-12-01. The id passes through
-    # both the Gemini and Antigravity normalizers unchanged. The `gemini` rows serve
+    # 2026-11-30; the list price applies from 2026-12-01. Both the Gemini and
+    # the Antigravity normalizers canonicalise the `gemini-4-argon*` family
+    # (the raw id carries a "-trial" suffix) to this id. The `gemini` rows serve
     # the Gemini/Hermes pipeline; the `antigravity` rows are for the separate
     # Antigravity extractor (Hermes never emits that provider). The promo row's
     # effective_from is the earliest date we have seen it, not a confirmed launch.
@@ -1170,6 +1182,17 @@ PRICING_SEED: list[dict] = [
         "cache_read_per_mtok": 0.145,
         "cache_create_per_mtok": 0.0,
         "notes": "OpenCode Zen DeepSeek V4 Pro",
+    },
+    {
+        "provider_id": "opencode",
+        "model_id": "claude-haiku-4.5",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 5.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 1.25,
+        "cache_create_1h_per_mtok": 2.00,
+        "notes": "OpenCode Zen Claude Haiku 4.5 alias",
     },
 ]
 

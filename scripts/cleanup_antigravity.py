@@ -19,8 +19,12 @@ This script:
   Phase 0 (--wipe-gauge) — delete ALL antigravity latest_usage rows so that
             orphaned rows from an earlier upsert-key shape (e.g. model_id=
             "gemini"/"frontier" before the aggregate-card migration) cannot
-            accumulate alongside the new 4-card shape. latest_usage is a
-            derived live-gauge table; the server repopulates it on next poll.
+            accumulate alongside the new 5-card shape. The current pool keys
+            (variant="gemini"/"frontier"/"argon") are unique by construction,
+            so a row left behind by a mis-formatted User-Agent (one that
+            hid the Gemini/Argon pools) is wiped here too.
+            latest_usage is a derived live-gauge table; the server repopulates
+            it on next poll.
             Run this phase after deploying the antigravity_api.py key change.
   Phase A — discover the canonical email from old LSP-era latest_usage cards,
             then delete those cards and their quota_snapshots.
@@ -66,6 +70,7 @@ if _SCRIPTS_DIR not in sys.path:
 from recost_events import phase_b_recost, phase_c_rollups, phase_d_windows  # noqa: E402
 from sqlmodel import Session, delete, select, update  # noqa: E402
 
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent  # noqa: E402
 
@@ -169,6 +174,7 @@ def phase_b_retag(session: Session, email: str, dry_run: bool) -> dict[str, int]
 
 
 def main() -> int:
+    force_utf8_console()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

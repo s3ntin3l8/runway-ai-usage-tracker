@@ -1287,7 +1287,14 @@ def setup_logging(log_level: str, file_enabled: bool) -> None:
         ensure_dirs()
         log_path = get_log_path()
         file_handler = RotatingFileHandler(
-            log_path, mode="a", maxBytes=5 * 1024 * 1024, backupCount=3
+            # UTF-8 explicitly: the default is the locale code page (cp1252 on
+            # Windows), which cannot encode the warning glyphs and emoji some
+            # log lines carry — a log record would take the process down.
+            log_path,
+            mode="a",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
         )
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -5837,7 +5844,13 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
 
 
 def main():
+    from app.core.console import force_utf8_console
     from scripts.sidecar_pkg.signatures import verification_command
+
+    # Before anything writes to the console: a redirected stdout/stderr uses
+    # the locale code page on Windows, which cannot encode the glyphs and emoji
+    # some log lines carry.
+    force_utf8_console()
 
     verification_command(sys.argv[1:])
     # Before anything can spawn a subprocess: the self-update hand-off variable must not leak

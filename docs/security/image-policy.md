@@ -19,12 +19,19 @@ write permissions or secrets. All external CI references remain immutable.
 
 The scanner receives read-only image archives/SBOMs, not Docker credentials. A
 single vulnerability database is used for the complete multi-architecture audit.
-Its validated status, checksummed source URL and build time are retained. It must
-be no older than 24 hours. A supplied `--database` cache permits before/after scans
-against the identical database. Audit artifacts retain raw CycloneDX SBOMs, package
-inventories, vulnerability reports, policy decisions and evidence for 90 days.
-The daily Image Security workflow resolves edge and the latest versioned release
-to immutable digests before scanning; failures remain failed workflow runs.
+Its validated status, checksummed source URL and build time are retained. The
+audit uses the release upstream currently advertises, verified by checksum
+against that release's source archive, and that release must be no older than 30
+hours. Upstream publishes about once a day and a release reaches its download
+location roughly an hour after its build stamp, so the newest release anybody
+can obtain is up to about 25 hours old by that stamp; the 30 hour ceiling is
+the tripwire for an upstream feed that stopped publishing, not a licence to
+scan with a database upstream has already superseded. A supplied `--database`
+cache permits before/after scans against the identical database. Audit artifacts
+retain raw CycloneDX SBOMs, package inventories, vulnerability reports, policy
+decisions and evidence for 90 days. The daily Image Security workflow resolves
+edge and the latest versioned release to immutable digests before scanning;
+failures remain failed workflow runs.
 
 ```bash
 python -m scripts.audit_release_image \
@@ -64,7 +71,10 @@ is provenance metadata, not authentication of an arbitrary SQLite file. Only
 reuse caches that you prepared with the pinned scanner and kept under your own
 control. The downloaded compressed archive checksum cannot be compared directly
 to the decompressed database file; an additional local file hash would be a
-corruption diagnostic, not a replacement for this trust boundary.
+corruption diagnostic, not a replacement for this trust boundary. A prepared
+cache also records the release upstream advertised when it was prepared; the
+audit verifies the cached database against that record, and a cache prepared
+before the record existed is checked for age only.
 
 Production daily audits prepare one fresh database and use it for both edge and
 the newest versioned release. Every architecture still validates its actual Grype

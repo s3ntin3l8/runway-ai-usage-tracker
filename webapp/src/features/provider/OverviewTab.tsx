@@ -69,8 +69,8 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
 
   // Trajectory for the window we treat as critical. Match on the full card
   // identity (window_type + variant + model_id) via findForecast, not window_type
-  // alone — providers like Antigravity emit two pools (gemini/frontier) per
-  // window, and a window_type-only match can land on the empty pool's
+  // alone — providers like Antigravity emit several pools (gemini/frontier/argon)
+  // per window, and a window_type-only match can land on the empty pool's
   // insufficient-data forecast instead of the gauge's own.
   const criticalForecast = useMemo(() => {
     const fs = forecast.data?.forecasts ?? [];

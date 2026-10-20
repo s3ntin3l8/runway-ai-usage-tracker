@@ -63,6 +63,7 @@ for Desktop cookie acceptance: both passed independently here.
 The user confirmed the test tray menu was visible with collection controls. Native
 inspection exposed generic browser labels; a subsequent server/frontend display fix
 names Chrome, Safari and Claude Desktop without leaking profile names or fingerprints.
+The extraction and verification modules remain unchanged after the native capture.
 That metadata-only follow-up is verified by source-list API/frontend regressions and a
 packaged synthetic run; it does not claim a new native credential capture.
 Automatic verification connected the available usable organizations; this run does

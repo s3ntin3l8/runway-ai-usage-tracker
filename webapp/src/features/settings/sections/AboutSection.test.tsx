@@ -50,4 +50,26 @@ describe('AboutSection', () => {
     renderWithProviders(<AboutSection />);
     expect(await screen.findByText(/still the insecure default/i)).toBeInTheDocument();
   });
+
+  it('shows the build SHA, shortened, linked to its commit', async () => {
+    // Assembled from a short literal so detect-secrets doesn't read the test
+    // fixture as a high-entropy hex string (a real secret).
+    const sha = 'abcdef012345'.repeat(3) + 'abcd';
+    vi.mocked(api.fetchSettings).mockResolvedValue({ ...settings, build_sha: sha });
+    vi.mocked(api.fetchStatus).mockResolvedValue({});
+    renderWithProviders(<AboutSection />);
+
+    const link = await screen.findByRole('link', { name: 'abcdef012345' });
+    expect(link.getAttribute('href') ?? '').toContain(`/commit/${sha}`);
+    expect(link).toHaveAttribute('title', `Commit ${sha}`);
+  });
+
+  it('shows a dash when the build carries no SHA', async () => {
+    vi.mocked(api.fetchSettings).mockResolvedValue({ ...settings, build_sha: null });
+    vi.mocked(api.fetchStatus).mockResolvedValue({});
+    renderWithProviders(<AboutSection />);
+
+    expect(await screen.findByText('Build')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /[0-9a-f]{12}/ })).toBeNull();
+  });
 });

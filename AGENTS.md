@@ -63,7 +63,14 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   worktree was used. Skipping this lets stale references accumulate.
 - **Fresh clone or worktree:** run `make install` first (venv, Python + webapp
   dependencies, git hooks) — none of it is inherited. On native Windows use
-  `python scripts/dev_checks.py install` instead.
+  `python scripts/dev_checks.py install` instead. Git hooks are shared by every
+  worktree of the repository, so install them once from the main checkout
+  (`make install-hooks`); a hook installed from a worktree keeps pointing at
+  that worktree's interpreter and stops working when the worktree is removed.
+  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.12+
+  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`); on Windows
+  `winget install OpenJS.NodeJS.LTS` puts it in the per-user PATH, and a new
+  shell (or session) is needed for that to take effect.
 
 ## Everyday commands
 

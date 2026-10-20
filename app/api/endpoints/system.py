@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app import __version__
+from app.core.build_info import get_build_sha
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.encryption import encryption_service
@@ -244,6 +245,10 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
     response: dict[str, Any] = {
         "project_name": settings.PROJECT_NAME,
         "version": __version__,
+        # The commit this build came from. `version` names a release and is
+        # identical across every `:edge` image cut from main; the SHA is what
+        # identifies one exact build. None when the build carries no SHA.
+        "build_sha": get_build_sha(),
         "latest_version": latest,
         "update_available": is_update_available(__version__, latest, target_channel="stable"),
         "app_host": settings.APP_HOST,

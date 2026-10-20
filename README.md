@@ -62,7 +62,7 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 - **Sidecar Ingestion**: Push metrics and per-message events from external hosts via `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP rate limit)
 - **Webhook Alerts**: Per-provider/per-account threshold alerts, plus credential alerts when a login expires or is rejected, to Discord or Slack
 - **Audit Log**: Append-only record of admin mutations, viewable from the Settings panel
-- **Build Info**: Settings → About reports the running server version alongside host, encryption, and auth status
+- **Build Info**: Settings → About reports the running server version alongside host, encryption, and auth status — plus the commit the build came from, so an `:edge` image can be traced to one exact source tree
 - **Session Auth**: Admin login via an HttpOnly `SameSite=Strict` session cookie with "log out everywhere" revocation; scripts can still use the `X-Admin-Key` header
 - **Installable PWA**: Add Runway to your home screen — app manifest, service worker, offline state banner, and a theme-color that follows the active theme
 - **Display Settings**: Compact mode, 2-column layout, soft chrome — configurable per browser
@@ -71,7 +71,7 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 
 ## Quick Start
 
-- **Python 3.12+** and **Node.js 18+** (for UI styling) are required.
+- **Python 3.12+** and **Node.js 22.12+** (for the UI build and the frontend test suite) are required.
 
 ```bash
 # 1. Clone and setup (installs venv, dependencies, and git hooks)

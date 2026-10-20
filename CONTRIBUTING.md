@@ -6,8 +6,11 @@
 make install    # venv + Python deps + webapp deps + git hooks (pre-commit & pre-push)
 ```
 
-On native Windows, install Python 3.12+ and Node.js (including npm), then run
-these commands in PowerShell from the repository root; Make and WSL are not required:
+On native Windows, install Python 3.12+ and Node.js 22.12+ (including npm).
+`winget install OpenJS.NodeJS.LTS` puts Node in the per-user PATH, and that
+only applies to *new* processes — start a fresh shell (or a fresh agent
+session) before `node`/`npm` resolve. Then run these commands in PowerShell
+from the repository root; Make and WSL are not required:
 
 ```powershell
 python scripts/dev_checks.py install
@@ -26,6 +29,18 @@ symlink privilege is reported as a specific skip, not Windows acceptance of thos
 POSIX permission assertions remain active on POSIX; Windows still checks
 credential contents and temporary-file cleanup. Frontend English date-label tests
 use a fixed test locale, while the dashboard retains the user's locale.
+
+Git hooks live in the repository's shared `.git/hooks`, so every worktree of
+this repository writes into the same two hook files. Install them once from the
+main checkout with `make install-hooks`: a hook installed from a worktree keeps
+pointing at that worktree's interpreter and stops working once the worktree is
+removed. A worktree that commits also needs its own `.venv`, because the mypy
+and pytest hooks resolve the interpreter from the checkout being committed.
+`make install` provides one; linking the main checkout's `.venv` into the
+worktree is enough, because the runner takes the repository root from its own
+path and runs the tests with that root as the working directory, so the
+checkout's own sources are the ones under test. The pre-push hook runs the
+full suite, so allow it several minutes.
 
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
 note that `make dev` alone no longer sees your local CLI logins (Gemini, Claude,

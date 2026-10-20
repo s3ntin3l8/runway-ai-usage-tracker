@@ -1,10 +1,12 @@
 ; Runway Sidecar — Windows installer (NSIS 3.x, per-user, no elevation).
 ;
-; Build (CI: .github/workflows/sidecar-build.yml; local: `make sidecar-installer`):
+; Build (CI + local: `python -m scripts.build_windows_installer --label edge`):
+; the helper takes VERSION/PRODUCT_VERSION_QUAD from package.json through
+; sidecar_app/spec/win_version.py and OUTFILE from the canonical release asset
+; name, so the pull request gate and the release write the same file. Raw form:
 ;   makensis -DVERSION=<package.json version> -DPRODUCT_VERSION_QUAD=<X.Y.Z.0> \
 ;            -DOUTFILE=<dest.exe> installer/windows/runway-sidecar.nsi
-; with the PyInstaller one-file build at dist/RunwaySidecar.exe. Both version
-; values come from `python sidecar_app/spec/win_version.py`.
+; with the PyInstaller one-file build at dist/RunwaySidecar.exe.
 ;
 ; Adapted from s3ntin3l8/branchdam-agent's installer. Design notes:
 ; * Per-user install into %LOCALAPPDATA%\Programs — no UAC prompt, and the

@@ -255,7 +255,7 @@ turn an unverified cache entry into a working connection.
 Desktop and the CLI own renewal. This read-only path issues no refresh request or
 credential write. It does not collect chat contents or exact token-consumption events.
 Desktop OAuth implementation/acceptance is tracked in #679; CLI variants in #673,
-remaining native browser/store acceptance in #672, and renewal/write-back in #526.
+scoped macOS acceptance in #672, optional browser acceptance in #683, and renewal/write-back in #526.
 
 ### macOS browser acceptance and store diagnostics
 
