@@ -670,6 +670,78 @@ def test_minimax_model_id_case_insensitive_fallback():
     assert differently_cased == exact > 0.0
 
 
+def test_minimax_m31_flash_cost_basic():
+    """1M input + 1M output + 1M cache read on MiniMax-M3.1-Flash
+    = $0.15 + $0.60 + $0.015."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="MiniMax-M3.1-Flash",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 0.15 + 0.60 + 0.015
+
+
+def test_minimax_m31_flash_model_id_case_insensitive_fallback():
+    """OpenCode reports `minimax-m3.1-flash` — the seed row is
+    'MiniMax-M3.1-Flash', so the differently-cased id must still price
+    through the case-insensitive fallback rather than costing zero."""
+    s = _seeded_session()
+    exact = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="MiniMax-M3.1-Flash",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    differently_cased = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="minimax-m3.1-flash",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert differently_cased == exact > 0.0
+
+
+def test_minimax_m31_flash_free_variant_stays_unpriced():
+    """The `-free` spellings resolve to no row, so they bill $0.
+
+    They must not reach the M3.1-Flash rate, nor M3's: the segment-trim
+    fallback cannot cross the "." to form "minimax-m3", and the
+    case-insensitive fallback compares the whole id, so neither row leaks in.
+    """
+    s = _seeded_session()
+    for model_id in ("minimax-m3.1-flash-free", "minimax-m3-free"):
+        assert resolve_price_row(s, "minimax", model_id, datetime.now(UTC)) is None, model_id
+        cost = compute_event_cost(
+            s,
+            provider_id="minimax",
+            model_id=model_id,
+            ts=datetime.now(UTC),
+            tokens_input=1_000_000,
+            tokens_output=1_000_000,
+            tokens_cache_read=1_000_000,
+            tokens_cache_create=0,
+            tokens_reasoning=0,
+        )
+        assert cost == 0.0, model_id
+
+
 # ── Antigravity cost resolution ───────────────────────────────────────────────
 
 
