@@ -49,11 +49,14 @@ def claude_account_label(
     whoever signed in last, and one account would wear a different name each
     time.
     """
-    if provider_id != "anthropic_console":
-        email = claude_member_email(org_data, account_data)
-        if email:
-            return email
-    return str((org_data or {}).get("name") or "")
+    if provider_id == "anthropic_console":
+        # The organization is the account, and its bare name is what the manual
+        # Console path already shows in Settings.
+        return str((org_data or {}).get("name") or "")
+    # A subscription belongs to one member, so their email names it. The
+    # identity string is the same answer, marked, when the member is unknown —
+    # one source of truth, so the two can never drift apart.
+    return claude_identity_string(org_data, account_data)
 
 
 def claude_identity_string(

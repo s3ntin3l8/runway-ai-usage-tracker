@@ -734,3 +734,26 @@ async def test_console_credit_never_borrows_the_signed_in_members_email():
     async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
         result = await verify_claude_cookie(client, "anthropic_console", "test-cookie")
     assert result.account_label == "API org"
+
+
+@pytest.mark.asyncio
+async def test_console_card_keeps_the_name_the_operator_chose(claude_db):
+    """A renamed Console account must not wear the organization's name again."""
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default", account_label="Team wallet")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            result = await collector._primary_strategy(client)
+    assert collector.account_label == "Team wallet"
+    assert collector._tag_results(result)[0]["account_label"] == "Team wallet"
