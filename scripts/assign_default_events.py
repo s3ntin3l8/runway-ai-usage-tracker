@@ -29,6 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from sqlmodel import Session, select  # noqa: E402
 
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import ProviderConfig  # noqa: E402
 from app.services.maintenance.event_reassign import (  # noqa: E402
@@ -90,6 +91,7 @@ def assign_events(provider_id: str, account_id: str, event_ids: list[str], apply
 
 
 def main() -> int:
+    force_utf8_console()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

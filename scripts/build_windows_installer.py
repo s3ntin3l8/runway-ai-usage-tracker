@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.core.console import force_utf8_console
 from scripts.sidecar_pkg import asset_names
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -238,6 +239,7 @@ def compile(
 
 
 def main(argv: list[str] | None = None) -> int:
+    force_utf8_console()
     parser = argparse.ArgumentParser(
         description="Compile the Windows installer under its canonical release name."
     )

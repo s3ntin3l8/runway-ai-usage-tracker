@@ -76,6 +76,7 @@ from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlmodel import Session, select  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import UsageEvent  # noqa: E402
 from scripts.backfill_rollups import backfill  # noqa: E402
@@ -307,6 +308,7 @@ def migrate(db_path: Path, apply: bool, source_providers: list[str] | None = Non
 
 
 def main() -> int:
+    force_utf8_console()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

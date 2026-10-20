@@ -70,6 +70,7 @@ if _SCRIPTS_DIR not in sys.path:
 from recost_events import phase_b_recost, phase_c_rollups, phase_d_windows  # noqa: E402
 from sqlmodel import Session, delete, select, update  # noqa: E402
 
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent  # noqa: E402
 
@@ -173,6 +174,7 @@ def phase_b_retag(session: Session, email: str, dry_run: bool) -> dict[str, int]
 
 
 def main() -> int:
+    force_utf8_console()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
