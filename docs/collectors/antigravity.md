@@ -206,8 +206,9 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 - The API gates the pools it serves on the **User-Agent version** — see the table above. If
   `_USER_AGENT` is older than the agy CLI you run, the response arrives with 200 but without
   the Gemini (and Argon) groups, and the dashboard shows just the Claude/GPT pool.
-- The server logs `Antigravity quota summary returned no Gemini pool for tier 'pro'` when that
-  happens on a paid tier.
+- The server logs `Antigravity quota summary is missing the gemini pool(s) for tier 'pro'` when
+  that happens on a paid tier — and `… missing the argon pool(s) …` when only the Argon pool is
+  missing (a 1.2 User-Agent serves Gemini but not Argon).
 - Compare with agy itself: `agy -p "/usage" --output-format json` prints the same groups the
   CLI sees — if the CLI shows a pool Runway does not, the UA is behind.
 

@@ -401,13 +401,17 @@ class AntigravityApiMixin:
         """
         if tier is None:
             return
+        # Keep this order stable — it is the order the pools are named in the
+        # log line ("missing the gemini and argon pool(s)").
         expected = [POOL_GEMINI]
         if tier != "free":
             expected.append(POOL_ARGON)
         missing = [pool for pool in expected if pool not in pools]
         if not missing:
             return
-        key = f"{tier}:{','.join(missing)}"
+        # The dedupe key is order-independent, so a reordering of `expected`
+        # cannot produce a second warning for the same situation.
+        key = f"{tier}:{','.join(sorted(missing))}"
         if key in _WARNED_MISSING_POOLS:
             return
         _WARNED_MISSING_POOLS.add(key)
