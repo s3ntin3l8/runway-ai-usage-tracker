@@ -136,6 +136,11 @@ function SortableProviderCard({
         ? `${formatTokens(tokenUsageTotal(gauge.token_usage, excludeCache) ?? gauge.used_value ?? null)} tokens used`
         : `${gauge.used_value != null ? formatCurrency(gauge.used_value, gauge.currency) : (gauge.remaining ?? '—')} ${gauge.unit ?? ''}`.trimEnd();
 
+  // The detail line rides along in the accessible name: the card is a
+  // role="button", and children of a button are presentational, so a nested
+  // aria-label would never be exposed.
+  const accessibleHero = cardHeroLabel(gauge, heroLabel) ?? heroLabel;
+
   return (
     <Card
       ref={setNodeRef}
@@ -145,7 +150,7 @@ function SortableProviderCard({
       role="button"
       tabIndex={0}
       aria-label={
-        accountLabel ? `${name} (${accountLabel}), ${heroLabel}` : `${name}, ${heroLabel}`
+        accountLabel ? `${name} (${accountLabel}), ${accessibleHero}` : `${name}, ${accessibleHero}`
       }
       onClick={() => {
         if (!isDragging) navigate(providerPath(entry.provider_id, entry.account_id));
@@ -178,7 +183,6 @@ function SortableProviderCard({
             <span
               className="font-mono text-lg font-semibold tabular"
               title={cardTooltip(gauge)}
-              aria-label={cardHeroLabel(gauge, cardPct(gauge))}
             >
               {formatPct(cardPct(gauge))}
             </span>

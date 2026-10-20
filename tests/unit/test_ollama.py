@@ -969,7 +969,7 @@ class TestOllamaApiCollector:
     async def test_collect_no_cap_response_returns_no_parse_error_card(self):
         collector = OllamaCollector(account_id="acc_test")
         smart = SmartCollector(collector, "Ollama", ttl=0, error_retry_delay=0)
-        no_cap_response = _make_response({"purchased": {"balance_usd": 0}})
+        no_cap_response = _make_response({"included": {"balance_usd": 0, "allowance_usd": 0}})
         malformed_response = _make_response(
             {"included": {"balance_usd": "not-a-number", "allowance_usd": 2.5}}
         )
@@ -1089,12 +1089,23 @@ class TestOllamaBalanceCollector:
         assert card["pct_used"] is None
         assert card["window_type"] == "rolling"
 
-    def test_no_included_and_no_credits_is_a_successful_empty_result(self):
+    def test_exhausted_credits_still_report_a_card(self):
+        """An account with no credits left is exactly when the card matters."""
         collector = OllamaCollector(account_id="acc_test")
         cards = collector._build_cards_from_api_balance({"purchased": {"balance_usd": 0}})
-        assert cards == []
-        assert collector._no_monthly_cap is True
-        assert collector._last_error_reason != "missing_data"
+        assert len(cards) == 1
+        assert cards[0]["remaining"] == "$0.00"
+        assert cards[0]["health"] == "critical"
+
+    def test_zero_allowance_falls_back_to_purchased_credits(self):
+        """No allowance to meter, but purchased credits are still the balance."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance(
+            {"included": {"balance_usd": 0, "allowance_usd": 0}, "purchased": {"balance_usd": 25}}
+        )
+        assert len(cards) == 1
+        assert cards[0]["remaining"] == "$25.00"
+        assert cards[0]["variant"] == "credits"
 
     @pytest.mark.parametrize(
         "body",

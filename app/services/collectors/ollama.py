@@ -447,16 +447,14 @@ class OllamaCollector(BaseCollector):
                 # reconciliation retire a working card.
                 self._set_error_reason("missing_data")
                 return []
-            if purchased > 0:
-                return [self._make_credits_card(purchased)]
-            # A pay-as-you-go account with no credits left: nothing to meter.
-            self._no_monthly_cap = True
-            return []
+            # A pay-as-you-go account. Report the purchased credits even at
+            # $0 — an exhausted account is exactly when the card matters.
+            return [self._make_credits_card(purchased)]
         if not isinstance(included, dict):
             self._set_error_reason("missing_data")
             return []
 
-        cards = self._cards_from_included_credits(included, body)
+        cards = self._cards_from_included_credits(included, purchased)
         if cards is not None:
             return cards
         cards = self._cards_from_legacy_limits(included)
@@ -466,7 +464,7 @@ class OllamaCollector(BaseCollector):
         return []
 
     def _cards_from_included_credits(
-        self, included: dict[str, Any], body: dict[str, Any]
+        self, included: dict[str, Any], purchased: float | None
     ) -> list[dict[str, Any]] | None:
         """Build the monthly allowance card from the included credits.
 
@@ -482,7 +480,9 @@ class OllamaCollector(BaseCollector):
             self._set_error_reason("missing_data")
             return []
         if allowance <= 0:
-            # Nothing to meter — the account has no included allowance.
+            # Nothing to meter. Purchased credits are the balance then.
+            if purchased is not None:
+                return [self._make_credits_card(purchased)]
             self._no_monthly_cap = True
             return []
         balance = min(balance, allowance)
@@ -496,7 +496,6 @@ class OllamaCollector(BaseCollector):
         pct = max(min(spent / allowance * 100.0, 100.0), 0.0)
 
         detail = f"${spent:.2f} of ${allowance:.2f} used"
-        purchased = self._purchased_balance(body)
         if purchased:
             detail += f" · +${purchased:.2f} usage credits"
         if reset_at:

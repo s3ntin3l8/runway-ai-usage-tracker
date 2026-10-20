@@ -194,14 +194,16 @@ export function cardTooltip(card: LimitCard): string | undefined {
   return card.unit_type === 'currency' ? card.detail : undefined;
 }
 
-// Accessible label for a quota hero: the percentage plus the detail line.
-// A native `title` only fires on hover, so touch and screen-reader users
-// would otherwise never reach the dollar breakdown behind the percentage.
-export function cardHeroLabel(card: LimitCard, pct: number | null | undefined): string | undefined {
+// Accessible label for a quota hero: the visible hero text plus the detail
+// line. A native `title` only fires on hover, so touch and screen-reader
+// users would otherwise never reach the dollar breakdown behind the
+// percentage. Callers that render the hero inside a role="button" must put
+// this on the button — children of a button are presentational, so a nested
+// aria-label is never exposed.
+export function cardHeroLabel(card: LimitCard, heroText: string): string | undefined {
   const detail = cardTooltip(card);
   if (!detail) return undefined;
-  const percent = pct === null || pct === undefined || Number.isNaN(pct) ? null : pct;
-  return percent === null ? detail : `${percent.toFixed(0)}% used — ${detail}`;
+  return `${heroText} — ${detail}`;
 }
 
 // Humanize a model id for display: de-separate and capitalize each word

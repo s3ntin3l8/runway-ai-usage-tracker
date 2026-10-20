@@ -392,21 +392,16 @@ describe('cardTooltip', () => {
 });
 
 describe('cardHeroLabel', () => {
-  it('pairs the percentage with the detail line', () => {
+  it('pairs the hero text with the detail line', () => {
     expect(
       cardHeroLabel(
         card({ unit_type: 'currency', currency: 'USD', detail: '$0.00 of $2.50 used' }),
-        0,
+        '0% used',
       ),
     ).toBe('0% used — $0.00 of $2.50 used');
   });
-  it('falls back to the detail alone without a percentage', () => {
-    expect(
-      cardHeroLabel(card({ unit_type: 'currency', detail: '$0.00 of $2.50 used' }), null),
-    ).toBe('$0.00 of $2.50 used');
-  });
   it('is undefined for cards without a currency detail', () => {
-    expect(cardHeroLabel(card({ pct_used: 42, detail: '42% used' }), 42)).toBeUndefined();
+    expect(cardHeroLabel(card({ pct_used: 42, detail: '42% used' }), '42% used')).toBeUndefined();
   });
 });
 

@@ -73,7 +73,7 @@ export function QuotaWindowRow({
         <span
           className="font-mono text-[13px] font-semibold tabular"
           title={cardTooltip(card)}
-          aria-label={cardHeroLabel(card, used)}
+          aria-label={cardHeroLabel(card, used != null ? formatPct(used) : (card.remaining ?? '—'))}
         >
           {used != null ? formatPct(used) : (card.remaining ?? '—')}
         </span>
