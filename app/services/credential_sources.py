@@ -128,6 +128,8 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
             path=_collapse_home(raw) if raw else None,
         )
     if value.startswith("cookie:"):
+        # Native acceptance covers these clients (#672); optional browser labels
+        # and their regression cases must accompany acceptance in #683.
         parts = value.split("#", 1)[0].split("/")
         if (
             len(parts) >= 4

@@ -270,7 +270,8 @@ cookies are filtered and counted. Malformed relevant Safari records mark the sca
 incomplete while preserving independently decoded candidates. Unknown Chromium schema
 versions remain unsupported and report the observed version. Diagnostic store IDs use
 a random process-local HMAC key, so they correlate scans only until restart and do not
-expose profile paths. Outcomes are internal logs/diagnostic sinks, not ingestion fields.
+expose profile paths. Per-store outcomes are DEBUG logs/internal diagnostic sinks, not ingestion fields;
+INFO logs contain one aggregate count summary per scan call.
 Safe Storage failures are cached until sidecar
 restart. `RUNWAY_CLAUDE_DESKTOP_CREDENTIALS=0` still disables both Desktop OAuth and
 Desktop cookie discovery. Empty scans preserve last-good source metadata; explicit

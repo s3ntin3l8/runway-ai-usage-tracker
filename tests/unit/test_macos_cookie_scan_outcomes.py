@@ -385,3 +385,46 @@ def test_diagnostic_store_ids_are_process_keyed(monkeypatch):
     monkeypatch.setattr(cookie_scan, "_DIAGNOSTIC_KEY", b"disposable-test-key")
     cookie_scan.report_scan("Safari", "private-profile", cookie_scan.StoreScan("empty"), outcomes)
     assert outcomes[0]["store_id"] != outcomes[2]["store_id"]
+
+
+def test_scan_logging_keeps_store_details_at_debug_and_info_aggregated(caplog):
+    import logging
+
+    from scripts.sidecar_pkg.cookie_scan import StoreScan, report_scan, report_scan_summary
+
+    outcomes = []
+    with caplog.at_level(logging.DEBUG):
+        report_scan("Safari", "private-profile", StoreScan("empty", expired_count=2), outcomes)
+        report_scan(
+            "Chrome", "private-profile-two", StoreScan("denied", rejected_count=1), outcomes
+        )
+        report_scan_summary(outcomes)
+    info = [record.message for record in caplog.records if record.levelno == logging.INFO]
+    assert len(info) == 1
+    assert "scans=2" in info[0]
+    assert "'denied': 1" in info[0] and "'empty': 1" in info[0]
+    assert "expired=2 rejected=1" in info[0]
+    assert "store_id" not in info[0]
+    assert "private-profile" not in caplog.text
+
+
+def test_legacy_desktop_cookie_path_reports_scan_outcome(tmp_path, monkeypatch, caplog):
+    import logging
+
+    from scripts.sidecar_pkg import claude_desktop
+    from scripts.sidecar_pkg.cookie_scan import StoreScan
+
+    monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
+    monkeypatch.delenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", raising=False)
+    monkeypatch.setattr(
+        claude_desktop,
+        "scan_session_cookie",
+        lambda path: StoreScan("candidates", ["synthetic-session"]),
+    )
+    with caplog.at_level(logging.INFO):
+        assert (
+            sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey")
+            == "synthetic-session"
+        )
+    assert "macOS cookie scan summary: scans=1" in caplog.text
+    assert "synthetic-session" not in caplog.text

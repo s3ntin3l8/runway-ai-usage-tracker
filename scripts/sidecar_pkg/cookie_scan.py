@@ -38,4 +38,19 @@ def report_scan(browser: str, origin: str, result: StoreScan, outcomes: list[dic
         summary["schema_version"] = result.schema_version
     if outcomes is not None:
         outcomes.append(summary)
-    logging.info("macOS cookie store scan: %s", summary)
+    logging.debug("macOS cookie store scan: %s", summary)
+
+
+def report_scan_summary(outcomes: list[dict]) -> None:
+    """Keep normal logs bounded to one count-only line per collection call."""
+    import logging
+    from collections import Counter
+
+    logging.info(
+        "macOS cookie scan summary: scans=%d statuses=%s candidates=%d expired=%d rejected=%d",
+        len(outcomes),
+        dict(sorted(Counter(item["status"] for item in outcomes).items())),
+        sum(item["candidate_count"] for item in outcomes),
+        sum(item["expired_count"] for item in outcomes),
+        sum(item["rejected_count"] for item in outcomes),
+    )

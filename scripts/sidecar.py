@@ -2506,10 +2506,12 @@ class BrowserCookieExtractor:
 
         Production emits the same sanitized outcomes to logs, not ingestion manifests.
         """
-        from scripts.sidecar_pkg.cookie_scan import report_scan
+        from scripts.sidecar_pkg.cookie_scan import report_scan, report_scan_summary
         from scripts.sidecar_pkg.identity import credential_fingerprint, keyed_credential_origin
         from scripts.sidecar_pkg.macos_cookies import scan_cookies
 
+        scan_outcomes = scan_outcomes if scan_outcomes is not None else []
+        first_outcome = len(scan_outcomes)
         candidates = []
         allowed_domains = (
             {"claude.ai"}
@@ -2581,6 +2583,7 @@ class BrowserCookieExtractor:
                     )
                     if candidate not in candidates:
                         candidates.append(candidate)
+        report_scan_summary(scan_outcomes[first_outcome:])
         return candidates
 
     @staticmethod
@@ -2612,11 +2615,21 @@ class BrowserCookieExtractor:
             not in {"0", "false", "off", "no"}
         ):
             try:
-                from scripts.sidecar_pkg.claude_desktop import read_session_cookie
+                from scripts.sidecar_pkg.claude_desktop import scan_session_cookie
+                from scripts.sidecar_pkg.cookie_scan import report_scan, report_scan_summary
 
-                desktop_cookie = read_session_cookie(
+                scanned = scan_session_cookie(
                     Path.home() / "Library/Application Support/Claude/Cookies"
                 )
+                outcomes = []
+                report_scan(
+                    "Claude Desktop",
+                    "cookie:anthropic/Claude Desktop/Default/Cookies",
+                    scanned,
+                    outcomes,
+                )
+                report_scan_summary(outcomes)
+                desktop_cookie = next(iter(scanned.values), None)
                 if desktop_cookie:
                     logging.info("Claude session cookie source: Claude Desktop")
                     return desktop_cookie
