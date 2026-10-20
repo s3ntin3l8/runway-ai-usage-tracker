@@ -80,6 +80,8 @@ a = Analysis(
         "scripts.sidecar_pkg.claude_desktop",
         "scripts.sidecar_pkg.claude_code_keychain",
         "scripts.sidecar_pkg.macos_cookies",
+        "scripts.sidecar_pkg.safari_cookies",
+        "scripts.sidecar_pkg.cookie_scan",
         "scripts.sidecar_pkg.cowork_events",
         "cryptography.hazmat.primitives.padding",
         "cryptography.hazmat.primitives.ciphers",
