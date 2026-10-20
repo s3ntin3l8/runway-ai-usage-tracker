@@ -757,3 +757,64 @@ async def test_console_card_keeps_the_name_the_operator_chose(claude_db):
             result = await collector._primary_strategy(client)
     assert collector.account_label == "Team wallet"
     assert collector._tag_results(result)[0]["account_label"] == "Team wallet"
+
+
+@pytest.mark.asyncio
+async def test_subscription_card_keeps_the_name_the_operator_chose():
+    """A renamed subscription account must not revert to the member's email."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default", account_label="Team wallet")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"membership": {"user": {"email": "member@example.com"}}},
+        )
+    assert collector.account_label == "Team wallet"
+    assert all(card.get("account_label") == "Team wallet" for card in result)
+
+
+@pytest.mark.asyncio
+async def test_a_placeholder_name_is_filled_in_on_the_subscription_path():
+    """The placeholder is a placeholder in any spelling, so it may be filled in."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default", account_label="DEFAULT")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"membership": {"user": {"email": "member@example.com"}}},
+        )
+    assert collector.account_label == "member@example.com"
+
+
+@pytest.mark.asyncio
+async def test_console_card_fills_in_a_placeholder_name(claude_db):
+    """The Console path treats every spelling of the placeholder as unset."""
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default", account_label="default")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            await collector._primary_strategy(client)
+    assert collector.account_label == "API org"

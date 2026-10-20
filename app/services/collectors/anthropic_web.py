@@ -218,7 +218,9 @@ class AnthropicWebMixin:
                 )
                 _pending_tasks.add(task)
                 task.add_done_callback(_pending_tasks.discard)
-            self.account_label = identity_str
+            if not self.account_label or self.account_label.lower() == "default":
+                # A name the operator chose is theirs: never overwrite it.
+                self.account_label = identity_str
 
         # Tier discovery - use regex to extract pro/max/team and multiplier (e.g. 5x)
         # Check both account_data and org_data for rate_limit_tier
@@ -353,7 +355,7 @@ class AnthropicWebMixin:
                         "data_source": self.DATA_SOURCE_WEB,
                         "input_source": getattr(self, "_current_input_source", "unknown"),
                         "tier": tier,
-                        "account_label": identity_str,
+                        "account_label": self.account_label or identity_str,
                         "usage_url": "https://claude.ai/settings/usage",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
@@ -384,7 +386,7 @@ class AnthropicWebMixin:
                             "data_source": self.DATA_SOURCE_WEB,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
-                            "account_label": identity_str,
+                            "account_label": self.account_label or identity_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -439,7 +441,7 @@ class AnthropicWebMixin:
                             "data_source": self.DATA_SOURCE_WEB,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
-                            "account_label": identity_str,
+                            "account_label": self.account_label or identity_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -472,7 +474,7 @@ class AnthropicWebMixin:
                                 "data_source": self.DATA_SOURCE_WEB,
                                 "input_source": getattr(self, "_current_input_source", "unknown"),
                                 "tier": tier,
-                                "account_label": identity_str,
+                                "account_label": self.account_label or identity_str,
                                 "usage_url": "https://claude.ai/settings/usage",
                                 "updated_at": datetime.now(UTC).isoformat(),
                             }

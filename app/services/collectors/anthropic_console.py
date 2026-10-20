@@ -235,7 +235,7 @@ class AnthropicConsoleCollector(BaseCollector):
                 if not verified.organization_id or verified.usage is None:
                     return []
                 if verified.account_label and (
-                    not self.account_label or self.account_label == "Default"
+                    not self.account_label or self.account_label.lower() == "default"
                 ):
                     # Console credit is shared by every member of the organization,
                     # so the organization names the account, not the signed-in member.

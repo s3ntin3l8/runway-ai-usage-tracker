@@ -370,7 +370,12 @@ every member shares its credit, so the organization's name names it.
 
 The name is written to `ProviderConfig.account_label` when the account row is
 created, and an `account_label` nobody set is filled in on a later poll. A
-label the operator chose is never overwritten.
+label the operator chose is never overwritten — neither in the row nor in the
+collector that publishes the account's cards.
+
+A card still reports the identity it proved — a subscription's member email, a
+Console organization's name — because that identity is what keys the card to its
+account. The name the operator chose is the account's own.
 
 The billing model is read off the shape of the cards the account publishes: a
 card reporting a percentage of a limit describes a subscription, a card
