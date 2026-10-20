@@ -17,9 +17,9 @@ The Claude collector supports multiple authentication and data collection method
 
 1.  **OAuth Token (Preferred)**:
     *   **Method 1**: Set the `CLAUDE_CODE_OAUTH_TOKEN` environment variable.
-    *   **Method 2 (Auto-discovered by the sidecar)**: Log in via the `claude` CLI and run the sidecar on that machine; the server never reads these files from its own host (`make dev` alone does not see them; use `make dev-all`). Standard Claude Code stores the token in `~/.claude/.credentials.json` and account identity in `~/.claude.json`. The sidecar pairs those files for identity discovery; custom credential files must contain their own `oauthAccount` identity or they remain available for assignment in Fleet. Other installations may use `~/.config/claude/oauth_creds.json` or macOS Keychain.
+    *   **Method 2 (Auto-discovered by the sidecar)**: Log in via the `claude` CLI and run the sidecar on that machine; the server never reads these files from its own host (`make dev` alone does not see them; use `make dev-all`). On Linux, Claude Code stores the token in `~/.claude/.credentials.json` and account identity in `~/.claude.json`. On macOS, Keychain is the default credential store; `.credentials.json` is a fallback, not a required duplicate. The sidecar pairs those files for identity discovery; custom credential files must contain their own `oauthAccount` identity or they remain available for assignment in Fleet. Other installations may use `~/.config/claude/oauth_creds.json` or macOS Keychain.
     *   When the discovered email matches an enabled Claude account, Runway records the host-specific origin mapping as `identity_claim` in Fleet's Credential Mappings. Unmatched credentials remain pending for operator assignment.
-    *   **Method 3 (Auto-discovered, macOS only)**: OAuth token stored in macOS Keychain.
+    *   **Method 3 (Auto-discovered, macOS only)**: Claude Code OAuth tokens stored in macOS Keychain, including configured-directory service variants. The sidecar selects the current macOS Keychain account and forwards expiry.
     *   **Details**: See [Primary: Hybrid (Statusline + OAuth API)](#primary-hybrid-statusline--oauth-api) and [Configuration section](#configuration).
 
 2.  **Statusline File**:
@@ -228,3 +228,31 @@ Automatic discovery is tracked in
 remaining native-source acceptance in
 [#672](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/672).
 Manual-cookie connections remain supported independently.
+
+
+### macOS Desktop OAuth discovery
+
+The sidecar reads Claude Desktop's `config.json` under its Application Support directory.
+It decrypts the observed `oauth:tokenCacheV2` and legacy `oauth:tokenCache` layouts
+using the process-cached `Claude Safe Storage` key, shared with Desktop cookie discovery.
+The first Desktop key lookup allows 30 seconds for a macOS prompt. Denial or timeout
+suppresses further lookups until sidecar restart. Tokens themselves are reread each cycle.
+
+V2 slots take precedence, including removed slots. Identical access tokens are deduplicated;
+independent account/client/organization/scope slots retain separate machine-bound origins.
+The sidecar forwards access tokens and millisecond expiry, never Desktop refresh tokens.
+`RUNWAY_CLAUDE_DESKTOP_CREDENTIALS=0` disables both Desktop OAuth and cookie discovery.
+
+The server checks the holder profile, its UUID against the cache binding, and readable
+quota before activating any automatically discovered native OAuth source. Every native
+OAuth collection rechecks identity and carries an exact-generation proof through persistence.
+Changed inferred native logins re-enter verification; explicit source assignments remain
+binding and a holder mismatch fails closed. All verified accounts connect automatically.
+OAuth sources are preferred to cookies at equal operator priority; independent cookie
+sources remain available for fallback. 403, rate limiting and transport errors do not
+turn an unverified cache entry into a working connection.
+
+Desktop and the CLI own renewal. This read-only path issues no refresh request or
+credential write. It does not collect chat contents or exact token-consumption events.
+Desktop OAuth implementation/acceptance is tracked in #679; CLI variants in #673,
+remaining native browser/store acceptance in #672, and renewal/write-back in #526.

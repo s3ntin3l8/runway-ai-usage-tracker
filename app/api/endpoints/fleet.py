@@ -100,6 +100,8 @@ _INGEST_CREDENTIAL_KEYS = frozenset(
         "id_token",
         "expiry_date",
         "client_id",
+        "oauth_account_uuid",
+        "oauth_read_only",
         "xai_access",
         "xai_refresh",
         "cli_access_token",
@@ -235,6 +237,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     card.metadata and card.metadata.get("identity_pending") is True
                 ) or bool(credential_origin and payload.sidecar_id and not acc_id)
                 verified_tag = None
+                tagged = None
                 if identity_pending and credential_origin and payload.sidecar_id:
                     # A verified identity can race one more heartbeat with
                     # stale pending metadata. Trust only the durable tag for
@@ -323,6 +326,33 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     }
 
                 if provider_tokens:
+                    if (
+                        provider_id == "anthropic"
+                        and provider_tokens.get("oauth_read_only") == "1"
+                        and credential_origin
+                        and (
+                            tagged is None
+                            or tagged.set_by
+                            in (None, "identity_claim", "identity_verification", "rotation")
+                        )
+                    ):
+                        from app.services.credential_sources import sidecar_source_id
+
+                        # Native slots survive login changes. A previous inferred tag
+                        # cannot prove a newly arrived bearer (or re-resolve one still
+                        # pending). Keep it isolated until profile+quota verification.
+                        native_source_id = sidecar_source_id(
+                            payload.sidecar_id or "local", credential_origin
+                        )
+                        still_pending = any(
+                            candidate["source_id"] == native_source_id
+                            for candidate in await token_cache.get_pending_sources(provider_id)
+                        )
+                        if still_pending or not await _bundle_holds(
+                            provider_id, acc_id or "default", native_source_id, provider_tokens
+                        ):
+                            identity_pending = True
+                            acc_id = "default"
                     tokens_to_store.append(
                         (
                             provider_id,

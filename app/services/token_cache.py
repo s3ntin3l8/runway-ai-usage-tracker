@@ -53,6 +53,8 @@ _OAUTH_CREDENTIAL_KEYS = {
     "cli_device_id",
     "expiry_date",
     "client_id",
+    "oauth_account_uuid",
+    "oauth_read_only",
     "xai_access",
     "xai_refresh",
 }

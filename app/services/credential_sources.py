@@ -62,6 +62,7 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 _LOGIN_HINTS = {
+    "Claude Desktop": "sign in again in Claude Desktop",
     "Codex CLI": "run `codex login`",
     "OpenCode": "run `opencode auth login`",
     "GitHub CLI": "run `gh auth login`",
@@ -130,6 +131,8 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
         return OriginDisplay("cookie", "Browser cookie", app="Browser")
     if value.startswith("keychain:"):
         service = value.split(":", 1)[1].split("#", 1)[0]
+        if service.startswith("Claude Desktop/oauth/"):
+            return OriginDisplay("keychain", "Desktop OAuth", app="Claude Desktop")
         app = "Claude Code" if service.startswith("Claude Code") else None
         return OriginDisplay("keychain", "Keychain entry", app=app)
     return OriginDisplay("sidecar", "Sidecar credential")

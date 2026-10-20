@@ -830,6 +830,10 @@ class CollectorManager:
             key=lambda candidate: (
                 self._access_token_expired(candidate),
                 candidate_priority(candidate),
+                bool(
+                    provider_id == "anthropic"
+                    and not candidate.get("tokens", {}).get("oauth_token")
+                ),
                 candidate["source_id"],
             )
         )
@@ -1104,7 +1108,7 @@ class CollectorManager:
 
         generation = getattr(collector, "verified_source_generation", None)
         organization = getattr(collector, "verified_organization_id", None)
-        if not generation or not organization:
+        if not generation:
             return cards
         proof = ClaudeSourceProof(
             provider_id,
@@ -1152,9 +1156,11 @@ class CollectorManager:
         self, provider_id: str, collector: Any, candidate: dict[str, Any]
     ) -> bool:
         organization_id = getattr(collector, "verified_organization_id", None)
-        if provider_id not in ("anthropic", "anthropic_console") or not organization_id:
+        if provider_id not in ("anthropic", "anthropic_console"):
             return True
         generation = getattr(collector, "verified_source_generation", None)
+        if not organization_id and not generation:
+            return True
         if not generation:
             return False
         return await token_cache.commit_verified_source(
@@ -1169,7 +1175,11 @@ class CollectorManager:
         )
 
     def _validate_claude_publication(
-        self, provider_id: str, account_id: str, organization_id: str, candidate: dict[str, Any]
+        self,
+        provider_id: str,
+        account_id: str,
+        organization_id: str | None,
+        candidate: dict[str, Any],
     ) -> bool:
         from sqlmodel import Session
 
@@ -1188,7 +1198,7 @@ class CollectorManager:
         session: Any,
         provider_id: str,
         account_id: str,
-        organization_id: str,
+        organization_id: str | None,
         candidate: dict[str, Any],
     ) -> bool:
         from sqlmodel import select
@@ -1228,7 +1238,7 @@ class CollectorManager:
         session: Any,
         provider_id: str,
         account_id: str,
-        organization_id: str,
+        organization_id: str | None,
         *,
         allow_selection: bool = False,
     ) -> bool:
@@ -1245,9 +1255,14 @@ class CollectorManager:
             row = ProviderConfig(provider_id=provider_id, account_id=account_id)
         if (not row.enabled or row.archived) and not allow_selection:
             return False
-        if row.claude_organization_id not in (None, organization_id) and not allow_selection:
+        if (
+            organization_id
+            and row.claude_organization_id not in (None, organization_id)
+            and not allow_selection
+        ):
             return False
-        row.claude_organization_id = organization_id
+        if organization_id:
+            row.claude_organization_id = organization_id
         session.add(row)
         return True
 
