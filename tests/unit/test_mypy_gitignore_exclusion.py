@@ -11,6 +11,7 @@ bundle, so only local checkouts ever hit it.
 from __future__ import annotations
 
 import io
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -28,6 +29,16 @@ def _git(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[st
         text=True,
         check=False,
     )
+
+
+@pytest.fixture
+def git_checkout() -> None:
+    """Skip when git is missing or the tree is not a checkout (sdist, image)."""
+    if shutil.which("git") is None:
+        pytest.skip("git is required to inspect the tracked sources")
+    listed = _git("ls-files")
+    if listed.returncode != 0 or not listed.stdout.split():
+        pytest.skip("not a git checkout - there is nothing to assert")
 
 
 def _gitignore_lines() -> set[str]:
@@ -48,7 +59,9 @@ def test_mypy_honours_gitignore(monkeypatch):
 
     monkeypatch.chdir(ROOT)
     stdout, stderr = io.StringIO(), io.StringIO()
-    _, options = process_options([str(ROOT)], stdout=stdout, stderr=stderr)
+    # require_targets=False keeps the check independent of the source tree:
+    # only the parsed configuration matters here.
+    _, options = process_options([], stdout=stdout, stderr=stderr, require_targets=False)
 
     assert options.exclude_gitignore is True
     assert "Unrecognized option" not in stdout.getvalue() + stderr.getvalue()
@@ -60,7 +73,7 @@ def test_pyinstaller_output_roots_stay_gitignored(root: str):
     assert root in _gitignore_lines()
 
 
-def test_no_tracked_python_source_is_gitignored():
+def test_no_tracked_python_source_is_gitignored(git_checkout: None):
     """Honouring .gitignore must never hide a tracked source file from mypy."""
     tracked = _git("ls-files", "--", "*.py", "*.pyi").stdout.split()
     assert tracked, "expected tracked Python sources in the checkout"
@@ -71,7 +84,7 @@ def test_no_tracked_python_source_is_gitignored():
     assert ignored == []
 
 
-def test_the_generated_bundle_really_is_excluded():
+def test_the_generated_bundle_really_is_excluded(git_checkout: None):
     """A file under the ignored bundle must match the .gitignore rules."""
     result = _git("check-ignore", "--no-index", "-v", "--", "dist/Runway Sidecar.app/x.py")
     assert result.returncode == 0, "dist/ is expected to be gitignored"
