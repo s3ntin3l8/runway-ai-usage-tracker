@@ -1091,6 +1091,7 @@ class CollectorManager:
             "expected_generation": generation,
             "organization_id": getattr(collector, "verified_organization_id", None),
             "account_label": getattr(collector, "verified_account_label", None),
+            "billing_type": getattr(collector, "verified_billing_type", None),
         }
 
     @staticmethod
@@ -1243,6 +1244,7 @@ class CollectorManager:
         *,
         allow_selection: bool = False,
         account_label: str | None = None,
+        billing_type: str | None = None,
     ) -> bool:
         from sqlmodel import select
 
@@ -1270,6 +1272,10 @@ class CollectorManager:
             # Name a discovered account after what it is. An operator's own label
             # is never overwritten; an account that never got one still deserves it.
             row.account_label = account_label
+        if created and billing_type:
+            # A detected billing type only ever describes a new account: an
+            # existing row's type is the operator's to choose.
+            row.billing_type = billing_type
         session.add(row)
         return True
 
@@ -1290,6 +1296,7 @@ class CollectorManager:
         collector.verified_organization_id = None
         collector.verified_source_generation = None
         collector.verified_account_label = None
+        collector.verified_billing_type = None
 
     async def _cookie_switched_account(
         self,
@@ -1573,6 +1580,7 @@ class CollectorManager:
         organization_id: str | None = None,
         allow_selection: bool = False,
         account_label: str | None = None,
+        billing_type: str | None = None,
     ) -> bool:
         """Commit a proved identity and move the same credential generation atomically."""
 
@@ -1586,6 +1594,7 @@ class CollectorManager:
                 organization_id=organization_id,
                 allow_selection=allow_selection,
                 account_label=account_label,
+                billing_type=billing_type,
             )
 
         if expected_generation is not None:
@@ -1619,6 +1628,7 @@ class CollectorManager:
         organization_id: str | None = None,
         allow_selection: bool = False,
         account_label: str | None = None,
+        billing_type: str | None = None,
     ) -> bool:
         from datetime import UTC, datetime
 
@@ -1679,6 +1689,7 @@ class CollectorManager:
                 organization_id,
                 allow_selection=allow_selection,
                 account_label=account_label,
+                billing_type=billing_type,
             ):
                 return False
             existing_target = session.exec(

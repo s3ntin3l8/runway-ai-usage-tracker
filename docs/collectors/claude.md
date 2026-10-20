@@ -201,6 +201,12 @@ member, so its email names it. A Console account is the organization itself —
 every member shares its credit — so the organization's name names it, and one
 organization keeps that name no matter which member signed in last.
 
+The billing model follows the cards the account publishes: a plan publishes
+percentage quotas and bills as a subscription, a Console account publishes a
+prepaid balance and bills as pay-as-you-go. Both are detected when the account
+is first recorded. A name or billing type set in Settings afterwards is never
+overwritten by a later poll.
+
 ### Manual fallback
 
 Choose **Claude → Console API credits** when adding a connection. Sign in at

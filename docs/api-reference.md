@@ -372,6 +372,13 @@ The name is written to `ProviderConfig.account_label` when the account row is
 created, and an `account_label` nobody set is filled in on a later poll. A
 label the operator chose is never overwritten.
 
+The billing model is read off the shape of the cards the account publishes: a
+card reporting a percentage of a limit describes a subscription, a card
+reporting a currency balance describes pay-as-you-go, and a quota card wins
+when an account publishes both. It is written to `ProviderConfig.billing_type`
+when the account row is created. An existing row keeps the type the operator
+chose — change it in Settings, and no later poll undoes that.
+
 ### Native Claude OAuth token metadata
 
 Sidecar token cards may additionally carry `oauth_read_only: "1"` and

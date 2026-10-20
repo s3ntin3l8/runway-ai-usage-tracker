@@ -956,6 +956,7 @@ async def test_promotion_names_a_discovered_claude_account(monkeypatch):
         org_id,
         organization_id=org_id,
         account_label="API org",
+        billing_type="pay_as_you_go",
     )
 
     with Session(engine) as session:
@@ -966,6 +967,7 @@ async def test_promotion_names_a_discovered_claude_account(monkeypatch):
             )
         ).one()
     assert row.account_label == "API org"
+    assert row.billing_type == "pay_as_you_go"
     assert row.claude_organization_id == org_id
     await cache.reset()
 
@@ -1001,6 +1003,7 @@ async def test_promotion_never_overwrites_the_operators_own_account_details(monk
                 provider_id="anthropic_console",
                 account_id=org_id,
                 account_label="Team wallet",
+                billing_type="subscription",
             )
         )
         session.commit()
@@ -1030,6 +1033,7 @@ async def test_promotion_never_overwrites_the_operators_own_account_details(monk
         org_id,
         organization_id=org_id,
         account_label="API org",
+        billing_type="pay_as_you_go",
     )
 
     with Session(engine) as session:
@@ -1040,4 +1044,5 @@ async def test_promotion_never_overwrites_the_operators_own_account_details(monk
             )
         ).one()
     assert row.account_label == "Team wallet"
+    assert row.billing_type == "subscription"
     await cache.reset()

@@ -664,6 +664,8 @@ async def test_verified_subscription_account_is_named_after_its_member(claude_db
     async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
         result = await verify_claude_cookie(client, "anthropic", "test-cookie")
     assert result.account_label == "person@example.com"
+    # A plan publishes percentage quotas, so it bills by subscription.
+    assert result.billing_type == "subscription"
 
 
 @pytest.mark.asyncio
@@ -681,6 +683,8 @@ async def test_verified_console_account_is_named_after_its_organization(claude_d
         result = await verify_claude_cookie(client, "anthropic_console", "test-cookie")
     # Console credit is shared by the whole organization, so the organization names it.
     assert result.account_label == "API org"
+    # A prepaid balance is spend, not a quota.
+    assert result.billing_type == "pay_as_you_go"
 
 
 @pytest.mark.asyncio
@@ -703,6 +707,7 @@ async def test_console_cards_carry_the_organization_name(claude_db):
         async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
             result = await collector._primary_strategy(client)
     assert collector.account_label == "API org"
+    assert collector.verified_billing_type == "pay_as_you_go"
     assert result[0]["remaining"] == "$12.34"
 
 

@@ -10,6 +10,7 @@ from uuid import UUID
 
 import httpx
 
+from app.services.billing_type import detect_billing_type
 from app.services.collectors.anthropic_console import (
     CONSOLE_URL,
     ConsoleAPIError,
@@ -142,8 +143,9 @@ class ClaudeVerification:
     org_data: dict[str, Any] | None = None
     usage: dict[str, Any] | None = None
     # Human name of the verified account (a member's email, or the organization's
-    # name for Console credit).
+    # name for Console credit) and the billing model its cards describe.
     account_label: str | None = None
+    billing_type: str | None = None
 
     @property
     def selection_required(self) -> bool:
@@ -178,6 +180,7 @@ async def verify_claude_cookie(
     if not isinstance(orgs, list):
         raise ConsoleAPIError("Invalid Claude organizations", "parse_error")
     usable: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    evidence: dict[str, dict[str, Any]] = {}
     for org in orgs:
         if not isinstance(org, dict):
             result.complete = False
@@ -191,7 +194,8 @@ async def verify_claude_cookie(
             )
             usage = await claude_get(client, provider, path, cookie)
             if provider == "anthropic_console":
-                parse_console_balance(usage)
+                # Console publishes a prepaid balance: spend-shaped, never a quota.
+                card = parse_console_balance(usage)
             else:
                 if not isinstance(usage, dict):
                     raise ValueError("Missing quota")
@@ -206,6 +210,13 @@ async def verify_claude_cookie(
                     for value in quota_values
                 ):
                     raise ValueError("Invalid quota")
+                # A claude.ai plan publishes percentage-of-limit windows, so its
+                # cards are quota-shaped whatever the window names say.
+                card = {
+                    "unit_type": "percent",
+                    "used_value": max(float(value) for value in quota_values if value is not None),
+                    "limit_value": 100.0,
+                }
         except ConsoleAPIError as exc:
             if exc.error_type == "auth_failed":
                 raise
@@ -216,6 +227,7 @@ async def verify_claude_cookie(
             result.complete = False
             continue
         usable[org_id] = (org, usage)
+        evidence[org_id] = card
         result.organizations.append(
             {"id": org_id, "name": str(org.get("name") or "Claude organization")}
         )
@@ -229,6 +241,7 @@ async def verify_claude_cookie(
             result.account_id = choice
         label = claude_account_label(provider, result.org_data, result.account)
         result.account_label = label or None
+        result.billing_type = detect_billing_type([evidence[choice]])
     return result
 
 
@@ -301,6 +314,7 @@ async def verify_collector_cookie(
         collector.verified_identity = result.account_id
         collector.verified_organization_id = result.organization_id
         collector.verified_account_label = result.account_label
+        collector.verified_billing_type = result.billing_type
         # Every attempt starts at default; only the exact pinned source may establish it.
         if not collector.account_id or collector.account_id == "default":
             collector.account_id = result.account_id
