@@ -28,8 +28,10 @@ on:
       # directories the sidecar actually imports from; the filter stays
       # narrower than 'app/**' so a server-only change does not spend a
       # sidecar build.
+      - 'app/__init__.py'
       - 'app/core/**'
       - 'app/models/**'
+      - 'app/services/__init__.py'
       - 'app/services/model_normalization.py'
       - '.github/workflows/sidecar-build.yml'
       - '.github/workflows/sidecar-edge.yml'

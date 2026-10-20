@@ -365,7 +365,9 @@ Workflows live in `.github/workflows/`.
   the cost bucket every collected event is billed under), so a change to
   those modules has to rebuild the sidecar too;
   `tests/unit/test_sidecar_edge_app_paths.py` computes the bundled `app/`
-  import closure and fails when the workflow's `paths:` filter stops
+  import closure — from every spec's entry point and declared hiddenimports,
+  following relative imports, and counting the package `__init__.py` files
+  the bundle carries — and fails when the workflow's `paths:` filter stops
   covering it.
 - **`hermes.yml`** — automated PR review. Auto-reviews exactly once per PR
   (`opened` when non-draft, or `ready_for_review`); on-demand re-reviews via
