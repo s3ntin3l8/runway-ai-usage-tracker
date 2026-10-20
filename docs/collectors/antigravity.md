@@ -146,12 +146,15 @@ Workspace path (→ `cwd`) comes from `trajectory_metadata_blob` table, field 7,
 
 The raw model id (f1.19) is authoritative whenever present. Claude slugs (including aliases like `anthropic-claude-sonnet-4-6`) collapse to their family (`claude-sonnet-4-6` → `claude-sonnet`); Gemini and other non-claude slugs ignore the `used_claude*` KV flags (they latch per-conversation once Claude is touched and otherwise stamp Gemini-raw turns as `claude-opus`). When raw is empty, the display path runs first; flags are only consulted if that path would return `unknown` (defensive — never observed with a flag set). Family + minor version are then resolved from the raw id and display name (a 3.x minor from either field wins, display first; otherwise display preferred for the minor). Gemini 3.x minor versions get their own cost bucket when seeded; unseeded 3.x minors clamp to the major bucket; flash-lite stays major-only; non-family raw ids pass through verbatim.
 
+Gemini 4 Argon is priced as one family under its own canonical id and bypasses the tier buckets: the raw id carries a `-trial` suffix (`gemini-4-argon-trial`) that must not survive into the stored `model_id`, so the whole `gemini-4-argon*` family normalizes to `gemini-4-argon` (issue #686). The display name (`Gemini 4 Argon (High)`) is used when the raw id is empty or carries no family of its own; a look-alike such as `gemini-4-argonoid` is a different model and passes through verbatim.
+
 | Condition | `model_id` |
 |---|---|
 | raw contains `claude` + `sonnet` | `claude-sonnet` |
 | raw contains `claude` (opus, haiku, other unseeded tiers) | `claude-opus` (accepted overbill vs $0 — issue #302) |
 | empty raw + empty/unknown display, `used_claude_conservative=true` | `claude-opus` |
 | empty raw + empty/unknown display, `used_claude=true` (no conservative) | `claude-sonnet` |
+| Gemini 4 Argon (`gemini-4-argon*` raw, or `Gemini 4 Argon` display) | `gemini-4-argon` |
 | family flash-lite, 3.x signal | `flash-lite-3` (never versioned) |
 | family flash/pro, seeded 3.x minor (flash 3.5–3.8, pro 3.1) | `flash-3.5` / `flash-3.6` / `flash-3.7` / `flash-3.8` / `pro-3.1` |
 | family flash/pro, 3.x minor without its own pricing row | `flash-3` / `pro-3` (clamped) |
@@ -165,7 +168,7 @@ The raw model id (f1.19) is authoritative whenever present. Claude slugs (includ
 
 **Since-watermark:** DBs are filtered by file mtime `> since`. No per-row timestamp; DB mtime is used as approximate event timestamp (spread by `row_idx × 1ms` for stable ordering). Server deduplicates by `event_id = "<conversation_id>|gen_<idx>"`.
 
-**Backfill:** rows ingested before minor-version preservation are repaired by `scripts/reclassify_antigravity_models.py` (run with the server stopped), then repriced via `scripts/recost_events.py --provider antigravity`.
+**Backfill:** rows ingested before minor-version preservation are repaired by `scripts/reclassify_antigravity_models.py` (run with the server stopped), then repriced via `scripts/recost_events.py --provider antigravity`. Rows ingested before the Argon family was recognized are repaired by `scripts/backfill_argon_models.py`, which rewrites the stored `model_id` to `gemini-4-argon` and re-prices the event in the same pass.
 
 ## Pricing
 
@@ -173,6 +176,7 @@ Antigravity events use `provider_id="antigravity"` pricing rows (independent of 
 
 | `model_id` | Rate basis |
 |---|---|
+| `gemini-4-argon` | Gemini 4 Argon — $2.00 / $10.00 / $0.10 through 2026-11-30, $4.00 / $20.00 / $0.20 from 2026-12-01 |
 | `flash-3.5` | Gemini 3.5 Flash — $1.50 / $9.00 / $0.15 |
 | `flash-3.6` | Gemini 3.6 Flash — $1.50 / $7.50 / $0.15 |
 | `flash-3.7` | Gemini 3.7 Flash — $0.75 / $3.75 / $0.075 |
@@ -227,5 +231,7 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 | `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
 | `scripts/sidecar_pkg/keep_alive.py` | Optional `--keep-alive` thread (`agy models` renewal) |
 | `scripts/reclassify_antigravity_models.py` | One-shot repair for pre-version-preservation rows |
+| `scripts/backfill_argon_models.py` | One-shot repair for pre-Argon-family rows (rewrites the stored model id and re-prices) |
+| `app/services/maintenance/argon_retag.py` | Shared logic behind the Argon repair script |
 | `scripts/recost_events.py` | Reprice after pricing-seed changes (`--provider antigravity`) |
 | `app/services/pricing_seed.py` | Antigravity pricing rows |

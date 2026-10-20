@@ -159,17 +159,10 @@ jobs:
 
       - name: Build NSIS installer (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # VERSION / PRODUCT_VERSION_QUAD from package.json (edge-stamped above).
-          python sidecar_app/spec/win_version.py | ForEach-Object {
-            $k, $v = $_ -split '=', 2
-            Set-Variable -Name $k -Value $v
-          }
-          # OUTFILE is resolved relative to the .nsi's directory.
-          makensis -V2 "-DVERSION=$VERSION" "-DPRODUCT_VERSION_QUAD=$PRODUCT_VERSION_QUAD" `
-            "-DOUTFILE=..\..\${{ steps.names.outputs.installer }}" installer/windows/runway-sidecar.nsi
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        # One helper builds the installer everywhere: the file name comes from
+        # scripts/sidecar_pkg/asset_names.py and the output path is computed
+        # relative to the .nsi, so this leg cannot drift from the PR gate.
+        run: python -m scripts.build_windows_installer --label "${{ inputs.label }}"
 
       # ---------------------------------------------------------------- Linux
       - name: Package self-update payload (Linux)
