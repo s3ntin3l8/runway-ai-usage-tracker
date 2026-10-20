@@ -51,6 +51,12 @@ export const WARNING_PCT = 70;
 
 // A variant whose last segment is a short hex hash — the collision-proof id
 // of a quota pool we do not have an explicit name for.
+//
+// The shape is the server's contract: `app/services/collectors/antigravity_api.py`
+// appends a 6-hex-char sha256 prefix to the pool key of an unmapped quota
+// group (`_pool_slug`). Keep both sides in step — if the hash length changes
+// there, this pattern stops matching and the chip falls back to showing the
+// raw hashed slug.
 const HASHED_VARIANT = /-[0-9a-f]{6}$/;
 
 export function statusForPct(pct: number | null | undefined): QuotaStatus {

@@ -127,10 +127,18 @@ def group_display_name(group: dict[str, Any]) -> str:
     return "unknown"
 
 
-def pool_label(pool: str) -> str:
-    """Human label for a pool key (known pools have a fixed one)."""
+def pool_label(pool: str, group_name: str = "") -> str:
+    """Human label for a pool key.
+
+    Known pools have a fixed label. An unmapped pool keeps the API's own
+    spelling of its name ("Claude & GPT models" stays "Claude & GPT models",
+    not the title-cased "Claude Gpt Models") — falling back to the readable
+    part of the pool key when the group had no name at all.
+    """
     if pool in POOL_LABELS:
         return POOL_LABELS[pool]
+    if group_name:
+        return group_name
     # Unmapped pools carry a trailing hash (their collision-proof id) — the
     # label stays the readable part of it.
     return re.sub(r"-[0-9a-f]{6}$", "", pool).replace("-", " ").title()
@@ -454,7 +462,7 @@ class AntigravityApiMixin:
                 detail = f"{detail} — {description}"
 
             card: dict[str, Any] = {
-                "service_name": pool_label(pool),
+                "service_name": pool_label(pool, group_name),
                 "icon": "🛸",
                 "remaining": f"{pct_used:.1f}%",
                 "unit": "used",
