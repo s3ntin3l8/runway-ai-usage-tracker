@@ -64,11 +64,14 @@ name, else its first bucket id), so two groups that differ only in case or punct
 ("Gemini 5 Code" vs "gemini 5-code") still land in different pools. The hash is an id, not a
 label: the card shows the readable name ("Some Future Pool").
 The known groups are matched by anchored patterns (not loose substrings): a group merely
-*containing* "gemini"/"claude"/"gpt" is a new pool, not a member of an existing one. The one
-rename the mapping tolerates is the Argon version number ("Gemini 4 Argon" → "Gemini 5 Argon");
-any other rename shows up as a new, slug-named pool plus the warning, and the old row is retired
-with the next complete snapshot. A group without a display name falls back to its bucket ids,
-so two unnamed groups cannot land in the same pool either.
+*containing* "gemini"/"claude"/"gpt" is a new pool, not a member of an existing one. The patterns
+tolerate the spellings Google is known to use — a trailing "Pool" ("Gemini Models Pool"), "&"
+for "and" ("Claude & GPT models"), a version number on the Argon pool ("Gemini 4 Argon" →
+"Gemini 5 Argon") — so a cosmetic rename does not re-key a live pool (which would split its
+history and fire the wrong warning). Any other rename shows up as a new, slug-named pool plus
+the warning, and the old row is retired with the next complete snapshot. A group without a
+display name falls back to its bucket ids, so two unnamed groups cannot land in the same pool
+either.
 
 The server logs `Antigravity quota summary returned no Gemini pool for tier '<tier>'` when a
 tier comes back without a Gemini pool (the fingerprint of a User-Agent that fell behind). The

@@ -51,12 +51,14 @@ POOL_LABELS: dict[str, str] = {
 # The known quota groups, matched by *anchored* patterns. Matching loosely
 # (a "gemini" substring test) would fold an unknown pool into a known one —
 # and two pools sharing a `variant` share a `latest_usage` row, where the
-# second one is silently dropped. The Argon pattern tolerates a version bump
-# ("Gemini 4 Argon" → "Gemini 5 Argon") without swallowing any other pool.
+# second one is silently dropped. The patterns tolerate the spellings Google
+# is known to use (a trailing "Pool", "&" for "and", a version number on the
+# Argon pool) so a cosmetic rename does not re-key a live pool — anything
+# else is a new pool and gets its own key.
 _KNOWN_GROUP_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^gemini(?:\s+[\d.]+)?\s+argon$"), POOL_ARGON),
-    (re.compile(r"^gemini\s+models?$"), POOL_GEMINI),
-    (re.compile(r"^claude\s+and\s+gpt\s+models?$"), POOL_FRONTIER),
+    (re.compile(r"^gemini\s+models?(?:\s+pool)?$"), POOL_GEMINI),
+    (re.compile(r"^claude\s+(?:and|&)\s+gpt\s+models?(?:\s+pool)?$"), POOL_FRONTIER),
 )
 
 

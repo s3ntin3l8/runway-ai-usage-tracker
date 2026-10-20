@@ -403,6 +403,16 @@ class TestAntigravityQuotaPools:
         # cannot swallow a different pool).
         assert pool_family("Gemini 5 Argon") == "argon"
 
+    def test_pool_family_tolerates_the_spellings_google_uses(self):
+        """A cosmetic rename must not re-key a live pool (that splits its
+        history and fires the wrong warning)."""
+        from app.services.collectors.antigravity_api import pool_family
+
+        assert pool_family("Gemini Models Pool") == "gemini"
+        assert pool_family("Claude & GPT models") == "frontier"
+        assert pool_family("Claude and GPT models pool") == "frontier"
+        assert pool_family("Gemini 4.5 Argon") == "argon"
+
     def test_a_new_pool_named_like_a_known_one_does_not_join_it(self):
         """Loose substring matching would fold a new pool into a known one —
         and two pools sharing a variant share a latest_usage row, where the
@@ -583,7 +593,7 @@ class TestAntigravityQuotaPools:
     @pytest.mark.asyncio
     async def test_unmapped_pool_keeps_the_api_spelling_of_its_name(self, mock_http_client):
         """The card name keeps the API's own spelling — a title-cased slug
-        would mangle acronyms ("Claude & GPT models" → "Claude Gpt Models")."""
+        would mangle acronyms ("Gemini & GPT models" → "Gemini Gpt Models")."""
         from app.services.collectors import antigravity_api
 
         antigravity_api._WARNED_UNKNOWN_POOLS.clear()
@@ -597,9 +607,9 @@ class TestAntigravityQuotaPools:
         qs.json.return_value = {
             "groups": [
                 {
-                    "displayName": "Claude & GPT models",
+                    "displayName": "Gemini & GPT models",
                     "buckets": [
-                        {"bucketId": "3p2-weekly", "window": "weekly", "remainingFraction": 1},
+                        {"bucketId": "gtp-weekly", "window": "weekly", "remainingFraction": 1},
                     ],
                 },
             ]
@@ -613,7 +623,7 @@ class TestAntigravityQuotaPools:
         ):
             result = await collector._collect_via_api(mock_http_client)
 
-        assert result[0]["service_name"] == "Claude & GPT models"
+        assert result[0]["service_name"] == "Gemini & GPT models"
 
     @pytest.mark.asyncio
     async def test_group_without_a_display_name_keeps_its_own_pool(self, mock_http_client):
