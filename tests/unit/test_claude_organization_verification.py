@@ -818,3 +818,17 @@ async def test_console_card_fills_in_a_placeholder_name(claude_db):
         async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
             await collector._primary_strategy(client)
     assert collector.account_label == "API org"
+
+
+def test_a_name_never_carries_the_card_details_marker():
+    """A name a human reads must be a name, not the card detail's marker."""
+    from app.services.claude_verification import (
+        claude_account_label,
+        claude_identity_string,
+    )
+
+    org_data = {"name": "Acme", "membership": {}}
+    assert claude_account_label("anthropic", org_data) == "Acme"
+    assert claude_account_label("anthropic_console", org_data) == "Acme"
+    # The card detail keeps the marker, so the tagger can tell it apart.
+    assert claude_identity_string(org_data) == "org: Acme"

@@ -53,10 +53,14 @@ def claude_account_label(
         # The organization is the account, and its bare name is what the manual
         # Console path already shows in Settings.
         return str((org_data or {}).get("name") or "")
-    # A subscription belongs to one member, so their email names it. The
-    # identity string is the same answer, marked, when the member is unknown —
-    # one source of truth, so the two can never drift apart.
-    return claude_identity_string(org_data, account_data)
+    # A subscription belongs to one member, so their email names it.
+    email = claude_member_email(org_data, account_data)
+    if email:
+        return email
+    # A subscription always reports a member email; if that ever stops being
+    # true, the organization's bare name names the account. The "org: " marker
+    # belongs to the card detail, not to a name a human reads in Settings.
+    return str((org_data or {}).get("name") or "")
 
 
 def claude_identity_string(
