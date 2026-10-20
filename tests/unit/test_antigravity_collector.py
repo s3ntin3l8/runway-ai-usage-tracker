@@ -5,6 +5,10 @@ no id_token, so the sidecar-pushed token is cached under a refresh-token-derived
 hash, while the collector's account_id is seeded with the email from LatestUsage.
 The collector must still find the token (newest-entry fallback) without adopting
 the hash, and must surface an auth error card when the token is rejected.
+
+Also covers the User-Agent's version: the Code Assist API gates which quota
+pools it serves on it, so the collector builds it from the version the sidecar
+reported with the token (#687).
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,6 +17,7 @@ import httpx
 import pytest
 
 from app.services.collectors.antigravity import AntigravityCollector
+from app.services.collectors.antigravity_api import _UA_FLOOR_VERSION, build_user_agent
 from app.services.token_cache import token_cache
 
 
@@ -725,27 +730,27 @@ class TestAntigravityUserAgent:
 
     def test_user_agent_keeps_the_agy_prefix(self):
         """The prefix is the 403 gate: Google's ESF rejects anything else."""
-        from app.services.collectors.antigravity_api import _USER_AGENT
-
-        assert _USER_AGENT.startswith("antigravity/cli/")
+        assert build_user_agent().startswith("antigravity/cli/")
 
     def test_user_agent_version_unlocks_every_pool(self):
         """< 1.2 serves only the Claude/GPT pool, >= 1.3 serves all three."""
         import re
 
-        from app.services.collectors.antigravity_api import _USER_AGENT
+        from app.services.collectors.antigravity_api import _UA_FLOOR_VERSION
 
-        match = re.search(r"antigravity/cli/(\d+)\.(\d+)\.(\d+)", _USER_AGENT)
-        assert match, f"cannot read a version out of {_USER_AGENT!r}"
+        match = re.search(r"antigravity/cli/(\d+)\.(\d+)\.(\d+)", build_user_agent())
+        assert match, f"cannot read a version out of {build_user_agent()!r}"
         version = tuple(int(part) for part in match.groups())
         assert version >= (1, 3, 0), (
-            f"UA version {version} hides the Gemini/Argon pools — bump _USER_AGENT"
+            f"floor version {version} hides the Gemini/Argon pools — bump _UA_FLOOR_VERSION"
         )
+        # The floor is what an un-reported version falls back to, so it must
+        # itself be the version that unlocks every pool.
+        assert _UA_FLOOR_VERSION == ".".join(str(part) for part in version)
 
     @pytest.mark.asyncio
     async def test_quota_requests_send_the_agy_user_agent(self, mock_http_client):
         collector = AntigravityCollector(account_id="user@example.com")
-        from app.services.collectors.antigravity_api import _USER_AGENT
 
         lca = MagicMock(spec=httpx.Response)
         lca.status_code = 200
@@ -768,7 +773,48 @@ class TestAntigravityUserAgent:
 
         assert post.await_count == 2
         for call in post.await_args_list:
-            assert call.kwargs["headers"]["User-Agent"] == _USER_AGENT
+            # No version was reported with the token, so the User-Agent is the
+            # floor version's.
+            assert call.kwargs["headers"]["User-Agent"] == build_user_agent()
+
+    def test_falls_back_to_the_floor_when_nothing_was_reported(self):
+        """An older sidecar reports no version — the floor must still serve every pool."""
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent(None)
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent("")
+
+    def test_uses_the_version_the_sidecar_reported(self):
+        assert "antigravity/cli/1.5.0" in build_user_agent("1.5.0")
+
+    def test_never_reports_a_version_below_the_floor(self):
+        """An older CLI must not hide a pool Runway already surfaces."""
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent("1.0.0")
+
+    def test_ignores_a_garbled_version(self):
+        """The version ends up in an HTTP header — it must never carry text."""
+        ua = build_user_agent("1.4.3\r\nX-Injected: 1")
+        assert "\n" not in ua and "\r" not in ua
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_unicode_digits(self):
+        """httpx encodes headers as ASCII: a Unicode digit would raise there."""
+        ua = build_user_agent("1.٤.٩")
+        assert ua.isascii()
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_a_non_string(self):
+        """The version arrives over the ingest route — it is not a string until vetted."""
+        ua = build_user_agent(12345)
+        assert ua.isascii()
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_a_version_with_too_many_parts(self):
+        ua = build_user_agent("1.4.3.2")
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_an_absurdly_long_version(self):
+        """int() refuses a 4300-digit string; that must not escape the collector."""
+        ua = build_user_agent("9" * 5000)
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
 
 
 class TestAntigravityNoServerSideRefresh:
@@ -813,3 +859,113 @@ class TestAntigravityNoServerSideRefresh:
         from app.services.collectors.oauth_base import OAuthBaseCollector
 
         assert OAuthBaseCollector.REFRESHABLE is True
+
+
+class TestAntigravityReportedVersion:
+    """The version the sidecar reports travels with the token (#687)."""
+
+    @pytest.mark.asyncio
+    async def test_the_collector_sends_the_reported_version(self, mock_http_client):
+        """The version the sidecar reported travels with the token and reaches the header."""
+        await token_cache.reset()
+        try:
+            await token_cache.store(
+                "antigravity",
+                {"oauth_token": "ya29.live", "agy_version": "1.5.2"},
+                account_id="user@example.com",
+                source="dev-01",
+            )
+
+            collector = AntigravityCollector(account_id="user@example.com")
+            lca = MagicMock(spec=httpx.Response)
+            lca.status_code = 200
+            lca.json.return_value = {"cloudaicompanionProject": "proj-1"}
+            qs = MagicMock(spec=httpx.Response)
+            qs.status_code = 200
+            qs.json.return_value = {"groups": []}
+
+            with patch(
+                "app.services.collectors.antigravity_api.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[lca, qs],
+            ) as post:
+                await collector._collect_via_api(mock_http_client)
+
+            headers = post.call_args_list[0].kwargs["headers"]
+            assert "antigravity/cli/1.5.2" in headers["User-Agent"]
+        finally:
+            await token_cache.reset()
+
+    @pytest.mark.asyncio
+    async def test_the_collector_falls_back_when_no_version_was_reported(self, mock_http_client):
+        """A sidecar that predates the report must not break collection."""
+        await token_cache.reset()
+        try:
+            await token_cache.store(
+                "antigravity",
+                {"oauth_token": "ya29.live"},
+                account_id="user@example.com",
+                source="dev-01",
+            )
+
+            collector = AntigravityCollector(account_id="user@example.com")
+            lca = MagicMock(spec=httpx.Response)
+            lca.status_code = 200
+            lca.json.return_value = {"cloudaicompanionProject": "proj-1"}
+            qs = MagicMock(spec=httpx.Response)
+            qs.status_code = 200
+            qs.json.return_value = {"groups": []}
+
+            with patch(
+                "app.services.collectors.antigravity_api.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[lca, qs],
+            ) as post:
+                await collector._collect_via_api(mock_http_client)
+
+            headers = post.call_args_list[0].kwargs["headers"]
+            assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in headers["User-Agent"]
+        finally:
+            await token_cache.reset()
+
+    @pytest.mark.asyncio
+    async def test_a_stale_reported_version_is_cleared(self):
+        """A bundle without a version must not leave the previous one behind.
+
+        The collector instance is reused across cycles, so a stale, higher
+        version would otherwise claim capabilities the current bundle no
+        longer reports.
+        """
+        await token_cache.reset()
+        try:
+            import time
+
+            now_ms = int(time.time() * 1000)
+            # A bundle that reported a version, now expired.
+            await token_cache.store(
+                "antigravity",
+                {
+                    "oauth_token": "ya29.stale",
+                    "agy_version": "1.5.2",
+                    "expiry_date": str(now_ms - 1_000),
+                },
+                account_id="user@example.com",
+                source="dev-01",
+            )
+            collector = AntigravityCollector(account_id="user@example.com")
+            await collector._get_current_token()
+            assert collector._agy_version == "1.5.2"
+
+            # Another host pushed a bundle without a version. It is the newest
+            # usable entry, so the collector reads it and must drop the report
+            # it came with.
+            await token_cache.store(
+                "antigravity",
+                {"oauth_token": "ya29.fresh"},
+                account_id=None,
+                source="dev-02",
+            )
+            await collector._get_current_token()
+            assert collector._agy_version is None
+        finally:
+            await token_cache.reset()

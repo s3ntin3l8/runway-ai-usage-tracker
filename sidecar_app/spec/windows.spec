@@ -33,6 +33,7 @@ a = Analysis(
     + [
         "app.core.console",
         "app.core.kimi_device",
+        "app.core.version",
         "pystray._win32",
         "PIL.Image",
         "PIL.PngImagePlugin",
@@ -97,6 +98,7 @@ a = Analysis(
         "scripts.sidecar_pkg.xai_renewer",
         "scripts.sidecar_pkg.opencode_credentials",
         "scripts.sidecar_pkg.anthropic_renewer",
+        "scripts.sidecar_pkg.agy_version",
         "scripts.sidecar_pkg.codex_renewer",
         "scripts.sidecar_pkg.oauth_renewal",
         "scripts.sidecar_pkg.asset_names",
