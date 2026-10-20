@@ -840,15 +840,22 @@ def test_seed_minimax_m31_flash_resolves_for_the_lowercase_opencode_spelling():
 
 
 def test_seed_minimax_m31_flash_free_variant_has_no_row():
-    """The `-free` spelling stays unseeded on purpose — OpenCode's free route
+    """The `-free` spellings stay unseeded on purpose — OpenCode's free route
     is priced at $0, not at the M3.1-Flash API rate (see the Data Health
-    `unpriced_models` check, which excludes these outright)."""
+    `unpriced_models` check, which excludes these outright).
+
+    No row is seeded for either casing, and the cost calculator's
+    segment-trim fallback is skipped for free-tier ids, so neither spelling
+    can reach the paid row.
+    """
     s = _make_session()
     seed_pricing_table(s)
-    row = s.exec(
-        select(ProviderPricing).where(
-            ProviderPricing.provider_id == "minimax",
-            ProviderPricing.model_id == "minimax-m3.1-flash-free",
-        )
-    ).first()
-    assert row is None
+    for model_id in ("minimax-m3.1-flash-free", "MiniMax-M3.1-Flash-free"):
+        row = s.exec(
+            select(ProviderPricing).where(
+                ProviderPricing.provider_id == "minimax",
+                ProviderPricing.model_id == model_id,
+            )
+        ).first()
+        assert row is None, model_id
+        assert _row(s, "minimax", model_id, date(2026, 10, 20)) is None, model_id

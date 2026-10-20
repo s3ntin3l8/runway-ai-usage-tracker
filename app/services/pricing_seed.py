@@ -657,7 +657,9 @@ PRICING_SEED: list[dict] = [
     # "minimax-m3.1-flash" spelling OpenCode reports resolves through the
     # cost_calculator's case-insensitive fallback (same path as "minimax-m3"
     # -> "MiniMax-M3"). The "-free" spellings stay deliberately unpriced —
-    # see the Data Health `unpriced_models` check.
+    # the cost calculator skips its segment-trim fallback for free-tier ids,
+    # so neither casing can reach this row (see the Data Health
+    # `unpriced_models` check, which excludes them for the same reason).
     {
         "provider_id": "minimax",
         "model_id": "MiniMax-M3.1-Flash",

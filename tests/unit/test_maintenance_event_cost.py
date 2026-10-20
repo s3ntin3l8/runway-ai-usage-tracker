@@ -158,21 +158,29 @@ def test_opencode_free_variant_keeps_its_reported_zero_alongside_a_seeded_siblin
     `opencode/minimax-m3.1-flash-free` resolves to no row (OpenCode's free
     route), so resolve_event_cost keeps OpenCode's reported $0. The sibling
     `minimax/MiniMax-M3.1-Flash` row must not leak into it — the segment-trim
-    fallback can't cross the "." to form "minimax-m3", and the case-insensitive
-    fallback compares the whole id.
+    fallback is skipped for free-tier ids, and the case-insensitive fallback
+    compares the whole id.
+
+    The canonical casing is the one that would have leaked: trimming
+    "MiniMax-M3.1-Flash-free" lands exactly on the seeded row.
     """
     s = _seeded_session()
-    result = resolve_event_cost(
-        s,
-        provider_id="opencode",
-        model_id="minimax-m3.1-flash-free",
-        ts=datetime.now(UTC),
-        tokens_input=1_000_000,
-        tokens_output=1_000_000,
-        tokens_cache_read=1_000_000,
-        tokens_cache_create=0,
-        billing_type="subscription",
-        reported_cost=0.0,
-    )
-    assert result.cost_usd == 0.0
-    assert result.cost_estimated_usd == 0.0
+    for model_id in (
+        "minimax-m3.1-flash-free",
+        "MiniMax-M3.1-Flash-free",
+        "MiniMax-M3-free",
+    ):
+        result = resolve_event_cost(
+            s,
+            provider_id="opencode",
+            model_id=model_id,
+            ts=datetime.now(UTC),
+            tokens_input=1_000_000,
+            tokens_output=1_000_000,
+            tokens_cache_read=1_000_000,
+            tokens_cache_create=0,
+            billing_type="subscription",
+            reported_cost=0.0,
+        )
+        assert result.cost_usd == 0.0, model_id
+        assert result.cost_estimated_usd == 0.0, model_id

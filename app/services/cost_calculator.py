@@ -12,6 +12,7 @@ from typing import NamedTuple
 from sqlmodel import Session, func, select
 
 from app.models.db import ProviderPricing
+from app.services.model_normalization import is_free_tier_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,7 @@ def resolve_price_row(
         family = _VERSION_SUFFIX.sub("", model_id)
         if family != model_id:
             row = exact_lookup(family)
-    if row is None:
+    if row is None and not is_free_tier_model_id(model_id):
         # Codenamed/unseeded variants ("gpt-5.7-nova") don't end in a bare
         # digit, so _VERSION_SUFFIX above never fires. Progressively
         # right-trim "-"-separated segments and retry each ("gpt-5.7-nova" ->
@@ -184,6 +185,12 @@ def resolve_price_row(
         # This is a fallback, not a substitute for seeding the real rate —
         # an unseeded variant may land on a family rate that doesn't match
         # its actual price.
+        #
+        # Free-tier ids are excluded: trimming "MiniMax-M3.1-Flash-free"
+        # lands on the paid "MiniMax-M3.1-Flash" row, which would bill a free
+        # route at list price. A free id is priced at $0 on purpose, not a
+        # missing seed row — the Data Health `unpriced_models` check excludes
+        # them for the same reason.
         segments = model_id.split("-")
         while row is None and len(segments) > 1:
             segments.pop()

@@ -36,7 +36,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.models.schemas import UsageEventPush  # noqa: E402
-from app.services.model_normalization import normalize_gemini_model  # noqa: E402
+from app.services.model_normalization import (  # noqa: E402
+    is_free_tier_model_id,
+    normalize_gemini_model,
+)
 from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
     SHARED_CANONICAL_PROVIDER_MAP,
     CanonicalProviderTuple,
@@ -67,13 +70,7 @@ _HERMES_CANONICAL_MAP: dict[str, CanonicalProviderTuple] = {
 
 def _is_free_model(model: str) -> bool:
     """Return True if model name indicates a free-tier model."""
-    m = (model or "").strip().lower()
-    if not m:
-        return False
-    if m.endswith((":free", "-free", "/free")):
-        return True
-    last_token = m.replace(":", "/").split("/")[-1]
-    return last_token == "free" or last_token.endswith("-free")
+    return is_free_tier_model_id(model)
 
 
 def _url_host_matches(url: str, *domains: str) -> bool:

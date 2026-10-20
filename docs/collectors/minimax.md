@@ -130,8 +130,10 @@ sources rather than MiniMax, so treat them as a rough figure rather than a list 
 
 Rows are keyed on the canonical id (`MiniMax-M3.1-Flash`), so OpenCode's lowercase
 `minimax-m3.1-flash` spelling prices through the cost calculator's case-insensitive fallback.
-The `-free` spellings (`minimax-m3.1-flash-free`) stay deliberately unpriced — that is
-OpenCode's free route, billed at $0 on purpose, not a missing seed row.
+The `-free` spellings (`minimax-m3.1-flash-free`, `MiniMax-M3.1-Flash-free`) stay deliberately
+unpriced — that is OpenCode's free route, billed at $0 on purpose, not a missing seed row.
+The cost calculator skips its segment-trim fallback for free-tier ids, so a `-free` id can
+never reach a paid sibling row and be billed at list price.
 
 ## OpenCode traffic
 
