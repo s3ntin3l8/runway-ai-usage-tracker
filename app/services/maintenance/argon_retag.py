@@ -225,7 +225,11 @@ def plan_argon_retag(
         if len(plan.samples) < sample_size:
             plan.samples.append(change)
     plan.stale_rollup_pairs = len(_stale_rollup_pairs(session, providers))
-    plan.rebuild_pairs = len(_rebuild_scope(session, providers))
+    # Same gate as `apply_argon_retag`: a run with nothing to rewrite and no
+    # stale grain left replays nothing, so the preview must not promise one.
+    plan.rebuild_pairs = (
+        len(_rebuild_scope(session, providers)) if (plan.total or plan.stale_rollup_pairs) else 0
+    )
     return plan
 
 
@@ -281,7 +285,12 @@ def apply_argon_retag(
     # The rebuild scope comes from the drift, not from the rows this run
     # rewrote: an interrupted run leaves the events canonical but the rollups
     # stale, and the repeat still has to find that scope to finish the repair.
-    pairs = _rebuild_scope(session, providers)
+    # A run with nothing to rewrite and no stale grain left is a no-op, so a
+    # repeat on a repaired database does not replay the derived tables.
+    stale_pairs = _stale_rollup_pairs(session, providers)
+    pairs: set[tuple[str, str]] = set()
+    if result.retagged or stale_pairs:
+        pairs = _rebuild_scope(session, providers)
 
     if not skip_rollups and pairs:
         rebuild_rollups_for_pairs(session, pairs)

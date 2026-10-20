@@ -231,5 +231,7 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 | `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
 | `scripts/sidecar_pkg/keep_alive.py` | Optional `--keep-alive` thread (`agy models` renewal) |
 | `scripts/reclassify_antigravity_models.py` | One-shot repair for pre-version-preservation rows |
+| `scripts/backfill_argon_models.py` | One-shot repair for pre-Argon-family rows (rewrites the stored model id and re-prices) |
+| `app/services/maintenance/argon_retag.py` | Shared logic behind the Argon repair script |
 | `scripts/recost_events.py` | Reprice after pricing-seed changes (`--provider antigravity`) |
 | `app/services/pricing_seed.py` | Antigravity pricing rows |

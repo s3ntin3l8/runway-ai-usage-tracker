@@ -196,6 +196,7 @@ def test_apply_rebuilds_the_rollups_under_the_canonical_grain():
 
 
 def test_repair_is_idempotent():
+    """A repeat run on a repaired database changes nothing and replays nothing."""
     session = _session()
     seed_pricing_table(session)
     _event(session)
@@ -205,6 +206,10 @@ def test_repair_is_idempotent():
 
     assert second.retagged == 0
     assert second.cost_delta_usd == 0.0
+    # The rebuild is gated on "something changed or a stale grain is left",
+    # so a repeat does not replay the rollups and windows.
+    assert second.rollups_rebuilt_pairs == 0
+    assert second.windows_rebuilt == 0
 
 
 def test_an_interrupted_repair_is_completed_by_a_second_run():
@@ -247,6 +252,20 @@ def test_the_plan_reports_the_drift_on_a_partially_repaired_database():
     assert plan.total == 0
     assert plan.stale_rollup_pairs == 1
     assert plan.rebuild_pairs == 1
+
+
+def test_the_plan_promises_no_rebuild_on_a_repaired_database():
+    """The preview must agree with what an apply would actually do."""
+    session = _session()
+    seed_pricing_table(session)
+    _event(session)
+    apply_argon_retag(session)
+
+    plan = plan_argon_retag(session)
+
+    assert plan.total == 0
+    assert plan.stale_rollup_pairs == 0
+    assert plan.rebuild_pairs == 0
 
 
 def test_a_raw_id_with_its_own_family_beats_an_argon_display():
