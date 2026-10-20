@@ -243,6 +243,45 @@ def test_detect_classifies_source_reported_despite_extra_zero_token_events(sessi
 
 def test_detect_excludes_free_suffixed_models(session):
     make_event(session, event_id="1", provider_id="opencode", model_id="grok:free", cost_usd=0.0)
+    make_event(
+        session,
+        event_id="2",
+        provider_id="opencode",
+        model_id="deepseek-v4-flash-free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session, event_id="3", provider_id="opencode", model_id="openrouter/free", cost_usd=0.0
+    )
+    make_event(session, event_id="4", provider_id="opencode", model_id="unknown", cost_usd=0.0)
+    make_event(
+        session,
+        event_id="5",
+        provider_id="opencode-zen",
+        model_id="deepseek-v4-flash-free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="6",
+        provider_id="opencode-zen",
+        model_id="mimo-v2.5-free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="7",
+        provider_id="opencode-byok",
+        model_id="gemini-2.5-flash-free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="8",
+        provider_id="hermes-auto",
+        model_id="deepseek-v4-flash-free",
+        cost_usd=0.0,
+    )
 
     report = _check().detect(session)
 
@@ -255,8 +294,19 @@ def test_detect_excludes_opencode_free_provider(session):
     )
 
     report = _check().detect(session)
-
     assert report.total_count == 0
+
+
+def test_detect_flags_unpriced_ollama_cloud_model(session):
+    """OpenCode's ollama-cloud events fold onto canonical 'ollama' and carry plain model IDs
+    (e.g. 'nemotron-3-ultra'); they must be flagged as needs_seed_row."""
+    make_event(
+        session, event_id="1", provider_id="ollama", model_id="nemotron-3-ultra", cost_usd=0.0
+    )
+
+    report = _check().detect(session)
+    assert report.total_count == 1
+    assert report.groups[0].detail["by_model"][0]["classification"] == "needs_seed_row"
 
 
 def test_detect_excludes_events_with_no_tokens(session):

@@ -8,7 +8,7 @@ import { claudeConnectionLabel } from '@/lib/providerFamilies';
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { Archive, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteProviderConfig, putDiscoveredAccountLabel, putProviderConfig } from '@/api/endpoints';
 import type { ProviderAccount, ProviderConfig } from '@/api/types';
@@ -111,6 +111,22 @@ export function ProviderDetailDialog({
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
     },
+  });
+
+  const archiveAccount = useMutation({
+    mutationFn: (account: ProviderAccount) => {
+      if (!provider) throw new Error('no provider');
+      return putProviderConfig(provider.provider_id, account.account_id, {
+        archived: true,
+      });
+    },
+    onSuccess: (_data, account) => {
+      toast.success(`${provider?.name} · ${maskAccountId(account.account_id)} archived`);
+      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+      queryClient.invalidateQueries({ queryKey: ['usage'] });
+      setMenuFor(null);
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   const remove = useMutation({
@@ -304,18 +320,33 @@ export function ProviderDetailDialog({
                                 Edit
                               </button>
                               {account.source !== 'discovered' ? (
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
-                                  onClick={() => {
-                                    setMenuFor(null);
-                                    setPendingDelete(account);
-                                  }}
-                                >
-                                  <Trash2 className="size-3.5" />
-                                  Remove
-                                </button>
+                                <>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    disabled={archiveAccount.isPending}
+                                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2 disabled:opacity-50"
+                                    onClick={() => {
+                                      setMenuFor(null);
+                                      archiveAccount.mutate(account);
+                                    }}
+                                  >
+                                    <Archive className="size-3.5 text-fg-muted" />
+                                    Archive
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
+                                    onClick={() => {
+                                      setMenuFor(null);
+                                      setPendingDelete(account);
+                                    }}
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                    Remove
+                                  </button>
+                                </>
                               ) : null}
                             </div>
                           ) : null}
