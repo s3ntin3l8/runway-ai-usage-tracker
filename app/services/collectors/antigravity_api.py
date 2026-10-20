@@ -74,11 +74,11 @@ def _pool_slug(normalized_name: str, hash_input: str) -> str:
       (e.g. a bare "Argon", which the anchored patterns do not match) is
       prefixed, so the fallback can never take a live pool's key (and never
       slips past the "unknown pool" warning that reports it).
-    * A short hash of the group's raw name is appended. The slug folds case
-      and punctuation, so "Gemini 5 Code" and "gemini 5-code" would otherwise
-      share a pool key — and two pools sharing a key share a `latest_usage`
-      row, where the second one is silently dropped. The hash keeps them
-      apart while the readable slug stays the card's label.
+    * A short hash of the group's resolved name is appended. The slug folds
+      case and punctuation, so "Gemini 5 Code" and "gemini 5-code" would
+      otherwise share a pool key — and two pools sharing a key share a
+      `latest_usage` row, where the second one is silently dropped. The hash
+      keeps them apart while the readable slug stays the card's label.
     """
     slug = re.sub(r"[^a-z0-9]+", "-", normalized_name).strip("-") or "unknown"
     if slug in POOL_LABELS:
