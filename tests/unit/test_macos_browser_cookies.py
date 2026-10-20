@@ -1,25 +1,14 @@
 """Synthetic Chromium stores; no real browser or Keychain access."""
 
-import hashlib
 import json
 import sqlite3
 import subprocess
 from unittest.mock import Mock
 
 import pytest
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from scripts import sidecar
-
-
-def encrypted(host, value=b"synthetic-session", version=24):
-    raw = (hashlib.sha256(host.encode()).digest() if version >= 24 else b"") + value
-    pad = padding.PKCS7(128).padder()
-    raw = pad.update(raw) + pad.finalize()
-    key = hashlib.pbkdf2_hmac("sha1", b"synthetic-key", b"saltysalt", 1003, 16)
-    enc = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).encryptor()
-    return b"v10" + enc.update(raw) + enc.finalize()
+from tests.macos_cookie_fixtures import encrypted
 
 
 @pytest.fixture
@@ -245,7 +234,7 @@ def test_existing_plaintext_browser_candidates_are_preserved(tmp_path, monkeypat
         lambda: [{"browser": browser_type.title(), "type": browser_type, "path": path}],
     )
     if browser_type == "safari":
-        from tests.unit.test_macos_cookie_scan_outcomes import safari_blob
+        from tests.macos_cookie_fixtures import safari_blob
 
         path.write_bytes(safari_blob(value="synthetic-safari"))
     candidates = sidecar.BrowserCookieExtractor.get_macos_candidates(

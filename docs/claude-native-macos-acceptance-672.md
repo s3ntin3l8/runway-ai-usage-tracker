@@ -63,8 +63,10 @@ for Desktop cookie acceptance: both passed independently here.
 The user confirmed the test tray menu was visible with collection controls. Native
 inspection exposed generic browser labels; a subsequent server/frontend display fix
 names Chrome, Safari and Claude Desktop without leaking profile names or fingerprints.
-The cookie/OAuth scan helpers and Claude verification modules remain byte-for-byte
-unchanged after the native capture.
+After the native capture, review hardened Safari partial-record parsing and scan
+diagnostics. These later changes have isolated regression coverage; the recorded native
+capture applies to the earlier build, not a fresh native run of the review fixes.
+OAuth extraction and server verification were unchanged.
 That metadata-only follow-up is verified by source-list API/frontend regressions and a
 packaged synthetic run; it does not claim a new native credential capture.
 Automatic verification connected the available usable organizations; this run does
@@ -115,10 +117,25 @@ and corrected unsupported SQLite layouts being misclassified as inaccessible,
 protected Safari profile trees being silently omitted, and cookie client names being
 hidden by a credentials-view formatter. Each fix has a failing-then-passing regression.
 
-The secret baseline update only moves existing line numbers; no detections were added
-or removed. No new public endpoint, ingestion field or database migration is introduced.
+CI also flagged four public artifact/revision digests in the JSON report. Their
+three artifact hashes and public commit were checked, and only those four vetted
+non-secret findings were added to the baseline; no detector exclusions or thresholds
+were relaxed. The CI dependency audit additionally required Vite 8.1.6 for
+[GHSA-698v-4r3x-3vcv](https://github.com/advisories/GHSA-698v-4r3x-3vcv). No new public endpoint, ingestion field or database migration is introduced.
 Internal scan reports contain status, counts and a one-way store identifier, never
 credential values or native account/profile identifiers. Existing candidate-returning
 APIs and conservative source retention remain compatible.
 
 See [sanitized result counts](claude-native-macos-acceptance-672.json).
+
+## PR review follow-up validation
+
+The Safari mixed-record regression reproduces on the pre-fix parser. The corrected
+parser retains valid candidates in either record order, skips unrelated value decoding,
+and reports incomplete relevant records. Shared fixtures remove the four CodeQL import
+cycles. The final local gate passed 5,020 Python tests (61 skipped) and 1,200 frontend
+tests, plus lint, SPA build, registry consistency and the exact CI secrets scan.
+The rebuilt ad-hoc-signed macOS app passed strict signature verification and synthetic
+signed ingestion, all five fixture sources, source labels, heartbeat and two polls,
+with zero real Keychain reads. This is synthetic follow-up evidence, not a new native
+credential capture. Dependency audit reports no known vulnerabilities after Vite 8.1.6.

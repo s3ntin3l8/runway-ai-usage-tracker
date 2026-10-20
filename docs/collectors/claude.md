@@ -266,7 +266,12 @@ privacy access; an inaccessible store is never treated as logout.
 
 Internal store diagnostics distinguish candidates, successful empty reads, missing
 stores/items, inaccessible stores, denial, timeout and unsupported layouts. Expired
-cookies are filtered and counted. Safe Storage failures are cached until sidecar
+cookies are filtered and counted. Malformed relevant Safari records mark the scan
+incomplete while preserving independently decoded candidates. Unknown Chromium schema
+versions remain unsupported and report the observed version. Diagnostic store IDs use
+a random process-local HMAC key, so they correlate scans only until restart and do not
+expose profile paths. Outcomes are internal logs/diagnostic sinks, not ingestion fields.
+Safe Storage failures are cached until sidecar
 restart. `RUNWAY_CLAUDE_DESKTOP_CREDENTIALS=0` still disables both Desktop OAuth and
 Desktop cookie discovery. Empty scans preserve last-good source metadata; explicit
 cleanup remains available. Optional-browser native acceptance is tracked in #683.

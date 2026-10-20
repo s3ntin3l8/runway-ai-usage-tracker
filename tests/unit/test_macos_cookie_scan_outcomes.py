@@ -11,6 +11,7 @@ import pytest
 
 from scripts import sidecar
 from scripts.sidecar_pkg import macos_cookies
+from tests.macos_cookie_fixtures import chromium_store, encrypted, safari_blob
 
 
 @pytest.fixture(autouse=True)
@@ -22,22 +23,6 @@ def isolated(tmp_path, monkeypatch):
         raise AssertionError("Native credential access forbidden")
 
     monkeypatch.setattr(subprocess, "run", forbidden)
-
-
-def safari_blob(*, expiry=None, domain=".claude.ai", value="synthetic-session"):
-    strings = [domain, "sessionKey", "/", value]
-    offsets, tail = [], b""
-    for text in strings:
-        offsets.append(56 + len(tail))
-        tail += text.encode() + b"\0"
-    record = struct.pack("<4I4I", 56 + len(tail), 0, 0, 0, *offsets)
-    record += b"\0" * 8
-    record += struct.pack(
-        "<dd", (expiry if expiry is not None else time.time() + 3600) - 978307200, 1
-    )
-    record += tail
-    page = b"\0\0\1\0" + struct.pack("<II", 1, 16) + b"\0" * 4 + record
-    return b"cook" + struct.pack(">II", 1, len(page)) + page
 
 
 def test_safari_expiry_is_filtered_by_existing_candidate_interface(tmp_path, monkeypatch):
@@ -106,16 +91,6 @@ def test_safari_profile_discovery_includes_container_and_distinct_profiles(tmp_p
     assert len({(p["profile"], p["store"]) for p in found}) == 4
 
 
-def chromium_store(path, rows=(), version=24):
-    with sqlite3.connect(path) as conn:
-        conn.execute("CREATE TABLE meta (key TEXT, value TEXT)")
-        conn.execute("INSERT INTO meta VALUES ('version', ?)", (str(version),))
-        conn.execute(
-            "CREATE TABLE cookies (host_key TEXT, name TEXT, encrypted_value BLOB, expires_utc INTEGER)"
-        )
-        conn.executemany("INSERT INTO cookies VALUES (?, 'sessionKey', ?, ?)", rows)
-
-
 def test_chromium_outcomes_do_not_treat_missing_or_unsupported_as_empty(tmp_path):
     path = tmp_path / "Cookies"
     assert (
@@ -147,7 +122,6 @@ def test_chromium_outcomes_do_not_treat_missing_or_unsupported_as_empty(tmp_path
 def test_failed_keychain_outcomes_are_cached_without_repeated_prompts(
     tmp_path, monkeypatch, failure, status
 ):
-    from tests.unit.test_macos_browser_cookies import encrypted
 
     path = tmp_path / "Cookies"
     chromium_store(path, [(".claude.ai", encrypted(".claude.ai"), 0)])
@@ -182,7 +156,6 @@ def test_permission_error_is_inaccessible_without_leaking_path(tmp_path, monkeyp
 
 def test_desktop_cookie_scan_uses_shared_key_cache_and_reports_expired(tmp_path, monkeypatch):
     from scripts.sidecar_pkg import claude_desktop
-    from tests.unit.test_macos_browser_cookies import encrypted
 
     path = tmp_path / "Cookies"
     chromium_store(path, [(".claude.ai", encrypted(".claude.ai"), 1)])
@@ -271,7 +244,6 @@ def test_desktop_preserves_exact_host_and_observed_cipher_allowlist(
     tmp_path, monkeypatch, host, prefix
 ):
     from scripts.sidecar_pkg import claude_desktop
-    from tests.unit.test_macos_browser_cookies import encrypted
 
     path = tmp_path / "Cookies"
     chromium_store(path, [(host, prefix + encrypted(host)[3:], 0)])
@@ -355,3 +327,61 @@ def test_protected_safari_profile_enumeration_reports_inaccessible(tmp_path, mon
     targets = stores(tmp_path)
     assert len(targets) == 1
     assert targets[0]["discovery_status"] == "inaccessible"
+
+
+@pytest.mark.parametrize("bad_first", [False, True])
+@pytest.mark.parametrize("unrelated", [False, True])
+def test_safari_partial_records_preserve_independent_credentials(tmp_path, bad_first, unrelated):
+    from scripts.sidecar_pkg.safari_cookies import scan_cookies
+
+    good = safari_blob()
+    bad = safari_blob(domain="example.com" if unrelated else ".claude.ai")
+    bad = bad.replace(b"synthetic-session", b"\xff" + b"x" * 16)
+    pages = [good[12:], bad[12:]]
+    if bad_first:
+        pages.reverse()
+    path = tmp_path / "Cookies.binarycookies"
+    path.write_bytes(b"cook" + struct.pack(">III", 2, *map(len, pages)) + b"".join(pages))
+    result = scan_cookies(path, "claude.ai", "sessionKey")
+    assert [item["value"] for item in result.values] == ["synthetic-session"]
+    assert result.status == ("candidates" if unrelated else "unsupported")
+    assert result.rejected_count == (0 if unrelated else 1)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_chromium_denial_outcome_does_not_depend_on_row_order(tmp_path, monkeypatch, reverse):
+    path = tmp_path / "Cookies"
+    rows = [(".claude.ai", encrypted(".claude.ai"), 0), (".claude.ai", b"v20bad", 0)]
+    chromium_store(path, rows[::-1] if reverse else rows)
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess([], 128, "", "")
+    )
+    result = macos_cookies.scan_cookies(path, "Chrome Safe Storage", "claude.ai", "sessionKey")
+    assert result.status == "denied"
+    assert result.rejected_count == 2
+
+
+def test_schema_diagnostic_reports_version_without_store_identity(tmp_path, caplog):
+    from scripts.sidecar_pkg.cookie_scan import report_scan
+
+    path = tmp_path / "Cookies"
+    chromium_store(path, version=999)
+    result = macos_cookies.scan_cookies(path, "Chrome Safe Storage", "claude.ai", "sessionKey")
+    outcomes = []
+    report_scan("Chrome", "private-profile", result, outcomes)
+    assert outcomes[0]["schema_version"] == 999
+    assert "private-profile" not in json.dumps(outcomes)
+
+
+def test_diagnostic_store_ids_are_process_keyed(monkeypatch):
+    from scripts.sidecar_pkg import cookie_scan
+
+    outcomes = []
+    for _ in range(2):
+        cookie_scan.report_scan(
+            "Safari", "private-profile", cookie_scan.StoreScan("empty"), outcomes
+        )
+    assert outcomes[0]["store_id"] == outcomes[1]["store_id"]
+    monkeypatch.setattr(cookie_scan, "_DIAGNOSTIC_KEY", b"disposable-test-key")
+    cookie_scan.report_scan("Safari", "private-profile", cookie_scan.StoreScan("empty"), outcomes)
+    assert outcomes[0]["store_id"] != outcomes[2]["store_id"]

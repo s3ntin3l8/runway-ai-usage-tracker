@@ -131,7 +131,7 @@ def scan_cookies(
         ) as conn:
             row = conn.execute("SELECT value FROM meta WHERE key = 'version'").fetchone()
             if row is None or not 1 <= int(row[0]) <= 24:
-                return StoreScan("unsupported")
+                return StoreScan("unsupported", schema_version=int(row[0]) if row else None)
             version = int(row[0])
             host_clause = "(host_key = ? OR host_key = ?)"
             params = [name, domain, "." + domain]
@@ -144,14 +144,14 @@ def scan_cookies(
                 + " ORDER BY expires_utc DESC",
                 params,
             ).fetchall()
-        failure: ScanStatus | None = None
+        failures: set[ScanStatus] = set()
         for host, blob, expires in rows:
             if expires and expires <= (time.time() + 11644473600) * 1_000_000:
                 expired += 1
                 continue
             if not isinstance(blob, bytes) or not blob.startswith(prefixes):
                 rejected += 1
-                failure = "unsupported"
+                failures.add("unsupported")
                 continue
             value = decrypt(blob, service, host, version)
             if value:
@@ -159,14 +159,22 @@ def scan_cookies(
                     values.append(value)
             else:
                 rejected += 1
-                failure = (
+                failures.add(
                     _KEY_STATUS.get(service, "inaccessible")
                     if service in _KEY_CACHE and _KEY_CACHE[service] is None
                     else "unsupported"
                 )
+        failure = next(
+            (
+                status
+                for status in ("timed_out", "denied", "inaccessible", "missing", "unsupported")
+                if status in failures
+            ),
+            None,
+        )
         # Partial decoding must not be mistaken for a successful completed scan.
         return StoreScan(
-            failure or ("candidates" if values else "empty"), values, expired, rejected
+            failure or ("candidates" if values else "empty"), values, expired, rejected, version
         )
     except FileNotFoundError:
         return StoreScan("missing")

@@ -98,6 +98,8 @@ def scan_cookies(
         return StoreScan("missing")
     except OSError:
         return StoreScan("inaccessible")
+    values: list[dict[str, Any]] = []
+    expired = rejected = 0
     try:
         if len(raw) < 8 or len(raw) > _MAX_STORE_BYTES or raw[:4] != b"cook":
             raise ValueError("Unsupported header")
@@ -105,8 +107,6 @@ def scan_cookies(
         if page_count > (len(raw) - 8) // 4:
             raise ValueError("Invalid page table")
         cursor = 8 + 4 * page_count
-        values = []
-        expired = 0
         for index in range(page_count):
             size = struct.unpack_from(">I", raw, 8 + 4 * index)[0]
             if size < 12 or cursor + size > len(raw):
@@ -131,38 +131,46 @@ def scan_cookies(
                     raise ValueError("Invalid record length")
                 record = page[offset : offset + length]
                 previous_end = offset + length
-                domain_offset, name_offset, path_offset, value_offset = struct.unpack_from(
-                    "<4I", record, 16
-                )
-                cookie_domain, cookie_name, cookie_path, value = (
-                    _string(record, item)
-                    for item in (domain_offset, name_offset, path_offset, value_offset)
-                )
-                expiry, created = struct.unpack_from("<dd", record, 40)
-                if not math.isfinite(expiry) or not math.isfinite(created):
-                    raise ValueError("Invalid timestamps")
-                if not cookie_domain or not cookie_name or not cookie_path.startswith("/"):
-                    raise ValueError("Invalid cookie fields")
-                bare = domain.lstrip(".").lower() if domain else None
-                if (
-                    bare
-                    and cookie_domain.lstrip(".").lower() != bare
-                    and not cookie_domain.lower().endswith("." + bare)
-                ):
-                    continue
-                if name is not None and cookie_name != name:
-                    continue
-                if expiry and expiry + _APPLE_EPOCH <= time.time():
-                    expired += 1
-                    continue
-                values.append(
-                    {
-                        "domain": cookie_domain,
-                        "name": cookie_name,
-                        "value": value,
-                        "expires_at": expiry + _APPLE_EPOCH if expiry else None,
-                    }
-                )
-        return StoreScan("candidates" if values else "empty", values, expired_count=expired)
+                try:
+                    domain_offset, name_offset, path_offset, value_offset = struct.unpack_from(
+                        "<4I", record, 16
+                    )
+                    cookie_domain = _string(record, domain_offset)
+                    cookie_name = _string(record, name_offset)
+                    bare = domain.lstrip(".").lower() if domain else None
+                    if (
+                        bare
+                        and cookie_domain.lstrip(".").lower() != bare
+                        and not cookie_domain.lower().endswith("." + bare)
+                    ):
+                        continue
+                    if name is not None and cookie_name != name:
+                        continue
+                    expiry, created = struct.unpack_from("<dd", record, 40)
+                    if not math.isfinite(expiry) or not math.isfinite(created):
+                        raise ValueError("Invalid timestamps")
+                    cookie_path = _string(record, path_offset)
+                    value = _string(record, value_offset)
+                    if not cookie_domain or not cookie_name or not cookie_path.startswith("/"):
+                        raise ValueError("Invalid cookie fields")
+                    if expiry and expiry + _APPLE_EPOCH <= time.time():
+                        expired += 1
+                        continue
+                    values.append(
+                        {
+                            "domain": cookie_domain,
+                            "name": cookie_name,
+                            "value": value,
+                            "expires_at": expiry + _APPLE_EPOCH if expiry else None,
+                        }
+                    )
+                except (ValueError, UnicodeError, struct.error):
+                    rejected += 1
+        return StoreScan(
+            "unsupported" if rejected else ("candidates" if values else "empty"),
+            values,
+            expired_count=expired,
+            rejected_count=rejected,
+        )
     except (ValueError, UnicodeError, struct.error):
-        return StoreScan("unsupported")
+        return StoreScan("unsupported", values, expired_count=expired, rejected_count=rejected + 1)

@@ -2502,7 +2502,10 @@ class BrowserCookieExtractor:
 
     @staticmethod
     def get_macos_candidates(provider, domains, name, *, scan_outcomes=None):
-        """Return independently attributable macOS sources, never merge accounts."""
+        """Return independent sources; optional scan_outcomes is an internal diagnostic sink.
+
+        Production emits the same sanitized outcomes to logs, not ingestion manifests.
+        """
         from scripts.sidecar_pkg.cookie_scan import report_scan
         from scripts.sidecar_pkg.identity import credential_fingerprint, keyed_credential_origin
         from scripts.sidecar_pkg.macos_cookies import scan_cookies

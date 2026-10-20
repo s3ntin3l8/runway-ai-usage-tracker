@@ -95,3 +95,8 @@ describe('native cookie source titles', () => {
       .toBe('Browser cookie on Workstation');
   });
 });
+
+it('keeps named cookie clients when server label copy changes', () => {
+  expect(originSummary(source({ origin_type: 'cookie', origin_app: 'Safari', label: 'Web session' })))
+    .toBe('Safari · Web session on Workstation');
+});
