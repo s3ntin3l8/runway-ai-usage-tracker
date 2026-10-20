@@ -33,4 +33,6 @@ def force_utf8_console(streams: tuple[TextIO | None, ...] | None = None) -> None
         try:
             reconfigure(encoding="utf-8", errors="replace")
         except (ValueError, OSError):
+            # A closed or detached stream has no encoding left to fix — but a
+            # log call must never take the process down over it.
             pass

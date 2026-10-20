@@ -275,11 +275,13 @@ def test_documented_run_command_succeeds_from_non_repo_cwd():
     """Round-2 regression: `python scripts/merge_antigravity_accounts.py --help`
     must work from any CWD (the `_REPO_ROOT` sys.path insert must remain).
 
-    ``PYTHONUTF8=0`` pins the child's streams to the locale code page — what a
-    user on Windows gets for a redirected stdout, and what the repo's own
-    tooling hides by running with ``PYTHONUTF8=1``. The docstring carries an
-    arrow the cp1252 page cannot encode, so the command only survives because
-    the script switches its console to UTF-8.
+    ``PYTHONIOENCODING=cp1252`` pins the child's streams to a legacy code
+    page — what a user on Windows gets for a redirected stdout, and what the
+    repo's own tooling hides by running with ``PYTHONUTF8=1``. The docstring
+    carries an arrow that page cannot encode, so the command only survives
+    because the script switches its console to UTF-8. Pinning the encoding
+    (rather than the interpreter's UTF-8 mode) reproduces it on every
+    platform, not only on Windows.
     """
     repo_root = Path(__file__).resolve().parents[2]
     script = repo_root / "scripts" / "merge_antigravity_accounts.py"
@@ -288,7 +290,12 @@ def test_documented_run_command_succeeds_from_non_repo_cwd():
         proc = subprocess.run(
             [sys.executable, str(script), "--help"],
             cwd=tmp,
-            env={**os.environ, "APP_HOST": "127.0.0.1", "PYTHONUTF8": "0"},
+            env={
+                **os.environ,
+                "APP_HOST": "127.0.0.1",
+                "PYTHONIOENCODING": "cp1252",
+                "PYTHONUTF8": "0",
+            },
             capture_output=True,
             encoding="utf-8",
             errors="replace",
