@@ -52,6 +52,10 @@ USER runway
 # checked-out commit as a build arg, so the running server can report the
 # exact build it is (Settings -> About). Public information — it only
 # describes the image — and an operator can override it at run time.
+#
+# This ARG must be declared in the FINAL stage: a builder-stage ARG is
+# consumed there and never reaches the image the server runs in. The build
+# workflow rejects a Dockerfile that declares it anywhere else.
 ARG BUILD_SHA=""
 
 # Environment variables

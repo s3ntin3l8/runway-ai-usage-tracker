@@ -85,10 +85,24 @@ def test_git_rejects_a_non_sha_head(monkeypatch, tmp_path):
 
 
 def test_no_checkout_returns_none(monkeypatch, tmp_path):
-    """An installed package (no `.git`) has no commit to report."""
+    """An installed package (no `.git`) has no commit to report.
+
+    git itself is available here, so the only thing that can stop the lookup
+    is the `.git` guard: if that guard went away, the stubbed git would answer
+    with a SHA and this test would fail.
+    """
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout=FAKE_SHA + "\n")
+
     monkeypatch.setattr(build_info, "_REPO_ROOT", tmp_path)
-    monkeypatch.setattr(build_info.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(build_info.shutil, "which", lambda _name: "/usr/bin/git")
+    monkeypatch.setattr(build_info.subprocess, "run", fake_run)
+
     assert get_build_sha() is None
+    assert calls == []
 
 
 def test_missing_git_binary_returns_none(monkeypatch, tmp_path):

@@ -73,6 +73,13 @@ on:
       # NOT be passed this way — build args land in image history/logs regardless of
       # GitHub secret masking. Use repo variables for publishable tokens that are
       # inlined into the client bundle by design (e.g. NEXT_PUBLIC_*). Empty by default.
+      #
+      # A Dockerfile that wants the build's commit declares `ARG BUILD_SHA` in its
+      # FINAL stage; the workflow then appends `BUILD_SHA=<checked-out commit>`
+      # automatically. The final stage is required — an ARG in a builder stage is
+      # consumed there and never reaches the running image, which the build then
+      # rejects with an explicit error rather than shipping an image whose server
+      # reports no build SHA.
       build-args:
         required: false
         type: string
@@ -194,12 +201,25 @@ jobs:
           if [ -n "$EXTRA_BUILD_ARGS" ]; then
             args="$EXTRA_BUILD_ARGS"
           fi
-          # Stamp the checked-out commit into the image when the Dockerfile
-          # declares the arg, so the running server can report its exact build
-          # (Settings -> About). The commit comes from the checkout — not
-          # `github.sha` — because a release build checks out the release tag,
-          # and the tag's commit is the one that gets built.
-          if grep -qiE '^[[:space:]]*ARG[[:space:]]+BUILD_SHA' "$DOCKERFILE"; then
+          # Stamp the checked-out commit into the image when the Dockerfile's
+          # FINAL stage declares the arg, so the running server can report its
+          # exact build (Settings -> About). The commit comes from the
+          # checkout — not `github.sha` — because a release build checks out
+          # the release tag, and the tag's commit is the one that gets built.
+          #
+          # Only the final stage matters: an ARG declared in a builder stage
+          # is consumed there and never reaches the image the server runs in,
+          # so the server would report no SHA at all. That is a Dockerfile bug,
+          # not a build preference — fail the build instead of shipping an
+          # image that silently shows "—".
+          final_stage="$(awk '/^[[:space:]]*[Ff][Rr][Oo][Mm][ \t]/ {buf=""} {buf = buf $0 "\n"} END {printf "%s", buf}' "$DOCKERFILE")"
+          anywhere="$(grep -icE '^[[:space:]]*ARG[[:space:]]+BUILD_SHA' "$DOCKERFILE" || true)"
+          in_final="$(printf '%s' "$final_stage" | grep -icE '^[[:space:]]*ARG[[:space:]]+BUILD_SHA' || true)"
+          if [ "$anywhere" -gt 0 ] && [ "$in_final" -eq 0 ]; then
+            echo "::error::${DOCKERFILE} declares ARG BUILD_SHA outside its final stage. Move it into the final stage — an ARG in a builder stage is consumed there and never reaches the running image, so the server would report no build SHA."
+            exit 1
+          fi
+          if [ "$in_final" -gt 0 ]; then
             sha="$(git rev-parse HEAD)"
             if [ -n "$args" ]; then
               args="${args}"$'\n'"BUILD_SHA=${sha}"
