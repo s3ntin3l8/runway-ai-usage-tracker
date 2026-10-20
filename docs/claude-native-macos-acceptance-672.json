@@ -273,5 +273,60 @@
   "real_keychain_denial_dialog_tested": false,
   "real_keychain_timeout_dialog_tested": false,
   "http_403_revocation_cause_proven": false,
-  "other_browser_followup": 683
+  "other_browser_followup": 683,
+  "integrated_packaged_synthetic_validation": {
+    "mode": "synthetic",
+    "injected_fault": null,
+    "packaged_app": true,
+    "binary_sha256": "c2c8c120c276d5719f6a1f114e5e23130c83a48c2c2184f33cdf26ac2ecbd022",
+    "groups": {
+      "desktop_oauth": {
+        "discovered": 1,
+        "verified": 1
+      },
+      "desktop_cookie": {
+        "discovered": 1,
+        "verified": 1
+      },
+      "chrome": {
+        "discovered": 2,
+        "verified": 2
+      },
+      "safari": {
+        "discovered": 1,
+        "verified": 1
+      }
+    },
+    "source_labels_identify_client": true,
+    "first_poll_cards": {
+      "anthropic_console": 1,
+      "anthropic": 2
+    },
+    "second_poll_cards": {
+      "anthropic_console": 1,
+      "anthropic": 2
+    },
+    "signed_ingestions": 3,
+    "signed_manifests": 3,
+    "resolved_sources_survived_heartbeat": true,
+    "keychain_lookups": 2,
+    "guard_invocations": 2,
+    "upstream_outcomes": {},
+    "refresh_requests": 0,
+    "credential_writes": 0,
+    "expired_cookie_counts": {
+      "Claude Desktop": 0,
+      "Chrome": 1,
+      "Safari": 1
+    },
+    "store_scan_status_counts": {
+      "Claude Desktop:candidates": 3,
+      "Chrome:candidates": 9,
+      "Safari:candidates": 6,
+      "Chrome:empty": 3,
+      "Safari:empty": 6
+    },
+    "real_keychain_reads": 0,
+    "validation_revision": "c9f6435d483ef5c0297f55abcf778082c9e7e1c4"
+  }
 }

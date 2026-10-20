@@ -8,7 +8,7 @@ Windows remains #675; renewal/write-back remains #526.
 
 ## Build and isolation
 
-macOS 26.6.2 (25G83), arm64; Chrome 155.0.8059.80; Safari 26.6.2. The tested
+macOS 26.6.2 (25G83), arm64; Chrome 155.0.8059.80; Safari 26.6.2. The native-tested
 production PyInstaller macOS app contains extraction revision `82e92af6` and passed
 ad-hoc signing/strict signature verification. Its launcher SHA-256 is
 `ec7e3ad26e4298c69492d35d9e7838b149663e0172ca417df18c2ccfbb990265`;
@@ -63,7 +63,8 @@ for Desktop cookie acceptance: both passed independently here.
 The user confirmed the test tray menu was visible with collection controls. Native
 inspection exposed generic browser labels; a subsequent server/frontend display fix
 names Chrome, Safari and Claude Desktop without leaking profile names or fingerprints.
-The extraction and verification modules remain unchanged after the native capture.
+The cookie/OAuth scan helpers and Claude verification modules remain byte-for-byte
+unchanged after the native capture.
 That metadata-only follow-up is verified by source-list API/frontend regressions and a
 packaged synthetic run; it does not claim a new native credential capture.
 Automatic verification connected the available usable organizations; this run does
@@ -104,7 +105,12 @@ claimed; automated 401/expiry/403/429 tests cover the distinct server policies.
 
 `make lint && make test && make web-test`, production SPA build, registry consistency,
 four frozen-spec contract checks, secret scanning and full diff review are required
-for delivery. Final counts and CI are recorded in the PR. Independent review found
+for delivery. The integrated gate passed with **5,012 Python tests (61 skipped)**; frontend counts
+and CI are recorded in the PR. A fresh ad-hoc-signed bundle at `c9f6435d` also passed
+the packaged synthetic real-HTTP preflight with client-specific labels, three signed
+manifest/ingest pairs, two polls and retained sources. This post-integration run made
+zero real Keychain reads; the native capture above remains an independent immutable
+build, not a claim of fresh login acceptance after browser logout. Independent review found
 and corrected unsupported SQLite layouts being misclassified as inaccessible,
 protected Safari profile trees being silently omitted, and cookie client names being
 hidden by a credentials-view formatter. Each fix has a failing-then-passing regression.
