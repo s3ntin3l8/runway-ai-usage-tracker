@@ -50,10 +50,14 @@ async function newContext(browser, theme, options) {
 // Skeletons (and the chart placeholders) shimmer until their query resolves.
 // A busy host can leave them up past networkidle, so wait them out instead of
 // shooting a half-loaded page.
-async function settled(page) {
-  await page.waitForFunction(() => !document.querySelector('.animate-shimmer'), null, {
-    timeout: 30_000,
-  });
+async function settled(page, label) {
+  try {
+    await page.waitForFunction(() => !document.querySelector('.animate-shimmer'), null, {
+      timeout: 30_000,
+    });
+  } catch (err) {
+    throw new Error(`skeletons still shimmering after 30s on ${label}`, { cause: err });
+  }
 }
 
 async function open(page, spec) {
@@ -62,7 +66,7 @@ async function open(page, spec) {
     await page.getByRole('tab', { name: spec.tab }).or(page.getByText(spec.tab, { exact: true })).first().click();
     await page.waitForLoadState('networkidle');
   }
-  await settled(page);
+  await settled(page, spec.path);
   // Home banners nag about setup (no alert webhook in a demo); dismiss them the
   // way a user would, so they don't sit on top of every capture.
   for (const close of await page.getByRole('button', { name: 'Dismiss' }).all())
@@ -120,7 +124,7 @@ async function recordLoop(browser, outDir) {
   for (const tab of LOOP_TABS) {
     await page.getByRole('tab', { name: tab }).or(page.getByText(tab, { exact: true })).first().click();
     await page.waitForLoadState('networkidle');
-    await settled(page);
+    await settled(page, `loop tab ${tab}`);
     await page.waitForTimeout(1800);
   }
   await context.close();
