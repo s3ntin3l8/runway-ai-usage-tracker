@@ -44,7 +44,9 @@ misleading second failure when signing, rather than a platform build, failed.
 - Share NSIS preparation between release builds and the Windows PR matrix.
   Check PATH and the standard installed location before contacting Chocolatey;
   retry failed installation at most three times with five-second delays. Stop
-  before compilation unless installation succeeded and the compiler exists.
+  before compilation unless the compiler exists, even if the installer reports
+  an error after placing it. Missing Chocolatey produces an explicit error;
+  local diagnosis does not require an Actions environment.
 - Run real Windows installer compilation in the PR frozen-verifier job, using
   the real freshly built executable.
 - Retry only the observed Rekor 409 equivalent-entry conflict, at most three

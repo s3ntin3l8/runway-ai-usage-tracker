@@ -22,11 +22,14 @@ def prepare() -> Path:
     if compiler:
         return compiler
     for attempt in range(3):
-        result = subprocess.run(
-            ["choco", "install", "nsis", "-y", "--no-progress"], timeout=180, check=False
-        )
+        try:
+            subprocess.run(
+                ["choco", "install", "nsis", "-y", "--no-progress"], timeout=180, check=False
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("Chocolatey is unavailable and NSIS is not installed") from exc
         compiler = _compiler()
-        if result.returncode == 0 and compiler:
+        if compiler:
             return compiler
         if attempt < 2:
             print("::warning::NSIS installation unavailable; retrying in five seconds.")
@@ -37,8 +40,9 @@ def prepare() -> Path:
 def main() -> None:
     compiler = prepare()
     print(f"NSIS compiler: {compiler}")
-    with Path(os.environ["GITHUB_PATH"]).open("a", encoding="utf-8") as output:
-        output.write(f"{compiler.parent}\n")
+    if github_path := os.environ.get("GITHUB_PATH"):
+        with Path(github_path).open("a", encoding="utf-8") as output:
+            output.write(f"{compiler.parent}\n")
 
 
 if __name__ == "__main__":

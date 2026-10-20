@@ -128,11 +128,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          python -m scripts.sidecar_pkg.asset_names Windows edge | ForEach-Object {
+            $k, $v = $_ -split '=', 2
+            Set-Variable -Name $k -Value $v
+          }
           python sidecar_app/spec/win_version.py | ForEach-Object {
             $k, $v = $_ -split '=', 2
             Set-Variable -Name $k -Value $v
           }
-          makensis -V2 "-DVERSION=$VERSION" "-DPRODUCT_VERSION_QUAD=$PRODUCT_VERSION_QUAD" installer/windows/runway-sidecar.nsi
+          makensis -V2 "-DVERSION=$VERSION" "-DPRODUCT_VERSION_QUAD=$PRODUCT_VERSION_QUAD" `
+            "-DOUTFILE=..\..\$installer" installer/windows/runway-sidecar.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify standard signed fixture
         run: python -m scripts.security_packaging_smoke --binary '${{ matrix.binary }}' --report fixture-evidence.json

@@ -83,7 +83,7 @@ def test_nsis_install_recovers_from_feed_failure_or_stops(tmp_path, monkeypatch,
     compiler = tmp_path / "NSIS" / "makensis.exe"
     attempts = []
     monkeypatch.setattr(prepare_nsis.shutil, "which", lambda _: None)
-    monkeypatch.setattr(prepare_nsis.os, "environ", {"ProgramFiles(x86)": str(tmp_path)})
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path))
     monkeypatch.setattr(prepare_nsis.time, "sleep", lambda _: None)
 
     def run(command, **kwargs):
@@ -110,8 +110,55 @@ def test_installed_nsis_outside_path_does_not_contact_feed(tmp_path, monkeypatch
     compiler.parent.mkdir()
     compiler.touch()
     monkeypatch.setattr(prepare_nsis.shutil, "which", lambda _: None)
-    monkeypatch.setattr(prepare_nsis.os, "environ", {"ProgramFiles(x86)": str(tmp_path)})
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path))
     monkeypatch.setattr(
         prepare_nsis.subprocess, "run", lambda *a, **kw: pytest.fail("unnecessary feed access")
     )
     assert prepare_nsis.prepare() == compiler
+
+
+def test_nsis_installed_despite_feed_error_is_usable(tmp_path, monkeypatch):
+    compiler = tmp_path / "NSIS" / "makensis.exe"
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path))
+    monkeypatch.setattr(prepare_nsis.shutil, "which", lambda _: None)
+
+    def run(command, **kwargs):
+        assert not compiler.exists(), "must not install again once compiler exists"
+        compiler.parent.mkdir()
+        compiler.touch()
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(prepare_nsis.subprocess, "run", run)
+    monkeypatch.setattr(prepare_nsis.time, "sleep", lambda _: None)
+    assert prepare_nsis.prepare() == compiler
+
+
+def test_nsis_missing_chocolatey_explains_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path))
+    monkeypatch.setattr(prepare_nsis.shutil, "which", lambda _: None)
+
+    def run(command, **kwargs):
+        raise FileNotFoundError("choco")
+
+    monkeypatch.setattr(prepare_nsis.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="Chocolatey is unavailable"):
+        prepare_nsis.prepare()
+
+
+@pytest.mark.parametrize("actions", [True, False])
+def test_nsis_entrypoint_exports_compiler_only_in_actions(tmp_path, monkeypatch, actions):
+    compiler = tmp_path / "NSIS" / "makensis.exe"
+    compiler.parent.mkdir()
+    compiler.touch()
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path))
+    monkeypatch.setattr(prepare_nsis.shutil, "which", lambda _: None)
+    output = tmp_path / "github-path"
+    if actions:
+        monkeypatch.setenv("GITHUB_PATH", str(output))
+    else:
+        monkeypatch.delenv("GITHUB_PATH", raising=False)
+    prepare_nsis.main()
+    if actions:
+        assert output.read_text() == f"{compiler.parent}\n"
+    else:
+        assert not output.exists()
