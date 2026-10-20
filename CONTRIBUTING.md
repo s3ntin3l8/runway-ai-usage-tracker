@@ -6,7 +6,7 @@
 make install    # venv + Python deps + webapp deps + git hooks (pre-commit & pre-push)
 ```
 
-On native Windows, install Python 3.12+ and Node.js 22+ (including npm).
+On native Windows, install Python 3.12+ and Node.js 22.12+ (including npm).
 `winget install OpenJS.NodeJS.LTS` puts Node in the per-user PATH, and that
 only applies to *new* processes — start a fresh shell (or a fresh agent
 session) before `node`/`npm` resolve. Then run these commands in PowerShell
