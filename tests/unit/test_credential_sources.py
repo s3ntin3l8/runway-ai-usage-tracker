@@ -833,3 +833,15 @@ def test_custom_dir_claude_credentials_still_name_claude_code():
 def test_custom_dir_auth_json_is_not_guessed():
     # Shared filename (Codex / OpenCode / Grok): don't mislabel it.
     assert describe_origin_full("path:/home/alice/elsewhere/auth.json").app is None
+
+
+@pytest.mark.parametrize("client", ["Chrome", "Safari", "Claude Desktop"])
+@pytest.mark.parametrize("provider", ["anthropic", "anthropic_console"])
+def test_native_cookie_source_labels_identify_client_without_private_profile(client, provider):
+    origin = f"cookie:{provider}/{client}/private-profile/Cookies#private-fingerprint"
+    display = describe_origin_full(origin)
+    assert display.app == client
+    assert display.label == "Session cookie"
+    assert describe_origin(origin) == ("cookie", f"{client} cookie")
+    assert "private-profile" not in repr(display)
+    assert "private-fingerprint" not in repr(display)

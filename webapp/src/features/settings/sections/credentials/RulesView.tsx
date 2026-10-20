@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { maskAccountId } from '@/lib/accountDisplay';
+import { hasNamedOriginApp } from './display';
 
 function ruleKey(t: CredentialTag): string {
   return `${t.provider_id}/${t.credential_origin}/${t.sidecar_id ?? '*'}`;
@@ -42,7 +43,7 @@ const SCOPE_LABEL: Record<Scope, string> = {
 function originTitle(t: CredentialTag): string {
   const label = t.origin_label;
   if (!label || label === 'Sidecar credential') return t.credential_origin;
-  return t.origin_app && label !== 'Browser cookie' ? `${t.origin_app} · ${label}` : label;
+  return hasNamedOriginApp(t.origin_app) ? `${t.origin_app} · ${label}` : label;
 }
 
 function pick<T extends string>(value: string | null, allowed: readonly T[], fallback: T): T {
