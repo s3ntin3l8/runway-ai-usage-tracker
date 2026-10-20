@@ -83,6 +83,7 @@ if _SCRIPTS_DIR not in sys.path:
 
 from sqlmodel import Session, delete, select  # noqa: E402
 
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import (  # noqa: E402
     LatestUsage,
@@ -393,6 +394,7 @@ def phase_f_gauge_unchanged(session: Session, email: str) -> dict[str, int]:
 
 
 def main() -> int:
+    force_utf8_console()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

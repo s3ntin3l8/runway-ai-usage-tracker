@@ -48,6 +48,16 @@ RUN chown -R runway:runway /app
 # Switch to non-root user
 USER runway
 
+# The commit this image was built from. The build workflow passes the
+# checked-out commit as a build arg, so the running server can report the
+# exact build it is (Settings -> About). Public information — it only
+# describes the image — and an operator can override it at run time.
+#
+# This ARG must be declared in the FINAL stage: a builder-stage ARG is
+# consumed there and never reaches the image the server runs in. The build
+# workflow rejects a Dockerfile that declares it anywhere else.
+ARG BUILD_SHA=""
+
 # Environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -55,7 +65,8 @@ ENV PYTHONUNBUFFERED=1 \
     MALLOC_ARENA_MAX=4 \
     APP_HOST=0.0.0.0 \
     APP_PORT=8765 \
-    RUN_MODE=docker
+    RUN_MODE=docker \
+    RUNWAY_BUILD_SHA=$BUILD_SHA
 
 # Expose port
 EXPOSE 8765

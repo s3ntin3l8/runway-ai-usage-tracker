@@ -51,8 +51,14 @@ def _apply_login_dirs(config: dict) -> None:
 
 
 def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoint, splits poorly
+    from app.core.console import force_utf8_console
     from scripts.sidecar_pkg.runtime_cleanup import release_retired_runtime
     from scripts.sidecar_pkg.self_update import reclaim_stale_state
+
+    # Before setup_logging(): a redirected stdout/stderr uses the locale code
+    # page on Windows, which cannot encode the glyphs and emoji some log lines
+    # carry.
+    force_utf8_console()
 
     release_retired_runtime()
     # 0. Enable logging to file

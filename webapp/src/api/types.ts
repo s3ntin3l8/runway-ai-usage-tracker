@@ -727,6 +727,10 @@ export interface SystemSettings {
   app_host?: string;
   app_port?: number;
   version?: string;
+  // The commit the running server was built from. `version` names a release
+  // and is identical across every `:edge` build; this pins one exact build.
+  // null when the build carries no SHA (e.g. an image built without one).
+  build_sha?: string | null;
   // Latest published Runway release tag (no `v` prefix); null until the server
   // has polled GitHub at least once. update_available compares it to `version`.
   latest_version?: string | null;

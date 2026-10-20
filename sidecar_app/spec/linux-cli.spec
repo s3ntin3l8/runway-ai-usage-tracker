@@ -24,6 +24,7 @@ a = Analysis(
     ],
     hiddenimports=sigstore_imports
     + [
+        "app.core.console",
         "app.core.kimi_device",
         # Mirror every top-level import in scripts/sidecar.py. PyInstaller's
         # static scan should find these, but declaring them is cheap insurance.
