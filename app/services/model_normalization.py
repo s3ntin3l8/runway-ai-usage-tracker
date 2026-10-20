@@ -21,6 +21,30 @@ def is_openrouter_model_id(model_id: str | None) -> bool:
     return "/" in lower and lower.endswith(":free")
 
 
+# ── Gemini 4 Argon ──
+
+# Google prices Gemini 4 Argon as one family (issue #686). The seeded pricing
+# rows are keyed on the canonical id for both the `gemini` and the
+# `antigravity` provider — see pricing_seed.py.
+ARGON_MODEL_ID = "gemini-4-argon"
+
+# The Antigravity CLI reports the raw id as "gemini-4-argon-trial": the
+# "-trial" suffix is part of the id, not a version qualifier, so it must not
+# survive into the stored model_id. Google publishes the model as
+# "gemini-4-argon" (https://ai.google.dev/gemini-api/docs/models/gemini-4-argon).
+_ARGON_RAW_RE = re.compile(r"^gemini-4-argon(?:[-.][a-z0-9][-a-z0-9.]*)?$")
+
+# The display name carries the model name in words ("Gemini 4 Argon (High)"),
+# so the match needs word boundaries: a look-alike such as "Argonoid" is a
+# different model, not a spelling of Argon.
+_ARGON_DISPLAY_RE = re.compile(r"\bargon\b", re.IGNORECASE)
+
+
+def is_argon_model_id(model_id: str) -> bool:
+    """True for any spelling of the Gemini 4 Argon id."""
+    return bool(_ARGON_RAW_RE.match((model_id or "").strip().lower()))
+
+
 def normalize_gemini_model(model_name: str) -> str:
     """Map raw Gemini model strings to versioned cost buckets.
 
@@ -31,6 +55,9 @@ def normalize_gemini_model(model_name: str) -> str:
     Quota cards (in app/services/collectors/gemini_api.py) keep the coarser
     pro/flash/flash-lite buckets since the families share Google's quota.
 
+    Gemini 4 Argon is priced as one family under its own canonical id, so it
+    bypasses the tier buckets entirely (issue #686).
+
     Examples:
         "gemini-2.5-flash"          → "flash-2.5"
         "gemini-2.5-flash-lite"     → "flash-lite-2.5"
@@ -40,11 +67,14 @@ def normalize_gemini_model(model_name: str) -> str:
         "gemini-3.1-flash-lite"     → "flash-lite-3.1"
         "gemini-3-pro-preview"      → "pro-3.1-preview"
         "gemini-3.1-pro-preview"    → "pro-3.1-preview"
+        "gemini-4-argon-trial"      → "gemini-4-argon"
         ""                           → "unknown"
     """
     lower = (model_name or "").lower()
     if not lower:
         return "unknown"
+    if is_argon_model_id(lower):
+        return ARGON_MODEL_ID
     is_3x = "gemini-3" in lower
     if "flash-lite" in lower:
         return "flash-lite-3.1" if is_3x else "flash-lite-2.5"
@@ -119,6 +149,26 @@ def _ag_versioned_bucket(family: str, version: str) -> str:
     return f"{family}-3"
 
 
+def _ag_argon_bucket(raw: str, display: str) -> str | None:
+    """Return the canonical Argon id when raw/display name Gemini 4 Argon.
+
+    The raw id is authoritative — a ``gemini-4-argon*`` slug is Argon whatever
+    the display says. A display-only match is scoped exactly like the family
+    fallback in ``normalize_ag_model``: it applies only when the raw id names
+    no family of its own, so a raw id that does (``gemini-3.8-flash``) keeps
+    its own bucket and a non-Gemini raw id (``gpt-oss``) passes through
+    verbatim even when the display happens to name Argon.
+    """
+    if is_argon_model_id(raw):
+        return ARGON_MODEL_ID
+    if raw and (_ag_detect_family(raw) is not None or not raw.lower().startswith("gemini")):
+        return None
+    lower_display = display.lower()
+    if "gemini" in lower_display and _ARGON_DISPLAY_RE.search(display):
+        return ARGON_MODEL_ID
+    return None
+
+
 def normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) -> str:
     """Map the raw agy model string to a stable cost-bucket id.
 
@@ -138,6 +188,11 @@ def normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) ->
     ``flash-lite-3`` / ``flash-lite`` (no versioned lite rows). Non-family raw
     ids (``gpt-oss``, …) pass through verbatim.
 
+    Gemini 4 Argon is priced as one family under its own canonical id, so it
+    bypasses the tier buckets entirely: the raw id carries a "-trial" suffix
+    (``gemini-4-argon-trial``) that must not reach the stored model_id
+    (issue #686).
+
     Examples:
         "claude-sonnet-4-6" / ""                 → "claude-sonnet"
         "claude-opus-4-6" / ""                   → "claude-opus"
@@ -146,6 +201,7 @@ def normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) ->
         "gemini-default" / "Gemini 3.5 Flash"   → "flash-3.5"
         "gemini-3-flash-a" / "Gemini 3 Flash"   → "flash-3"
         "gemini-3.1-flash" / …                  → "flash-3"  (unseeded minor)
+        "gemini-4-argon-trial" / "Gemini 4 Argon (High)" → "gemini-4-argon"
         "gpt-oss"                               → "gpt-oss"
         ""                                      → "unknown"
     """
@@ -166,6 +222,13 @@ def normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) ->
         # row (issue #302 accepted policy): better to overbill at Opus than
         # land on $0 via verbatim pass-through with no pricing row.
         return "claude-opus"
+
+    # Gemini 4 Argon (issue #686): the raw id carries a "-trial" suffix and
+    # Google publishes the model as "gemini-4-argon" — both spellings must
+    # reach the seeded row, which is keyed on the canonical id.
+    argon = _ag_argon_bucket(raw, display)
+    if argon is not None:
+        return argon
 
     if not raw and not display:
         if kv.get("used_claude_conservative") == "true":

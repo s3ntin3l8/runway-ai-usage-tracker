@@ -12,6 +12,7 @@ on:
     paths:
       - 'scripts/sidecar.py'
       - 'scripts/sidecar_pkg/**'
+      - 'scripts/build_windows_installer.py'
       - 'scripts/prepare_nsis.py'
       - 'scripts/sign_release_assets.py'
       - 'sidecar_app/**'
