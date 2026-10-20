@@ -777,6 +777,40 @@ class TestAntigravityUserAgent:
             # floor version's.
             assert call.kwargs["headers"]["User-Agent"] == build_user_agent()
 
+    def test_falls_back_to_the_floor_when_nothing_was_reported(self):
+        """An older sidecar reports no version — the floor must still serve every pool."""
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent(None)
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent("")
+
+    def test_uses_the_version_the_sidecar_reported(self):
+        assert "antigravity/cli/1.5.0" in build_user_agent("1.5.0")
+
+    def test_never_reports_a_version_below_the_floor(self):
+        """An older CLI must not hide a pool Runway already surfaces."""
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent("1.0.0")
+
+    def test_ignores_a_garbled_version(self):
+        """The version ends up in an HTTP header — it must never carry text."""
+        ua = build_user_agent("1.4.3\r\nX-Injected: 1")
+        assert "\n" not in ua and "\r" not in ua
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_unicode_digits(self):
+        """httpx encodes headers as ASCII: a Unicode digit would raise there."""
+        ua = build_user_agent("1.٤.٩")
+        assert ua.isascii()
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_a_non_string(self):
+        """The version arrives over the ingest route — it is not a string until vetted."""
+        ua = build_user_agent(12345)
+        assert ua.isascii()
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_a_version_with_too_many_parts(self):
+        ua = build_user_agent("1.4.3.2")
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
 
 class TestAntigravityNoServerSideRefresh:
     @pytest.mark.asyncio
@@ -822,42 +856,8 @@ class TestAntigravityNoServerSideRefresh:
         assert OAuthBaseCollector.REFRESHABLE is True
 
 
-class TestAntigravityUserAgent:
-    """The UA's version decides which quota pools the API serves (#687)."""
-
-    def test_falls_back_to_the_floor_when_nothing_was_reported(self):
-        """An older sidecar reports no version — the floor must still serve every pool."""
-        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent(None)
-        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent("")
-
-    def test_uses_the_version_the_sidecar_reported(self):
-        assert "antigravity/cli/1.5.0" in build_user_agent("1.5.0")
-
-    def test_never_reports_a_version_below_the_floor(self):
-        """An older CLI must not hide a pool Runway already surfaces."""
-        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in build_user_agent("1.0.0")
-
-    def test_ignores_a_garbled_version(self):
-        """The version ends up in an HTTP header — it must never carry text."""
-        ua = build_user_agent("1.4.3\r\nX-Injected: 1")
-        assert "\n" not in ua and "\r" not in ua
-        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
-
-    def test_ignores_unicode_digits(self):
-        """httpx encodes headers as ASCII: a Unicode digit would raise there."""
-        ua = build_user_agent("1.٤.٩")
-        assert ua.isascii()
-        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
-
-    def test_ignores_a_non_string(self):
-        """The version arrives over the ingest route — it is not a string until vetted."""
-        ua = build_user_agent(12345)
-        assert ua.isascii()
-        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
-
-    def test_ignores_a_version_with_too_many_parts(self):
-        ua = build_user_agent("1.4.3.2")
-        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+class TestAntigravityReportedVersion:
+    """The version the sidecar reports travels with the token (#687)."""
 
     @pytest.mark.asyncio
     async def test_the_collector_sends_the_reported_version(self, mock_http_client):

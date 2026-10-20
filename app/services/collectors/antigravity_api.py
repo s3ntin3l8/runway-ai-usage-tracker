@@ -60,6 +60,7 @@ def build_user_agent(reported_version: object = None) -> str:
         version = candidate
     return _UA_TEMPLATE.format(version=version)
 
+
 # Physical quota pools. The API returns one group per pool and the group's
 # display name is the only stable identity it hands us.
 POOL_ARGON = "argon"
