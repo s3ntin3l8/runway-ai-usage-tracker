@@ -49,6 +49,15 @@ misleading second failure when signing, rather than a platform build, failed.
   local diagnosis does not require an Actions environment.
 - Run real Windows installer compilation in the PR frozen-verifier job, using
   the real freshly built executable.
+- Compile the installer through one shared helper
+  (`scripts/build_windows_installer.py`) in the release build, the Windows PR
+  matrix and the Linux NSIS check. The file name comes from
+  `scripts/sidecar_pkg/asset_names.py` and the output path is computed
+  relative to the `.nsi` file, so the pull request gate and the release can no
+  longer disagree about where the installer is written. The helper verifies
+  the result and fails closed when the installer did not land at the resolved
+  path, so a wrong output path or a lost output-path override stops the build
+  instead of shipping an installer nobody looks for.
 - Retry only the observed Rekor 409 equivalent-entry conflict, at most three
   times, launching a new cosign process and ephemeral key each time. Discard
   partial bundles before retrying or failing. Other signing errors fail closed.
@@ -59,7 +68,8 @@ misleading second failure when signing, rather than a platform build, failed.
   platform releases while skipping publication after signing failure.
 - Fault-injection tests cover conflict recovery/exhaustion, unrelated signing
   rejection, signing timeout cleanup, missing bundles, feed recovery/exhaustion,
-  and installed NSIS outside PATH. These establish control-flow behavior; they
+  installed NSIS outside PATH, and an installer that lands at the wrong output
+  path or without its output-path override. These establish control-flow behavior; they
   cannot establish external-service availability at the next release.
 
 Live release signing remains a post-merge check. Windows provisioning now runs

@@ -98,10 +98,10 @@ jobs:
         run: |
           mkdir -p dist
           printf 'MZ placeholder' > dist/RunwaySidecar.exe
-          eval "$(python3 sidecar_app/spec/win_version.py)"
-          makensis -V2 -WX -DVERSION="$VERSION" -DPRODUCT_VERSION_QUAD="$PRODUCT_VERSION_QUAD" \
-            installer/windows/runway-sidecar.nsi
-          ls -l dist/runway-sidecar-setup.exe
+          # The same helper the Windows release leg and the Windows PR gate
+          # use — one asset name, one computed output path.
+          python3 -m scripts.build_windows_installer --label edge --strict
+          ls -l *-setup.exe
 
   build-docker:
     needs: [test-python, test-frontend, dependency-audit]
