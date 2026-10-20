@@ -90,16 +90,11 @@ def _module_file(name: str) -> pathlib.Path | None:
 def _package_of(path: pathlib.Path) -> str:
     """The dotted package a module belongs to (``app/core/utils.py`` -> ``app.core``).
 
-    A module's package is its parent directory's dotted path; a package's own
-    ``__init__.py`` belongs to the package it initialises.
+    A module's package is its parent directory's dotted path, and a package's
+    own ``__init__.py`` sits in the package it initialises — so both drop the
+    last path segment.
     """
-    rel = path.relative_to(ROOT)
-    parts = list(rel.parts)
-    if parts[-1] == "__init__.py":
-        parts = parts[:-1]
-    else:
-        parts = parts[:-1]
-    return ".".join(parts)
+    return ".".join(path.relative_to(ROOT).parts[:-1])
 
 
 def _resolve_relative(importer: pathlib.Path, level: int, module: str | None) -> str:
@@ -176,22 +171,33 @@ def _spec_hidden_imports(spec: pathlib.Path) -> set[str]:
     """The ``app.*`` modules a spec declares as hiddenimports.
 
     A spec that names a module explicitly ships it even when the static scan
-    would not find it, so these are roots of the closure too.
+    would not find it, so these are roots of the closure too. Scoped to the
+    ``hiddenimports`` list so an unrelated quoted ``app.*`` string elsewhere
+    in the spec is not mistaken for a declaration.
     """
-    return set(re.findall(r'"(app\.[\w.]+)"', spec.read_text(encoding="utf-8")))
+    text = spec.read_text(encoding="utf-8")
+    match = re.search(r"hiddenimports=.*?\[(.*?)\]", text, re.DOTALL)
+    if not match:
+        return set()
+    return set(re.findall(r'"(app\.[\w.]+)"', match.group(1)))
 
 
-def _bundled_app_modules() -> dict[str, pathlib.Path]:
+def _bundled_app_modules() -> tuple[dict[str, pathlib.Path], set[pathlib.Path]]:
     """The transitive ``app.*`` import closure every sidecar spec bundles.
 
     Mirrors PyInstaller's static scan: start at each spec's entry point and
     its declared hiddenimports, follow every import (including the ones
     inside function bodies, which is how ``app.core.utils`` reaches
     ``app.models.db``), and collect what lives under ``app/``.
+
+    Returns the closure keyed by module name, plus every file the scan
+    visited (the entry points are not themselves ``app/`` modules, but the
+    scan has to reach them for their imports to count).
     """
     seen: set[pathlib.Path] = set()
     queue: list[pathlib.Path] = []
     app_modules: dict[str, pathlib.Path] = {}
+    visited: set[pathlib.Path] = set()
 
     for spec in SPECS:
         entry = _spec_entry_point(spec)
@@ -208,6 +214,7 @@ def _bundled_app_modules() -> dict[str, pathlib.Path]:
         if current in seen:
             continue
         seen.add(current)
+        visited.add(current)
         for name in _imports_of(current):
             target = _module_file(name)
             if target is None:
@@ -228,7 +235,7 @@ def _bundled_app_modules() -> dict[str, pathlib.Path]:
             target = _module_file(parent)
             if target is not None:
                 app_modules.setdefault(parent, target)
-    return app_modules
+    return app_modules, visited
 
 
 def _glob_to_regex(pattern: str) -> re.Pattern[str]:
@@ -274,7 +281,7 @@ class TestSidecarEdgeBuildWatchesBundledAppCode:
         watched = [_glob_to_regex(pattern) for pattern in _edge_watch_paths()]
         uncovered = [
             path.relative_to(ROOT).as_posix()
-            for path in _bundled_app_modules().values()
+            for path in _bundled_app_modules()[0].values()
             if not any(rx.match(path.relative_to(ROOT).as_posix()) for rx in watched)
         ]
         assert not uncovered, (
@@ -288,18 +295,24 @@ class TestSidecarEdgeBuildWatchesBundledAppCode:
         # Guards the test above against a scan that stops finding a module:
         # the released sidecar bundles exactly this set, so a closure that
         # shrank means the scan truncated, not that the bundle did.
-        assert _bundled_app_modules().keys() >= KNOWN_BUNDLED_APP_MODULES
+        assert _bundled_app_modules()[0].keys() >= KNOWN_BUNDLED_APP_MODULES
 
     def test_model_normalization_is_among_the_bundled_modules(self):
         # The module PR #693 changed. If it ever leaves the bundle the
         # assertion above stops covering the case this test exists for.
-        assert "app.services.model_normalization" in _bundled_app_modules()
+        assert "app.services.model_normalization" in _bundled_app_modules()[0]
 
     def test_every_spec_contributes_to_the_closure(self):
         # The tray specs bundle scripts/sidecar.py as data and hand-declare
         # their app.* imports, so their entry point has to be a root too.
+        # Guard against an empty spec list, which would pass vacuously.
+        assert SPECS, "no PyInstaller specs found"
         entries = {spec.name: _spec_entry_point(spec) for spec in SPECS}
         assert all(entry is not None for entry in entries.values()), entries
+        visited = _bundled_app_modules()[1]
+        for spec in SPECS:
+            entry = _spec_entry_point(spec)
+            assert entry in visited, f"{spec.name}'s entry point {entry} was not scanned"
 
     @pytest.mark.parametrize("pattern", ["app/core/**", "app/models/**"])
     def test_shared_app_trees_are_watched(self, pattern):
