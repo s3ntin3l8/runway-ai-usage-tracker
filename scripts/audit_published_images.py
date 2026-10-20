@@ -8,7 +8,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from scripts.audit_release_image import audit, prepare_database
+from scripts.audit_release_image import audit, prepare_database, read_listing
 from scripts.image_policy import check_database
 
 
@@ -19,7 +19,12 @@ def audit_published(release: str, output: Path) -> bool:
         cache = Path(temp)
         try:
             database = prepare_database(cache)
-            check_database(database, datetime.now(UTC))
+            listing = read_listing(cache / "listing.json")
+            check_database(
+                database,
+                datetime.now(UTC),
+                listing.get("checksum") if listing else None,
+            )
         except Exception as exc:
             for label in ("edge", "release"):
                 directory = output / label

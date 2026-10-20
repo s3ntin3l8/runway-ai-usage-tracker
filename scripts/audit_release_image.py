@@ -10,12 +10,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.image_policy import check_database, evaluate, load_exceptions
+from scripts.image_policy import check_database, database_checksum, evaluate, load_exceptions
 
 SYFT = "anchore/syft@sha256:3eb5379ba7b409c3f4069b686110527af0c47df993fa5c10d13e7cf34f49b1aa"
 GRYPE = "anchore/grype@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe"
 IMAGE_PATTERN = r"ghcr\.io/s3ntin3l8/runway@sha256:[0-9a-f]{64}"
 DEFAULT_EXCEPTIONS = Path(__file__).resolve().parents[1] / "docs/security/image-exceptions.json"
+# Upstream can publish a new release while the database is being downloaded.
+# A mismatch is retried a few times before the audit fails closed.
+DB_UPDATE_ATTEMPTS = 3
 
 
 def run(*args: str, stdout: Any = None) -> None:
@@ -43,13 +46,41 @@ def scanner(cache: Path, *args: str, stdout: Any = None) -> None:
     )
 
 
+def read_listing(path: Path) -> dict[str, Any] | None:
+    """Return the release upstream advertises, or None when no listing was recorded."""
+    if not path.exists():
+        return None
+    entries = json.loads(path.read_text())
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("Invalid upstream vulnerability database listing")
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("status") == "active":
+            return entry
+    raise ValueError("Invalid upstream vulnerability database listing")
+
+
 def prepare_database(cache: Path) -> dict[str, Any]:
+    """Download the vulnerability database release upstream currently advertises.
+
+    The advertised release is recorded next to the database so the audit can
+    verify that the scan used it. The record is taken when the database is
+    prepared: upstream publishing again mid-audit does not invalidate a scan
+    whose database was the current release when the audit started.
+    """
     cache.mkdir(parents=True, exist_ok=True)
-    scanner(cache, "db", "update")
-    status = cache / "status.json"
-    with status.open("w") as fh:
-        scanner(cache, "db", "status", "-o", "json", stdout=fh)
-    return json.loads(status.read_text())
+    status_path = cache / "status.json"
+    listing_path = cache / "listing.json"
+    for _ in range(DB_UPDATE_ATTEMPTS):
+        scanner(cache, "db", "update")
+        with status_path.open("w") as fh:
+            scanner(cache, "db", "status", "-o", "json", stdout=fh)
+        with listing_path.open("w") as fh:
+            scanner(cache, "db", "list", "-o", "json", stdout=fh)
+        status = json.loads(status_path.read_text())
+        listing = read_listing(listing_path)
+        if listing is not None and database_checksum(status) == listing.get("checksum"):
+            return status
+    raise ValueError("Vulnerability database is not the release upstream currently advertises")
 
 
 def scan_archive(archive: Path, arch: str, output: Path, cache: Path) -> dict[str, Any]:
@@ -101,7 +132,12 @@ def scan_archive(archive: Path, arch: str, output: Path, cache: Path) -> dict[st
         )
     report = json.loads(scan_path.read_text())
     # The scanner must have used the same database we retained and validated.
-    check_database(report["descriptor"]["db"]["status"], datetime.now(UTC))
+    listing = read_listing(cache / "listing.json")
+    check_database(
+        report["descriptor"]["db"]["status"],
+        datetime.now(UTC),
+        listing.get("checksum") if listing else None,
+    )
     if (
         report["descriptor"]["db"]["status"]["from"]
         != json.loads((cache / "status.json").read_text())["from"]
@@ -158,8 +194,10 @@ def audit(
                 db = json.loads((cache / "status.json").read_text())
             else:
                 db = prepare_database(cache)
-            check_database(db, datetime.now(UTC))
+            listing = read_listing(cache / "listing.json")
+            check_database(db, datetime.now(UTC), listing.get("checksum") if listing else None)
             evidence["database"] = db
+            evidence["database_listing"] = listing
             if archive:
                 if architecture not in {"amd64", "arm64"}:
                     raise ValueError("Local archives require --architecture amd64 or arm64")
