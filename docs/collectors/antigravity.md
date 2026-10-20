@@ -57,7 +57,12 @@ complete snapshot, so a pool that is no longer served is retired.
 
 A group the collector does not know yet gets a **slug of its own name** as its pool (e.g.
 "Some Future Pool" → `some-future-pool`) plus a server-log warning — never an existing pool's
-slot, so a new pool cannot silently overwrite another one.
+slot, so a new pool cannot silently overwrite another one. The known groups are matched by
+anchored patterns (not loose substrings): a group merely *containing* "gemini"/"claude"/"gpt"
+is a new pool, not a member of an existing one. The one rename the mapping tolerates is the
+Argon version number ("Gemini 4 Argon" → "Gemini 5 Argon"); any other rename shows up as a
+new, slug-named pool plus the warning, and the old row is retired with the next complete
+snapshot.
 
 The server logs `Antigravity quota summary returned no Gemini pool for tier '<tier>'` when a
 non-free tier comes back without a Gemini pool (the fingerprint of a User-Agent that fell

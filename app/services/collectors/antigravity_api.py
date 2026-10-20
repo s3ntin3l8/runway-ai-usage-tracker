@@ -33,10 +33,7 @@ _USER_AGENT = (
 )
 
 # Physical quota pools. The API returns one group per pool and the group's
-# display name is the only stable identity it hands us. The order matters:
-# "Gemini 4 Argon" is a *separate* paid-plan pool that also says "gemini", so
-# the Argon check must win — otherwise both pools land in the same
-# `antigravity:gemini:<window>` slot and overwrite each other in LatestUsage.
+# display name is the only stable identity it hands us.
 POOL_ARGON = "argon"
 POOL_GEMINI = "gemini"
 POOL_FRONTIER = "frontier"
@@ -50,10 +47,26 @@ POOL_LABELS: dict[str, str] = {
     POOL_FRONTIER: "Frontier",
 }
 
+# The known quota groups, matched by *anchored* patterns. Matching loosely
+# (a "gemini" substring test) would fold an unknown pool into a known one —
+# and two pools sharing a `variant` share a `latest_usage` row, where the
+# second one is silently dropped. The Argon pattern tolerates a version bump
+# ("Gemini 4 Argon" → "Gemini 5 Argon") without swallowing any other pool.
+_KNOWN_GROUP_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^gemini(?:\s+[\d.]+)?\s+argon$"), POOL_ARGON),
+    (re.compile(r"^gemini\s+models?$"), POOL_GEMINI),
+    (re.compile(r"^claude\s+and\s+gpt\s+models?$"), POOL_FRONTIER),
+)
+
+
+def _normalize_group_name(group_name: str) -> str:
+    """Lower-case a group display name and collapse its whitespace."""
+    return re.sub(r"\s+", " ", (group_name or "").strip().lower())
+
 
 def _pool_slug(group_name: str) -> str:
     """Stable variant key for a quota group we do not know yet."""
-    slug = re.sub(r"[^a-z0-9]+", "-", (group_name or "").lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "-", group_name).strip("-")
     return slug or "unknown"
 
 
@@ -68,14 +81,11 @@ def pool_family(group_name: str) -> str:
     folded into an existing pool: two pools sharing a ``variant`` share a
     ``latest_usage`` slot, and the second one silently overwrites the first.
     """
-    lowered = (group_name or "").lower()
-    if "argon" in lowered:
-        return POOL_ARGON
-    if "gemini" in lowered:
-        return POOL_GEMINI
-    if "claude" in lowered or "gpt" in lowered:
-        return POOL_FRONTIER
-    return _pool_slug(group_name)
+    normalized = _normalize_group_name(group_name)
+    for pattern, pool in _KNOWN_GROUP_PATTERNS:
+        if pattern.match(normalized):
+            return pool
+    return _pool_slug(normalized)
 
 
 def pool_label(pool: str) -> str:
@@ -83,6 +93,10 @@ def pool_label(pool: str) -> str:
     if pool in POOL_LABELS:
         return POOL_LABELS[pool]
     return pool.replace("-", " ").title()
+
+
+# Pools we have already warned about (once per process, not once per poll).
+_WARNED_UNKNOWN_POOLS: set[str] = set()
 
 
 class AntigravityApiMixin:
@@ -143,8 +157,8 @@ class AntigravityApiMixin:
     async def _collect_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch Antigravity quota from the Code Assist cloud API.
 
-        Returns up to 4 cards: Gemini-pool weekly, Gemini-pool 5h,
-        Frontier-pool (Claude+GPT) weekly, Frontier-pool 5h.
+        Returns up to 5 cards: Gemini-pool weekly, Gemini-pool 5h,
+        Frontier-pool (Claude+GPT) weekly, Frontier-pool 5h, Argon-pool weekly.
         """
         now = datetime.now(UTC)
         backoff_until = getattr(self, "_last_429_backoff_until", None)
@@ -332,10 +346,12 @@ class AntigravityApiMixin:
         """Turn one quota group (one physical pool) into a card per window."""
         group_name = group.get("displayName", "Unknown")
         pool = pool_family(group_name)
-        if pool not in POOL_LABELS:
+        if pool not in POOL_LABELS and pool not in _WARNED_UNKNOWN_POOLS:
             # A pool we don't know yet: it gets its own variant (never an
             # existing pool's), and a warning so the mapping can be made
             # explicit instead of silently showing up under a made-up name.
+            # Logged once per pool per process — the poll runs every minute.
+            _WARNED_UNKNOWN_POOLS.add(pool)
             logger.warning(
                 "Unknown Antigravity quota group %r — reporting it as pool %r",
                 group_name,

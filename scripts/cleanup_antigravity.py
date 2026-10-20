@@ -19,7 +19,7 @@ This script:
   Phase 0 (--wipe-gauge) — delete ALL antigravity latest_usage rows so that
             orphaned rows from an earlier upsert-key shape (e.g. model_id=
             "gemini"/"frontier" before the aggregate-card migration) cannot
-            accumulate alongside the new 4-card shape. latest_usage is a
+            accumulate alongside the new 5-card shape. latest_usage is a
             derived live-gauge table; the server repopulates it on next poll.
             Run this phase after deploying the antigravity_api.py key change.
   Phase A — discover the canonical email from old LSP-era latest_usage cards,

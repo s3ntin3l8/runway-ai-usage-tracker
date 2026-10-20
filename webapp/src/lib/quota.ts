@@ -219,7 +219,9 @@ function chipBaseLabel(card: LimitCard, sameWinSiblings: LimitCard[]): string {
     return `${base} · ${modelLabel(card.model_id)}`;
   }
   if (card.variant && sameWinSiblings.some((s) => s.variant !== card.variant)) {
-    const variantLabel = card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
+    // Slug-style variants (e.g. an Antigravity pool we don't know yet:
+    // "some-future-pool") read as words, not as a raw key.
+    const variantLabel = modelLabel(card.variant);
     return `${base} · ${variantLabel}`;
   }
   return base;

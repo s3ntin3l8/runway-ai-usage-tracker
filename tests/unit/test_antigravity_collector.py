@@ -182,7 +182,7 @@ class TestAntigravityTier:
         qs.json.return_value = {
             "groups": [
                 {
-                    "displayName": "Gemini Models Pool",
+                    "displayName": "Gemini Models",
                     "buckets": [
                         {
                             "bucketId": "g_weekly",
@@ -200,7 +200,7 @@ class TestAntigravityTier:
                     ],
                 },
                 {
-                    "displayName": "Frontier Models Pool",
+                    "displayName": "Claude and GPT models",
                     "buckets": [
                         {
                             "bucketId": "f_weekly",
@@ -399,6 +399,20 @@ class TestAntigravityQuotaPools:
         assert pool_family("Gemini Models") == "gemini"
         assert pool_family("Claude and GPT models") == "frontier"
         assert pool_family("Gemini 4 Argon") == "argon"
+        # A version bump keeps the Argon pool (the pattern is anchored, so it
+        # cannot swallow a different pool).
+        assert pool_family("Gemini 5 Argon") == "argon"
+
+    def test_a_new_pool_named_like_a_known_one_does_not_join_it(self):
+        """Loose substring matching would fold a new pool into a known one —
+        and two pools sharing a variant share a latest_usage row, where the
+        second one is silently dropped."""
+        from app.services.collectors.antigravity_api import POOL_LABELS, pool_family
+
+        for name in ("Gemini Pro Models", "GPT-OSS models", "Claude Opus models"):
+            pool = pool_family(name)
+            assert pool not in POOL_LABELS, f"{name!r} was folded into {pool!r}"
+        assert pool_family("Gemini Pro Models") == "gemini-pro-models"
 
     def test_unknown_group_gets_its_own_pool(self):
         """An unrecognised group must not land in an existing pool: two pools
@@ -416,6 +430,10 @@ class TestAntigravityQuotaPools:
         """An unknown pool is surfaced (own variant, own card) and logged."""
         import logging
 
+        from app.services.collectors import antigravity_api
+
+        # The unknown-pool warning is logged once per pool per process.
+        antigravity_api._WARNED_UNKNOWN_POOLS.clear()
         collector = AntigravityCollector(account_id="user@example.com")
 
         lca = MagicMock(spec=httpx.Response)

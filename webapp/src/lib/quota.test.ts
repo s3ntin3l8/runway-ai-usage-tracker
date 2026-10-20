@@ -289,6 +289,15 @@ describe('chipLabel', () => {
     expect(chipLabel(frontier, siblings)).toBe('Weekly · Frontier');
     expect(chipLabel(argon, siblings)).toBe('Weekly · Argon');
   });
+  it('reads a slug-style variant as words (unknown Antigravity pool)', () => {
+    const known = card({ service_name: 'Frontier', window_type: 'weekly', variant: 'frontier' });
+    const unknown = card({
+      service_name: 'Some Future Pool',
+      window_type: 'weekly',
+      variant: 'some-future-pool',
+    });
+    expect(chipLabel(unknown, [known, unknown])).toBe('Weekly · Some Future Pool');
+  });
   it('appends the model when two same-name windows collide (Claude weekly vs Sonnet weekly)', () => {
     const generic = card({ service_name: 'Claude', window_type: 'weekly', model_id: null });
     const sonnet = card({ service_name: 'Claude', window_type: 'weekly', model_id: 'sonnet' });
