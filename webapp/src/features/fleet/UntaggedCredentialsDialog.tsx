@@ -333,7 +333,6 @@ function UntaggedRow({
   // ``accounts`` view in /fleet/config only ships enabled rows).
   // PR #290 round-2 review (Hermes body suggestion #4).
   const enabledAccounts = accounts.filter((a) => a.enabled !== false);
-  const disabledCount = accounts.length - enabledAccounts.length;
 
   return (
     <Card
@@ -395,28 +394,35 @@ function UntaggedRow({
       {isClaudeBrowserSource(entry) ? (
         <ClaudeSourceOrganizationPicker sourceId={entry.source_id!} providerId={entry.provider_id} onComplete={onOrganizationComplete} />
       ) : enabledAccounts.length === 0 ? (
-        <p className="mt-2 flex items-center gap-2 text-[12px] text-warning">
-          <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-          {accounts.length === 0 ? (
-            <>
-              No <span className="font-mono">{entry.provider_id}</span> row configured.{' '}
-              <Link to="/settings/providers" className="text-accent underline underline-offset-2">
-                Add one in Provider Settings
-              </Link>
-              .
-            </>
-          ) : (
-            <>
-              All {accounts.length}{' '}
-              <span className="font-mono">{entry.provider_id}</span> row
-              {accounts.length === 1 ? '' : 's'} configured{' '}
-              {disabledCount > 0 ? 'are' : 'is'} disabled.{' '}
-              <Link to="/settings/providers" className="text-accent underline underline-offset-2">
-                Enable in Provider Settings
-              </Link>
-              .
-            </>
-          )}
+        <p className="mt-2 flex items-start gap-2 text-[12px] text-warning">
+          <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+          {/* The whole message lives in one span: as flex children of this <p>, the
+              text runs, the provider id and the link would each become their own
+              flex item and wrap independently (ragged, gappy layout). One span
+              keeps it a single flowing sentence next to the icon. */}
+          <span className="min-w-0">
+            {accounts.length === 0 ? (
+              <>
+                No <span className="font-mono">{entry.provider_id}</span> row is configured.{' '}
+                <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+                  Add one in Provider Settings
+                </Link>
+                .
+              </>
+            ) : (
+              <>
+                {accounts.length === 1 ? 'The' : `All ${accounts.length}`}{' '}
+                <span className="font-mono">{entry.provider_id}</span>{' '}
+                {accounts.length === 1 ? 'row is' : 'rows are'} disabled.{' '}
+                <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+                  {accounts.length === 1
+                    ? 'Enable it in Provider Settings'
+                    : 'Enable one in Provider Settings'}
+                </Link>
+                .
+              </>
+            )}
+          </span>
         </p>
       ) : (
         <div className="mt-3 flex items-end gap-2">

@@ -177,7 +177,7 @@ describe('UntaggedCredentialsDialog', () => {
     const link = await within(dialog).findByRole('link', {
       name: /add one in provider settings/i,
     });
-    expect(link.closest('p')?.textContent).toMatch(/no .*anthropic.* row configured/i);
+    expect(link.closest('p')?.textContent).toMatch(/no .*anthropic.* row is configured/i);
     // No Tag button when there are no provider rows to pick from.
     expect(within(dialog).queryByRole('button', { name: /^tag$/i })).not.toBeInTheDocument();
     await user.click(link); // exercise the link without error
@@ -604,9 +604,61 @@ describe('UntaggedCredentialsDialog', () => {
     expect(within(dialog).queryByRole('button', { name: /^tag$/i })).not.toBeInTheDocument();
     // The Enable-in-Provider-Settings link is the precondition.
     const link = await within(dialog).findByRole('link', {
-      name: /enable in provider settings/i,
+      name: /enable it in provider settings/i,
     });
-    expect(link.closest('p')?.textContent).toMatch(/all .*anthropic.* rows? configured .* disabled/i);
+    expect(link.closest('p')?.textContent).toMatch(/the anthropic row is disabled/i);
+    // The message must be a single flex item next to the icon: as loose flex
+    // children the text runs, the provider id and the link each wrapped on
+    // their own and the sentence came out gappy and ragged.
+    expect(link.closest('p')?.querySelectorAll(':scope > *')).toHaveLength(2);
+  });
+
+  it('pluralizes the all-rows-disabled message when a provider has several rows', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'anthropic',
+          name: 'Anthropic',
+          accounts: [
+            {
+              account_id: 'bob@example.com',
+              account_label: 'Bob',
+              enabled: false,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+            {
+              account_id: 'carol@example.com',
+              account_label: 'Carol',
+              enabled: false,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+          ],
+          account_count: 2,
+        },
+      ],
+    });
+    renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={() => {}} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    const link = await within(dialog).findByRole('link', {
+      name: /enable one in provider settings/i,
+    });
+    expect(link.closest('p')?.textContent).toMatch(/all 2 anthropic rows are disabled/i);
   });
 });
 
