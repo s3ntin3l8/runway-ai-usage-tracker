@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -50,19 +51,38 @@ POOL_LABELS: dict[str, str] = {
 }
 
 
+def _pool_slug(group_name: str) -> str:
+    """Stable variant key for a quota group we do not know yet."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (group_name or "").lower()).strip("-")
+    return slug or "unknown"
+
+
 def pool_family(group_name: str) -> str:
     """Map a quota group's display name to its physical pool family.
 
     "Gemini Models" → ``gemini``, "Claude and GPT models" → ``frontier``,
     "Gemini 4 Argon" → ``argon`` (a separate paid-plan pool, not part of the
     Gemini bucket).
+
+    A group we do not recognise gets a slug of its own name instead of being
+    folded into an existing pool: two pools sharing a ``variant`` share a
+    ``latest_usage`` slot, and the second one silently overwrites the first.
     """
     lowered = (group_name or "").lower()
     if "argon" in lowered:
         return POOL_ARGON
     if "gemini" in lowered:
         return POOL_GEMINI
-    return POOL_FRONTIER
+    if "claude" in lowered or "gpt" in lowered:
+        return POOL_FRONTIER
+    return _pool_slug(group_name)
+
+
+def pool_label(pool: str) -> str:
+    """Human label for a pool key (known pools have a fixed one)."""
+    if pool in POOL_LABELS:
+        return POOL_LABELS[pool]
+    return pool.replace("-", " ").title()
 
 
 class AntigravityApiMixin:
@@ -221,6 +241,7 @@ class AntigravityApiMixin:
                 "g1-pro-tier": "pro",
                 "g1-ultra-tier": "ultra",
                 "standard-tier": "free",
+                "free-tier": "free",
             }
             tier = tier_mapping.get(tier_id_raw, tier_id_raw if tier_id_raw != "unknown" else None)
             if not project_id:
@@ -279,10 +300,12 @@ class AntigravityApiMixin:
 
             results: list[dict[str, Any]] = []
             pools = {pool_family(g.get("displayName", "")) for g in groups}
-            if tier in ("pro", "ultra") and POOL_GEMINI not in pools:
-                # A paid tier always has a Gemini pool. Its absence means the
+            if tier not in ("free", None) and POOL_GEMINI not in pools:
+                # Every paid tier has a Gemini pool. Its absence means the
                 # backend served us a subset of the pools — almost always an
-                # outdated User-Agent version (see _USER_AGENT).
+                # outdated User-Agent version (see _USER_AGENT). The check
+                # keys on "not free" rather than on a list of paid tier ids,
+                # so a tier Google adds later is covered too.
                 logger.warning(
                     "Antigravity quota summary returned no Gemini pool for tier %r "
                     "(pools: %s) — the User-Agent version may be too old",
@@ -309,6 +332,15 @@ class AntigravityApiMixin:
         """Turn one quota group (one physical pool) into a card per window."""
         group_name = group.get("displayName", "Unknown")
         pool = pool_family(group_name)
+        if pool not in POOL_LABELS:
+            # A pool we don't know yet: it gets its own variant (never an
+            # existing pool's), and a warning so the mapping can be made
+            # explicit instead of silently showing up under a made-up name.
+            logger.warning(
+                "Unknown Antigravity quota group %r — reporting it as pool %r",
+                group_name,
+                pool,
+            )
         cards: list[dict[str, Any]] = []
 
         for bucket in group.get("buckets", []):
@@ -348,7 +380,7 @@ class AntigravityApiMixin:
                 detail = f"{detail} — {description}"
 
             card: dict[str, Any] = {
-                "service_name": POOL_LABELS.get(pool, pool.capitalize()),
+                "service_name": pool_label(pool),
                 "icon": "🛸",
                 "remaining": f"{pct_used:.1f}%",
                 "unit": "used",

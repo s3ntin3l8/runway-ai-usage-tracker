@@ -55,6 +55,14 @@ must not be folded into the `gemini` pool — both would then share one `latest_
 disappears on its own when Google folds it back into the Gemini bucket: the collector returns a
 complete snapshot, so a pool that is no longer served is retired.
 
+A group the collector does not know yet gets a **slug of its own name** as its pool (e.g.
+"Some Future Pool" → `some-future-pool`) plus a server-log warning — never an existing pool's
+slot, so a new pool cannot silently overwrite another one.
+
+The server logs `Antigravity quota summary returned no Gemini pool for tier '<tier>'` when a
+non-free tier comes back without a Gemini pool (the fingerprint of a User-Agent that fell
+behind). The check keys on "not free", so a paid tier id Google adds later is covered too.
+
 **Credentials:** `~/.gemini/antigravity-cli/antigravity-oauth-token`
 ```json
 {"auth_method": "consumer", "token": {"access_token": "…", "refresh_token": "…", "expiry": "ISO8601"}}
