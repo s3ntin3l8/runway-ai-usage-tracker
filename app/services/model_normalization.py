@@ -51,7 +51,11 @@ def is_free_tier_model_id(model_id: str | None) -> bool:
     if m.endswith((":free", "-free", "/free")):
         return True
     last_token = m.replace(":", "/").split("/")[-1]
-    return last_token == "free" or last_token.endswith("-free")
+    # Only the bare "free" id reaches here. A last token that ends in
+    # "-free" implies the whole id does, so the suffix check above already
+    # returned for it; the sidecar's copy of this predicate keeps the
+    # equivalent (dead) clause, and this one does not.
+    return last_token == "free"
 
 
 # ── Gemini 4 Argon ──
