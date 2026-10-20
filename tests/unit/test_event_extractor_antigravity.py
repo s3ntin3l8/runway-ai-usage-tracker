@@ -365,3 +365,47 @@ def test_effort_empty_is_none():
 def test_effort_not_trailing_is_none():
     """Only a trailing parenthesized effort suffix counts."""
     assert _extract_ag_effort("(High) Gemini 3.1 Pro") is None
+
+
+# ---------------------------------------------------------------------------
+# Model normalisation — Gemini 4 Argon (issue #686)
+# ---------------------------------------------------------------------------
+
+
+def test_argon_raw_id_drops_the_trial_suffix():
+    """The raw id carries a "-trial" suffix; the pricing id does not."""
+    assert (
+        _normalize_ag_model("gemini-4-argon-trial", "Gemini 4 Argon (High)", {}) == "gemini-4-argon"
+    )
+
+
+def test_argon_canonical_raw_id_is_unchanged():
+    assert _normalize_ag_model("gemini-4-argon", "Gemini 4 Argon", {}) == "gemini-4-argon"
+
+
+def test_argon_from_display_when_raw_is_empty():
+    assert _normalize_ag_model("", "Gemini 4 Argon (High)", {}) == "gemini-4-argon"
+
+
+def test_argon_from_display_when_raw_is_generic():
+    assert _normalize_ag_model("gemini-default", "Gemini 4 Argon (High)", {}) == "gemini-4-argon"
+
+
+def test_argon_preview_raw_id_is_canonicalised():
+    assert _normalize_ag_model("gemini-4-argon-preview", "", {}) == "gemini-4-argon"
+
+
+def test_non_gemini_raw_id_passes_through_even_with_argon_display():
+    """A non-family raw id stays verbatim, same contract as the family fallback."""
+    assert _normalize_ag_model("gpt-oss", "Gemini 4 Argon (High)", {}) == "gpt-oss"
+
+
+def test_argon_is_not_confused_with_the_tier_buckets():
+    """Argon is priced as its own family, not as pro/flash."""
+    assert _normalize_ag_model("gemini-4-argon-trial", "", {}) != "pro"
+    assert _normalize_ag_model("gemini-4-argon-trial", "", {}) != "flash"
+
+
+def test_lookalike_id_is_not_argon():
+    """Only the exact Argon family matches — a look-alike slug passes through."""
+    assert _normalize_ag_model("gemini-4-argonoid", "Gemini 4 Argonoid", {}) == "gemini-4-argonoid"

@@ -200,3 +200,9 @@ def test_cwd_falls_back_to_dir_name_and_kind_maps_to_subagent(tmp_path):
     assert len(evts) == 1
     assert evts[0].cwd == "fallbackproj"
     assert evts[0].subagent_type == "plan"
+
+
+def test_normalizes_gemini_4_argon_to_its_own_family():
+    """Argon is priced as one family under the canonical id (issue #686)."""
+    assert _normalize_gemini_model("gemini-4-argon") == "gemini-4-argon"
+    assert _normalize_gemini_model("gemini-4-argon-trial") == "gemini-4-argon"
