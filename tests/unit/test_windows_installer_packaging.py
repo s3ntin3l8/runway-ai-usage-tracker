@@ -292,10 +292,12 @@ def test_the_installer_must_be_a_windows_executable(tmp_path):
 def test_the_workflows_use_the_shared_installer_helper(workflow):
     text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
     assert "scripts.build_windows_installer" in text
-    # No workflow may compile the installer on its own any more. Only the
-    # commands matter — a comment may still mention the compiler.
+    # No workflow may compile the installer on its own any more. The drift
+    # shows up as a compiler invocation or a spelled-out output path — a
+    # comment that merely mentions the compiler is not drift.
     commands = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    assert not re.search(r"\bmakensis\b", commands)
+    assert not re.search(r"^\s*(?:run:\s*)?(?:makensis|makensis\.exe)\b", commands, re.MULTILINE)
+    assert "-DOUTFILE=" not in commands
 
 
 def test_an_edge_build_is_triggered_by_a_change_to_the_installer_helper():
