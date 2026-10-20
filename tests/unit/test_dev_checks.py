@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -136,7 +137,53 @@ def test_isolated_checks_remove_inherited_database_and_login_paths(monkeypatch):
     dc.execute(["synthetic-check"], isolated_paths={"RUNWAY_CONFIG_DIR": "isolated-config"})
 
 
-@pytest.mark.parametrize("task", ["install-hooks", "lint", "mypy", "test", "unit", "gate"])
+def test_test_shard_runs_the_suite_without_the_other_shards(monkeypatch):
+    commands = []
+    monkeypatch.setattr(dc, "suite_files", lambda: ["tests/unit/a.py", "tests/unit/b.py"])
+    monkeypatch.setattr(dc, "shard_files", lambda shard_id, shards, modules: [modules[0]])
+    monkeypatch.setattr(dc, "execute", lambda command, **kwargs: commands.append(command))
+    dc.check("test-shard", [], shard_id=1, shards=2)
+    command = commands[0]
+    assert command[:4] == [str(dc.venv_python()), "-m", "pytest", "tests/"]
+    assert "--deselect=tests/unit/b.py" in command
+    assert "--deselect=tests/unit/a.py" not in command
+
+
+def test_install_python_skips_the_node_dependencies(monkeypatch):
+    commands = []
+    dc.venv_python().unlink()
+
+    def execute(command):
+        commands.append(command)
+        if command[1:3] == ["-m", "venv"]:
+            dc.venv_python().touch()
+
+    monkeypatch.setattr(dc, "execute", execute)
+    monkeypatch.setattr(dc, "npm_command", lambda: pytest.fail("npm is not needed"))
+    dc.check("install-python", [])
+    assert commands[0][1:3] == ["-m", "venv"]
+    assert not any("npm" in " ".join(command) for command in commands)
+
+
+def test_shard_settings_come_from_the_environment(monkeypatch):
+    monkeypatch.setenv("RUNWAY_PYTEST_SHARD_ID", "3")
+    monkeypatch.setenv("RUNWAY_PYTEST_SHARDS", "6")
+    seen = {}
+
+    def check(task, extra, **kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr(dc, "check", check)
+    monkeypatch.setattr(sys, "argv", ["dev_checks.py", "test-shard"])
+    assert dc.main() == 0
+    assert seen["shard_id"] == 3
+    assert seen["shards"] == 6
+
+
+@pytest.mark.parametrize(
+    "task",
+    ["install-hooks", "lint", "mypy", "test", "unit", "test-shard", "gate", "record-shard-weights"],
+)
 def test_missing_venv_reports_install_before_running_commands(tmp_path, monkeypatch, task):
     dc.venv_python().unlink()
     monkeypatch.setattr(dc, "execute", lambda *a, **k: pytest.fail("check ran without .venv"))
