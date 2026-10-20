@@ -106,6 +106,10 @@ _INGEST_CREDENTIAL_KEYS = frozenset(
         "xai_refresh",
         "cli_access_token",
         "cli_expires_at",
+        # The installed agy CLI's version, reported next to the token. Not a
+        # secret: the Code Assist API gates the quota pools it serves on the
+        # User-Agent version, so the collector needs the real one (#687).
+        "agy_version",
         "session_cookie",
         "console_session",
     }
