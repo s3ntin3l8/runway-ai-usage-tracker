@@ -138,9 +138,8 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
     if value.startswith("keychain:"):
         service = value.split(":", 1)[1].split("#", 1)[0]
         if service.startswith("Claude Desktop/oauth/"):
-            return OriginDisplay(
-                "keychain", "Desktop OAuth", app="Claude Desktop", detail="Claude Desktop"
-            )
+            # The app already says "Claude Desktop"; a detail would only repeat it.
+            return OriginDisplay("keychain", "Desktop OAuth", app="Claude Desktop")
         app = "Claude Code" if service.startswith("Claude Code") else None
         return OriginDisplay("keychain", "Keychain entry", app=app, detail=service or None)
     return OriginDisplay("sidecar", "Sidecar credential")

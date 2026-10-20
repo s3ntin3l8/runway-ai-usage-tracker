@@ -79,7 +79,8 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
   if (origin.startsWith('keychain:')) {
     const service = origin.slice('keychain:'.length).split('#')[0];
     if (service.startsWith('Claude Desktop/oauth/')) {
-      return { kind: 'keychain', label: 'Desktop OAuth', detail: 'Claude Desktop' };
+      // The app already says "Claude Desktop"; a detail would only repeat it.
+      return { kind: 'keychain', label: 'Desktop OAuth' };
     }
     return { kind: 'keychain', label: 'Keychain entry', detail: service || undefined };
   }
@@ -88,7 +89,9 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
   }
   if (origin.startsWith('path:') || origin.startsWith('file:')) {
     const raw = origin.slice(origin.indexOf(':') + 1).split('#')[0];
-    const path = raw.replace(/^\/{2,}(localhost)?/, '');
+    // Same normalisation as the server: "file:///home/u/x.json" keeps its
+    // leading slash ("/home/u/x.json"), only the authority is dropped.
+    const path = raw.replace(/^\/{2,}(localhost)?(?=\/)/, '');
     const name = path.split('/').filter(Boolean).pop() ?? 'Credential file';
     return { kind: 'file', label: name, path };
   }

@@ -43,6 +43,13 @@ describe('describeCredentialOrigin', () => {
     expect(described.path).toBe('/home/u/.codex/auth.json');
   });
 
+  it('normalises a file URI like the server does', () => {
+    // Same as the Python twin: only the authority is dropped, the path keeps
+    // its leading slash.
+    expect(describeCredentialOrigin('file:///home/u/x.json').path).toBe('/home/u/x.json');
+    expect(describeCredentialOrigin('file://localhost/home/u/x.json').path).toBe('/home/u/x.json');
+  });
+
   it('describes an env var by its name', () => {
     const described = describeCredentialOrigin('env:OPENROUTER_API_KEY');
     expect(described.kind).toBe('env');
@@ -54,6 +61,8 @@ describe('describeCredentialOrigin', () => {
     expect(described.kind).toBe('keychain');
     expect(described.label).toBe('Keychain entry');
     expect(described.detail).toBe('Claude Code-credentials');
+    // The app already names the owner; a detail would only repeat it.
+    expect(describeCredentialOrigin('keychain:Claude Desktop/oauth/x').detail).toBeUndefined();
   });
 
   it('falls back to a sidecar credential for an origin it cannot place', () => {

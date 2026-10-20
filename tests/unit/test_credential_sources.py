@@ -85,6 +85,8 @@ def test_file_and_env_origins_carry_no_extra_detail():
     assert describe_origin_full("keychain:Claude Code-credentials").detail == (
         "Claude Code-credentials"
     )
+    # The app already names the owner; a detail would only repeat it.
+    assert describe_origin_full("keychain:Claude Desktop/oauth/x").detail is None
 
 
 def test_sidecar_source_id_is_host_scoped_and_stable():
