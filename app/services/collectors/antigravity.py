@@ -1,8 +1,9 @@
 """
 Antigravity CLI quota collector.
 
-Fetches 4 quota gauges (Gemini-pool weekly/5h + Frontier-pool weekly/5h) from
-the Code Assist cloud API using the agy OAuth token.
+Fetches up to 5 quota gauges from the Code Assist cloud API using the agy
+OAuth token: Gemini-pool weekly/5h + Frontier-pool weekly/5h + Argon-pool
+weekly (the separate Gemini 4 Argon bucket of paid Pro plans).
 """
 
 import logging
