@@ -745,6 +745,19 @@ __REGISTRY__: dict[str, Any] = {
                         "token.expiry": "_raw_expiry",
                     },
                 },
+                # The Windows counterpart of the token-file rule: on Windows the agy CLI
+                # stores the same JSON bundle in the Credential Manager instead of a
+                # file, so the sidecar reads the stored entry directly (advapi32, no
+                # PowerShell) and maps the same three fields.
+                {
+                    "type": "windows_credential_json",
+                    "target": "gemini:antigravity",
+                    "mapping": {
+                        "token.access_token": "oauth_token",
+                        "token.refresh_token": "refresh_token",
+                        "token.expiry": "_raw_expiry",
+                    },
+                },
             ],
         },
         "ollama": {
@@ -2895,7 +2908,16 @@ class BrowserCookieExtractor:
 
 
 def get_windows_credential(target: str) -> str | None:
-    """Extract credential from Windows Credential Manager with caching."""
+    """Extract credential from Windows Credential Manager with caching.
+
+    Read natively through ``advapi32!CredReadW``. The earlier route shelled
+    out to PowerShell's ``Get-StoredCredential``, which needs the
+    CredentialManager PowerShell module: that module is absent from a stock
+    Windows install, so every lookup silently returned nothing and the rule
+    was dead on the one platform it was written for. Reading the entry
+    directly also spawns no process, so the packaged windowed sidecar cannot
+    flash a console.
+    """
     if platform.system() != "Windows":
         return None
 
@@ -2904,32 +2926,15 @@ def get_windows_credential(target: str) -> str | None:
         if now < ttl and cached_target == target:
             return password
 
-    try:
-        cmd = [
-            "powershell",
-            "-Command",
-            f"(New-Object System.Net.NetworkCredential('', (Get-StoredCredential -Target '{target}').Password)).Password",
-        ]
-        # The packaged Windows sidecar is a windowed application. Console
-        # programs such as PowerShell still flash a console unless explicitly
-        # started with CREATE_NO_WINDOW, even when stdout/stderr are captured.
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            creationflags=_subprocess_creationflags(),
+    from scripts.sidecar_pkg.wincred import read_credential_text
+
+    password = read_credential_text(target)
+    if password:
+        _windows_cred_cache[target] = (
+            password,
+            time.time() + _windows_cred_ttl_seconds,
         )
-        if result.returncode == 0:
-            password = result.stdout.strip()
-            if password:
-                _windows_cred_cache[target] = (
-                    password,
-                    time.time() + _windows_cred_ttl_seconds,
-                )
-                return password
-    except Exception:
-        logging.debug("Windows Credential Manager lookup failed for %r", target, exc_info=True)
+        return password
     return None
 
 
@@ -4180,6 +4185,34 @@ class GenericCollector:
                     if target:
                         token_candidates.append(
                             ({target: val}, f"keychain:{rule.get('target')}", "keychain")
+                        )
+
+            # 4b. Windows Credential Manager, JSON document
+            #
+            # Some CLIs store a whole token bundle as JSON in the Credential
+            # Manager (agy does: its OAuth token lives under the target
+            # "gemini:antigravity"). The bundle is read fresh - no cache - so
+            # a token agy just renewed is picked up on the next cycle.
+            elif rule_type == "windows_credential_json" and platform.system() == "Windows":
+                from scripts.sidecar_pkg.wincred import read_json_credential
+
+                document = read_json_credential(rule.get("target"))
+                if document:
+                    candidate_tokens = {}
+                    for key_path, target in mapping.items():
+                        val = GenericCollector.get_nested(document, key_path)
+                        if val:
+                            candidate_tokens[target] = val
+                    if candidate_tokens:
+                        token_candidates.append(
+                            (
+                                candidate_tokens,
+                                f"keychain:{rule.get('target')}",
+                                "keychain",
+                            )
+                        )
+                        logging.info(
+                            f"  [{provider_id}] Credential Manager entry matched: {rule.get('target')}"
                         )
 
             # 5. Browser Cookies

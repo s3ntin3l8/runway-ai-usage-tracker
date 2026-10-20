@@ -14,22 +14,33 @@ an expired token in place — and does *not* touch the file while the token is
 still valid, which is why the thread polls the tiny file every minute and
 only invokes agy once the token has actually expired (bounded dead-token
 window of one tick).
+
+Where the token lives is platform-dependent: a file under the Gemini dir on
+POSIX, the Windows Credential Manager on Windows (agy writes no token file
+there, and renews the stored entry in place). Both are read through the same
+helpers, so the renewal loop is the same everywhere.
 """
 
 import json
 import logging
+import platform
 import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from scripts.sidecar_pkg.agy_version import resolve_agy
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOKEN_PATH = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+# On Windows the agy CLI keeps its OAuth token in the Credential Manager
+# (target "gemini:antigravity") and writes no token file, so the keep-alive
+# has to read the credential store rather than the filesystem.
+WINDOWS_CREDENTIAL_TARGET = "gemini:antigravity"
 # Cheap stat + read of a ~1.6 KB file. This bounds the dead-token window to
 # one tick after expiry; agy only rewrites the file once the token has lapsed,
 # so a longer tick would leave collection failing for longer.
@@ -74,16 +85,45 @@ def is_enabled(provider: str | None = None) -> bool:
     return _enabled and (provider is None or provider not in _disabled_providers)
 
 
+def _expiry_from_document(document: Any) -> float | None:
+    """``token.expiry`` as epoch seconds from a parsed token document."""
+    try:
+        expiry = str((document.get("token") or {}).get("expiry") or "")
+        if not expiry:
+            return None
+        return datetime.fromisoformat(expiry.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def expiry_epoch(token_path: Path) -> float | None:
     """``token.expiry`` (ISO 8601) as epoch seconds; None when unreadable."""
     try:
         raw = json.loads(token_path.read_text())
-        expiry = str((raw.get("token") or {}).get("expiry") or "")
-        if not expiry:
-            return None
-        return datetime.fromisoformat(expiry.replace("Z", "+00:00")).timestamp()
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError):
         return None
+    return _expiry_from_document(raw)
+
+
+def _windows_expiry_epoch() -> float | None:
+    """The agy token's expiry, read from the Windows Credential Manager."""
+    from scripts.sidecar_pkg.wincred import read_json_credential
+
+    return _expiry_from_document(read_json_credential(WINDOWS_CREDENTIAL_TARGET))
+
+
+def local_expiry_epoch(token_path: Path | None = None) -> float | None:
+    """The expiry of the agy login on this machine, wherever it is stored.
+
+    ``token_path`` names a token file to read (the POSIX layout, and what the
+    tests inject). Without one the platform decides: the Windows Credential
+    Manager entry on Windows, the token file elsewhere.
+    """
+    if token_path is not None:
+        return expiry_epoch(token_path)
+    if platform.system() == "Windows":
+        return _windows_expiry_epoch()
+    return expiry_epoch(DEFAULT_TOKEN_PATH)
 
 
 def refresh_due(token_path: Path, *, now: float | None = None, lead: int = LEAD_SECONDS) -> bool:
@@ -99,6 +139,33 @@ def refresh_due(token_path: Path, *, now: float | None = None, lead: int = LEAD_
     if not token_path.is_file():
         return False
     expiry = expiry_epoch(token_path)
+    if expiry is None:
+        return True
+    return expiry <= (time.time() if now is None else now) + lead
+
+
+def local_refresh_due(
+    token_path: Path | None = None, *, now: float | None = None, lead: int = LEAD_SECONDS
+) -> bool:
+    """Whether the agy login on this machine needs renewing.
+
+    A machine that never logged into agy has nothing to renew and must not
+    be prodded into starting a login flow, so an absent token (no file on
+    POSIX, no Credential Manager entry on Windows) is not due. A token whose
+    expiry cannot be read counts as due — let the CLI decide.
+    """
+    if token_path is not None:
+        return refresh_due(token_path, now=now, lead=lead)
+    if platform.system() == "Windows":
+        from scripts.sidecar_pkg.wincred import read_credential_bytes
+
+        if read_credential_bytes(WINDOWS_CREDENTIAL_TARGET) is None:
+            return False
+        expiry = _windows_expiry_epoch()
+    else:
+        if not DEFAULT_TOKEN_PATH.is_file():
+            return False
+        expiry = expiry_epoch(DEFAULT_TOKEN_PATH)
     if expiry is None:
         return True
     return expiry <= (time.time() if now is None else now) + lead
@@ -160,7 +227,10 @@ class KeepAliveThread(threading.Thread):
         # backs off on its own, so one broken login never delays another.
         self._renewers = list(renewers or [])
         self._renewer_resume_at: dict[str, float] = {}
-        self._token_path = token_path or DEFAULT_TOKEN_PATH
+        # None means "wherever this OS keeps the agy token": the Windows
+        # Credential Manager entry on Windows, the token file elsewhere. An
+        # explicit path (the tests) always wins.
+        self._token_path = token_path
         self._command = command
         self._tick_seconds = tick_seconds
         self._retry_tick_seconds = retry_tick_seconds
@@ -217,16 +287,16 @@ class KeepAliveThread(threading.Thread):
 
         Not due → normal tick. Due → run the refresh, backing off after a
         failure (or when agy isn't installed) so a broken login isn't hammered —
-        and also when the CLI exited 0 but the token file's expiry is still
-        unreadable, so a corrupt file can't be re-prodded every tick.
+        and also when the CLI exited 0 but the token's expiry is still
+        unreadable, so a corrupt token can't be re-prodded every tick.
         """
-        if not refresh_due(self._token_path, lead=self._lead_seconds):
+        if not local_refresh_due(self._token_path, lead=self._lead_seconds):
             return self._tick_seconds
         command = self._resolve_command()
         if command is None:
             return self._retry_tick_seconds
         if run_refresh(command):
-            if expiry_epoch(self._token_path) is None:
+            if local_expiry_epoch(self._token_path) is None:
                 return self._retry_tick_seconds
             return self._tick_seconds
         return self._retry_tick_seconds
