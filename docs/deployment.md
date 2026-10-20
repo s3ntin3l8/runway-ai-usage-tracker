@@ -214,6 +214,7 @@ The relevant env vars apply to both runtimes:
 | `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` | ✅ when `APP_HOST != 127.0.0.1` | Admin key or trusted forward-auth proxy for network binds |
 | `SESSION_LIFETIME_HOURS` | optional (default `12`) | Admin session-cookie lifetime for a normal login |
 | `SESSION_REMEMBER_DAYS` | optional (default `30`) | Session lifetime when the login uses "remember me" |
+| `RUNWAY_BUILD_SHA` | optional | The commit this build came from, shown in Settings → About. The official Docker image bakes it in at build time; set it by hand for a source or pip install |
 
 For local single-host development the only mandatory variable is `INGEST_API_KEY` (default `sidecar-default-secret` ships in `.env.example`). For any multi-host or Docker deployment, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and an admin gate (`ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` with forward-auth) become hard requirements; the server fails fast on startup otherwise.
 
