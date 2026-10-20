@@ -90,8 +90,11 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
   if (origin.startsWith('path:') || origin.startsWith('file:')) {
     const raw = origin.slice(origin.indexOf(':') + 1).split('#')[0];
     // Same normalisation as the server: "file:///home/u/x.json" keeps its
-    // leading slash ("/home/u/x.json"), only the authority is dropped.
-    const path = raw.replace(/^\/{2,}(localhost)?(?=\/)/, '');
+    // leading slash ("/home/u/x.json"), only the authority is dropped, and a
+    // Windows drive letter loses the slash before it ("C:/Users/...").
+    const path = raw
+      .replace(/^\/{2,}(localhost)?(?=\/)/, '')
+      .replace(/^\/(?=[A-Za-z]:)/, '');
     const name = path.split('/').filter(Boolean).pop() ?? 'Credential file';
     return { kind: 'file', label: name, path };
   }

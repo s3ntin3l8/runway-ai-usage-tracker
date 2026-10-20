@@ -2581,6 +2581,28 @@ def test_listed_credential_tags_describe_their_origin(client: TestClient, sessio
     )
 
 
+def test_listed_credential_tags_name_the_browser_a_cookie_came_from(
+    client: TestClient, session: Session
+) -> None:
+    """A cookie rule says which browser holds it, so it can't be read as a file."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin="cookie:opencode/Chrome/Profile 1/Cookies",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+    )
+    session.commit()
+
+    (item,) = client.get("/api/v1/fleet/credentials/tags").json()["items"]
+    assert (item["origin_label"], item["origin_detail"]) == (
+        "Browser cookie",
+        "Chrome · Profile 1",
+    )
+
+
 def test_listed_credential_tags_report_whether_a_machine_still_matches_them(
     client: TestClient, session: Session
 ) -> None:

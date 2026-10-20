@@ -48,6 +48,10 @@ describe('describeCredentialOrigin', () => {
     // its leading slash.
     expect(describeCredentialOrigin('file:///home/u/x.json').path).toBe('/home/u/x.json');
     expect(describeCredentialOrigin('file://localhost/home/u/x.json').path).toBe('/home/u/x.json');
+    // A Windows drive letter loses the slash before it, like the server does.
+    expect(describeCredentialOrigin('file:///C:/Users/u/.codex/auth.json').path).toBe(
+      'C:/Users/u/.codex/auth.json',
+    );
   });
 
   it('describes an env var by its name', () => {
