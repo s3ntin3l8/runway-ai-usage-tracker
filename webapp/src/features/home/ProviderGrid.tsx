@@ -34,7 +34,7 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
 import { maskAccountId } from '@/lib/accountDisplay';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
-import { cardKind, cardPct, cardStale, cardStatus, cardTooltip, chipLabel, staleTitle, tokenUsageTotal, windowLabel } from '@/lib/quota';
+import { cardHeroLabel, cardKind, cardPct, cardStale, cardStatus, cardTooltip, chipLabel, staleTitle, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
 import type { RiskItem } from './risk';
@@ -175,7 +175,11 @@ function SortableProviderCard({
       {kind === 'quota' && (
         <>
           <div className="mt-3 flex items-baseline justify-between gap-2">
-            <span className="font-mono text-lg font-semibold tabular" title={cardTooltip(gauge)}>
+            <span
+              className="font-mono text-lg font-semibold tabular"
+              title={cardTooltip(gauge)}
+              aria-label={cardHeroLabel(gauge, cardPct(gauge))}
+            >
               {formatPct(cardPct(gauge))}
             </span>
             <span className="truncate text-[11px] text-fg-subtle">

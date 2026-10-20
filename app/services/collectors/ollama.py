@@ -437,13 +437,19 @@ class OllamaCollector(BaseCollector):
         """
         self._no_monthly_cap = False
         included = body.get("included")
+        purchased = self._purchased_balance(body)
         if included is None:
-            # No included allowance — a pay-as-you-go account. Only purchased
-            # credits are left to report, and only when there are some.
-            purchased = self._purchased_balance(body)
-            if purchased and purchased > 0:
+            if purchased is None:
+                # Not a balance payload at all — an error page, or a schema
+                # we do not know. Only an explicit purchased block proves
+                # there is no included allowance; anything else is malformed
+                # data, and reporting it as "no quota" would let the snapshot
+                # reconciliation retire a working card.
+                self._set_error_reason("missing_data")
+                return []
+            if purchased > 0:
                 return [self._make_credits_card(purchased)]
-            # A valid no-quota state, not malformed data.
+            # A pay-as-you-go account with no credits left: nothing to meter.
             self._no_monthly_cap = True
             return []
         if not isinstance(included, dict):
@@ -517,6 +523,11 @@ class OllamaCollector(BaseCollector):
                 "reset_at": reset_at.isoformat() if reset_at else None,
                 "account_label": self.account_label or "",
                 "window_type": "monthly",
+                # A distinct pool: the card's unit changed from percent (the
+                # legacy monthly-limit shape) to currency, and merge_card_json
+                # freezes the quota fields of a stored card whose unit differs.
+                # A new pool lets the stale one be reconciled away instead.
+                "variant": "allowance",
                 "provider_id": "ollama",
                 "tier": "cloud",
                 "data_source": self.DATA_SOURCE_API,
@@ -545,8 +556,10 @@ class OllamaCollector(BaseCollector):
                 continue
             remaining_pct = _to_float(limit.get("remaining_percent"))
             if remaining_pct is None or not 0 <= remaining_pct <= 100:
-                self._set_error_reason("missing_data")
-                return []
+                # One unreadable window must not cost the account its other
+                # meters — skip it and keep the siblings.
+                logger.warning("Ollama: skipping unreadable %s limit window", key)
+                continue
             resets_at = self._parse_timestamp(limit.get("resets_at"))
             pct = 100.0 - remaining_pct
             cards.append(
@@ -575,6 +588,10 @@ class OllamaCollector(BaseCollector):
                     "updated_at": now.isoformat(),
                 }
             )
+        if not cards:
+            # Every window we could read was unreadable.
+            self._set_error_reason("missing_data")
+            return []
         return cards
 
     def _make_credits_card(self, purchased: float) -> dict[str, Any]:
@@ -598,6 +615,7 @@ class OllamaCollector(BaseCollector):
             "reset_at": None,
             "account_label": self.account_label or "",
             "window_type": "rolling",
+            "variant": "credits",
             "provider_id": "ollama",
             "tier": "cloud",
             "data_source": self.DATA_SOURCE_API,

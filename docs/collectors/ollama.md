@@ -21,6 +21,11 @@ The Ollama provider supports two collection strategies:
   legacy `limits.monthly.usage` shape — its spend report is deliberately
   ignored, because usage comes from the CLI sidecar (see
   [OpenCode traffic](#opencode-traffic)).
+
+  The allowance card carries the variant `allowance` (the credits card
+  `credits`): the card's unit changed from percent to currency, and
+  `merge_card_json` freezes the quota fields of a stored card whose unit
+  differs — a separate pool lets the stale card be reconciled away instead.
 - **`web`** (fallback): scrape `https://ollama.com/settings` for included-usage meters
   (one card per usage meter; window type comes from a concrete meter label —
   `Hourly usage` → session, `Weekly usage` → weekly — else the reset horizon;
@@ -102,6 +107,7 @@ percentage is the share of the allowance already spent:
     "currency": "USD",
     "reset_at": "2026-11-12T06:45:12+00:00",
     "window_type": "monthly",
+    "variant": "allowance",
     "data_source": "api",
     "tier": "cloud",
     "usage_url": "https://ollama.com/settings/billing",

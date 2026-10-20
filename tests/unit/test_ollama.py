@@ -1097,6 +1097,57 @@ class TestOllamaBalanceCollector:
         assert collector._last_error_reason != "missing_data"
 
     @pytest.mark.parametrize(
+        "body",
+        [
+            {},  # not a balance payload at all
+            {"included": None},  # no purchased block to prove there is no allowance
+            {"included": None, "purchased": {"balance_usd": "not-a-number"}},
+        ],
+    )
+    def test_payload_without_evidence_is_malformed_not_no_quota(self, body):
+        """Only an explicit purchased block proves there is no included
+        allowance. Anything else is unreadable data — reporting it as "no
+        quota" would let the snapshot reconciliation retire a working card."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance(body)
+        assert cards == []
+        assert collector._no_monthly_cap is False
+        assert collector._last_error_reason == "missing_data"
+
+    def test_allowance_card_uses_its_own_pool(self):
+        """A distinct variant: the stored percent card (legacy monthly limit)
+        would otherwise freeze its quota fields when the unit changes."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance(_balance_body())
+        assert cards[0]["variant"] == "allowance"
+
+    def test_credits_card_uses_its_own_pool(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance({"purchased": {"balance_usd": 25}})
+        assert cards[0]["variant"] == "credits"
+
+    def test_unreadable_legacy_window_does_not_cost_the_sibling(self):
+        """One broken window must not discard the account's other meter."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "included": {
+                "session": {"remaining_percent": 75, "resets_at": "2026-10-01T07:00:00Z"},
+                "weekly": {"remaining_percent": "not-a-number"},
+            }
+        }
+        cards = collector._build_cards_from_api_balance(body)
+        assert len(cards) == 1
+        assert cards[0]["window_type"] == "session"
+        assert cards[0]["remaining"] == "75.0%"
+
+    def test_all_legacy_windows_unreadable_is_malformed(self):
+        collector = OllamaCollector(account_id="acc_test")
+        body = {"included": {"session": {"remaining_percent": "bad"}}}
+        cards = collector._build_cards_from_api_balance(body)
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    @pytest.mark.parametrize(
         "included",
         [
             {"balance_usd": "not-a-number", "allowance_usd": 2.5},

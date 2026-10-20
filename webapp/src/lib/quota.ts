@@ -194,6 +194,16 @@ export function cardTooltip(card: LimitCard): string | undefined {
   return card.unit_type === 'currency' ? card.detail : undefined;
 }
 
+// Accessible label for a quota hero: the percentage plus the detail line.
+// A native `title` only fires on hover, so touch and screen-reader users
+// would otherwise never reach the dollar breakdown behind the percentage.
+export function cardHeroLabel(card: LimitCard, pct: number | null | undefined): string | undefined {
+  const detail = cardTooltip(card);
+  if (!detail) return undefined;
+  const percent = pct === null || pct === undefined || Number.isNaN(pct) ? null : pct;
+  return percent === null ? detail : `${percent.toFixed(0)}% used — ${detail}`;
+}
+
 // Humanize a model id for display: de-separate and capitalize each word
 // ("sonnet" → "Sonnet", "gemini-flash" → "Gemini Flash").
 export function modelLabel(modelId: string): string {
