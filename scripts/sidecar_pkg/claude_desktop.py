@@ -10,13 +10,12 @@ import json
 import logging
 import math
 import os
-import sqlite3
 import threading
-import time
-from contextlib import closing
 from pathlib import Path
 from typing import Any
 from uuid import UUID
+
+from scripts.sidecar_pkg.cookie_scan import StoreScan
 
 _WARNED: set[str] = set()
 _WARN_LOCK = threading.Lock()
@@ -130,34 +129,21 @@ def read_oauth_candidates(path: Path) -> list[tuple[dict[str, str], str]]:
     return result
 
 
-def read_session_cookie(path: Path) -> str | None:
-    """Read a non-expired sessionKey with strict padding and v24 host binding."""
-    if not path.is_file():
-        return None
-    try:
-        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
-            version_row = conn.execute("SELECT value FROM meta WHERE key = 'version'").fetchone()
-            if version_row is None:
-                _warn_once("cookie schema version missing")
-                return None
-            version = int(version_row[0])
-            rows = conn.execute(
-                "SELECT host_key, encrypted_value, expires_utc FROM cookies "
-                "WHERE name = 'sessionKey' AND host_key IN ('claude.ai', '.claude.ai') "
-                "ORDER BY expires_utc DESC"
-            ).fetchall()
-        for host, encrypted, expires in rows:
-            # Chromium uses microseconds since 1601; zero is a session cookie.
-            if expires and expires <= (time.time() + 11644473600) * 1_000_000:
-                continue
-            if not isinstance(encrypted, bytes) or not encrypted.startswith(b"v10"):
-                _warn_once("unsupported cookie encryption")
-                continue
-            from scripts.sidecar_pkg.macos_cookies import decrypt
+def scan_session_cookie(path: Path) -> StoreScan[str]:
+    """Expose store-read evidence while sharing Desktop OAuth's cached key."""
+    from scripts.sidecar_pkg.macos_cookies import scan_cookies
 
-            value = decrypt(encrypted, "Claude Safe Storage", host, version)
-            if value:
-                return value
-    except (OSError, sqlite3.Error, ValueError, TypeError):
-        _warn_once("cookie database unreadable")
-    return None
+    return scan_cookies(
+        path,
+        "Claude Safe Storage",
+        "claude.ai",
+        "sessionKey",
+        include_subdomains=False,
+        prefixes=(b"v10",),
+    )
+
+
+def read_session_cookie(path: Path) -> str | None:
+    """Compatibility wrapper: choose the first independently decoded live session."""
+    values = scan_session_cookie(path).values
+    return values[0] if values else None
