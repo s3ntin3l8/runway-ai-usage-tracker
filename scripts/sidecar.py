@@ -4147,6 +4147,17 @@ class GenericCollector:
 
             if provider_id == "antigravity" and tokens and not tokens.get("account_id"):
                 tokens["account_id"] = _ag_account_email()
+            if provider_id == "antigravity" and tokens:
+                # The Code Assist API gates *which quota pools* it serves on the
+                # User-Agent's version, and the server cannot see the CLI — only
+                # this host can. Report the installed agy version with the token
+                # so the collector builds its User-Agent from the real CLI
+                # instead of a value that goes stale (#687).
+                from scripts.sidecar_pkg.agy_version import installed_version
+
+                agy_version = installed_version()
+                if agy_version:
+                    tokens["agy_version"] = agy_version
             if provider_id == "chatgpt" and candidate_kind == "file" and tokens:
                 codex_identity = _decode_id_token_email(
                     tokens.get("id_token", "")
