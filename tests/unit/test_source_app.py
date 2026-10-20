@@ -24,22 +24,32 @@ from app.services.queries.windows import query_window_aggregation
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 
-# The client app each bundled extractor reports. The behavioural assertions
-# live in the per-extractor test files; this table is the contract they and
-# any future extractor must satisfy.
-EXTRACTOR_SOURCE_APPS = {
-    "anthropic": source_apps.CLAUDE_CODE,
-    "antigravity": source_apps.ANTIGRAVITY,
-    "chatgpt": source_apps.CODEX,
-    "gemini": source_apps.GEMINI_CLI,
-    "hermes": source_apps.HERMES,
-    "opencode": source_apps.OPENCODE,
-    "xai": source_apps.XAI_CLI,
-}
+
+def _extractor_modules() -> list[str]:
+    """Every extractor module in the sidecar package.
+
+    Discovered from the package rather than hand-listed, so a new extractor is
+    covered by the contract the moment it lands — a hand-maintained table
+    would silently stop covering one that nobody remembered to add.
+    """
+    import pkgutil
+
+    from scripts.sidecar_pkg import event_extractors
+
+    return sorted(info.name for info in pkgutil.iter_modules(event_extractors.__path__))
 
 
-@pytest.mark.parametrize(("extractor", "expected"), sorted(EXTRACTOR_SOURCE_APPS.items()))
-def test_every_extractor_stamps_its_source_app(extractor, expected):
+def _source_app_constants(module) -> list[str]:
+    """The ``source_app`` constants an extractor module imports."""
+    return [
+        name
+        for name in dir(module)
+        if name.isupper() and name in vars(source_apps) and isinstance(getattr(module, name), str)
+    ]
+
+
+@pytest.mark.parametrize("extractor", _extractor_modules())
+def test_every_extractor_stamps_its_source_app(extractor):
     """No extractor may push events without naming the client app.
 
     ``provider_id`` says who was billed; without ``source_app`` the app that
@@ -51,10 +61,25 @@ def test_every_extractor_stamps_its_source_app(extractor, expected):
     import inspect
 
     module = importlib.import_module(f"scripts.sidecar_pkg.event_extractors.{extractor}")
-    constant = next(
-        name for name, value in vars(source_apps).items() if name.isupper() and value == expected
-    )
-    assert f"source_app={constant}" in inspect.getsource(module)
+    constants = _source_app_constants(module)
+    assert len(constants) == 1, f"{extractor} must name exactly one source app, found {constants}"
+    assert f"source_app={constants[0]}" in inspect.getsource(module)
+
+
+def test_the_apps_the_extractors_report_are_known_apps():
+    """An extractor may not report an app the UI can't label.
+
+    ``KNOWN_SOURCE_APPS`` is the webapp's label map, so an id outside it would
+    render as its raw value. The reverse doesn't hold: ``minimax_code`` is
+    reserved for the MiniMax Code extractor, which doesn't exist yet.
+    """
+    import importlib
+
+    produced = set()
+    for extractor in _extractor_modules():
+        module = importlib.import_module(f"scripts.sidecar_pkg.event_extractors.{extractor}")
+        produced.update(getattr(module, name) for name in _source_app_constants(module))
+    assert produced <= set(source_apps.KNOWN_SOURCE_APPS)
 
 
 def _session():

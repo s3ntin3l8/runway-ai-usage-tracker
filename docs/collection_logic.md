@@ -52,6 +52,8 @@ Enrichment events also carry **project context** — the working directory (`cwd
 
 They also carry **the client app that made the call** (`source_app`: `opencode`, `claude_code`, `minimax_code`, ...). That is not the same as the provider the request was billed to — several client apps share one provider, and a canonical-provider retag folds them onto one id. `source_app` survives the retag, so "which app spent the quota" stays answerable (`/usage/source-apps`).
 
+Rows written **before** the column existed are backfilled with `provider_id`, which is exactly what the ingestor falls back to when an older sidecar reports no app. Those rows therefore show the provider id (`minimax`, `opencode`, ...) under the app label until enough new events arrive to separate them — the split is only as precise as the data behind it, not a bug in the chart.
+
 ## Per-Collector Strategy Mapping
 
 The "Runs in" column shows where the strategy executes. The server-side collectors only do `api` / `web`; everything that needs filesystem, CLI, or LSP access lives in the sidecar and reaches the server through `/api/v1/fleet/ingest`.

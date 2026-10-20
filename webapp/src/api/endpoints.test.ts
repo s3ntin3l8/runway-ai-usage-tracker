@@ -6,6 +6,7 @@ import {
   fetchPendingUsageEvents,
   fetchPendingUsageSessions,
   fetchProviderConfigs,
+  fetchSourceApps,
   patchCredentialSources,
   fetchSidecars,
   fetchStatus,
@@ -153,6 +154,20 @@ describe('endpoints', () => {
     mockFetch().mockResolvedValue(jsonResponse({ status: 'deleted' }));
     await deleteProviderConfig('opencode', 'alice@example.com');
     expect(lastCall()[0]).toBe('/api/v1/system/provider-config/opencode/alice%40example.com');
+  });
+
+  it('fetchSourceApps hits the source-apps path with its filters', async () => {
+    const payload = { apps: [], metric: 'tokens', generated_at: '2026-10-20T12:00:00Z' };
+    mockFetch().mockResolvedValue(jsonResponse(payload));
+    const data = await fetchSourceApps({
+      provider_id: 'minimax',
+      account_id: 'acc-1',
+      since: '2026-10-01T00:00:00Z',
+    });
+    expect(data).toEqual(payload);
+    expect(lastCall()[0]).toBe(
+      '/api/v1/usage/source-apps?provider_id=minimax&account_id=acc-1&since=2026-10-01T00%3A00%3A00Z',
+    );
   });
 
   it('getDashboardLayout hits the dashboard-layout path', async () => {
