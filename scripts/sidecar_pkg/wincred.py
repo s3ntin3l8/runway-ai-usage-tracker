@@ -21,8 +21,11 @@ from __future__ import annotations
 
 import ctypes
 import json
+import logging
 import platform
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ``CRED_TYPE_GENERIC`` from wincred.h - the type every CLI here writes.
 CRED_TYPE_GENERIC = 1
@@ -90,7 +93,10 @@ def read_credential_bytes(target: str) -> bytes | None:
             return ctypes.string_at(found.CredentialBlob, found.CredentialBlobSize)
         finally:
             advapi.CredFree(cred)
-    except OSError:
+    except (AttributeError, OSError):
+        # A failed lookup must not break a collection cycle: the entry is
+        # simply treated as absent. The reason is logged for diagnosis.
+        logger.debug("Windows Credential Manager lookup failed for %r", target, exc_info=True)
         return None
 
 
