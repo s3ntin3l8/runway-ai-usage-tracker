@@ -256,3 +256,17 @@ Desktop and the CLI own renewal. This read-only path issues no refresh request o
 credential write. It does not collect chat contents or exact token-consumption events.
 Desktop OAuth implementation/acceptance is tracked in #679; CLI variants in #673,
 remaining native browser/store acceptance in #672, and renewal/write-back in #526.
+
+### macOS browser acceptance and store diagnostics
+
+Chrome, Safari and Claude Desktop passed the scoped packaged-app acceptance in
+[#672](../claude-native-macos-acceptance-672.md). Safari discovery covers legacy,
+container and separate profile cookie stores. macOS may require user-controlled
+privacy access; an inaccessible store is never treated as logout.
+
+Internal store diagnostics distinguish candidates, successful empty reads, missing
+stores/items, inaccessible stores, denial, timeout and unsupported layouts. Expired
+cookies are filtered and counted. Safe Storage failures are cached until sidecar
+restart. `RUNWAY_CLAUDE_DESKTOP_CREDENTIALS=0` still disables both Desktop OAuth and
+Desktop cookie discovery. Empty scans preserve last-good source metadata; explicit
+cleanup remains available. Optional-browser native acceptance is tracked in #683.

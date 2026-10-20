@@ -1602,9 +1602,9 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             if item["source_id"] in known_ids:
                 continue
             origin = item.get("credential_origin") or ""
-            from app.services.credential_sources import describe_origin_full
+            from app.services.credential_sources import describe_origin
 
-            source_label = describe_origin_full(origin).label
+            source_label = describe_origin(origin)[1]
             summaries.append(
                 {
                     "source_id": item["source_id"],

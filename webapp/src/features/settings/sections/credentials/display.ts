@@ -68,7 +68,9 @@ export const MAPPING_HINT: Record<CredentialMapping, string> = {
 
 /** "Codex CLI · auth.json", "Browser cookie", "GITHUB_TOKEN" — what a credential is. */
 export function originTitle(s: CredentialSourceView): string {
-  if (s.origin_app && s.origin_type !== 'cookie') return `${s.origin_app} · ${s.label}`;
+  if (s.origin_app && (s.origin_type !== 'cookie' || s.label === 'Session cookie')) {
+    return `${s.origin_app} · ${s.label}`;
+  }
   return s.label;
 }
 
