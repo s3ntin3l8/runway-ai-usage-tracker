@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from time import sleep
 from typing import Any
 
 from scripts.image_policy import check_database, database_checksum, evaluate, load_exceptions
@@ -17,8 +18,10 @@ GRYPE = "anchore/grype@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc53
 IMAGE_PATTERN = r"ghcr\.io/s3ntin3l8/runway@sha256:[0-9a-f]{64}"
 DEFAULT_EXCEPTIONS = Path(__file__).resolve().parents[1] / "docs/security/image-exceptions.json"
 # Upstream can publish a new release while the database is being downloaded.
-# A mismatch is retried a few times before the audit fails closed.
+# Every attempt re-downloads the whole database, so the attempts are few and
+# the backoff short; three attempts stay far inside the workflow job timeout.
 DB_UPDATE_ATTEMPTS = 3
+DB_UPDATE_BACKOFF_SECONDS = 10
 
 
 def run(*args: str, stdout: Any = None) -> None:
@@ -59,18 +62,18 @@ def read_listing(path: Path) -> dict[str, Any] | None:
     raise ValueError("Invalid upstream vulnerability database listing")
 
 
-def prepare_database(cache: Path) -> dict[str, Any]:
-    """Download the vulnerability database release upstream currently advertises.
+def prepare_database(cache: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Download the release upstream currently advertises and return it with its listing.
 
-    The advertised release is recorded next to the database so the audit can
-    verify that the scan used it. The record is taken when the database is
+    The advertised release is returned with the database so the audit can
+    verify that the scan used it. The listing is taken when the database is
     prepared: upstream publishing again mid-audit does not invalidate a scan
     whose database was the current release when the audit started.
     """
     cache.mkdir(parents=True, exist_ok=True)
     status_path = cache / "status.json"
     listing_path = cache / "listing.json"
-    for _ in range(DB_UPDATE_ATTEMPTS):
+    for attempt in range(DB_UPDATE_ATTEMPTS):
         scanner(cache, "db", "update")
         with status_path.open("w") as fh:
             scanner(cache, "db", "status", "-o", "json", stdout=fh)
@@ -78,12 +81,22 @@ def prepare_database(cache: Path) -> dict[str, Any]:
             scanner(cache, "db", "list", "-o", "json", stdout=fh)
         status = json.loads(status_path.read_text())
         listing = read_listing(listing_path)
-        if listing is not None and database_checksum(status) == listing.get("checksum"):
-            return status
+        if listing is None:
+            raise ValueError("Missing upstream vulnerability database listing")
+        if database_checksum(status) == listing.get("checksum"):
+            return status, listing
+        if attempt + 1 < DB_UPDATE_ATTEMPTS:
+            sleep(DB_UPDATE_BACKOFF_SECONDS)
     raise ValueError("Vulnerability database is not the release upstream currently advertises")
 
 
-def scan_archive(archive: Path, arch: str, output: Path, cache: Path) -> dict[str, Any]:
+def scan_archive(
+    archive: Path,
+    arch: str,
+    output: Path,
+    cache: Path,
+    expected_checksum: str | None = None,
+) -> dict[str, Any]:
     sbom_path = output / f"{arch}.cyclonedx.json"
     with sbom_path.open("w") as fh:
         run(
@@ -132,12 +145,7 @@ def scan_archive(archive: Path, arch: str, output: Path, cache: Path) -> dict[st
         )
     report = json.loads(scan_path.read_text())
     # The scanner must have used the same database we retained and validated.
-    listing = read_listing(cache / "listing.json")
-    check_database(
-        report["descriptor"]["db"]["status"],
-        datetime.now(UTC),
-        listing.get("checksum") if listing else None,
-    )
+    check_database(report["descriptor"]["db"]["status"], datetime.now(UTC), expected_checksum)
     if (
         report["descriptor"]["db"]["status"]["from"]
         != json.loads((cache / "status.json").read_text())["from"]
@@ -192,10 +200,13 @@ def audit(
             cache = database or temp_path / "database"
             if database:
                 db = json.loads((cache / "status.json").read_text())
+                # An operator cache prepared before listing records existed is
+                # checked for age only.
+                listing = read_listing(cache / "listing.json")
             else:
-                db = prepare_database(cache)
-            listing = read_listing(cache / "listing.json")
-            check_database(db, datetime.now(UTC), listing.get("checksum") if listing else None)
+                db, listing = prepare_database(cache)
+            expected_checksum = listing["checksum"] if listing else None
+            check_database(db, datetime.now(UTC), expected_checksum)
             evidence["database"] = db
             evidence["database_listing"] = listing
             if archive:
@@ -222,7 +233,7 @@ def audit(
                 if target:
                     run("docker", "pull", "--platform", f"linux/{arch}", target)
                     run("docker", "image", "save", "--output", str(local_archive), target)
-                report = scan_archive(local_archive, arch, output, cache)
+                report = scan_archive(local_archive, arch, output, cache, expected_checksum)
                 policy = evaluate(report, arch, exceptions)
                 policy["image"] = target
                 (output / f"{arch}.policy.json").write_text(json.dumps(policy, indent=2))

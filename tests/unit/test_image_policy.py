@@ -168,17 +168,25 @@ def advertised(checksum):
     return [{"status": "active", "checksum": checksum, "built": NOW.isoformat()}]
 
 
+def test_read_listing_without_a_record_returns_none(tmp_path):
+    assert audit_module.read_listing(tmp_path / "listing.json") is None
+
+
 def test_prepare_database_keeps_the_advertised_release(tmp_path, monkeypatch):
     state = {"updates": 0, "status": database(), "listings": [advertised("sha256:" + "a" * 64)]}
     monkeypatch.setattr(audit_module, "scanner", scanner_stub(state))
+    monkeypatch.setattr(audit_module, "sleep", lambda _: None)
     cache = tmp_path / "cache"
-    assert audit_module.prepare_database(cache) == state["status"]
+    status, listing = audit_module.prepare_database(cache)
+    assert status == state["status"]
+    assert listing == state["listings"][0][0]
     assert json.loads((cache / "listing.json").read_text()) == state["listings"][0]
 
 
 def test_prepare_database_rejects_a_superseded_release(tmp_path, monkeypatch):
     state = {"updates": 0, "status": database(), "listings": [advertised("sha256:" + "b" * 64)]}
     monkeypatch.setattr(audit_module, "scanner", scanner_stub(state))
+    monkeypatch.setattr(audit_module, "sleep", lambda _: None)
     with pytest.raises(ValueError, match="currently advertises"):
         audit_module.prepare_database(tmp_path / "cache")
     assert state["updates"] == audit_module.DB_UPDATE_ATTEMPTS
@@ -191,8 +199,29 @@ def test_prepare_database_retries_after_upstream_publishes(tmp_path, monkeypatch
         "listings": [advertised("sha256:" + "b" * 64), advertised("sha256:" + "a" * 64)],
     }
     monkeypatch.setattr(audit_module, "scanner", scanner_stub(state))
-    assert audit_module.prepare_database(tmp_path / "cache") == state["status"]
+    monkeypatch.setattr(audit_module, "sleep", lambda _: None)
+    status, listing = audit_module.prepare_database(tmp_path / "cache")
+    assert status == state["status"]
+    assert listing == state["listings"][1][0]
     assert state["updates"] == 2
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        [{"status": "deprecated", "checksum": "sha256:" + "a" * 64}],
+        [{"status": "invalid", "checksum": "sha256:" + "a" * 64}],
+        {"status": "active", "checksum": "sha256:" + "a" * 64},
+        [],
+    ],
+)
+def test_prepare_database_rejects_an_unusable_listing(tmp_path, monkeypatch, listing):
+    state = {"updates": 0, "status": database(), "listings": [listing]}
+    monkeypatch.setattr(audit_module, "scanner", scanner_stub(state))
+    monkeypatch.setattr(audit_module, "sleep", lambda _: None)
+    with pytest.raises(ValueError, match="listing"):
+        audit_module.prepare_database(tmp_path / "cache")
+    assert state["updates"] == 1
 
 
 @pytest.mark.parametrize("report", [{}, {"matches": None}, {"matches": [{}]}])
@@ -203,7 +232,11 @@ def test_incomplete_report_rejected(report):
 
 def test_scan_failure_retains_failed_evidence(tmp_path, monkeypatch):
     exceptions = write_exceptions(tmp_path, [])
-    monkeypatch.setattr(audit_module, "prepare_database", lambda _: database())
+    monkeypatch.setattr(
+        audit_module,
+        "prepare_database",
+        lambda _: (database(), {"status": "active", "checksum": "sha256:" + "a" * 64}),
+    )
     monkeypatch.setattr(audit_module, "check_database", lambda *args: None)
     monkeypatch.setattr(
         audit_module,
@@ -225,7 +258,11 @@ def test_scan_failure_retains_failed_evidence(tmp_path, monkeypatch):
 
 
 def test_missing_architecture_never_passes(tmp_path, monkeypatch):
-    monkeypatch.setattr(audit_module, "prepare_database", lambda _: database())
+    monkeypatch.setattr(
+        audit_module,
+        "prepare_database",
+        lambda _: (database(), {"status": "active", "checksum": "sha256:" + "a" * 64}),
+    )
     monkeypatch.setattr(audit_module, "check_database", lambda *args: None)
     monkeypatch.setattr(
         audit_module.subprocess,
