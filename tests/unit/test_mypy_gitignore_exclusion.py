@@ -84,7 +84,12 @@ def test_no_tracked_python_source_is_gitignored(git_checkout: None):
     assert ignored == []
 
 
-def test_the_generated_bundle_really_is_excluded(git_checkout: None):
-    """A file under the ignored bundle must match the .gitignore rules."""
-    result = _git("check-ignore", "--no-index", "-v", "--", "dist/Runway Sidecar.app/x.py")
-    assert result.returncode == 0, "dist/ is expected to be gitignored"
+@pytest.mark.parametrize("root", ["build", "dist"])
+def test_the_generated_bundle_really_is_excluded(git_checkout: None, root: str):
+    """Some file under the ignored tree must match the .gitignore rules.
+
+    The path stays neutral on purpose: the .gitignore rule covers the whole
+    directory, so this must not depend on the bundle's name.
+    """
+    result = _git("check-ignore", "--no-index", "-v", "--", f"{root}/bundle/x.py")
+    assert result.returncode == 0, f"{root}/ is expected to be gitignored"
