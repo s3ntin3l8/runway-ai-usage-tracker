@@ -88,25 +88,29 @@ def _pool_slug(normalized_name: str, hash_input: str) -> str:
 
 
 def pool_family(group_name: str) -> str:
-    """Map a quota group's display name to its physical pool family.
+    """Map a quota group's name to its physical pool family.
+
+    The name is the *resolved* one (the group's display name, else its first
+    bucket id — see :func:`group_display_name`), so an unnamed group still
+    gets its own key.
 
     "Gemini Models" → ``gemini``, "Claude and GPT models" → ``frontier``,
     "Gemini 4 Argon" → ``argon`` (a separate paid-plan pool, not part of the
     Gemini bucket).
 
     A group we do not recognise gets a slug of its own name (plus a short
-    hash of the raw name) instead of being folded into an existing pool: two
+    hash of the name) instead of being folded into an existing pool: two
     pools sharing a ``variant`` share a ``latest_usage`` slot, and the second
     one silently overwrites the first.
     """
-    raw = (group_name or "").strip()
-    normalized = _normalize_group_name(raw)
+    name = (group_name or "").strip()
+    normalized = _normalize_group_name(name)
     for pattern, pool in _KNOWN_GROUP_PATTERNS:
         if pattern.match(normalized):
             return pool
-    # Hash the raw name (whitespace-collapsed, but case- and
+    # Hash the name (whitespace-collapsed, but case- and
     # punctuation-sensitive): only the readable part is folded.
-    hash_input = re.sub(r"\s+", " ", raw)
+    hash_input = re.sub(r"\s+", " ", name)
     return _pool_slug(normalized, hash_input)
 
 

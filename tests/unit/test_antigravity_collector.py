@@ -653,6 +653,10 @@ class TestAntigravityQuotaPools:
         assert len(result) == 2
         assert len({c["variant"] for c in result}) == 2
         assert {c["variant"].split("-")[0] for c in result} == {"7p", "9p"}
+        # A group the API sent unnamed is labelled from its pool key, not
+        # from a raw bucket id.
+        labels = {c["service_name"] for c in result}
+        assert labels == {"7P Weekly", "9P Weekly"}
 
 
 class TestAntigravityUserAgent:
