@@ -48,3 +48,14 @@ class TestNormalizeVersion:
         """The value arrives over the ingest route — it is not a string until vetted."""
         for bad in (12345, 1.4, ["1.4.3"], {"version": "1.4.3"}, True):
             assert normalize_version(bad) is None
+
+    def test_rejects_an_absurdly_long_part(self):
+        """An unbounded digit run would reach int(), which refuses a 4300-digit string.
+
+        The ValueError would escape the collector and cost that account its
+        quota cards on every cycle.
+        """
+        assert normalize_version("9" * 5000) is None
+        assert normalize_version("1.4." + "9" * 5000) is None
+        # Just inside the bound still works.
+        assert normalize_version("9" * 9) == "9" * 9

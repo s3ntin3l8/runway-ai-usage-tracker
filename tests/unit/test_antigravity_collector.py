@@ -811,6 +811,11 @@ class TestAntigravityUserAgent:
         ua = build_user_agent("1.4.3.2")
         assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
 
+    def test_ignores_an_absurdly_long_version(self):
+        """int() refuses a 4300-digit string; that must not escape the collector."""
+        ua = build_user_agent("9" * 5000)
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
 
 class TestAntigravityNoServerSideRefresh:
     @pytest.mark.asyncio

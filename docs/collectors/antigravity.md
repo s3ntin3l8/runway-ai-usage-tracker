@@ -21,7 +21,7 @@ extracts per-message token/cost events sidecar-side from the local conversation 
 1. `POST .../v1internal:loadCodeAssist` with `{"metadata": {"ideType": "ANTIGRAVITY"}}` → get `cloudaicompanionProject` id
 2. `POST .../v1internal:retrieveUserQuotaSummary` with `{"project": "<id>"}` → quota summary
 
-<**Required header:** `User-Agent: antigravity/cli/<version> (aidev_client; os_type=linux; arch=amd64; cl=1002753436; auth_method=consumer)` (Google gates this endpoint on the agy UA; omitting it returns 403).
+**Required header:** `User-Agent: antigravity/cli/<version> (aidev_client; os_type=linux; arch=amd64; cl=1002753436; auth_method=consumer)` (Google gates this endpoint on the agy UA; omitting it returns 403).
 
 > **The UA version decides which quota pools come back.** The prefix is the 403 gate, but the
 > *version* selects the pools the backend serves — measured 2026-10-20 against
