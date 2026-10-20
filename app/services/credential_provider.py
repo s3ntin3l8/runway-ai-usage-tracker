@@ -146,6 +146,12 @@ def _resolve_legacy_provider_config(
         return None
 
 
+def _is_expiry_key(name: str) -> bool:
+    """Whether a key name holds an expiry timestamp."""
+    lowered = name.lower()
+    return "expires" in lowered or "expiry" in lowered
+
+
 def _expiry_seconds(value: Any) -> float | None:
     """Epoch seconds of *value*, normalising epoch milliseconds.
 
@@ -172,8 +178,7 @@ def _record_expiry(record: Any) -> float | None:
         return None
     best: float | None = None
     for key, value in record.items():
-        name = str(key).lower()
-        if "expires" not in name and "expiry" not in name:
+        if not _is_expiry_key(str(key)):
             continue
         moment = _expiry_seconds(value)
         if moment is None:
@@ -200,7 +205,7 @@ def _expiry_in_nested_records(data: dict) -> bool:
             if not isinstance(record, dict):
                 continue
             for key, val in record.items():
-                if "expires" not in str(key).lower():
+                if not _is_expiry_key(str(key)):
                     continue
                 moment = _expiry_seconds(val)
                 if moment is not None and moment > now + 60:

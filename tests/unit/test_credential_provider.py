@@ -294,6 +294,45 @@ def test_expand_rule_paths_nested_record_expiry_beats_a_newer_dead_file(tmp_path
     assert matches == [str(live), str(dead)]
 
 
+def test_expand_rule_paths_sees_a_nested_expiry_key_of_any_spelling(tmp_path):
+    """The nested probe and the record picker must agree on what an expiry
+    key is called — otherwise a record that is selectable never makes its file
+    sort as fresh."""
+    from app.services.credential_provider import _expand_rule_paths
+
+    live = tmp_path / "mcode-expiry-date.json"
+    live.write_text(
+        json.dumps(
+            {
+                "records": {
+                    "com.minimax.mcode.oauth.prod.en live": {
+                        "accessToken": "mmoat_live",  # pragma: allowlist secret
+                        "expiry_date": 4102444800000,
+                    }
+                }
+            }
+        )
+    )
+    dead = tmp_path / "mcode-expired.json"
+    dead.write_text(
+        json.dumps(
+            {
+                "records": {
+                    "com.minimax.mcode.oauth.prod.en dead": {
+                        "accessToken": "mmoat_dead",  # pragma: allowlist secret
+                        "expiry_date": 1600000000000,
+                    }
+                }
+            }
+        )
+    )
+    os.utime(live, (1000, 1000))  # older mtime …
+    os.utime(dead, (2000, 2000))  # … but the dead file is the recently-touched one
+
+    matches = _expand_rule_paths([str(tmp_path / "mcode-*.json")])
+    assert matches == [str(live), str(dead)]
+
+
 def test_expand_rule_paths_plain_exact_match(tmp_path):
     """Non-glob entries keep exact-match behavior; missing files are skipped."""
     from app.services.credential_provider import _expand_rule_paths

@@ -4851,6 +4851,10 @@ class TestMiniMaxCredentialSelection:
         assert collector._open_platform_base_url() == "https://platform.evilminimaxi.com"
         collector.host = "minimax.io"
         assert collector._open_platform_base_url() == "https://platform.minimax.io"
+        # A host configured as a URL is still a host — the raw setting must
+        # not be pasted into the middle of the path.
+        collector.host = "https://minimax.io"
+        assert collector._open_platform_base_url() == "https://platform.minimax.io"
 
 
 class TestHttpTimeouts:

@@ -175,7 +175,9 @@ class MiniMaxCollector(BaseCollector):
         labels = name.split(".") if name else []
         if len(labels) >= 2 and ".".join(labels[-2:]) == CHINA_DOMAIN:
             return f"https://{CHINA_OPEN_PLATFORM_HOST}"
-        return f"https://platform.{self.host.lower()}"
+        # Fall back to the parsed hostname, not the raw setting: a host given
+        # as a URL would otherwise be pasted into the middle of the path.
+        return f"https://platform.{name or self.host.strip().lower()}"
 
     async def _fetch_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch usage via the API endpoint.
