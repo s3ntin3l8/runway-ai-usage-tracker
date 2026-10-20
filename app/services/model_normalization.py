@@ -28,12 +28,20 @@ def is_free_tier_model_id(model_id: str | None) -> bool:
     missing a rate. The suffix forms are the ones the sidecar's
     ``_is_free_model`` recognises: a trailing ``":free"``, ``"-free"`` or
     ``"/free"``, or a bare ``"free"`` id. That covers OpenCode's ``-free``
-    catalog entries (``deepseek-v4-flash-free``), OpenRouter's ``:free``
-    entries (``vendor/model:free``) and the ``openrouter/free/*`` prefix form.
+    catalog entries (``deepseek-v4-flash-free``) and OpenRouter's ``:free``
+    entries (``vendor/model:free``). The ``openrouter/free/*`` prefix form is
+    included as well.
+
+    This is the *pricing* notion of "free tier", and it is deliberately
+    broader than the sidecar's ``_is_free_model`` — that one decides which
+    provider bucket a session files under, and widening it would re-route
+    ``openrouter/free/*`` sessions between providers. See
+    ``scripts/sidecar_pkg/event_extractors/hermes.py``.
 
     The cost calculator uses this to keep a free id from reaching a paid
-    sibling row through the segment-trim fallback, and the Data Health
-    ``unpriced_models`` check uses it to leave free ids out of its report.
+    sibling row through its version-strip or segment-trim fallbacks, and the
+    Data Health ``unpriced_models`` check uses it to leave free ids out of
+    its report.
     """
     m = (model_id or "").strip().lower()
     if not m:

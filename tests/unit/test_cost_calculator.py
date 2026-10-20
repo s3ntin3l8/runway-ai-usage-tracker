@@ -754,6 +754,19 @@ def test_free_tier_model_ids_are_never_priced_at_a_paid_sibling():
         assert cost == 0.0, model_id
 
 
+def test_free_tier_guard_covers_the_version_strip_path():
+    """The free-tier guard sits ahead of the version-strip fallback too.
+
+    "openrouter/free/gpt-4" ends in a digit, so _VERSION_SUFFIX strips it to
+    "openrouter/free/gpt" — a path that ran before the guard and could have
+    reached a paid row. No seeded row matches it today, so nothing bills
+    either way; the test pins the invariant rather than a current value.
+    """
+    s = _seeded_session()
+    assert resolve_price_row(s, "openrouter", "openrouter/free/gpt-4", datetime.now(UTC)) is None
+    assert resolve_price_row(s, "openrouter", "openrouter/free/gpt", datetime.now(UTC)) is None
+
+
 def test_free_tier_guard_does_not_block_paid_ids_that_merely_mention_free():
     """The free-tier guard keys on the suffix forms only — a paid id that
     merely contains "free" still resolves and prices normally."""
