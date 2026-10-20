@@ -112,7 +112,7 @@ Source inspection covered `app/`, its direct requirements, the Dockerfile and
 the supplied Compose configuration. Static SPA mounting is an HTTP route, not a
 filesystem mount. The exceptions do not assert these packages are patched or
 cover deployments with different privileges or input paths. The existing
-High/Critical gate, 24-hour database limit, unfiltered report retention and
+High/Critical gate, 30-hour database limit, unfiltered report retention and
 per-version/per-architecture matching remain in force.
 
 An isolated local amd64 candidate built from source `66bd9a52` passed the server
