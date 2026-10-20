@@ -32,6 +32,7 @@ a = Analysis(
     ],
     hiddenimports=sigstore_imports
     + [
+        "app.core.console",
         "app.core.kimi_device",
         "pystray._darwin",
         # runway-sidecar:// Apple Event handler (sidecar_app/url_events.py).

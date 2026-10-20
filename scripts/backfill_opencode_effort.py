@@ -53,6 +53,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from sqlmodel import Session, select  # noqa: E402
 
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import UsageEvent  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
@@ -212,6 +213,7 @@ def run(db_path: Path | None, dry_run: bool, skip_rollups: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    force_utf8_console()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

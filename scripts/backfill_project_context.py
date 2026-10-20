@@ -33,6 +33,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from sqlmodel import Session, select  # noqa: E402
 
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import UsageEvent  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
@@ -153,6 +154,7 @@ def backfill(session: Session, providers: list[str], dry_run: bool) -> int:
 
 
 def main() -> None:
+    force_utf8_console()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", help="limit to one runway provider id")
     parser.add_argument("--dry-run", action="store_true", help="report counts, write nothing")

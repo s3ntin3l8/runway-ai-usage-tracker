@@ -56,6 +56,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from sqlmodel import Session, col, delete, select  # noqa: E402
 
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import UsageWindow  # noqa: E402
 from app.services.window_closer import WINDOW_DURATION  # noqa: E402
@@ -193,6 +194,7 @@ def migrate(apply: bool) -> int:
 
 
 def main() -> int:
+    force_utf8_console()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

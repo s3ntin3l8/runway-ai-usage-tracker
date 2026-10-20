@@ -54,6 +54,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from sqlmodel import Session  # noqa: E402
 
+from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.services.maintenance.argon_retag import (  # noqa: E402
     ARGON_PROVIDER_IDS,
@@ -120,6 +121,7 @@ def run(providers: list[str] | None, dry_run: bool, skip_rollups: bool, skip_win
 
 
 def main(argv: list[str] | None = None) -> int:
+    force_utf8_console()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
