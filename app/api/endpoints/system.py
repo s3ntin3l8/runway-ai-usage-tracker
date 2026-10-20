@@ -4,6 +4,7 @@ import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -43,6 +44,12 @@ from app.services.account_identity import (
     canonical_account_id,
 )
 from app.services.collector_manager import manager
+from app.services.collectors.anthropic_console import (
+    ConsoleAPIError,
+    console_get,
+    console_organizations,
+    parse_console_balance,
+)
 from app.services.credential_inventory import build_inventory as build_credential_inventory
 from app.services.credential_provider import CredentialProvider
 from app.services.credential_sources import effective_health, is_server_source_id
@@ -1526,6 +1533,7 @@ class _AccountPreviewRequest(BaseModel):
     provider_id: str
     api_key: str | None = None
     session_cookie: str | None = None
+    organization_id: str | None = None
 
 
 def _supported_saved_strategies(
@@ -1708,7 +1716,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             for rule in rules
             if rule.get("type") in ("env", "file", "keychain")
         )
-        supports_session_cookie = any(
+        supports_session_cookie = bool(provider_def.get("supports_session_cookie")) or any(
             any(
                 k in rule.get("mapping", {}).values()
                 for k in (
@@ -1761,6 +1769,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     r.strategies, manager.get_supported_strategies(p_id)
                 ),
                 "opencode_workspace_id": r.opencode_workspace_id,
+                "claude_organization_id": r.claude_organization_id,
                 "billing_type": r.billing_type,
                 # `is_orphaned` surfaces the orphaned-bookkeeping-row
                 # bug in the settings UI: #286 highlights
@@ -1805,6 +1814,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "poll_interval_seconds": None,
                     "collection_strategies": None,
                     "opencode_workspace_id": None,
+                    "claude_organization_id": None,
                     "is_orphaned": False,
                     "source": "discovered",
                     "credential_source_labels": _discovery_labels(p_id, c_aid),
@@ -1833,6 +1843,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "poll_interval_seconds": None,
                         "collection_strategies": None,
                         "opencode_workspace_id": None,
+                        "claude_organization_id": None,
                         "is_orphaned": False,
                         "source": "discovered",
                         "credential_source_labels": [],
@@ -1866,6 +1877,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     db.strategies if db else None, manager.get_supported_strategies(p_id)
                 ),
                 "opencode_workspace_id": db.opencode_workspace_id if db else None,
+                "claude_organization_id": db.claude_organization_id if db else None,
                 # Per-account breakdown: DB rows first (config-backed), then
                 # cache/latest_usage-only identities (discovered). The
                 # canonical row above is the first entry whose account_id is
@@ -1918,6 +1930,30 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
         if existing is None and (account_id == "default" or bool(HASH_RE.match(account_id))):
             rewritten_from = original_account_id
             account_id = canonical_account_id(body.account_label)
+
+    if provider_id == "anthropic_console":
+        try:
+            account_id = str(UUID(account_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Select a Console organization") from exc
+        existing_console = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == provider_id,
+                ProviderConfig.account_id == account_id,
+            )
+        ).first()
+        if (
+            body.session_cookie
+            and not body.clear_session_cookie
+            and (existing_console is None or body.session_cookie != existing_console.session_cookie)
+        ):
+            label = await _validate_console_connection(body.session_cookie, account_id)
+            if body.account_label is None:
+                body.account_label = label
+        if not existing_console and (not body.session_cookie or body.clear_session_cookie):
+            raise HTTPException(status_code=422, detail="Enter a Console session cookie")
+        if not existing_console and body.billing_type is None:
+            body.billing_type = "pay_as_you_go"
 
     await _apply_provider_config_update(session, provider_id, account_id, body)
     response_data: dict[str, str] = {
@@ -2182,6 +2218,51 @@ def _account_usage_flags(
     }
 
 
+class _ConsoleOrganizationsRequest(BaseModel):
+    session_cookie: str
+
+
+@router.post("/provider-config/console-organizations")
+@limiter.limit("20/minute")
+async def discover_console_organizations(
+    request: Request,
+    body: _ConsoleOrganizationsRequest,
+    _auth: None = Depends(require_admin_key),
+) -> dict:
+    """Read Console organizations without persisting the supplied credential."""
+    try:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            organizations = await console_organizations(client, body.session_cookie)
+        return {"organizations": organizations}
+    except ConsoleAPIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+async def _validate_console_connection(cookie: str, organization_id: str) -> str:
+    """Validate membership and billing access; the UUID stays the saved identity."""
+    try:
+        org_id = str(UUID(organization_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Select a Console organization") from exc
+    try:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            organizations = await console_organizations(client, cookie)
+            org = next((o for o in organizations if o["id"] == org_id), None)
+            if org is None:
+                raise HTTPException(
+                    status_code=403, detail="Console organization is not accessible"
+                )
+            balance = await console_get(
+                client, f"/api/organizations/{org_id}/prepaid/credits", cookie
+            )
+            parse_console_balance(balance)
+        return org["name"]
+    except ConsoleAPIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=502, detail="Invalid Console billing response") from exc
+
+
 @router.post("/provider-config/preview-account")
 @limiter.limit("30/minute")
 async def preview_account_identity(
@@ -2213,6 +2294,27 @@ async def preview_account_identity(
 
     if body.provider_id not in manager.collector_registry:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {body.provider_id}")
+
+    if body.provider_id == "anthropic_console":
+        if not body.session_cookie or not body.organization_id:
+            raise HTTPException(
+                status_code=422, detail="Enter a Console cookie and select an organization"
+            )
+        try:
+            organization_id = str(UUID(body.organization_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Select a Console organization") from exc
+        label = await _validate_console_connection(body.session_cookie, organization_id)
+        already_exists = _row_exists(session, body.provider_id, organization_id)
+        result = {
+            "suggested_account_id": organization_id,
+            "suggested_label": label,
+            "label_source": "organization",
+            "already_exists": already_exists,
+        }
+        if already_exists:
+            raise HTTPException(status_code=409, detail=result)
+        return result
 
     credential_hint = body.api_key or body.session_cookie
     if not credential_hint:

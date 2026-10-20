@@ -168,6 +168,7 @@ class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
     poll_interval_seconds: int | None = None  # None = use collector default TTL
     collection_strategies_json: str | None = Field(default=None)  # JSON list of {id, enabled}
     opencode_workspace_id: str | None = Field(default=None)
+    claude_organization_id: str | None = Field(default=None)
     # How monetary values should be presented for this account.
     billing_type: str = "unknown"  # subscription | pay_as_you_go | unknown
 
@@ -796,6 +797,8 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     first_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     last_seen: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
     # Safe quota fields only; tokens and cookies are never written here.
+    claude_organizations_json: str | None = None
+    claude_organizations_complete: bool = False
     quota_preview_json: str | None = None
     quota_preview_observed_at: UTCDateTime | None = None
     # Identity-verifier retry state: a source that cannot name its account is retried

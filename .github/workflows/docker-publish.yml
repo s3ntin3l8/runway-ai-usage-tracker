@@ -289,7 +289,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          # `download-artifact@v4` extracts each matched artifact into its own
+          # `download-artifact` extracts each matched artifact into its own
           # subdirectory named after the artifact (e.g.
           # /tmp/digests/digests-<slug>--<arch>/<digest-file>) unless
           # `merge-multiple: true` is set — it does NOT reproduce the upload side's

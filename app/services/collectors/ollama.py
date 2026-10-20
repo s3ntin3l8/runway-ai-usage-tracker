@@ -353,84 +353,138 @@ class OllamaCollector(BaseCollector):
         return self._build_cards_from_api_usage(body)
 
     def _build_cards_from_api_usage(self, body: dict[str, Any]) -> list[dict[str, Any]]:
-        """Build a monthly quota card from `/api/usage`'s ``limits`` / ``activity`` shape.
+        """Build usage cards from `/api/usage`.
 
-        The shape observed live (Sep 2026):
-
-            {
-              "activity": {
-                "cost": "0.00000",
-                "period": {"type": "last_4_weeks",
-                           "starting_at": "2026-08-31T00:00:00Z",
-                           "ending_at":   "2026-09-24T22:29:17Z"},
-                "models": [...],
-              },
-              "limits": {"monthly": {"usage": 0.002,
-                                      "models": [{"name": "web search",
-                                                  "request_count": 1}]}},
-            }
-
-        ``limits.monthly.usage`` is a fraction from 0 to 1. The API does not
-        provide a reset time, so the card reports percent used without
-        inventing reset or pace information. Plans without a monthly cap
-        (free tier) report no ``limits.monthly``;
-        that case degrades gracefully into an empty card list rather than
-        a parse error.
+        Supports two response shapes:
+        1. Time-bucketed usage API (returns range, totals, buckets) with dollar
+           spend and token counts (PAYG).
+        2. Legacy monthly quota limit (fraction from 0 to 1). Plans without a
+           monthly cap report no ``limits.monthly``; that degrades into an empty
+           result rather than a parse error.
         """
         self._no_monthly_cap = False
-        limits = body.get("limits") or {}
-        if not isinstance(limits, dict):
-            self._set_error_reason("missing_data")
-            return []
-        # No monthly entry is a valid no-cap plan (for example, free tier).
-        # It is a successful empty result, not malformed quota data.
-        if "monthly" not in limits or limits["monthly"] is None:
-            self._no_monthly_cap = True
-            return []
-        monthly = limits["monthly"]
-        if not isinstance(monthly, dict):
-            self._set_error_reason("missing_data")
-            return []
-        usage_raw = monthly.get("usage")
-        if usage_raw is None:
-            self._set_error_reason("missing_data")
-            return []
-        try:
-            usage = float(usage_raw)
-        except (TypeError, ValueError):
-            self._set_error_reason("missing_data")
-            return []
-        if not math.isfinite(usage) or not 0 <= usage <= 1:
-            self._set_error_reason("missing_data")
-            return []
         now = datetime.now(UTC)
         now_iso = now.isoformat()
-        pct = usage * 100.0
-        card = {
-            "service_name": "Ollama",
-            "icon": "🦙",
-            "remaining": f"{100 - pct:.1f}%",
-            "unit": "remaining",
-            "reset": "—",
-            "health": HealthCalculator.from_percentage(pct),
-            "pace": "—",
-            "detail": f"{pct:.1f}% used · Ollama API",
-            "used_value": pct,
-            "limit_value": 100.0,
-            "pct_used": pct,
-            "is_unlimited": False,
-            "unit_type": "percent",
-            "reset_at": None,
-            "account_label": self.account_label or "",
-            "window_type": "monthly",
-            "provider_id": "ollama",
-            "tier": "cloud",
-            "data_source": self.DATA_SOURCE_API,
-            "input_source": getattr(self, "_current_input_source", "unknown"),
-            "usage_url": "https://ollama.com/settings/billing",
-            "updated_at": now_iso,
-        }
-        return [card]
+
+        # Format 2: Monthly quota cap.
+        # Prefer limits when present: a payload carrying both limits.monthly and
+        # totals retains the monthly quota card rather than retiring it.
+        limits = body.get("limits")
+        if isinstance(limits, dict) and limits.get("monthly") is not None:
+            monthly = limits["monthly"]
+            if not isinstance(monthly, dict):
+                self._set_error_reason("missing_data")
+                return []
+            usage_raw = monthly.get("usage")
+            if usage_raw is None:
+                self._set_error_reason("missing_data")
+                return []
+            try:
+                usage = float(usage_raw)
+            except (TypeError, ValueError):
+                self._set_error_reason("missing_data")
+                return []
+            if not math.isfinite(usage) or not 0 <= usage <= 1:
+                self._set_error_reason("missing_data")
+                return []
+            pct = usage * 100.0
+            card = {
+                "service_name": "Ollama",
+                "icon": "🦙",
+                "remaining": f"{100 - pct:.1f}%",
+                "unit": "remaining",
+                "reset": "—",
+                "health": HealthCalculator.from_percentage(pct),
+                "pace": "—",
+                "detail": f"{pct:.1f}% used · Ollama API",
+                "used_value": pct,
+                "limit_value": 100.0,
+                "pct_used": pct,
+                "is_unlimited": False,
+                "unit_type": "percent",
+                "reset_at": None,
+                "account_label": self.account_label or "",
+                "window_type": "monthly",
+                "provider_id": "ollama",
+                "tier": "cloud",
+                "data_source": self.DATA_SOURCE_API,
+                "input_source": getattr(self, "_current_input_source", "unknown"),
+                "usage_url": "https://ollama.com/settings/billing",
+                "updated_at": now_iso,
+            }
+            return [card]
+
+        # Format 1: Time-bucketed usage API (returns range, totals, buckets).
+        # Require at least one recognised counter to avoid fabricating a PAYG
+        # card from an empty dictionary.
+        totals = body.get("totals")
+        if isinstance(totals, dict) and any(
+            k in totals for k in ("usage_usd", "request_count", "input_tokens", "output_tokens")
+        ):
+            range_val = str(body.get("range", "7d")).lower()
+            window_map = {"24h": "daily", "7d": "weekly", "30d": "monthly"}
+            window_type = window_map.get(range_val, "weekly")
+            try:
+                usage_usd = float(totals.get("usage_usd", 0.0) or 0.0)
+                if not math.isfinite(usage_usd) or usage_usd < 0:
+                    usage_usd = 0.0
+            except (TypeError, ValueError):
+                usage_usd = 0.0
+
+            def _to_int(val: Any) -> int:
+                try:
+                    return int(val or 0)
+                except (TypeError, ValueError):
+                    return 0
+
+            request_count = _to_int(totals.get("request_count"))
+            input_tokens = _to_int(totals.get("input_tokens"))
+            output_tokens = _to_int(totals.get("output_tokens"))
+            cached_tokens = _to_int(totals.get("cached_input_tokens"))
+
+            detail = f"${usage_usd:.2f} spent · {request_count} requests · Ollama Cloud"
+            card = {
+                "service_name": "Ollama Cloud",
+                "icon": "🦙",
+                "remaining": "—",
+                "unit": "USD",
+                "reset": "—",
+                "health": "good",
+                "pace": "Stable",
+                "detail": detail,
+                "used_value": usage_usd,
+                "limit_value": None,
+                "pct_used": None,
+                "is_unlimited": True,
+                "unit_type": "currency",
+                "currency": "USD",
+                "token_usage": {
+                    "input": input_tokens,
+                    "output": output_tokens,
+                    "cache_read": cached_tokens,
+                },
+                "reset_at": None,
+                "account_label": self.account_label or "",
+                "window_type": window_type,
+                "provider_id": "ollama",
+                "tier": "cloud",
+                "data_source": self.DATA_SOURCE_API,
+                "input_source": getattr(self, "_current_input_source", "unknown"),
+                "usage_url": "https://ollama.com/settings/billing",
+                "updated_at": now_iso,
+            }
+            return [card]
+
+        # No monthly entry is a valid no-cap plan (for example, free tier,
+        # limits: null, or an activity-only payload). It is a successful empty
+        # result, not malformed quota data.
+        limits_val = body.get("limits")
+        if limits_val is not None and not isinstance(limits_val, dict):
+            self._set_error_reason("missing_data")
+            return []
+
+        self._no_monthly_cap = True
+        return []
 
     async def _get_ollama_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Cookie-scrape fallback — WorkOS /settings page parse."""

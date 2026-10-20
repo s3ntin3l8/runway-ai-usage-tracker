@@ -18,6 +18,16 @@ export interface ByModelEntry {
   tokens?: TokenUsage;
 }
 
+export interface CreditBalanceComponent {
+  kind: 'purchased' | 'subscription' | 'promotion';
+  label: string;
+  currency: string;
+  remaining_value: number;
+  granted_value?: number | null;
+  expires_at?: string | null;
+  products: string[];
+}
+
 export interface LimitCard {
   service_name: string;
   icon?: string;
@@ -32,6 +42,7 @@ export interface LimitCard {
   is_unlimited?: boolean;
   unit_type?: string; // "currency" | "tokens" | "requests" | "minutes" | "percent" | "generic"
   currency?: string | null;
+  credit_breakdown?: CreditBalanceComponent[] | null;
   reset_at?: string | null;
   data_source?: string;
   input_source?: string;
@@ -579,6 +590,9 @@ export interface UntaggedCredential {
   sidecar_id: string;
   provider_id: string;
   claimed_account_id?: string | null;
+  source_id?: string | null;
+  selection_required?: boolean;
+  organization_count?: number;
   // Stable host-side descriptor; phase 1 ships `provider:<id>`,
   // per-rule expansion is the follow-up issue.
   credential_origin: string;
@@ -811,6 +825,7 @@ export interface ProviderAccount {
   poll_interval_seconds?: number | null;
   collection_strategies?: CollectionStrategy[] | null;
   opencode_workspace_id?: string | null;
+  claude_organization_id?: string | null;
   billing_type?: 'subscription' | 'pay_as_you_go' | 'unknown';
   // Set by the server (#281 hardening + #286 follow-up). Lets the UI surface
   // orphaned `account_id="default"` rows that have been shadowed by a real
@@ -858,6 +873,7 @@ export interface ProviderConfig {
   supported_strategies?: CollectionStrategy[];
   collection_strategies?: CollectionStrategy[];
   opencode_workspace_id?: string | null;
+  claude_organization_id?: string | null;
   // Multi-account view (one entry per ProviderConfig DB row, plus any
   // discovered-only identities — see ProviderAccount.source).
   accounts: ProviderAccount[];
@@ -869,10 +885,11 @@ export interface ProviderConfig {
 // Wizard (#287) preview-endpoint types — keep in sync with
 // `_AccountPreviewRequest` / preview_account_identity response in
 // `app/api/endpoints/system.py`.
-export type AccountPreviewLabelSource = 'email' | 'credential_hash' | 'default';
+export type AccountPreviewLabelSource = 'email' | 'credential_hash' | 'default' | 'organization';
 
 export interface AccountPreviewRequest {
   provider_id: string;
+  organization_id?: string;
   api_key?: string | null;
   session_cookie?: string | null;
 }

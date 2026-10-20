@@ -106,6 +106,17 @@ PRICING_SEED: list[dict] = [
         "cache_create_1h_per_mtok": 2.00,  # 1h TTL writes: 2x input
         "notes": "Haiku 4.5 effective rate",
     },
+    {
+        "provider_id": "anthropic",
+        "model_id": "claude-haiku-4.5",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 5.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 1.25,
+        "cache_create_1h_per_mtok": 2.00,
+        "notes": "Haiku 4.5 full name alias",
+    },
     # OpenAI ChatGPT / Codex (GPT-5 series)
     {
         "provider_id": "chatgpt",
@@ -1170,6 +1181,17 @@ PRICING_SEED: list[dict] = [
         "cache_read_per_mtok": 0.145,
         "cache_create_per_mtok": 0.0,
         "notes": "OpenCode Zen DeepSeek V4 Pro",
+    },
+    {
+        "provider_id": "opencode",
+        "model_id": "claude-haiku-4.5",
+        "effective_from": "2025-09-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 5.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 1.25,
+        "cache_create_1h_per_mtok": 2.00,
+        "notes": "OpenCode Zen Claude Haiku 4.5 alias",
     },
 ]
 

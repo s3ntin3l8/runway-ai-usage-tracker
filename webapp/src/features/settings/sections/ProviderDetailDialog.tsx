@@ -1,3 +1,4 @@
+import { claudeConnectionLabel } from '@/lib/providerFamilies';
 // Per-provider detail dialog. Shows the master enabled toggle + a vertical
 // list of account rows for one ProviderConfig. Each row exposes a "⋮" menu
 // with Edit / Remove actions. The "Add account" footer button is wired in
@@ -7,7 +8,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { Archive, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteProviderConfig, putDiscoveredAccountLabel, putProviderConfig } from '@/api/endpoints';
 import type { ProviderAccount, ProviderConfig } from '@/api/types';
@@ -26,6 +27,8 @@ function credentialProblemTitle(status: string | undefined): string | undefined 
 
 interface ProviderDetailDialogProps {
   provider: ProviderConfig | null;
+  connections?: ProviderConfig[];
+  onSelectConnection?: (providerId: string) => void;
   onClose: () => void;
   onAccountDeleted?: (providerId: string, accountId: string) => void;
   // PR #287 — when the user clicks "Add account" inside the dialog,
@@ -39,6 +42,8 @@ interface ProviderDetailDialogProps {
 
 export function ProviderDetailDialog({
   provider,
+  connections,
+  onSelectConnection,
   onClose,
   onAccountDeleted,
   onAddAccount,
@@ -108,6 +113,22 @@ export function ProviderDetailDialog({
     },
   });
 
+  const archiveAccount = useMutation({
+    mutationFn: (account: ProviderAccount) => {
+      if (!provider) throw new Error('no provider');
+      return putProviderConfig(provider.provider_id, account.account_id, {
+        archived: true,
+      });
+    },
+    onSuccess: (_data, account) => {
+      toast.success(`${provider?.name} · ${maskAccountId(account.account_id)} archived`);
+      queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
+      queryClient.invalidateQueries({ queryKey: ['usage'] });
+      setMenuFor(null);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const remove = useMutation({
     mutationFn: (accountId: string) => {
       if (!provider) throw new Error('no provider');
@@ -147,7 +168,7 @@ export function ProviderDetailDialog({
             onClose();
           }
         }}
-        title={provider?.name ?? ''}
+        title={connections && connections.length > 1 ? 'Claude' : (provider?.name ?? '')}
         description={
           provider
             ? visibleAccounts.length === 0
@@ -161,6 +182,16 @@ export function ProviderDetailDialog({
       >
         {provider ? (
           <div className="flex flex-col gap-3">
+            {connections && connections.length > 1 ? (
+              <label className="flex flex-col gap-1.5 text-sm">
+                Claude connection
+                <select aria-label="Claude connection" value={provider.provider_id}
+                  className="rounded-md border border-edge bg-surface-1 p-2 text-fg"
+                  onChange={(e) => onSelectConnection?.(e.target.value)}>
+                  {connections.map((p) => <option key={p.provider_id} value={p.provider_id}>{claudeConnectionLabel(p.provider_id)}</option>)}
+                </select>
+              </label>
+            ) : null}
             <div className="flex items-center justify-between rounded-sm border border-edge bg-surface-2 px-3 py-2">
               <div className="flex items-center gap-2">
                 <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
@@ -289,18 +320,33 @@ export function ProviderDetailDialog({
                                 Edit
                               </button>
                               {account.source !== 'discovered' ? (
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
-                                  onClick={() => {
-                                    setMenuFor(null);
-                                    setPendingDelete(account);
-                                  }}
-                                >
-                                  <Trash2 className="size-3.5" />
-                                  Remove
-                                </button>
+                                <>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    disabled={archiveAccount.isPending}
+                                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2 disabled:opacity-50"
+                                    onClick={() => {
+                                      setMenuFor(null);
+                                      archiveAccount.mutate(account);
+                                    }}
+                                  >
+                                    <Archive className="size-3.5 text-fg-muted" />
+                                    Archive
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
+                                    onClick={() => {
+                                      setMenuFor(null);
+                                      setPendingDelete(account);
+                                    }}
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                    Remove
+                                  </button>
+                                </>
                               ) : null}
                             </div>
                           ) : null}

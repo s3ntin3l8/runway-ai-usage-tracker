@@ -49,6 +49,16 @@ export type QuotaStatus = 'critical' | 'warning' | 'ok' | 'unlimited' | 'unknown
 export const CRITICAL_PCT = 90;
 export const WARNING_PCT = 70;
 
+// A variant whose last segment is a short hex hash — the collision-proof id
+// of a quota pool we do not have an explicit name for.
+//
+// The shape is the server's contract: `app/services/collectors/antigravity_api.py`
+// appends a 6-hex-char sha256 prefix to the pool key of an unmapped quota
+// group (`_pool_slug`). Keep both sides in step — if the hash length changes
+// there, this pattern stops matching and the chip falls back to showing the
+// raw hashed slug.
+const HASHED_VARIANT = /-[0-9a-f]{6}$/;
+
 export function statusForPct(pct: number | null | undefined): QuotaStatus {
   if (pct === null || pct === undefined || Number.isNaN(pct)) return 'unknown';
   if (pct >= CRITICAL_PCT) return 'critical';
@@ -219,8 +229,15 @@ function chipBaseLabel(card: LimitCard, sameWinSiblings: LimitCard[]): string {
     return `${base} · ${modelLabel(card.model_id)}`;
   }
   if (card.variant && sameWinSiblings.some((s) => s.variant !== card.variant)) {
-    const variantLabel = card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
-    return `${base} · ${variantLabel}`;
+    // An unmapped pool (e.g. an Antigravity quota group we don't know yet)
+    // carries a short hash in its variant — it keeps two similarly named
+    // pools apart in the database. The card's own name is the readable
+    // label for it; the hash stays in the key.
+    const label =
+      HASHED_VARIANT.test(card.variant) && card.service_name
+        ? card.service_name
+        : card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
+    return `${base} · ${label}`;
   }
   return base;
 }

@@ -249,6 +249,9 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # oai-sc: OpenAI service-credential cookie required by chatgpt.com/api/auth/session
     ("provider_configs", "oai_sc_cookie_encrypted", "VARCHAR"),
     ("provider_configs", "opencode_workspace_id", "VARCHAR"),
+    ("provider_configs", "claude_organization_id", "VARCHAR"),
+    ("pending_credential_tags", "claude_organizations_json", "VARCHAR"),
+    ("pending_credential_tags", "claude_organizations_complete", "BOOLEAN NOT NULL DEFAULT 0"),
     ("provider_configs", "billing_type", "VARCHAR NOT NULL DEFAULT 'unknown'"),
     # Archive: hide discontinued providers from the dashboard while preserving data.
     ("provider_configs", "archived", "BOOLEAN NOT NULL DEFAULT 0"),

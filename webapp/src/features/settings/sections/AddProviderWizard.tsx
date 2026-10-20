@@ -1,3 +1,5 @@
+import { claudeConnectionLabel, groupProviderFamilies, providerFamilyId } from '@/lib/providerFamilies';
+import { ConsoleOrganizationPicker } from './ConsoleOrganizationPicker';
 // AddProviderWizard — 3-step dialog for adding a new provider account (Issue
 // #287). Step 1 picks a provider (skipped when pre-scoped from
 // `ProviderDetailDialog`'s "Add account" button). Step 2 collects credentials
@@ -88,9 +90,9 @@ export function AddProviderWizard({
 
         {step === 1 ? (
           <Step1
-            providers={providers}
+            providers={groupProviderFamilies(providers)}
             onPick={(p) => {
-              setSelected(p);
+              setSelected(providers.find((candidate) => candidate.provider_id === p.provider_id) ?? p);
               setStep2Result(null);
               setStep(2);
             }}
@@ -102,6 +104,21 @@ export function AddProviderWizard({
           step is hidden via the `hidden` attribute — visually identical to
           not rendering, but preserves useState across step transitions.
         */}
+        {selected && step === 2 && providerFamilyId(selected.provider_id) === 'anthropic' && providers.some((p) => p.provider_id === 'anthropic_console') ? (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="claude-connection">Claude connection</Label>
+            <select id="claude-connection" value={selected.provider_id}
+              className="rounded-md border border-edge bg-surface-1 p-2 text-sm text-fg"
+              onChange={(e) => {
+                setSelected(providers.find((p) => p.provider_id === e.target.value) ?? null);
+                setStep2Result(null);
+              }}>
+              {providers.filter((p) => providerFamilyId(p.provider_id) === 'anthropic').map((p) => (
+                <option key={p.provider_id} value={p.provider_id}>{claudeConnectionLabel(p.provider_id)}</option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         {selected ? (
           <>
             {/*
@@ -301,6 +318,7 @@ function Step2({
 }) {
   const [apiKey, setApiKey] = useState('');
   const [cookie, setCookie] = useState('');
+  const [organizationId, setOrganizationId] = useState('');
   const [preview, setPreview] = useState<AccountPreviewResponse | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
@@ -347,6 +365,13 @@ function Step2({
     [existingAccountIds],
   );
   useEffect(() => {
+    if (provider.provider_id === 'anthropic_console' && !organizationId) {
+      setPreview(null);
+      setPreviewError(null);
+      setIsPreviewing(false);
+      setConflict(false);
+      return;
+    }
     if (credentialless) {
       // Backend returns the default sentinel when the preview endpoint is
       // called with no credential — same response we synthesize here. We
@@ -382,6 +407,7 @@ function Step2({
         const data = await previewAccount(
           {
             provider_id: provider.provider_id,
+            organization_id: provider.provider_id === 'anthropic_console' ? organizationId : undefined,
             api_key: apiKey.trim() || undefined,
             session_cookie: cookie.trim() || undefined,
           },
@@ -424,7 +450,7 @@ function Step2({
       if (debounceRef.current) clearTimeout(debounceRef.current);
       ac.abort();
     };
-  }, [apiKey, cookie, provider.provider_id, existingAccountIdsKey, credentialless]);
+  }, [apiKey, cookie, provider.provider_id, existingAccountIdsKey, credentialless, organizationId]);
 
   const canProceed = !!preview && !conflict && !isPreviewing;
 
@@ -453,13 +479,17 @@ function Step2({
             type="password"
             autoComplete="off"
             value={cookie}
-            onChange={(e) => setCookie(e.target.value)}
+            onChange={(e) => { setCookie(e.target.value); setOrganizationId(''); }}
             placeholder="cookie value…"
           />
           {provider.session_cookie_help ? (
             <HelperText>{provider.session_cookie_help}</HelperText>
           ) : null}
         </div>
+      ) : null}
+
+      {provider.provider_id === 'anthropic_console' ? (
+        <ConsoleOrganizationPicker cookie={cookie} value={organizationId} onSelect={setOrganizationId} />
       ) : null}
 
       {credentialless ? (
@@ -552,7 +582,9 @@ function PreviewBlock({
     );
   }
   const sourceLabel =
-    preview.label_source === 'email'
+    preview.label_source === 'organization'
+      ? 'Source: verified Console organization and billing access'
+      : preview.label_source === 'email'
       ? 'Source: extracted from credential'
       : preview.label_source === 'credential_hash'
         ? 'Source: derived credential hash'
@@ -616,6 +648,7 @@ function Step3({
     mutationFn: () => {
       const body: ProviderConfigUpdate = {
         enabled: true,
+        ...(provider.provider_id === 'anthropic_console' ? { billing_type: 'pay_as_you_go' as const } : {}),
         // Empty string means "clear" server-side (mirrors the provider account form's
         // behaviour); trimmed value otherwise.
         account_label: label.trim(),

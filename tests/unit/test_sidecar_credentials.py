@@ -760,11 +760,14 @@ class TestCredentialCandidateOwnership:
     def test_claude_cli_env_and_browser_cookie_are_independent(self, monkeypatch):
         import scripts.sidecar as sc
 
+        monkeypatch.setattr(sc.platform, "system", lambda: "Darwin")
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "cli-a")
         monkeypatch.setattr(
             sc.BrowserCookieExtractor,
-            "get_cookie",
-            staticmethod(lambda _domain, _name: "browser-b"),
+            "get_macos_candidates",
+            staticmethod(
+                lambda *_args: [("browser-b", "cookie:anthropic/Chrome/Profile 4/Network/Cookies")]
+            ),
         )
         config = {
             "name": "Claude",
@@ -787,7 +790,7 @@ class TestCredentialCandidateOwnership:
         assert all(card["metadata"]["identity_pending"] for card in cards)
         assert {entry["credential_origin"] for entry in blocked} == {
             "env:CLAUDE_CODE_OAUTH_TOKEN",
-            "cookie:anthropic/session",
+            "cookie:anthropic/Chrome/Profile 4/Network/Cookies",
         }
 
         tagged, blocked = sc.GenericCollector.collect_provider(
@@ -796,7 +799,7 @@ class TestCredentialCandidateOwnership:
             account_label_hints={
                 "anthropic": {
                     "env:CLAUDE_CODE_OAUTH_TOKEN": "a@example.com",
-                    "cookie:anthropic/session": "b@example.com",
+                    "cookie:anthropic/Chrome/Profile 4/Network/Cookies": "b@example.com",
                 }
             },
         )
@@ -809,11 +812,16 @@ class TestCredentialCandidateOwnership:
     def test_old_provider_tag_does_not_assign_browser_candidate(self, monkeypatch):
         import scripts.sidecar as sc
 
+        monkeypatch.setattr(sc.platform, "system", lambda: "Darwin")
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "unrelated-env-token")
         monkeypatch.setattr(
             sc.BrowserCookieExtractor,
-            "get_cookie",
-            staticmethod(lambda _domain, _name: "browser-cookie"),
+            "get_macos_candidates",
+            staticmethod(
+                lambda *_args: [
+                    ("browser-cookie", "cookie:anthropic/Chrome/Profile 4/Network/Cookies")
+                ]
+            ),
         )
         cards, blocked = sc.GenericCollector.collect_provider(
             "anthropic",
@@ -838,7 +846,7 @@ class TestCredentialCandidateOwnership:
         assert all(card["metadata"]["identity_pending"] for card in cards)
         assert {entry["credential_origin"] for entry in blocked} == {
             "env:CLAUDE_CODE_OAUTH_TOKEN",
-            "cookie:anthropic/session",
+            "cookie:anthropic/Chrome/Profile 4/Network/Cookies",
         }
 
     def test_unverifiable_provider_reports_origin_without_shipping_token(self, monkeypatch):
@@ -1380,6 +1388,8 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
     """
     import scripts.sidecar as sc
 
+    monkeypatch.setattr(sc.Path, "home", lambda: tmp_path)
+
     # Pre-populate the cache directly via the module-global (a wrapper
     # test below uses the real ``_get_credential_cache()`` path).
     from scripts.sidecar_pkg.credentials import CredentialCache
@@ -1413,7 +1423,7 @@ def test_run_collection_iterates_one_account_matching_local_identity(monkeypatch
             self.event_id = eid
 
         def model_dump(self, mode: str = "python") -> dict:
-            return {"event_id": self.event_id}
+            return {"provider_id": "anthropic", "event_id": self.event_id}
 
     def _fake_extractor(
         account_id: str,
@@ -1458,6 +1468,8 @@ def test_run_collection_stamps_local_identity_when_no_server_match(monkeypatch, 
     the mismatch.
     """
     import scripts.sidecar as sc
+
+    monkeypatch.setattr(sc.Path, "home", lambda: tmp_path)
     from scripts.sidecar_pkg.credentials import CredentialCache
 
     cache = CredentialCache()
@@ -1480,7 +1492,7 @@ def test_run_collection_stamps_local_identity_when_no_server_match(monkeypatch, 
             self.event_id = eid
 
         def model_dump(self, mode: str = "python") -> dict:
-            return {"event_id": self.event_id}
+            return {"provider_id": "anthropic", "event_id": self.event_id}
 
     def _fake_extractor(
         account_id: str,
@@ -1774,3 +1786,24 @@ def test_extract_events_for_provider_runs_real_path_list_parser(
     # The same file listed twice must not double-count.
     event_ids = [e["event_id"] for e in out]
     assert len(event_ids) == len(set(event_ids))
+
+
+@pytest.fixture(autouse=True)
+def isolate_host_credentials(monkeypatch, tmp_path):
+    """Synthetic tests must never inspect host browser stores or Keychain."""
+    import subprocess
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    original_run = subprocess.run
+
+    def guarded_run(command, *args, **kwargs):
+        if (
+            isinstance(command, (list, tuple))
+            and command
+            and Path(str(command[0])).name == "security"
+        ):
+            raise AssertionError("Live Keychain access is forbidden in unit tests")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)

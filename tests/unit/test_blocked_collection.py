@@ -61,6 +61,7 @@ def test_withholds_token_trusts_the_reason_then_infers_for_older_sidecars():
     # one it can verify ships its token (pending verification, not blocked).
     assert withholds_token(_pending(provider="deepseek")) is True
     assert withholds_token(_pending(provider="anthropic")) is False
+    assert withholds_token(_pending(provider="anthropic_console")) is False
 
 
 def test_blocked_only_when_the_provider_has_no_fresh_collection():

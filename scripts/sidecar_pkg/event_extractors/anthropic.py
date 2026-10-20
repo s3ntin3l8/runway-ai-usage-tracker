@@ -67,6 +67,8 @@ def parse_anthropic_events(
     jsonl_paths: list[Path],
     account_id: str,
     since: datetime,
+    *,
+    ranges: dict[Path, tuple[int, int]] | None = None,
 ) -> list[UsageEventPush]:
     """Extract UsageEventPush records from Claude JSONL log files.
 
@@ -76,87 +78,101 @@ def parse_anthropic_events(
     events: list[UsageEventPush] = []
     for fp in jsonl_paths:
         try:
-            with open(fp, encoding="utf-8") as f:
+            with open(fp, "rb") as f:
+                start, end = ranges[fp] if ranges is not None else (0, None)
+                f.seek(start)
                 for line in f:
+                    if end is not None and f.tell() > end:
+                        break
                     try:
                         e = json.loads(line)
                     except Exception:
                         continue
-                    if e.get("type") != "assistant":
-                        continue
-                    ts_raw = e.get("timestamp")
-                    if not ts_raw:
-                        continue
                     try:
-                        ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-                    except ValueError:
-                        continue
-                    if ts <= since:
-                        continue
+                        if e.get("type") != "assistant":
+                            continue
+                        ts_raw = e.get("timestamp")
+                        if not ts_raw:
+                            continue
+                        try:
+                            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                        except ValueError:
+                            continue
+                        if ts <= since:
+                            continue
 
-                    msg = e.get("message", {})
-                    msg_id = msg.get("id") or ""
-                    req_id = msg.get("requestId") or ""
-                    event_id = f"{msg_id}|{req_id}" if req_id else msg_id
-                    if not event_id:
-                        continue
-                    dedup_key = (msg_id, req_id)
-                    if dedup_key in seen:
-                        continue
-                    seen.add(dedup_key)
+                        msg = e.get("message", {})
+                        msg_id = msg.get("id") or ""
+                        req_id = msg.get("requestId") or ""
+                        event_id = f"{msg_id}|{req_id}" if req_id else msg_id
+                        if not event_id:
+                            continue
+                        dedup_key = (msg_id, req_id)
+                        if dedup_key in seen:
+                            continue
 
-                    usage = msg.get("usage") or {}
-                    content = msg.get("content") or []
-                    tool_names = [
-                        c.get("name")
-                        for c in content
-                        if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name")
-                    ]
-                    tool_calls = len(tool_names)
+                        usage = msg.get("usage") or {}
+                        content = msg.get("content") or []
+                        tool_names = [
+                            c["name"]
+                            for c in content
+                            if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name")
+                        ]
+                        tool_calls = len(tool_names)
 
-                    subagent_type = e.get("attributionAgent") if e.get("isSidechain") else None
+                        subagent_type = e.get("attributionAgent") if e.get("isSidechain") else None
 
-                    # Cache writes split by TTL — `cache_creation_input_tokens` is
-                    # the total; `cache_creation.{ephemeral_1h,ephemeral_5m}_input_tokens`
-                    # is the breakdown cost_calculator needs to bill the 1h portion
-                    # at its own (2x input) rate instead of the 5m (1.25x) rate.
-                    cache_creation = usage.get("cache_creation") or {}
-                    server_tool_use = usage.get("server_tool_use") or {}
+                        # Cache writes split by TTL — `cache_creation_input_tokens` is
+                        # the total; `cache_creation.{ephemeral_1h,ephemeral_5m}_input_tokens`
+                        # is the breakdown cost_calculator needs to bill the 1h portion
+                        # at its own (2x input) rate instead of the 5m (1.25x) rate.
+                        cache_creation = usage.get("cache_creation") or {}
+                        server_tool_use = usage.get("server_tool_use") or {}
 
-                    events.append(
-                        UsageEventPush(
-                            provider_id="anthropic",
-                            account_id=account_id,
-                            event_id=event_id,
-                            ts=ts.isoformat(),
-                            model_id=_normalize_anthropic_model(msg.get("model", "")),
-                            session_id=e.get("sessionId"),
-                            cwd=e.get("cwd"),
-                            git_branch=e.get("gitBranch"),
-                            tool_names=tool_names or None,
-                            subagent_type=subagent_type,
-                            tokens_input=int(usage.get("input_tokens", 0)),
-                            tokens_output=int(usage.get("output_tokens", 0)),
-                            tokens_cache_read=int(usage.get("cache_read_input_tokens", 0)),
-                            tokens_cache_create=int(usage.get("cache_creation_input_tokens", 0)),
-                            tokens_cache_create_1h=int(
-                                cache_creation.get("ephemeral_1h_input_tokens", 0)
-                            ),
-                            tokens_cache_create_5m=int(
-                                cache_creation.get("ephemeral_5m_input_tokens", 0)
-                            ),
-                            tokens_reasoning=0,
-                            stop_reason=msg.get("stop_reason"),
-                            tool_calls=tool_calls,
-                            effort=e.get("effort"),
-                            speed=usage.get("speed"),
-                            service_tier=usage.get("service_tier"),
-                            entrypoint=e.get("entrypoint"),
-                            app_version=e.get("version"),
-                            web_search_requests=int(server_tool_use.get("web_search_requests", 0)),
-                            web_fetch_requests=int(server_tool_use.get("web_fetch_requests", 0)),
+                        events.append(
+                            UsageEventPush(
+                                provider_id="anthropic",
+                                account_id=account_id,
+                                event_id=event_id,
+                                ts=ts.isoformat(),
+                                model_id=_normalize_anthropic_model(msg.get("model", "")),
+                                session_id=e.get("sessionId"),
+                                cwd=e.get("cwd"),
+                                git_branch=e.get("gitBranch"),
+                                tool_names=tool_names or None,
+                                subagent_type=subagent_type,
+                                tokens_input=int(usage.get("input_tokens", 0)),
+                                tokens_output=int(usage.get("output_tokens", 0)),
+                                tokens_cache_read=int(usage.get("cache_read_input_tokens", 0)),
+                                tokens_cache_create=int(
+                                    usage.get("cache_creation_input_tokens", 0)
+                                ),
+                                tokens_cache_create_1h=int(
+                                    cache_creation.get("ephemeral_1h_input_tokens", 0)
+                                ),
+                                tokens_cache_create_5m=int(
+                                    cache_creation.get("ephemeral_5m_input_tokens", 0)
+                                ),
+                                tokens_reasoning=0,
+                                stop_reason=msg.get("stop_reason"),
+                                tool_calls=tool_calls,
+                                effort=e.get("effort"),
+                                speed=usage.get("speed"),
+                                service_tier=usage.get("service_tier"),
+                                entrypoint=e.get("entrypoint"),
+                                app_version=e.get("version"),
+                                web_search_requests=int(
+                                    server_tool_use.get("web_search_requests", 0)
+                                ),
+                                web_fetch_requests=int(
+                                    server_tool_use.get("web_fetch_requests", 0)
+                                ),
+                            )
                         )
-                    )
+                        seen.add(dedup_key)
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+
         except Exception:
             continue
     return events

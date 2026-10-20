@@ -926,6 +926,144 @@ class TestOllamaApiCollector:
         assert cards == []
         assert collector._last_error_reason == "missing_data"
 
+    def test_build_cards_from_api_usage_time_bucketed_totals(self):
+        """Ollama Cloud usage API returning totals and range."""
+        collector = OllamaCollector(account_id="acc_test", account_label="user@example.com")
+        body = {
+            "range": "7d",
+            "scope": "self",
+            "granularity": "day",
+            "totals": {
+                "request_count": 42,
+                "usage_usd": 1.25,
+                "input_tokens": 10000,
+                "cached_input_tokens": 2000,
+                "output_tokens": 5000,
+            },
+            "buckets": [],
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["service_name"] == "Ollama Cloud"
+        assert card["provider_id"] == "ollama"
+        assert card["window_type"] == "weekly"
+        assert card["is_unlimited"] is True
+        assert card["used_value"] == 1.25
+        assert card["remaining"] == "—"
+        assert card["token_usage"] == {
+            "input": 10000,
+            "output": 5000,
+            "cache_read": 2000,
+        }
+        assert "$1.25 spent · 42 requests · Ollama Cloud" in card["detail"]
+        assert card["account_label"] == "user@example.com"
+
+    def test_build_cards_from_api_usage_zero_spend_time_bucketed(self):
+        """Zero spend / 0 request response creates a valid active PAYG card."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "range": "24h",
+            "scope": "self",
+            "granularity": "hour",
+            "totals": {
+                "request_count": 0,
+                "usage_usd": 0,
+                "input_tokens": 0,
+                "cached_input_tokens": 0,
+                "output_tokens": 0,
+            },
+            "buckets": [],
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["window_type"] == "daily"
+        assert card["remaining"] == "—"
+        assert card["used_value"] == 0.0
+        assert card["health"] == "good"
+
+    def test_build_cards_from_api_usage_prefers_limits_when_both_present(self):
+        """When payload carries both limits.monthly and totals, monthly quota is preferred."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "limits": {"monthly": {"usage": 0.25}},
+            "totals": {
+                "request_count": 10,
+                "usage_usd": 5.0,
+                "input_tokens": 1000,
+                "output_tokens": 500,
+            },
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["service_name"] == "Ollama"
+        assert card["remaining"] == "75.0%"
+        assert card["window_type"] == "monthly"
+
+    def test_build_cards_from_api_usage_empty_totals_falls_through(self):
+        """Empty totals dict does not fabricate a card and falls through."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {"range": "7d", "totals": {}}
+        cards = collector._build_cards_from_api_usage(body)
+        assert cards == []
+        assert collector._no_monthly_cap is True
+
+    def test_build_cards_from_api_usage_activity_only_payload_is_no_cap(self):
+        """A free-tier payload with only activity and no limits/totals is a valid no-cap result."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {"activity": {"cost": "0.00000"}}
+        cards = collector._build_cards_from_api_usage(body)
+        assert cards == []
+        assert collector._no_monthly_cap is True
+        assert collector._last_error_reason != "missing_data"
+
+    def test_build_cards_from_api_usage_null_limits_is_no_cap(self):
+        """Explicit null limits is a clean no-cap result (Hermes r4)."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {"limits": None}
+        cards = collector._build_cards_from_api_usage(body)
+        assert cards == []
+        assert collector._no_monthly_cap is True
+        assert collector._last_error_reason != "missing_data"
+
+    def test_build_cards_from_api_usage_string_typed_counters(self):
+        """String or null values in totals do not raise and parse safely."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "range": "7d",
+            "totals": {
+                "usage_usd": "invalid",
+                "request_count": "10",
+                "input_tokens": None,
+                "output_tokens": "not-a-number",
+                "cached_input_tokens": 5,
+            },
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["used_value"] == 0.0
+        assert card["token_usage"]["input"] == 0
+        assert card["token_usage"]["output"] == 0
+        assert card["token_usage"]["cache_read"] == 5
+
+    def test_build_cards_from_api_usage_nan_usage_usd_guarded(self):
+        """NaN or negative usage_usd is guarded to 0.0 without nan in detail."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "range": "7d",
+            "totals": {
+                "usage_usd": float("nan"),
+                "request_count": 1,
+            },
+        }
+        cards = collector._build_cards_from_api_usage(body)
+        assert len(cards) == 1
+        assert cards[0]["used_value"] == 0.0
+        assert "$0.00 spent" in cards[0]["detail"]
+
 
 def test_the_page_email_is_reported_as_verified_identity(ollama_html):
     """The collector proves which account a cookie is signed into (#462): the server compares
