@@ -42,10 +42,11 @@ def _empty_grain() -> dict[str, Any]:
 
 
 def _empty_bucket() -> dict[str, Any]:
-    """A top-level cumulative bucket (totals + by_model + by_sidecar)."""
+    """A top-level cumulative bucket (totals + by_model + by_sidecar + by_source_app)."""
     b = _empty_grain()
     b["by_model"] = {}
     b["by_sidecar"] = {}
+    b["by_source_app"] = {}
     return b
 
 
@@ -67,10 +68,10 @@ def query_cumulative_live(
     """Aggregate billable usage_events in ``[since, until)`` per identity.
 
     Returns ``{(provider_id, account_id): bucket}`` where each bucket carries
-    token totals, ``cost_usd``, ``msgs``, and ``by_model`` / ``by_sidecar``
-    breakdowns — the same shape ``/usage/cumulative`` builds from the rollup.
-    Only ``kind == "message"`` rows are counted (errors excluded), matching
-    the rollup semantics.
+    token totals, ``cost_usd``, ``msgs``, and ``by_model`` / ``by_sidecar`` /
+    ``by_source_app`` breakdowns — the same shape ``/usage/cumulative`` builds
+    from the rollup. Only ``kind == "message"`` rows are counted (errors
+    excluded), matching the rollup semantics.
 
     When *identity_pairs* is provided, only events matching one of the
     ``(provider_id, account_id)`` tuples are included — an OR-clause filter
@@ -84,6 +85,7 @@ def query_cumulative_live(
         UsageEvent.account_id,
         UsageEvent.model_id,
         UsageEvent.sidecar_id,
+        UsageEvent.source_app,
         func.count(UsageEvent.id),  # type: ignore[arg-type]
         func.sum(UsageEvent.tokens_input),
         func.sum(UsageEvent.tokens_output),
@@ -123,6 +125,7 @@ def query_cumulative_live(
         UsageEvent.account_id,
         UsageEvent.model_id,
         UsageEvent.sidecar_id,
+        UsageEvent.source_app,
     )
 
     out: dict[tuple[str, str], dict[str, Any]] = {}
@@ -131,6 +134,7 @@ def query_cumulative_live(
         aid,
         mid,
         sid,
+        app,
         msgs,
         ti,
         to,
@@ -163,4 +167,6 @@ def query_cumulative_live(
             _accumulate(bucket["by_model"].setdefault(mid, _empty_grain()), delta)
         if sid:
             _accumulate(bucket["by_sidecar"].setdefault(sid, _empty_grain()), delta)
+        if app:
+            _accumulate(bucket["by_source_app"].setdefault(app, _empty_grain()), delta)
     return out

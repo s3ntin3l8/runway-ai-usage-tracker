@@ -214,6 +214,10 @@ def test_parse_hermes_events_basic(tmp_path):
         )
 
         assert len(events) == 2
+        # The client app is Hermes even for events retagged onto another
+        # provider (kimi_coding below) — the provider says who was billed,
+        # source_app says who made the call.
+        assert all(e.source_app == "hermes" for e in events)
 
         # First event: Kimi Coding
         kimi_ev = next(e for e in events if e.model_id == "kimi-for-coding")

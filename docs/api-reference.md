@@ -26,6 +26,7 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/usage/top-projects` | Top projects ranked by `metric=tokens\|cost\|sessions`, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/top-tools` | Top tools by invocation volume, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/top-models` | Cross-provider Top Models ranked by `metric=tokens\|cost`, optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/source-apps` | Client apps that produced events, ranked by `metric=tokens\|cost`; several apps can share one provider, so this is what says which app spent the quota. Optionally scoped by `provider_id`/`account_id`/`sidecar_id` |
 | `GET` | `/api/v1/usage/global-stats` | Global cross-provider snapshot; optional `sidecar_id` and `exclude_cache` filters |
 | `GET` | `/api/v1/usage/cost-forecast` | MTD cost + 7-day burn extrapolated to EOM; optional `exclude_cache` |
 | `GET` | `/api/v1/usage/anomalies` | Z-score spike detection vs. historical mean; omitted/empty `sidecar_id` selects the all-source rollup, while a non-empty ID selects that source |

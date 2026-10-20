@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, func, or_
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.cache import cache_clear, cache_get, cache_set
 from app.core.date_utils import parse_iso8601_utc
@@ -25,6 +25,7 @@ from app.models.schemas import (
     GlobalStatsResponse,
     LimitCard,
     LimitsResponse,
+    SourceAppsResponse,
     TopModelsResponse,
     TopProjectsResponse,
     TopToolsResponse,
@@ -52,6 +53,7 @@ from app.services.queries import (
     query_global_stats,
     query_projects,
     query_sessions_paginated,
+    query_source_apps,
     query_top_models,
     query_top_projects,
     query_top_tools,
@@ -122,7 +124,13 @@ async def get_usage_sources(
     request: Request,
     session: Session = Depends(get_session),
 ) -> dict[str, list[str]]:
-    """Return distinct sources that have contributed billable usage events."""
+    """Return distinct sources that have contributed billable usage events.
+
+    "Sources" here are the hosts that pushed the events (``sidecar_ids``).
+    The client apps that produced them are reported separately as
+    ``source_apps`` — several apps share one provider, so the provider id
+    alone can't say which app spent the quota.
+    """
     cached = cache_get(_USAGE_SOURCES_CACHE_KEY)
     if cached is not None:
         return cached
@@ -134,7 +142,16 @@ async def get_usage_sources(
         .distinct()
         .order_by(UsageEvent.sidecar_id)
     ).all()
-    result = {"sidecar_ids": [str(sidecar_id) for sidecar_id in ids if sidecar_id]}
+    apps = session.exec(
+        select(UsageEvent.source_app)
+        .where(UsageEvent.kind == "message", col(UsageEvent.source_app).is_not(None))
+        .distinct()
+        .order_by(UsageEvent.source_app)
+    ).all()
+    result = {
+        "sidecar_ids": [str(sidecar_id) for sidecar_id in ids if sidecar_id],
+        "source_apps": [str(app) for app in apps if app],
+    }
     cache_set(_USAGE_SOURCES_CACHE_KEY, result, _USAGE_SOURCES_CACHE_TTL)
     return result
 
@@ -1120,6 +1137,66 @@ async def get_top_models(
         )
         return TopModelsResponse.model_validate(
             {"models": models, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+        )
+
+    result = await asyncio.to_thread(_work)
+    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    return result
+
+
+@router.get("/source-apps")
+@limiter.limit("30/minute")
+async def get_source_apps(  # noqa: PLR0913, PLR0917 — known-debt: 11 query filters; collapse into a Pydantic params model in a follow-up
+    request: Request,
+    metric: str = Query(default="tokens", pattern="^(tokens|cost)$"),
+    days: float | None = Query(default=None, ge=0.01, le=365.0),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    exclude_cache: bool = Query(default=False),
+    provider_id: str | None = None,
+    account_id: str | None = None,
+    sidecar_id: str | None = None,
+    limit: int = Query(default=15, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> SourceAppsResponse:
+    """Rank the client apps that produced usage events.
+
+    ``provider_id`` names the upstream provider a request was billed to, and
+    several client apps share one provider (MiniMax Code, OpenCode and a
+    plain API script can all spend the same MiniMax plan), so the provider
+    alone can't say which app spent the quota. This answers that.
+
+    Range resolution mirrors `/top-models`: an explicit `since`/`until`
+    (exclusive) pair wins; else the last `days`; else the current month on the
+    user's local calendar.
+
+    Offloaded to a worker thread via `asyncio.to_thread` (see
+    `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
+    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    """
+    cache_key = (
+        f"source-apps:{metric}:{days}:{since}:{until}:{exclude_cache}:"
+        f"{provider_id}:{account_id}:{sidecar_id}:{limit}"
+    )
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _work() -> SourceAppsResponse:
+        since_utc = _resolve_ranking_since(session, since, days)
+        apps = query_source_apps(
+            session,
+            since=since_utc,
+            until=parse_iso8601_utc(until) if until else None,
+            metric=metric,
+            exclude_cache=exclude_cache,
+            provider_id=provider_id,
+            account_id=account_id,
+            sidecar_id=sidecar_id,
+            limit=limit,
+        )
+        return SourceAppsResponse.model_validate(
+            {"apps": apps, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
         )
 
     result = await asyncio.to_thread(_work)

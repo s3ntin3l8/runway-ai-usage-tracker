@@ -35,6 +35,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from app.core.source_apps import ANTIGRAVITY  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.model_normalization import (  # noqa: E402
     normalize_ag_model as _normalize_ag_model,
@@ -264,6 +265,7 @@ def parse_antigravity_events(
                     events.append(
                         UsageEventPush(
                             provider_id="antigravity",
+                            source_app=ANTIGRAVITY,
                             account_id=account_id,
                             event_id=event_id,
                             ts=event_ts.isoformat(),

@@ -71,8 +71,9 @@ export interface LimitCard {
   collection_failing?: boolean;
 }
 
-// Live aggregation of usage_events over a quota window, split by model and
-// sidecar. Computed on demand by /usage/fleet for the longest active window.
+// Live aggregation of usage_events over a quota window, split by model,
+// sidecar and client app. Computed on demand by /usage/fleet for the longest
+// active window.
 export interface WindowAggregation {
   window_type: string;
   window_start: string;
@@ -80,6 +81,7 @@ export interface WindowAggregation {
   token_usage: TokenUsage;
   by_model: Record<string, CumulativeModelBucket>;
   by_sidecar: Record<string, CumulativeModelBucket>;
+  by_source_app?: Record<string, CumulativeModelBucket>;
 }
 
 export interface FleetEntry {
@@ -120,6 +122,7 @@ export interface CumulativeModelBucket {
 export interface CumulativeBucket extends CumulativeModelBucket {
   by_model?: Record<string, CumulativeModelBucket>;
   by_sidecar?: Record<string, CumulativeModelBucket>;
+  by_source_app?: Record<string, CumulativeModelBucket>;
 }
 
 export interface CumulativeEntry {
@@ -217,6 +220,10 @@ export interface HeatmapResponse {
 
 export interface UsageSourcesResponse {
   sidecar_ids: string[];
+  // The client apps that produced the events ("opencode", "claude_code", ...).
+  // Several apps share one provider, so the provider id alone can't say which
+  // app spent the quota.
+  source_apps?: string[];
 }
 
 export interface SessionModelSplit extends CumulativeModelBucket {
@@ -1108,6 +1115,31 @@ export interface TopModelEntry {
 
 export interface TopModelsResponse {
   models: TopModelEntry[];
+  metric: string; // "tokens" | "cost"
+  generated_at: string;
+}
+
+// One client app's totals in the per-app usage breakdown.
+export interface SourceAppEntry {
+  source_app: string;
+  msgs: number;
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+  tokens_reasoning: number;
+  cost_usd: number;
+  cost_cache: number; // cache_read + cache_create cost, for exclude-cache
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_create: number;
+  providers: string[];
+}
+
+export interface SourceAppsResponse {
+  apps: SourceAppEntry[];
   metric: string; // "tokens" | "cost"
   generated_at: string;
 }
