@@ -19,11 +19,14 @@ def test_daily_audits_prepare_one_database_and_attempt_both(monkeypatch, tmp_pat
 
     def prepare(cache):
         prepared.append(cache)
-        return {
-            "built": datetime.now(UTC).isoformat(),
-            "valid": True,
-            "from": "https://example.com/?checksum=sha256:" + "a" * 64,
-        }
+        return (
+            {
+                "built": datetime.now(UTC).isoformat(),
+                "valid": True,
+                "from": "https://example.com/?checksum=sha256:" + "a" * 64,
+            },
+            {"status": "active", "checksum": "sha256:" + "a" * 64},
+        )
 
     def audit(image, output, *, database):
         audited.append((image, output, database))
@@ -49,11 +52,14 @@ def test_shared_database_failure_records_both_targets(monkeypatch, tmp_path, fai
     def prepare(cache):
         if failure == "preparation":
             raise RuntimeError("database unavailable")
-        return {
-            "built": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
-            "valid": True,
-            "from": "https://example.com/?checksum=sha256:" + "a" * 64,
-        }
+        return (
+            {
+                "built": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+                "valid": True,
+                "from": "https://example.com/?checksum=sha256:" + "a" * 64,
+            },
+            {"status": "active", "checksum": "sha256:" + "a" * 64},
+        )
 
     monkeypatch.setattr(published, "prepare_database", prepare)
     monkeypatch.setattr(published, "audit", lambda *a, **kw: pytest.fail("untrusted DB audited"))
