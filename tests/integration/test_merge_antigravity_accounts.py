@@ -274,6 +274,12 @@ def test_dry_run_does_not_abort_on_gauge_gate(engine, capsys):
 def test_documented_run_command_succeeds_from_non_repo_cwd():
     """Round-2 regression: `python scripts/merge_antigravity_accounts.py --help`
     must work from any CWD (the `_REPO_ROOT` sys.path insert must remain).
+
+    ``PYTHONUTF8=0`` pins the child's streams to the locale code page — what a
+    user on Windows gets for a redirected stdout, and what the repo's own
+    tooling hides by running with ``PYTHONUTF8=1``. The docstring carries an
+    arrow the cp1252 page cannot encode, so the command only survives because
+    the script switches its console to UTF-8.
     """
     repo_root = Path(__file__).resolve().parents[2]
     script = repo_root / "scripts" / "merge_antigravity_accounts.py"
@@ -282,15 +288,18 @@ def test_documented_run_command_succeeds_from_non_repo_cwd():
         proc = subprocess.run(
             [sys.executable, str(script), "--help"],
             cwd=tmp,
-            env={**os.environ, "APP_HOST": "127.0.0.1"},
+            env={**os.environ, "APP_HOST": "127.0.0.1", "PYTHONUTF8": "0"},
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     assert proc.returncode == 0, (
         f"documented command failed: rc={proc.returncode} stderr={proc.stderr[:500]}"
     )
     assert "usage: merge_antigravity_accounts.py" in proc.stdout
+    # The arrow from the docstring made it through the legacy code page.
+    assert "\u2192" in proc.stdout
 
 
 def test_twin_divergence_gate_aborts_with_rc4_unless_force(engine):
