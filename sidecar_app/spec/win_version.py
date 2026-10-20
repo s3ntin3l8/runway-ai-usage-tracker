@@ -5,8 +5,9 @@ Two consumers, one source (``package.json``):
 - ``windows.spec`` imports :func:`write_version_file` to stamp a
   ``VSVersionInfo`` resource into ``RunwaySidecar.exe`` (Explorer →
   Properties → Details, and the SmartScreen/Apps & Features metadata).
-- CI and ``make sidecar-installer`` run ``python sidecar_app/spec/win_version.py``
-  to get the values ``makensis`` needs::
+- ``scripts/build_windows_installer.py`` — the helper every CI and local
+  installer build goes through — reads them here to get the values
+  ``makensis`` needs::
 
       $ python sidecar_app/spec/win_version.py
       VERSION=2.12.0+edge.abc1234
