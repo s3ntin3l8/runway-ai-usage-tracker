@@ -177,7 +177,7 @@ describe('UntaggedCredentialsDialog', () => {
     const link = await within(dialog).findByRole('link', {
       name: /add one in provider settings/i,
     });
-    expect(link.closest('p')?.textContent).toMatch(/no .*anthropic.* row configured/i);
+    expect(link.closest('p')?.textContent).toMatch(/no .*anthropic.* row is configured/i);
     // No Tag button when there are no provider rows to pick from.
     expect(within(dialog).queryByRole('button', { name: /^tag$/i })).not.toBeInTheDocument();
     await user.click(link); // exercise the link without error
@@ -604,9 +604,100 @@ describe('UntaggedCredentialsDialog', () => {
     expect(within(dialog).queryByRole('button', { name: /^tag$/i })).not.toBeInTheDocument();
     // The Enable-in-Provider-Settings link is the precondition.
     const link = await within(dialog).findByRole('link', {
-      name: /enable in provider settings/i,
+      name: /enable it in provider settings/i,
     });
-    expect(link.closest('p')?.textContent).toMatch(/all .*anthropic.* rows? configured .* disabled/i);
+    expect(link.closest('p')?.textContent).toMatch(/the anthropic row is disabled/i);
+    // The message must be one text block next to the icon: as loose flex
+    // children the text runs, the provider id and the link each became their
+    // own flex item and wrapped independently (gappy, ragged layout).
+    // Assert the shape rather than the child count, so a decorative sibling
+    // (another icon, a tooltip) cannot break this while a re-split sentence
+    // still does.
+    const paragraph = link.closest('p');
+    // The link lives inside the text block, never as a third flex child.
+    expect(link.parentElement?.tagName).toBe('SPAN');
+    expect(paragraph?.querySelector(':scope > a')).toBeNull();
+    // Nor is the provider id hoisted out of the text block.
+    expect(paragraph?.querySelector(':scope > span.font-mono')).toBeNull();
+    // Nor are the sentence's text runs direct children of the paragraph.
+    expect(
+      Array.from(paragraph?.childNodes ?? []).filter(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('pluralizes the all-rows-disabled message when a provider has several rows', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'anthropic',
+          name: 'Anthropic',
+          accounts: [
+            {
+              account_id: 'bob@example.com',
+              account_label: 'Bob',
+              enabled: false,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+            {
+              account_id: 'carol@example.com',
+              account_label: 'Carol',
+              enabled: false,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+          ],
+          account_count: 2,
+        },
+      ],
+    });
+    renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={() => {}} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    const link = await within(dialog).findByRole('link', {
+      name: /enable one in provider settings/i,
+    });
+    expect(link.closest('p')?.textContent).toMatch(/all 2 anthropic rows are disabled/i);
+  });
+});
+
+describe('accountPickNotice', () => {
+  it('keeps the lead, tail and link label coupled to one count check', async () => {
+    const { accountPickNotice } = await import('./UntaggedCredentialsDialog');
+    // No row configured at all.
+    expect(accountPickNotice(0)).toEqual({
+      lead: 'No',
+      tail: 'row is configured.',
+      linkLabel: 'Add one in Provider Settings',
+    });
+    // A single row, and it is disabled.
+    expect(accountPickNotice(1)).toEqual({
+      lead: 'The',
+      tail: 'row is disabled.',
+      linkLabel: 'Enable it in Provider Settings',
+    });
+    // Several rows, all of them disabled.
+    expect(accountPickNotice(2)).toEqual({
+      lead: 'All 2',
+      tail: 'rows are disabled.',
+      linkLabel: 'Enable one in Provider Settings',
+    });
+    expect(accountPickNotice(7).lead).toBe('All 7');
   });
 });
 
