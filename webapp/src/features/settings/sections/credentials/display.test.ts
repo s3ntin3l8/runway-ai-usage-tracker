@@ -83,3 +83,20 @@ describe('credential display helpers', () => {
     expect(text).not.toContain('alice@example.com');
   });
 });
+
+describe('native cookie source titles', () => {
+  it.each(['Chrome', 'Safari', 'Claude Desktop'])('identifies %s without a private profile or fingerprint', (client) => {
+    expect(originSummary(source({ origin_type: 'cookie', origin_app: client, label: 'Session cookie' })))
+      .toBe(`${client} · Session cookie on Workstation`);
+  });
+
+  it('preserves the generic browser label', () => {
+    expect(originSummary(source({ origin_type: 'cookie', origin_app: 'Browser', label: 'Browser cookie' })))
+      .toBe('Browser cookie on Workstation');
+  });
+});
+
+it('keeps named cookie clients when server label copy changes', () => {
+  expect(originSummary(source({ origin_type: 'cookie', origin_app: 'Safari', label: 'Web session' })))
+    .toBe('Safari · Web session on Workstation');
+});

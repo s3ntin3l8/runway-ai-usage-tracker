@@ -34,6 +34,7 @@ a = Analysis(
     + [
         "app.core.console",
         "app.core.kimi_device",
+        "app.core.version",
         "pystray._darwin",
         # runway-sidecar:// Apple Event handler (sidecar_app/url_events.py).
         "objc",
@@ -83,6 +84,8 @@ a = Analysis(
         "scripts.sidecar_pkg.claude_desktop",
         "scripts.sidecar_pkg.claude_code_keychain",
         "scripts.sidecar_pkg.macos_cookies",
+        "scripts.sidecar_pkg.safari_cookies",
+        "scripts.sidecar_pkg.cookie_scan",
         "scripts.sidecar_pkg.cowork_events",
         "cryptography.hazmat.primitives.padding",
         "cryptography.hazmat.primitives.ciphers",
@@ -101,6 +104,7 @@ a = Analysis(
         "scripts.sidecar_pkg.xai_renewer",
         "scripts.sidecar_pkg.opencode_credentials",
         "scripts.sidecar_pkg.anthropic_renewer",
+        "scripts.sidecar_pkg.agy_version",
         "scripts.sidecar_pkg.codex_renewer",
         "scripts.sidecar_pkg.oauth_renewal",
         "scripts.sidecar_pkg.asset_names",

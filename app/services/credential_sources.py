@@ -132,6 +132,15 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
             path=_collapse_home(raw) if raw else None,
         )
     if value.startswith("cookie:"):
+        # Native acceptance covers these clients (#672); optional browser labels
+        # and their regression cases must accompany acceptance in #683.
+        parts = value.split("#", 1)[0].split("/")
+        if (
+            len(parts) >= 4
+            and parts[0] in {"cookie:anthropic", "cookie:anthropic_console"}
+            and parts[1] in {"Chrome", "Safari", "Claude Desktop"}
+        ):
+            return OriginDisplay("cookie", "Session cookie", app=parts[1])
         return OriginDisplay("cookie", "Browser cookie", app="Browser")
     if value.startswith("keychain:"):
         service = value.split(":", 1)[1].split("#", 1)[0]
@@ -145,6 +154,8 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
 def describe_origin(origin: str | None) -> tuple[str, str]:
     """Return a UI-safe source kind and label for a sidecar credential origin."""
     display = describe_origin_full(origin)
+    if display.kind == "cookie" and display.label == "Session cookie" and display.app:
+        return display.kind, f"{display.app} cookie"
     return display.kind, display.label
 
 
