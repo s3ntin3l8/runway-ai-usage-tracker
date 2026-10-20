@@ -33,10 +33,18 @@ const BROWSER_TOKENS = [
   'desktop',
 ];
 
-/** Whether a path segment names the cookie store itself ("Cookies", "cookies.sqlite"). */
+/**
+ * Whether a path segment names the store itself rather than a profile.
+ *
+ * Chromium keeps the cookie file in a `Network` folder on some platforms
+ * (`<profile>/Network/Cookies`), so that segment belongs to the store path and
+ * must never be read as a profile name.
+ */
 function isCookieStore(part: string): boolean {
   const lowered = part.toLowerCase();
-  return lowered.startsWith('cookies') || lowered.endsWith('cookies.sqlite');
+  return (
+    lowered.startsWith('cookies') || lowered.endsWith('cookies.sqlite') || lowered === 'network'
+  );
 }
 
 /**

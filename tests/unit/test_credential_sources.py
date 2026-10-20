@@ -67,6 +67,18 @@ def test_cookie_origin_names_the_browser_and_profile_it_came_from():
     )
 
 
+def test_cookie_origin_never_reads_the_store_folder_as_a_profile():
+    """Chromium keeps the cookie file in a ``Network`` folder on some platforms
+    (``<profile>/Network/Cookies``), so that segment is part of the store path."""
+    assert describe_origin_full("cookie:opencode/Chrome/Network/Cookies").detail == "Chrome"
+    assert (
+        describe_origin_full("cookie:opencode/Chrome/Default/Cookies").detail == "Chrome · Default"
+    )
+    assert describe_origin_full(
+        "cookie:opencode/Firefox/abc123.default-release/cookies.sqlite"
+    ).detail == ("Firefox · abc123.default-release")
+
+
 def test_file_and_env_origins_carry_no_extra_detail():
     assert describe_origin_full("path:/home/alice/.codex/auth.json").detail is None
     assert describe_origin_full("env:OPENROUTER_API_KEY").detail is None

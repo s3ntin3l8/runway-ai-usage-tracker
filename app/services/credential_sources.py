@@ -171,9 +171,16 @@ _BROWSER_TOKENS = (
 
 
 def _is_cookie_store(part: str) -> bool:
-    """Whether a path segment names the cookie store itself ("Cookies", "cookies.sqlite")."""
+    """Whether a path segment names the store itself rather than a profile.
+
+    Chromium keeps the cookie file in a ``Network`` folder on some platforms
+    (``<profile>/Network/Cookies``), so that segment belongs to the store path
+    and must never be read as a profile name.
+    """
     lowered = part.lower()
-    return lowered.startswith("cookies") or lowered.endswith("cookies.sqlite")
+    return (
+        lowered.startswith("cookies") or lowered.endswith("cookies.sqlite") or lowered == "network"
+    )
 
 
 def cookie_origin_detail(origin: str | None) -> str | None:

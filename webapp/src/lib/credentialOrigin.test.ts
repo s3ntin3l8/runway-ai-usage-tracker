@@ -22,6 +22,14 @@ describe('describeCredentialOrigin', () => {
     );
   });
 
+  it('never reads the store folder as a profile', () => {
+    // Chromium keeps the cookie file in a `Network` folder on some platforms.
+    expect(describeCredentialOrigin('cookie:opencode/Chrome/Network/Cookies').detail).toBe('Chrome');
+    expect(describeCredentialOrigin('cookie:opencode/Chrome/Default/Cookies').detail).toBe(
+      'Chrome · Default',
+    );
+  });
+
   it('never leaks the fingerprint into the description', () => {
     expect(describeCredentialOrigin('cookie:opencode/Chrome/Default/Cookies#abc123').detail).toBe(
       'Chrome · Default',
