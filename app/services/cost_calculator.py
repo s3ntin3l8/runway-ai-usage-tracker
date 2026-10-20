@@ -193,12 +193,6 @@ def resolve_price_row(
         # This is a fallback, not a substitute for seeding the real rate —
         # an unseeded variant may land on a family rate that doesn't match
         # its actual price.
-        #
-        # Free-tier ids are excluded: trimming "MiniMax-M3.1-Flash-free"
-        # lands on the paid "MiniMax-M3.1-Flash" row, which would bill a free
-        # route at list price. A free id is priced at $0 on purpose, not a
-        # missing seed row — the Data Health `unpriced_models` check excludes
-        # them for the same reason.
         segments = model_id.split("-")
         while row is None and len(segments) > 1:
             segments.pop()
