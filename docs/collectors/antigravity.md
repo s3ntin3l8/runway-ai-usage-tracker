@@ -9,7 +9,8 @@ extracts per-message token/cost events sidecar-side from the local conversation 
 |---|---|---|
 | `AntigravityCollector` (server) | `app/services/collectors/antigravity.py` | Fetches up to 5 quota gauge cards from the Cloud Code Assist API |
 | Event extractor (sidecar) | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Parses `gen_metadata` protobuf blobs from conversation DBs |
-| OAuth mixin (server) | `app/services/collectors/antigravity_oauth.py` | Reads / caches the agy OAuth token |
+| OAuth mixin (server) | `app/services/collectors/antigravity_oauth.py` | Reads / caches the agy OAuth token and the CLI version reported with it |
+| CLI version (sidecar) | `scripts/sidecar_pkg/agy_version.py` | Reads the installed `agy --version` and reports it with the token |
 | Sidecar credential rule | `scripts/sidecar.py` `__REGISTRY__["antigravity"]` | Ships the OAuth token to the server in multi-host topology |
 
 ## Quota Collection
@@ -20,11 +21,12 @@ extracts per-message token/cost events sidecar-side from the local conversation 
 1. `POST .../v1internal:loadCodeAssist` with `{"metadata": {"ideType": "ANTIGRAVITY"}}` → get `cloudaicompanionProject` id
 2. `POST .../v1internal:retrieveUserQuotaSummary` with `{"project": "<id>"}` → quota summary
 
-**Required header:** `User-Agent: antigravity/cli/1.4.3 (aidev_client; os_type=linux; arch=amd64; cl=1002753436; auth_method=consumer)` (Google gates this endpoint on the agy UA; omitting it returns 403).
+<**Required header:** `User-Agent: antigravity/cli/<version> (aidev_client; os_type=linux; arch=amd64; cl=1002753436; auth_method=consumer)` (Google gates this endpoint on the agy UA; omitting it returns 403).
 
 > **The UA version decides which quota pools come back.** The prefix is the 403 gate, but the
-> *version* selects the pools the backend serves — measured 2026-10-20 with the same token,
-> project and request body, changing only the UA:
+> *version* selects the pools the backend serves — measured 2026-10-20 against
+> `daily-cloudcode-pa.googleapis.com` with the same token, project and request body, changing only
+> the UA:
 >
 > | UA version | groups returned |
 > |---|---|
@@ -33,10 +35,30 @@ extracts per-message token/cost events sidecar-side from the local conversation 
 > | `>= 1.3` | + "Gemini 4 Argon" (also unlocked at 1.2 by the `aidev_client` marker) |
 >
 > An outdated UA therefore fails *silently*: the API answers 200 with a subset of the pools and
-> Runway reports only the Claude/GPT quota. Keep `_USER_AGENT` in
-> `app/services/collectors/antigravity_api.py` in step with the installed agy CLI (a unit test
-> fails if the version drops below 1.3), and treat a missing Gemini pool on a paid tier as the
-> signal that the UA fell behind.
+> Runway reports only the Claude/GPT quota. That is how the Gemini pools went missing — the
+> collector still carried agy 1.0.9 from June 2026 while the installed CLI was 1.4.3.
+>
+> **The version follows the installed CLI.** The CLI lives on the sidecar's host and the server
+> never sees it, so the sidecar reports the installed `agy --version` next to the token
+> (`scripts/sidecar_pkg/agy_version.py`) and the collector builds the User-Agent from it. The
+> report rides along with the credential bundle (`agy_version` in the token card's metadata), so
+> every read path — including the "borrow the newest entry" fallback — sees it.
+>
+> The sidecar caches the read: an hour for a success (the CLI only changes when agy itself is
+> updated), a minute for a **failure**. A miss is never cached for the full hour — agy may not
+> be on `PATH` yet at boot, or one read may time out, and a stale "unknown" would suppress the
+> report (and with it a quota pool) for exactly as long as the problem takes to notice.
+>
+> The collector keeps a **floor version** (`_UA_FLOOR_VERSION`, the oldest version known to serve
+> every pool). It is used when no sidecar reported a version (an older sidecar) and it is never
+> dropped below, so an older CLI cannot hide a pool Runway already surfaces. Keep the floor in
+> step with the installed agy CLI — a unit test fails if it drops below 1.3 — and treat a missing
+> Gemini pool on a paid tier as the signal that the UA fell behind.
+>
+> The reported value is vetted by a shared validator (`app/core/version.py`): ASCII digits only,
+> one to three parts, no non-strings. The value ends up in an HTTP header and httpx encodes
+> headers as ASCII, so a Unicode digit would raise there and fail the account's collection.
+
 
 **Output:** up to 5 cards — 3 quota pools:
 
@@ -207,9 +229,12 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 - Per-source state lives in Fleet → Token Health: `auth_failed` on one source while another shows `healthy` means failover is carrying the account.
 
 ### Only the Claude/GPT quota is shown (Gemini pools missing)
-- The API gates the pools it serves on the **User-Agent version** — see the table above. If
-  `_USER_AGENT` is older than the agy CLI you run, the response arrives with 200 but without
-  the Gemini (and Argon) groups, and the dashboard shows just the Claude/GPT pool.
+- The API gates the pools it serves on the **User-Agent version** — see the table above. If the
+  User-Agent the server sent is older than the agy CLI you run, the response arrives with 200
+  but without the Gemini (and Argon) groups, and the dashboard shows just the Claude/GPT pool.
+  The version normally follows the CLI (the sidecar reports it with the token), so this points at
+  a sidecar that is not reporting one — check the sidecar log for an unrecognised version, and
+  at the floor version in `app/services/collectors/antigravity_api.py`.
 - The server logs `Antigravity quota summary is missing the gemini pool(s) for tier 'pro'` when
   that happens on a paid tier — and `… missing the argon pool(s) …` when only the Argon pool is
   missing (a 1.2 User-Agent serves Gemini but not Argon).
@@ -228,6 +253,7 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 | `app/services/collectors/antigravity_api.py` | `retrieveUserQuotaSummary` API mixin |
 | `app/services/collectors/antigravity_oauth.py` | OAuth token cache-read mixin |
 | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Conversation DB parser |
+| `scripts/sidecar_pkg/agy_version.py` | Installed agy CLI's version (reported with the token) |
 | `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
 | `scripts/sidecar_pkg/keep_alive.py` | Optional `--keep-alive` thread (`agy models` renewal) |
 | `scripts/reclassify_antigravity_models.py` | One-shot repair for pre-version-preservation rows |

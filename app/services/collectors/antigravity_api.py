@@ -26,12 +26,45 @@ _CLOUDCODE_HOST = "https://daily-cloudcode-pa.googleapis.com"
 #   >= 1.3 → + "Gemini 4 Argon" (also unlocked at 1.2 by the aidev_client marker)
 # An outdated UA therefore fails silently rather than loudly — the API answers
 # 200 with a subset of the pools and Runway reports only the Claude/GPT quota.
-# Keep this in step with the installed agy CLI; the follow-up issue tracks
-# having the sidecar report `agy --version` so it cannot go stale again.
-_USER_AGENT = (
-    "antigravity/cli/1.4.3 (aidev_client; os_type=linux; arch=amd64; "
+#
+# The CLI lives on the sidecar's host and the server never sees it, so the
+# sidecar reports the installed version with the token (issue #687) and the
+# User-Agent follows it. `_UA_FLOOR_VERSION` is the oldest version known to
+# serve every pool: it is used when no version was reported, and it is never
+# dropped below, so an older CLI cannot hide a pool Runway already surfaces.
+_UA_FLOOR_VERSION = "1.4.3"
+_UA_TEMPLATE = (
+    "antigravity/cli/{version} (aidev_client; os_type=linux; arch=amd64; "
     "cl=1002753436; auth_method=consumer)"
 )
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """A comparable tuple for a dotted version ("1.4.3" → (1, 4, 3))."""
+    parts: list[int] = []
+    for chunk in version.split("."):
+        try:
+            parts.append(int(chunk))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
+def build_user_agent(reported_version: str | None = None) -> str:
+    """The agy User-Agent for the CLI version the sidecar reported.
+
+    *reported_version* is the installed agy CLI's version as the sidecar saw
+    it. Anything unparseable (an older sidecar that does not report one, a
+    garbled value) falls back to the floor version, and a reported version
+    below the floor is raised to it — the floor is the oldest version known to
+    serve every quota pool.
+    """
+    version = _UA_FLOOR_VERSION
+    candidate = (reported_version or "").strip().lstrip("v")
+    if candidate and all(part.isdigit() for part in candidate.split(".")):
+        if _version_tuple(candidate) > _version_tuple(version):
+            version = candidate
+    return _UA_TEMPLATE.format(version=version)
 
 # Physical quota pools. The API returns one group per pool and the group's
 # display name is the only stable identity it hands us.
@@ -181,7 +214,7 @@ class AntigravityApiMixin:
         """POST to the Code Assist API with the agy UA + bearer; auto-refresh on 401."""
         headers = {
             "Authorization": f"Bearer {state['token']}",
-            "User-Agent": _USER_AGENT,
+            "User-Agent": state.get("user_agent") or build_user_agent(),
         }
         resp = await http_request_with_retry(
             client,
@@ -264,7 +297,14 @@ class AntigravityApiMixin:
             self.account_label = self.account_id
             self._account_label_cache = self.account_id  # type: ignore[attr-defined]
 
-        state = {"token": token, "refreshed": False}
+        state = {
+            "token": token,
+            "refreshed": False,
+            # The version the sidecar reported with the token (#687). Absent
+            # when no sidecar reported one — the User-Agent then falls back to
+            # the floor version.
+            "user_agent": build_user_agent(getattr(self, "_agy_version", None)),
+        }
 
         try:
             # 1. Resolve project id (required by retrieveUserQuotaSummary).
