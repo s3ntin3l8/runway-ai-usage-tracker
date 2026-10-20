@@ -20,9 +20,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # otherwise refuse to load the test suite. Tests that want to exercise the
 # multi-host gates monkeypatch the live settings explicitly.
 os.environ["APP_HOST"] = "127.0.0.1"
-os.environ.pop("ADMIN_API_KEY", None)
 os.environ.pop("CORS_ORIGINS", None)
 os.environ.pop("TLS_TERMINATED", None)
+# An operator's .env may configure the admin and encryption keys. The
+# EncryptionService singleton is built from them when the app is imported, and
+# several modules hold that instance, so the suite has to neutralise them
+# before the import instead of patching them afterwards. An empty value
+# normalises to None (config.py), which keeps every keyless path keyless and
+# leaves a keyed checkout behaving exactly like CI.
+os.environ["ADMIN_API_KEY"] = ""
+os.environ["DB_ENCRYPTION_KEY"] = ""
 # pystray's dummy backend allows tray menu tests on headless Linux CI.
 os.environ["PYSTRAY_BACKEND"] = "dummy"
 
@@ -64,6 +71,10 @@ def setup_test_settings(monkeypatch):
         "FORWARD_AUTH_GROUPS_HEADER",
         "FORWARD_AUTH_ALLOWED_GROUPS",
         "FORWARD_AUTH_ALLOWED_USERS",
+        # The encryption key is neutralised before the app import above, so the
+        # singleton and the modules holding it stay keyless; resetting the
+        # setting keeps the per-test state at the model default as well.
+        "DB_ENCRYPTION_KEY",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
 

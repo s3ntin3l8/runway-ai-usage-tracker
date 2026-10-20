@@ -63,7 +63,10 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   worktree was used. Skipping this lets stale references accumulate.
 - **Fresh clone or worktree:** run `make install` first (venv, Python + webapp
   dependencies, git hooks) — none of it is inherited. On native Windows use
-  `python scripts/dev_checks.py install` instead.
+  `python scripts/dev_checks.py install` instead. Git hooks are shared by every
+  worktree of the repository, so install them once from the main checkout
+  (`make install-hooks`); a hook installed from a worktree keeps pointing at
+  that worktree's interpreter and stops working when the worktree is removed.
 
 ## Everyday commands
 
