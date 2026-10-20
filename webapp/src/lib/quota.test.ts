@@ -298,6 +298,17 @@ describe('chipLabel', () => {
     });
     expect(chipLabel(unknown, [known, unknown])).toBe('Weekly · Some Future Pool');
   });
+  it('labels a hashed pool variant with the card name', () => {
+    // Unmapped pools carry a hash in their variant (it keeps two similarly
+    // named pools apart); the card's own name is the readable label.
+    const known = card({ service_name: 'Frontier', window_type: 'weekly', variant: 'frontier' });
+    const unknown = card({
+      service_name: 'Some Future Pool',
+      window_type: 'weekly',
+      variant: 'some-future-pool-1a2b3c',
+    });
+    expect(chipLabel(unknown, [known, unknown])).toBe('Weekly · Some Future Pool');
+  });
   it('appends the model when two same-name windows collide (Claude weekly vs Sonnet weekly)', () => {
     const generic = card({ service_name: 'Claude', window_type: 'weekly', model_id: null });
     const sonnet = card({ service_name: 'Claude', window_type: 'weekly', model_id: 'sonnet' });

@@ -412,7 +412,7 @@ class TestAntigravityQuotaPools:
         for name in ("Gemini Pro Models", "GPT-OSS models", "Claude Opus models"):
             pool = pool_family(name)
             assert pool not in POOL_LABELS, f"{name!r} was folded into {pool!r}"
-        assert pool_family("Gemini Pro Models") == "gemini-pro-models"
+        assert pool_family("Gemini Pro Models").startswith("gemini-pro-models-")
 
     def test_a_bare_known_name_does_not_take_a_live_pool_key(self):
         """A group called "Argon" misses the anchored patterns and slugs to
@@ -424,6 +424,14 @@ class TestAntigravityQuotaPools:
             assert pool not in POOL_LABELS, f"{name!r} took the live pool key {pool!r}"
             assert pool.startswith("unknown-")
 
+    def test_two_groups_differing_only_in_case_stay_apart(self):
+        """The slug folds case and punctuation — the hash keeps such groups
+        apart, so they cannot share a latest_usage row."""
+        from app.services.collectors.antigravity_api import pool_family
+
+        assert pool_family("Gemini 5 Code") != pool_family("gemini 5-code")
+        assert pool_family("Gemini 5 Code").startswith("gemini-5-code-")
+
     def test_unknown_group_gets_its_own_pool(self):
         """An unrecognised group must not land in an existing pool: two pools
         sharing a variant share a latest_usage slot and overwrite each other."""
@@ -431,7 +439,7 @@ class TestAntigravityQuotaPools:
 
         unknown = pool_family("Some Future Pool")
         assert unknown not in POOL_LABELS
-        assert unknown == "some-future-pool"
+        assert unknown.startswith("some-future-pool-")
         # …and it stays distinct from the known pools.
         assert unknown not in {pool_family("Gemini Models"), pool_family("Gemini 4 Argon")}
 
@@ -477,8 +485,8 @@ class TestAntigravityQuotaPools:
             result = await collector._collect_via_api(mock_http_client)
 
         assert len(result) == 1
-        assert result[0]["variant"] == "some-future-pool"
-        assert result[0]["quota_pool_id"] == "antigravity:some-future-pool:weekly"
+        assert result[0]["variant"].startswith("some-future-pool-")
+        assert result[0]["quota_pool_id"].startswith("antigravity:some-future-pool-")
         assert result[0]["service_name"] == "Some Future Pool"
         assert any("Unknown Antigravity quota group" in r.getMessage() for r in caplog.records)
 
@@ -609,7 +617,7 @@ class TestAntigravityQuotaPools:
 
         assert len(result) == 2
         assert len({c["variant"] for c in result}) == 2
-        assert {c["variant"] for c in result} == {"7p-weekly", "9p-weekly"}
+        assert {c["variant"].split("-")[0] for c in result} == {"7p", "9p"}
 
 
 class TestAntigravityUserAgent:

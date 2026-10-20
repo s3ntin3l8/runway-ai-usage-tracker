@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 from datetime import UTC, datetime, timedelta
@@ -64,18 +65,26 @@ def _normalize_group_name(group_name: str) -> str:
     return re.sub(r"\s+", " ", (group_name or "").strip().lower())
 
 
-def _pool_slug(group_name: str) -> str:
+def _pool_slug(normalized_name: str, hash_input: str) -> str:
     """Stable variant key for a quota group we do not know yet.
 
-    The known pool keys are reserved: a group whose slug would collide with
-    one (e.g. a bare "Argon", which the anchored patterns do not match) is
-    prefixed, so an unknown group can never take a live pool's key — and
-    never slips past the "unknown pool" warning that reports it.
+    Two things keep an unknown group out of a live pool's key:
+
+    * The known pool keys are reserved — a slug that would collide with one
+      (e.g. a bare "Argon", which the anchored patterns do not match) is
+      prefixed, so the fallback can never take a live pool's key (and never
+      slips past the "unknown pool" warning that reports it).
+    * A short hash of the group's raw name is appended. The slug folds case
+      and punctuation, so "Gemini 5 Code" and "gemini 5-code" would otherwise
+      share a pool key — and two pools sharing a key share a `latest_usage`
+      row, where the second one is silently dropped. The hash keeps them
+      apart while the readable slug stays the card's label.
     """
-    slug = re.sub(r"[^a-z0-9]+", "-", group_name).strip("-") or "unknown"
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized_name).strip("-") or "unknown"
     if slug in POOL_LABELS:
         slug = f"unknown-{slug}"
-    return slug
+    digest = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()[:6]
+    return f"{slug}-{digest}"
 
 
 def pool_family(group_name: str) -> str:
@@ -85,15 +94,20 @@ def pool_family(group_name: str) -> str:
     "Gemini 4 Argon" → ``argon`` (a separate paid-plan pool, not part of the
     Gemini bucket).
 
-    A group we do not recognise gets a slug of its own name instead of being
-    folded into an existing pool: two pools sharing a ``variant`` share a
-    ``latest_usage`` slot, and the second one silently overwrites the first.
+    A group we do not recognise gets a slug of its own name (plus a short
+    hash of the raw name) instead of being folded into an existing pool: two
+    pools sharing a ``variant`` share a ``latest_usage`` slot, and the second
+    one silently overwrites the first.
     """
-    normalized = _normalize_group_name(group_name)
+    raw = (group_name or "").strip()
+    normalized = _normalize_group_name(raw)
     for pattern, pool in _KNOWN_GROUP_PATTERNS:
         if pattern.match(normalized):
             return pool
-    return _pool_slug(normalized)
+    # Hash the raw name (whitespace-collapsed, but case- and
+    # punctuation-sensitive): only the readable part is folded.
+    hash_input = re.sub(r"\s+", " ", raw)
+    return _pool_slug(normalized, hash_input)
 
 
 def group_display_name(group: dict[str, Any]) -> str:
@@ -117,7 +131,9 @@ def pool_label(pool: str) -> str:
     """Human label for a pool key (known pools have a fixed one)."""
     if pool in POOL_LABELS:
         return POOL_LABELS[pool]
-    return pool.replace("-", " ").title()
+    # Unmapped pools carry a trailing hash (their collision-proof id) — the
+    # label stays the readable part of it.
+    return re.sub(r"-[0-9a-f]{6}$", "", pool).replace("-", " ").title()
 
 
 # Pools we have already warned about. Process-global on purpose: the poll

@@ -56,10 +56,13 @@ disappears on its own when Google folds it back into the Gemini bucket: the coll
 complete snapshot, so a pool that is no longer served is retired.
 
 A group the collector does not know yet gets a **slug of its own name** as its pool (e.g.
-"Some Future Pool" → `some-future-pool`) plus a server-log warning — never an existing pool's
-slot, so a new pool cannot silently overwrite another one. The known pool keys are reserved: a
-group whose slug would collide with one (e.g. a bare "Argon") is prefixed (`unknown-argon`). The
-known groups are matched by anchored patterns (not loose substrings): a group merely
+"Some Future Pool" → `some-future-pool-<hash>`) plus a server-log warning — never an existing
+pool's slot, so a new pool cannot silently overwrite another one. The known pool keys are
+reserved: a group whose slug would collide with one (e.g. a bare "Argon") is prefixed
+(`unknown-argon-<hash>`). The short hash comes from the group's *raw* name, so two groups that
+differ only in case or punctuation ("Gemini 5 Code" vs "gemini 5-code") still land in different
+pools. The hash is an id, not a label: the card shows the readable name ("Some Future Pool").
+The known groups are matched by anchored patterns (not loose substrings): a group merely
 *containing* "gemini"/"claude"/"gpt" is a new pool, not a member of an existing one. The one
 rename the mapping tolerates is the Argon version number ("Gemini 4 Argon" → "Gemini 5 Argon");
 any other rename shows up as a new, slug-named pool plus the warning, and the old row is retired

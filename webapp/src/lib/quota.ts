@@ -49,6 +49,10 @@ export type QuotaStatus = 'critical' | 'warning' | 'ok' | 'unlimited' | 'unknown
 export const CRITICAL_PCT = 90;
 export const WARNING_PCT = 70;
 
+// A variant whose last segment is a short hex hash — the collision-proof id
+// of a quota pool we do not have an explicit name for.
+const HASHED_VARIANT = /-[0-9a-f]{6}$/;
+
 export function statusForPct(pct: number | null | undefined): QuotaStatus {
   if (pct === null || pct === undefined || Number.isNaN(pct)) return 'unknown';
   if (pct >= CRITICAL_PCT) return 'critical';
@@ -219,10 +223,15 @@ function chipBaseLabel(card: LimitCard, sameWinSiblings: LimitCard[]): string {
     return `${base} · ${modelLabel(card.model_id)}`;
   }
   if (card.variant && sameWinSiblings.some((s) => s.variant !== card.variant)) {
-    // Slug-style variants (e.g. an Antigravity pool we don't know yet:
-    // "some-future-pool") read as words, not as a raw key.
-    const variantLabel = modelLabel(card.variant);
-    return `${base} · ${variantLabel}`;
+    // An unmapped pool (e.g. an Antigravity quota group we don't know yet)
+    // carries a short hash in its variant — it keeps two similarly named
+    // pools apart in the database. The card's own name is the readable
+    // label for it; the hash stays in the key.
+    const label =
+      HASHED_VARIANT.test(card.variant) && card.service_name
+        ? card.service_name
+        : modelLabel(card.variant);
+    return `${base} · ${label}`;
   }
   return base;
 }
