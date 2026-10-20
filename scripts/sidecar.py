@@ -740,7 +740,7 @@ __REGISTRY__: dict[str, Any] = {
                 # Primary: the opencode CLI stores the ollama-cloud API key in
                 # ~/.local/share/opencode/auth.json["ollama-cloud"].key. The collector
                 # uses it as `Authorization: Bearer ...` against
-                # https://ollama.com/api/usage for monthly quota.
+                # https://ollama.com/api/balance for the monthly allowance (quota).
                 {
                     "type": "file",
                     "paths": [

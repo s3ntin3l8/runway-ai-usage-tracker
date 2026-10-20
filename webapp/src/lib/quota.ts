@@ -185,6 +185,15 @@ export function windowLabel(card: LimitCard): string | null {
   return w.charAt(0).toUpperCase() + w.slice(1);
 }
 
+// Hover tooltip for a quota card: the collector's detail line. Only
+// currency-denominated cards carry information the hero percentage does not
+// show — e.g. Ollama Cloud's "$0.00 of $2.50 used · refills Nov 12" behind a
+// "0%" hero.
+export function cardTooltip(card: LimitCard): string | undefined {
+  if (!card.detail) return undefined;
+  return card.unit_type === 'currency' ? card.detail : undefined;
+}
+
 // Humanize a model id for display: de-separate and capitalize each word
 // ("sonnet" → "Sonnet", "gemini-flash" → "Gemini Flash").
 export function modelLabel(modelId: string): string {

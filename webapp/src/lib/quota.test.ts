@@ -5,6 +5,7 @@ import {
   cardPct,
   cardStale,
   cardStatus,
+  cardTooltip,
   chipLabel,
   clusterModelLabel,
   clusterPools,
@@ -364,6 +365,28 @@ describe('cardKind', () => {
   it('falls back to quota for unclassifiable cards', () => {
     expect(cardKind(card({}))).toBe('quota');
     expect(cardKind(card({ unit_type: 'generic' }))).toBe('quota');
+  });
+});
+
+describe('cardTooltip', () => {
+  it('surfaces the dollar breakdown of a currency quota card', () => {
+    // Ollama Cloud: the hero shows "0%" used; the dollars live in the detail.
+    expect(
+      cardTooltip(
+        card({
+          unit_type: 'currency',
+          currency: 'USD',
+          pct_used: 0,
+          detail: '$0.00 of $2.50 used · refills Nov 12',
+        }),
+      ),
+    ).toBe('$0.00 of $2.50 used · refills Nov 12');
+  });
+  it('leaves non-currency cards without a tooltip', () => {
+    expect(cardTooltip(card({ pct_used: 42, detail: '42% used · Pro' }))).toBeUndefined();
+  });
+  it('is undefined without a detail', () => {
+    expect(cardTooltip(card({ unit_type: 'currency' }))).toBeUndefined();
   });
 });
 

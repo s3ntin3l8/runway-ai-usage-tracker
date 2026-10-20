@@ -171,6 +171,34 @@ describe('ProviderGrid', () => {
     expect(cardEl.className).not.toContain('opacity-60');
   });
 
+  it('puts the dollar breakdown of a currency quota card in the hero tooltip', () => {
+    // Ollama Cloud: the hero reads "0%" used, the dollars live in the tooltip.
+    const items = buildRiskItems(
+      [
+        entry({
+          critical_gauge: card({
+            unit_type: 'currency',
+            currency: 'USD',
+            pct_used: 0,
+            detail: '$0.00 of $2.50 used · refills Nov 12',
+          }),
+        }),
+      ],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    expect(screen.getByTitle('$0.00 of $2.50 used · refills Nov 12')).toBeInTheDocument();
+  });
+
+  it('leaves non-currency quota cards without a hero tooltip', () => {
+    const items = buildRiskItems(
+      [entry({ critical_gauge: card({ pct_used: 50, detail: '50% used · Pro' }) })],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    expect(screen.queryByTitle('50% used · Pro')).not.toBeInTheDocument();
+  });
+
   it('respects the exclude-cache toggle in the tokens-kind hero metric', () => {
     const tokenCard = card({
       pct_used: undefined,

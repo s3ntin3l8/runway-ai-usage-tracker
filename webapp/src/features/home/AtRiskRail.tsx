@@ -10,7 +10,7 @@ import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { formatPct } from '@/lib/format';
 import { maskAccountId } from '@/lib/accountDisplay';
-import { cardPct, windowLabel } from '@/lib/quota';
+import { cardPct, cardTooltip, windowLabel } from '@/lib/quota';
 import { forecastLabel, type RiskItem } from './risk';
 
 interface AtRiskRailProps {
@@ -80,7 +80,7 @@ function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Ma
         ) : null}
       </div>
       <div className="mt-4 flex items-baseline justify-between gap-2">
-        <span className="font-mono text-2xl font-semibold tabular">
+        <span className="font-mono text-2xl font-semibold tabular" title={cardTooltip(gauge)}>
           {formatPct(cardPct(gauge))}
         </span>
         <span className="truncate text-[11px] text-fg-muted">

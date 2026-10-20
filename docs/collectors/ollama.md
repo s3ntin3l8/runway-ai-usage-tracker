@@ -5,11 +5,22 @@
 The Ollama provider supports two collection strategies:
 
 - **`api`** (preferred when an API key is available): bearer `Authorization: Bearer …`
-  against `GET https://ollama.com/api/usage`. `limits.monthly.usage` is accepted
-  only as a finite fraction from 0 to 1 and displayed as a percentage.
-  The API response does not provide a quota reset, so the card leaves reset
-  and pace unavailable. Missing or unsupported values fall through to web.
-  Cleaner than the HTML scrape and unaffected by WorkOS redesign churn.
+  against `GET https://ollama.com/api/balance`, the endpoint that carries the
+  quota. Two shapes are accepted:
+  - *Included credits* (current plans): `included.balance_usd` (what is left of
+    `included.allowance_usd`) plus the `included.period` the allowance refills
+    on. Reported as one monthly card: the percentage used, the remaining
+    dollars, and the reset timestamp. This is the same quota the web
+    dashboard renders as "Free usage 0% used · Refills in 3 weeks".
+  - *Legacy plan limits*: `included.session` / `included.weekly` entries with
+    `remaining_percent` and `resets_at` — one percent-quota card per window.
+
+  A pay-as-you-go account with no included allowance reports its purchased
+  credits as a balance card instead. `GET /api/usage` is only consulted as a
+  fallback for deployments that do not serve `/api/balance`, and only for its
+  legacy `limits.monthly.usage` shape — its spend report is deliberately
+  ignored, because usage comes from the CLI sidecar (see
+  [OpenCode traffic](#opencode-traffic)).
 - **`web`** (fallback): scrape `https://ollama.com/settings` for included-usage meters
   (one card per usage meter; window type comes from a concrete meter label —
   `Hourly usage` → session, `Weekly usage` → weekly — else the reset horizon;
@@ -19,7 +30,9 @@ The Ollama provider supports two collection strategies:
 ## Overview
 
 - **Collection Strategies**: `api` (bearer) → `web` (cookie scrape) fallback.
-- **Cards**: one monthly card (api path) or one card per usage meter (web path).
+- **Cards**: one monthly allowance card (api path), one card per legacy limit
+  window, a credits-balance card for pay-as-you-go accounts, or one card per
+  usage meter (web path).
 - **Authentication**: bearer API key (preferred), or browser cookie (web, pushed by
   the sidecar) / `OLLAMA_SESSION_TOKEN` (web). Saved account credentials take
   precedence, followed by sidecar values and then server environment variables.
@@ -68,16 +81,44 @@ The Ollama collector supports the following authentication methods:
 }
 ```
 
+The API path emits the monthly allowance instead — a currency card whose
+percentage is the share of the allowance already spent:
+
+```python
+{
+    "service_name": "Ollama Cloud",
+    "icon": "🦙",
+    "remaining": "100.0%",  # percent left of the allowance
+    "unit": "remaining",
+    "reset": "22d 12h",
+    "health": "good",
+    "pace": "Stable",
+    "detail": "$0.00 of $2.50 used · refills Nov 12",  # hover tooltip
+    "used_value": 0.0,  # dollars spent this period
+    "limit_value": 2.5,  # dollars the period is worth
+    "pct_used": 0.0,
+    "is_unlimited": False,
+    "unit_type": "currency",
+    "currency": "USD",
+    "reset_at": "2026-11-12T06:45:12+00:00",
+    "window_type": "monthly",
+    "data_source": "api",
+    "tier": "cloud",
+    "usage_url": "https://ollama.com/settings/billing",
+    "updated_at": "2026-10-20T19:06:31+00:00",
+}
+```
+
 ## Configuration
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OLLAMA_API_KEY` | Optional | Ollama Cloud key for the `/api/usage` quota endpoint; server env applies to the default account |
+| `OLLAMA_API_KEY` | Optional | Ollama Cloud key for the `/api/balance` quota endpoint; server env applies to the default account |
 | `OLLAMA_SESSION_TOKEN` | Optional | Ollama session cookie value or full `Cookie` header; server env applies to the default account |
 
-The API strategy requires a finite usage fraction between 0 and 1. If the
-endpoint returns a count or another shape, collection falls back to the web
-settings page. That page may require a browser session cookie.
+The API strategy needs the balance endpoint to answer with one of the shapes
+above. Anything else is treated as malformed quota data and collection falls
+back to the web settings page. That page may require a browser session cookie.
 
 *Either auto-discovery or environment variable required.
 
@@ -104,10 +145,13 @@ provider there, Runway auto-discovers the API key from
 `~/.local/share/opencode/auth.json["ollama-cloud"].key` (or
 `~/.opencode/auth.json`) on every host that runs a sidecar. The same key
 opencode uses for its own `ollama-cloud` backend feeds this collector's
-`/api/usage` quota call automatically — no `OLLAMA_SESSION_TOKEN` env var or
+`/api/balance` quota call automatically — no `OLLAMA_SESSION_TOKEN` env var or
 manual cookie paste needed on hosts with the opencode CLI. When the API key
 is unavailable the collector transparently falls back to the cookie scrape
 of `/settings`, so legacy browser-cookie setups continue to work.
+
+That key is also what Ollama bills: every request the CLI makes debits the
+included allowance, so the quota card tracks the CLI's cloud usage.
 
 The discovered key's origin is key-scoped exactly like opencode's own
 (`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
