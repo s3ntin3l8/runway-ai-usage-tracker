@@ -8,11 +8,62 @@ Provides:
 - Mock response data for various providers
 """
 
+import atexit
+import getpass
 import json
 import os
+import shutil
 import sys
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _pytest_user() -> str:
+    """The name pytest files its per-run temp directories under."""
+    try:
+        return getpass.getuser() or "unknown"
+    except (ImportError, KeyError, OSError):
+        return "unknown"
+
+
+def _pytest_root_dir(temproot: Path) -> Path:
+    """Where pytest keeps its per-run temp directories."""
+    return temproot / f"pytest-of-{_pytest_user()}"
+
+
+def _ensure_writable_pytest_root(temproot: Path | None = None) -> None:
+    """Point pytest at a temp root this user can actually read.
+
+    pytest keeps its per-run directories in ``%TEMP%\\pytest-of-<user>``. A
+    directory left behind by another user's (or an elevated) process can carry
+    an ACL that lets this user stat it but not list it — pytest then fails
+    *every* test with ``PermissionError`` before a single one runs. The repo's
+    own runner sidesteps this with a unique ``--basetemp``
+    (``scripts/dev_checks.py``); this keeps a bare ``pytest`` working too.
+
+    The fallback is a fresh directory per run, not a shared one: pytest
+    allocates its per-run directories under the root it is given, so a shared
+    fallback would have concurrent runs fighting over the same numbered
+    directories.
+    """
+    root = Path(tempfile.gettempdir()) if temproot is None else temproot
+    pytest_root = _pytest_root_dir(root)
+    try:
+        pytest_root.mkdir(parents=True, exist_ok=True)
+        os.listdir(pytest_root)
+    except OSError:
+        # Unusable: a foreign ACL, or a parent that cannot be written to.
+        try:
+            fallback = Path(tempfile.mkdtemp(prefix="runway-pytest-"))
+        except OSError:
+            return  # Nothing left to try — let pytest report the real error.
+        # PYTEST_DEBUG_TEMPROOT is the env var pytest reads for its temp root.
+        os.environ["PYTEST_DEBUG_TEMPROOT"] = str(fallback)
+        atexit.register(shutil.rmtree, fallback, True)
+
+
+_ensure_writable_pytest_root()
 
 # Force a localhost / un-secured configuration for tests, BEFORE any app
 # module is imported. config.py runs _validate_security_invariants at import
