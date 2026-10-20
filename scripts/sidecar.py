@@ -2195,6 +2195,10 @@ def has_unexpired_token(path: Path) -> bool:
     """Best-effort freshness probe: True when the file's JSON carries an
     '*expires*' key with a numeric epoch value still in the future (+60s
     skew). Unknown/absent/unparseable -> False (ordering falls back to mtime).
+
+    A store that keeps several logins in one file nests the expiry inside each
+    record rather than at the top level (the MiniMax Code app does), so a
+    second pass looks one level into those records for the same shape.
     """
     try:
         data = json.loads(path.read_text())
@@ -2210,6 +2214,18 @@ def has_unexpired_token(path: Path) -> bool:
                     return True
             except (TypeError, ValueError):
                 continue
+    for mapping in data.values():
+        if not isinstance(mapping, dict):
+            continue
+        for record in mapping.values():
+            if not isinstance(record, dict):
+                continue
+            for key, val in record.items():
+                if "expires" not in str(key).lower():
+                    continue
+                moment = _expiry_seconds(val)
+                if moment is not None and moment > now + 60:
+                    return True
     return False
 
 
@@ -3636,6 +3652,43 @@ def read_kimi_cli_device_id(credential_path: Path) -> str | None:
         return None
 
 
+def _expiry_seconds(value):
+    """Epoch seconds of *value*, normalising epoch milliseconds.
+
+    Returns None when *value* isn't a number.
+    """
+    try:
+        moment = float(value)
+    except (TypeError, ValueError):
+        return None
+    # Epoch milliseconds are ~1e3x the seconds value.
+    if moment > 1e11:
+        moment /= 1000.0
+    return moment
+
+
+def _record_expiry(record):
+    """The latest expiry a credential *record* carries, in epoch seconds.
+
+    A credential store that keeps several logins in one file nests the expiry
+    inside each record — the MiniMax Code app stores one record per build and
+    region. Returns None when the record carries no expiry at all.
+    """
+    if not isinstance(record, dict):
+        return None
+    best = None
+    for key, value in record.items():
+        name = str(key).lower()
+        if "expires" not in name and "expiry" not in name:
+            continue
+        moment = _expiry_seconds(value)
+        if moment is None:
+            continue
+        if best is None or moment > best:
+            best = moment
+    return best
+
+
 def _key_glob(pattern: str) -> "re.Pattern[str]":
     """Compile a mapping-key glob. ``*`` is the only special character and matches zero or
     more characters (dots and colons included) within ONE dict key. Same rule as
@@ -3713,7 +3766,8 @@ class GenericCollector:
         # A key may itself contain dots (gh's ``github.com`` host), so try the
         # longest matching prefix at each level, like the server's resolver. A prefix
         # containing ``*`` is a glob over that level's keys (sorted, so a rewritten file
-        # can't change which entry wins); a glob returns the first truthy match.
+        # can't change which entry wins); a glob returns the match whose record is
+        # still valid, falling back to the first truthy match.
         parts = key_path.split(".")
         if not isinstance(data, dict):
             return None
@@ -3723,10 +3777,27 @@ class GenericCollector:
             last = i == len(parts)
             if "*" in head:
                 pattern = _key_glob(head)
+                candidates = []
                 for key in sorted(k for k in data if isinstance(k, str) and pattern.fullmatch(k)):
                     found = data[key] if last else GenericCollector.get_nested(data[key], rest)
                     if found:
-                        return found
+                        candidates.append((data[key], found))
+                if candidates:
+                    # A glob must not hand out a dead record just because its
+                    # key sorts first. When the matched records carry an
+                    # expiry, the one that is still valid wins — and because
+                    # the choice depends only on the record, every mapping key
+                    # walking the same glob picks the same record, so a token
+                    # and its expiry never come from two different records.
+                    dated = []
+                    for record, found in candidates:
+                        expiry = _record_expiry(record)
+                        if expiry is not None:
+                            dated.append((found, expiry))
+                    if dated:
+                        live = [pair for pair in dated if pair[1] > time.time() + 60]
+                        return max(live or dated, key=lambda pair: pair[1])[0]
+                    return candidates[0][1]
             elif head in data:
                 if last:
                     return data[head]

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 import httpx
 import pytest
 
+from app.core.utils import is_error_card_dict
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.chatgpt import ChatGPTCollector
 from app.services.collectors.deepseek import DeepSeekCollector
@@ -4677,6 +4678,179 @@ class TestMiniMaxOAuthCollector:
         assert (
             mock_http_client.get.call_args[0][0] == "https://api.minimax.io/v1/coding_plan/remains"
         )
+
+
+class TestMiniMaxCredentialSelection:
+    """Which credential kind is used, and what a rejected token reports.
+
+    MiniMax answers HTTP 200 and puts the failure in the body: sending the
+    wrong kind of credential to a host comes back as
+    ``base_resp.status_code`` 1004 "login fail". That has to read as a
+    failure — parsed as a quota snapshot it would report a healthy
+    "No active plan" card, and because this collector reports complete
+    snapshots the reconciler would then retire the user's real rows.
+    """
+
+    LOGIN_FAIL = {"base_resp": {"status_code": 1004, "status_msg": "login fail"}}
+
+    @pytest.mark.asyncio
+    async def test_login_fail_is_an_error_card_not_an_empty_plan(self, mock_http_client):
+        """A rejected token must not look like a plan with no quota."""
+        with (
+            patch("app.services.collectors.minimax.settings") as mock_settings,
+            patch(
+                "app.services.collectors.minimax.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.token_cache.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"oauth_token": "mmoat_test_token"},  # pragma: allowlist secret
+                    {"source": "sidecar"},
+                ),
+            ),
+        ):
+            mock_settings.MINIMAX_API_KEY = ""
+            mock_settings.MINIMAX_HOST = ""
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = self.LOGIN_FAIL
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert len(result) == 1
+        card = result[0]
+        assert card["remaining"] == "ERR"
+        assert card["error_type"] == "auth_failed"
+        assert "1004" in card["detail"]
+        # An error card keeps the smart collector from treating the response
+        # as a complete snapshot, which is what would delete the real rows.
+        assert is_error_card_dict(card)
+        assert not any(c.get("remaining") == "No active plan" for c in result)
+
+    @pytest.mark.asyncio
+    async def test_other_failure_status_is_an_api_error(self, mock_http_client):
+        """A non-zero status that isn't a login failure is still a failure."""
+        with (
+            patch("app.services.collectors.minimax.settings") as mock_settings,
+            patch(
+                "app.services.collectors.minimax.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.token_cache.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"oauth_token": "mmoat_test_token"},  # pragma: allowlist secret
+                    {"source": "sidecar"},
+                ),
+            ),
+        ):
+            mock_settings.MINIMAX_API_KEY = ""
+            mock_settings.MINIMAX_HOST = ""
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = {
+                "base_resp": {"status_code": 1008, "status_msg": "insufficient balance"}
+            }
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert result[0]["error_type"] == "api_error"
+        assert "1008" in result[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_pasted_app_token_is_recognised_by_its_prefix(self, mock_http_client):
+        """A token pasted into Settings arrives without a marker of its kind.
+
+        The ``mmoat_`` prefix is all that says it is the app's OAuth token and
+        not a platform API secret — without it the token would be sent to the
+        API host, which answers "login fail".
+        """
+        with (
+            patch("app.services.collectors.minimax.settings") as mock_settings,
+            patch(
+                "app.services.collectors.minimax.credential_provider.get_provider_api_key",
+                return_value="mmoat_pasted_token",  # pragma: allowlist secret
+            ),
+            patch(
+                "app.services.token_cache.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            mock_settings.MINIMAX_API_KEY = ""
+            mock_settings.MINIMAX_HOST = ""
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = TestMiniMaxOAuthCollector.PAYLOAD
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert (
+            mock_http_client.get.call_args[0][0]
+            == "https://platform.minimax.io/v1/api/openplatform/coding_plan/remains"
+        )
+        assert result[0]["detail"].endswith("[App]")
+
+    @pytest.mark.asyncio
+    async def test_pasted_api_secret_keeps_using_the_api_host(self, mock_http_client):
+        """The platform secret has no such prefix and stays on the API host."""
+        with (
+            patch("app.services.collectors.minimax.settings") as mock_settings,
+            patch(
+                "app.services.collectors.minimax.credential_provider.get_provider_api_key",
+                return_value="sk_pasted_key",  # pragma: allowlist secret
+            ),
+            patch(
+                "app.services.token_cache.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            mock_settings.MINIMAX_API_KEY = ""
+            mock_settings.MINIMAX_HOST = ""
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = TestMiniMaxOAuthCollector.PAYLOAD
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        assert (
+            mock_http_client.get.call_args[0][0] == "https://api.minimax.io/v1/coding_plan/remains"
+        )
+        assert result[0]["detail"].endswith("[API]")
+
+    def test_china_host_is_matched_on_the_parsed_hostname(self):
+        """The China host is decided by the parsed hostname, not a raw suffix.
+
+        A suffix test would also accept a lookalike domain such as
+        ``evilminimaxi.com``.
+        """
+        collector = MiniMaxCollector()
+        collector.host = "minimaxi.com"
+        assert collector._open_platform_base_url() == "https://www.minimaxi.com"
+        collector.host = "www.minimaxi.com"
+        assert collector._open_platform_base_url() == "https://www.minimaxi.com"
+        collector.host = "api.minimaxi.com"
+        assert collector._open_platform_base_url() == "https://www.minimaxi.com"
+        collector.host = "evilminimaxi.com"
+        assert collector._open_platform_base_url() == "https://platform.evilminimaxi.com"
+        collector.host = "minimax.io"
+        assert collector._open_platform_base_url() == "https://platform.minimax.io"
 
 
 class TestHttpTimeouts:

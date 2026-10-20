@@ -40,6 +40,30 @@ MINIMAX_CODE_AUTH = {
     },
 }
 
+# Two logins in one store: the stale China record sorts before the live
+# English one, so a resolver that took the first match would hand out a dead
+# token. The live record has to win — and both the token and the expiry have
+# to come from THAT record, not from two different ones.
+MINIMAX_CODE_AUTH_TWO_RECORDS = {
+    "schemaVersion": 1,
+    "records": {
+        "com.minimax.mcode.oauth.prod.cn deadbeef": {
+            "schemaVersion": 1,
+            "accessToken": "mmoat_dead",
+            "refreshToken": "mmort_dead",
+            "clientId": "mcode-public",
+            "expiresAtMs": 1_600_000_000_000,  # long expired
+        },
+        "com.minimax.mcode.oauth.prod.en cafebabe": {
+            "schemaVersion": 1,
+            "accessToken": "mmoat_live",
+            "refreshToken": "mmort_live",
+            "clientId": "mcode-public",
+            "expiresAtMs": 4_102_444_800_000,  # year 2100
+        },
+    },
+}
+
 CASES = [
     # id, data, path, expected
     ("plain nested", {"a": {"b": 1}}, "a.b", 1),
@@ -122,6 +146,26 @@ CASES = [
         MINIMAX_CODE_AUTH,
         "records.*.expiresAtMs",
         1792518384753,
+    ),
+    # Two logins in one store: the unexpired record wins over the dead one
+    # that sorts first.
+    (
+        "minimax code: the unexpired record wins over the dead one that sorts first",
+        MINIMAX_CODE_AUTH_TWO_RECORDS,
+        "records.*.accessToken",
+        "mmoat_live",
+    ),
+    (
+        "minimax code: the expiry comes from the same record as the token",
+        MINIMAX_CODE_AUTH_TWO_RECORDS,
+        "records.*.expiresAtMs",
+        4_102_444_800_000,
+    ),
+    (
+        "minimax code: the refresh token comes from the same record too",
+        MINIMAX_CODE_AUTH_TWO_RECORDS,
+        "records.*.refreshToken",
+        "mmort_live",
     ),
 ]
 

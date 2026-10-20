@@ -1,12 +1,13 @@
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 from app.core.config import settings
-from app.core.utils import HealthCalculator, PaceCalculator, human_delta
-from app.services.collectors.base import BaseCollector
+from app.core.utils import HealthCalculator, PaceCalculator, error_card, human_delta
+from app.services.collectors.base import BaseCollector, ErrorType
 from app.services.credential_provider import credential_provider
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,47 @@ logger = logging.getLogger(__name__)
 # intentionally excluded regardless of its remaining_percent. Undocumented by
 # MiniMax; see _parse_api_response's docstring for how this was derived.
 ENTITLED_STATUSES = frozenset({1, 2})
+
+# The MiniMax Code app's OAuth access token. The platform API secret is an
+# ``sk-...``. The two are not interchangeable, and the prefix is the only
+# marker of which kind a credential is once it arrives from Settings or the
+# database — where it comes without any other hint of its kind.
+OAUTH_TOKEN_PREFIX = "mmoat_"
+
+# The China domain, and the open-platform host the MiniMax Code app's quota
+# client uses there. The global region uses ``platform.minimax.io`` instead.
+CHINA_DOMAIN = "minimaxi.com"
+CHINA_OPEN_PLATFORM_HOST = "www.minimaxi.com"
+
+# MiniMax's body-level "login fail" code: the token was rejected by the host
+# it was sent to (an OAuth token on the API host, or an API key on the
+# open-platform host). HTTP 200, so only the body reveals it.
+LOGIN_FAIL_STATUS = 1004
+
+
+def _credential_kind_of(token: str | None) -> str:
+    """Which kind of credential *token* is: ``"oauth"`` or ``"api_key"``.
+
+    The API host answers ``status_code 1004 login fail`` for an OAuth token
+    and the open-platform host answers it for an API key, so sending the
+    wrong kind silently reports "No active plan" instead of the real quota.
+    The app's token carries the ``mmoat_`` prefix; the platform secret is an
+    ``sk-...``. Anything else is treated as an API key.
+    """
+    if token and token.startswith(OAUTH_TOKEN_PREFIX):
+        return "oauth"
+    return "api_key"
+
+
+def _hostname(host: str) -> str:
+    """Hostname of *host*, which may be a bare domain or carry a scheme."""
+    candidate = (host or "").strip()
+    if "://" not in candidate:
+        candidate = f"//{candidate}"
+    try:
+        return (urlsplit(candidate).hostname or "").lower()
+    except ValueError:
+        return ""
 
 
 class MiniMaxCollector(BaseCollector):
@@ -30,7 +72,10 @@ class MiniMaxCollector(BaseCollector):
     Config:
     - MINIMAX_API_KEY: API token (env var or DB)
     - MINIMAX_HOST: Override host (default: minimax.io, China: minimaxi.com) — a bare
-      domain; both the API and dashboard URLs prefix it themselves.
+      domain; both the API and dashboard URLs prefix it themselves. The
+      open-platform host is derived from it: ``minimaxi.com`` (or any of its
+      subdomains) maps to ``www.minimaxi.com``, anything else to
+      ``platform.<host>``.
     """
 
     PROVIDER_ID = "minimax"
@@ -62,7 +107,7 @@ class MiniMaxCollector(BaseCollector):
         db_key = credential_provider.get_provider_api_key("minimax", account_id=account_id)
         if db_key:
             self._current_input_source = "config"
-            self._credential_kind = "api_key"
+            self._credential_kind = _credential_kind_of(db_key)
             return db_key
 
         from app.services.token_cache import token_cache
@@ -77,7 +122,9 @@ class MiniMaxCollector(BaseCollector):
             api_key = tokens.get("api_key")
             oauth_token = tokens.get("oauth_token")
             if api_key:
-                self._credential_kind = "api_key"
+                # A credential pasted into the UI lands in the api_key slot
+                # whatever it really is, so let the prefix decide.
+                self._credential_kind = _credential_kind_of(api_key)
                 return api_key
             if oauth_token:
                 self._credential_kind = "oauth"
@@ -85,7 +132,7 @@ class MiniMaxCollector(BaseCollector):
         key = (settings.MINIMAX_API_KEY or None) if account_id == "default" else None
         if key:
             self._current_input_source = "server"
-            self._credential_kind = "api_key"
+            self._credential_kind = _credential_kind_of(key)
         return key
 
     async def is_configured(self) -> bool:
@@ -119,11 +166,16 @@ class MiniMaxCollector(BaseCollector):
         bare-domain ``MINIMAX_HOST`` override can't express on its own, so the
         China host is listed explicitly and everything else follows the
         ``platform.<host>`` pattern.
+
+        The China check compares the *parsed hostname* against the registrable
+        domain instead of testing a raw suffix: a suffix test would also
+        accept ``evilminimaxi.com``.
         """
-        host = self.host.lower()
-        if host.endswith("minimaxi.com"):
-            return "https://www.minimaxi.com"
-        return f"https://platform.{host}"
+        name = _hostname(self.host)
+        labels = name.split(".") if name else []
+        if len(labels) >= 2 and ".".join(labels[-2:]) == CHINA_DOMAIN:
+            return f"https://{CHINA_OPEN_PLATFORM_HOST}"
+        return f"https://platform.{self.host.lower()}"
 
     async def _fetch_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch usage via the API endpoint.
@@ -227,6 +279,30 @@ class MiniMaxCollector(BaseCollector):
         """
         now_str = datetime.now(UTC).isoformat()
 
+        # MiniMax answers HTTP 200 and puts the failure in the body: an OAuth
+        # token sent to the API host (or an API key sent to the open-platform
+        # host) comes back as ``base_resp.status_code`` 1004 "login fail".
+        # Parsing that as a quota snapshot would report a healthy "No active
+        # plan" card — and because this collector reports complete snapshots,
+        # the reconciler would then retire the user's real session and weekly
+        # rows. A rejected credential is a failure, not an empty plan, so it
+        # has to become an error card.
+        failure = self._api_failure(data)
+        if failure is not None:
+            code, message = failure
+            detail = f"MiniMax error {code}" + (f": {message}" if message else "")
+            error_type = ErrorType.AUTH_FAILED if code == LOGIN_FAIL_STATUS else ErrorType.API_ERROR
+            logger.error("MiniMax API returned a failure status: %s", detail)
+            return [
+                error_card(
+                    "MiniMax",
+                    "🤖",
+                    detail,
+                    error_type=error_type,
+                    provider_id=self.PROVIDER_ID,
+                )
+            ]
+
         model_remains = data.get("model_remains", [])
         entitled = [
             item
@@ -264,6 +340,24 @@ class MiniMaxCollector(BaseCollector):
         if weekly_entitled:
             results.append(self._build_weekly_card(weekly_entitled[0], now_str))
         return results
+
+    @staticmethod
+    def _api_failure(data: dict[str, Any]) -> tuple[int, str] | None:
+        """The ``base_resp`` failure of a MiniMax payload, or None when it is OK.
+
+        MiniMax reports success as ``status_code`` 0; anything else is a
+        failure the HTTP status does not show (the response is a 200).
+        """
+        base_resp = data.get("base_resp")
+        if not isinstance(base_resp, dict):
+            return None
+        try:
+            code = int(base_resp.get("status_code"))
+        except (TypeError, ValueError):
+            return None
+        if code == 0:
+            return None
+        return code, str(base_resp.get("status_msg") or "").strip()
 
     def _window_pct_used(
         self, total_count: int, usage_count: int, remaining_percent: float
