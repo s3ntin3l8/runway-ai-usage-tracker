@@ -261,6 +261,44 @@ export function isMachineBoundOrigin(origin: string): boolean {
   return origin.startsWith('cookie:') || origin.startsWith('keychain:');
 }
 
+/** The parts of the "no account to map to" notice, split around the provider id
+ *  so the id can be rendered in the mono font. */
+export interface AccountPickNotice {
+  /** Sentence fragment rendered before the provider id ("No", "The", "All 2"). */
+  lead: string;
+  /** Sentence fragment rendered after the provider id ("row is disabled."). */
+  tail: string;
+  /** Label of the link to Provider Settings. */
+  linkLabel: string;
+}
+
+/**
+ * The copy for a credential with no enabled account to map to. One helper
+ * keeps the grammar — lead noun, verb and link label — coupled to a single
+ * count check, so the three pieces cannot drift apart.
+ */
+export function accountPickNotice(accountCount: number): AccountPickNotice {
+  if (accountCount === 0) {
+    return {
+      lead: 'No',
+      tail: 'row is configured.',
+      linkLabel: 'Add one in Provider Settings',
+    };
+  }
+  if (accountCount === 1) {
+    return {
+      lead: 'The',
+      tail: 'row is disabled.',
+      linkLabel: 'Enable it in Provider Settings',
+    };
+  }
+  return {
+    lead: `All ${accountCount}`,
+    tail: 'rows are disabled.',
+    linkLabel: 'Enable one in Provider Settings',
+  };
+}
+
 export function stageToBody(
   entry: UntaggedCredential,
   state: DialogState,
@@ -333,7 +371,8 @@ function UntaggedRow({
   // ``accounts`` view in /fleet/config only ships enabled rows).
   // PR #290 round-2 review (Hermes body suggestion #4).
   const enabledAccounts = accounts.filter((a) => a.enabled !== false);
-  const disabledCount = accounts.length - enabledAccounts.length;
+  // The copy shown when there is no enabled account to map to.
+  const notice = accountPickNotice(accounts.length);
 
   return (
     <Card
@@ -395,28 +434,21 @@ function UntaggedRow({
       {isClaudeBrowserSource(entry) ? (
         <ClaudeSourceOrganizationPicker sourceId={entry.source_id!} providerId={entry.provider_id} onComplete={onOrganizationComplete} />
       ) : enabledAccounts.length === 0 ? (
-        <p className="mt-2 flex items-center gap-2 text-[12px] text-warning">
-          <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-          {accounts.length === 0 ? (
-            <>
-              No <span className="font-mono">{entry.provider_id}</span> row configured.{' '}
-              <Link to="/settings/providers" className="text-accent underline underline-offset-2">
-                Add one in Provider Settings
-              </Link>
-              .
-            </>
-          ) : (
-            <>
-              All {accounts.length}{' '}
-              <span className="font-mono">{entry.provider_id}</span> row
-              {accounts.length === 1 ? '' : 's'} configured{' '}
-              {disabledCount > 0 ? 'are' : 'is'} disabled.{' '}
-              <Link to="/settings/providers" className="text-accent underline underline-offset-2">
-                Enable in Provider Settings
-              </Link>
-              .
-            </>
-          )}
+        <p className="mt-2 flex items-start gap-2 text-[12px] text-warning">
+          <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+          {/* The whole message lives in one span: as flex children of this <p>, the
+              text runs, the provider id and the link would each become their own
+              flex item and wrap independently (ragged, gappy layout). One span
+              keeps it a single flowing sentence next to the icon. */}
+          <span className="min-w-0">
+            {notice.lead}{' '}
+            <span className="font-mono">{entry.provider_id}</span>{' '}
+            {notice.tail}{' '}
+            <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+              {notice.linkLabel}
+            </Link>
+            .
+          </span>
         </p>
       ) : (
         <div className="mt-3 flex items-end gap-2">
