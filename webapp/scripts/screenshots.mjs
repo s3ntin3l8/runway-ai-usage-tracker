@@ -47,12 +47,22 @@ async function newContext(browser, theme, options) {
   return context;
 }
 
+// Skeletons (and the chart placeholders) shimmer until their query resolves.
+// A busy host can leave them up past networkidle, so wait them out instead of
+// shooting a half-loaded page.
+async function settled(page) {
+  await page.waitForFunction(() => !document.querySelector('.animate-shimmer'), null, {
+    timeout: 30_000,
+  });
+}
+
 async function open(page, spec) {
   await page.goto(`${WEB_URL}${spec.path}`, { waitUntil: 'networkidle' });
   if (spec.tab) {
     await page.getByRole('tab', { name: spec.tab }).or(page.getByText(spec.tab, { exact: true })).first().click();
     await page.waitForLoadState('networkidle');
   }
+  await settled(page);
   // Home banners nag about setup (no alert webhook in a demo); dismiss them the
   // way a user would, so they don't sit on top of every capture.
   for (const close of await page.getByRole('button', { name: 'Dismiss' }).all())
@@ -110,6 +120,7 @@ async function recordLoop(browser, outDir) {
   for (const tab of LOOP_TABS) {
     await page.getByRole('tab', { name: tab }).or(page.getByText(tab, { exact: true })).first().click();
     await page.waitForLoadState('networkidle');
+    await settled(page);
     await page.waitForTimeout(1800);
   }
   await context.close();
