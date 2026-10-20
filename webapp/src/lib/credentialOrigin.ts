@@ -82,7 +82,14 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
       // The app already says "Claude Desktop"; a detail would only repeat it.
       return { kind: 'keychain', label: 'Desktop OAuth' };
     }
-    return { kind: 'keychain', label: 'Keychain entry', detail: service || undefined };
+    // The app name already identifies the entry ("Claude Code - Keychain
+    // entry"); only an unnamed owner needs the service spelled out.
+    const app = service.startsWith('Claude Code') ? 'Claude Code' : undefined;
+    return {
+      kind: 'keychain',
+      label: 'Keychain entry',
+      detail: app ? undefined : service || undefined,
+    };
   }
   if (origin.startsWith('env:')) {
     return { kind: 'env', label: origin.slice('env:'.length).split('#')[0] };

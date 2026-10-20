@@ -61,12 +61,17 @@ describe('describeCredentialOrigin', () => {
   });
 
   it('describes a keychain entry by its service', () => {
-    const described = describeCredentialOrigin('keychain:Claude Code-credentials');
+    const described = describeCredentialOrigin('keychain:Gemini CLI');
     expect(described.kind).toBe('keychain');
     expect(described.label).toBe('Keychain entry');
-    expect(described.detail).toBe('Claude Code-credentials');
-    // The app already names the owner; a detail would only repeat it.
+    expect(described.detail).toBe('Gemini CLI');
+  });
+
+  it('does not repeat the app name in a keychain detail', () => {
+    // The app already says "Claude Desktop" / "Claude Code"; a detail would
+    // only repeat it.
     expect(describeCredentialOrigin('keychain:Claude Desktop/oauth/x').detail).toBeUndefined();
+    expect(describeCredentialOrigin('keychain:Claude Code-credentials').detail).toBeUndefined();
   });
 
   it('falls back to a sidecar credential for an origin it cannot place', () => {

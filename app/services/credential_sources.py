@@ -141,7 +141,14 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
             # The app already says "Claude Desktop"; a detail would only repeat it.
             return OriginDisplay("keychain", "Desktop OAuth", app="Claude Desktop")
         app = "Claude Code" if service.startswith("Claude Code") else None
-        return OriginDisplay("keychain", "Keychain entry", app=app, detail=service or None)
+        # The app name already identifies the entry ("Claude Code - Keychain
+        # entry"); only an unnamed owner needs the service spelled out.
+        return OriginDisplay(
+            "keychain",
+            "Keychain entry",
+            app=app,
+            detail=None if app else service or None,
+        )
     return OriginDisplay("sidecar", "Sidecar credential")
 
 

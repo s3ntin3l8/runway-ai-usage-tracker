@@ -82,11 +82,11 @@ def test_cookie_origin_never_reads_the_store_folder_as_a_profile():
 def test_file_and_env_origins_carry_no_extra_detail():
     assert describe_origin_full("path:/home/alice/.codex/auth.json").detail is None
     assert describe_origin_full("env:OPENROUTER_API_KEY").detail is None
-    assert describe_origin_full("keychain:Claude Code-credentials").detail == (
-        "Claude Code-credentials"
-    )
     # The app already names the owner; a detail would only repeat it.
     assert describe_origin_full("keychain:Claude Desktop/oauth/x").detail is None
+    assert describe_origin_full("keychain:Claude Code-credentials").detail is None
+    # An unnamed owner needs the service spelled out.
+    assert describe_origin_full("keychain:Gemini CLI").detail == "Gemini CLI"
 
 
 def test_sidecar_source_id_is_host_scoped_and_stable():
