@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -63,6 +64,9 @@ STAGING_DIR = Path(".")
 #: Label used when there is no release tag (the rolling prerelease).
 DEFAULT_LABEL = asset_names.EDGE_LABEL
 
+#: A release label is the rolling prerelease or a version.
+_VERSION_LABEL = re.compile(r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$")
+
 
 def _win_version(root: Path) -> Any:
     """Load ``sidecar_app/spec/win_version.py`` — a script, not a package."""
@@ -76,10 +80,18 @@ def _win_version(root: Path) -> Any:
 
 
 def resolve_label(label: str) -> str:
-    """``"edge"`` stays as it is; a version becomes the ``v``-prefixed label."""
+    """``"edge"`` stays as it is; a version becomes the ``v``-prefixed label.
+
+    Anything else is refused: a stray space or a different case would
+    otherwise name an asset nobody downloads.
+    """
     if label == asset_names.EDGE_LABEL:
         return asset_names.EDGE_LABEL
-    return asset_names.release_label("stable", label)
+    if not _VERSION_LABEL.match(label.strip()):
+        raise ValueError(
+            f"{label!r} is not a release label — use 'edge' or a version such as 'v2.13.0'"
+        )
+    return asset_names.release_label("stable", label.strip())
 
 
 def installer_name(label: str = DEFAULT_LABEL) -> str:

@@ -292,8 +292,10 @@ def test_the_installer_must_be_a_windows_executable(tmp_path):
 def test_the_workflows_use_the_shared_installer_helper(workflow):
     text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
     assert "scripts.build_windows_installer" in text
-    # No workflow may compile the installer on its own any more.
-    assert "makensis" not in text
+    # No workflow may compile the installer on its own any more. Only the
+    # commands matter — a comment may still mention the compiler.
+    commands = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    assert not re.search(r"\bmakensis\b", commands)
 
 
 def test_an_edge_build_is_triggered_by_a_change_to_the_installer_helper():
@@ -321,6 +323,60 @@ def test_the_pull_request_windows_gate_builds_the_real_executable():
     installer_index = gate.index("scripts.build_windows_installer")
     assert build_index < installer_index
     assert "dist/RunwaySidecar.exe" in gate
+
+
+# ---------------------------------------------------------------------------
+# The command line every workflow and the Makefile use
+# ---------------------------------------------------------------------------
+
+
+def test_the_command_line_entry_point_builds_the_installer(tmp_path, monkeypatch):
+    root = _fake_root(tmp_path)
+    _write_executable(root)
+    monkeypatch.setattr(
+        build_windows_installer, "resolve_compiler", lambda: _fake_compiler(tmp_path)
+    )
+    assert build_windows_installer.main(["--label", "edge", "--root", str(root)]) == 0
+    assert (root / "Runway-Sidecar-Windows-edge-setup.exe").exists()
+
+
+def test_the_command_line_entry_point_can_stage_the_installer_elsewhere(tmp_path, monkeypatch):
+    root = _fake_root(tmp_path)
+    _write_executable(root)
+    monkeypatch.setattr(
+        build_windows_installer, "resolve_compiler", lambda: _fake_compiler(tmp_path)
+    )
+    argv = ["--label", "edge", "--root", str(root), "--out-dir", "dist"]
+    assert build_windows_installer.main(argv) == 0
+    assert (root / "dist" / "Runway-Sidecar-Windows-edge-setup.exe").exists()
+
+
+def test_the_command_line_entry_point_can_use_the_package_version(tmp_path, monkeypatch):
+    root = _fake_root(tmp_path)
+    _write_executable(root)
+    monkeypatch.setattr(
+        build_windows_installer, "resolve_compiler", lambda: _fake_compiler(tmp_path)
+    )
+    argv = ["--from-package-version", "--root", str(root), "--out-dir", "dist"]
+    assert build_windows_installer.main(argv) == 0
+    assert (root / "dist" / "Runway-Sidecar-Windows-v3.0.0-beta.10-setup.exe").exists()
+
+
+def test_the_command_line_entry_point_refuses_an_unknown_label(tmp_path, monkeypatch):
+    root = _fake_root(tmp_path)
+    _write_executable(root)
+    monkeypatch.setattr(
+        build_windows_installer, "resolve_compiler", lambda: _fake_compiler(tmp_path)
+    )
+    with pytest.raises(ValueError, match="not a release label"):
+        build_windows_installer.main(["--label", "EDGE", "--root", str(root)])
+
+
+@pytest.mark.parametrize("label", ["EDGE", " edge ", "latest", "2.13", ""])
+def test_an_unknown_label_is_refused(label):
+    """A label that is not a version would name an asset nobody downloads."""
+    with pytest.raises(ValueError, match="not a release label"):
+        build_windows_installer.resolve_label(label)
 
 
 # ---------------------------------------------------------------------------
