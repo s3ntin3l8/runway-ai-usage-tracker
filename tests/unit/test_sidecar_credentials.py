@@ -521,6 +521,61 @@ class TestCollectProviderBlockGuard:
         assert len(cards) == 1
         assert [b.get("reason") for b in blocked] == [None]
 
+    def test_antigravity_card_reports_the_installed_agy_version(self, monkeypatch):
+        """The sidecar ships the installed CLI's version next to the token (#687).
+
+        The Code Assist API gates *which quota pools* it serves on the
+        User-Agent's version, and the server never sees the CLI — only this
+        host does.
+        """
+        import scripts.sidecar as sc
+        from scripts.sidecar_pkg import agy_version
+
+        monkeypatch.setenv("SOME_AGY_KEY", "sk-test-123")
+        monkeypatch.setattr(sc, "_ag_account_email", lambda: "user@example.com")
+        monkeypatch.setattr(agy_version, "installed_version", lambda: "1.4.3")
+        rules = {
+            "name": "Antigravity",
+            "icon": "x",
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "SOME_AGY_KEY",
+                    "mapping": {"value": "api_key"},
+                }
+            ],
+        }
+
+        cards, _blocked = sc.GenericCollector.collect_provider("antigravity", rules)
+
+        assert len(cards) == 1
+        assert cards[0]["metadata"]["agy_version"] == "1.4.3"
+
+    def test_no_version_reported_when_the_cli_is_not_installed(self, monkeypatch):
+        """An unknown version is simply absent — the server falls back on its own."""
+        import scripts.sidecar as sc
+        from scripts.sidecar_pkg import agy_version
+
+        monkeypatch.setenv("SOME_AGY_KEY", "sk-test-123")
+        monkeypatch.setattr(sc, "_ag_account_email", lambda: "user@example.com")
+        monkeypatch.setattr(agy_version, "installed_version", lambda: None)
+        rules = {
+            "name": "Antigravity",
+            "icon": "x",
+            "rules": [
+                {
+                    "type": "env",
+                    "variable": "SOME_AGY_KEY",
+                    "mapping": {"value": "api_key"},
+                }
+            ],
+        }
+
+        cards, _blocked = sc.GenericCollector.collect_provider("antigravity", rules)
+
+        assert len(cards) == 1
+        assert "agy_version" not in cards[0]["metadata"]
+
     def test_no_block_when_no_tokens_extracted(self):
         """No credentials found → no blocked origin (because there was nothing to ship)."""
         import scripts.sidecar as sc

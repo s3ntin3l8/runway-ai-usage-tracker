@@ -18,13 +18,14 @@ window of one tick).
 
 import json
 import logging
-import shutil
 import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
+
+from scripts.sidecar_pkg.agy_version import resolve_agy
 
 logger = logging.getLogger(__name__)
 
@@ -101,22 +102,6 @@ def refresh_due(token_path: Path, *, now: float | None = None, lead: int = LEAD_
     if expiry is None:
         return True
     return expiry <= (time.time() if now is None else now) + lead
-
-
-def resolve_agy() -> str | None:
-    """Locate the agy binary: PATH first, then the common per-user installs."""
-    found = shutil.which("agy")
-    if found:
-        return found
-    home = Path.home()
-    for candidate in (
-        home / ".local" / "bin" / "agy",
-        home / "bin" / "agy",
-        home / ".agy" / "bin" / "agy",
-    ):
-        if candidate.is_file():
-            return str(candidate)
-    return None
 
 
 def run_refresh(command: list[str]) -> bool:

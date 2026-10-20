@@ -26,6 +26,7 @@ a = Analysis(
     + [
         "app.core.console",
         "app.core.kimi_device",
+        "app.core.version",
         # Mirror every top-level import in scripts/sidecar.py. PyInstaller's
         # static scan should find these, but declaring them is cheap insurance.
         "argparse",
@@ -85,6 +86,7 @@ a = Analysis(
         "scripts.sidecar_pkg.xai_renewer",
         "scripts.sidecar_pkg.opencode_credentials",
         "scripts.sidecar_pkg.anthropic_renewer",
+        "scripts.sidecar_pkg.agy_version",
         "scripts.sidecar_pkg.codex_renewer",
         "scripts.sidecar_pkg.oauth_renewal",
         "scripts.sidecar_pkg.asset_names",

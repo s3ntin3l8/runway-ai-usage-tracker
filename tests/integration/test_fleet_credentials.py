@@ -4195,3 +4195,36 @@ async def test_native_oauth_changed_generation_reenters_pending_despite_old_veri
             assert pending[0]["tokens"]["oauth_token"] == "new-account-token"
             assert pending[0]["account_slot"] == sid
             assert not await cache.get_source_candidates("anthropic", "old@example.com")
+
+
+async def test_ingest_keeps_the_reported_agy_version(client: TestClient, session: Session):
+    """The agy version the sidecar reported with the token survives ingest (#687).
+
+    The Code Assist API gates *which quota pools* it serves on the User-Agent's
+    version, so the collector has to be able to read the real one. A sidecar
+    that reports no version must still push its token.
+    """
+    from app.services.token_cache import token_cache
+
+    card = {
+        "service_name": "Antigravity",
+        "remaining": "Token",
+        "unit": "oauth",
+        "account_id": "user@example.com",
+        "metadata": {
+            "provider_id": "antigravity",
+            "credential_origin": "path:/home/u/.gemini/antigravity-cli/antigravity-oauth-token",
+            "oauth_token": "ya29.live",
+            "agy_version": "1.5.2",
+        },
+    }
+    response = _ingest(client, "native-host", [card])
+    assert response.status_code == 200, response.text
+
+    tokens, _metadata = await token_cache.get_with_metadata(
+        "antigravity", account_id="user@example.com"
+    )
+    assert tokens is not None
+    assert tokens.get("agy_version") == "1.5.2"
+    # The token itself must survive untouched.
+    assert tokens.get("oauth_token") == "ya29.live"
