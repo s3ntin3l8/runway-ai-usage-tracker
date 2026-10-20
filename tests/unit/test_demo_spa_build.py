@@ -87,16 +87,16 @@ def test_removing_a_top_level_input_makes_dist_stale(webapp: Path, removed: str)
     assert spa_is_stale(webapp)
 
 
-def test_a_dangling_symlink_is_ignored(webapp: Path) -> None:
+def test_a_dangling_symlink_is_ignored(webapp: Path, make_symlink) -> None:
     link = webapp / "src" / "gone.tsx"
-    link.symlink_to(webapp / "src" / "missing.tsx")
+    make_symlink(link, webapp / "src" / "missing.tsx")
     os.utime(webapp / "src", (1_000, 1_000))
     assert not spa_is_stale(webapp)
 
 
-def test_a_looping_symlink_is_ignored(webapp: Path) -> None:
+def test_a_looping_symlink_is_ignored(webapp: Path, make_symlink) -> None:
     loop = webapp / "src" / "loop.tsx"
-    loop.symlink_to(loop)
+    make_symlink(loop, loop)
     os.utime(webapp / "src", (1_000, 1_000))
     assert not spa_is_stale(webapp)
 
