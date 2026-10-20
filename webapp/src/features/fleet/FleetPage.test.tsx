@@ -957,13 +957,13 @@ describe('FleetPage', () => {
     await userEvent.click(badge);
 
     const dialog = await screen.findByRole('dialog');
-    // The empty-state paragraph reads: "No <span>anthropic</span> row
+    // The empty-state paragraph reads: "No <span>anthropic</span> row is
     // configured. Add one in Provider Settings." — broken across the
     // provider_id span. The <a> child is what links out, so query the
     // anchor text specifically — it's unique to this empty state.
     const link = within(dialog).getByRole('link', { name: /add one in provider settings/i });
     expect(link).toBeInTheDocument();
-    expect(link.closest('p')?.textContent).toMatch(/no .*anthropic.* row configured/i);
+    expect(link.closest('p')?.textContent).toMatch(/no .*anthropic.* row is configured/i);
     // No Tag button is rendered when there are no provider rows to pick from.
     // We scope the query to the dialog body so the global "Tag now" button
     // in the banner doesn't satisfy it (the banner sits outside the
