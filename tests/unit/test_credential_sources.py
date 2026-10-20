@@ -843,6 +843,15 @@ def test_describe_origin_full_non_file_origins():
     assert describe_origin_full("keychain:Claude Code-credentials").path is None
 
 
+def test_describe_origin_full_names_the_windows_credential_store_owner():
+    """The Windows Credential Manager entry that holds the agy token names the
+    CLI that put it there, so the operator is told what to re-login to."""
+    display = describe_origin_full("keychain:gemini:antigravity")
+    assert display.app == "Antigravity CLI"
+    assert display.kind == "keychain"
+    assert login_hint(display.app) == "sign in again in the Antigravity CLI"
+
+
 def test_login_hint_known_and_unknown():
     assert login_hint("Codex CLI") == "run `codex login`"
     assert login_hint("Claude Code") == "run `claude`, then `/login`"  # no shell subcommand

@@ -112,6 +112,13 @@ def _windows_expiry_epoch() -> float | None:
     return _expiry_from_document(read_json_credential(WINDOWS_CREDENTIAL_TARGET))
 
 
+def _windows_expiry_epoch_from(raw: bytes) -> float | None:
+    """The agy token's expiry, from a Credential Manager blob already read."""
+    from scripts.sidecar_pkg.wincred import decode_json_credential
+
+    return _expiry_from_document(decode_json_credential(raw))
+
+
 def local_expiry_epoch(token_path: Path | None = None) -> float | None:
     """The expiry of the agy login on this machine, wherever it is stored.
 
@@ -159,9 +166,11 @@ def local_refresh_due(
     if platform.system() == "Windows":
         from scripts.sidecar_pkg.wincred import read_credential_bytes
 
-        if read_credential_bytes(WINDOWS_CREDENTIAL_TARGET) is None:
+        # One read of the store serves both the presence check and the expiry.
+        raw = read_credential_bytes(WINDOWS_CREDENTIAL_TARGET)
+        if raw is None:
             return False
-        expiry = _windows_expiry_epoch()
+        expiry = _windows_expiry_epoch_from(raw)
     else:
         if not DEFAULT_TOKEN_PATH.is_file():
             return False

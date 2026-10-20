@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 # ``CRED_TYPE_GENERIC`` from wincred.h - the type every CLI here writes.
 CRED_TYPE_GENERIC = 1
 
+# What a decode with ``errors="replace"`` leaves where the bytes were not
+# readable. Its presence means the blob did not decode cleanly.
+_REPLACEMENT = "\ufffd"
+
 
 class _Filetime(ctypes.Structure):
     """Win32 ``FILETIME`` (two 32-bit halves)."""
@@ -107,9 +111,12 @@ def decode_credential(raw: bytes) -> str:
     the agy CLI writes UTF-8 JSON, the GitHub CLI writes UTF-16LE. A BOM wins;
     otherwise NULs in every odd byte position mark UTF-16LE (the signature of
     ASCII text in UTF-16) and anything else is UTF-8.
+
+    Never raises: a corrupt blob decodes to whatever can be read. A truncated
+    UTF-16 blob would otherwise raise out of a collection cycle.
     """
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return raw.decode("utf-16")
+        return raw.decode("utf-16", errors="replace")
     if len(raw) >= 2 and not any(raw[1::2]):
         return raw.decode("utf-16-le", errors="replace").rstrip("\x00")
     return raw.decode("utf-8", errors="replace")
@@ -118,13 +125,36 @@ def decode_credential(raw: bytes) -> str:
 def read_credential_text(target: str) -> str | None:
     """The text of the generic credential *target*, or None when there is none.
 
-    None means "no such entry"; an entry that exists but holds an empty blob
-    comes back as ``""``.
+    None means "no such entry", and also "an entry that does not decode
+    cleanly": such a blob holds no usable secret, and shipping the garbled
+    remainder as a credential would be worse than shipping none. An entry that
+    exists but holds an empty blob comes back as ``""``.
     """
     raw = read_credential_bytes(target)
     if raw is None:
         return None
-    return decode_credential(raw)
+    text = decode_credential(raw)
+    if _REPLACEMENT in text:
+        logger.debug("Windows Credential Manager entry %r did not decode cleanly", target)
+        return None
+    return text
+
+
+def decode_json_credential(raw: bytes) -> dict[str, Any] | None:
+    """The blob *raw* parsed as a JSON object, or None.
+
+    None covers "not JSON", "not a JSON object" and "did not decode cleanly".
+    Split from the read so a caller that already holds the bytes does not
+    read the store twice.
+    """
+    text = decode_credential(raw)
+    if _REPLACEMENT in text:
+        return None
+    try:
+        document = json.loads(text)
+    except ValueError:
+        return None
+    return document if isinstance(document, dict) else None
 
 
 def read_json_credential(target: str) -> dict[str, Any] | None:
@@ -133,11 +163,7 @@ def read_json_credential(target: str) -> dict[str, Any] | None:
     None covers both "no such entry" and "the entry is not a JSON object";
     callers that must tell those apart read :func:`read_credential_text`.
     """
-    text = read_credential_text(target)
-    if text is None:
+    raw = read_credential_bytes(target)
+    if raw is None:
         return None
-    try:
-        document = json.loads(text)
-    except ValueError:
-        return None
-    return document if isinstance(document, dict) else None
+    return decode_json_credential(raw)

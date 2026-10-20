@@ -84,23 +84,76 @@ class TestDecodeCredential:
         """UTF-8 text with a two-byte character has a non-NUL odd byte."""
         assert wincred.decode_credential("é".encode()) == "é"
 
+    def test_a_truncated_utf16_blob_does_not_raise(self):
+        """A corrupt blob must not abort a collection cycle.
+
+        The BOM branch used a strict decode, so an odd-length UTF-16 blob
+        raised UnicodeDecodeError out of the rule branch and took the whole
+        antigravity cycle with it.
+        """
+        assert isinstance(wincred.decode_credential(b"\xff\xfe" + b"a"), str)
+
+    def test_decoding_never_raises(self):
+        """Whatever the store holds, decoding returns text."""
+        for raw in (b"", b"\x00", b"\xff", b"\xfe", b"\xff\xfe", b"\xff\xfe\x00", b"\x00\x00"):
+            assert isinstance(wincred.decode_credential(raw), str)
+
+
+class TestCorruptBlobDoesNotAbortACycle:
+    """One corrupt store entry must not take a whole provider cycle down.
+
+    The BOM branch used a strict decode, so a truncated UTF-16 blob raised
+    UnicodeDecodeError out of the reader and out of ``collect_provider``.
+    """
+
+    def test_the_flat_reader_returns_nothing_for_a_corrupt_blob(self):
+        with patch.object(wincred, "read_credential_bytes", return_value=b"\xff\xfe" + b"a"):
+            assert wincred.read_credential_text(_TARGET) is None
+
+    def test_the_flat_credential_lookup_does_not_raise(self):
+        with (
+            patch.object(sidecar.platform, "system", return_value="Windows"),
+            patch(
+                "scripts.sidecar_pkg.wincred.read_credential_bytes", return_value=b"\xff\xfe" + b"a"
+            ),
+        ):
+            assert sidecar.get_windows_credential("github.com") is None
+
+    def test_the_provider_cycle_completes(self):
+        config = json.loads(json.dumps(sidecar.__REGISTRY__["providers"]["antigravity"]))
+        config["rules"] = [r for r in config["rules"] if r["type"] == "windows_credential_json"]
+        with (
+            patch.object(sidecar.platform, "system", return_value="Windows"),
+            patch(
+                "scripts.sidecar_pkg.wincred.read_credential_bytes", return_value=b"\xff\xfe" + b"a"
+            ),
+        ):
+            cards, _blocked = sidecar.GenericCollector.collect_provider("antigravity", config)
+        assert [c for c in cards if c.get("remaining") == "Token"] == []
+
 
 class TestReadJsonCredential:
     def test_absent_target_returns_none(self):
-        with patch.object(wincred, "read_credential_text", return_value=None):
+        with patch.object(wincred, "read_credential_bytes", return_value=None):
+            assert wincred.read_json_credential(_TARGET) is None
+
+    def test_a_corrupt_blob_reads_as_absent(self):
+        """A blob that does not decode cleanly holds no usable credential."""
+        with patch.object(wincred, "read_credential_bytes", return_value=b"\xff\xfe" + b"a"):
             assert wincred.read_json_credential(_TARGET) is None
 
     def test_non_json_blob_returns_none(self):
-        with patch.object(wincred, "read_credential_text", return_value="not json"):
+        with patch.object(wincred, "read_credential_bytes", return_value=b"not json"):
             assert wincred.read_json_credential(_TARGET) is None
 
     def test_json_array_blob_returns_none(self):
         """Only a JSON object is a credential document."""
-        with patch.object(wincred, "read_credential_text", return_value="[1, 2]"):
+        with patch.object(wincred, "read_credential_bytes", return_value=b"[1, 2]"):
             assert wincred.read_json_credential(_TARGET) is None
 
     def test_json_object_is_returned(self):
-        with patch.object(wincred, "read_credential_text", return_value=json.dumps(_AGY_BLOB)):
+        raw = json.dumps(_AGY_BLOB).encode()
+        with patch.object(wincred, "read_credential_bytes", return_value=raw):
             assert wincred.read_json_credential(_TARGET) == _AGY_BLOB
 
     def test_absent_target_reads_nothing_on_other_platforms(self):
@@ -278,15 +331,12 @@ class TestKeepAliveWindowsSource:
     def test_a_fresh_windows_credential_is_not_due(self):
         from scripts.sidecar_pkg import keep_alive
 
+        raw = json.dumps(_blob(_in_an_hour())).encode()
         with (
             patch.object(keep_alive.platform, "system", return_value="Windows"),
             patch(
                 "scripts.sidecar_pkg.wincred.read_credential_bytes",
-                return_value=b"{}",
-            ),
-            patch(
-                "scripts.sidecar_pkg.wincred.read_json_credential",
-                return_value=_blob(_in_an_hour()),
+                return_value=raw,
             ),
         ):
             assert keep_alive.local_refresh_due() is False
@@ -304,3 +354,19 @@ class TestKeepAliveWindowsSource:
         ):
             epoch = keep_alive.local_expiry_epoch()
         assert epoch == pytest.approx(expiry.timestamp(), abs=1)
+
+    def test_the_credential_store_is_read_once_per_tick(self):
+        """The tick reads the store once: the presence check and the expiry
+        must not each pay for their own read."""
+        from scripts.sidecar_pkg import keep_alive
+
+        blob = json.dumps(_blob(_in_an_hour())).encode()
+        with (
+            patch.object(keep_alive.platform, "system", return_value="Windows"),
+            patch(
+                "scripts.sidecar_pkg.wincred.read_credential_bytes",
+                return_value=blob,
+            ) as read,
+        ):
+            assert keep_alive.local_refresh_due() is False
+        assert read.call_count == 1
