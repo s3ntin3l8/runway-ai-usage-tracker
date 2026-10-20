@@ -280,6 +280,15 @@ describe('chipLabel', () => {
     const solo = card({ service_name: 'ChatGPT', window_type: 'monthly', variant: 'Codex' });
     expect(chipLabel(solo, [solo])).toBe('Monthly');
   });
+  it('disambiguates three same-window pools (Antigravity gemini/frontier/argon)', () => {
+    const gemini = card({ service_name: 'Gemini', window_type: 'weekly', variant: 'gemini' });
+    const frontier = card({ service_name: 'Frontier', window_type: 'weekly', variant: 'frontier' });
+    const argon = card({ service_name: 'Argon', window_type: 'weekly', variant: 'argon' });
+    const siblings = [gemini, frontier, argon];
+    expect(chipLabel(gemini, siblings)).toBe('Weekly · Gemini');
+    expect(chipLabel(frontier, siblings)).toBe('Weekly · Frontier');
+    expect(chipLabel(argon, siblings)).toBe('Weekly · Argon');
+  });
   it('appends the model when two same-name windows collide (Claude weekly vs Sonnet weekly)', () => {
     const generic = card({ service_name: 'Claude', window_type: 'weekly', model_id: null });
     const sonnet = card({ service_name: 'Claude', window_type: 'weekly', model_id: 'sonnet' });

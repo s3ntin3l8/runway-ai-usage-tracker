@@ -82,8 +82,9 @@ export function ProviderKpis({
 
   // Forecast entry for the gauge we treat as critical. Match the full card
   // identity via findForecast (window_type + variant + model_id), not
-  // window_type alone — multi-pool providers (e.g. Antigravity gemini/frontier)
-  // would otherwise resolve to the empty pool's insufficient-data forecast.
+  // window_type alone — multi-pool providers (e.g. Antigravity
+  // gemini/frontier/argon) would otherwise resolve to the empty pool's
+  // insufficient-data forecast.
   const criticalForecast = useMemo(() => {
     const fs = forecast.data?.forecasts ?? [];
     return findForecast(critical, fs);

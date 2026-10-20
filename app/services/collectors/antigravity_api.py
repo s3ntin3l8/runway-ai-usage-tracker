@@ -14,8 +14,55 @@ logger = logging.getLogger(__name__)
 # but we mirror agy's own preference.
 _CLOUDCODE_HOST = "https://daily-cloudcode-pa.googleapis.com"
 # Server-sent User-Agent — must look like the agy CLI binary or Google's ESF
-# returns 403.  The version string is cosmetic; the UA *prefix* is the gate.
-_USER_AGENT = "antigravity/cli/1.0.9 linux/amd64"
+# returns 403.
+#
+# The version in the UA is NOT cosmetic: the backend gates *which quota pools*
+# it serves on it. Measured 2026-10-20 against daily-cloudcode-pa.googleapis.com
+# with the same token, project and request body, changing only the UA:
+#   < 1.2  → "Claude and GPT models" only
+#   >= 1.2 → + "Gemini Models"
+#   >= 1.3 → + "Gemini 4 Argon" (also unlocked at 1.2 by the aidev_client marker)
+# An outdated UA therefore fails silently rather than loudly — the API answers
+# 200 with a subset of the pools and Runway reports only the Claude/GPT quota.
+# Keep this in step with the installed agy CLI; the follow-up issue tracks
+# having the sidecar report `agy --version` so it cannot go stale again.
+_USER_AGENT = (
+    "antigravity/cli/1.4.3 (aidev_client; os_type=linux; arch=amd64; "
+    "cl=1002753436; auth_method=consumer)"
+)
+
+# Physical quota pools. The API returns one group per pool and the group's
+# display name is the only stable identity it hands us. The order matters:
+# "Gemini 4 Argon" is a *separate* paid-plan pool that also says "gemini", so
+# the Argon check must win — otherwise both pools land in the same
+# `antigravity:gemini:<window>` slot and overwrite each other in LatestUsage.
+POOL_ARGON = "argon"
+POOL_GEMINI = "gemini"
+POOL_FRONTIER = "frontier"
+
+# Short labels for the quota cards. "argon" stays stable even when Google
+# renames the model (Gemini 4 Argon → Gemini 5 Argon), and the pool simply
+# disappears when Google folds it back into the Gemini bucket.
+POOL_LABELS: dict[str, str] = {
+    POOL_ARGON: "Argon",
+    POOL_GEMINI: "Gemini",
+    POOL_FRONTIER: "Frontier",
+}
+
+
+def pool_family(group_name: str) -> str:
+    """Map a quota group's display name to its physical pool family.
+
+    "Gemini Models" → ``gemini``, "Claude and GPT models" → ``frontier``,
+    "Gemini 4 Argon" → ``argon`` (a separate paid-plan pool, not part of the
+    Gemini bucket).
+    """
+    lowered = (group_name or "").lower()
+    if "argon" in lowered:
+        return POOL_ARGON
+    if "gemini" in lowered:
+        return POOL_GEMINI
+    return POOL_FRONTIER
 
 
 class AntigravityApiMixin:
@@ -23,7 +70,8 @@ class AntigravityApiMixin:
 
     Two calls mirror exactly what ``agy /usage`` does:
       1. ``loadCodeAssist`` → cloudaicompanionProject (project id)
-      2. ``retrieveUserQuotaSummary`` → QuotaSummary with 2 pools × 2 windows
+      2. ``retrieveUserQuotaSummary`` → QuotaSummary with up to 3 pools
+         (gemini weekly+5h, frontier weekly+5h, argon weekly)
     """
 
     async def _ag_post(
@@ -230,70 +278,20 @@ class AntigravityApiMixin:
                 ]
 
             results: list[dict[str, Any]] = []
+            pools = {pool_family(g.get("displayName", "")) for g in groups}
+            if tier in ("pro", "ultra") and POOL_GEMINI not in pools:
+                # A paid tier always has a Gemini pool. Its absence means the
+                # backend served us a subset of the pools — almost always an
+                # outdated User-Agent version (see _USER_AGENT).
+                logger.warning(
+                    "Antigravity quota summary returned no Gemini pool for tier %r "
+                    "(pools: %s) — the User-Agent version may be too old",
+                    tier,
+                    sorted(pools),
+                )
+
             for group in groups:
-                group_name = group.get("displayName", "Unknown")
-                pool_family = "gemini" if "gemini" in group_name.lower() else "frontier"
-
-                for bucket in group.get("buckets", []):
-                    bucket_id = bucket.get("bucketId", "")
-                    win_raw = bucket.get(
-                        "window", "unknown"
-                    )  # provider raw value: "weekly" or "5h"
-                    # Map to canonical WindowType.  agy's "5h" is a rolling five-hour
-                    # window — same semantics as Anthropic's SESSION window.  Any other
-                    # unknown value falls through to base.py coercion → "unknown".
-                    win = "session" if win_raw == "5h" else win_raw
-                    display_name = bucket.get("displayName", win_raw.title())
-                    rem_frac = bucket.get("remainingFraction", 1.0)
-                    description = bucket.get("description", "")
-
-                    reset_dt: datetime | None = None
-                    reset_at: str | None = None
-                    reset_ts = bucket.get("resetTime")
-                    if reset_ts:
-                        try:
-                            reset_dt = parse_iso8601_utc(reset_ts)
-                            reset_at = reset_dt.isoformat()
-                        except (ValueError, TypeError):
-                            pass  # malformed resetTime — leave reset_at/reset_dt unset
-
-                    pct_used = round((1.0 - float(rem_frac)) * 100, 4)
-                    health = HealthCalculator.from_percentage(pct_used)
-                    pace = PaceCalculator.estimate_longevity(pct_used, reset_dt)
-
-                    # Stable pool_id per (pool, canonical-window) so the two window
-                    # cards never merge in the accumulator.
-                    pool_id = f"antigravity:{pool_family}:{win}"
-
-                    card = {
-                        "service_name": pool_family.capitalize(),
-                        "icon": "🛸",
-                        "remaining": f"{pct_used:.1f}%",
-                        "unit": "used",
-                        "reset_at": reset_at,
-                        "health": health,
-                        "pace": pace,
-                        "detail": description or f"{group_name} | {display_name}",
-                        "used_value": pct_used,
-                        "limit_value": 100.0,
-                        "pct_used": pct_used,
-                        # Aggregate card: pool identity goes in variant so the
-                        # accumulator window-guard (fires only when model_id != "")
-                        # is skipped, letting weekly + session coexist in latest_usage.
-                        # See accumulator.py:226-236 for the aggregate-card convention.
-                        "model_id": "",
-                        "variant": pool_family,
-                        "unit_type": "percent",
-                        "window_type": win,
-                        "data_source": self.DATA_SOURCE_API,
-                        "input_source": getattr(self, "_current_input_source", "unknown"),
-                        "quota_pool_id": pool_id,
-                        "bucket_id": bucket_id,
-                        "updated_at": now.isoformat(),
-                    }
-                    if tier is not None:
-                        card["tier"] = tier
-                    results.append(card)
+                results.extend(self._group_cards(group, tier, now))
 
             results.sort(key=lambda x: x.get("window_type", ""), reverse=True)
             return results
@@ -301,3 +299,82 @@ class AntigravityApiMixin:
         except Exception:
             logger.warning("Antigravity API collection failed", exc_info=True)
             return []
+
+    def _group_cards(
+        self,
+        group: dict[str, Any],
+        tier: str | None,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
+        """Turn one quota group (one physical pool) into a card per window."""
+        group_name = group.get("displayName", "Unknown")
+        pool = pool_family(group_name)
+        cards: list[dict[str, Any]] = []
+
+        for bucket in group.get("buckets", []):
+            bucket_id = bucket.get("bucketId", "")
+            win_raw = bucket.get("window", "unknown")  # provider raw value: "weekly" or "5h"
+            # Map to canonical WindowType.  agy's "5h" is a rolling five-hour
+            # window — same semantics as Anthropic's SESSION window.  Any other
+            # unknown value falls through to base.py coercion → "unknown".
+            win = "session" if win_raw == "5h" else win_raw
+            display_name = bucket.get("displayName", win_raw.title())
+            rem_frac = bucket.get("remainingFraction", 1.0)
+            description = bucket.get("description", "")
+
+            reset_dt: datetime | None = None
+            reset_at: str | None = None
+            reset_ts = bucket.get("resetTime")
+            if reset_ts:
+                try:
+                    reset_dt = parse_iso8601_utc(reset_ts)
+                    reset_at = reset_dt.isoformat()
+                except (ValueError, TypeError):
+                    pass  # malformed resetTime — leave reset_at/reset_dt unset
+
+            pct_used = round((1.0 - float(rem_frac)) * 100, 4)
+            health = HealthCalculator.from_percentage(pct_used)
+            pace = PaceCalculator.estimate_longevity(pct_used, reset_dt)
+
+            # Stable pool_id per (pool, canonical-window) so the window
+            # cards of one pool never merge in the accumulator.
+            pool_id = f"antigravity:{pool}:{win}"
+
+            # The group name identifies the physical pool; the bucket's
+            # own description ("… it will fully refresh in 3 days …") is
+            # appended when the API sends one.
+            detail = f"{group_name} | {display_name}"
+            if description:
+                detail = f"{detail} — {description}"
+
+            card: dict[str, Any] = {
+                "service_name": POOL_LABELS.get(pool, pool.capitalize()),
+                "icon": "🛸",
+                "remaining": f"{pct_used:.1f}%",
+                "unit": "used",
+                "reset_at": reset_at,
+                "health": health,
+                "pace": pace,
+                "detail": detail,
+                "used_value": pct_used,
+                "limit_value": 100.0,
+                "pct_used": pct_used,
+                # Aggregate card: pool identity goes in variant so the
+                # accumulator window-guard (fires only when model_id != "")
+                # is skipped, letting weekly + session coexist in latest_usage.
+                # See accumulator.py:226-236 for the aggregate-card convention.
+                "model_id": "",
+                "variant": pool,
+                "unit_type": "percent",
+                "window_type": win,
+                "data_source": self.DATA_SOURCE_API,
+                "input_source": getattr(self, "_current_input_source", "unknown"),
+                "quota_pool_id": pool_id,
+                "bucket_id": bucket_id,
+                "updated_at": now.isoformat(),
+            }
+            if tier is not None:
+                card["tier"] = tier
+            cards.append(card)
+
+        return cards
