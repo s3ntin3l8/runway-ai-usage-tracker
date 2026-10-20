@@ -307,6 +307,13 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # Pin the cosign CLI explicitly. cosign-installer v4.x defaults to
+          # v3.0.6, which is affected by GHSA-fx35-mq7g-6g98 (verification
+          # bypass via a public key in a legacy bundle); v3.1.3 is the patched
+          # release and matches sidecar-build.yml, so the two signing paths
+          # use the same cosign.
+          cosign-release: 'v3.1.3'
 
       # See the build job's identically-named step for why this isn't
       # docker/login-action -- same rationale applies here.
