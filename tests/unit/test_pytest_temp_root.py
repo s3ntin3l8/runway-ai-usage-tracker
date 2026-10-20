@@ -2,19 +2,52 @@
 
 pytest keeps its per-run directories in ``%TEMP%\\pytest-of-<user>``. A
 directory left behind by another user's (or an elevated) process can carry an
-ACL that lets this user stat it but not list it, and pytest then fails every
-single test with ``PermissionError`` before one of them runs.
+ACL that leaves this user unable to use it, and pytest then fails every single
+test with ``PermissionError`` before one of them runs.
 """
 
 import os
-import tempfile
+import stat
 from pathlib import Path
 
-from tests.conftest import _ensure_writable_pytest_root, _pytest_root_dir
+import pytest
+
+from tests.conftest import (
+    _ensure_writable_pytest_root,
+    _pytest_root_dir,
+    _pytest_root_usable,
+)
 
 
-def test_a_missing_root_is_created(tmp_path, monkeypatch):
+@pytest.fixture
+def temproot_env(monkeypatch):
+    """Own PYTEST_DEBUG_TEMPROOT so the helper's write is undone at teardown.
+
+    ``monkeypatch.delenv`` only guards a value that already exists — what the
+    helper sets during the test would otherwise stay set for the rest of the
+    session.
+    """
     monkeypatch.delenv("PYTEST_DEBUG_TEMPROOT", raising=False)
+    yield
+    os.environ.pop("PYTEST_DEBUG_TEMPROOT", None)
+
+
+@pytest.fixture
+def deny_writes_to(monkeypatch):
+    """Make writes into the given directory fail, as a foreign ACL would."""
+    denied: list[Path] = []
+    real_mkdir = Path.mkdir
+
+    def mkdir(self, *args, **kwargs):
+        if self.parent in denied:
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    return denied
+
+
+def test_a_missing_root_is_created(tmp_path, temproot_env):
     root = _pytest_root_dir(tmp_path)
     assert not root.exists()
 
@@ -25,8 +58,7 @@ def test_a_missing_root_is_created(tmp_path, monkeypatch):
     assert "PYTEST_DEBUG_TEMPROOT" not in os.environ
 
 
-def test_a_readable_root_is_left_alone(tmp_path, monkeypatch):
-    monkeypatch.delenv("PYTEST_DEBUG_TEMPROOT", raising=False)
+def test_a_usable_root_is_left_alone(tmp_path, temproot_env):
     root = _pytest_root_dir(tmp_path)
     root.mkdir()
     (root / "pytest-0").mkdir()
@@ -36,18 +68,12 @@ def test_a_readable_root_is_left_alone(tmp_path, monkeypatch):
     assert "PYTEST_DEBUG_TEMPROOT" not in os.environ
 
 
-def test_an_unreadable_root_falls_back_to_a_fresh_one(tmp_path, monkeypatch):
-    monkeypatch.delenv("PYTEST_DEBUG_TEMPROOT", raising=False)
+def test_a_readable_but_unwritable_root_falls_back(tmp_path, temproot_env, deny_writes_to):
+    # A root left by an elevated process is typically listable but not
+    # writable: a read check would wave it through, a write would not.
     root = _pytest_root_dir(tmp_path)
     root.mkdir()
-    real_listdir = os.listdir
-
-    def deny_listing(path, *args, **kwargs):
-        if Path(path) == root:
-            raise PermissionError(13, "Access is denied", str(path))
-        return real_listdir(path, *args, **kwargs)
-
-    monkeypatch.setattr(os, "listdir", deny_listing)
+    deny_writes_to.append(root)
 
     _ensure_writable_pytest_root(temproot=tmp_path)
 
@@ -58,24 +84,80 @@ def test_an_unreadable_root_falls_back_to_a_fresh_one(tmp_path, monkeypatch):
     assert _pytest_root_dir(fallback).parent == fallback
 
 
-def test_the_fallback_is_not_shared_between_runs(tmp_path, monkeypatch):
-    # pytest allocates its per-run directories under the root it is given, so a
-    # shared fallback would have concurrent runs fighting over the same ones.
-    monkeypatch.delenv("PYTEST_DEBUG_TEMPROOT", raising=False)
+def test_a_symlinked_root_falls_back(tmp_path, temproot_env, monkeypatch):
+    # pytest refuses a symlinked root outright.
     root = _pytest_root_dir(tmp_path)
     root.mkdir()
-    real_listdir = os.listdir
+    real_stat = Path.stat
 
-    def deny_listing(path, *args, **kwargs):
-        if Path(path) == root:
-            raise PermissionError(13, "Access is denied", str(path))
-        return real_listdir(path, *args, **kwargs)
+    def stat_as_symlink(self, *args, **kwargs):
+        if self == root:
+            info = real_stat(self, *args, **kwargs)
+            return os.stat_result(
+                (
+                    stat.S_IFLNK | 0o777,
+                    info.st_ino,
+                    info.st_dev,
+                    1,
+                    info.st_uid,
+                    info.st_gid,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            )
+        return real_stat(self, *args, **kwargs)
 
-    monkeypatch.setattr(os, "listdir", deny_listing)
+    monkeypatch.setattr(Path, "stat", stat_as_symlink)
+
+    _ensure_writable_pytest_root(temproot=tmp_path)
+
+    assert Path(os.environ["PYTEST_DEBUG_TEMPROOT"]) != root
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no uid to compare")
+def test_a_root_owned_by_another_user_falls_back(tmp_path, temproot_env, monkeypatch):
+    root = _pytest_root_dir(tmp_path)
+    root.mkdir()
+    real_stat = Path.stat
+
+    def stat_as_foreign(self, *args, **kwargs):
+        if self == root:
+            info = real_stat(self, *args, **kwargs)
+            return os.stat_result(
+                (
+                    info.st_mode,
+                    info.st_ino,
+                    info.st_dev,
+                    1,
+                    info.st_uid + 1,
+                    info.st_gid,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            )
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat_as_foreign)
+
+    _ensure_writable_pytest_root(temproot=tmp_path)
+
+    assert Path(os.environ["PYTEST_DEBUG_TEMPROOT"]) != root
+
+
+def test_the_fallback_is_not_shared_between_runs(tmp_path, temproot_env, deny_writes_to):
+    # pytest allocates its per-run directories under the root it is given, so a
+    # shared fallback would have concurrent runs fighting over the same ones.
+    root = _pytest_root_dir(tmp_path)
+    root.mkdir()
+    deny_writes_to.append(root)
 
     _ensure_writable_pytest_root(temproot=tmp_path)
     first = os.environ["PYTEST_DEBUG_TEMPROOT"]
-    monkeypatch.delenv("PYTEST_DEBUG_TEMPROOT", raising=False)
+    os.environ.pop("PYTEST_DEBUG_TEMPROOT", None)
 
     _ensure_writable_pytest_root(temproot=tmp_path)
     second = os.environ["PYTEST_DEBUG_TEMPROOT"]
@@ -83,24 +165,24 @@ def test_the_fallback_is_not_shared_between_runs(tmp_path, monkeypatch):
     assert first != second
 
 
-def test_an_unusable_fallback_leaves_pytest_to_report_the_real_error(tmp_path, monkeypatch):
-    monkeypatch.delenv("PYTEST_DEBUG_TEMPROOT", raising=False)
+def test_an_unusable_fallback_leaves_pytest_to_report_the_real_error(
+    tmp_path, temproot_env, deny_writes_to, monkeypatch
+):
     root = _pytest_root_dir(tmp_path)
     root.mkdir()
-    real_listdir = os.listdir
-
-    def deny_listing(path, *args, **kwargs):
-        if Path(path) == root:
-            raise PermissionError(13, "Access is denied", str(path))
-        return real_listdir(path, *args, **kwargs)
-
-    def deny_fallback(*args, **kwargs):
-        raise PermissionError(13, "Access is denied", "mkdtemp")
-
-    monkeypatch.setattr(os, "listdir", deny_listing)
-    monkeypatch.setattr(tempfile, "mkdtemp", deny_fallback)
+    deny_writes_to.append(root)
+    # The fallback lives next to the root, so denying writes to the parent
+    # takes the fallback down too.
+    deny_writes_to.append(tmp_path)
 
     _ensure_writable_pytest_root(temproot=tmp_path)
 
     # No usable root anywhere — pytest's own error is the useful one.
     assert "PYTEST_DEBUG_TEMPROOT" not in os.environ
+
+
+def test_the_probe_covers_the_missing_root_case(tmp_path):
+    # A missing root is fine: pytest creates it itself.
+    root = _pytest_root_dir(tmp_path)
+    assert _pytest_root_usable(root) is True
+    assert root.is_dir()
