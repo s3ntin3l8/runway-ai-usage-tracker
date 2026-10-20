@@ -236,7 +236,7 @@ function chipBaseLabel(card: LimitCard, sameWinSiblings: LimitCard[]): string {
     const label =
       HASHED_VARIANT.test(card.variant) && card.service_name
         ? card.service_name
-        : modelLabel(card.variant);
+        : card.variant.charAt(0).toUpperCase() + card.variant.slice(1);
     return `${base} · ${label}`;
   }
   return base;

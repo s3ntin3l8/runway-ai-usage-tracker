@@ -289,14 +289,12 @@ describe('chipLabel', () => {
     expect(chipLabel(frontier, siblings)).toBe('Weekly · Frontier');
     expect(chipLabel(argon, siblings)).toBe('Weekly · Argon');
   });
-  it('reads a slug-style variant as words (unknown Antigravity pool)', () => {
-    const known = card({ service_name: 'Frontier', window_type: 'weekly', variant: 'frontier' });
-    const unknown = card({
-      service_name: 'Some Future Pool',
-      window_type: 'weekly',
-      variant: 'some-future-pool',
-    });
-    expect(chipLabel(unknown, [known, unknown])).toBe('Weekly · Some Future Pool');
+  it('keeps a plain variant label as it was', () => {
+    // A variant is a key, not a sentence: only the hashed (unmapped pool)
+    // case renders the card's own name.
+    const a = card({ service_name: 'OpenAI', window_type: 'weekly', variant: 'gpt-5' });
+    const b = card({ service_name: 'OpenAI', window_type: 'weekly', variant: 'gpt-4' });
+    expect(chipLabel(a, [a, b])).toBe('Weekly · Gpt-5');
   });
   it('labels a hashed pool variant with the card name', () => {
     // Unmapped pools carry a hash in their variant (it keeps two similarly

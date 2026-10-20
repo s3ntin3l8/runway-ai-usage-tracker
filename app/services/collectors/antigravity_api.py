@@ -56,7 +56,7 @@ POOL_LABELS: dict[str, str] = {
 # Argon pool) so a cosmetic rename does not re-key a live pool — anything
 # else is a new pool and gets its own key.
 _KNOWN_GROUP_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^gemini(?:\s+[\d.]+)?\s+argon$"), POOL_ARGON),
+    (re.compile(r"^gemini(?:\s+[\d.]+)?\s+argon(?:\s+pool)?$"), POOL_ARGON),
     (re.compile(r"^gemini\s+models?(?:\s+pool)?$"), POOL_GEMINI),
     (re.compile(r"^claude\s+(?:and|&)\s+gpt\s+models?(?:\s+pool)?$"), POOL_FRONTIER),
 )
@@ -144,7 +144,8 @@ def pool_label(pool: str, group_name: str = "") -> str:
     if pool in POOL_LABELS:
         return POOL_LABELS[pool]
     if group_name:
-        return group_name
+        # The API's own spelling, with its whitespace collapsed.
+        return re.sub(r"\s+", " ", group_name).strip()
     # Unmapped pools carry a trailing hash (their collision-proof id) — the
     # label stays the readable part of it.
     return re.sub(r"-[0-9a-f]{6}$", "", pool).replace("-", " ").title()
@@ -156,9 +157,9 @@ def pool_label(pool: str, group_name: str = "") -> str:
 # others — the pool is unknown for everyone anyway).
 _WARNED_UNKNOWN_POOLS: set[str] = set()
 
-# Tiers we have already warned about for a missing Gemini pool (same
+# Tiers we have already warned about for a missing pool (same
 # once-per-process rationale).
-_WARNED_MISSING_GEMINI_TIERS: set[str] = set()
+_WARNED_MISSING_POOLS: set[str] = set()
 
 
 class AntigravityApiMixin:
@@ -376,24 +377,7 @@ class AntigravityApiMixin:
 
             results: list[dict[str, Any]] = []
             pools = {pool_family(group_display_name(g)) for g in groups}
-            if tier is not None and POOL_GEMINI not in pools:
-                # The User-Agent gate is account-independent: a free account
-                # loses its Gemini card the same way a paid one does. Its
-                # absence means the backend served us a subset of the pools —
-                # almost always an outdated User-Agent version (see
-                # _USER_AGENT). The check keys on "not None" rather than on a
-                # list of paid tier ids, so a tier Google adds later is
-                # covered too; a free account is only worth a debug line.
-                if tier not in _WARNED_MISSING_GEMINI_TIERS:
-                    _WARNED_MISSING_GEMINI_TIERS.add(tier)
-                    message = (
-                        "Antigravity quota summary returned no Gemini pool for tier %r "
-                        "(pools: %s) — the User-Agent version may be too old"
-                    )
-                    if tier == "free":
-                        logger.debug(message, tier, sorted(pools))
-                    else:
-                        logger.warning(message, tier, sorted(pools))
+            self._warn_about_missing_pools(tier, pools)
 
             for group in groups:
                 results.extend(self._group_cards(group, tier, now))
@@ -404,6 +388,37 @@ class AntigravityApiMixin:
         except Exception:
             logger.warning("Antigravity API collection failed", exc_info=True)
             return []
+
+    def _warn_about_missing_pools(self, tier: str | None, pools: set[str]) -> None:
+        """Log the quota pools a tier should have but did not get.
+
+        The User-Agent version gates which pools the backend serves, and a
+        missing pool fails *silently* — the dashboard just shows less. Every
+        tier has a Gemini pool; the Argon pool comes with the paid plans
+        (Pro and up). The check keys on the tier being known rather than on a
+        list of paid tier ids, so a tier Google adds later is covered too; a
+        free account is only worth a debug line.
+        """
+        if tier is None:
+            return
+        expected = [POOL_GEMINI]
+        if tier != "free":
+            expected.append(POOL_ARGON)
+        missing = [pool for pool in expected if pool not in pools]
+        if not missing:
+            return
+        key = f"{tier}:{','.join(missing)}"
+        if key in _WARNED_MISSING_POOLS:
+            return
+        _WARNED_MISSING_POOLS.add(key)
+        message = (
+            "Antigravity quota summary is missing the %s pool(s) for tier %r (pools: %s) — "
+            "the User-Agent version may be too old (or Google retired the pool)"
+        )
+        if tier == "free":
+            logger.debug(message, " and ".join(missing), tier, sorted(pools))
+        else:
+            logger.warning(message, " and ".join(missing), tier, sorted(pools))
 
     def _group_cards(
         self,

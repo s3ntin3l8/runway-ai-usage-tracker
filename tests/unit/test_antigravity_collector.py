@@ -412,6 +412,7 @@ class TestAntigravityQuotaPools:
         assert pool_family("Claude & GPT models") == "frontier"
         assert pool_family("Claude and GPT models pool") == "frontier"
         assert pool_family("Gemini 4.5 Argon") == "argon"
+        assert pool_family("Gemini 4 Argon Pool") == "argon"
 
     def test_a_new_pool_named_like_a_known_one_does_not_join_it(self):
         """Loose substring matching would fold a new pool into a known one —
@@ -510,7 +511,7 @@ class TestAntigravityQuotaPools:
 
         from app.services.collectors import antigravity_api
 
-        antigravity_api._WARNED_MISSING_GEMINI_TIERS.clear()
+        antigravity_api._WARNED_MISSING_POOLS.clear()
         collector = AntigravityCollector(account_id="user@example.com")
 
         lca = MagicMock(spec=httpx.Response)
@@ -541,7 +542,55 @@ class TestAntigravityQuotaPools:
         ):
             await collector._collect_via_api(mock_http_client)
 
-        assert any("no Gemini pool" in r.getMessage() for r in caplog.records)
+        assert any("missing the gemini" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_paid_tier_without_the_argon_pool_warns(self, mock_http_client, caplog):
+        """A User-Agent of 1.2 serves the Gemini pool but not the Argon one —
+        the original symptom ("the Argon quota was never reported") would
+        otherwise stay silent."""
+        import logging
+
+        from app.services.collectors import antigravity_api
+
+        antigravity_api._WARNED_MISSING_POOLS.clear()
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {
+            "cloudaicompanionProject": "aicode-consumers",
+            "paidTier": {"id": "g1-pro-tier"},
+        }
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "buckets": [
+                        {"bucketId": "gemini-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+                {
+                    "displayName": "Claude and GPT models",
+                    "buckets": [
+                        {"bucketId": "3p-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+            caplog.at_level(logging.WARNING),
+        ):
+            await collector._collect_via_api(mock_http_client)
+
+        assert any("missing the argon" in r.getMessage() for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_free_tier_only_debugs_a_missing_gemini_pool(self, mock_http_client, caplog):
@@ -551,7 +600,7 @@ class TestAntigravityQuotaPools:
 
         from app.services.collectors import antigravity_api
 
-        antigravity_api._WARNED_MISSING_GEMINI_TIERS.clear()
+        antigravity_api._WARNED_MISSING_POOLS.clear()
         collector = AntigravityCollector(account_id="user@example.com")
 
         lca = MagicMock(spec=httpx.Response)
@@ -583,10 +632,10 @@ class TestAntigravityQuotaPools:
             result = await collector._collect_via_api(mock_http_client)
 
         assert result[0]["tier"] == "free"
-        assert any("no Gemini pool" in r.getMessage() for r in caplog.records)
+        assert any("missing the gemini" in r.getMessage() for r in caplog.records)
         # …and it is not a warning (it would spam on every free account).
         assert not any(
-            r.levelno == logging.WARNING and "no Gemini pool" in r.getMessage()
+            r.levelno == logging.WARNING and "missing the gemini" in r.getMessage()
             for r in caplog.records
         )
 

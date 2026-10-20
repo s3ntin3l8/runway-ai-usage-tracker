@@ -73,11 +73,12 @@ the warning, and the old row is retired with the next complete snapshot. A group
 display name falls back to its bucket ids, so two unnamed groups cannot land in the same pool
 either.
 
-The server logs `Antigravity quota summary returned no Gemini pool for tier '<tier>'` when a
-tier comes back without a Gemini pool (the fingerprint of a User-Agent that fell behind). The
-User-Agent gate is account-independent, so a free account is covered too — its line is only
-logged at debug level. The check keys on the tier being known at all, so a paid tier id Google
-adds later is covered as well.
+The server logs `Antigravity quota summary is missing the <pool> pool(s) for tier '<tier>'` when
+a tier comes back without a pool it should have — the fingerprint of a User-Agent that fell
+behind (a 1.2 User-Agent serves the Gemini pool but not the Argon one, which is exactly how
+"the Argon quota was never reported" looked). The User-Agent gate is account-independent, so a
+free account is covered too — its line is only logged at debug level. The check keys on the
+tier being known at all, so a paid tier id Google adds later is covered as well.
 
 **Credentials:** `~/.gemini/antigravity-cli/antigravity-oauth-token`
 ```json
