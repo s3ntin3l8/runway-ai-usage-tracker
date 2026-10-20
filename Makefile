@@ -74,7 +74,7 @@ sidecar-dmg: sidecar-app ## macOS only: package the drag-to-Applications DMG (br
 
 sidecar-installer: ## Compile the Windows NSIS installer from dist/RunwaySidecar.exe (needs makensis; works on Linux/macOS too)
 	@[ -f dist/RunwaySidecar.exe ] || { echo "dist/RunwaySidecar.exe missing — build it on Windows with pyinstaller sidecar_app/spec/windows.spec"; exit 1; }
-	$(PYTHON) -m scripts.build_windows_installer --from-package-version
+	$(PYTHON) -m scripts.build_windows_installer --from-package-version --out-dir dist
 
 test: ## Run test suite (matches CI)
 	$(PYTHON) scripts/dev_checks.py test

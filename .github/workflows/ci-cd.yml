@@ -101,7 +101,7 @@ jobs:
           # The same helper the Windows release leg and the Windows PR gate
           # use — one asset name, one computed output path.
           python3 -m scripts.build_windows_installer --label edge --strict
-          ls -l "dist/Runway-Sidecar-Windows-edge-setup.exe"
+          ls -l *-setup.exe
 
   build-docker:
     needs: [test-python, test-frontend, dependency-audit]

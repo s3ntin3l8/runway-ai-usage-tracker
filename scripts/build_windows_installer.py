@@ -16,6 +16,8 @@ This module is the single place that knows how to compile the installer:
 * the version values come from ``sidecar_app/spec/win_version.py``;
 * the output path is *computed* relative to the ``.nsi`` file (NSIS resolves
   ``OutFile`` relative to the script), never spelled out;
+* the installer is written where the release workflows stage their assets —
+  the working directory, next to the payloads they produce there;
 * the result is verified before success is reported — the installer must exist
   at the resolved path and must be a Windows executable.
 
@@ -49,8 +51,14 @@ ROOT = Path(__file__).resolve().parents[1]
 NSI = Path("installer") / "windows" / "runway-sidecar.nsi"
 #: The PyInstaller one-file build the installer ships, relative to the root.
 EXE = Path("dist") / "RunwaySidecar.exe"
-#: Where installers are written, relative to the repository root.
-DIST = Path("dist")
+
+#: Where the release workflows stage the assets they publish.
+#:
+#: The payloads and the macOS DMG are written into the working directory and
+#: the build moves every one of them into the artifact set afterwards, so the
+#: installer has to land in the same place — or that move finds nothing and
+#: the release publishes without it.
+STAGING_DIR = Path(".")
 
 #: Label used when there is no release tag (the rolling prerelease).
 DEFAULT_LABEL = asset_names.EDGE_LABEL
@@ -108,13 +116,11 @@ class InstallerPlan:
     quad: str
 
 
-def _plan(label: str, root: Path) -> InstallerPlan:
+def _plan(label: str, root: Path, out_dir: Path) -> InstallerPlan:
     resolved = resolve_label(label)
-    name = asset_names.installer_name(asset_names.WINDOWS, resolved)
-    if not name:  # pragma: no cover - Windows always ships an installer
-        raise RuntimeError(f"the {asset_names.WINDOWS} platform ships no installer")
+    name = installer_name(resolved)
     nsi = root / NSI
-    outfile = root / DIST / name
+    outfile = root / out_dir / name
     win_version = _win_version(root)
     version = win_version.read_version(root)
     return InstallerPlan(
@@ -130,14 +136,25 @@ def _plan(label: str, root: Path) -> InstallerPlan:
     )
 
 
-def plan(label: str = DEFAULT_LABEL, root: Path = ROOT) -> InstallerPlan:
-    """Resolve the compile of the installer for the release ``label``."""
-    return _plan(label, root)
+def plan(
+    label: str = DEFAULT_LABEL,
+    root: Path = ROOT,
+    out_dir: Path = STAGING_DIR,
+) -> InstallerPlan:
+    """Resolve the compile of the installer for the release ``label``.
+
+    The installer is written to ``out_dir`` (relative to ``root``) — by default
+    the directory the release workflows stage their assets in.
+    """
+    return _plan(label, root, out_dir)
 
 
-def plan_for_package_version(root: Path = ROOT) -> InstallerPlan:
+def plan_for_package_version(
+    root: Path = ROOT,
+    out_dir: Path = STAGING_DIR,
+) -> InstallerPlan:
     """Resolve the compile for the version in ``package.json`` (local builds)."""
-    return _plan(_win_version(root).read_version(root), root)
+    return _plan(_win_version(root).read_version(root), root, out_dir)
 
 
 def command(
@@ -227,11 +244,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="treat NSIS warnings as errors",
     )
+    parser.add_argument(
+        "--out-dir",
+        default=str(STAGING_DIR),
+        help="directory the installer is written to, relative to the root",
+    )
     parser.add_argument("--root", default=str(ROOT), help="repository root to build in")
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
-    target = plan_for_package_version(root) if args.from_package_version else plan(args.label, root)
+    out_dir = Path(args.out_dir)
+    target = (
+        plan_for_package_version(root, out_dir)
+        if args.from_package_version
+        else plan(args.label, root, out_dir)
+    )
     print(f"Installer label: {target.label}")
     print(f"Installer path:  {target.outfile}")
     output = compile(target, strict=args.strict)

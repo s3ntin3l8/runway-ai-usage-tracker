@@ -137,15 +137,41 @@ def test_the_helper_publishes_the_name_the_release_publishes(tmp_path):
             asset_names.WINDOWS, build_windows_installer.resolve_label(label)
         )
         assert target.installer == published
-        assert target.outfile == root / "dist" / published
+        assert target.outfile == root / published
 
 
 def test_the_output_path_is_computed_from_the_installer_script(tmp_path):
     root = _fake_root(tmp_path)
     target = build_windows_installer.plan("edge", root)
     # NSIS resolves OutFile against the .nsi directory — never the caller's cwd.
-    assert target.outfile_argument == f"..\\..\\dist\\{target.installer}"
+    assert target.outfile_argument == f"..\\..\\{target.installer}"
+    assert target.outfile == root / target.installer
+
+
+def test_the_installer_lands_where_the_release_stages_its_assets(tmp_path):
+    """The release moves every staged asset out of the working directory.
+
+    The payloads and the macOS DMG are written there and the build moves them
+    into the artifact set afterwards, so the installer has to land there too —
+    a staging step that looks in the wrong directory finds nothing and the
+    release ships without the installer.
+    """
+    root = _fake_root(tmp_path)
+    target = build_windows_installer.plan("edge", root)
+    assert target.outfile.parent == target.root
+
+    build = (WORKFLOWS / "sidecar-build.yml").read_text(encoding="utf-8")
+    staging = build[build.index("- name: Checksums") : build.index("- name: Upload build artifact")]
+    # Each asset is moved by bare name — out of the working directory.
+    assert 'mv "$f" out/' in staging
+
+
+def test_a_local_build_can_stage_the_installer_elsewhere(tmp_path):
+    """Local builds may keep the installer out of the working directory."""
+    root = _fake_root(tmp_path)
+    target = build_windows_installer.plan("edge", root, pathlib.Path("dist"))
     assert target.outfile == root / "dist" / target.installer
+    assert target.outfile_argument == f"..\\..\\dist\\{target.installer}"
 
 
 def test_the_pr_gate_and_the_release_share_one_output_layout(tmp_path):
