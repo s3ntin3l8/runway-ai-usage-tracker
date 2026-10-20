@@ -313,6 +313,12 @@ Workflows live in `.github/workflows/`.
     asset fails here, not at release time.
   - **`build-docker`** — on push only: GHCR image via the shared
     `docker-publish.yml` with `push-edge: true` → the `:edge` tag.
+    The checked-out commit is passed as the `BUILD_SHA` build arg and baked
+    in as `RUNWAY_BUILD_SHA`, so the running server reports the exact build
+    it is in Settings → About — every `:edge` image ships the same version
+    string, so the SHA is what tells two of them apart. The Dockerfile has
+    to declare `ARG BUILD_SHA` in its **final** stage (a builder-stage ARG
+    never reaches the running image); the build fails loudly if it doesn't.
   - Required checks on `main`: `test-python / lint`,
     `test-python / type-and-test`, `test-frontend / lint-and-test`, and
     CodeQL — enforced *strict* (branch must be up to date).
