@@ -67,8 +67,10 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   worktree of the repository, so install them once from the main checkout
   (`make install-hooks`); a hook installed from a worktree keeps pointing at
   that worktree's interpreter and stops working when the worktree is removed.
-  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.12+
-  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`); on Windows
+  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.13+
+  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, and the
+  `@napi-rs/wasm-runtime` that vite 8.1 pulls in needs `^22.13.0` on the 22
+  line); on Windows
   `winget install OpenJS.NodeJS.LTS` puts it in the per-user PATH, and a new
   shell (or session) is needed for that to take effect.
 

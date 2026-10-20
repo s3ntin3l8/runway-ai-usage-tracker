@@ -71,7 +71,7 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 
 ## Quick Start
 
-- **Python 3.12+** and **Node.js 22.12+** (for the UI build and the frontend test suite) are required.
+- **Python 3.12+** and **Node.js 22.13+** (for the UI build and the frontend test suite) are required.
 
 ```bash
 # 1. Clone and setup (installs venv, dependencies, and git hooks)
