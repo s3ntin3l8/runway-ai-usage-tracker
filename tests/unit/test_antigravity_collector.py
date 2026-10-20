@@ -843,6 +843,22 @@ class TestAntigravityUserAgent:
         assert "\n" not in ua and "\r" not in ua
         assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
 
+    def test_ignores_unicode_digits(self):
+        """httpx encodes headers as ASCII: a Unicode digit would raise there."""
+        ua = build_user_agent("1.٤.٩")
+        assert ua.isascii()
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_a_non_string(self):
+        """The version arrives over the ingest route — it is not a string until vetted."""
+        ua = build_user_agent(12345)
+        assert ua.isascii()
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
+    def test_ignores_a_version_with_too_many_parts(self):
+        ua = build_user_agent("1.4.3.2")
+        assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in ua
+
     @pytest.mark.asyncio
     async def test_the_collector_sends_the_reported_version(self, mock_http_client):
         """The version the sidecar reported travels with the token and reaches the header."""
@@ -904,5 +920,47 @@ class TestAntigravityUserAgent:
 
             headers = post.call_args_list[0].kwargs["headers"]
             assert f"antigravity/cli/{_UA_FLOOR_VERSION}" in headers["User-Agent"]
+        finally:
+            await token_cache.reset()
+
+    @pytest.mark.asyncio
+    async def test_a_stale_reported_version_is_cleared(self):
+        """A bundle without a version must not leave the previous one behind.
+
+        The collector instance is reused across cycles, so a stale, higher
+        version would otherwise claim capabilities the current bundle no
+        longer reports.
+        """
+        await token_cache.reset()
+        try:
+            import time
+
+            now_ms = int(time.time() * 1000)
+            # A bundle that reported a version, now expired.
+            await token_cache.store(
+                "antigravity",
+                {
+                    "oauth_token": "ya29.stale",
+                    "agy_version": "1.5.2",
+                    "expiry_date": str(now_ms - 1_000),
+                },
+                account_id="user@example.com",
+                source="dev-01",
+            )
+            collector = AntigravityCollector(account_id="user@example.com")
+            await collector._get_current_token()
+            assert collector._agy_version == "1.5.2"
+
+            # Another host pushed a bundle without a version. It is the newest
+            # usable entry, so the collector reads it and must drop the report
+            # it came with.
+            await token_cache.store(
+                "antigravity",
+                {"oauth_token": "ya29.fresh"},
+                account_id=None,
+                source="dev-02",
+            )
+            await collector._get_current_token()
+            assert collector._agy_version is None
         finally:
             await token_cache.reset()

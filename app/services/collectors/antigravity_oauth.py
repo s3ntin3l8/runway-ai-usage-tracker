@@ -103,10 +103,10 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
             )
             # The agy version the sidecar reported with this token (#687). It
             # rides along with the credential bundle, so every read path sees
-            # it — including the borrowed-entry fallback above.
-            reported_version = tokens.get("agy_version")
-            if reported_version:
-                self._agy_version = reported_version
+            # it — including the borrowed-entry fallback above. Assign it
+            # unconditionally: a bundle without a version must not leave a
+            # stale, higher one behind for this collector's whole lifetime.
+            self._agy_version = tokens.get("agy_version") or None
             cached_label = metadata.get("account_label")
             if cached_label and (not self.account_label or self.account_label == "Default"):
                 self.account_label = cached_label

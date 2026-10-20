@@ -33,6 +33,7 @@ a = Analysis(
     + [
         "app.core.console",
         "app.core.kimi_device",
+        "app.core.version",
         "pystray._win32",
         "PIL.Image",
         "PIL.PngImagePlugin",

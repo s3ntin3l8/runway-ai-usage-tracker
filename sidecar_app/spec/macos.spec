@@ -34,6 +34,7 @@ a = Analysis(
     + [
         "app.core.console",
         "app.core.kimi_device",
+        "app.core.version",
         "pystray._darwin",
         # runway-sidecar:// Apple Event handler (sidecar_app/url_events.py).
         "objc",

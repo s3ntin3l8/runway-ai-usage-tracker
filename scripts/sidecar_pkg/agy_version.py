@@ -13,26 +13,34 @@ changes when agy itself is updated.
 
 import logging
 import os
-import re
 import shutil
 import subprocess
 import threading
 import time
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from app.core.version import normalize_version
 
-# ``agy --version`` prints a bare version ("1.4.3"). Only a dotted number is
-# accepted: the value ends up in an HTTP header, so it must never carry
-# arbitrary text.
-_VERSION_RE = re.compile(r"^\s*v?(\d+(?:\.\d+){0,2})\s*$")
+logger = logging.getLogger(__name__)
 
 # The CLI only changes when agy itself is updated, so re-read it rarely.
 _CACHE_TTL_SECONDS = 3600
 _COMMAND_TIMEOUT_SECONDS = 10
 
-_cached_version: tuple[float, str | None] | None = None
-_cache_lock = threading.Lock()
+
+class _VersionCache:
+    """The cached version and the lock that guards it.
+
+    A plain module-level global would have to be rebound with ``global``,
+    which reads badly and trips CodeQL's unused-global check.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.value: tuple[float, str | None] | None = None
+
+
+_cache = _VersionCache()
 
 
 def _creationflags() -> int:
@@ -68,10 +76,7 @@ def resolve_agy() -> str | None:
 
 def parse_version(output: str | None) -> str | None:
     """The dotted version in *output*, or None when it is not one."""
-    if not output:
-        return None
-    match = _VERSION_RE.match(output)
-    return match.group(1) if match else None
+    return normalize_version(output)
 
 
 def _read_version(binary: str) -> str | None:
@@ -91,7 +96,7 @@ def _read_version(binary: str) -> str | None:
     if result.returncode != 0:
         logger.debug("agy --version exited with %s", result.returncode)
         return None
-    return parse_version(result.stdout)
+    return normalize_version(result.stdout)
 
 
 def installed_version(*, now: float | None = None, refresh: bool = False) -> str | None:
@@ -100,16 +105,15 @@ def installed_version(*, now: float | None = None, refresh: bool = False) -> str
     ``None`` means "the sidecar could not tell" — the server then falls back to
     its own floor version. It never means "agy is old".
     """
-    global _cached_version
     moment = time.time() if now is None else now
     # The sidecar collects from a background thread while the tray may trigger a
     # refresh: the lock keeps a cold cache from spawning the CLI twice.
-    with _cache_lock:
-        if not refresh and _cached_version is not None:
-            cached_at, version = _cached_version
+    with _cache.lock:
+        if not refresh and _cache.value is not None:
+            cached_at, version = _cache.value
             if moment - cached_at < _CACHE_TTL_SECONDS:
                 return version
         binary = resolve_agy()
         version = _read_version(binary) if binary else None
-        _cached_version = (moment, version)
+        _cache.value = (moment, version)
         return version

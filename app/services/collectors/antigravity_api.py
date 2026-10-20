@@ -8,6 +8,7 @@ import httpx
 
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import HealthCalculator, PaceCalculator, error_card, http_request_with_retry
+from app.core.version import normalize_version
 from app.services.identity_lookup import google_userinfo_email
 
 logger = logging.getLogger(__name__)
@@ -41,16 +42,10 @@ _UA_TEMPLATE = (
 
 def _version_tuple(version: str) -> tuple[int, ...]:
     """A comparable tuple for a dotted version ("1.4.3" → (1, 4, 3))."""
-    parts: list[int] = []
-    for chunk in version.split("."):
-        try:
-            parts.append(int(chunk))
-        except ValueError:
-            parts.append(0)
-    return tuple(parts)
+    return tuple(int(part) for part in version.split("."))
 
 
-def build_user_agent(reported_version: str | None = None) -> str:
+def build_user_agent(reported_version: object = None) -> str:
     """The agy User-Agent for the CLI version the sidecar reported.
 
     *reported_version* is the installed agy CLI's version as the sidecar saw
@@ -60,10 +55,9 @@ def build_user_agent(reported_version: str | None = None) -> str:
     serve every quota pool.
     """
     version = _UA_FLOOR_VERSION
-    candidate = (reported_version or "").strip().lstrip("v")
-    if candidate and all(part.isdigit() for part in candidate.split(".")):
-        if _version_tuple(candidate) > _version_tuple(version):
-            version = candidate
+    candidate = normalize_version(reported_version)
+    if candidate and _version_tuple(candidate) > _version_tuple(version):
+        version = candidate
     return _UA_TEMPLATE.format(version=version)
 
 # Physical quota pools. The API returns one group per pool and the group's
