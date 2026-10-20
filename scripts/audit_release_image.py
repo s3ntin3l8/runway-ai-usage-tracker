@@ -8,14 +8,20 @@ import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from time import sleep
 from typing import Any
 
-from scripts.image_policy import check_database, evaluate, load_exceptions
+from scripts.image_policy import check_database, database_checksum, evaluate, load_exceptions
 
 SYFT = "anchore/syft@sha256:3eb5379ba7b409c3f4069b686110527af0c47df993fa5c10d13e7cf34f49b1aa"
 GRYPE = "anchore/grype@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe"
 IMAGE_PATTERN = r"ghcr\.io/s3ntin3l8/runway@sha256:[0-9a-f]{64}"
 DEFAULT_EXCEPTIONS = Path(__file__).resolve().parents[1] / "docs/security/image-exceptions.json"
+# Upstream can publish a new release while the database is being downloaded.
+# Every attempt re-downloads the whole database, so the attempts are few and
+# the backoff short; three attempts stay far inside the workflow job timeout.
+DB_UPDATE_ATTEMPTS = 3
+DB_UPDATE_BACKOFF_SECONDS = 10
 
 
 def run(*args: str, stdout: Any = None) -> None:
@@ -43,16 +49,54 @@ def scanner(cache: Path, *args: str, stdout: Any = None) -> None:
     )
 
 
-def prepare_database(cache: Path) -> dict[str, Any]:
+def read_listing(path: Path) -> dict[str, Any] | None:
+    """Return the release upstream advertises, or None when no listing was recorded."""
+    if not path.exists():
+        return None
+    entries = json.loads(path.read_text())
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("Invalid upstream vulnerability database listing")
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("status") == "active":
+            return entry
+    raise ValueError("Invalid upstream vulnerability database listing")
+
+
+def prepare_database(cache: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Download the release upstream currently advertises and return it with its listing.
+
+    The advertised release is returned with the database so the audit can
+    verify that the scan used it. The listing is taken when the database is
+    prepared: upstream publishing again mid-audit does not invalidate a scan
+    whose database was the current release when the audit started.
+    """
     cache.mkdir(parents=True, exist_ok=True)
-    scanner(cache, "db", "update")
-    status = cache / "status.json"
-    with status.open("w") as fh:
-        scanner(cache, "db", "status", "-o", "json", stdout=fh)
-    return json.loads(status.read_text())
+    status_path = cache / "status.json"
+    listing_path = cache / "listing.json"
+    for attempt in range(DB_UPDATE_ATTEMPTS):
+        scanner(cache, "db", "update")
+        with status_path.open("w") as fh:
+            scanner(cache, "db", "status", "-o", "json", stdout=fh)
+        with listing_path.open("w") as fh:
+            scanner(cache, "db", "list", "-o", "json", stdout=fh)
+        status = json.loads(status_path.read_text())
+        listing = read_listing(listing_path)
+        if listing is None:
+            raise ValueError("Missing upstream vulnerability database listing")
+        if database_checksum(status) == listing.get("checksum"):
+            return status, listing
+        if attempt + 1 < DB_UPDATE_ATTEMPTS:
+            sleep(DB_UPDATE_BACKOFF_SECONDS)
+    raise ValueError("Vulnerability database is not the release upstream currently advertises")
 
 
-def scan_archive(archive: Path, arch: str, output: Path, cache: Path) -> dict[str, Any]:
+def scan_archive(
+    archive: Path,
+    arch: str,
+    output: Path,
+    cache: Path,
+    expected_checksum: str | None = None,
+) -> dict[str, Any]:
     sbom_path = output / f"{arch}.cyclonedx.json"
     with sbom_path.open("w") as fh:
         run(
@@ -101,7 +145,7 @@ def scan_archive(archive: Path, arch: str, output: Path, cache: Path) -> dict[st
         )
     report = json.loads(scan_path.read_text())
     # The scanner must have used the same database we retained and validated.
-    check_database(report["descriptor"]["db"]["status"], datetime.now(UTC))
+    check_database(report["descriptor"]["db"]["status"], datetime.now(UTC), expected_checksum)
     if (
         report["descriptor"]["db"]["status"]["from"]
         != json.loads((cache / "status.json").read_text())["from"]
@@ -156,10 +200,15 @@ def audit(
             cache = database or temp_path / "database"
             if database:
                 db = json.loads((cache / "status.json").read_text())
+                # An operator cache prepared before listing records existed is
+                # checked for age only.
+                listing = read_listing(cache / "listing.json")
             else:
-                db = prepare_database(cache)
-            check_database(db, datetime.now(UTC))
+                db, listing = prepare_database(cache)
+            expected_checksum = listing["checksum"] if listing else None
+            check_database(db, datetime.now(UTC), expected_checksum)
             evidence["database"] = db
+            evidence["database_listing"] = listing
             if archive:
                 if architecture not in {"amd64", "arm64"}:
                     raise ValueError("Local archives require --architecture amd64 or arm64")
@@ -184,7 +233,7 @@ def audit(
                 if target:
                     run("docker", "pull", "--platform", f"linux/{arch}", target)
                     run("docker", "image", "save", "--output", str(local_archive), target)
-                report = scan_archive(local_archive, arch, output, cache)
+                report = scan_archive(local_archive, arch, output, cache, expected_checksum)
                 policy = evaluate(report, arch, exceptions)
                 policy["image"] = target
                 (output / f"{arch}.policy.json").write_text(json.dumps(policy, indent=2))

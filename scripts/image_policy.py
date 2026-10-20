@@ -10,7 +10,16 @@ from urllib.parse import parse_qs, urlparse
 
 KNOWN_SEVERITIES = frozenset({"Critical", "High", "Medium", "Low", "Negligible", "Unknown"})
 BLOCKING_SEVERITIES = frozenset({"Critical", "High"})
-MAX_DB_AGE = timedelta(hours=24)
+# Upstream Anchore publishes the Grype vulnerability database about once a day.
+# A release is built roughly every 24 hours, but its archive only reaches the
+# CDN 50-60 minutes after the build stamp, and consecutive releases are built
+# 23h50m-24h12m apart. The newest database anybody can download is therefore
+# up to about 25 hours old by its build stamp, so a 24 hour ceiling is not
+# satisfiable for roughly an hour every day. The audit uses the release
+# upstream currently advertises (see check_database) and keeps this ceiling as
+# the tripwire for an upstream feed that stopped publishing; the newest
+# advertised release never reaches it while upstream keeps publishing daily.
+MAX_DB_AGE = timedelta(hours=30)
 MAX_EXCEPTION_AGE = timedelta(days=30)
 
 
@@ -21,10 +30,17 @@ def timestamp(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def check_database(database: dict[str, Any], now: datetime) -> None:
+def database_checksum(database: dict[str, Any]) -> str:
+    """Return the checksum of the source archive the database was built from."""
+    return parse_qs(urlparse(database.get("from", "")).query).get("checksum", [""])[0]
+
+
+def check_database(
+    database: dict[str, Any], now: datetime, expected_checksum: str | None = None
+) -> None:
     # Record the checksummed source archive and validated build timestamp.
     built = timestamp(database["built"])
-    checksum = parse_qs(urlparse(database.get("from", "")).query).get("checksum", [""])[0]
+    checksum = database_checksum(database)
     if (
         database.get("error")
         or database.get("valid") is not True
@@ -32,7 +48,12 @@ def check_database(database: dict[str, Any], now: datetime) -> None:
     ):
         raise ValueError("Vulnerability database is incomplete")
     if built > now + timedelta(minutes=5) or now - built > MAX_DB_AGE:
-        raise ValueError("Vulnerability database must be at most 24 hours old")
+        hours = int(MAX_DB_AGE.total_seconds() // 3600)
+        raise ValueError(f"Vulnerability database must be at most {hours} hours old")
+    # The scan must use the release upstream currently advertises, never a
+    # database upstream has already superseded.
+    if expected_checksum is not None and checksum != expected_checksum:
+        raise ValueError("Vulnerability database is not the release upstream currently advertises")
 
 
 def exception_key(entry: dict[str, Any]) -> tuple[str, ...]:
