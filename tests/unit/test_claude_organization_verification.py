@@ -648,3 +648,84 @@ async def test_pending_organization_metadata_is_robust_and_not_returned(claude_d
     import json
 
     assert "never-output-secret" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_verified_subscription_account_is_named_after_its_member(claude_db):
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": "person@example.com"})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(200, json=[{"uuid": ORG_A, "name": "Org"}])
+        return httpx.Response(200, json={"five_hour": {"utilization": 10}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic", "test-cookie")
+    assert result.account_label == "person@example.com"
+
+
+@pytest.mark.asyncio
+async def test_verified_console_account_is_named_after_its_organization(claude_db):
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic_console", "test-cookie")
+    # Console credit is shared by the whole organization, so the organization names it.
+    assert result.account_label == "API org"
+
+
+@pytest.mark.asyncio
+async def test_console_cards_carry_the_organization_name(claude_db):
+    """The Console account must not render as an unnamed "Default" account."""
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            result = await collector._primary_strategy(client)
+    assert collector.account_label == "API org"
+    assert result[0]["remaining"] == "$12.34"
+
+
+@pytest.mark.asyncio
+async def test_console_credit_never_borrows_the_signed_in_members_email():
+    """Two members of one organization share the account, so the label must not flap."""
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "uuid": ORG_A,
+                        "name": "API org",
+                        "capabilities": ["api"],
+                        "membership": {"user": {"email": "member@example.com"}},
+                    }
+                ],
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic_console", "test-cookie")
+    assert result.account_label == "API org"

@@ -103,6 +103,9 @@ class BaseCollector(ABC):
     # providers that never reveal an email. Compared with the value recorded for the source:
     # a change means the browser behind a cookie switched users. Reset like ``verified_identity``.
     verified_subject: str | None = None
+    # The human name of the account a verification proved. Reset like
+    # ``verified_identity``; the poller names a freshly discovered account after it.
+    verified_account_label: str | None = None
 
     @property
     def successful_empty_result(self) -> bool:

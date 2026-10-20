@@ -1090,6 +1090,7 @@ class CollectorManager:
         return {
             "expected_generation": generation,
             "organization_id": getattr(collector, "verified_organization_id", None),
+            "account_label": getattr(collector, "verified_account_label", None),
         }
 
     @staticmethod
@@ -1241,6 +1242,7 @@ class CollectorManager:
         organization_id: str | None,
         *,
         allow_selection: bool = False,
+        account_label: str | None = None,
     ) -> bool:
         from sqlmodel import select
 
@@ -1251,6 +1253,7 @@ class CollectorManager:
                 ProviderConfig.provider_id == provider_id, ProviderConfig.account_id == account_id
             )
         ).first()
+        created = row is None
         if row is None:
             row = ProviderConfig(provider_id=provider_id, account_id=account_id)
         if (not row.enabled or row.archived) and not allow_selection:
@@ -1263,6 +1266,10 @@ class CollectorManager:
             return False
         if organization_id:
             row.claude_organization_id = organization_id
+        if account_label and (created or not row.account_label):
+            # Name a discovered account after what it is. An operator's own label
+            # is never overwritten; an account that never got one still deserves it.
+            row.account_label = account_label
         session.add(row)
         return True
 
@@ -1282,6 +1289,7 @@ class CollectorManager:
         collector.verified_subject = None
         collector.verified_organization_id = None
         collector.verified_source_generation = None
+        collector.verified_account_label = None
 
     async def _cookie_switched_account(
         self,
@@ -1564,6 +1572,7 @@ class CollectorManager:
         expected_generation: str | None = None,
         organization_id: str | None = None,
         allow_selection: bool = False,
+        account_label: str | None = None,
     ) -> bool:
         """Commit a proved identity and move the same credential generation atomically."""
 
@@ -1576,6 +1585,7 @@ class CollectorManager:
                 cache_account_id=cache_account_id,
                 organization_id=organization_id,
                 allow_selection=allow_selection,
+                account_label=account_label,
             )
 
         if expected_generation is not None:
@@ -1608,6 +1618,7 @@ class CollectorManager:
         cache_account_id: str | None = None,
         organization_id: str | None = None,
         allow_selection: bool = False,
+        account_label: str | None = None,
     ) -> bool:
         from datetime import UTC, datetime
 
@@ -1662,7 +1673,12 @@ class CollectorManager:
                 )
                 return False
             if organization_id and not self._claude_binding_allowed(
-                session, provider_id, target, organization_id, allow_selection=allow_selection
+                session,
+                provider_id,
+                target,
+                organization_id,
+                allow_selection=allow_selection,
+                account_label=account_label,
             ):
                 return False
             existing_target = session.exec(

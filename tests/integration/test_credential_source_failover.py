@@ -901,3 +901,143 @@ async def test_collector_retries_next_enabled_source_on_missing_config_or_empty(
         )
     ]
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_promotion_names_a_discovered_claude_account(monkeypatch):
+    """An account the server discovered for itself gets a name and a billing model."""
+    from app.models.db import ProviderConfig
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    source_id = "sidecar:host-a:path:/home/user/console.json"
+    origin = "path:/home/user/console.json"
+    org_id = "11111111-1111-4111-8111-111111111111"
+    with Session(engine) as session:
+        session.add(
+            CredentialSource(
+                provider_id="anthropic_console",
+                account_id="default",
+                source_id=source_id,
+                source_type="file",
+                source_label="host-a",
+                credential_origin=origin,
+                sidecar_id="host-a",
+            )
+        )
+        session.commit()
+
+    cache = TokenCache()
+    await cache.store(
+        "anthropic_console",
+        {"session_cookie": "fake-console-cookie"},  # pragma: allowlist secret
+        account_id="default",
+        source_id=source_id,
+        source_metadata={
+            "source_type": "file",
+            "sidecar_id": "host-a",
+            "credential_origin": origin,
+            "identity_pending": True,
+        },
+    )
+    monkeypatch.setattr("app.core.db.engine", engine)
+    monkeypatch.setattr("sqlmodel.Session", Session)
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    manager = CollectorManager()
+
+    await manager._promote_source_identity(
+        "anthropic_console",
+        "default",
+        source_id,
+        org_id,
+        organization_id=org_id,
+        account_label="API org",
+    )
+
+    with Session(engine) as session:
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "anthropic_console",
+                ProviderConfig.account_id == org_id,
+            )
+        ).one()
+    assert row.account_label == "API org"
+    assert row.claude_organization_id == org_id
+    await cache.reset()
+
+
+@pytest.mark.asyncio
+async def test_promotion_never_overwrites_the_operators_own_account_details(monkeypatch):
+    """A label and a billing type the operator set are theirs to keep."""
+    from app.models.db import ProviderConfig
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    source_id = "sidecar:host-a:path:/home/user/console.json"
+    origin = "path:/home/user/console.json"
+    org_id = "11111111-1111-4111-8111-111111111111"
+    with Session(engine) as session:
+        session.add(
+            CredentialSource(
+                provider_id="anthropic_console",
+                account_id="default",
+                source_id=source_id,
+                source_type="file",
+                source_label="host-a",
+                credential_origin=origin,
+                sidecar_id="host-a",
+            )
+        )
+        session.add(
+            ProviderConfig(
+                provider_id="anthropic_console",
+                account_id=org_id,
+                account_label="Team wallet",
+            )
+        )
+        session.commit()
+
+    cache = TokenCache()
+    await cache.store(
+        "anthropic_console",
+        {"session_cookie": "fake-console-cookie"},  # pragma: allowlist secret
+        account_id="default",
+        source_id=source_id,
+        source_metadata={
+            "source_type": "file",
+            "sidecar_id": "host-a",
+            "credential_origin": origin,
+            "identity_pending": True,
+        },
+    )
+    monkeypatch.setattr("app.core.db.engine", engine)
+    monkeypatch.setattr("sqlmodel.Session", Session)
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    manager = CollectorManager()
+
+    await manager._promote_source_identity(
+        "anthropic_console",
+        "default",
+        source_id,
+        org_id,
+        organization_id=org_id,
+        account_label="API org",
+    )
+
+    with Session(engine) as session:
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "anthropic_console",
+                ProviderConfig.account_id == org_id,
+            )
+        ).one()
+    assert row.account_label == "Team wallet"
+    await cache.reset()

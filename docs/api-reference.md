@@ -360,6 +360,18 @@ cookie replacement and display-label changes. API responses expose only the
 credential's configured status. Clear it using `clear_session_cookie: true`.
 
 
+### Automatically discovered Claude accounts
+
+A Claude account the server discovers for itself — a sidecar console whose
+cookie proves which organization it belongs to — is named after what it
+actually is instead of the placeholder "Default". A subscription belongs to one
+member, so its email names it; a Console account *is* the organization, because
+every member shares its credit, so the organization's name names it.
+
+The name is written to `ProviderConfig.account_label` when the account row is
+created, and an `account_label` nobody set is filled in on a later poll. A
+label the operator chose is never overwritten.
+
 ### Native Claude OAuth token metadata
 
 Sidecar token cards may additionally carry `oauth_read_only: "1"` and

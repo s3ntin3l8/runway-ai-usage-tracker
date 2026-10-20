@@ -234,6 +234,10 @@ class AnthropicConsoleCollector(BaseCollector):
                 verified = await verify_collector_cookie(self, client, self.PROVIDER_ID, cookie)
                 if not verified.organization_id or verified.usage is None:
                     return []
+                if verified.account_label:
+                    # Console credit is shared by every member of the organization,
+                    # so the organization names the account, not the signed-in member.
+                    self.account_label = verified.account_label
                 return [parse_console_balance(verified.usage)]
             org_id = str(UUID(self.account_id or ""))
             data = await console_get(client, f"/api/organizations/{org_id}/prepaid/credits", cookie)

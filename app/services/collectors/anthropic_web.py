@@ -174,22 +174,9 @@ class AnthropicWebMixin:
         self, org_data: dict[str, Any], account_data: dict[str, Any] | None = None
     ) -> str:
         """Extract account identity string from Web API organization/account response."""
-        email = ""
-        if account_data:
-            email = account_data.get("email_address", "")
+        from app.services.claude_verification import claude_identity_string
 
-        if not email and org_data:
-            membership = org_data.get("membership", {})
-            user = membership.get("user", {})
-            email = user.get("email", "")
-
-        org_name = org_data.get("name", "") if org_data else ""
-
-        if email:
-            return email
-        if org_name:
-            return f"org: {org_name}"
-        return ""
+        return claude_identity_string(org_data, account_data)
 
     def _parse_web_api_response(  # noqa: PLR0915 — known-debt: provider response shape, splits poorly
         self,

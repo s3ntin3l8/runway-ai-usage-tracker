@@ -193,6 +193,14 @@ that store entirely empty can therefore leave stale source metadata until explic
 cleanup or later positive replacement evidence. Failed or expired credentials retain
 the existing rejection behavior; an empty scan does not prove logout.
 
+### Naming and pricing a discovered account
+
+An automatically discovered Claude account is named after what it is, not after
+the browser session that happened to find it. A subscription belongs to one
+member, so its email names it. A Console account is the organization itself —
+every member shares its credit — so the organization's name names it, and one
+organization keeps that name no matter which member signed in last.
+
 ### Manual fallback
 
 Choose **Claude → Console API credits** when adding a connection. Sign in at

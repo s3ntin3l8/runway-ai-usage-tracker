@@ -18,6 +18,57 @@ from app.services.collectors.anthropic_console import (
 )
 from app.services.token_cache import token_cache
 
+#: Marker that tells an organization-scoped identity apart from a member's email.
+#: ``base.py`` parses it back out of a card detail to rediscover a label.
+ORG_IDENTITY_PREFIX = "org: "
+
+
+def claude_member_email(
+    org_data: dict[str, Any] | None, account_data: dict[str, Any] | None = None
+) -> str:
+    """The email a Claude account or its organization membership reports, if any."""
+    email = str((account_data or {}).get("email_address") or "")
+    if not email and org_data:
+        membership = org_data.get("membership") or {}
+        user = membership.get("user") or {}
+        email = str(user.get("email") or "")
+    return email.strip()
+
+
+def claude_account_label(
+    provider_id: str,
+    org_data: dict[str, Any] | None,
+    account_data: dict[str, Any] | None = None,
+) -> str:
+    """Human label for a verified Claude account.
+
+    A claude.ai subscription belongs to a single member, so their email names
+    it. A Console account *is* the organization — every member shares its
+    credit — so the organization names it: a member's email would change with
+    whoever signed in last, and one account would wear a different name each
+    time.
+    """
+    if provider_id != "anthropic_console":
+        email = claude_member_email(org_data, account_data)
+        if email:
+            return email
+    return str((org_data or {}).get("name") or "")
+
+
+def claude_identity_string(
+    org_data: dict[str, Any] | None, account_data: dict[str, Any] | None = None
+) -> str:
+    """Identity string embedded in card details.
+
+    An organization-only identity keeps the ``org:`` marker so the card tagger
+    can tell it apart from a bare member name.
+    """
+    email = claude_member_email(org_data, account_data)
+    if email:
+        return email
+    org_name = str((org_data or {}).get("name") or "")
+    return f"{ORG_IDENTITY_PREFIX}{org_name}" if org_name else ""
+
 
 def subscription_headers(cookie: str) -> dict[str, str]:
     if not cookie.strip() or "\r" in cookie or "\n" in cookie:
@@ -90,6 +141,9 @@ class ClaudeVerification:
     account: dict[str, Any] | None = None
     org_data: dict[str, Any] | None = None
     usage: dict[str, Any] | None = None
+    # Human name of the verified account (a member's email, or the organization's
+    # name for Console credit).
+    account_label: str | None = None
 
     @property
     def selection_required(self) -> bool:
@@ -173,6 +227,8 @@ async def verify_claude_cookie(
         result.org_data, result.usage = usable[choice]
         if provider == "anthropic_console":
             result.account_id = choice
+        label = claude_account_label(provider, result.org_data, result.account)
+        result.account_label = label or None
     return result
 
 
@@ -244,6 +300,7 @@ async def verify_collector_cookie(
         )
         collector.verified_identity = result.account_id
         collector.verified_organization_id = result.organization_id
+        collector.verified_account_label = result.account_label
         # Every attempt starts at default; only the exact pinned source may establish it.
         if not collector.account_id or collector.account_id == "default":
             collector.account_id = result.account_id
