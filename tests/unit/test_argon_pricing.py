@@ -22,6 +22,7 @@ from app.services.model_normalization import (
     normalize_ag_model,
     normalize_gemini_model,
 )
+from app.services.period_rollups import rebuild_rollups_for_pairs
 from app.services.pricing_seed import seed_pricing_table
 
 TS = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
@@ -204,6 +205,53 @@ def test_repair_is_idempotent():
 
     assert second.retagged == 0
     assert second.cost_delta_usd == 0.0
+
+
+def test_an_interrupted_repair_is_completed_by_a_second_run():
+    """A crash after the event writes but before the rebuild leaves the stale
+    rollup grain behind — the next run has to find it from the drift."""
+    session = _session()
+    seed_pricing_table(session)
+    _event(session)
+    # Roll the raw id up first, the way ingest would have.
+    rebuild_rollups_for_pairs(session, {("antigravity", "alice@example.com")})
+    assert "gemini-4-argon-trial" in {
+        row.model_id for row in session.exec(select(UsagePeriodRollup))
+    }
+
+    # First run: events rewritten, rebuild skipped (the crash point).
+    first = apply_argon_retag(session, skip_rollups=True)
+    assert first.retagged == 1
+    assert "gemini-4-argon-trial" in {
+        row.model_id for row in session.exec(select(UsagePeriodRollup))
+    }
+
+    # Second run: nothing left to rewrite, but the stale grain is still there.
+    second = apply_argon_retag(session)
+    assert second.retagged == 0
+    assert second.rollups_rebuilt_pairs == 1
+    model_ids = {row.model_id for row in session.exec(select(UsagePeriodRollup))}
+    assert "gemini-4-argon-trial" not in model_ids
+    assert ARGON_MODEL_ID in model_ids
+
+
+def test_the_plan_reports_the_drift_on_a_partially_repaired_database():
+    session = _session()
+    seed_pricing_table(session)
+    _event(session)
+    rebuild_rollups_for_pairs(session, {("antigravity", "alice@example.com")})
+    apply_argon_retag(session, skip_rollups=True)
+
+    plan = plan_argon_retag(session)
+
+    assert plan.total == 0
+    assert plan.stale_rollup_pairs == 1
+    assert plan.rebuild_pairs == 1
+
+
+def test_a_raw_id_with_its_own_family_beats_an_argon_display():
+    """The display only decides when the raw id names no family of its own."""
+    assert normalize_ag_model("gemini-3.8-flash", "Gemini 4 Argon (High)", {}) == "flash-3.8"
 
 
 def test_lookalike_model_id_is_left_alone():

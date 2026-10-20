@@ -153,13 +153,15 @@ def _ag_argon_bucket(raw: str, display: str) -> str | None:
     """Return the canonical Argon id when raw/display name Gemini 4 Argon.
 
     The raw id is authoritative — a ``gemini-4-argon*`` slug is Argon whatever
-    the display says. A display-only match is scoped like the family fallback
-    in ``normalize_ag_model``: a non-Gemini raw id (``gpt-oss``) passes through
+    the display says. A display-only match is scoped exactly like the family
+    fallback in ``normalize_ag_model``: it applies only when the raw id names
+    no family of its own, so a raw id that does (``gemini-3.8-flash``) keeps
+    its own bucket and a non-Gemini raw id (``gpt-oss``) passes through
     verbatim even when the display happens to name Argon.
     """
     if is_argon_model_id(raw):
         return ARGON_MODEL_ID
-    if raw and not raw.lower().startswith("gemini"):
+    if raw and (_ag_detect_family(raw) is not None or not raw.lower().startswith("gemini")):
         return None
     lower_display = display.lower()
     if "gemini" in lower_display and _ARGON_DISPLAY_RE.search(display):

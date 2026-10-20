@@ -72,7 +72,14 @@ def run(providers: list[str] | None, dry_run: bool, skip_rollups: bool, skip_win
         if dry_run:
             plan = plan_argon_retag(session, providers, sample_size=10)
             if not plan.total:
-                print("  no Argon model ids to repair — nothing to do.")
+                if plan.stale_rollup_pairs:
+                    print(
+                        f"  no Argon model ids left to rewrite, but {plan.stale_rollup_pairs} "
+                        "pair(s) still hold a stale Argon rollup grain — re-run without "
+                        "--dry-run to rebuild them."
+                    )
+                else:
+                    print("  no Argon model ids to repair — nothing to do.")
                 return
             for model_id, count in sorted(plan.by_model.items()):
                 print(f"  {model_id} -> {ARGON_MODEL_ID}: {count} event(s)")
@@ -81,6 +88,11 @@ def run(providers: list[str] | None, dry_run: bool, skip_rollups: bool, skip_win
                 f"{plan.repriced} re-priced, {plan.unpriced} still unpriced; "
                 f"cost delta ${plan.cost_delta_usd:,.4f}."
             )
+            if plan.stale_rollup_pairs:
+                print(
+                    f"  would rebuild rollups for {plan.rebuild_pairs} pair(s); "
+                    f"{plan.stale_rollup_pairs} still hold a stale Argon grain."
+                )
             for sample in plan.samples:
                 print(
                     f"    {sample.event_ref} — {sample.old_model_id} "
