@@ -607,10 +607,24 @@ describe('UntaggedCredentialsDialog', () => {
       name: /enable it in provider settings/i,
     });
     expect(link.closest('p')?.textContent).toMatch(/the anthropic row is disabled/i);
-    // The message must be a single flex item next to the icon: as loose flex
-    // children the text runs, the provider id and the link each wrapped on
-    // their own and the sentence came out gappy and ragged.
-    expect(link.closest('p')?.querySelectorAll(':scope > *')).toHaveLength(2);
+    // The message must be one text block next to the icon: as loose flex
+    // children the text runs, the provider id and the link each became their
+    // own flex item and wrapped independently (gappy, ragged layout).
+    // Assert the shape rather than the child count, so a decorative sibling
+    // (another icon, a tooltip) cannot break this while a re-split sentence
+    // still does.
+    const paragraph = link.closest('p');
+    // The link lives inside the text block, never as a third flex child.
+    expect(link.parentElement?.tagName).toBe('SPAN');
+    expect(paragraph?.querySelector(':scope > a')).toBeNull();
+    // Nor is the provider id hoisted out of the text block.
+    expect(paragraph?.querySelector(':scope > span.font-mono')).toBeNull();
+    // Nor are the sentence's text runs direct children of the paragraph.
+    expect(
+      Array.from(paragraph?.childNodes ?? []).filter(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+      ),
+    ).toHaveLength(0);
   });
 
   it('pluralizes the all-rows-disabled message when a provider has several rows', async () => {
@@ -659,6 +673,31 @@ describe('UntaggedCredentialsDialog', () => {
       name: /enable one in provider settings/i,
     });
     expect(link.closest('p')?.textContent).toMatch(/all 2 anthropic rows are disabled/i);
+  });
+});
+
+describe('accountPickNotice', () => {
+  it('keeps the lead, tail and link label coupled to one count check', async () => {
+    const { accountPickNotice } = await import('./UntaggedCredentialsDialog');
+    // No row configured at all.
+    expect(accountPickNotice(0)).toEqual({
+      lead: 'No',
+      tail: 'row is configured.',
+      linkLabel: 'Add one in Provider Settings',
+    });
+    // A single row, and it is disabled.
+    expect(accountPickNotice(1)).toEqual({
+      lead: 'The',
+      tail: 'row is disabled.',
+      linkLabel: 'Enable it in Provider Settings',
+    });
+    // Several rows, all of them disabled.
+    expect(accountPickNotice(2)).toEqual({
+      lead: 'All 2',
+      tail: 'rows are disabled.',
+      linkLabel: 'Enable one in Provider Settings',
+    });
+    expect(accountPickNotice(7).lead).toBe('All 7');
   });
 });
 

@@ -261,6 +261,44 @@ export function isMachineBoundOrigin(origin: string): boolean {
   return origin.startsWith('cookie:') || origin.startsWith('keychain:');
 }
 
+/** The parts of the "no account to map to" notice, split around the provider id
+ *  so the id can be rendered in the mono font. */
+export interface AccountPickNotice {
+  /** Sentence fragment rendered before the provider id ("No", "The", "All 2"). */
+  lead: string;
+  /** Sentence fragment rendered after the provider id ("row is disabled."). */
+  tail: string;
+  /** Label of the link to Provider Settings. */
+  linkLabel: string;
+}
+
+/**
+ * The copy for a credential with no enabled account to map to. One helper
+ * keeps the grammar — lead noun, verb and link label — coupled to a single
+ * count check, so the three pieces cannot drift apart.
+ */
+export function accountPickNotice(accountCount: number): AccountPickNotice {
+  if (accountCount === 0) {
+    return {
+      lead: 'No',
+      tail: 'row is configured.',
+      linkLabel: 'Add one in Provider Settings',
+    };
+  }
+  if (accountCount === 1) {
+    return {
+      lead: 'The',
+      tail: 'row is disabled.',
+      linkLabel: 'Enable it in Provider Settings',
+    };
+  }
+  return {
+    lead: `All ${accountCount}`,
+    tail: 'rows are disabled.',
+    linkLabel: 'Enable one in Provider Settings',
+  };
+}
+
 export function stageToBody(
   entry: UntaggedCredential,
   state: DialogState,
@@ -333,6 +371,8 @@ function UntaggedRow({
   // ``accounts`` view in /fleet/config only ships enabled rows).
   // PR #290 round-2 review (Hermes body suggestion #4).
   const enabledAccounts = accounts.filter((a) => a.enabled !== false);
+  // The copy shown when there is no enabled account to map to.
+  const notice = accountPickNotice(accounts.length);
 
   return (
     <Card
@@ -401,27 +441,13 @@ function UntaggedRow({
               flex item and wrap independently (ragged, gappy layout). One span
               keeps it a single flowing sentence next to the icon. */}
           <span className="min-w-0">
-            {accounts.length === 0 ? (
-              <>
-                No <span className="font-mono">{entry.provider_id}</span> row is configured.{' '}
-                <Link to="/settings/providers" className="text-accent underline underline-offset-2">
-                  Add one in Provider Settings
-                </Link>
-                .
-              </>
-            ) : (
-              <>
-                {accounts.length === 1 ? 'The' : `All ${accounts.length}`}{' '}
-                <span className="font-mono">{entry.provider_id}</span>{' '}
-                {accounts.length === 1 ? 'row is' : 'rows are'} disabled.{' '}
-                <Link to="/settings/providers" className="text-accent underline underline-offset-2">
-                  {accounts.length === 1
-                    ? 'Enable it in Provider Settings'
-                    : 'Enable one in Provider Settings'}
-                </Link>
-                .
-              </>
-            )}
+            {notice.lead}{' '}
+            <span className="font-mono">{entry.provider_id}</span>{' '}
+            {notice.tail}{' '}
+            <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+              {notice.linkLabel}
+            </Link>
+            .
           </span>
         </p>
       ) : (
