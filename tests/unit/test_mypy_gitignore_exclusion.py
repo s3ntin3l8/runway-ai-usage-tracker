@@ -2,30 +2,21 @@
 
 Ruff honours .gitignore by default; mypy did not. A contributor who ran
 ``make sidecar-app`` locally therefore had mypy walk the PyInstaller bundle in
-``dist/``, which holds two copies of ``assets/generate_icons.py`` -- one per
-frameworks tree -- and abort the whole run with "Duplicate module named". CI
-never builds that bundle, so only local checkouts ever hit it.
+``dist/``, which holds two copies of ``sidecar_app/assets/generate_icons.py``
+-- one under ``Contents/Resources`` and one under ``Contents/Frameworks`` -- and
+abort the whole run with "Duplicate module named". CI never builds that
+bundle, so only local checkouts ever hit it.
 """
 
 from __future__ import annotations
 
+import io
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def _mypy_config() -> dict:
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    return pyproject["tool"]["mypy"]
-
-
-def _gitignore_lines() -> set[str]:
-    raw = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    return {line.strip() for line in raw.splitlines()}
 
 
 def _git(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -39,9 +30,28 @@ def _git(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[st
     )
 
 
-def test_mypy_honours_gitignore():
-    """The mypy config must opt into .gitignore, like ruff does by default."""
-    assert _mypy_config().get("exclude_gitignore") is True
+def _gitignore_lines() -> set[str]:
+    raw = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    return {line.strip() for line in raw.splitlines()}
+
+
+def test_mypy_honours_gitignore(monkeypatch):
+    """The installed mypy must be told to honour .gitignore.
+
+    Asserted through mypy's own parser rather than by reading the TOML:
+    mypy reports an unrecognised config key as a line of output and still
+    exits 0, so a renamed option would leave the TOML intact, ``make lint``
+    green, and the ``dist/`` abort back.
+    """
+    pytest.importorskip("mypy")
+    from mypy.main import process_options
+
+    monkeypatch.chdir(ROOT)
+    stdout, stderr = io.StringIO(), io.StringIO()
+    _, options = process_options([str(ROOT)], stdout=stdout, stderr=stderr)
+
+    assert options.exclude_gitignore is True
+    assert "Unrecognized option" not in stdout.getvalue() + stderr.getvalue()
 
 
 @pytest.mark.parametrize("root", ["build/", "dist/"])
@@ -52,7 +62,7 @@ def test_pyinstaller_output_roots_stay_gitignored(root: str):
 
 def test_no_tracked_python_source_is_gitignored():
     """Honouring .gitignore must never hide a tracked source file from mypy."""
-    tracked = _git("ls-files", "--", "*.py").stdout.split()
+    tracked = _git("ls-files", "--", "*.py", "*.pyi").stdout.split()
     assert tracked, "expected tracked Python sources in the checkout"
 
     # --no-index forces the pattern check: without it git skips tracked files
