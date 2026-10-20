@@ -25,6 +25,7 @@ class MiniMaxCollector(BaseCollector):
 
     Supports:
     - API token: https://api.minimax.io/v1/coding_plan/remains
+    - MiniMax Code app OAuth token: https://platform.minimax.io/v1/api/openplatform/coding_plan/remains
 
     Config:
     - MINIMAX_API_KEY: API token (env var or DB)
@@ -43,13 +44,25 @@ class MiniMaxCollector(BaseCollector):
         super().__init__(account_id=account_id, account_label=account_label)
         self.api_key: str | None = None
         self.host: str = ""
+        # Which kind of credential the last _get_current_creds() returned:
+        # "api_key" (platform API secret) or "oauth" (the MiniMax Code app's
+        # login). They are not interchangeable — each host accepts only its own.
+        self._credential_kind: str = "api_key"
 
     async def _get_current_creds(self) -> str | None:
-        """Async credential retrieval with metadata support."""
+        """Async credential retrieval with metadata support.
+
+        Two credential kinds reach the same provider: the platform API secret
+        (``sk-...``) and the MiniMax Code app's OAuth access token
+        (``mmoat_...``). The API host answers ``status_code 1004 login fail``
+        for an OAuth token and the open-platform host answers it for an API
+        key, so the kind is remembered here and decides the request.
+        """
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         db_key = credential_provider.get_provider_api_key("minimax", account_id=account_id)
         if db_key:
             self._current_input_source = "config"
+            self._credential_kind = "api_key"
             return db_key
 
         from app.services.token_cache import token_cache
@@ -61,12 +74,18 @@ class MiniMaxCollector(BaseCollector):
             self._current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
-            cached_key = tokens.get("api_key") or tokens.get("oauth_token")
-            if cached_key:
-                return cached_key
+            api_key = tokens.get("api_key")
+            oauth_token = tokens.get("oauth_token")
+            if api_key:
+                self._credential_kind = "api_key"
+                return api_key
+            if oauth_token:
+                self._credential_kind = "oauth"
+                return oauth_token
         key = (settings.MINIMAX_API_KEY or None) if account_id == "default" else None
         if key:
             self._current_input_source = "server"
+            self._credential_kind = "api_key"
         return key
 
     async def is_configured(self) -> bool:
@@ -88,7 +107,23 @@ class MiniMaxCollector(BaseCollector):
         if not self.api_key:
             return []
 
+        if self._credential_kind == "oauth":
+            return await self._fetch_via_openplatform(client)
         return await self._fetch_via_api(client)
+
+    def _open_platform_base_url(self) -> str:
+        """Base URL of the open-platform host that serves the quota endpoints.
+
+        The MiniMax Code app's own quota client uses ``platform.minimax.io``
+        for the global region and ``www.minimaxi.com`` for China — a split the
+        bare-domain ``MINIMAX_HOST`` override can't express on its own, so the
+        China host is listed explicitly and everything else follows the
+        ``platform.<host>`` pattern.
+        """
+        host = self.host.lower()
+        if host.endswith("minimaxi.com"):
+            return "https://www.minimaxi.com"
+        return f"https://platform.{host}"
 
     async def _fetch_via_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Fetch usage via the API endpoint.
@@ -119,6 +154,41 @@ class MiniMaxCollector(BaseCollector):
 
         except Exception as e:
             logger.error(f"Failed to collect MiniMax usage: {e}")
+
+        return []
+
+    async def _fetch_via_openplatform(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        """Fetch usage with the MiniMax Code app's OAuth token.
+
+        The app's own quota client calls
+        ``/v1/api/openplatform/coding_plan/remains`` on the open-platform host
+        with the OAuth access token as a bearer. The payload is the same
+        ``model_remains`` shape the API-key path returns, so the parser is
+        shared — only the host and path differ.
+        """
+        base_url = self._open_platform_base_url()
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json",
+            }
+
+            resp = await client.get(
+                f"{base_url}/v1/api/openplatform/coding_plan/remains",
+                headers=headers,
+                timeout=10,
+            )
+
+            if resp.status_code == 200:
+                return self._parse_api_response(resp.json())
+
+            logger.error(
+                f"MiniMax open-platform API error (HTTP {resp.status_code}): {resp.text[:200]}"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to collect MiniMax usage via open platform: {e}")
 
         return []
 
@@ -291,7 +361,7 @@ class MiniMaxCollector(BaseCollector):
             "reset": human_delta(reset_at),
             "health": health,
             "pace": pace,
-            "detail": f"{allowance} [API]",
+            "detail": f"{allowance} [{'App' if self._credential_kind == 'oauth' else 'API'}]",
             "used_value": used_value,
             "limit_value": limit_value,
             "is_unlimited": False,

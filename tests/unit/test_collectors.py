@@ -4521,6 +4521,164 @@ class TestMiniMaxCollector:
         assert result[0]["remaining"] == "No active plan"
 
 
+class TestMiniMaxOAuthCollector:
+    """The MiniMax Code app's OAuth token, and the open-platform endpoint it needs.
+
+    The app's own quota client calls
+    ``/v1/api/openplatform/coding_plan/remains`` on the open-platform host with
+    the OAuth access token as a bearer. The API key and the OAuth token are
+    not interchangeable: the API host answers ``status_code 1004 login fail``
+    for an OAuth token, and the open-platform path answers it for an API key.
+    """
+
+    PAYLOAD = {
+        "model_remains": [
+            {
+                "start_time": 1792508400000,
+                "end_time": 1792526400000,
+                "remains_time": 11586321,
+                "current_interval_total_count": 0,
+                "current_interval_usage_count": 0,
+                "model_name": "general",
+                "current_weekly_total_count": 0,
+                "current_weekly_usage_count": 0,
+                "weekly_start_time": 1792368000000,
+                "weekly_end_time": 1792972800000,
+                "current_interval_status": 1,
+                "current_interval_remaining_percent": 100,
+                "current_weekly_status": 1,
+                "current_weekly_remaining_percent": 99,
+            },
+            {
+                "model_name": "video",
+                "current_interval_status": 3,
+                "current_weekly_status": 3,
+                "current_interval_remaining_percent": 100,
+                "current_weekly_remaining_percent": 100,
+            },
+        ],
+        "base_resp": {"status_code": 0, "status_msg": "success"},
+    }
+
+    @pytest.mark.asyncio
+    async def test_oauth_token_uses_the_openplatform_endpoint(self, mock_http_client):
+        """The OAuth token goes to platform.<host>/v1/api/openplatform/..."""
+        with (
+            patch("app.services.collectors.minimax.settings") as mock_settings,
+            patch(
+                "app.services.collectors.minimax.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.token_cache.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"oauth_token": "mmoat_test_token"},  # pragma: allowlist secret
+                    {"source": "sidecar"},
+                ),
+            ),
+        ):
+            mock_settings.MINIMAX_API_KEY = ""
+            mock_settings.MINIMAX_HOST = ""
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = self.PAYLOAD
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        url = mock_http_client.get.call_args[0][0]
+        assert url == "https://platform.minimax.io/v1/api/openplatform/coding_plan/remains"
+        headers = mock_http_client.get.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer mmoat_test_token"
+        # The payload is the same shape the API-key path returns, so the same
+        # parser builds the same two cards (session + weekly; "video" excluded).
+        by_window = {c["window_type"]: c for c in result}
+        assert set(by_window) == {"session", "weekly"}
+        assert by_window["session"]["detail"].endswith("[App]")
+
+    @pytest.mark.asyncio
+    async def test_api_key_still_uses_the_api_endpoint(self, mock_http_client):
+        """An API key must keep using the api.<host> path it always used."""
+        with (
+            patch("app.services.collectors.minimax.settings") as mock_settings,
+            patch(
+                "app.services.collectors.minimax.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.token_cache.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {"api_key": "sk_test_key"},  # pragma: allowlist secret
+                    {"source": "sidecar"},
+                ),
+            ),
+        ):
+            mock_settings.MINIMAX_API_KEY = ""
+            mock_settings.MINIMAX_HOST = ""
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = self.PAYLOAD
+            mock_http_client.get.return_value = response
+
+            result = await collector.collect(mock_http_client)
+
+        url = mock_http_client.get.call_args[0][0]
+        assert url == "https://api.minimax.io/v1/coding_plan/remains"
+        assert result[0]["detail"].endswith("[API]")
+
+    def test_open_platform_host_is_region_aware(self):
+        """The open-platform host differs by region: the global region serves it
+        from platform.<host>, China from www.minimaxi.com."""
+        collector = MiniMaxCollector()
+        collector.host = "minimax.io"
+        assert collector._open_platform_base_url() == "https://platform.minimax.io"
+        collector.host = "minimaxi.com"
+        assert collector._open_platform_base_url() == "https://www.minimaxi.com"
+
+    @pytest.mark.asyncio
+    async def test_api_key_wins_when_both_are_present(self, mock_http_client):
+        """A bundle carrying both keeps using the API key — the app's OAuth token
+        is a fallback, not a replacement for an existing API key."""
+        with (
+            patch("app.services.collectors.minimax.settings") as mock_settings,
+            patch(
+                "app.services.collectors.minimax.credential_provider.get_provider_api_key",
+                return_value=None,
+            ),
+            patch(
+                "app.services.token_cache.token_cache.get_with_metadata",
+                new_callable=AsyncMock,
+                return_value=(
+                    {
+                        "api_key": "sk_test_key",  # pragma: allowlist secret
+                        "oauth_token": "mmoat_test_token",  # pragma: allowlist secret
+                    },
+                    {"source": "sidecar"},
+                ),
+            ),
+        ):
+            mock_settings.MINIMAX_API_KEY = ""
+            mock_settings.MINIMAX_HOST = ""
+            collector = MiniMaxCollector()
+
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.json.return_value = self.PAYLOAD
+            mock_http_client.get.return_value = response
+
+            await collector.collect(mock_http_client)
+
+        assert (
+            mock_http_client.get.call_args[0][0] == "https://api.minimax.io/v1/coding_plan/remains"
+        )
+
+
 class TestHttpTimeouts:
     """I2: All collector HTTP calls must pass an explicit timeout."""
 

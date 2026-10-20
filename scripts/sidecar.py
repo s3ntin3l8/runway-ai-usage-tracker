@@ -374,6 +374,19 @@ __REGISTRY__: dict[str, Any] = {
                         "minimax-coding-plan.key": "api_key",
                     },
                 },
+                {
+                    "type": "file",
+                    "paths": [
+                        "~/.minimax/auth/*/*/mcode-public/auth.json",
+                    ],
+                    "format": "json",
+                    "mapping": {
+                        "records.*.accessToken": "oauth_token",
+                        "records.*.refreshToken": "refresh_token",
+                        "records.*.clientId": "client_id",
+                        "records.*.expiresAtMs": "expiry_date",
+                    },
+                },
             ],
         },
         "github": {

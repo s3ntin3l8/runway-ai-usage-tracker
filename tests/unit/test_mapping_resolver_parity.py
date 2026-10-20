@@ -24,6 +24,22 @@ APPS = {
     "foo.ghe.com:Iv1.b507a08c87ecfe98": {"oauth_token": "tok-ghe"},
 }
 
+# The MiniMax Code desktop app's auth store: one record per (buildEnv, region),
+# keyed by "<service> <account-hash>". The registry rule reaches the token with
+# a `records.*` wildcard, which has to span the dots AND the space in that key.
+MINIMAX_CODE_AUTH = {
+    "schemaVersion": 1,
+    "records": {
+        "com.minimax.mcode.oauth.prod.en whmxAo4Y9iIPa1gPWcGzY9bdtkLxQaMy3kWpwXHjJjA": {
+            "schemaVersion": 1,
+            "accessToken": "mmoat_x",
+            "refreshToken": "mmort_x",
+            "clientId": "mcode-public",
+            "expiresAtMs": 1792518384753,
+        }
+    },
+}
+
 CASES = [
     # id, data, path, expected
     ("plain nested", {"a": {"b": 1}}, "a.b", 1),
@@ -88,6 +104,25 @@ CASES = [
     ("non-dict data", "text", "a.b", None),
     ("empty dict", {}, "a", None),
     ("scalar in the middle of a path", {"a": 5}, "a.b", None),
+    # MiniMax Code's auth store — the record key carries dots AND a space.
+    (
+        "minimax code: wildcard record key spans dots and a space",
+        MINIMAX_CODE_AUTH,
+        "records.*.accessToken",
+        "mmoat_x",
+    ),
+    (
+        "minimax code: wildcard record key reaches the refresh token",
+        MINIMAX_CODE_AUTH,
+        "records.*.refreshToken",
+        "mmort_x",
+    ),
+    (
+        "minimax code: wildcard record key reaches the expiry",
+        MINIMAX_CODE_AUTH,
+        "records.*.expiresAtMs",
+        1792518384753,
+    ),
 ]
 
 

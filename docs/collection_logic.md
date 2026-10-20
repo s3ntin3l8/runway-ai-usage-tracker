@@ -70,6 +70,8 @@ The "Runs in" column shows where the strategy executes. The server-side collecto
 | OpenCode | local (SQLite events) | enrichment | sidecar |
 | **Antigravity** | api (Code Assist cloud) | quota | server |
 | Antigravity | local (LSP probe — legacy enrichment) | enrichment | sidecar |
+| **MiniMax** | api (coding plan) | quota | server |
+| MiniMax | api (open platform — MiniMax Code app login) | quota | server |
 
 ## Collection Pipeline
 
