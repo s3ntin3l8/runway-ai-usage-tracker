@@ -775,8 +775,12 @@ async def test_subscription_card_keeps_the_name_the_operator_chose():
             {"five_hour": {"utilization": 10}},
             org_data={"membership": {"user": {"email": "member@example.com"}}},
         )
+    # The collector keeps the name the operator chose.
     assert collector.account_label == "Team wallet"
-    assert all(card.get("account_label") == "Team wallet" for card in result)
+    # The card still reports the identity that keys it: ``anthropic`` is not a
+    # login-keyed provider, so an email-shaped card label is what files the
+    # card under its account.
+    assert all(card.get("account_label") == "member@example.com" for card in result)
 
 
 @pytest.mark.asyncio
@@ -832,3 +836,20 @@ def test_a_name_never_carries_the_card_details_marker():
     assert claude_account_label("anthropic_console", org_data) == "Acme"
     # The card detail keeps the marker, so the tagger can tell it apart.
     assert claude_identity_string(org_data) == "org: Acme"
+
+
+def test_the_verified_name_and_billing_model_reach_the_promotion():
+    """What the collector proved must be what the promotion writes."""
+
+    class _Proved:
+        verified_source_generation = "gen-1"
+        verified_organization_id = "org-1"
+        verified_account_label = "API org"
+        verified_billing_type = "pay_as_you_go"
+
+    from app.services.collector_manager import CollectorManager
+
+    kwargs = CollectorManager._source_proof_kwargs(_Proved())
+    assert kwargs["organization_id"] == "org-1"
+    assert kwargs["account_label"] == "API org"
+    assert kwargs["billing_type"] == "pay_as_you_go"

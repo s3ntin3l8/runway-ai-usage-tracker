@@ -22,6 +22,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.core.date_utils import normalize_iso_date
+from app.services.account_identity import is_placeholder_label
 
 logger = logging.getLogger(__name__)
 
@@ -508,7 +509,7 @@ class BaseCollector(ABC):
 
         # Phase 0C: Auto-discover account label from detail if not already set by user
         # Avoid running discovery if a custom label is already present or cached.
-        if not self._account_label_cache or self._account_label_cache.lower() == "default":
+        if is_placeholder_label(self._account_label_cache):
             discovered_label = None
             for card in results:
                 detail = card.get("detail", "")
@@ -569,11 +570,7 @@ class BaseCollector(ABC):
             # Tag account identifiers
             if "account_id" not in card_data or not card_data.get("account_id"):
                 card_data["account_id"] = self.account_id or "default"
-            if (
-                "account_label" not in card_data
-                or not card_data.get("account_label")
-                or card_data.get("account_label").lower() == "default"
-            ):
+            if is_placeholder_label(card_data.get("account_label")):
                 card_data["account_label"] = (
                     self.account_label or self._account_label_cache or "Default"
                 )

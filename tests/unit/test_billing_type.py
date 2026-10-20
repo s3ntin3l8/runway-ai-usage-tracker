@@ -26,6 +26,17 @@ def test_a_currency_balance_is_pay_as_you_go():
     assert detect_billing_type([balance]) == PAY_AS_YOU_GO
 
 
+def test_a_currency_card_with_a_limit_is_still_spend():
+    """Money against a cap is money, not a plan."""
+    card = {
+        "unit_type": "currency",
+        "currency": "USD",
+        "used_value": 5.0,
+        "limit_value": 20.0,
+    }
+    assert card_billing_type(card) == PAY_AS_YOU_GO
+
+
 def test_a_token_count_says_nothing_about_the_billing_model():
     tokens = {"unit_type": "token", "used_value": 1000}
     assert card_billing_type(tokens) == UNKNOWN

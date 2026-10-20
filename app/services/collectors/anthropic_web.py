@@ -20,6 +20,7 @@ import httpx
 
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
+from app.services.account_identity import is_placeholder_label
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
@@ -218,7 +219,7 @@ class AnthropicWebMixin:
                 )
                 _pending_tasks.add(task)
                 task.add_done_callback(_pending_tasks.discard)
-            if not self.account_label or self.account_label.lower() == "default":
+            if is_placeholder_label(self.account_label):
                 # A name the operator chose is theirs: never overwrite it.
                 self.account_label = identity_str
 
@@ -355,7 +356,7 @@ class AnthropicWebMixin:
                         "data_source": self.DATA_SOURCE_WEB,
                         "input_source": getattr(self, "_current_input_source", "unknown"),
                         "tier": tier,
-                        "account_label": self.account_label or identity_str,
+                        "account_label": identity_str,
                         "usage_url": "https://claude.ai/settings/usage",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
@@ -386,7 +387,7 @@ class AnthropicWebMixin:
                             "data_source": self.DATA_SOURCE_WEB,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
-                            "account_label": self.account_label or identity_str,
+                            "account_label": identity_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -441,7 +442,7 @@ class AnthropicWebMixin:
                             "data_source": self.DATA_SOURCE_WEB,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
-                            "account_label": self.account_label or identity_str,
+                            "account_label": identity_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -474,7 +475,7 @@ class AnthropicWebMixin:
                                 "data_source": self.DATA_SOURCE_WEB,
                                 "input_source": getattr(self, "_current_input_source", "unknown"),
                                 "tier": tier,
-                                "account_label": self.account_label or identity_str,
+                                "account_label": identity_str,
                                 "usage_url": "https://claude.ai/settings/usage",
                                 "updated_at": datetime.now(UTC).isoformat(),
                             }

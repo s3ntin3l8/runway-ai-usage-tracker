@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from app.core.utils import IdentityExtractor, has_refresh_credential, scrub_log
+from app.services.account_identity import is_placeholder_label
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.anthropic_console import AnthropicConsoleCollector
 from app.services.collectors.antigravity import AntigravityCollector
@@ -1268,7 +1269,7 @@ class CollectorManager:
             return False
         if organization_id:
             row.claude_organization_id = organization_id
-        if account_label and (created or not row.account_label):
+        if account_label and (created or is_placeholder_label(row.account_label)):
             # Name a discovered account after what it is. An operator's own label
             # is never overwritten; an account that never got one still deserves it.
             row.account_label = account_label
@@ -1288,6 +1289,9 @@ class CollectorManager:
             # on a later poll.
             collector.account_id = "default"
             collector.account_label = default_label
+            # The label cache is the other half of that memory: a name one
+            # attempt proved must not be stamped on the next attempt's card.
+            collector._account_label_cache = default_label
         if hasattr(collector, "credential_account_id"):
             collector.credential_account_id = account_id
         # Proof from one source's response must never be read as another's.

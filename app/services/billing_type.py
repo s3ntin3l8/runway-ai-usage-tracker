@@ -1,10 +1,9 @@
 """Detect how an account bills from the shape of the cards it publishes.
 
-Mirrors the dashboard's card classification (``webapp/src/lib/quota.ts``): a
-card that reports a percentage of a limit describes a subscription, a card
-that reports a currency balance describes pay-as-you-go spend. A card that
-only counts tokens says nothing about the billing model, so it never decides
-one.
+Follows the dashboard's card shapes (``webapp/src/lib/quota.ts``): a card
+that reports a percentage of a limit describes a subscription, a card that
+reports a currency balance describes pay-as-you-go spend. A card that only
+counts tokens says nothing about the billing model, so it never decides one.
 """
 
 from __future__ import annotations
@@ -36,12 +35,17 @@ def card_pct(card: Mapping[str, Any]) -> float | None:
 
 
 def card_billing_type(card: Mapping[str, Any]) -> str:
-    """The billing model a single card implies (``unknown`` when it implies none)."""
-    if card_pct(card) is not None:
-        return SUBSCRIPTION
+    """The billing model a single card implies (``unknown`` when it implies none).
+
+    A card that reports a currency balance is spend, even when it also reports
+    a limit — money against a cap is still money. A card that reports a
+    percentage of a limit is a plan.
+    """
     unit_type = card.get("unit_type")
     if unit_type in ("currency", "credits") or card.get("currency"):
         return PAY_AS_YOU_GO
+    if card_pct(card) is not None:
+        return SUBSCRIPTION
     return UNKNOWN
 
 
