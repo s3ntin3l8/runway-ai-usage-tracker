@@ -1,5 +1,6 @@
 // About: server identity, version, collector status snapshot.
 
+import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -11,6 +12,11 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useInstallPrompt } from '@/hooks/useInstallPrompt';
 
 const RELEASES_URL = 'https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases';
+const COMMIT_URL = 'https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit';
+
+// How much of the SHA to show. The full 40 chars overflow the grid cell; the
+// link still carries the whole SHA, and the hover title spells it out.
+const SHORT_SHA_LEN = 12;
 
 // Friendly labels for the `auth_methods` the /settings probe advertises —
 // raw values (`admin_key`, `forward_auth`) are internal wire strings.
@@ -91,6 +97,7 @@ export function AboutSection() {
             <InfoItem label="Admin auth" value={s?.admin_auth_required ? 'required' : 'open'} />
             <InfoItem label="Auth methods" value={formatAuthMethods(s?.auth_methods)} />
             <InfoItem label="User" value={s?.user_context ?? 'local'} />
+            <InfoItem label="Build" value={<BuildCommit sha={s?.build_sha} />} />
           </dl>
           {s?.ingest_api_key_is_default ? (
             <p className="mt-3 rounded-sm bg-warning-muted px-3 py-2 text-xs text-warning">
@@ -119,11 +126,29 @@ export function AboutSection() {
   );
 }
 
-function InfoItem({ label, value }: { label: string; value: string }) {
+function InfoItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <dt className="text-[11px] text-fg-subtle">{label}</dt>
       <dd className="mt-0.5 truncate font-medium">{value}</dd>
     </div>
+  );
+}
+
+// The commit the running server was built from — what identifies one exact
+// build (every `:edge` image ships the same version string). Links to the
+// commit so a reader can see the diff; plain "—" when the build carries no SHA.
+function BuildCommit({ sha }: { sha?: string | null }) {
+  if (!sha) return <>—</>;
+  return (
+    <a
+      href={`${COMMIT_URL}/${sha}`}
+      target="_blank"
+      rel="noreferrer"
+      title={`Commit ${sha}`}
+      className="font-mono tabular text-accent hover:underline"
+    >
+      {sha.slice(0, SHORT_SHA_LEN)}
+    </a>
   );
 }
