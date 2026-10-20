@@ -64,6 +64,10 @@ def setup_test_settings(monkeypatch):
         "FORWARD_AUTH_GROUPS_HEADER",
         "FORWARD_AUTH_ALLOWED_GROUPS",
         "FORWARD_AUTH_ALLOWED_USERS",
+        # A configured key makes "no key" impossible to express: the
+        # EncryptionService falls back to this setting, so a developer whose
+        # .env sets it sees the keyless-path tests fail.
+        "DB_ENCRYPTION_KEY",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
 
