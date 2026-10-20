@@ -97,3 +97,14 @@ def test_missing_git_binary_returns_none(monkeypatch, tmp_path):
     monkeypatch.setattr(build_info, "_REPO_ROOT", tmp_path)
     monkeypatch.setattr(build_info.shutil, "which", lambda _name: None)
     assert get_build_sha() is None
+
+
+def test_git_that_cannot_launch_returns_none(monkeypatch, tmp_path):
+    """A git that can't be spawned must not take the server down either."""
+
+    def boom(*_args, **_kwargs):
+        raise OSError("git vanished")
+
+    _fake_git(monkeypatch, tmp_path)
+    monkeypatch.setattr(build_info.subprocess, "run", boom)
+    assert get_build_sha() is None
