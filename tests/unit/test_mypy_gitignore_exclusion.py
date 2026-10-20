@@ -11,6 +11,7 @@ bundle, so only local checkouts ever hit it.
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +22,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _git(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    # pre-commit exports GIT_DIR and the other GIT_* variables so its hooks
+    # stage into their own index. In a worktree .git is a file, so an
+    # inherited GIT_DIR makes git refuse to run outside a work tree. Run
+    # with a clean environment instead.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     return subprocess.run(
         ["git", *args],
         cwd=ROOT,
@@ -28,6 +34,7 @@ def _git(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[st
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
 
@@ -41,9 +48,15 @@ def git_checkout() -> None:
         pytest.skip("not a git checkout - there is nothing to assert")
 
 
-def _gitignore_lines() -> set[str]:
+def _ignore_rules() -> set[str]:
+    """The literal rules in .gitignore, without comments or blank lines."""
     raw = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    return {line.strip() for line in raw.splitlines()}
+    rules = set()
+    for line in raw.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            rules.add(line)
+    return rules
 
 
 def test_mypy_honours_gitignore(monkeypatch):
@@ -67,10 +80,15 @@ def test_mypy_honours_gitignore(monkeypatch):
     assert "Unrecognized option" not in stdout.getvalue() + stderr.getvalue()
 
 
-@pytest.mark.parametrize("root", ["build/", "dist/"])
+@pytest.mark.parametrize("root", ["build", "dist"])
 def test_pyinstaller_output_roots_stay_gitignored(root: str):
-    """Dropping these .gitignore entries would bring the abort back."""
-    assert root in _gitignore_lines()
+    """Dropping these .gitignore entries would bring the abort back.
+
+    Either spelling of the rule is fine: what matters is that the tree stays
+    ignored, not whether the rule carries a trailing slash.
+    """
+    rules = _ignore_rules()
+    assert root in rules or f"{root}/" in rules
 
 
 def test_no_tracked_python_source_is_gitignored(git_checkout: None):
