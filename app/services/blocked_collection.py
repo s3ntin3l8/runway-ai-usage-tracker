@@ -21,7 +21,7 @@ from app.models.schemas import BlockedCollectionView
 # server can verify the exact source (``identity_pending`` flow). Mirror of the sidecar's
 # ``_SERVER_IDENTITY_PROVIDERS`` (a parity test keeps them equal).
 SERVER_IDENTITY_PROVIDERS = frozenset(
-    {"antigravity", "anthropic", "chatgpt", "gemini", "github", "opencode"}
+    {"antigravity", "anthropic", "anthropic_console", "chatgpt", "gemini", "github", "opencode"}
 )
 TOKEN_WITHHELD = "token_withheld"
 # A provider counts as collecting if any enabled source succeeded this recently.

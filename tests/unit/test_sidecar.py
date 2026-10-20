@@ -3474,3 +3474,24 @@ class TestOpencodeDbOverride:
         monkeypatch.setenv("USERPROFILE", str(tmp_path))  # expanduser on Windows
         monkeypatch.setenv("OPENCODE_DB", ":memory:")
         assert sidecar._discover_opencode_db_path() is None
+
+
+@pytest.fixture(autouse=True)
+def isolate_host_credentials(monkeypatch, tmp_path):
+    """Synthetic tests must never inspect host browser stores or Keychain."""
+    import subprocess
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    original_run = subprocess.run
+
+    def guarded_run(command, *args, **kwargs):
+        if (
+            isinstance(command, (list, tuple))
+            and command
+            and Path(str(command[0])).name == "security"
+        ):
+            raise AssertionError("Live Keychain access is forbidden in unit tests")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)

@@ -21,6 +21,10 @@ name: Sidecar Build
 
 on:
   workflow_call:
+    outputs:
+      assets-ready:
+        description: True only after the signed and verified asset set was uploaded.
+        value: ${{ jobs.attest.outputs.assets-ready }}
     inputs:
       ref:
         description: Git ref to build.
@@ -149,14 +153,14 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/RunwaySidecar.exe -DestinationPath "${{ steps.names.outputs.payload }}"
 
+      - name: Prepare NSIS (Windows)
+        if: runner.os == 'Windows'
+        run: python -m scripts.prepare_nsis
+
       - name: Build NSIS installer (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
-            choco install nsis -y --no-progress
-            $env:PATH = "${env:ProgramFiles(x86)}\NSIS;$env:PATH"
-          }
           # VERSION / PRODUCT_VERSION_QUAD from package.json (edge-stamped above).
           python sidecar_app/spec/win_version.py | ForEach-Object {
             $k, $v = $_ -split '=', 2
@@ -199,6 +203,8 @@ jobs:
     needs: build
     if: ${{ !cancelled() && (needs.build.result == 'success' || inputs.allow-partial) }}
     runs-on: ubuntu-latest
+    outputs:
+      assets-ready: ${{ steps.ready.outputs.assets-ready }}
     permissions:
       contents: read
       id-token: write  # Sigstore keyless signing via GitHub OIDC
@@ -230,14 +236,12 @@ jobs:
         with:
           cosign-release: 'v3.1.3'
 
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
       - name: Sign assets (Sigstore keyless)
-        working-directory: release-assets
-        run: |
-          shopt -s nullglob
-          for f in Runway-Sidecar-*.{dmg,exe,zip,tar.gz} SHA256SUMS.txt; do
-            cosign sign-blob --yes \
-              --bundle "$f.sigstore.json" "$f"
-          done
+        run: python -m scripts.sign_release_assets release-assets
 
       - name: Verify signatures
         working-directory: release-assets
@@ -251,9 +255,6 @@ jobs:
               "$f"
           done
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.12'
       - name: Install updater verification dependencies
         run: pip install -e '.[sidecar]'
       - name: Verify portable updates with the production updater
@@ -270,3 +271,5 @@ jobs:
           path: release-assets/*
           if-no-files-found: error
           retention-days: 3
+      - id: ready
+        run: echo 'assets-ready=true' >> "$GITHUB_OUTPUT"

@@ -7,7 +7,7 @@ extracts per-message token/cost events sidecar-side from the local conversation 
 
 | Component | Where it runs | What it does |
 |---|---|---|
-| `AntigravityCollector` (server) | `app/services/collectors/antigravity.py` | Fetches 4 quota gauge cards from the Cloud Code Assist API |
+| `AntigravityCollector` (server) | `app/services/collectors/antigravity.py` | Fetches up to 5 quota gauge cards from the Cloud Code Assist API |
 | Event extractor (sidecar) | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Parses `gen_metadata` protobuf blobs from conversation DBs |
 | OAuth mixin (server) | `app/services/collectors/antigravity_oauth.py` | Reads / caches the agy OAuth token |
 | Sidecar credential rule | `scripts/sidecar.py` `__REGISTRY__["antigravity"]` | Ships the OAuth token to the server in multi-host topology |
@@ -20,16 +20,65 @@ extracts per-message token/cost events sidecar-side from the local conversation 
 1. `POST .../v1internal:loadCodeAssist` with `{"metadata": {"ideType": "ANTIGRAVITY"}}` → get `cloudaicompanionProject` id
 2. `POST .../v1internal:retrieveUserQuotaSummary` with `{"project": "<id>"}` → quota summary
 
-**Required header:** `User-Agent: antigravity/cli/1.0.9 linux/amd64` (Google gates this endpoint on the agy UA; omitting it returns 403).
+**Required header:** `User-Agent: antigravity/cli/1.4.3 (aidev_client; os_type=linux; arch=amd64; cl=1002753436; auth_method=consumer)` (Google gates this endpoint on the agy UA; omitting it returns 403).
 
-**Output:** 4 cards — 2 quota pools × 2 windows:
+> **The UA version decides which quota pools come back.** The prefix is the 403 gate, but the
+> *version* selects the pools the backend serves — measured 2026-10-20 with the same token,
+> project and request body, changing only the UA:
+>
+> | UA version | groups returned |
+> |---|---|
+> | `< 1.2` | "Claude and GPT models" only |
+> | `>= 1.2` | + "Gemini Models" |
+> | `>= 1.3` | + "Gemini 4 Argon" (also unlocked at 1.2 by the `aidev_client` marker) |
+>
+> An outdated UA therefore fails *silently*: the API answers 200 with a subset of the pools and
+> Runway reports only the Claude/GPT quota. Keep `_USER_AGENT` in
+> `app/services/collectors/antigravity_api.py` in step with the installed agy CLI (a unit test
+> fails if the version drops below 1.3), and treat a missing Gemini pool on a paid tier as the
+> signal that the UA fell behind.
 
-| Pool | Windows | `window_type` |
-|---|---|---|
-| Gemini Models (Flash, Pro) | Weekly, 5-hour | `weekly`, `5h` |
-| Claude and GPT models | Weekly, 5-hour | `weekly`, `5h` |
+**Output:** up to 5 cards — 3 quota pools:
 
-Each card carries `pct_used = round((1 − remainingFraction) × 100, 4)`, `reset_at` from `resetTime`, and `quota_pool_id = "antigravity:<pool_family>:<window>"`.
+| Pool | `variant` | Windows | `window_type` |
+|---|---|---|---|
+| Gemini Models (Flash, Pro) | `gemini` | Weekly, 5-hour | `weekly`, `session` |
+| Claude and GPT models | `frontier` | Weekly, 5-hour | `weekly`, `session` |
+| Gemini 4 Argon (paid Pro/Ultra plans only) | `argon` | Weekly | `weekly` |
+
+Each card carries `pct_used = round((1 − remainingFraction) × 100, 4)`, `reset_at` from `resetTime`, and `quota_pool_id = "antigravity:<variant>:<window>"`.
+
+The API's `5h` window is the canonical `session` window. The group display name decides the
+pool: "Gemini 4 Argon" is a **separate** paid-plan pool (it carries its own weekly limit) and
+must not be folded into the `gemini` pool — both would then share one `latest_usage` slot
+(`provider, account, window_type, variant, model_id`) and overwrite each other. The Argon pool
+disappears on its own when Google folds it back into the Gemini bucket: the collector returns a
+complete snapshot, so a pool that is no longer served is retired.
+
+A group the collector does not know yet gets a **slug of its own name** as its pool (e.g.
+"Some Future Pool" → `some-future-pool-<hash>`) plus a server-log warning — never an existing
+pool's slot, so a new pool cannot silently overwrite another one. The known pool keys are
+reserved: a group whose slug would collide with one (e.g. a bare "Argon") is prefixed
+(`unknown-argon-<hash>`). The short hash comes from the group's *resolved* name (its display
+name, else its first bucket id), so two groups that differ only in case or punctuation
+("Gemini 5 Code" vs "gemini 5-code") still land in different pools. The hash is an id, not a
+label: the card shows the readable name ("Some Future Pool").
+The known groups are matched by anchored patterns (not loose substrings): a group merely
+*containing* "gemini"/"claude"/"gpt" is a new pool, not a member of an existing one. The patterns
+tolerate the spellings Google is known to use — a trailing "Pool" ("Gemini Models Pool"), "&"
+for "and" ("Claude & GPT models"), a version number on the Argon pool ("Gemini 4 Argon" →
+"Gemini 5 Argon") — so a cosmetic rename does not re-key a live pool (which would split its
+history and fire the wrong warning). Any other rename shows up as a new, slug-named pool plus
+the warning, and the old row is retired with the next complete snapshot. A group without a
+display name falls back to its bucket ids, so two unnamed groups cannot land in the same pool
+either.
+
+The server logs `Antigravity quota summary is missing the <pool> pool(s) for tier '<tier>'` when
+a tier comes back without a pool it should have — the fingerprint of a User-Agent that fell
+behind (a 1.2 User-Agent serves the Gemini pool but not the Argon one, which is exactly how
+"the Argon quota was never reported" looked). The User-Agent gate is account-independent, so a
+free account is covered too — its line is only logged at debug level. The check keys on the
+tier being known at all, so a paid tier id Google adds later is covered as well.
 
 **Credentials:** `~/.gemini/antigravity-cli/antigravity-oauth-token`
 ```json
@@ -152,6 +201,16 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 - A pre-expiry `WARNING — local token expires at … (within 10 min)` is the early version of the same signal: act before quota collection breaks.
 - Check server logs: `[antigravity] collect_via_api failed` with status or error detail; `Refreshing … access token` never appears for Antigravity (the server cannot refresh it), so a 401 there means every candidate token was dead.
 - Per-source state lives in Fleet → Token Health: `auth_failed` on one source while another shows `healthy` means failover is carrying the account.
+
+### Only the Claude/GPT quota is shown (Gemini pools missing)
+- The API gates the pools it serves on the **User-Agent version** — see the table above. If
+  `_USER_AGENT` is older than the agy CLI you run, the response arrives with 200 but without
+  the Gemini (and Argon) groups, and the dashboard shows just the Claude/GPT pool.
+- The server logs `Antigravity quota summary is missing the gemini pool(s) for tier 'pro'` when
+  that happens on a paid tier — and `… missing the argon pool(s) …` when only the Argon pool is
+  missing (a 1.2 User-Agent serves Gemini but not Argon).
+- Compare with agy itself: `agy -p "/usage" --output-format json` prints the same groups the
+  CLI sees — if the CLI shows a pool Runway does not, the UA is behind.
 
 ### No token events / zero cost
 - Events only appear after `agy` conversations: check `~/.gemini/antigravity-cli/conversations/` for `*.db` files.

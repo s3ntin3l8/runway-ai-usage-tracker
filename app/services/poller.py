@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import logging
 from collections import deque
+from typing import Any
 
 from sqlmodel import Session
 
@@ -169,16 +170,42 @@ class BackgroundPoller:
         self._snapshot_hashes.clear()
         self._wake_event.set()  # interrupt the _run_loop wait
 
+    @staticmethod
+    def _validated_cards(
+        session: Session, cards: list[dict[str, Any]], outcomes: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Validate private Claude proof in the same no-yield transaction as card writes."""
+        accepted = []
+        rejected = set()
+        for card in cards:
+            if getattr(
+                card, "claude_source_proof", None
+            ) is not None and not manager.claude_card_proof_valid(session, card):
+                rejected.add((card.get("provider_id"), card.get("account_id")))
+                continue
+            # Only public card keys reach persistence, snapshots, alerts, or API output.
+            accepted.append(dict(card))
+        outcomes = [
+            {
+                **outcome,
+                "state": "skipped",
+                "reason": "credential binding changed during collection",
+            }
+            if (outcome.get("provider_id"), outcome.get("account_id")) in rejected
+            else outcome
+            for outcome in outcomes
+        ]
+        return accepted, outcomes
+
     async def poll_now(self):
         """Execute a single collection and snapshot cycle."""
         logger.info("Starting scheduled background collection...")
         cards = await manager.collect_all()
         outcomes = getattr(manager, "last_collection_outcomes", [])
 
-        # Update dormancy state before DB write
-        self._update_sleep_state(cards)
-
         with Session(engine) as session:
+            cards, outcomes = self._validated_cards(session, cards, outcomes)
+            self._update_sleep_state(cards)
             for card_dict in cards:
                 try:
                     provider_id = card_dict.get("provider_id")

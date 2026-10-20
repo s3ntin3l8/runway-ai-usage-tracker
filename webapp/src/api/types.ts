@@ -590,6 +590,9 @@ export interface UntaggedCredential {
   sidecar_id: string;
   provider_id: string;
   claimed_account_id?: string | null;
+  source_id?: string | null;
+  selection_required?: boolean;
+  organization_count?: number;
   // Stable host-side descriptor; phase 1 ships `provider:<id>`,
   // per-rule expansion is the follow-up issue.
   credential_origin: string;
@@ -822,6 +825,7 @@ export interface ProviderAccount {
   poll_interval_seconds?: number | null;
   collection_strategies?: CollectionStrategy[] | null;
   opencode_workspace_id?: string | null;
+  claude_organization_id?: string | null;
   billing_type?: 'subscription' | 'pay_as_you_go' | 'unknown';
   // Set by the server (#281 hardening + #286 follow-up). Lets the UI surface
   // orphaned `account_id="default"` rows that have been shadowed by a real
@@ -869,6 +873,7 @@ export interface ProviderConfig {
   supported_strategies?: CollectionStrategy[];
   collection_strategies?: CollectionStrategy[];
   opencode_workspace_id?: string | null;
+  claude_organization_id?: string | null;
   // Multi-account view (one entry per ProviderConfig DB row, plus any
   // discovered-only identities — see ProviderAccount.source).
   accounts: ProviderAccount[];

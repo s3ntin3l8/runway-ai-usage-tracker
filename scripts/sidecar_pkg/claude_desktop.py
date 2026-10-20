@@ -4,18 +4,20 @@ No chat contents, quota-history percentages, or synthetic token events are read.
 The server verifies the cookie's account identity before using it.
 """
 
+import base64
 import hashlib
-import hmac
+import json
 import logging
+import math
+import os
 import sqlite3
-import subprocess
 import threading
 import time
 from contextlib import closing
 from pathlib import Path
+from typing import Any
+from uuid import UUID
 
-_KEY_CACHE: dict[str, tuple[float, bytes | None]] = {}
-_KEY_LOCK = threading.Lock()
 _WARNED: set[str] = set()
 _WARN_LOCK = threading.Lock()
 
@@ -29,33 +31,103 @@ def _warn_once(reason: str) -> None:
 
 
 def _storage_key(path: Path) -> bytes | None:
-    """Cache success and refusal for ten minutes; never log Keychain output."""
-    cache_id = str(path)
-    with _KEY_LOCK:
-        cached = _KEY_CACHE.get(cache_id)
-        if cached and time.monotonic() < cached[0]:
-            return cached[1]
-        key = None
-        failure_reason = "Keychain access failed (retry in ten minutes)"
+    """Use the shared process cache; a restart is required after refusal."""
+    from scripts.sidecar_pkg.macos_cookies import storage_key
+
+    return storage_key("Claude Safe Storage")
+
+
+def _oauth_cache(value: Any, key: bytes) -> dict[str, Any]:
+    """Desktop safeStorage strings have no Chromium cookie host-hash prefix."""
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    if not isinstance(value, str):
+        return {}
+    blob = base64.b64decode(value, validate=True)
+    if not blob.startswith(b"v10") or not blob[3:] or len(blob[3:]) % 16:
+        raise ValueError("Unsupported Desktop OAuth encryption")
+    decoder = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).decryptor()
+    padded = decoder.update(blob[3:]) + decoder.finalize()
+    unpadder = padding.PKCS7(128).unpadder()
+    data = json.loads(unpadder.update(padded) + unpadder.finalize())
+    if not isinstance(data, dict):
+        raise ValueError("Unsupported Desktop OAuth cache")
+    return data
+
+
+def read_oauth_candidates(path: Path) -> list[tuple[dict[str, str], str]]:
+    """Read only the two observed OAuth cache layouts; never export refresh secrets."""
+    if os.getenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "1").strip().lower() in {
+        "0",
+        "false",
+        "off",
+        "no",
+    }:
+        return []
+    try:
+        config = json.loads(path.read_text())
+        if not isinstance(config, dict) or not any(
+            config.get(name) for name in ("oauth:tokenCacheV2", "oauth:tokenCache")
+        ):
+            return []
+    except (OSError, ValueError):
+        return []
+    key = _storage_key(path)
+    if key is None:
+        return []
+    result: list[tuple[dict[str, str], str]] = []
+    seen: set[str] = set()
+    slots: set[str] = set()
+    for cache_name in ("oauth:tokenCacheV2", "oauth:tokenCache"):
         try:
-            result = subprocess.run(
-                ["security", "find-generic-password", "-s", "Claude Safe Storage", "-w"],
-                capture_output=True,
-                text=True,
-                timeout=5,
+            entries = _oauth_cache(config.get(cache_name), key)
+        except (ValueError, TypeError):
+            _warn_once("unsupported OAuth cache")
+            continue
+        for slot, entry in entries.items():
+            if not isinstance(slot, str) or slot in slots:
+                continue
+            # V2 tombstones and unsupported entries must not resurrect stale V1 logins.
+            slots.add(slot)
+            if not isinstance(entry, dict):
+                continue
+            token, expiry = entry.get("token"), entry.get("expiresAt")
+            if not isinstance(token, str) or not token.strip():
+                continue
+            if (
+                isinstance(expiry, bool)
+                or not isinstance(expiry, int | float)
+                or not math.isfinite(expiry)
+            ):
+                _warn_once("unsupported OAuth expiry")
+                continue
+            if not slot.startswith("acct:") or "|" not in slot:
+                _warn_once("OAuth account binding unavailable")
+                continue
+            try:
+                account_uuid = str(UUID(slot[5 : slot.index("|")]))
+            except ValueError:
+                _warn_once("unsupported OAuth account binding")
+                continue
+            if token in seen:
+                continue
+            seen.add(token)
+            tokens = {
+                "oauth_token": token,
+                "expiry_date": str(int(expiry)),
+                "oauth_account_uuid": account_uuid,
+                "oauth_read_only": "1",
+            }
+            # Slot identity includes account, organization, client and scope, never the secret.
+            origin = (
+                "keychain:Claude Desktop/oauth/"
+                + hashlib.pbkdf2_hmac("sha256", slot.encode(), b"runway-desktop-slot-v1", 1).hex()[
+                    :24
+                ]
             )
-            if result.returncode == 0 and result.stdout.strip():
-                key = hashlib.pbkdf2_hmac(
-                    "sha1", result.stdout.strip().encode(), b"saltysalt", 1003, 16
-                )
-        except (OSError, subprocess.SubprocessError):
-            # A missing executable or timed-out prompt is a cached failure too.
-            # Do not expose command output or exception text: either may contain secrets.
-            failure_reason = "Keychain command did not complete (retry in ten minutes)"
-        if key is None:
-            _warn_once(failure_reason)
-        _KEY_CACHE[cache_id] = (time.monotonic() + 600, key)
-        return key
+            result.append((tokens, origin))
+    return result
 
 
 def read_session_cookie(path: Path) -> str | None:
@@ -81,32 +153,11 @@ def read_session_cookie(path: Path) -> str | None:
             if not isinstance(encrypted, bytes) or not encrypted.startswith(b"v10"):
                 _warn_once("unsupported cookie encryption")
                 continue
-            key = _storage_key(path)
-            if key is None:
-                return None
-            try:
-                from cryptography.hazmat.primitives import padding
-                from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from scripts.sidecar_pkg.macos_cookies import decrypt
 
-                decryptor = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).decryptor()
-                padded = decryptor.update(encrypted[3:]) + decryptor.finalize()
-                unpadder = padding.PKCS7(128).unpadder()
-                plaintext = unpadder.update(padded) + unpadder.finalize()
-                if version >= 24:
-                    if not hmac.compare_digest(
-                        plaintext[:32], hashlib.sha256(host.encode()).digest()
-                    ):
-                        _warn_once("cookie host binding failed")
-                        continue
-                    plaintext = plaintext[32:]
-                value = plaintext.decode("utf-8")
-                if value:
-                    return value
-            except ImportError:
-                _warn_once("cookie decryption dependency unavailable")
-                return None
-            except (ValueError, UnicodeError):
-                _warn_once("cookie decryption failed")
+            value = decrypt(encrypted, "Claude Safe Storage", host, version)
+            if value:
+                return value
     except (OSError, sqlite3.Error, ValueError, TypeError):
         _warn_once("cookie database unreadable")
     return None

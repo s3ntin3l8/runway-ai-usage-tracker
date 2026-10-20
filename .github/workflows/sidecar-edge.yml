@@ -12,6 +12,8 @@ on:
     paths:
       - 'scripts/sidecar.py'
       - 'scripts/sidecar_pkg/**'
+      - 'scripts/prepare_nsis.py'
+      - 'scripts/sign_release_assets.py'
       - 'sidecar_app/**'
       - 'package.json'
       - 'installer/**'
@@ -68,8 +70,8 @@ jobs:
     # runs on a partial set) — but a failed guard must stop the force-tag +
     # prerelease entirely (without the explicit guard check `!cancelled()`
     # would still run publish when build was skipped because the guard failed).
-    # The signed set only exists if attest succeeded; download fails otherwise.
-    if: ${{ !cancelled() && needs.guard.result == 'success' }}
+    # A partial build can ship only after attest uploaded a verified set.
+    if: ${{ !cancelled() && needs.guard.result == 'success' && needs.build.outputs.assets-ready == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

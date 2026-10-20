@@ -100,6 +100,8 @@ _INGEST_CREDENTIAL_KEYS = frozenset(
         "id_token",
         "expiry_date",
         "client_id",
+        "oauth_account_uuid",
+        "oauth_read_only",
         "xai_access",
         "xai_refresh",
         "cli_access_token",
@@ -235,6 +237,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     card.metadata and card.metadata.get("identity_pending") is True
                 ) or bool(credential_origin and payload.sidecar_id and not acc_id)
                 verified_tag = None
+                tagged = None
                 if identity_pending and credential_origin and payload.sidecar_id:
                     # A verified identity can race one more heartbeat with
                     # stale pending metadata. Trust only the durable tag for
@@ -323,6 +326,33 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     }
 
                 if provider_tokens:
+                    if (
+                        provider_id == "anthropic"
+                        and provider_tokens.get("oauth_read_only") == "1"
+                        and credential_origin
+                        and (
+                            tagged is None
+                            or tagged.set_by
+                            in (None, "identity_claim", "identity_verification", "rotation")
+                        )
+                    ):
+                        from app.services.credential_sources import sidecar_source_id
+
+                        # Native slots survive login changes. A previous inferred tag
+                        # cannot prove a newly arrived bearer (or re-resolve one still
+                        # pending). Keep it isolated until profile+quota verification.
+                        native_source_id = sidecar_source_id(
+                            payload.sidecar_id or "local", credential_origin
+                        )
+                        still_pending = any(
+                            candidate["source_id"] == native_source_id
+                            for candidate in await token_cache.get_pending_sources(provider_id)
+                        )
+                        if still_pending or not await _bundle_holds(
+                            provider_id, acc_id or "default", native_source_id, provider_tokens
+                        ):
+                            identity_pending = True
+                            acc_id = "default"
                     tokens_to_store.append(
                         (
                             provider_id,
@@ -430,7 +460,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # token-derived placeholder identity; use a stable host+origin key while
         # identity is pending so token rotations do not create orphan entries.
         cache_account_id = pending_cache_slot(p_id, source_id) if identity_pending else a_id
-        if p_id == "anthropic" and not identity_pending:
+        if p_id in ("anthropic", "anthropic_console") and not identity_pending:
             # A pending source is cache-keyed by its stable source_id. Retire
             # that placeholder even if its durable CredentialSource row was
             # lost; otherwise its OAuth bundle survives beside the resolved one.
@@ -978,6 +1008,39 @@ def _entry_reason(
     return reason
 
 
+def _reported_manifest_origins(payload: CredentialManifestRequest) -> dict[str, set[str]]:
+    """All positively reported sources, including resolved observation-only credentials."""
+    reported: dict[str, set[str]] = {}
+    for entry in payload.entries:
+        provider, origin = entry.get("provider_id"), entry.get("credential_origin")
+        if isinstance(provider, str) and provider and isinstance(origin, str) and origin:
+            reported.setdefault(provider, set()).add(origin)
+    for observation in payload.observations:
+        reported.setdefault(observation.provider_id, set()).add(observation.credential_origin)
+    return reported
+
+
+async def _retire_missing_claude_sources(
+    session: Session, payload: CredentialManifestRequest
+) -> None:
+    from app.services.collector_manager import manager
+    from app.services.credential_sources import retire_missing_claude_cookie_sources
+
+    retired_sources = retire_missing_claude_cookie_sources(
+        session,
+        sidecar_id=payload.sidecar_id,
+        completed_providers=payload.completed_providers,
+        keep_by_provider=_reported_manifest_origins(payload),
+    )
+    # No cache/preference eviction may escape a failed durable transaction.
+    session.commit()
+    for retired in retired_sources:
+        await token_cache.remove_source(retired.provider_id, retired.account_id, retired.source_id)
+        manager.drop_credential_source_preference(
+            retired.provider_id, retired.account_id, retired.source_id
+        )
+
+
 @router.post("/credentials/manifest")
 @limiter.limit("60/minute")
 async def post_credential_manifest(
@@ -1237,7 +1300,7 @@ async def post_credential_manifest(
         if prune_keep
         else 0
     )
-    session.commit()
+    await _retire_missing_claude_sources(session, payload)
 
     resolved = _account_tag_hints_for_providers(
         session, candidate_pids, sidecar_id=payload.sidecar_id
@@ -1560,6 +1623,21 @@ def visible_pending_rows(session: Session) -> list[PendingCredentialTag]:
     return visible
 
 
+def _pending_organization_count(serialized: str | None) -> int:
+    try:
+        organizations = json.loads(serialized or "[]")
+    except (TypeError, ValueError):
+        return 0
+    if not isinstance(organizations, list):
+        return 0
+    return sum(
+        isinstance(org, dict)
+        and isinstance(org.get("id"), str)
+        and isinstance(org.get("name"), str)
+        for org in organizations
+    )
+
+
 @router.get("/credentials/tags/pending")
 async def list_pending_credential_tags(
     sidecar_id: str | None = None,
@@ -1578,6 +1656,8 @@ async def list_pending_credential_tags(
     auto-hint doesn't oscillate, but they're not "untagged" from the
     operator's perspective.
     """
+    from app.services.credential_sources import sidecar_source_id
+
     visible_rows = visible_pending_rows(session)
     counts_by_sidecar: dict[str, int] = {}
     for r in visible_rows:
@@ -1589,12 +1669,20 @@ async def list_pending_credential_tags(
     items = []
     for row in visible_rows:
         preview, observed_at, preview_stale = PendingCredentialTagRepo.read_quota_preview(row)
+        organization_count = _pending_organization_count(row.claude_organizations_json)
         items.append(
             {
                 "sidecar_id": row.sidecar_id,
                 "provider_id": row.provider_id,
                 "credential_origin": row.credential_origin,
                 "claimed_account_id": row.claimed_account_id,
+                **(
+                    {"source_id": sidecar_source_id(row.sidecar_id, row.credential_origin)}
+                    if row.provider_id in ("anthropic", "anthropic_console")
+                    else {}
+                ),
+                "selection_required": organization_count > 1,
+                "organization_count": organization_count,
                 "first_seen": row.first_seen.isoformat() if row.first_seen else None,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
                 "quota_preview": preview,
@@ -1607,6 +1695,145 @@ async def list_pending_credential_tags(
         "items": items,
         "counts_by_sidecar": counts_by_sidecar,
     }
+
+
+class ClaudeOrganizationSelection(BaseModel):
+    provider_id: Literal["anthropic", "anthropic_console"]
+    organization_id: str
+
+
+async def _pending_claude_source(
+    session: Session, provider_id: str, source_id: str
+) -> tuple[PendingCredentialTag, dict[str, Any]]:
+    from app.services.credential_sources import sidecar_source_id
+
+    if provider_id not in ("anthropic", "anthropic_console"):
+        raise HTTPException(status_code=422, detail="Unsupported Claude provider")
+    row = next(
+        (
+            r
+            for r in session.exec(
+                select(PendingCredentialTag).where(PendingCredentialTag.provider_id == provider_id)
+            ).all()
+            if sidecar_source_id(r.sidecar_id, r.credential_origin) == source_id
+        ),
+        None,
+    )
+    source = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == provider_id, CredentialSource.source_id == source_id
+        )
+    ).first()
+    candidates = await token_cache.get_pending_sources(provider_id)
+    candidate = next((c for c in candidates if c["source_id"] == source_id), None)
+    if (
+        row is None
+        or source is None
+        or candidate is None
+        or source.credential_origin != row.credential_origin
+        or source.sidecar_id != row.sidecar_id
+        or candidate.get("credential_origin") != row.credential_origin
+        or candidate.get("sidecar_id") != row.sidecar_id
+    ):
+        raise HTTPException(status_code=404, detail="Pending Claude source unavailable")
+    if (
+        CredentialTagRepo.get(
+            session,
+            provider_id=provider_id,
+            credential_origin=row.credential_origin,
+            sidecar_id=row.sidecar_id,
+        )
+        is not None
+    ):
+        raise HTTPException(status_code=409, detail="Credential source already assigned")
+    return row, candidate
+
+
+async def _verify_pending_claude_source(
+    provider_id: str, candidate: dict[str, Any], organization_id: str | None = None
+) -> Any:
+    import httpx
+
+    from app.services.claude_verification import verify_claude_cookie
+    from app.services.collectors.anthropic_console import ConsoleAPIError
+
+    tokens = candidate["tokens"]
+    cookie = tokens.get("cookie_sessionKey") or tokens.get("session_cookie")
+    if not cookie:
+        raise HTTPException(status_code=409, detail="Claude cookie unavailable")
+    try:
+        async with (
+            token_cache.using_source(
+                provider_id, candidate["account_slot"], candidate["source_id"]
+            ),
+            httpx.AsyncClient(event_hooks={"response": [token_cache.observe_response]}) as client,
+        ):
+            return await verify_claude_cookie(client, provider_id, cookie, organization_id)
+    except ConsoleAPIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/credentials/{source_id}/claude-organizations")
+async def get_claude_source_organizations(
+    source_id: str,
+    provider_id: Literal["anthropic", "anthropic_console"],
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    row, candidate = await _pending_claude_source(session, provider_id, source_id)
+    result = await _verify_pending_claude_source(provider_id, candidate)
+    # Validate that the exact candidate survived the upstream calls before recording metadata.
+    _current_row, current = await _pending_claude_source(session, provider_id, source_id)
+    if current["tokens"] != candidate["tokens"]:
+        raise HTTPException(status_code=409, detail="Claude source changed; retry")
+    row.claude_organizations_json = json.dumps(result.organizations)
+    row.claude_organizations_complete = result.complete
+    session.add(row)
+    session.commit()
+    return {
+        "organizations": result.organizations,
+        "complete": result.complete,
+        "selection_required": result.selection_required,
+    }
+
+
+@router.post("/credentials/{source_id}/claude-organizations")
+async def select_claude_source_organization(
+    source_id: str,
+    body: ClaudeOrganizationSelection,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_admin_key),
+) -> dict[str, str]:
+    from app.services.claude_verification import organization_uuid
+    from app.services.collector_manager import manager
+    from app.services.collectors.anthropic_console import ConsoleAPIError
+
+    try:
+        organization_id = organization_uuid(body.organization_id)
+    except ConsoleAPIError as exc:
+        raise HTTPException(status_code=422, detail="Invalid Claude organization") from exc
+    _pending_row, candidate = await _pending_claude_source(session, body.provider_id, source_id)
+    result = await _verify_pending_claude_source(body.provider_id, candidate, organization_id)
+    if not result.organization_id or not result.account_id:
+        raise HTTPException(
+            status_code=403, detail="Claude organization is not accessible with this source"
+        )
+    _current_row, current = await _pending_claude_source(session, body.provider_id, source_id)
+    if current["tokens"] != candidate["tokens"]:
+        raise HTTPException(status_code=409, detail="Claude source changed; retry")
+    promoted = await manager._promote_source_identity(
+        body.provider_id,
+        "default",
+        source_id,
+        result.account_id,
+        cache_account_id=candidate["account_slot"],
+        expected_generation=token_cache.credential_generation(candidate["tokens"]),
+        organization_id=organization_id,
+        allow_selection=True,
+    )
+    if not promoted:
+        raise HTTPException(status_code=409, detail="Claude source changed; retry")
+    return {"status": "ok"}
 
 
 @router.get("/events/pending")

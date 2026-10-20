@@ -182,7 +182,7 @@ class TestAntigravityTier:
         qs.json.return_value = {
             "groups": [
                 {
-                    "displayName": "Gemini Models Pool",
+                    "displayName": "Gemini Models",
                     "buckets": [
                         {
                             "bucketId": "g_weekly",
@@ -200,7 +200,7 @@ class TestAntigravityTier:
                     ],
                 },
                 {
-                    "displayName": "Frontier Models Pool",
+                    "displayName": "Claude and GPT models",
                     "buckets": [
                         {
                             "bucketId": "f_weekly",
@@ -227,6 +227,548 @@ class TestAntigravityTier:
             assert card.get("tier") == "pro", (
                 f"Expected tier='pro' in card {card.get('service_name')}"
             )
+
+
+def _quota_summary_response() -> dict:
+    """A quota summary with all three pools the API serves (2026-10-20 shape).
+
+    Values are taken from a live `retrieveUserQuotaSummary` answer: the Gemini
+    pool is nearly exhausted, the Claude/GPT pool is untouched, and the paid
+    "Gemini 4 Argon" pool has its own separate weekly limit.
+    """
+    return {
+        "groups": [
+            {
+                "displayName": "Gemini Models",
+                "buckets": [
+                    {
+                        "bucketId": "gemini-weekly",
+                        "window": "weekly",
+                        "remainingFraction": 0.0032,
+                        "displayName": "Weekly Limit Remaining",
+                        "resetTime": "2026-10-23T21:59:41Z",
+                    },
+                    {
+                        "bucketId": "gemini-5h",
+                        "window": "5h",
+                        "remainingFraction": 0.9909,
+                        "displayName": "Five Hour Limit Remaining",
+                        "resetTime": "2026-10-20T11:01:40Z",
+                    },
+                ],
+            },
+            {
+                "displayName": "Claude and GPT models",
+                "buckets": [
+                    {
+                        "bucketId": "3p-weekly",
+                        "window": "weekly",
+                        "remainingFraction": 1,
+                        "displayName": "Weekly Limit Remaining",
+                        "resetTime": "2026-10-27T06:19:20Z",
+                    },
+                    {
+                        "bucketId": "3p-5h",
+                        "window": "5h",
+                        "remainingFraction": 1,
+                        "displayName": "Five Hour Limit Remaining",
+                        "resetTime": "2026-10-20T11:19:20Z",
+                    },
+                ],
+            },
+            {
+                "displayName": "Gemini 4 Argon",
+                "description": "For paid Pro plans, Argon quota is separate.",
+                "buckets": [
+                    {
+                        "bucketId": "gemini-argon-wtu-weekly",
+                        "window": "weekly",
+                        "remainingFraction": 0.8247,
+                        "displayName": "Gemini 4 Argon Weekly Limit",
+                        "resetTime": "2026-10-27T05:52:07Z",
+                    },
+                ],
+            },
+        ]
+    }
+
+
+class TestAntigravityQuotaPools:
+    """The API answers with one group per *physical* quota pool. Each pool
+    needs its own `variant`, because LatestUsage keys a row on
+    (provider, account, window_type, variant, model_id) — two pools sharing a
+    variant would overwrite each other instead of showing up side by side.
+    """
+
+    @pytest.mark.asyncio
+    async def test_three_pools_yield_five_cards_with_distinct_slots(self, mock_http_client):
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = _quota_summary_response()
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        assert len(result) == 5
+        # Every card sits in its own LatestUsage slot.
+        slots = {(c["window_type"], c["variant"]) for c in result}
+        assert slots == {
+            ("weekly", "gemini"),
+            ("session", "gemini"),
+            ("weekly", "frontier"),
+            ("session", "frontier"),
+            ("weekly", "argon"),
+        }
+        assert len({c["quota_pool_id"] for c in result}) == 5
+
+    @pytest.mark.asyncio
+    async def test_argon_group_is_its_own_pool(self, mock_http_client):
+        """ "Gemini 4 Argon" says "gemini" but is a separate paid-plan pool —
+        it must not land in the gemini pool's slot."""
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = _quota_summary_response()
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        argon = [c for c in result if c["variant"] == "argon"]
+        assert len(argon) == 1
+        card = argon[0]
+        assert card["service_name"] == "Argon"
+        assert card["window_type"] == "weekly"
+        assert card["quota_pool_id"] == "antigravity:argon:weekly"
+        # 1 - 0.8247 remaining → 17.53 % used.
+        assert card["pct_used"] == 17.53
+        assert card["reset_at"] == "2026-10-27T05:52:07+00:00"
+        assert "Gemini 4 Argon" in card["detail"]
+
+    @pytest.mark.asyncio
+    async def test_five_hour_window_maps_to_session(self, mock_http_client):
+        """The API's "5h" window is the canonical "session" window."""
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = _quota_summary_response()
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        gemini_weekly = next(
+            c for c in result if c["variant"] == "gemini" and c["window_type"] == "weekly"
+        )
+        assert gemini_weekly["pct_used"] == 99.68
+        assert gemini_weekly["quota_pool_id"] == "antigravity:gemini:weekly"
+        gemini_session = next(
+            c for c in result if c["variant"] == "gemini" and c["window_type"] == "session"
+        )
+        assert gemini_session["quota_pool_id"] == "antigravity:gemini:session"
+
+    def test_pool_family_maps_group_names(self):
+        from app.services.collectors.antigravity_api import pool_family
+
+        assert pool_family("Gemini Models") == "gemini"
+        assert pool_family("Claude and GPT models") == "frontier"
+        assert pool_family("Gemini 4 Argon") == "argon"
+        # A version bump keeps the Argon pool (the pattern is anchored, so it
+        # cannot swallow a different pool).
+        assert pool_family("Gemini 5 Argon") == "argon"
+
+    def test_pool_family_tolerates_the_spellings_google_uses(self):
+        """A cosmetic rename must not re-key a live pool (that splits its
+        history and fires the wrong warning)."""
+        from app.services.collectors.antigravity_api import pool_family
+
+        assert pool_family("Gemini Models Pool") == "gemini"
+        assert pool_family("Claude & GPT models") == "frontier"
+        assert pool_family("Claude and GPT models pool") == "frontier"
+        assert pool_family("Gemini 4.5 Argon") == "argon"
+        assert pool_family("Gemini 4 Argon Pool") == "argon"
+
+    def test_a_new_pool_named_like_a_known_one_does_not_join_it(self):
+        """Loose substring matching would fold a new pool into a known one —
+        and two pools sharing a variant share a latest_usage row, where the
+        second one is silently dropped."""
+        from app.services.collectors.antigravity_api import POOL_LABELS, pool_family
+
+        for name in ("Gemini Pro Models", "GPT-OSS models", "Claude Opus models"):
+            pool = pool_family(name)
+            assert pool not in POOL_LABELS, f"{name!r} was folded into {pool!r}"
+        assert pool_family("Gemini Pro Models").startswith("gemini-pro-models-")
+
+    def test_a_bare_known_name_does_not_take_a_live_pool_key(self):
+        """A group called "Argon" misses the anchored patterns and slugs to
+        "argon" — the live Argon pool's key. Reserved keys stay reserved."""
+        from app.services.collectors.antigravity_api import POOL_LABELS, pool_family
+
+        for name in ("Argon", "Gemini", "Frontier"):
+            pool = pool_family(name)
+            assert pool not in POOL_LABELS, f"{name!r} took the live pool key {pool!r}"
+            assert pool.startswith("unknown-")
+
+    def test_two_groups_differing_only_in_case_stay_apart(self):
+        """The slug folds case and punctuation — the hash keeps such groups
+        apart, so they cannot share a latest_usage row."""
+        from app.services.collectors.antigravity_api import pool_family
+
+        assert pool_family("Gemini 5 Code") != pool_family("gemini 5-code")
+        assert pool_family("Gemini 5 Code").startswith("gemini-5-code-")
+
+    def test_unknown_group_gets_its_own_pool(self):
+        """An unrecognised group must not land in an existing pool: two pools
+        sharing a variant share a latest_usage slot and overwrite each other."""
+        from app.services.collectors.antigravity_api import POOL_LABELS, pool_family
+
+        unknown = pool_family("Some Future Pool")
+        assert unknown not in POOL_LABELS
+        assert unknown.startswith("some-future-pool-")
+        # …and it stays distinct from the known pools.
+        assert unknown not in {pool_family("Gemini Models"), pool_family("Gemini 4 Argon")}
+
+    @pytest.mark.asyncio
+    async def test_unknown_group_is_reported_and_warned_about(self, mock_http_client, caplog):
+        """An unknown pool is surfaced (own variant, own card) and logged."""
+        import logging
+
+        from app.services.collectors import antigravity_api
+
+        # The unknown-pool warning is logged once per pool per process.
+        antigravity_api._WARNED_UNKNOWN_POOLS.clear()
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "displayName": "Some Future Pool",
+                    "buckets": [
+                        {
+                            "bucketId": "future-weekly",
+                            "window": "weekly",
+                            "remainingFraction": 0.5,
+                            "displayName": "Weekly Limit Remaining",
+                        },
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+            caplog.at_level(logging.WARNING),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        assert len(result) == 1
+        assert result[0]["variant"].startswith("some-future-pool-")
+        assert result[0]["quota_pool_id"].startswith("antigravity:some-future-pool-")
+        assert result[0]["service_name"] == "Some Future Pool"
+        assert any("Unknown Antigravity quota group" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_unknown_paid_tier_still_warns_about_a_missing_gemini_pool(
+        self, mock_http_client, caplog
+    ):
+        """The guard keys on the tier being known at all — a tier id Google
+        adds later must not slip through an allow-list of known paid tiers."""
+        import logging
+
+        from app.services.collectors import antigravity_api
+
+        antigravity_api._WARNED_MISSING_POOLS.clear()
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {
+            "cloudaicompanionProject": "aicode-consumers",
+            "paidTier": {"id": "g1-max-tier"},
+        }
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "displayName": "Claude and GPT models",
+                    "buckets": [
+                        {"bucketId": "3p-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+            caplog.at_level(logging.WARNING),
+        ):
+            await collector._collect_via_api(mock_http_client)
+
+        assert any("missing the gemini" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_paid_tier_without_the_argon_pool_warns(self, mock_http_client, caplog):
+        """A User-Agent of 1.2 serves the Gemini pool but not the Argon one —
+        the original symptom ("the Argon quota was never reported") would
+        otherwise stay silent."""
+        import logging
+
+        from app.services.collectors import antigravity_api
+
+        antigravity_api._WARNED_MISSING_POOLS.clear()
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {
+            "cloudaicompanionProject": "aicode-consumers",
+            "paidTier": {"id": "g1-pro-tier"},
+        }
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "buckets": [
+                        {"bucketId": "gemini-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+                {
+                    "displayName": "Claude and GPT models",
+                    "buckets": [
+                        {"bucketId": "3p-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+            caplog.at_level(logging.WARNING),
+        ):
+            await collector._collect_via_api(mock_http_client)
+
+        assert any("missing the argon" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_free_tier_only_debugs_a_missing_gemini_pool(self, mock_http_client, caplog):
+        """The User-Agent gate is account-independent, so a free account loses
+        its Gemini card the same way — but that is only worth a debug line."""
+        import logging
+
+        from app.services.collectors import antigravity_api
+
+        antigravity_api._WARNED_MISSING_POOLS.clear()
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {
+            "cloudaicompanionProject": "aicode-consumers",
+            "currentTier": {"id": "free-tier"},
+        }
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "displayName": "Claude and GPT models",
+                    "buckets": [
+                        {"bucketId": "3p-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+            caplog.at_level(logging.DEBUG),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        assert result[0]["tier"] == "free"
+        assert any("missing the gemini" in r.getMessage() for r in caplog.records)
+        # …and it is not a warning (it would spam on every free account).
+        assert not any(
+            r.levelno == logging.WARNING and "missing the gemini" in r.getMessage()
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_unmapped_pool_keeps_the_api_spelling_of_its_name(self, mock_http_client):
+        """The card name keeps the API's own spelling — a title-cased slug
+        would mangle acronyms ("Gemini & GPT models" → "Gemini Gpt Models")."""
+        from app.services.collectors import antigravity_api
+
+        antigravity_api._WARNED_UNKNOWN_POOLS.clear()
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "displayName": "Gemini & GPT models",
+                    "buckets": [
+                        {"bucketId": "gtp-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        assert result[0]["service_name"] == "Gemini & GPT models"
+
+    @pytest.mark.asyncio
+    async def test_group_without_a_display_name_keeps_its_own_pool(self, mock_http_client):
+        """Two unnamed groups would both fall back to "Unknown" and overwrite
+        each other — the bucket ids make a safe fallback."""
+
+        collector = AntigravityCollector(account_id="user@example.com")
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = {
+            "groups": [
+                {
+                    "buckets": [
+                        {"bucketId": "7p-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+                {
+                    "buckets": [
+                        {"bucketId": "9p-weekly", "window": "weekly", "remainingFraction": 1},
+                    ],
+                },
+            ]
+        }
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch.object(collector, "_ag_post", new_callable=AsyncMock, side_effect=[lca, qs]),
+        ):
+            result = await collector._collect_via_api(mock_http_client)
+
+        assert len(result) == 2
+        assert len({c["variant"] for c in result}) == 2
+        assert {c["variant"].split("-")[0] for c in result} == {"7p", "9p"}
+        # A group the API sent unnamed is labelled from its pool key, not
+        # from a raw bucket id.
+        labels = {c["service_name"] for c in result}
+        assert labels == {"7P Weekly", "9P Weekly"}
+
+
+class TestAntigravityUserAgent:
+    """The UA version decides *which quota pools* the backend serves — an
+    outdated one answers 200 with a subset (the Claude/GPT pool only) instead
+    of failing loudly."""
+
+    def test_user_agent_keeps_the_agy_prefix(self):
+        """The prefix is the 403 gate: Google's ESF rejects anything else."""
+        from app.services.collectors.antigravity_api import _USER_AGENT
+
+        assert _USER_AGENT.startswith("antigravity/cli/")
+
+    def test_user_agent_version_unlocks_every_pool(self):
+        """< 1.2 serves only the Claude/GPT pool, >= 1.3 serves all three."""
+        import re
+
+        from app.services.collectors.antigravity_api import _USER_AGENT
+
+        match = re.search(r"antigravity/cli/(\d+)\.(\d+)\.(\d+)", _USER_AGENT)
+        assert match, f"cannot read a version out of {_USER_AGENT!r}"
+        version = tuple(int(part) for part in match.groups())
+        assert version >= (1, 3, 0), (
+            f"UA version {version} hides the Gemini/Argon pools — bump _USER_AGENT"
+        )
+
+    @pytest.mark.asyncio
+    async def test_quota_requests_send_the_agy_user_agent(self, mock_http_client):
+        collector = AntigravityCollector(account_id="user@example.com")
+        from app.services.collectors.antigravity_api import _USER_AGENT
+
+        lca = MagicMock(spec=httpx.Response)
+        lca.status_code = 200
+        lca.json.return_value = {"cloudaicompanionProject": "aicode-consumers"}
+        qs = MagicMock(spec=httpx.Response)
+        qs.status_code = 200
+        qs.json.return_value = _quota_summary_response()
+
+        with (
+            patch.object(
+                collector, "_get_valid_token", new_callable=AsyncMock, return_value="ya29.live"
+            ),
+            patch(
+                "app.services.collectors.antigravity_api.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[lca, qs],
+            ) as post,
+        ):
+            await collector._collect_via_api(mock_http_client)
+
+        assert post.await_count == 2
+        for call in post.await_args_list:
+            assert call.kwargs["headers"]["User-Agent"] == _USER_AGENT
 
 
 class TestAntigravityNoServerSideRefresh:

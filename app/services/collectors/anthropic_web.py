@@ -87,33 +87,28 @@ class AnthropicWebMixin:
             logger.debug("No Claude sessionKey cookie found in token cache")
             return []
 
-        # If the session_key already looks like a multi-cookie string (contains ; or =),
-        # use it as-is. Otherwise wrap it in sessionKey=.
-        cookie_header = (
-            session_key if ";" in session_key or "=" in session_key else f"sessionKey={session_key}"
+        from app.services.claude_verification import (
+            is_native_claude_source,
+            selected_organization,
+            subscription_headers,
+            verify_collector_cookie,
         )
+        from app.services.collectors.anthropic_console import ConsoleAPIError
 
-        # Extract activitySessionId from cookies if present for x-activity-session-id header
-        activity_sid_match = re.search(r"activitySessionId=([^;]+)", cookie_header)
-        activity_sid = activity_sid_match.group(1) if activity_sid_match else None
+        native_source = is_native_claude_source("anthropic")
+        if native_source or selected_organization("anthropic", self.account_id):
+            self._current_input_source = "sidecar" if native_source else "config"
+            try:
+                verified = await verify_collector_cookie(self, client, "anthropic", session_key)
+            except ConsoleAPIError as exc:
+                from app.core.utils import error_card
 
-        headers = {
-            "Cookie": cookie_header,
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-            "accept": "application/json, text/plain, */*",
-            "accept-language": "en-US,en;q=0.9",
-            "referer": "https://claude.ai/settings/usage",
-            "origin": "https://claude.ai",
-            "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-origin",
-            "x-requested-with": "XMLHttpRequest",
-        }
-        if activity_sid:
-            headers["x-activity-session-id"] = activity_sid
+                return [error_card("Claude", "🟠", str(exc), error_type=exc.error_type)]
+            if not verified.organization_id or verified.usage is None:
+                return []
+            return self._parse_web_api_response(verified.usage, verified.org_data, verified.account)
+
+        headers = subscription_headers(session_key)
 
         try:
             # Step 1: Get organization ID

@@ -18,8 +18,8 @@ def audit_published(release: str, output: Path) -> bool:
     with tempfile.TemporaryDirectory(prefix="runway-published-db-") as temp:
         cache = Path(temp)
         try:
-            database = prepare_database(cache)
-            check_database(database, datetime.now(UTC))
+            database, listing = prepare_database(cache)
+            check_database(database, datetime.now(UTC), listing["checksum"])
         except Exception as exc:
             for label in ("edge", "release"):
                 directory = output / label

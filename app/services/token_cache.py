@@ -10,9 +10,11 @@ Architecture:
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any
@@ -51,6 +53,8 @@ _OAUTH_CREDENTIAL_KEYS = {
     "cli_device_id",
     "expiry_date",
     "client_id",
+    "oauth_account_uuid",
+    "oauth_read_only",
     "xai_access",
     "xai_refresh",
 }
@@ -524,6 +528,20 @@ class TokenCache:
         request = getattr(response, "request", None)
         if request is not None and not self._request_uses_active_source(request):
             return
+        # Claude organization denials and browser challenges do not reject the cookie.
+        # Keep unrelated providers and account-level authentication failures unchanged.
+        url = getattr(request, "url", None)
+        if getattr(url, "host", None) in ("claude.ai", "platform.claude.com"):
+            headers = getattr(response, "headers", {})
+            if (
+                "text/html" in headers.get("content-type", "").lower()
+                or headers.get("cf-mitigated") == "challenge"
+            ):
+                return
+            if response.status_code == 403 and getattr(url, "path", "").startswith(
+                "/api/organizations/"
+            ):
+                return
         attempt["auth_failed"] = True
 
     def _request_uses_active_source(self, request: Any) -> bool:
@@ -655,6 +673,14 @@ class TokenCache:
                     "source_id": source_id,
                     "sidecar_id": metadata.get("sidecar_id"),
                     "credential_origin": metadata.get("credential_origin"),
+                    **(
+                        {
+                            "identity_pending": metadata.get("identity_pending"),
+                            "credential_generation": self.credential_generation(_tokens),
+                        }
+                        if provider in ("anthropic", "anthropic_console")
+                        else {}
+                    ),
                 }
                 for account_id, sources in self._source_cache.get(provider, {}).items()
                 for source_id, (_tokens, metadata, _timestamp) in sources.items()
@@ -766,8 +792,54 @@ class TokenCache:
                 self._source_cache.pop(provider, None)
             return True
 
+    @staticmethod
+    def credential_generation(tokens: dict[str, str]) -> str:
+        """Nonsecret proof of an exact credential bundle, stable across identical heartbeats."""
+        return hashlib.sha256(
+            json.dumps(tokens, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    def source_generation(self, provider: str, account_id: str, source_id: str) -> str | None:
+        """Read a nonsecret bundle proof in a synchronous no-yield publication section."""
+        entry = (
+            self._source_cache.get(provider, {})
+            .get(canonical_account_id(account_id), {})
+            .get(source_id)
+        )
+        return self.credential_generation(entry[0]) if entry else None
+
+    async def commit_verified_source(
+        self,
+        provider: str,
+        from_account_id: str,
+        to_account_id: str,
+        source_id: str,
+        expected_generation: str,
+        commit: Callable[[], bool],
+    ) -> bool:
+        """Compare the proved bundle, commit its durable binding, and move it without yielding.
+
+        The synchronous callback owns the DB transaction. Holding the existing cache lock
+        prevents ingest/removal/reconciliation from replacing the bundle around that commit.
+        """
+        from_id = canonical_account_id(from_account_id)
+        to_id = canonical_account_id(to_account_id)
+        async with self._lock:
+            entry = self._source_cache.get(provider, {}).get(from_id, {}).get(source_id)
+            if entry is None or self.credential_generation(entry[0]) != expected_generation:
+                return False
+            if not commit():
+                return False
+            return self._move_source_unlocked(provider, from_id, to_id, source_id)
+
     async def move_source(
-        self, provider: str, from_account_id: str, to_account_id: str, source_id: str
+        self,
+        provider: str,
+        from_account_id: str,
+        to_account_id: str,
+        source_id: str,
+        *,
+        expected_generation: str | None = None,
     ) -> bool:
         """Move an identified credential bundle and clear ``identity_pending``.
 
@@ -777,99 +849,109 @@ class TokenCache:
         from_id = canonical_account_id(from_account_id)
         to_id = canonical_account_id(to_account_id)
         async with self._lock:
-            source_accounts = self._source_cache.get(provider, {}).get(from_id, {})
-            entry = source_accounts.pop(source_id, None)
-            if entry is None:
+            entry = self._source_cache.get(provider, {}).get(from_id, {}).get(source_id)
+            if expected_generation is not None and (
+                entry is None or self.credential_generation(entry[0]) != expected_generation
+            ):
                 return False
-            if not source_accounts:
-                self._source_cache[provider].pop(from_id, None)
-            tokens, metadata, timestamp = entry
-            target_sources = self._source_cache.setdefault(provider, {}).setdefault(to_id, {})
-            existing_target = target_sources.get(source_id)
-            # Only an already-live entry for this exact source can win the
-            # per-key expiry comparison against the bundle being promoted.
-            if existing_target:
-                target_tokens, target_metadata, target_timestamp = existing_target
-                merged_tokens = dict(target_tokens)
-                from_oauth_is_staler = self._is_staler(tokens, target_tokens)
-                _merge_cli_family(merged_tokens, tokens, prefer_incoming=not from_oauth_is_staler)
-                for key, value in tokens.items():
+            return self._move_source_unlocked(provider, from_id, to_id, source_id)
+
+    def _move_source_unlocked(
+        self, provider: str, from_id: str, to_id: str, source_id: str
+    ) -> bool:
+        source_accounts = self._source_cache.get(provider, {}).get(from_id, {})
+        entry = source_accounts.pop(source_id, None)
+        if entry is None:
+            return False
+        if not source_accounts:
+            self._source_cache[provider].pop(from_id, None)
+        tokens, metadata, timestamp = entry
+        target_sources = self._source_cache.setdefault(provider, {}).setdefault(to_id, {})
+        existing_target = target_sources.get(source_id)
+        # Only an already-live entry for this exact source can win the
+        # per-key expiry comparison against the bundle being promoted.
+        if existing_target:
+            target_tokens, target_metadata, target_timestamp = existing_target
+            merged_tokens = dict(target_tokens)
+            from_oauth_is_staler = self._is_staler(tokens, target_tokens)
+            _merge_cli_family(merged_tokens, tokens, prefer_incoming=not from_oauth_is_staler)
+            for key, value in tokens.items():
+                if key in _CLI_FAMILY_KEYS:
+                    continue
+                if key in merged_tokens:
+                    if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
+                        {key: merged_tokens[key]}, {key: value}
+                    ):
+                        merged_tokens[key] = value
+                    continue
+                if from_oauth_is_staler and key in _OAUTH_CREDENTIAL_KEYS:
+                    continue
+                merged_tokens[key] = value
+            # Existing target metadata wins on collisions, preserving its
+            # source ownership and last-seen details during promotion.
+            merged_metadata = {**metadata, **target_metadata, "identity_pending": False}
+            entry = (merged_tokens, merged_metadata, max(timestamp, target_timestamp))
+        else:
+            entry = (tokens, {**metadata, "identity_pending": False}, timestamp)
+        target_sources[source_id] = entry
+        # Keep the compatibility cache coherent when it represents this
+        # same source bundle; never overwrite another account's aggregate.
+        old_aggregate = self._cache.get(provider, {}).get(from_id)
+        if from_id != to_id and old_aggregate and old_aggregate[1].get("source_id") == source_id:
+            target_aggregate = self._cache.setdefault(provider, {}).get(to_id)
+            if target_aggregate is None:
+                self._cache[provider][to_id] = old_aggregate
+            else:
+                _merge_cli_family(
+                    target_aggregate[0],
+                    old_aggregate[0],
+                    prefer_incoming=not self._is_staler(old_aggregate[0], target_aggregate[0]),
+                )
+                for key, value in old_aggregate[0].items():
                     if key in _CLI_FAMILY_KEYS:
                         continue
-                    if key in merged_tokens:
+                    if key in target_aggregate[0]:
+                        # Keep the better known-expiry OAuth value when a
+                        # stale target survived an earlier legacy migration.
                         if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
-                            {key: merged_tokens[key]}, {key: value}
+                            {key: target_aggregate[0][key]}, {key: value}
                         ):
-                            merged_tokens[key] = value
-                        continue
-                    if from_oauth_is_staler and key in _OAUTH_CREDENTIAL_KEYS:
-                        continue
-                    merged_tokens[key] = value
-                # Existing target metadata wins on collisions, preserving its
-                # source ownership and last-seen details during promotion.
-                merged_metadata = {**metadata, **target_metadata, "identity_pending": False}
-                entry = (merged_tokens, merged_metadata, max(timestamp, target_timestamp))
-            else:
-                entry = (tokens, {**metadata, "identity_pending": False}, timestamp)
-            target_sources[source_id] = entry
-            # Keep the compatibility cache coherent when it represents this
-            # same source bundle; never overwrite another account's aggregate.
-            old_aggregate = self._cache.get(provider, {}).get(from_id)
-            if old_aggregate and old_aggregate[1].get("source_id") == source_id:
-                target_aggregate = self._cache.setdefault(provider, {}).get(to_id)
-                if target_aggregate is None:
-                    self._cache[provider][to_id] = old_aggregate
-                else:
-                    _merge_cli_family(
-                        target_aggregate[0],
-                        old_aggregate[0],
-                        prefer_incoming=not self._is_staler(old_aggregate[0], target_aggregate[0]),
-                    )
-                    for key, value in old_aggregate[0].items():
-                        if key in _CLI_FAMILY_KEYS:
-                            continue
-                        if key in target_aggregate[0]:
-                            # Keep the better known-expiry OAuth value when a
-                            # stale target survived an earlier legacy migration.
-                            if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
-                                {key: target_aggregate[0][key]}, {key: value}
-                            ):
-                                target_aggregate[0][key] = value
-                                self._mark_token_seen(provider, to_id, key)
-                            continue
-                        if self._is_staler({key: value}, target_aggregate[0]):
-                            # Use the target's full expiry context, not just the
-                            # missing key, so another OAuth field can veto it.
-                            # Opaque non-OAuth keys have no expiry to compare and pass.
-                            continue
-                        target_aggregate[0][key] = value
-                        self._mark_token_seen(provider, to_id, key)
-                    if not target_aggregate[1].get("account_label"):
-                        target_aggregate[1]["account_label"] = old_aggregate[1].get("account_label")
-                self._cache[provider].pop(from_id, None)
-            elif entry:
-                tokens, metadata, timestamp = entry
-                target_aggregate = self._cache.setdefault(provider, {}).get(to_id)
-                if target_aggregate is None:
-                    self._cache[provider][to_id] = (
-                        dict(tokens),
-                        {
-                            "account_label": metadata.get("account_label"),
-                            "source": metadata.get("source"),
-                            "source_id": source_id,
-                        },
-                        timestamp,
-                    )
-                else:
-                    prefer_cli = not self._is_staler(tokens, target_aggregate[0])
-                    _merge_cli_family(target_aggregate[0], tokens, prefer_incoming=prefer_cli)
-                    target_aggregate[0].update(
-                        {key: value for key, value in tokens.items() if key not in _CLI_FAMILY_KEYS}
-                    )
-                    for key in tokens:
-                        if key not in _CLI_FAMILY_KEYS or prefer_cli:
+                            target_aggregate[0][key] = value
                             self._mark_token_seen(provider, to_id, key)
-            return True
+                        continue
+                    if self._is_staler({key: value}, target_aggregate[0]):
+                        # Use the target's full expiry context, not just the
+                        # missing key, so another OAuth field can veto it.
+                        # Opaque non-OAuth keys have no expiry to compare and pass.
+                        continue
+                    target_aggregate[0][key] = value
+                    self._mark_token_seen(provider, to_id, key)
+                if not target_aggregate[1].get("account_label"):
+                    target_aggregate[1]["account_label"] = old_aggregate[1].get("account_label")
+            self._cache[provider].pop(from_id, None)
+        elif entry:
+            tokens, metadata, timestamp = entry
+            target_aggregate = self._cache.setdefault(provider, {}).get(to_id)
+            if target_aggregate is None:
+                self._cache[provider][to_id] = (
+                    dict(tokens),
+                    {
+                        "account_label": metadata.get("account_label"),
+                        "source": metadata.get("source"),
+                        "source_id": source_id,
+                    },
+                    timestamp,
+                )
+            else:
+                prefer_cli = not self._is_staler(tokens, target_aggregate[0])
+                _merge_cli_family(target_aggregate[0], tokens, prefer_incoming=prefer_cli)
+                target_aggregate[0].update(
+                    {key: value for key, value in tokens.items() if key not in _CLI_FAMILY_KEYS}
+                )
+                for key in tokens:
+                    if key not in _CLI_FAMILY_KEYS or prefer_cli:
+                        self._mark_token_seen(provider, to_id, key)
+        return True
 
     async def remove_source_tokens(
         self, provider: str, account_id: str, source_id: str, token_types: set[str]

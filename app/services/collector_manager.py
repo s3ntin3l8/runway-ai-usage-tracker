@@ -830,6 +830,10 @@ class CollectorManager:
             key=lambda candidate: (
                 self._access_token_expired(candidate),
                 candidate_priority(candidate),
+                bool(
+                    provider_id == "anthropic"
+                    and not candidate.get("tokens", {}).get("oauth_token")
+                ),
                 candidate["source_id"],
             )
         )
@@ -993,13 +997,20 @@ class CollectorManager:
                 and resolved_id.strip()
                 and resolved_id.strip().lower() != "default"
             ):
-                await self._promote_source_identity(
+                if not await self._promote_source_identity(
                     provider_id,
                     account_id,
                     candidate["source_id"],
                     resolved_id,
                     cache_account_id=cache_slot,
-                )
+                    **self._source_proof_kwargs(collector),
+                ) and (
+                    rejection_reason := self._promotion_rejection_reason(
+                        provider_id, candidate, collector
+                    )
+                ):
+                    successful_result = self._discard_stale_source_result(smart, rejection_reason)
+                    continue
             elif (
                 account_id == "default"
                 and is_sidecar_source(candidate)
@@ -1008,19 +1019,19 @@ class CollectorManager:
                 # Let an unresolved source call its API so it can prove its
                 # identity, but never publish an unidentified quota card into
                 # the shared default account history.
-                from app.services.credential_tags import safe_quota_preview
-
-                preview = safe_quota_preview(
-                    [card for card in result if not card.get("error_type")]
-                )
-                await asyncio.to_thread(
-                    self._persist_identity_pending_preview, provider_id, candidate, preview
-                )
+                await self._preview_unresolved_source(provider_id, candidate, result)
                 # Keep going: a source that works but cannot name its account must not
                 # starve the other pending sources of their own verification.
                 successful_result = []
                 continue
-            successful_result = result
+            if not await self._claude_organization_allows_publication(
+                provider_id, collector, candidate
+            ):
+                successful_result = self._discard_stale_source_result(smart)
+                continue
+            successful_result = self._protect_claude_cards(
+                provider_id, collector, candidate, result
+            )
             break
         # Every source tried but not promoted (a promotion deletes its pending row, so
         # noting it is a no-op) is scheduled for a later retry.
@@ -1039,6 +1050,223 @@ class CollectorManager:
         )
 
     @staticmethod
+    def _promotion_rejection_reason(
+        provider_id: str, candidate: dict[str, Any], collector: Any
+    ) -> str | None:
+        if getattr(collector, "verified_source_generation", None) is not None:
+            return "credential binding changed during collection"
+        # Preserve legacy generic collection when optional source metadata is absent,
+        # while never publishing against a contradictory explicit operator assignment.
+        from sqlmodel import Session
+
+        from app.core.db import engine
+        from app.services.account_identity import canonical_account_id
+        from app.services.credential_tags import CredentialTagRepo
+
+        origin = candidate.get("credential_origin")
+        if not isinstance(origin, str):
+            return None
+        with Session(engine) as session:
+            tag = CredentialTagRepo.get(
+                session,
+                provider_id=provider_id,
+                credential_origin=origin,
+                sidecar_id=candidate.get("sidecar_id"),
+            )
+            if (
+                tag
+                and tag.set_by not in (None, "identity_claim", "identity_verification", "rotation")
+                and canonical_account_id(tag.account_id)
+                != canonical_account_id(collector.account_id)
+            ):
+                return "credential source assigned to another account"
+        return None
+
+    @staticmethod
+    def _source_proof_kwargs(collector: Any) -> dict[str, Any]:
+        generation = getattr(collector, "verified_source_generation", None)
+        if generation is None:
+            return {}
+        return {
+            "expected_generation": generation,
+            "organization_id": getattr(collector, "verified_organization_id", None),
+        }
+
+    @staticmethod
+    def _discard_stale_source_result(
+        smart: SmartCollector, reason: str = "credential binding changed during collection"
+    ) -> list[dict[str, Any]]:
+        """A rejected proof is non-authoritative; a later successful fallback may complete."""
+        smart._set_collection_state("skipped", reason)
+        return []
+
+    @staticmethod
+    def _protect_claude_cards(
+        provider_id: str, collector: Any, candidate: dict[str, Any], cards: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        from app.services.claude_verification import ClaudeSourceProof, ClaudeVerifiedCard
+
+        generation = getattr(collector, "verified_source_generation", None)
+        organization = getattr(collector, "verified_organization_id", None)
+        if not generation:
+            return cards
+        proof = ClaudeSourceProof(
+            provider_id,
+            collector.account_id,
+            candidate["source_id"],
+            generation,
+            organization,
+            candidate.get("credential_origin"),
+            candidate.get("sidecar_id"),
+        )
+        return [ClaudeVerifiedCard(card, proof) for card in cards]
+
+    def claude_card_proof_valid(self, session: Any, card: dict[str, Any]) -> bool:
+        proof = getattr(card, "claude_source_proof", None)
+        if proof is None:
+            return True
+        if (
+            token_cache.source_generation(proof.provider_id, proof.account_id, proof.source_id)
+            != proof.generation
+        ):
+            return False
+        return self._claude_publication_binding(
+            session,
+            proof.provider_id,
+            proof.account_id,
+            proof.organization_id,
+            {
+                "source_id": proof.source_id,
+                "credential_origin": proof.credential_origin,
+                "sidecar_id": proof.sidecar_id,
+            },
+        )
+
+    async def _preview_unresolved_source(
+        self, provider_id: str, candidate: dict[str, Any], result: list[dict[str, Any]]
+    ) -> None:
+        from app.services.credential_tags import safe_quota_preview
+
+        preview = safe_quota_preview([card for card in result if not card.get("error_type")])
+        await asyncio.to_thread(
+            self._persist_identity_pending_preview, provider_id, candidate, preview
+        )
+
+    async def _claude_organization_allows_publication(
+        self, provider_id: str, collector: Any, candidate: dict[str, Any]
+    ) -> bool:
+        organization_id = getattr(collector, "verified_organization_id", None)
+        if provider_id not in ("anthropic", "anthropic_console"):
+            return True
+        generation = getattr(collector, "verified_source_generation", None)
+        if not organization_id and not generation:
+            return True
+        if not generation:
+            return False
+        return await token_cache.commit_verified_source(
+            provider_id,
+            collector.account_id,
+            collector.account_id,
+            candidate["source_id"],
+            generation,
+            lambda: self._validate_claude_publication(
+                provider_id, collector.account_id, organization_id, candidate
+            ),
+        )
+
+    def _validate_claude_publication(
+        self,
+        provider_id: str,
+        account_id: str,
+        organization_id: str | None,
+        candidate: dict[str, Any],
+    ) -> bool:
+        from sqlmodel import Session
+
+        from app.core.db import engine
+
+        with Session(engine) as session:
+            allowed = self._claude_publication_binding(
+                session, provider_id, account_id, organization_id, candidate
+            )
+            if allowed:
+                session.commit()
+            return allowed
+
+    def _claude_publication_binding(
+        self,
+        session: Any,
+        provider_id: str,
+        account_id: str,
+        organization_id: str | None,
+        candidate: dict[str, Any],
+    ) -> bool:
+        from sqlmodel import select
+
+        from app.models.db import CredentialSource
+        from app.services.credential_tags import CredentialTagRepo
+
+        source = session.exec(
+            select(CredentialSource).where(
+                CredentialSource.provider_id == provider_id,
+                CredentialSource.account_id == account_id,
+                CredentialSource.source_id == candidate["source_id"],
+            )
+        ).first()
+        if (
+            source is None
+            or source.credential_origin != candidate.get("credential_origin")
+            or source.sidecar_id != candidate.get("sidecar_id")
+        ):
+            return False
+        if source.sidecar_id and (
+            not source.credential_origin
+            or CredentialTagRepo.get_account_id(
+                session,
+                provider_id=provider_id,
+                credential_origin=source.credential_origin,
+                sidecar_id=source.sidecar_id,
+            )
+            != account_id
+        ):
+            return False
+        allowed = self._claude_binding_allowed(session, provider_id, account_id, organization_id)
+        return allowed
+
+    @staticmethod
+    def _claude_binding_allowed(
+        session: Any,
+        provider_id: str,
+        account_id: str,
+        organization_id: str | None,
+        *,
+        allow_selection: bool = False,
+    ) -> bool:
+        from sqlmodel import select
+
+        from app.models.db import ProviderConfig
+
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == provider_id, ProviderConfig.account_id == account_id
+            )
+        ).first()
+        if row is None:
+            row = ProviderConfig(provider_id=provider_id, account_id=account_id)
+        if (not row.enabled or row.archived) and not allow_selection:
+            return False
+        if (
+            organization_id
+            and row.claude_organization_id not in (None, organization_id)
+            and not allow_selection
+        ):
+            return False
+        if organization_id:
+            row.claude_organization_id = organization_id
+        session.add(row)
+        return True
+
+    @staticmethod
     def _reset_attempt_identity(collector: Any, account_id: str, default_label: Any) -> None:
         """Clear what a previous source attempt taught the shared collector instance."""
         if account_id == "default":
@@ -1052,6 +1280,8 @@ class CollectorManager:
         # Proof from one source's response must never be read as another's.
         collector.verified_identity = None
         collector.verified_subject = None
+        collector.verified_organization_id = None
+        collector.verified_source_generation = None
 
     async def _cookie_switched_account(
         self,
@@ -1092,6 +1322,8 @@ class CollectorManager:
             switched = EMAIL_RE.match(account_id) is not None and canonical_account_id(
                 verified
             ) != canonical_account_id(account_id)
+        elif provider_id == "anthropic_console" and isinstance(verified, str):
+            switched = canonical_account_id(verified) != canonical_account_id(account_id)
         else:
             # No email from the provider: fall back to its stable subject, if it gave one.
             switched = isinstance(subject, str) and await asyncio.to_thread(
@@ -1329,13 +1561,54 @@ class CollectorManager:
         account_id: str,
         *,
         cache_account_id: str | None = None,
-    ) -> None:
-        """Move one default source to the stable identity it proved itself.
+        expected_generation: str | None = None,
+        organization_id: str | None = None,
+        allow_selection: bool = False,
+    ) -> bool:
+        """Commit a proved identity and move the same credential generation atomically."""
 
-        ``old_account_id`` is the durable row's account (``default``); ``cache_account_id`` is
-        the token-cache slot holding the bundle when that differs (Anthropic's pending
-        bundles sit under their source id).
-        """
+        def commit() -> bool:
+            return self._commit_source_identity(
+                provider_id,
+                old_account_id,
+                source_id,
+                account_id,
+                cache_account_id=cache_account_id,
+                organization_id=organization_id,
+                allow_selection=allow_selection,
+            )
+
+        if expected_generation is not None:
+            return await token_cache.commit_verified_source(
+                provider_id,
+                cache_account_id or old_account_id,
+                account_id,
+                source_id,
+                expected_generation,
+                commit,
+            )
+        if not commit():
+            return False
+        moved = await self.reconcile_token_cache_from_durable_tags(
+            provider_id=provider_id, source_id=source_id
+        )
+        if moved:
+            return True
+        return await token_cache.move_source(
+            provider_id, cache_account_id or old_account_id, account_id, source_id
+        )
+
+    def _commit_source_identity(
+        self,
+        provider_id: str,
+        old_account_id: str,
+        source_id: str,
+        account_id: str,
+        *,
+        cache_account_id: str | None = None,
+        organization_id: str | None = None,
+        allow_selection: bool = False,
+    ) -> bool:
         from datetime import UTC, datetime
 
         from sqlmodel import Session, col, select
@@ -1347,7 +1620,7 @@ class CollectorManager:
 
         target = canonical_account_id(account_id)
         if not target or target == "default":
-            return
+            return False
         with Session(engine) as session:
             # The durable row sits under the account the bundle was filed under: ``default``,
             # or (Anthropic) the source id itself while the identity is pending.
@@ -1362,7 +1635,7 @@ class CollectorManager:
                 )
             ).first()
             if source is None or not source.credential_origin:
-                return
+                return False
             existing_tag = (
                 CredentialTagRepo.get(
                     session,
@@ -1387,7 +1660,11 @@ class CollectorManager:
                     "Not promoting %s: the operator already mapped this source",
                     scrub_log(source_id),
                 )
-                return
+                return False
+            if organization_id and not self._claude_binding_allowed(
+                session, provider_id, target, organization_id, allow_selection=allow_selection
+            ):
+                return False
             existing_target = session.exec(
                 select(CredentialSource).where(
                     CredentialSource.provider_id == provider_id,
@@ -1436,20 +1713,7 @@ class CollectorManager:
                     credential_origin=source_credential_origin,
                 )
             session.commit()
-        moved = await self.reconcile_token_cache_from_durable_tags(
-            provider_id=provider_id, source_id=source_id
-        )
-        if not moved:
-            # Safety net if reconciliation cannot see the just-committed tag.
-            logger.warning(
-                "Credential source reconciliation did not move the verified source; "
-                "using direct cache fallback (provider=%s, source_id=%s)",
-                provider_id,
-                source_id,
-            )
-            await token_cache.move_source(
-                provider_id, cache_account_id or old_account_id, target, source_id
-            )
+        return True
 
     @classmethod
     async def _due_for_verification(
@@ -1573,7 +1837,7 @@ class CollectorManager:
         from app.services.credential_tags import CredentialTagRepo
 
         provider_ids = [provider_id] if provider_id else list(self.collector_registry)
-        moves: list[tuple[str, str, str, str, tuple[bool, int] | None]] = []
+        moves: list[tuple[str, str, str, str, tuple[bool, int] | None, str | None]] = []
         candidates_by_provider: dict[str, list[dict[str, Any]]] = {}
         for pid in provider_ids:
             candidates_by_provider[pid] = await token_cache.get_all_source_descriptors(pid)
@@ -1592,12 +1856,17 @@ class CollectorManager:
                         or not isinstance(sidecar_id, str)
                     ):
                         continue
-                    target = CredentialTagRepo.get_account_id(
-                        session,
-                        provider_id=pid,
-                        credential_origin=origin,
-                        sidecar_id=sidecar_id,
+                    tag = CredentialTagRepo.get(
+                        session, provider_id=pid, credential_origin=origin, sidecar_id=sidecar_id
                     )
+                    target = tag.account_id if tag else None
+                    if (
+                        pid in ("anthropic", "anthropic_console")
+                        and candidate.get("identity_pending")
+                        and tag
+                        and tag.set_by == "identity_verification"
+                    ):
+                        continue
                     if not target or target == "default":
                         continue
                     old_account_id = str(candidate.get("account_id") or "default")
@@ -1649,14 +1918,22 @@ class CollectorManager:
                             target,
                             old_account_id,
                             preference,
+                            candidate.get("credential_generation"),
                         )
                     )
             # Durable tags are authoritative; a failed cache move is retried
             # from this mapping by the next startup or reconciliation pass.
             session.commit()
 
-        for pid, candidate_id, target, old_account_id, preference in moves:
-            await token_cache.move_source(pid, old_account_id, target, candidate_id)
+        for pid, candidate_id, target, old_account_id, preference, generation in moves:
+            if not await token_cache.move_source(
+                pid,
+                old_account_id,
+                target,
+                candidate_id,
+                **({"expected_generation": generation} if generation is not None else {}),
+            ):
+                continue
             old_preferences = self._credential_source_preferences.get((pid, old_account_id))
             if old_preferences is not None:
                 old_preferences.pop(candidate_id, None)

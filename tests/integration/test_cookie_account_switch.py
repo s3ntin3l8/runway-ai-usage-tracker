@@ -20,7 +20,6 @@ from app.services.collector_manager import CollectorManager
 from app.services.credential_tags import CredentialTagRepo
 from app.services.smart_collector import SmartCollector
 from app.services.token_cache import TokenCache
-from app.services.token_cache import token_cache as global_cache
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
@@ -38,11 +37,13 @@ def world(monkeypatch):
     )
     SQLModel.metadata.create_all(engine)
     cache = TokenCache()
+    from app.services import claude_verification  # noqa: F401 — preload before wiring caches
+
     for name, module in list(sys.modules.items()):
         if (
             name.startswith("app.")
             and name != "app.services.token_cache"
-            and getattr(module, "token_cache", None) is global_cache
+            and isinstance(getattr(module, "token_cache", None), TokenCache)
         ):
             monkeypatch.setattr(module, "token_cache", cache)
     monkeypatch.setattr("app.core.db.engine", engine)
@@ -103,7 +104,9 @@ def _claude(email: str | None):
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/api/organizations":
-            return httpx.Response(200, json=[{"uuid": "org-1", "name": "Org"}])
+            return httpx.Response(
+                200, json=[{"uuid": "11111111-1111-4111-8111-111111111111", "name": "Org"}]
+            )
         if path == "/api/account":
             if email is None:
                 return httpx.Response(404)
@@ -160,7 +163,9 @@ async def test_the_same_email_keeps_the_tag_whatever_its_case(world):
 
     result = await _poll(ALICE, _claude("Alice@Example.com"))
 
-    assert result, "an unchanged account keeps publishing"
+    assert any(not card.get("error_type") and card.get("account_id") == ALICE for card in result), (
+        "an unchanged account keeps publishing usable quota"
+    )
     account, tag = _state(engine)
     assert account == ALICE
     assert tag is not None and tag.account_id == ALICE
@@ -282,7 +287,9 @@ async def test_only_the_switched_source_is_revoked_and_the_other_still_publishes
 
     result = await _poll(ALICE, handler)
 
-    assert result, "the unchanged source still publishes"
+    assert any(not card.get("error_type") and card.get("account_id") == ALICE for card in result), (
+        "the unchanged source still publishes usable quota"
+    )
     with Session(engine) as session:
         rows = {r.source_id: r.account_id for r in session.exec(select(CredentialSource)).all()}
     assert rows[SOURCE_ID] == SOURCE_ID
@@ -307,7 +314,16 @@ async def test_a_switched_sources_proof_is_not_read_as_the_next_sources(world):
 
     result = await _poll(ALICE, handler)
 
-    assert result, "the second source is judged on its own response, so it still publishes"
+    assert not any(
+        not card.get("error_type") and card.get("remaining") != "ERR" for card in result
+    ), "a source without authenticated identity cannot publish fresh quota"
+    with Session(engine) as session:
+        tag = CredentialTagRepo.get(
+            session, provider_id="anthropic", credential_origin=other_origin, sidecar_id=SIDECAR
+        )
+        assert tag is not None and tag.account_id == ALICE, (
+            "the next source's tag is not revoked using another source's proof"
+        )
     with Session(engine) as session:
         rows = {r.source_id: r.account_id for r in session.exec(select(CredentialSource)).all()}
     assert rows[SOURCE_ID] == SOURCE_ID and rows[other_source] == ALICE

@@ -46,6 +46,7 @@ import { Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { buildSidecarNameMap, useSidecars } from './queries';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
+import { ClaudeSourceOrganizationPicker } from './ClaudeSourceOrganizationPicker';
 import { maskAccountId } from '@/lib/accountDisplay';
 import {
   Select,
@@ -210,7 +211,7 @@ export function UntaggedCredentialsDialog({
       title="Untagged credentials"
       description={
         singleEntry
-          ? `${singleEntry.provider_id} · ${singleEntry.credential_origin}`
+          ? `${singleEntry.provider_id} · ${claudeSourceLabel(singleEntry)}`
           : providerId
             ? `${providerId} · credentials reported by ${machineNames.get(sidecarId ?? '') ?? sidecarId}`
             : "Choose an account for each credential the sidecar couldn't identify."
@@ -225,7 +226,7 @@ export function UntaggedCredentialsDialog({
         <div className="flex flex-col gap-3">
           {visibleEntries.map((entry) => (
             <UntaggedRow
-              key={`${entry.sidecar_id}/${entry.provider_id}/${entry.credential_origin}`}
+              key={`${entry.sidecar_id}/${entry.provider_id}/${entry.source_id ?? entry.credential_origin}`}
               entry={entry}
               machineName={machineNames.get(entry.sidecar_id)}
               accounts={accountsByProvider[entry.provider_id] ?? []}
@@ -237,6 +238,7 @@ export function UntaggedCredentialsDialog({
                 if (body) save.mutate(body);
               }}
               saving={save.isPending}
+              onOrganizationComplete={() => { invalidateCredentialViews(); if (singleEntry) onClose(); }}
             />
           ))}
         </div>
@@ -296,6 +298,7 @@ interface UntaggedRowProps {
   onScope: (allMachines: boolean) => void;
   onSave: () => void;
   saving: boolean;
+  onOrganizationComplete: () => void;
 }
 
 function UntaggedRow({
@@ -307,6 +310,7 @@ function UntaggedRow({
   onScope,
   onSave,
   saving,
+  onOrganizationComplete,
 }: UntaggedRowProps) {
   // Each row tracks its own Select state via currentSelection.account_id
   // when the entry matches. We keep that gating intentionally simple —
@@ -335,13 +339,13 @@ function UntaggedRow({
     <Card
       className="p-3"
       role="group"
-      aria-label={`${entry.credential_origin} on ${machineName ?? entry.sidecar_id}`}
+      aria-label={`${claudeSourceLabel(entry)} on ${machineName ?? entry.sidecar_id}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[13px] font-semibold">
             {entry.provider_id}{' '}
-            <span className="font-mono text-[11px] text-fg-muted">{entry.credential_origin}</span>
+            <span className="font-mono text-[11px] text-fg-muted">{claudeSourceLabel(entry)}</span>
           </p>
           <p className="truncate text-[11px] text-fg-subtle">
             from <span className="font-mono">{machineName ?? entry.sidecar_id}</span>
@@ -388,7 +392,9 @@ function UntaggedRow({
         </div>
       ) : null}
 
-      {enabledAccounts.length === 0 ? (
+      {isClaudeBrowserSource(entry) ? (
+        <ClaudeSourceOrganizationPicker sourceId={entry.source_id!} providerId={entry.provider_id} onComplete={onOrganizationComplete} />
+      ) : enabledAccounts.length === 0 ? (
         <p className="mt-2 flex items-center gap-2 text-[12px] text-warning">
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
           {accounts.length === 0 ? (
@@ -450,7 +456,7 @@ function UntaggedRow({
         </div>
       )}
 
-      {enabledAccounts.length > 0 ? (
+      {enabledAccounts.length > 0 && !isClaudeBrowserSource(entry) ? (
         <div className="mt-2">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] text-fg-subtle">
@@ -501,4 +507,13 @@ function UntaggedRow({
       ) : null}
     </Card>
   );
+}
+
+function isClaudeBrowserSource(entry: UntaggedCredential): boolean {
+  return Boolean(entry.source_id) && entry.credential_origin.startsWith('cookie:') && ['anthropic', 'anthropic_console'].includes(entry.provider_id);
+}
+function claudeSourceLabel(entry: UntaggedCredential): string {
+  if (!isClaudeBrowserSource(entry)) return entry.credential_origin;
+  const [, browser, profile] = entry.credential_origin.split('#', 1)[0].split('/');
+  return browser ? [browser, profile].filter(Boolean).join(' · ') : 'Claude browser login';
 }
