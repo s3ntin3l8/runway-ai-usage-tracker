@@ -34,8 +34,9 @@ pointing at that worktree's interpreter and stops working once the worktree is
 removed. A worktree that commits also needs its own `.venv`, because the mypy
 and pytest hooks resolve the interpreter from the checkout being committed.
 `make install` provides one; linking the main checkout's `.venv` into the
-worktree is enough, because the checkout's own sources still take precedence
-over the linked environment's editable install. The pre-push hook runs the
+worktree is enough, because the runner takes the repository root from its own
+path and runs the tests with that root as the working directory, so the
+checkout's own sources are the ones under test. The pre-push hook runs the
 full suite, so allow it several minutes.
 
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
