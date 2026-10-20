@@ -88,6 +88,35 @@ class TestInstalledVersion:
 
         assert agy_version.installed_version() is None
 
+    def test_concurrent_reads_spawn_the_cli_once(self, monkeypatch):
+        """The sidecar collects from a thread while the tray may refresh: a cold
+        cache must not start the CLI twice."""
+        import threading
+
+        calls: list[str] = []
+
+        def slow_read(binary: str) -> str:
+            calls.append(binary)
+            threading.Event().wait(0.05)
+            return "1.4.3"
+
+        monkeypatch.setattr(agy_version, "resolve_agy", lambda: "/usr/bin/agy")
+        monkeypatch.setattr(agy_version, "_read_version", slow_read)
+        monkeypatch.setattr(agy_version, "_cached_version", None)
+
+        results: list[str | None] = []
+        threads = [
+            threading.Thread(target=lambda: results.append(agy_version.installed_version()))
+            for _ in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert results == ["1.4.3"] * 4
+        assert len(calls) == 1
+
 
 class TestResolveAgy:
     def test_prefers_the_path(self, monkeypatch):

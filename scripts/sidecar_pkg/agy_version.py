@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -31,6 +32,7 @@ _CACHE_TTL_SECONDS = 3600
 _COMMAND_TIMEOUT_SECONDS = 10
 
 _cached_version: tuple[float, str | None] | None = None
+_cache_lock = threading.Lock()
 
 
 def _creationflags() -> int:
@@ -100,11 +102,14 @@ def installed_version(*, now: float | None = None, refresh: bool = False) -> str
     """
     global _cached_version
     moment = time.time() if now is None else now
-    if not refresh and _cached_version is not None:
-        cached_at, version = _cached_version
-        if moment - cached_at < _CACHE_TTL_SECONDS:
-            return version
-    binary = resolve_agy()
-    version = _read_version(binary) if binary else None
-    _cached_version = (moment, version)
-    return version
+    # The sidecar collects from a background thread while the tray may trigger a
+    # refresh: the lock keeps a cold cache from spawning the CLI twice.
+    with _cache_lock:
+        if not refresh and _cached_version is not None:
+            cached_at, version = _cached_version
+            if moment - cached_at < _CACHE_TTL_SECONDS:
+                return version
+        binary = resolve_agy()
+        version = _read_version(binary) if binary else None
+        _cached_version = (moment, version)
+        return version
