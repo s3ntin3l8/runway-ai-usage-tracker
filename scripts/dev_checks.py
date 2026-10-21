@@ -165,6 +165,26 @@ def check(
                 ],
                 isolated_paths=isolated_paths,
             )
+    elif task == "test-windows":
+        # The native Windows gate: only the modules whose subject is the
+        # Windows platform. The rest of the suite runs on the Windows runner
+        # in the full-suite workflow (main pushes and the nightly run).
+        with isolated_environment() as (root, isolated_paths):
+            execute(
+                [
+                    python,
+                    "-m",
+                    "pytest",
+                    "tests/",
+                    "-m",
+                    "windows",
+                    *parallel_args(jobs),
+                    "--basetemp",
+                    str(root / "tests"),
+                    *extra,
+                ],
+                isolated_paths=isolated_paths,
+            )
     elif task == "test-shard":
         # One shard of the suite: whole test modules only, so the fixed-port
         # helpers and tests/conftest.py's import-time setup stay in one process.
@@ -230,6 +250,7 @@ def main() -> int:
             "mypy",
             "test",
             "test-shard",
+            "test-windows",
             "unit",
             "web-test",
             "gate",
@@ -248,10 +269,12 @@ def main() -> int:
         help="run the suite in this many parallel workers (1 = serial)",
     )
     args, extra = parser.parse_known_args()
-    if extra and args.task not in {"test", "unit", "test-shard", "web-test"}:
+    if extra and args.task not in {"test", "unit", "test-shard", "test-windows", "web-test"}:
         parser.error("additional arguments are supported only for test commands")
-    if args.jobs is not None and args.task not in {"test", "unit", "test-shard"}:
-        parser.error("--jobs is supported only for the test, unit and test-shard tasks")
+    if args.jobs is not None and args.task not in {"test", "unit", "test-shard", "test-windows"}:
+        parser.error(
+            "--jobs is supported only for the test, unit, test-shard and test-windows tasks"
+        )
     shard_id = args.shard_id
     if shard_id is None:
         shard_id = int(os.environ.get("RUNWAY_PYTEST_SHARD_ID", "1"))

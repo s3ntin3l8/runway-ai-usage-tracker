@@ -24,6 +24,11 @@ import pytest
 from scripts import build_windows_installer, prepare_nsis
 from scripts.sidecar_pkg import asset_names
 
+# The native Windows gate runs the modules marked ``windows``; see
+# `scripts/dev_checks.py test-windows`. The installer is a Windows artefact,
+# so its packaging rules belong to that gate.
+pytestmark = pytest.mark.windows
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 NSI = (ROOT / "installer" / "windows" / "runway-sidecar.nsi").read_text(encoding="utf-8")

@@ -1,0 +1,73 @@
+name: Windows Native Suite
+
+# The whole pytest suite on a native Windows runner.
+#
+# It used to run on every pull request, in four parallel shards. That cost
+# ~11 runner-minutes per pull request -- the largest advisory cost in the
+# repository -- for coverage that a Windows runner is not the only way to
+# get: most of the suite is platform independent and the Linux job already
+# runs it.
+#
+# What stays on every pull request is `windows/specific` in ci-cd.yml: the
+# modules whose subject is the Windows platform (native socket and handle
+# semantics, installer packaging, console code pages). The full suite runs
+# here, on main pushes and nightly, so a Windows-only regression in any
+# module still surfaces -- just on a slower cadence than before.
+#
+# Four parallel shards, because the suite takes 11-27 minutes on a hosted
+# Windows runner depending on how fast the runner is, which is what pushed
+# the old monolithic job into its 30-minute timeout (#712). The plan splits
+# whole test modules and balances them by measured runtime, so no shard runs
+# long enough to matter even on a slow runner.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only a pull request supersedes its own previous run. On the default
+  # branch the nightly schedule and a push share this group, and cancelling
+  # on either would silently drop one of them -- the nightly run is the
+  # backstop for the narrowed per-pull-request Windows gate.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  windows-native-pytest:
+    name: windows-native-pytest (shard ${{ matrix.shard }}/4)
+    runs-on: windows-latest
+    # 45 minutes survives a runner several times slower than median: a shard
+    # is about a quarter of the suite, so even a 4x-slow runner finishes it in
+    # well under 15 minutes.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install canonical Python dependencies
+        run: python scripts/dev_checks.py install-python
+      # Four workers inside the shard as well: the runner has four cores,
+      # and `--dist loadfile` keeps each test module in one worker.
+      - name: Run the shard
+        env:
+          RUNWAY_PYTEST_SHARD_ID: ${{ matrix.shard }}
+          RUNWAY_PYTEST_SHARDS: '4'
+          RUNWAY_TEST_JOBS: '4'
+        run: python scripts/dev_checks.py test-shard
