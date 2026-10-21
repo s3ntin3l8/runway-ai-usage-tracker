@@ -140,3 +140,25 @@ def test_the_backoff_escalates_and_stays_bounded(monkeypatch):
     assert len(sleeps) == sign_release_image._ATTEMPTS - 1
     assert sleeps == sorted(sleeps)
     assert sum(sleeps) <= 60
+
+
+def test_a_signing_timeout_fails_closed(monkeypatch):
+    def run(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, 180)
+
+    monkeypatch.setattr(sign_release_image.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="timed out"):
+        sign_release_image.sign_image(REFERENCE)
+
+
+def test_the_failure_message_keeps_the_operator_guidance(monkeypatch):
+    def run(command, **kwargs):
+        return _completed("error: OIDC permission denied")
+
+    monkeypatch.setattr(sign_release_image.subprocess, "run", run)
+    with pytest.raises(RuntimeError) as exc:
+        sign_release_image.sign_image(REFERENCE)
+    # The inline step this replaces told the operator what to do next; the
+    # script must not drop that on the floor.
+    assert "Re-run the workflow" in str(exc.value)
+    assert "no public tags were promoted" in str(exc.value)

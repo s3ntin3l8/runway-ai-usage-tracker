@@ -70,6 +70,13 @@ def sign_image(reference: str) -> None:
             )
         except FileNotFoundError as exc:
             raise RuntimeError("cosign is not installed; the image was not signed") from exc
+        except subprocess.TimeoutExpired as exc:
+            # The process was killed mid-sign, so the signature may or may not
+            # have been written. Fail closed either way - the digest is
+            # re-signed cleanly on the next attempt.
+            raise RuntimeError(
+                f"{reference}: signing timed out after {exc.timeout}s; no public tags were promoted."
+            ) from exc
         # Keep cosign's own output in the job log: it is the only diagnostic a
         # failed signing attempt leaves behind.
         print(result.stdout, end="")
@@ -78,7 +85,9 @@ def sign_image(reference: str) -> None:
             return
         if not is_transient(result.stderr) or attempt == _ATTEMPTS:
             raise RuntimeError(
-                f"{reference}: signing failed; no public tags were promoted.\n"
+                f"{reference}: signing failed; no public tags were promoted. "
+                "Re-run the workflow to rebuild, re-audit, and sign before "
+                "promotion. The audit candidate is retained for diagnosis.\n"
                 f"{result.stderr.strip()}"
             )
         print(
