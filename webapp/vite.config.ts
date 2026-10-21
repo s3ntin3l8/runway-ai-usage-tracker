@@ -181,6 +181,12 @@ export default defineConfig({
     // jsdom by default so component tests render; pure-logic tests run fine in
     // it too. `globals: true` enables RTL auto-cleanup + jest-dom matchers.
     environment: 'jsdom',
+    // The default `forks` pool builds a fresh jsdom environment per test
+    // file, and that dominated the run: vitest reported "Environment jsdom
+    // was created 117 times, 40% of tracked time". `vmThreads` reuses one
+    // environment per worker while keeping per-file isolation, which takes
+    // the suite from 47s to 19s.
+    pool: 'vmThreads',
     env: { NODE_ENV: 'development' },
     globals: true,
     setupFiles: ['src/test/setup.ts'],
@@ -198,6 +204,11 @@ export default defineConfig({
         'src/main.tsx',
         'src/**/*.d.ts',
         'src/api/types.ts',
+        // A two-line wrapper around window.location.reload(). It cannot be
+        // covered: under the vmThreads pool `window.location` is
+        // non-configurable, so no test can replace or spy on the reload.
+        // Callers mock the module instead.
+        'src/lib/reload.ts',
       ],
     },
   },
