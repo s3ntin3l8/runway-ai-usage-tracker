@@ -281,12 +281,12 @@ class KeepAliveController:
     def reported(self) -> bool | None:
         """Keep-alive state to report on ingest: ``None`` (unknown) when never armed.
 
-        The tray app never arms the controller, so it must not claim keep-alive is off.
+        Startup and unpaired tray instances must not claim keep-alive is off.
         """
         return self.effective if self._armed else None
 
     def reported_providers(self) -> dict[str, bool] | None:
-        """Keep-alive per login to report on ingest; ``None`` when never armed (tray app)."""
+        """Keep-alive per login to report on ingest; ``None`` before daemon start."""
         if not self._armed:
             return None
         return {name: self.effective_for(name) for name in self._provider_names()}

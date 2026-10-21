@@ -70,3 +70,11 @@ updates remain in #767. Keep #526 open until the required native acceptance pass
 
 The machine-readable evidence is
 [claude-keychain-renewal-followup-767.json](claude-keychain-renewal-followup-767.json).
+
+## Later tray verification
+
+The later [packaged tray acceptance](claude-keychain-tray-acceptance-548.md)
+implements #548 lifecycle wiring and verifies an actual packaged-daemon refresh,
+canonical policy preservation in that run, and CLI/API acceptance. It supersedes
+the unarmed-tray limitation above. The earlier snapshot discrepancy remains
+unexplained under #773; #750/#767 retain other native acceptance boundaries.
