@@ -104,12 +104,27 @@ def isolated_environment() -> Iterator[tuple[Path, dict[str, str]]]:
         yield root, isolated_paths
 
 
+def parallel_args(jobs: int) -> list[str]:
+    """The pytest arguments that run the suite in ``jobs`` parallel workers.
+
+    ``--dist loadfile`` keeps every test module inside a single worker, so
+    a module's module-scoped fixtures and anything it sets up at import time
+    stay together. That is the same property ``scripts/pytest_shard.py``
+    relies on when it splits the suite across CI runners, and the reason
+    in-process parallelism is safe here.
+    """
+    if jobs <= 1:
+        return []
+    return ["-n", str(jobs), "--dist", "loadfile"]
+
+
 def check(
     task: str,
     extra: list[str],
     *,
     shard_id: int = 1,
     shards: int = DEFAULT_SHARDS,
+    jobs: int = 0,
 ) -> None:
     interpreter = venv_python()
     if task not in {"install", "install-python", "web-test"} and not interpreter.is_file():
@@ -138,7 +153,16 @@ def check(
         with isolated_environment() as (root, isolated_paths):
             args = ["tests/unit/", "-q"] if task == "unit" else []
             execute(
-                [python, "-m", "pytest", *args, "--basetemp", str(root / "tests"), *extra],
+                [
+                    python,
+                    "-m",
+                    "pytest",
+                    *args,
+                    *parallel_args(jobs),
+                    "--basetemp",
+                    str(root / "tests"),
+                    *extra,
+                ],
                 isolated_paths=isolated_paths,
             )
     elif task == "test-shard":
@@ -157,6 +181,7 @@ def check(
                     "pytest",
                     "tests/",
                     *shard_deselections(modules, shard),
+                    *parallel_args(jobs),
                     "--basetemp",
                     str(root / "tests"),
                     *extra,
@@ -190,7 +215,7 @@ def check(
         execute([*npm_command(), "--prefix", "webapp", "test", *(["--", *extra] if extra else [])])
     elif task == "gate":
         for step in ("lint", "test", "web-test"):
-            check(step, [])
+            check(step, [], jobs=jobs)
 
 
 def main() -> int:
@@ -216,17 +241,28 @@ def main() -> int:
     # instead of being interpolated into the shell command.
     parser.add_argument("--shard-id", type=int, default=None, help="1-based shard to run")
     parser.add_argument("--shards", type=int, default=None, help="total number of shards")
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=None,
+        help="run the suite in this many parallel workers (1 = serial)",
+    )
     args, extra = parser.parse_known_args()
     if extra and args.task not in {"test", "unit", "test-shard", "web-test"}:
         parser.error("additional arguments are supported only for test commands")
+    if args.jobs is not None and args.task not in {"test", "unit", "test-shard"}:
+        parser.error("--jobs is supported only for the test, unit and test-shard tasks")
     shard_id = args.shard_id
     if shard_id is None:
         shard_id = int(os.environ.get("RUNWAY_PYTEST_SHARD_ID", "1"))
     shards = args.shards
     if shards is None:
         shards = int(os.environ.get("RUNWAY_PYTEST_SHARDS", str(DEFAULT_SHARDS)))
+    jobs = args.jobs
+    if jobs is None:
+        jobs = int(os.environ.get("RUNWAY_TEST_JOBS", "0"))
     try:
-        check(args.task, extra, shard_id=shard_id, shards=shards)
+        check(args.task, extra, shard_id=shard_id, shards=shards, jobs=jobs)
     except subprocess.CalledProcessError as exc:
         return exc.returncode
     except RuntimeError as exc:

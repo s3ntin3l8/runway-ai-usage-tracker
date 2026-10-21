@@ -36,9 +36,9 @@ def test_gate_stops_after_a_failed_step(monkeypatch):
     calls = []
     original = dc.check
 
-    def check(task, extra):
+    def check(task, extra, **kwargs):
         if task == "gate":
-            return original(task, extra)
+            return original(task, extra, **kwargs)
         calls.append(task)
         if task == "test":
             raise subprocess.CalledProcessError(1, ["test"])
