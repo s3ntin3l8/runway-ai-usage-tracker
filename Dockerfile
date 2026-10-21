@@ -1,4 +1,8 @@
 # Stage 1: Build the SPA
+# The digest pins the multi-arch image index, not a per-architecture manifest,
+# so one pin covers every architecture the build runs on. Node 24 ships npm
+# 11.19, which webapp/package.json's devEngines requires; Node 22 ships npm
+# 10, and npm 10 strips the libc metadata the lockfile needs.
 FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS frontend-builder
 WORKDIR /app
 COPY webapp/package*.json ./webapp/

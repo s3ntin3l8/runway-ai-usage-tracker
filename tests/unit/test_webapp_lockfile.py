@@ -85,10 +85,12 @@ class TestWebappLockfileLibcMetadata:
         missing = EXPECTED_LIBC_PACKAGES - recorded
         assert not missing, (
             "webapp/package-lock.json lost the libc metadata for "
-            f"{len(missing)} package(s): {sorted(missing)}. npm needs it to pick the "
-            "glibc or musl build of an optional native package. Regenerate the "
-            "lockfile with the pinned npm (webapp/package.json 'packageManager'); "
-            "if the dependency change is intended, update EXPECTED_LIBC_PACKAGES."
+            f"{len(missing)} package(s):\n"
+            + "\n".join(f"  - {name}" for name in sorted(missing))
+            + "\nnpm needs it to pick the glibc or musl build of an optional native "
+            "package. Regenerate the lockfile with the pinned npm (webapp/package.json "
+            "'packageManager'); if the dependency change is intended, update "
+            "EXPECTED_LIBC_PACKAGES."
         )
 
     def test_no_unexpected_package_carries_the_libc_metadata(self):
@@ -99,8 +101,9 @@ class TestWebappLockfileLibcMetadata:
         unexpected = recorded - EXPECTED_LIBC_PACKAGES
         assert not unexpected, (
             "webapp/package-lock.json gained the libc metadata for "
-            f"{len(unexpected)} package(s): {sorted(unexpected)}. A dependency "
-            "change usually brings new platform packages; update "
+            f"{len(unexpected)} package(s):\n"
+            + "\n".join(f"  + {name}" for name in sorted(unexpected))
+            + "\nA dependency change usually brings new platform packages; update "
             "EXPECTED_LIBC_PACKAGES if this one is intended."
         )
 
@@ -152,12 +155,24 @@ class TestFrontendToolchainPin:
         "document",
         ["README.md", "CONTRIBUTING.md", "AGENTS.md"],
     )
-    def test_the_documented_node_floor_matches_the_pin(self, document: str):
-        """The docs and the enforced floor must not drift apart."""
+    def test_the_documents_do_not_still_demand_node_22_12(self, document: str):
+        """A stale floor is the half of the drift that silently misleads readers."""
         text = (ROOT / document).read_text(encoding="utf-8")
 
         assert "22.12+" not in text, (
             f"{document} still documents Node 22.12+, but react-router 8.3.0 "
             "requires 22.22.0 and the lockfile pins it."
         )
-        assert "22.22+" in text
+
+    @pytest.mark.parametrize(
+        "document",
+        ["README.md", "CONTRIBUTING.md", "AGENTS.md"],
+    )
+    def test_the_documents_demand_node_22_22(self, document: str):
+        """The documented floor has to be the floor the manifest enforces."""
+        text = (ROOT / document).read_text(encoding="utf-8")
+
+        assert "22.22+" in text, (
+            f"{document} does not document the Node 22.22+ floor that "
+            "webapp/package.json enforces through devEngines.runtime."
+        )
