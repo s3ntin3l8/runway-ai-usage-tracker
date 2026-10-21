@@ -417,11 +417,12 @@ jobs:
         env:
           IMAGE_NAME: ${{ inputs.image-name }}
           AUDITED_DIGEST: ${{ steps.audit.outputs.digest }}
+        # Fails closed: the script raises unless the signature was written, so
+        # nothing is promoted without one. It retries only a transient ambient
+        # OIDC token fault, which otherwise stops the publish (see
+        # docs/ci-edge-release-recovery.md).
         run: |
-          if ! cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${AUDITED_DIGEST}"; then
-            echo "::error::Candidate signing failed; no public tags were promoted. Re-run the workflow to rebuild, re-audit, and sign before promotion. The audit candidate is retained for diagnosis."
-            exit 1
-          fi
+          python -m scripts.sign_release_image "${REGISTRY}/${IMAGE_NAME}@${AUDITED_DIGEST}"
 
       - name: Promote exactly the audited image
         env:
