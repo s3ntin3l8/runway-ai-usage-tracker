@@ -922,14 +922,30 @@ def _codex_login_paths() -> list[Path]:
     return expand_file_rule_paths(paths)
 
 
+# Bound to the current runner, so replacement on local config reload is observed.
+_CLAUDE_KEYCHAIN_PERMISSION: Callable[[], bool] | None = None
+
+
+def _claude_keychain_renewal_enabled() -> bool:
+    return _CLAUDE_KEYCHAIN_PERMISSION is not None and _CLAUDE_KEYCHAIN_PERMISSION() is True
+
+
 def _make_keep_alive_renewers() -> list:
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
+    from scripts.sidecar_pkg.claude_keychain_renewer import KeychainRenewer
     from scripts.sidecar_pkg.codex_renewer import CodexRenewer
+    from scripts.sidecar_pkg.keep_alive import is_enabled
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     return [
         XaiRenewer(),
-        AnthropicRenewer(_claude_login_paths),
+        AnthropicRenewer(
+            _claude_login_paths,
+            keychain=KeychainRenewer(
+                lambda: custom_login_dirs("CLAUDE_CONFIG_DIR"),
+                lambda: _claude_keychain_renewal_enabled() and is_enabled("anthropic"),
+            ),
+        ),
         CodexRenewer(_codex_login_paths),
     ]
 
@@ -5286,6 +5302,8 @@ class DaemonRunner:
         on_status_change: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config
+        global _CLAUDE_KEYCHAIN_PERMISSION
+        _CLAUDE_KEYCHAIN_PERMISSION = self._keychain_renewal_allowed
         # Heartbeat: how often the sidecar pings the server for instructions.
         # The server (via /fleet/ingest's poll_providers field) is the cadence
         # authority — it tells the sidecar which providers are due. A short
@@ -5321,6 +5339,9 @@ class DaemonRunner:
     # ------------------------------------------------------------------
     # Status property (computed)
     # ------------------------------------------------------------------
+
+    def _keychain_renewal_allowed(self) -> bool:
+        return self._config.get("claude_keychain_renewal") is True
 
     @property
     def status(self) -> str:
@@ -6039,4 +6060,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--runway-keychain-worker"]:
+        from scripts.sidecar_pkg.macos_keychain_store import worker_main
+
+        worker_main()
+    else:
+        main()

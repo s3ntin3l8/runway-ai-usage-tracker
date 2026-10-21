@@ -20,6 +20,8 @@ It only touches ``claudeAiOauth`` (the sibling ``mcpOAuth`` block, which Claude 
 and every other key survive), writes atomically, and never logs token material.
 """
 
+from __future__ import annotations
+
 import contextlib
 import json
 import logging
@@ -31,9 +33,14 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from scripts.sidecar_pkg.oauth_renewal import RefreshRejectedError, atomic_replace_json
+
+if TYPE_CHECKING:
+    from scripts.sidecar_pkg.claude_keychain_renewer import KeychainRenewer
+
+from scripts.sidecar_pkg.claude_renewal_lock import claude_renewal_lock
 
 __all__ = ["AnthropicRenewer", "RefreshRejectedError"]
 
@@ -195,7 +202,10 @@ class AnthropicRenewer:
 
     name = "anthropic"
 
-    def __init__(self, targets: Callable[[], list[Path]]) -> None:
+    def __init__(
+        self, targets: Callable[[], list[Path]], *, keychain: KeychainRenewer | None = None
+    ) -> None:
+        self.keychain = keychain
         # A callable, evaluated on every tick: login dirs change on config reload.
         self._targets = targets
         self._rejected: dict[Path, str] = {}  # path -> refresh token the endpoint refused
@@ -223,12 +233,18 @@ class AnthropicRenewer:
         return logins
 
     def due(self) -> bool:
-        return bool(self._due_logins())
+        return bool(self._due_logins()) or (self.keychain is not None and self.keychain.due())
 
     def renew(self) -> bool:
         """Renew every due login; True unless one failed. Nothing due is not a failure."""
         with _RENEW_LOCK:
-            return self._renew_due_logins()
+            with claude_renewal_lock() as acquired:
+                if not acquired:
+                    return False
+                ok = self._renew_due_logins()
+            if self.keychain is not None:
+                ok = self.keychain.renew() and ok
+            return ok
 
     def _renew_due_logins(self) -> bool:
         ok = True

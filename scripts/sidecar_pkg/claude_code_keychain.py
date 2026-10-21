@@ -54,17 +54,31 @@ def _mapped_value(data: dict[str, Any], field: str) -> Any:
     return None
 
 
-def read_candidates(
-    directories: list[Path], mapping: dict[str, str]
-) -> list[tuple[dict[str, Any], str]]:
-    if ("*", "*") in _DENIED:
-        return []
+def account_name() -> str:
     try:
         account = os.getenv("USER") or getpass.getuser()
     except (OSError, KeyError):
         account = "claude-code-user"
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", account):
         account = "claude-code-user"
+    return account
+
+
+def access_blocked() -> bool:
+    """Discovery and renewal share a process-wide denial/timeout circuit breaker."""
+    return ("*", "*") in _DENIED
+
+
+def block_access() -> None:
+    _DENIED.add(("*", "*"))
+
+
+def read_candidates(
+    directories: list[Path], mapping: dict[str, str]
+) -> list[tuple[dict[str, Any], str]]:
+    if ("*", "*") in _DENIED:
+        return []
+    account = account_name()
     candidates = []
     for service in service_candidates(directories):
         if (service, account) in _DENIED:
