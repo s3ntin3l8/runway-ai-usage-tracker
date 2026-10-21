@@ -33,14 +33,10 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-from scripts.sidecar_pkg.oauth_renewal import RefreshRejectedError, atomic_replace_json
-
-if TYPE_CHECKING:
-    from scripts.sidecar_pkg.claude_keychain_renewer import KeychainRenewer
+from typing import Any, Protocol
 
 from scripts.sidecar_pkg.claude_renewal_lock import claude_renewal_lock
+from scripts.sidecar_pkg.oauth_renewal import RefreshRejectedError, atomic_replace_json
 
 __all__ = ["AnthropicRenewer", "RefreshRejectedError"]
 
@@ -61,6 +57,14 @@ REQUEST_TIMEOUT_SECONDS = 15
 RECENT_WRITE_SECONDS = 30
 # Used when a refresh response carries no ``expires_in`` (never seen): short, so we look again soon.
 FALLBACK_EXPIRES_IN = 3600
+
+
+class RenewalTarget(Protocol):
+    """Optional secondary credential store, without coupling the file renewer to it."""
+
+    def due(self) -> bool: ...
+
+    def renew(self) -> bool: ...
 
 
 @dataclass
@@ -203,7 +207,7 @@ class AnthropicRenewer:
     name = "anthropic"
 
     def __init__(
-        self, targets: Callable[[], list[Path]], *, keychain: KeychainRenewer | None = None
+        self, targets: Callable[[], list[Path]], *, keychain: RenewalTarget | None = None
     ) -> None:
         self.keychain = keychain
         # A callable, evaluated on every tick: login dirs change on config reload.

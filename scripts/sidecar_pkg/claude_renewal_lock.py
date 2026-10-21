@@ -41,13 +41,12 @@ def claude_renewal_lock() -> Iterator[bool]:
         return
     fd = None
     try:
-        acquired = False
         try:
             if sys.platform == "darwin":
                 fd = _open_user_lock()
             acquired = True
         except OSError:
-            pass
+            acquired = False  # Unsafe storage or contention: skip rather than run unlocked.
         yield acquired
     finally:
         if fd is not None:

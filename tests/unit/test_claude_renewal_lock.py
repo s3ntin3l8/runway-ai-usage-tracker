@@ -16,10 +16,14 @@ def test_threads_exclude_each_other_and_release_after_error(tmp_path, monkeypatc
         assert first
         with locking.claude_renewal_lock() as second:
             assert not second
-    with pytest.raises(OSError, match="body failure"):
+
+    def fail_inside_lock():
         with locking.claude_renewal_lock() as acquired:
             assert acquired
             raise OSError("body failure")
+
+    caught = pytest.raises(OSError, fail_inside_lock)
+    caught.match("body failure")
     with locking.claude_renewal_lock() as acquired:
         assert acquired
 
