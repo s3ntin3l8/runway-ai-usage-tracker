@@ -8,6 +8,13 @@ import time
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+#: A fixed, far-future expiry for blobs whose bytes have to be reproducible.
+#: ``safari_blob``'s default expiry is derived from the clock, so a blob
+#: built at collection time produced a different parametrised test id in
+#: every process -- which pytest-xdist rejects ("different tests were
+#: collected between gw0 and gw1").
+FIXED_EXPIRY = 4102444800  # 2100-01-01T00:00:00Z
+
 
 def encrypted(host, value=b"synthetic-session", version=24):
     raw = (hashlib.sha256(host.encode()).digest() if version >= 24 else b"") + value

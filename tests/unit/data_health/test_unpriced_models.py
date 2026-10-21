@@ -101,8 +101,10 @@ def test_detect_classifies_a_reported_zero_cost_as_source_reported(session):
 
 
 def test_detect_reports_a_configured_zero_rate_as_informational(session):
-    make_event(session, event_id="zero", provider_id="chatgpt", model_id="gpt-free", cost_usd=0.0)
-    make_price(session, provider_id="chatgpt", model_id="gpt-free", rate=0.0)
+    make_event(
+        session, event_id="zero", provider_id="chatgpt", model_id="gpt-zero-rate", cost_usd=0.0
+    )
+    make_price(session, provider_id="chatgpt", model_id="gpt-zero-rate", rate=0.0)
 
     report = _check().detect(session)
 
@@ -111,8 +113,10 @@ def test_detect_reports_a_configured_zero_rate_as_informational(session):
 
 
 def test_informational_group_rejects_preview_and_apply(session):
-    make_event(session, event_id="zero", provider_id="chatgpt", model_id="gpt-free", cost_usd=0.0)
-    make_price(session, provider_id="chatgpt", model_id="gpt-free", rate=0.0)
+    make_event(
+        session, event_id="zero", provider_id="chatgpt", model_id="gpt-zero-rate", cost_usd=0.0
+    )
+    make_price(session, provider_id="chatgpt", model_id="gpt-zero-rate", rate=0.0)
     group_key = _check().detect(session).groups[0].key
 
     with pytest.raises(ValueError, match="informational zero-cost"):
@@ -280,6 +284,45 @@ def test_detect_excludes_free_suffixed_models(session):
         event_id="8",
         provider_id="hermes-auto",
         model_id="deepseek-v4-flash-free",
+        cost_usd=0.0,
+    )
+
+    report = _check().detect(session)
+
+    assert report.total_count == 0
+
+
+def test_detect_excludes_free_suffixed_models_for_every_provider(session):
+    """Free-tier ids are excluded for every provider, not just the OpenCode
+    ones — the cost calculator's segment-trim fallback is blocked for them
+    too, so a "-free" id can never reach a paid sibling row and be billed at
+    list price."""
+    make_event(
+        session,
+        event_id="1",
+        provider_id="minimax",
+        model_id="MiniMax-M3.1-Flash-free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="2",
+        provider_id="minimax",
+        model_id="minimax-m3.1-flash-free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="3",
+        provider_id="openrouter",
+        model_id="vendor/model:free",
+        cost_usd=0.0,
+    )
+    make_event(
+        session,
+        event_id="4",
+        provider_id="minimax",
+        model_id="MiniMax-M3-free",
         cost_usd=0.0,
     )
 

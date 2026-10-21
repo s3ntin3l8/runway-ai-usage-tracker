@@ -35,8 +35,10 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   `python scripts/dev_checks.py gate`).
   `make install` wires the same checks into git hooks: pre-commit runs ruff,
   mypy, detect-secrets, and the unit tests; pre-push runs the full suite.
+  Both run the suite in four workers, so the gates take about a minute
+  rather than five.
   CI must stay green — `test-python / lint`, `test-python / type-and-test`,
-  `test-frontend / lint-and-test`, and CodeQL — with coverage floors of 70%
+  `test-frontend / lint-and-test`, and CodeQL — with coverage floors of 85%
   (Python) and 85% (frontend).
 - **Get a review, and close the loop on it.** Hermes auto-reviews each PR
   once on open (`.github/workflows/hermes.yml`) — don't request another one
@@ -55,6 +57,12 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
      ```
      Get `thread_id` from a `reviewThreads` query on the PR, not the REST
      comment id.
+  An `APPROVED` review can still carry an open inline comment, so check
+  `reviewThreads`/`isResolved` — not just the review state — before merging:
+  the branch requires every conversation resolved
+  (`required_conversation_resolution`), so an open thread blocks the merge.
+  Don't merge through the REST `PUT /pulls/<n>/merge` endpoint: it accepts a
+  PR with an unresolved thread and silently skips that gate.
 - **Run a review pass on your own diff before declaring done.**
 - **File a GitHub issue for anything a plan defers, blocks, or descopes**, and
   link it from the PR — a footnote in a plan doc is not a durable record.
@@ -67,8 +75,11 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   worktree of the repository, so install them once from the main checkout
   (`make install-hooks`); a hook installed from a worktree keeps pointing at
   that worktree's interpreter and stops working when the worktree is removed.
-  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.12+
-  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`); on Windows
+  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22+
+  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, and `react-router`
+  8.3.0 pins `>=22.22.0`) and npm 11.11+ (Node 24 ships npm 11.19) — `webapp/package.json`
+  pins both with `devEngines`, so a mismatched toolchain refuses to install
+  rather than quietly rewriting the lockfile. On Windows
   `winget install OpenJS.NodeJS.LTS` puts it in the per-user PATH, and a new
   shell (or session) is needed for that to take effect.
 
@@ -91,7 +102,10 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
 - `make sidecar-registry` — regenerate the sidecar's baked credential rules after
   editing `app/core/registry.json` (the baked block is generated, never hand-edited).
 - `make secrets` / `make secrets-baseline` — detect-secrets gate / regenerate
-  the baseline after vetting a new detection.
+  the baseline after vetting a new detection. The baseline pins **line
+  numbers**, so editing a baselined file shifts them: re-run
+  `make secrets-baseline` in the same change or the CI gate fails — and the
+  baseline conflicts on the next rebase.
 
 ## Core invariants
 

@@ -12,7 +12,16 @@ Two properties matter here.
 **Whole files.** A shard owns whole test modules, never a slice of one, so the
 fixed-port helpers and the import-time environment setup in ``tests/conftest.py``
 keep running in a single process exactly as they did in the unsharded run.
-In-process parallelism (``pytest-xdist``) would not have that property.
+In-process parallelism (``pytest-xdist``) only keeps that property with
+``--dist loadfile``, which is what the local runner and the Linux CI job use;
+the default ``--dist load`` would split a module across workers and lose it.
+
+This file and xdist solve different problems and both are in use. xdist
+parallelises *within* one runner (several workers on one machine); this
+planner parallelises *across* runners (one shard per CI job, each on its own
+runner). The Windows CI job needs the latter: it runs one shard per runner,
+because a hosted Windows runner is slow enough that a single job would blow
+its timeout.
 
 **Balanced by measured duration.** The suite's runtime is heavily skewed - two
 modules are about 30% of the total - and the number of tests inside a module
@@ -20,6 +29,13 @@ barely predicts how long that module runs (correlation ~0.14 on this suite).
 Splitting by file count or by test count therefore leaves the shards minutes
 apart, so the weights come from measured per-module durations kept in
 ``tests/shard_durations.json``.
+
+The weights are platform-specific: a module that is slow on Linux is not
+necessarily slow on Windows (``test_multi_account_provider_config.py`` takes
+26s on Linux and 136s on Windows, while ``test_macos_frozen_ca.py`` goes the
+other way). Measuring them on one platform and planning the other leaves the
+shards minutes apart -- which is exactly what a per-platform weight file
+fixes.
 
 Refresh the weights with ``python scripts/dev_checks.py record-shard-weights``.
 The plan itself is a pure function of the module list and the weight table, so

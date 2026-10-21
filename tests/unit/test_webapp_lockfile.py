@@ -1,0 +1,205 @@
+"""Unit tests for the webapp lockfile's native platform metadata.
+
+npm copies the ``libc`` field of an optional platform package into the lockfile
+verbatim. It is the only thing that tells npm which of two packages matching
+the same ``os`` and ``cpu`` to install - the glibc build or the musl build.
+Without it npm installs both, which grew ``node_modules/@img`` from 19M to 37M
+on a glibc host.
+
+npm 10 does not write the field at all: it is missing from npm 10's
+``pkgMetaKeys``, so every lockfile npm 10 rewrites loses it. npm 11.11 added
+it back, and npm 11.19 and 12.2 both reproduce this lockfile byte for byte.
+The ``npm audit fix`` that regenerated the lockfile in #731 dropped it from 29
+of the 35 entries, so these tests fail when a regeneration loses it.
+
+The check is loss-only, deliberately. npm records the field per package and
+independently - one package carrying it says nothing about another - so no
+rule over the lockfile's own content can stand in for the fixture below.
+Requiring an exact match instead would mean the fixture changed with every
+dependency bump that moves the platform packages, and a good bump would fail
+the gate the same way a stripped lockfile does.
+
+The pin that keeps a second npm out of the tree lives in ``devEngines`` in
+``webapp/package.json``; these tests cover the lockfile it protects.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+WEBAPP_PACKAGE_JSON = ROOT / "webapp" / "package.json"
+ROOT_PACKAGE_JSON = ROOT / "package.json"
+WEBAPP_LOCKFILE = ROOT / "webapp" / "package-lock.json"
+
+# The optional platform packages whose manifest declares a libc, so npm
+# records it. Every one of them ships a glibc and a musl variant under the same
+# os/cpu, and npm cannot tell them apart without the field.
+#
+# Keyed on the bare package name, not the path that holds it: the same package
+# can sit at the top of the tree or nested under a dependency, and both copies
+# have to carry the field.
+#
+# This is a floor, not an exact match. An entry listed here is checked for
+# still carrying the field as long as it is in the lockfile; a package that
+# joins the tree is not checked, and one that leaves it is skipped. Add names
+# to widen the coverage - never to make a failing check pass.
+EXPECTED_LIBC_PACKAGES = frozenset(
+    {
+        "@img/sharp-libvips-linux-arm",
+        "@img/sharp-libvips-linux-arm64",
+        "@img/sharp-libvips-linux-ppc64",
+        "@img/sharp-libvips-linux-riscv64",
+        "@img/sharp-libvips-linux-s390x",
+        "@img/sharp-libvips-linux-x64",
+        "@img/sharp-libvips-linuxmusl-arm64",
+        "@img/sharp-libvips-linuxmusl-x64",
+        "@img/sharp-linux-arm",
+        "@img/sharp-linux-arm64",
+        "@img/sharp-linux-ppc64",
+        "@img/sharp-linux-riscv64",
+        "@img/sharp-linux-s390x",
+        "@img/sharp-linux-x64",
+        "@img/sharp-linuxmusl-arm64",
+        "@img/sharp-linuxmusl-x64",
+        "@rolldown/binding-linux-arm64-gnu",
+        "@rolldown/binding-linux-arm64-musl",
+        "@rolldown/binding-linux-ppc64-gnu",
+        "@rolldown/binding-linux-s390x-gnu",
+        "@rolldown/binding-linux-x64-gnu",
+        "@rolldown/binding-linux-x64-musl",
+        "@rollup/rollup-linux-arm-gnueabihf",
+        "@rollup/rollup-linux-arm-musleabihf",
+        "@rollup/rollup-linux-arm64-gnu",
+        "@rollup/rollup-linux-arm64-musl",
+        "@rollup/rollup-linux-loong64-gnu",
+        "@rollup/rollup-linux-loong64-musl",
+        "@rollup/rollup-linux-ppc64-gnu",
+        "@rollup/rollup-linux-ppc64-musl",
+        "@rollup/rollup-linux-riscv64-gnu",
+        "@rollup/rollup-linux-riscv64-musl",
+        "@rollup/rollup-linux-s390x-gnu",
+        "@rollup/rollup-linux-x64-gnu",
+        "@rollup/rollup-linux-x64-musl",
+    }
+)
+
+
+def _read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _bare_package_name(path: str) -> str:
+    """The package name without the node_modules path that holds it."""
+    return path.rsplit("node_modules/", 1)[-1]
+
+
+class TestWebappLockfileLibcMetadata:
+    def test_the_lockfile_keeps_the_libc_metadata(self):
+        """A regeneration that drops the field would make npm install both builds.
+
+        The check is loss-only: an entry that is still in the lockfile must
+        still carry the field. A package that joins the tree is not checked
+        and a package that leaves it is skipped, so a dependency bump that
+        changes the platform packages does not have to touch this fixture.
+        """
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+
+        stripped = sorted(
+            path
+            for path, meta in packages.items()
+            if _bare_package_name(path) in EXPECTED_LIBC_PACKAGES and not meta.get("libc")
+        )
+        assert not stripped, (
+            "webapp/package-lock.json lost the libc metadata for "
+            f"{len(stripped)} package(s):\n"
+            + "\n".join(f"  - {path}" for path in stripped)
+            + "\nnpm needs it to pick the glibc or musl build of an optional native "
+            "package. Regenerate the lockfile with the pinned npm (webapp/package.json "
+            "'packageManager')."
+        )
+
+    def test_the_fixture_still_matches_the_lockfile(self):
+        """A fixture that matches nothing checks nothing - that is not a pass."""
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+        present = {_bare_package_name(path) for path in packages}
+
+        live = EXPECTED_LIBC_PACKAGES & present
+        assert live, (
+            "none of the packages in EXPECTED_LIBC_PACKAGES are in "
+            "webapp/package-lock.json any more, so the libc check above cannot "
+            "fail. Update the fixture to the platform packages the tree has now."
+        )
+
+    def test_every_recorded_libc_entry_declares_a_platform(self):
+        """libc only means something next to an os and a cpu."""
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+
+        for name, meta in packages.items():
+            if not meta.get("libc"):
+                continue
+            assert meta.get("os"), f"{name} declares libc without an os"
+            assert meta.get("cpu"), f"{name} declares libc without a cpu"
+
+
+class TestFrontendToolchainPin:
+    def test_the_webapp_declares_the_pinned_toolchain(self):
+        """npm reads devEngines from the project root before install, ci and run."""
+        manifest = _read_json(WEBAPP_PACKAGE_JSON)
+
+        assert manifest["packageManager"] == "npm@11.19.0"
+        dev_engines = manifest["devEngines"]
+        assert dev_engines["runtime"] == {
+            "name": "node",
+            "version": ">=22.22.0",
+            "onFail": "error",
+        }
+        assert dev_engines["packageManager"] == {
+            "name": "npm",
+            "version": ">=11.11.0",
+            "onFail": "error",
+        }
+
+    def test_the_root_manifest_declares_no_package_manager(self):
+        """The root holds no lockfile, so a root package manager declaration is a trap.
+
+        ``actions/setup-node`` v7 enables its npm cache whenever the manifest at
+        the repository root names npm as the package manager, and then looks for
+        a ``package-lock.json`` there. The lockfile lives in ``webapp/``, so a
+        root declaration makes every workflow that sets up Node fail with
+        "Dependencies lock file is not found". The pin belongs to the project
+        that owns the lockfile.
+        """
+        root = _read_json(ROOT_PACKAGE_JSON)
+
+        assert "packageManager" not in root
+        assert "devEngines" not in root
+
+    @pytest.mark.parametrize(
+        "document",
+        ["README.md", "CONTRIBUTING.md", "AGENTS.md"],
+    )
+    def test_the_documents_do_not_still_demand_node_22_12(self, document: str):
+        """A stale floor is the half of the drift that silently misleads readers."""
+        text = (ROOT / document).read_text(encoding="utf-8")
+
+        assert "22.12+" not in text, (
+            f"{document} still documents Node 22.12+, but react-router 8.3.0 "
+            "requires 22.22.0 and the lockfile pins it."
+        )
+
+    @pytest.mark.parametrize(
+        "document",
+        ["README.md", "CONTRIBUTING.md", "AGENTS.md"],
+    )
+    def test_the_documents_demand_node_22_22(self, document: str):
+        """The documented floor has to be the floor the manifest enforces."""
+        text = (ROOT / document).read_text(encoding="utf-8")
+
+        assert "22.22+" in text, (
+            f"{document} does not document the Node 22.22+ floor that "
+            "webapp/package.json enforces through devEngines.runtime."
+        )

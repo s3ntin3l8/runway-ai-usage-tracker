@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -18,6 +17,7 @@ from app.core.db import get_session
 from app.main import app
 from app.models.db import AuditLog, SidecarPairingCode
 from app.services import pairing
+from tests.fixtures.test_client import TestClient
 
 INGEST_KEY = "k" * 40  # pragma: allowlist secret
 

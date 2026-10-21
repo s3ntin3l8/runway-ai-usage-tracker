@@ -14,9 +14,11 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import uuid
+import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -89,6 +91,27 @@ def _pytest_root_usable(pytest_root: Path) -> bool:
     return True
 
 
+def _mkdir_private(path: Path) -> None:
+    """Create ``path`` and any missing parent, all with private permissions.
+
+    ``mkdir(parents=True)`` would leave the intermediate directories at the
+    default 0755 — readable by every user on a shared host, which is exactly
+    what a temp root must not be.
+    """
+    missing: list[Path] = []
+    current = path
+    while not current.exists():
+        missing.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+    for directory in reversed(missing):
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:  # created concurrently
+            pass
+
+
 def _ensure_writable_pytest_root(temproot: Path | None = None) -> None:
     """Point pytest at a temp root this user can actually use.
 
@@ -104,7 +127,28 @@ def _ensure_writable_pytest_root(temproot: Path | None = None) -> None:
     per-run root keeps concurrent runs from sharing anything. The cost is
     that a killed run can leave its fallback behind — pytest's own numbered
     directories are cleaned up on exit, this one only on a normal exit.
+
+    An explicit ``PYTEST_DEBUG_TEMPROOT`` is left alone: the operator has
+    already chosen a root, and pytest reads that variable itself. The
+    directory is created if it is missing — pytest's own ``mkdir`` has no
+    ``parents=True``, so a root that does not exist yet would fail every
+    test.
     """
+    chosen = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+    if chosen:
+        try:
+            _mkdir_private(Path(chosen))
+        except OSError as exc:
+            # Nothing left to do: pytest will fail every test with a
+            # FileNotFoundError on <chosen>/pytest-of-<user>, and nothing
+            # would hint that this variable was the cause.
+            warnings.warn(
+                f"PYTEST_DEBUG_TEMPROOT={chosen!r} could not be created ({exc}); "
+                "pytest will fail to allocate its temp directories",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return
     root = Path(tempfile.gettempdir()) if temproot is None else temproot
     if _pytest_root_usable(_pytest_root_dir(root)):
         return
@@ -141,6 +185,8 @@ os.environ["PYSTRAY_BACKEND"] = "dummy"
 
 import httpx
 import pytest
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from app.core.config import Settings, settings
 from app.core.net import LOOPBACK_HOSTS
@@ -156,6 +202,36 @@ from tests.fixtures.mock_data import (
     KIMI_RESPONSE,
     OPENCODE_GO_RESPONSE,
 )
+from tests.fixtures.sqlite import disable_fsync, skip_fsync_requested
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _fast_sqlite_writes():
+    """Stop SQLite from fsyncing every write the suite makes.
+
+    The suite builds its own throwaway SQLite engines (a per-test
+    ``SQLModel.metadata.create_all()`` plus a commit or two), and those
+    engines never go through ``app.core.db.configure_sqlite_engine``. They
+    therefore keep SQLite's default ``synchronous=FULL`` and fsync on every
+    commit, which made the suite I/O-bound: profiling showed ~80% of the
+    local run's wall time spent waiting on the filesystem rather than running
+    code.
+
+    The app engine is exempt -- it sets ``synchronous=NORMAL`` and WAL on
+    purpose, and those are production decisions the suite must not change
+    behind our back. See ``tests/fixtures/sqlite.py``.
+
+    Set ``RUNWAY_TEST_SQLITE_SYNC=1`` to restore the durable default.
+    """
+    if skip_fsync_requested():
+        yield
+        return
+
+    event.listen(Engine, "connect", disable_fsync)
+    try:
+        yield
+    finally:
+        event.remove(Engine, "connect", disable_fsync)
 
 
 @pytest.fixture(autouse=True)
@@ -245,6 +321,20 @@ def mock_db_session(monkeypatch):
     for module in tuple(sys.modules.values()):
         if module is not None and vars(module).get("Session") is mock_session:
             module.Session = Session
+
+
+@pytest.fixture(autouse=True)
+def close_managed_test_clients():
+    """Close the TestClients a test created (see tests/fixtures/test_client).
+
+    The client in ``tests/fixtures/test_client`` enters itself so that every
+    request it makes shares one event loop; this is where that loop — and
+    the socket pair it holds — is released.
+    """
+    from tests.fixtures.test_client import close_open_clients
+
+    yield
+    close_open_clients()
 
 
 @pytest.fixture
@@ -422,3 +512,45 @@ def make_symlink():
             raise
 
     return create
+
+
+@pytest.fixture
+def isolated_git(tmp_path: Path):
+    """Run git with every user-level ignore source taken out of the way.
+
+    ``git check-ignore`` consults the system config, the global config and the
+    default excludes file (``$XDG_CONFIG_HOME/git/ignore``). A developer's own
+    ignore rules would otherwise decide the answer, and an assertion about
+    this repository's .gitignore would pass for the wrong reason.
+
+    The pre-commit hooks export ``GIT_DIR`` so that their own staging does not
+    touch the checkout; in a worktree ``.git`` is a file, so an inherited
+    ``GIT_DIR`` makes git refuse to run outside a work tree, and an inherited
+    ``GIT_DIR`` would also make ``git init`` reinitialise the checkout running
+    the test. Every ``GIT_*`` variable is therefore dropped.
+    """
+    empty_config = tmp_path / "gitconfig"
+    empty_config.write_text("", encoding="utf-8")
+    empty_excludes = tmp_path / "gitignore"
+    empty_excludes.write_text("", encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = str(empty_config)
+
+    def run(
+        *args: str,
+        cwd: Path | None = None,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        command = ["git", "-c", f"core.excludesFile={empty_excludes}", *args]
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    return run
