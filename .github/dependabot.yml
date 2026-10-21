@@ -32,3 +32,18 @@ updates:
       npm-deps:
         patterns:
           - "*"
+        # Weekly pull requests carry minor and patch bumps only. A major is a
+        # migration, not a weekly batch: the first run of this group proposed
+        # 34 updates including seven majors, and could not be reviewed or
+        # merged as one.
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # TypeScript 7 is the Go rewrite of the compiler, not a version bump:
+      # the tooling around it has not caught up yet, and taking it here is a
+      # migration rather than a dependency update. #742 already had to drop
+      # the baseUrl option that 7 removed. Track the migration in #757 and
+      # lift this when it is time.
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
