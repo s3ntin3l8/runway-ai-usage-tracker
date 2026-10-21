@@ -12,13 +12,12 @@ it back, and npm 11.19 and 12.2 both reproduce this lockfile byte for byte.
 The ``npm audit fix`` that regenerated the lockfile in #731 dropped it from 29
 of the 35 entries, so these tests fail when a regeneration loses it.
 
-The check is loss-only, deliberately. npm's decision to record the field is a
-per-manifest fact - the same package carries it in one lockfile and not in
-another at the same version - so there is no invariant over the lockfile's
-own content that can replace the fixture below. Requiring an exact match
-instead would mean the fixture changed with every dependency bump that moves
-the platform packages, and a good bump would fail the gate the same way a
-stripped lockfile does.
+The check is loss-only, deliberately. npm records the field per package and
+independently - one package carrying it says nothing about another - so no
+rule over the lockfile's own content can stand in for the fixture below.
+Requiring an exact match instead would mean the fixture changed with every
+dependency bump that moves the platform packages, and a good bump would fail
+the gate the same way a stripped lockfile does.
 
 The pin that keeps a second npm out of the tree lives in ``devEngines`` in
 ``webapp/package.json``; these tests cover the lockfile it protects.
@@ -40,53 +39,62 @@ WEBAPP_LOCKFILE = ROOT / "webapp" / "package-lock.json"
 # records it. Every one of them ships a glibc and a musl variant under the same
 # os/cpu, and npm cannot tell them apart without the field.
 #
+# Keyed on the bare package name, not the path that holds it: the same package
+# can sit at the top of the tree or nested under a dependency, and both copies
+# have to carry the field.
+#
 # This is a floor, not an exact match. An entry listed here is checked for
 # still carrying the field as long as it is in the lockfile; a package that
 # joins the tree is not checked, and one that leaves it is skipped. Add names
 # to widen the coverage - never to make a failing check pass.
 EXPECTED_LIBC_PACKAGES = frozenset(
     {
-        "node_modules/@img/sharp-libvips-linux-arm",
-        "node_modules/@img/sharp-libvips-linux-arm64",
-        "node_modules/@img/sharp-libvips-linux-ppc64",
-        "node_modules/@img/sharp-libvips-linux-riscv64",
-        "node_modules/@img/sharp-libvips-linux-s390x",
-        "node_modules/@img/sharp-libvips-linux-x64",
-        "node_modules/@img/sharp-libvips-linuxmusl-arm64",
-        "node_modules/@img/sharp-libvips-linuxmusl-x64",
-        "node_modules/@img/sharp-linux-arm",
-        "node_modules/@img/sharp-linux-arm64",
-        "node_modules/@img/sharp-linux-ppc64",
-        "node_modules/@img/sharp-linux-riscv64",
-        "node_modules/@img/sharp-linux-s390x",
-        "node_modules/@img/sharp-linux-x64",
-        "node_modules/@img/sharp-linuxmusl-arm64",
-        "node_modules/@img/sharp-linuxmusl-x64",
-        "node_modules/@rolldown/binding-linux-arm64-gnu",
-        "node_modules/@rolldown/binding-linux-arm64-musl",
-        "node_modules/@rolldown/binding-linux-ppc64-gnu",
-        "node_modules/@rolldown/binding-linux-s390x-gnu",
-        "node_modules/@rolldown/binding-linux-x64-gnu",
-        "node_modules/@rolldown/binding-linux-x64-musl",
-        "node_modules/@rollup/rollup-linux-arm-gnueabihf",
-        "node_modules/@rollup/rollup-linux-arm-musleabihf",
-        "node_modules/@rollup/rollup-linux-arm64-gnu",
-        "node_modules/@rollup/rollup-linux-arm64-musl",
-        "node_modules/@rollup/rollup-linux-loong64-gnu",
-        "node_modules/@rollup/rollup-linux-loong64-musl",
-        "node_modules/@rollup/rollup-linux-ppc64-gnu",
-        "node_modules/@rollup/rollup-linux-ppc64-musl",
-        "node_modules/@rollup/rollup-linux-riscv64-gnu",
-        "node_modules/@rollup/rollup-linux-riscv64-musl",
-        "node_modules/@rollup/rollup-linux-s390x-gnu",
-        "node_modules/@rollup/rollup-linux-x64-gnu",
-        "node_modules/@rollup/rollup-linux-x64-musl",
+        "@img/sharp-libvips-linux-arm",
+        "@img/sharp-libvips-linux-arm64",
+        "@img/sharp-libvips-linux-ppc64",
+        "@img/sharp-libvips-linux-riscv64",
+        "@img/sharp-libvips-linux-s390x",
+        "@img/sharp-libvips-linux-x64",
+        "@img/sharp-libvips-linuxmusl-arm64",
+        "@img/sharp-libvips-linuxmusl-x64",
+        "@img/sharp-linux-arm",
+        "@img/sharp-linux-arm64",
+        "@img/sharp-linux-ppc64",
+        "@img/sharp-linux-riscv64",
+        "@img/sharp-linux-s390x",
+        "@img/sharp-linux-x64",
+        "@img/sharp-linuxmusl-arm64",
+        "@img/sharp-linuxmusl-x64",
+        "@rolldown/binding-linux-arm64-gnu",
+        "@rolldown/binding-linux-arm64-musl",
+        "@rolldown/binding-linux-ppc64-gnu",
+        "@rolldown/binding-linux-s390x-gnu",
+        "@rolldown/binding-linux-x64-gnu",
+        "@rolldown/binding-linux-x64-musl",
+        "@rollup/rollup-linux-arm-gnueabihf",
+        "@rollup/rollup-linux-arm-musleabihf",
+        "@rollup/rollup-linux-arm64-gnu",
+        "@rollup/rollup-linux-arm64-musl",
+        "@rollup/rollup-linux-loong64-gnu",
+        "@rollup/rollup-linux-loong64-musl",
+        "@rollup/rollup-linux-ppc64-gnu",
+        "@rollup/rollup-linux-ppc64-musl",
+        "@rollup/rollup-linux-riscv64-gnu",
+        "@rollup/rollup-linux-riscv64-musl",
+        "@rollup/rollup-linux-s390x-gnu",
+        "@rollup/rollup-linux-x64-gnu",
+        "@rollup/rollup-linux-x64-musl",
     }
 )
 
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _bare_package_name(path: str) -> str:
+    """The package name without the node_modules path that holds it."""
+    return path.rsplit("node_modules/", 1)[-1]
 
 
 class TestWebappLockfileLibcMetadata:
@@ -101,17 +109,29 @@ class TestWebappLockfileLibcMetadata:
         packages = _read_json(WEBAPP_LOCKFILE)["packages"]
 
         stripped = sorted(
-            name
-            for name in EXPECTED_LIBC_PACKAGES
-            if name in packages and not packages[name].get("libc")
+            path
+            for path, meta in packages.items()
+            if _bare_package_name(path) in EXPECTED_LIBC_PACKAGES and not meta.get("libc")
         )
         assert not stripped, (
             "webapp/package-lock.json lost the libc metadata for "
             f"{len(stripped)} package(s):\n"
-            + "\n".join(f"  - {name}" for name in stripped)
+            + "\n".join(f"  - {path}" for path in stripped)
             + "\nnpm needs it to pick the glibc or musl build of an optional native "
             "package. Regenerate the lockfile with the pinned npm (webapp/package.json "
             "'packageManager')."
+        )
+
+    def test_the_fixture_still_matches_the_lockfile(self):
+        """A fixture that matches nothing checks nothing - that is not a pass."""
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+        present = {_bare_package_name(path) for path in packages}
+
+        live = EXPECTED_LIBC_PACKAGES & present
+        assert live, (
+            "none of the packages in EXPECTED_LIBC_PACKAGES are in "
+            "webapp/package-lock.json any more, so the libc check above cannot "
+            "fail. Update the fixture to the platform packages the tree has now."
         )
 
     def test_every_recorded_libc_entry_declares_a_platform(self):
