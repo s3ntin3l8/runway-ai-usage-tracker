@@ -97,7 +97,7 @@ All later test runs used these guards. No further real credential test ran.
 
 ## Remaining acceptance
 
-Keep #751 draft and #526/#750/#764 open. Runway remains stopped; no production
+PR #751 is ready at the user's request. Keep #526/#750/#764 open. Runway remains stopped; no production
 installation or background renewal activation was performed.
 
 1. **Passed with explicit user approval:** isolated temporary Keychain containing
@@ -118,6 +118,13 @@ installation or background renewal activation was performed.
 3. Only after those pass, separately approve at most one renewal and verify
    expiry advancement, available access-control evidence, Claude Code acceptance,
    recovery cleanup, not-due cycles and the full packaged daemon.
+
+These later read/renewal stages have now been exercised under the user's broader
+bounded-verification approval. See
+[the #767 follow-up](claude-keychain-renewal-followup-767.md) for successful
+write-back/API/CLI/restart checks and the remaining ACL, dialog-attribution and
+packaged-tray boundaries. The earlier synthetic pass alone does not establish
+full native acceptance.
 
 If unattended access is unavailable, retain that result and create a linked
 follow-up for explicit local authorization/stable-signing design. Do not hide

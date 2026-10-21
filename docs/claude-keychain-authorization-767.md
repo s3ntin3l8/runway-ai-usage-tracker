@@ -72,6 +72,9 @@ access descriptor came from a different reference path. A metadata-only legacy
 item lookup successfully returned its ACL. The earlier absence result must not
 be treated as proof that the real item had no access-control policy.
 
-Full packaged-daemon renewal, expiry advancement, real-item security metadata
-comparison and Claude acceptance remain pending until recorded native results
-establish them. Keep #526/#750/#764/#767 open.
+The later bounded follow-up completed one refresh/write-back, expiry advancement,
+API and Claude Code acceptance, and fresh-helper restart reads. Its real-item ACL
+snapshot comparison and dialog attribution remain unresolved, and full tray
+renewal is blocked by the existing unarmed controller (#548). See the
+[follow-up evidence](claude-keychain-renewal-followup-767.md). Keep
+#526/#750/#764/#767 open.
