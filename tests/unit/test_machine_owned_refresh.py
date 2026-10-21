@@ -14,7 +14,6 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import auth_failures
@@ -25,6 +24,7 @@ from app.services.token_refresher import (
     ROTATING_REFRESH_PROVIDERS,
     machine_owns_credential,
 )
+from tests.fixtures.test_client import TestClient
 
 ALICE = "alice@example.com"
 

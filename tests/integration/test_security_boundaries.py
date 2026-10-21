@@ -3,9 +3,9 @@
 from unittest.mock import Mock
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.fixtures.test_client import TestClient
 
 
 @pytest.mark.parametrize("path", ["/api/v1/system/settings", "/api/v1/usage/limits"])

@@ -9,12 +9,12 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
+from tests.fixtures.test_client import TestClient
 
 
 class _FakeCollector:

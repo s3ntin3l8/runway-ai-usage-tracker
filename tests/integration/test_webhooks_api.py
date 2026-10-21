@@ -1,13 +1,13 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
 from app.models.db import ProviderConfig, WebhookCredentialAlert
+from tests.fixtures.test_client import TestClient
 
 
 @pytest.fixture(name="session")
