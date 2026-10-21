@@ -22,7 +22,9 @@ updates:
           - "*"
 
   - package-ecosystem: npm
-    directory: /
+    # The npm project lives in webapp/; the repository root only holds a
+    # script wrapper with no dependencies and no lockfile of its own.
+    directory: /webapp
     schedule:
       interval: weekly
       day: monday
