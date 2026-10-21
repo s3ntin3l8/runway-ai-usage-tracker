@@ -61,6 +61,22 @@ def test_an_explicit_temproot_is_left_alone(tmp_path, temproot_env, deny_writes_
     assert os.environ["PYTEST_DEBUG_TEMPROOT"] == str(chosen)
     # pytest's own mkdir has no parents=True, so the root has to exist.
     assert chosen.is_dir()
+    # A temp root must not be readable by other users on a shared host.
+    if os.name != "nt":
+        assert chosen.stat().st_mode & 0o077 == 0
+
+
+def test_an_explicit_temproot_that_cannot_be_created_warns(tmp_path, temproot_env, deny_writes_to):
+    # Otherwise the suite dies with pytest's FileNotFoundError on
+    # <chosen>/pytest-of-<user> and nothing hints at the cause.
+    chosen = tmp_path / "chosen-root"
+    os.environ["PYTEST_DEBUG_TEMPROOT"] = str(chosen)
+    deny_writes_to.append(tmp_path)
+
+    with pytest.warns(RuntimeWarning, match="could not be created"):
+        _ensure_writable_pytest_root(temproot=tmp_path)
+
+    assert not chosen.exists()
 
 
 def test_a_missing_root_is_created(tmp_path, temproot_env):

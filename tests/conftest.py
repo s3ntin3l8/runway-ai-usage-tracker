@@ -17,6 +17,7 @@ import stat
 import sys
 import tempfile
 import uuid
+import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -89,6 +90,27 @@ def _pytest_root_usable(pytest_root: Path) -> bool:
     return True
 
 
+def _mkdir_private(path: Path) -> None:
+    """Create ``path`` and any missing parent, all with private permissions.
+
+    ``mkdir(parents=True)`` would leave the intermediate directories at the
+    default 0755 — readable by every user on a shared host, which is exactly
+    what a temp root must not be.
+    """
+    missing: list[Path] = []
+    current = path
+    while not current.exists():
+        missing.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+    for directory in reversed(missing):
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:  # created concurrently
+            pass
+
+
 def _ensure_writable_pytest_root(temproot: Path | None = None) -> None:
     """Point pytest at a temp root this user can actually use.
 
@@ -114,9 +136,17 @@ def _ensure_writable_pytest_root(temproot: Path | None = None) -> None:
     chosen = os.environ.get("PYTEST_DEBUG_TEMPROOT")
     if chosen:
         try:
-            Path(chosen).mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass
+            _mkdir_private(Path(chosen))
+        except OSError as exc:
+            # Nothing left to do: pytest will fail every test with a
+            # FileNotFoundError on <chosen>/pytest-of-<user>, and nothing
+            # would hint that this variable was the cause.
+            warnings.warn(
+                f"PYTEST_DEBUG_TEMPROOT={chosen!r} could not be created ({exc}); "
+                "pytest will fail to allocate its temp directories",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         return
     root = Path(tempfile.gettempdir()) if temproot is None else temproot
     if _pytest_root_usable(_pytest_root_dir(root)):

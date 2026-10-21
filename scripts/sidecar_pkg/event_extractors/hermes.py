@@ -66,7 +66,14 @@ _HERMES_CANONICAL_MAP: dict[str, CanonicalProviderTuple] = {
 
 
 def _is_free_model(model: str) -> bool:
-    """Return True if model name indicates a free-tier model."""
+    """Return True if model name indicates a free-tier model.
+
+    Deliberately narrower than `app.services.model_normalization.is_free_tier_model_id`,
+    which also matches the "openrouter/free/*" prefix form. This one decides
+    which provider bucket a Hermes session files under; the shared one decides
+    whether an id may be billed at a paid rate. Widening this would silently
+    re-route "openrouter/free/*" sessions from "opencode" to "opencode-free".
+    """
     m = (model or "").strip().lower()
     if not m:
         return False
