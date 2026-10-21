@@ -58,12 +58,14 @@ def test_gate_forwards_the_worker_count_to_its_steps(monkeypatch):
     def check(task, extra, **kwargs):
         if task == "gate":
             return original(task, extra, **kwargs)
-        seen.append((task, kwargs.get("jobs")))
+        seen.append((task, kwargs.get("jobs", 0)))
         return None
 
     monkeypatch.setattr(dc, "check", check)
     dc.check("gate", [], jobs=4)
-    assert seen == [("lint", 4), ("test", 4), ("web-test", 4)]
+    # Only the pytest step is told the worker count; lint and web-test do
+    # not run the suite.
+    assert seen == [("lint", 0), ("test", 4), ("web-test", 0)]
 
 
 @pytest.mark.parametrize(
@@ -130,6 +132,9 @@ def test_tests_get_an_owned_root_and_keep_pytest_arguments(monkeypatch):
     assert paths[0]["HOME"] == paths[0]["USERPROFILE"]
     for name in ("APPDATA", "LOCALAPPDATA", "RUNWAY_CONFIG_DIR"):
         assert Path(paths[0][name]).is_relative_to(temp.parent)
+    # The root itself is exported too, so the suite can give each xdist
+    # worker its own home and config directory (tests/conftest.py).
+    assert Path(paths[0]["TEST_ISOLATION_ROOT"]) == temp.parent
 
 
 def test_missing_npm_reports_setup_requirement(monkeypatch):

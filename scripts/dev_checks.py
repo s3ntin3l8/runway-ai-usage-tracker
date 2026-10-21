@@ -85,11 +85,14 @@ def isolated_environment() -> Iterator[tuple[Path, dict[str, str]]]:
     Yields the temporary root plus the environment overrides that point HOME,
     APPDATA, the XDG directories and RUNWAY_CONFIG_DIR at it.
 
-    ``TEST_ISOLATION_ROOT`` carries the root itself so the suite can
-    specialise it per xdist worker: the four workers of a parallel run must
-    not share one app database file, or two tests writing to the app engine
-    at the same time contend on it. The specialisation happens in the worker
-    (see ``tests/conftest.py``) because the worker id is only known there.
+    The paths exported here are the serial run's. ``TEST_ISOLATION_ROOT``
+    carries the root itself so the suite can specialise it per xdist worker:
+    the four workers of a parallel run must not share one app database file,
+    or two tests writing to the app engine at the same time contend on it.
+    That specialisation happens in the worker (see ``tests/conftest.py``),
+    because the worker id is only known there, so on the parallel path the
+    exported HOME and config directory are the fallback the conftest
+    re-derives per worker -- not the paths the workers end up using.
     """
     # A unique owned root avoids old pytest roots with another user's Windows ACLs.
     with tempfile.TemporaryDirectory(prefix="runway-pytest-") as tmp:
@@ -241,8 +244,12 @@ def check(
     elif task == "web-test":
         execute([*npm_command(), "--prefix", "webapp", "test", *(["--", *extra] if extra else [])])
     elif task == "gate":
-        for step in ("lint", "test", "web-test"):
-            check(step, [], jobs=jobs)
+        # Only the pytest step runs the suite, so only it is told how many
+        # workers to use. `lint` runs ruff and mypy; `web-test` runs vitest,
+        # which has its own pool knob.
+        check("lint", [])
+        check("test", [], jobs=jobs)
+        check("web-test", [])
 
 
 def main() -> int:

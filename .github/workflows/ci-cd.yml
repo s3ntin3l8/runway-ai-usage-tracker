@@ -78,9 +78,8 @@ jobs:
     # Native Windows coverage of the static checks. The suite itself runs in
     # the sharded windows-native-pytest matrix below.
     #
-    # Advisory: it is not a required status check. The merge queue therefore
-    # skips it -- the queue only needs the checks that decide the merge, and
-    # the Windows runner is the slowest thing in this workflow.
+    # Advisory: it is not a required status check, so it does not decide
+    # whether a pull request merges.
     runs-on: windows-latest
     # ruff + mypy + pip-audit take ~1.2 minutes on a healthy runner; the budget
     # only has to absorb a very slow runner, not the suite.
@@ -133,7 +132,7 @@ jobs:
         run: python scripts/dev_checks.py test-windows
 
   dependency-audit:
-    # Advisory: the merge queue does not wait on it.
+    # Advisory: it is not a required status check.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -162,7 +161,7 @@ jobs:
     # one is built on windows-latest by sidecar-build.yml) so a broken .nsi or
     # a missing installer asset fails here, not at release time.
     #
-    # Advisory: the merge queue does not wait on it.
+    # Advisory: it is not a required status check.
     runs-on: ubuntu-latest
     permissions:
       contents: read

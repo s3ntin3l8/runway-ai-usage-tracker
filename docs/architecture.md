@@ -371,6 +371,25 @@ Workflows live in `.github/workflows/`.
     would need to skip that event so the queue does not wait on the Windows
     runner. Neither is in place, because neither could be exercised here —
     an untested conditional path in CI is worse than no path at all.
+- **`windows-native-suite.yml`** — the whole pytest suite on a native Windows
+    runner, in four parallel shards, on `main` pushes and nightly. It used to
+    run on every pull request, where it cost ~11 runner-minutes — the largest
+    advisory cost in the repository — for coverage a Windows runner is not
+    the only way to get. `scripts/pytest_shard.py` owns the split: it keeps
+    whole test modules together (so the fixed-port helpers and
+    `tests/conftest.py`'s import-time setup stay in one process) and balances
+    them by measured runtime, recorded in `tests/shard_durations.json`. A
+    shard runs the whole suite with the other shards' modules deselected by
+    node id prefix, so pytest's own `collect_ignore` still decides what is
+    collectible. Re-measure with `make shard-weights`. The frontend is not
+    part of this job — `test-frontend / lint-and-test` already covers it on
+    Linux.
+- **`image-security.yml` / `image-security-arm64.yml`** — the candidate
+    image is built and scanned for known vulnerabilities. The amd64 leg runs
+    on every pull request; the arm64 leg is a native build on an ARM runner
+    and lives in its own workflow, filtered to the paths that can change the
+    image. The daily `published` job audits the arm64 image that actually
+    ships.
 - **`release-please.yml`** — on push to `main`: opens/merges the release PR
   from Conventional Commits (see *Releases*). When it cuts a release it also
   runs `docker-publish.yml` with `push-release: true` (stable → `:latest` +
