@@ -104,6 +104,27 @@ one attempt instead of four. The step still fails closed: nothing is
 promoted unless the signature was written, so the retry changes *when* the
 publish fails, never *whether* it fails.
 
+Two properties of that retry are worth knowing.
+
+**The pinned cosign cannot always tell a rejection from a transient fault.**
+cosign v3.1.3 - the version this repository pins - does not check the token
+endpoint's HTTP status before decoding the body, so a plain-text `403`
+reaches cosign as the same JSON decode error and is indistinguishable from
+the transient fault. Such a rejection is retried before the step fails; it
+still fails and still promotes nothing, but the failure arrives later than
+it otherwise would. cosign v3.1.4 checks the status and reports it as
+`failed with status 403 Forbidden`, which the script already treats as
+permanent - so moving the pin forward tightens the retry with no code
+change.
+
+**The retry budget has to fit inside the job's timeout.** The `merge` job
+allows 15 minutes and the steps ahead of the signing measured about 132
+seconds on the run that signed, so the signing step is capped well below
+the remainder: four attempts of 60 seconds plus 60 seconds of backoff is
+300 seconds. A longer per-attempt cap would let a hung `cosign` outlive
+the job, and the platform would cancel the run instead of the script
+reporting its own annotated failure.
+
 This is the same narrow-retry rule the release asset signer already follows
 for Rekor's equivalent-entry conflict: recover the one observed transient
 external fault, and never mask a permanent one behind a slow failure.

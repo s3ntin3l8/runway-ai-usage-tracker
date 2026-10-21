@@ -18,6 +18,15 @@ image, the registry, or this repository's credentials. Every other failure
 the registry does not have - is permanent and is reported immediately, so a
 real misconfiguration surfaces in one attempt instead of four.
 
+One caveat, because the pinned cosign v3.1.3 does not check the token
+endpoint's HTTP status before decoding the body: a plain-text rejection
+reaches cosign as a JSON decode error and is indistinguishable from the
+transient fault, so it is retried before the step fails. It still fails,
+and nothing is promoted; only the failure is slower to arrive. cosign
+v3.1.4 checks the status, and this script already treats a stated
+rejection as permanent, so moving the pin forward tightens the retry
+without a code change.
+
 The retry mirrors ``scripts/sign_release_assets.py``, which retries
 Rekor's equivalent-entry conflict and nothing else.
 """
@@ -39,6 +48,27 @@ _TRANSIENT_MARKERS = (
     "invalid character",
 )
 
+# A rejection the token endpoint states outright is permanent and must never
+# be retried, whatever else the message contains.
+#
+# cosign v3.1.3 - the version this repository pins - does not check the
+# token endpoint's HTTP status before decoding the body, so a plain-text 403
+# reaches cosign as a JSON decode error and looks exactly like the transient
+# fault. The two are indistinguishable in v3.1.3's output. cosign v3.1.4 adds
+# the status check, and then a rejection is reported as such:
+#
+#     identity token request to provider github-actions failed with status
+#     403 Forbidden
+#
+# Treating that as permanent is what keeps a real misconfiguration from
+# being retried once the pinned cosign is moved forward. The marker is
+# checked first so it wins over the decode-error markers above: a v3.1.4
+# rejection whose body also happens to be unparseable carries both.
+_PERMANENT_MARKERS = (
+    "failed with status 403",
+    "failed with status 401",
+)
+
 # Four attempts with an escalating ten-second backoff: about 60 seconds of
 # waiting in total, matching the bound the issue asks for and the pattern in
 # .github/actions/registry-login/login.sh. The bound is tight on purpose - a
@@ -47,9 +77,26 @@ _TRANSIENT_MARKERS = (
 _ATTEMPTS = 4
 _BACKOFF_SECONDS = 10
 
+# Per-attempt ceiling on the cosign process itself. A real signing takes
+# about three seconds (measured on the run that signed successfully), so 60
+# seconds is generous for the work and still bounds the whole retry inside
+# the enclosing job's timeout:
+#
+#     4 x 60 s attempts + 60 s of backoff = 300 s
+#
+# The `merge` job allows 15 minutes (900 s) and the steps ahead of the
+# signing - checkout, artifact download, buildx setup, cosign install,
+# registry login, and the two-architecture audit - measured about 132 s. A
+# 300 s signing step plus that overhead leaves the job in control of its own
+# timeout, so a hung cosign is reported as the script's annotated failure
+# instead of being cancelled by the platform with no explanation.
+_ATTEMPT_TIMEOUT_SECONDS = 60
+
 
 def is_transient(stderr: str) -> bool:
     """Whether this failure is a transient OIDC token fault worth retrying."""
+    if any(marker in stderr for marker in _PERMANENT_MARKERS):
+        return False
     return all(marker in stderr for marker in _TRANSIENT_MARKERS)
 
 
@@ -65,7 +112,7 @@ def sign_image(reference: str) -> None:
                 ["cosign", "sign", "--yes", reference],
                 capture_output=True,
                 text=True,
-                timeout=180,
+                timeout=_ATTEMPT_TIMEOUT_SECONDS,
                 check=False,
             )
         except FileNotFoundError as exc:
@@ -75,7 +122,8 @@ def sign_image(reference: str) -> None:
             # have been written. Fail closed either way - the digest is
             # re-signed cleanly on the next attempt.
             raise RuntimeError(
-                f"{reference}: signing timed out after {exc.timeout}s; no public tags were promoted."
+                f"{reference}: signing timed out after {exc.timeout}s; "
+                "no public tags were promoted."
             ) from exc
         # Keep cosign's own output in the job log: it is the only diagnostic a
         # failed signing attempt leaves behind.

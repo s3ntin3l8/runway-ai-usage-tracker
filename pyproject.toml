@@ -178,7 +178,7 @@ ignore_missing_imports = true
 # module named". CI never builds those trees, so only contributors who ran
 # `make sidecar-app` locally hit it.
 exclude_gitignore = true
-exclude = ["tests", "scripts", "sidecar_app", "scratch", "evidence"]
+exclude = ["tests", "scripts/(?!sign_release_image).*\\.py$", "sidecar_app", "scratch", "evidence"]
 
 [[tool.mypy.overrides]]
 module = "app.services.collectors.*"

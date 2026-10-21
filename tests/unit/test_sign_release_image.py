@@ -91,6 +91,29 @@ def test_transient_detection_requires_the_ambient_credential_markers():
     assert not sign_release_image.is_transient("fetching ambient OIDC credentials: 403 Forbidden")
 
 
+def test_a_stated_rejection_is_permanent():
+    # cosign v3.1.4 and later report the token endpoint's HTTP status, so a
+    # rejection is distinguishable from the transient fault and must never be
+    # retried.
+    for status in ("401", "403"):
+        message = (
+            "retrieving ID token: reading ID token: fetching ambient OIDC credentials: "
+            f"identity token request to provider github-actions failed with status {status} Forbidden"
+        )
+        assert not sign_release_image.is_transient(message)
+
+
+def test_a_stated_rejection_wins_over_the_decode_markers():
+    # A v3.1.4 rejection whose body was also unparseable carries both the
+    # status and a decode error. The permanent verdict must win.
+    message = (
+        "fetching ambient OIDC credentials: identity token request to provider "
+        "github-actions failed with status 403 Forbidden: invalid character 'u' "
+        "looking for beginning of value"
+    )
+    assert not sign_release_image.is_transient(message)
+
+
 def test_a_missing_cosign_fails_closed(monkeypatch):
     def run(command, **kwargs):
         raise FileNotFoundError(2, "No such file or directory")
@@ -138,7 +161,7 @@ def test_the_backoff_escalates_and_stays_bounded(monkeypatch):
     # bounded, and it grows rather than repeating a fixed delay.
     assert len(calls) == sign_release_image._ATTEMPTS
     assert len(sleeps) == sign_release_image._ATTEMPTS - 1
-    assert sleeps == sorted(sleeps)
+    assert sleeps == [10, 20, 30]
     assert sum(sleeps) <= 60
 
 
@@ -162,3 +185,18 @@ def test_the_failure_message_keeps_the_operator_guidance(monkeypatch):
     # script must not drop that on the floor.
     assert "Re-run the workflow" in str(exc.value)
     assert "no public tags were promoted" in str(exc.value)
+
+
+def test_the_retry_budget_fits_inside_the_enclosing_job_timeout():
+    # The `merge` job in docker-publish.yml allows 15 minutes (900 s). The
+    # worst case for this script is every attempt hitting its timeout, plus
+    # the backoff between them. That has to leave room for the steps that
+    # run before it (measured at ~132 s on the run that signed), otherwise
+    # the platform cancels the job and the script never gets to report its
+    # own annotated failure.
+    job_timeout = 900
+    pre_sign_overhead = 132
+    worst_case = sign_release_image._ATTEMPTS * sign_release_image._ATTEMPT_TIMEOUT_SECONDS + sum(
+        sign_release_image._BACKOFF_SECONDS * n for n in range(1, sign_release_image._ATTEMPTS)
+    )
+    assert worst_case + pre_sign_overhead < job_timeout
