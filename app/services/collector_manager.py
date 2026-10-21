@@ -1249,7 +1249,7 @@ class CollectorManager:
     ) -> bool:
         from sqlmodel import select
 
-        from app.models.db import ProviderConfig
+        from app.models.db import ProviderAccountLabel, ProviderConfig
 
         row = session.exec(
             select(ProviderConfig).where(
@@ -1272,7 +1272,13 @@ class CollectorManager:
         if account_label and (created or is_placeholder_label(row.account_label)):
             # Name a discovered account after what it is. An operator's own label
             # is never overwritten; an account that never got one still deserves it.
-            row.account_label = account_label
+            override = session.exec(
+                select(ProviderAccountLabel).where(
+                    ProviderAccountLabel.provider_id == provider_id,
+                    ProviderAccountLabel.account_id == account_id,
+                )
+            ).first()
+            row.account_label = (override.account_label if override else None) or account_label
         if created and billing_type:
             # A detected billing type only ever describes a new account: an
             # existing row's type is the operator's to choose.

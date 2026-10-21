@@ -13,6 +13,7 @@ from app.core.utils import (
     http_request_with_retry,
     human_delta,
 )
+from app.services.account_identity import is_placeholder_label
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
@@ -253,7 +254,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
         cards = self._parse_oauth_response(data, name_map, api_account_info)
         if holder:
-            self.account_id = self.account_label = holder
+            self.account_id = holder
+            if is_placeholder_label(self.account_label):
+                self.account_label = holder
         return cards
 
     def _extract_identity_from_oauth(self, data: dict[str, Any] | None) -> str:
@@ -312,9 +315,16 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
 
         identity_suffix = f" | {identity_str}" if identity_str else ""
 
+        # The account's *name*: the organization names it. Its contact address
+        # is not who holds the token, so it never becomes the account's name —
+        # and a name the operator chose is never overwritten.
+        name_str = str((api_account_info or {}).get("organization") or "") or str(
+            (data.get("account") or {}).get("organization") or ""
+        )
+
         # Persist identity to collector
-        if identity_str:
-            self.account_label = identity_str
+        if name_str and is_placeholder_label(self.account_label):
+            self.account_label = name_str
 
         # Newer OAuth response shape: a top-level `limits` array of self-describing
         # window objects (kind/group/percent/severity/scope) that coexists with (and
@@ -330,7 +340,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 build_anthropic_limit_cards(
                     limits,
                     tier=tier,
-                    account_label=identity_str,
+                    account_label=name_str,
                     identity_suffix=identity_suffix,
                     data_source=self.DATA_SOURCE_API,
                     input_source=getattr(self, "_current_input_source", "unknown"),
@@ -392,7 +402,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                             "data_source": self.DATA_SOURCE_API,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
-                            "account_label": identity_str,
+                            "account_label": name_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -437,7 +447,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                         "data_source": self.DATA_SOURCE_API,
                         "input_source": getattr(self, "_current_input_source", "unknown"),
                         "tier": tier,
-                        "account_label": identity_str,
+                        "account_label": name_str,
                         "usage_url": "https://claude.ai/settings/usage",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
@@ -487,7 +497,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                     "data_source": self.DATA_SOURCE_API,
                     "input_source": getattr(self, "_current_input_source", "unknown"),
                     "tier": tier,
-                    "account_label": identity_str,
+                    "account_label": name_str,
                     "usage_url": "https://claude.ai/settings/usage",
                     "updated_at": datetime.now(UTC).isoformat(),
                 }

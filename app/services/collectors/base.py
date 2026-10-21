@@ -22,7 +22,11 @@ import httpx
 from pydantic import ValidationError
 
 from app.core.date_utils import normalize_iso_date
-from app.services.account_identity import is_placeholder_label, resolve_account_id
+from app.services.account_identity import (
+    HASH_RE,
+    is_placeholder_label,
+    resolve_account_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -516,7 +520,11 @@ class BaseCollector(ABC):
         label = self.account_label or self._account_label_cache
         account_id = self.account_id
         if not label:
-            return account_id or "Default"
+            # A credential-derived id is not a display name: the dashboard
+            # renders a label whole, and the digest is withheld for that reason.
+            if account_id and not HASH_RE.match(account_id):
+                return account_id
+            return "Default"
         if (
             self.ACCOUNT_LABEL_IS_DISPLAY_NAME
             and account_id
@@ -539,7 +547,9 @@ class BaseCollector(ABC):
 
         # Phase 0C: Auto-discover account label from detail if not already set by user
         # Avoid running discovery if a custom label is already present or cached.
-        if is_placeholder_label(self._account_label_cache):
+        if is_placeholder_label(self.account_label) and is_placeholder_label(
+            self._account_label_cache
+        ):
             discovered_label = None
             for card in results:
                 detail = card.get("detail", "")

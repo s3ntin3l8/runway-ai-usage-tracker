@@ -965,3 +965,62 @@ def test_a_provider_whose_label_is_the_account_keeps_its_label():
         ]
     )
     assert tagged[0]["account_label"] == "person@example.com"
+
+
+@pytest.mark.asyncio
+async def test_the_oauth_strategy_names_the_organization_not_its_contact():
+    """The organization's contact is not who holds the token."""
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    result = collector._parse_oauth_response(
+        {"five_hour": {"utilization": 10}},
+        name_map={},
+        api_account_info={"organization": "Acme", "email": "contact@acme.com"},
+    )
+    # The contact address would file the card under an account that is not the
+    # credential's; the organization's name files it under the right one.
+    assert all(card.get("account_label") == "Acme" for card in result)
+    assert collector.account_label == "Acme"
+
+
+@pytest.mark.asyncio
+async def test_a_rename_is_not_overwritten_by_the_next_poll():
+    """The rediscovery must not take a name the operator chose back."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="person@example.com", account_label=None)
+    # The operator renames the account in Settings; the manager propagates the
+    # name, but the collector's label cache still holds the placeholder.
+    collector.account_label = "Team wallet"
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"membership": {"user": {"email": "member@example.com"}}},
+        )
+    collector._tag_results(result)
+    assert collector.account_label == "Team wallet"
+
+
+def test_a_credential_digest_is_never_a_label():
+    """The dashboard renders a label whole, and a digest is withheld for that."""
+    from app.services.collectors.openrouter import OpenRouterCollector
+
+    digest = "a" * 64
+    collector = OpenRouterCollector(account_id=digest, account_label=None)
+    tagged = collector._tag_results(
+        [
+            {
+                "service_name": "OpenRouter",
+                "variant": "Key Limit",
+                "window_type": "rolling",
+                "remaining": "$15.00",
+            }
+        ]
+    )
+    assert tagged[0]["account_label"] == "Default"
