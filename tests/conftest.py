@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -465,3 +466,45 @@ def make_symlink():
             raise
 
     return create
+
+
+@pytest.fixture
+def isolated_git(tmp_path: Path):
+    """Run git with every user-level ignore source taken out of the way.
+
+    ``git check-ignore`` consults the system config, the global config and the
+    default excludes file (``$XDG_CONFIG_HOME/git/ignore``). A developer's own
+    ignore rules would otherwise decide the answer, and an assertion about
+    this repository's .gitignore would pass for the wrong reason.
+
+    The pre-commit hooks export ``GIT_DIR`` so that their own staging does not
+    touch the checkout; in a worktree ``.git`` is a file, so an inherited
+    ``GIT_DIR`` makes git refuse to run outside a work tree, and an inherited
+    ``GIT_DIR`` would also make ``git init`` reinitialise the checkout running
+    the test. Every ``GIT_*`` variable is therefore dropped.
+    """
+    empty_config = tmp_path / "gitconfig"
+    empty_config.write_text("", encoding="utf-8")
+    empty_excludes = tmp_path / "gitignore"
+    empty_excludes.write_text("", encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = str(empty_config)
+
+    def run(
+        *args: str,
+        cwd: Path | None = None,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        command = ["git", "-c", f"core.excludesFile={empty_excludes}", *args]
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    return run
