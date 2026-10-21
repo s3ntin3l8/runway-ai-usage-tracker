@@ -360,3 +360,39 @@ def test_missing_or_invalid_refresh_response_leaves_ambiguous_intent(env, monkey
     assert not make().renew()
     assert len(calls) == 1
     assert store.writes == 0
+
+
+def test_nonrotating_response_saves_replacement_access_token(env, monkeypatch):
+    store, calls, make = env
+    refresh = renewal.request_refresh
+
+    def reuse(*args):
+        response = refresh(*args)
+        response["refresh_token"] = "old-refresh"
+        return response
+
+    monkeypatch.setattr(renewal, "request_refresh", reuse)
+    assert make().renew()
+    assert store.writes == 1
+    assert store.data["claudeAiOauth"]["accessToken"] == "new-access"
+    assert store.data["claudeAiOauth"]["refreshToken"] == "old-refresh"
+    assert len(calls) == 1 and store.journal is None
+
+
+def test_nonrotating_write_with_failed_cleanup_never_exchanges_again(env, monkeypatch):
+    store, calls, make = env
+    refresh = renewal.request_refresh
+
+    def reuse(*args):
+        response = refresh(*args)
+        response["refresh_token"] = "old-refresh"
+        return response
+
+    monkeypatch.setattr(renewal, "request_refresh", reuse)
+    worker = make()
+    store.fail_delete = True
+    assert not worker.renew()
+    assert store.writes == 1
+    store.fail_delete = False
+    assert worker.renew()
+    assert store.writes == 1 and len(calls) == 1 and store.journal is None

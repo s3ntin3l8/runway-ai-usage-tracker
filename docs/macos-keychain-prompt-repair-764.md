@@ -59,7 +59,7 @@ package; a persistent helper alone is not proof of prompt-free operation.
 
 ## Verification
 
-- `make lint && make test && make web-test`: passed; **5,282 Python tests passed,
+- `make lint && make test && make web-test`: passed; **5,284 Python tests passed,
   62 skipped; 1,208 frontend tests passed**. A subsequent Protocol-only CodeQL
   correction passed the 55-test file-renewer suite. Commit/push gates also run.
 - Explicit-package-base mypy checks passed for the four native transport/adapter
@@ -100,10 +100,19 @@ All later test runs used these guards. No further real credential test ran.
 Keep #751 draft and #526/#750/#764 open. Runway remains stopped; no production
 installation or background renewal activation was performed.
 
-1. Report exact readiness and obtain scoped approval for an isolated Keychain
-   containing synthetic items only. Verify authorized and denied operations,
-   zero background dialogs, helper restart/failure and source/packaged parity.
-   This requires no additional Anthropic account.
+1. **Passed with explicit user approval:** isolated temporary Keychain containing
+   four synthetic items. Source and packaged helpers completed read/update/read-back,
+   helper reuse/restart, locked read/write denial, empty-trust ACL denial, repeated
+   denial suppression, unaffected-group operation and deletion without recreation.
+   No new SecurityAgent process was observed with a 50 ms monitor; this is a UI
+   activity proxy rather than an exact dialog counter. All four fixture attempts
+   restored the original search list/default and deleted their temporary Keychain.
+   The first three attempts diagnosed a fixture trust mismatch: the SDK's current-
+   application reference (`SecTrustedApplicationCreateFromPath(NULL, ...)`) fixed
+   the fixture. No product or real-item ACL was changed, and no Claude credential
+   read, refresh, or write occurred. Sanitized evidence is in
+   [macos-keychain-prompt-repair-native-764.json](macos-keychain-prompt-repair-native-764.json).
+   This used no additional Anthropic account.
 2. Separately approve a bounded real-login read with zero exchanges/writes.
    Stop and tear down on the first unexpected dialog; do not keep approving.
 3. Only after those pass, separately approve at most one renewal and verify
@@ -114,3 +123,25 @@ If unattended access is unavailable, retain that result and create a linked
 follow-up for explicit local authorization/stable-signing design. Do not hide
 interactive enrollment inside the background loop. The independent Claude Code
 write race and provider-rotation-to-journal crash interval remain documented.
+
+
+## Existing draft review disposition
+
+Two concrete Hermes findings were verified and corrected: temporary subprocesses
+now receive an explicit project import path (the CI failure), and recovery only
+recognizes a previous completed write when the full OAuth data matches. A valid
+response reusing its refresh token now saves the new access token; interrupted
+cleanup does not exchange again. The watchdog test also records entry into its
+synthetic native call so an import failure cannot masquerade as watchdog success.
+
+The requested timer-based intent retry is intentionally rejected: elapsed time
+cannot prove that a single-use token was not consumed. Claude Code may renew or
+reauthenticate, after which the changed login supersedes the old intent. File and
+Keychain sweeps are separately serialized under the same per-user lock; a whole
+provider sweep is not an atomic transaction, and each exchange re-reads under its
+lock. Nesting the existing non-reentrant lock would skip renewal. Ambiguous reads
+remain unavailable rather than selecting another profile's first item. The shared
+30-second deadline includes queue time; no UI fallback is added. CFData references
+remain opaque bytes across the private plist transport. A failed interaction-policy
+restore deliberately retires the worker as unavailable instead of trusting its state.
+No additional review request was made after the user's instruction.

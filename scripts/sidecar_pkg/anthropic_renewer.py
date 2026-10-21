@@ -243,6 +243,7 @@ class AnthropicRenewer:
 
     def renew(self) -> bool:
         """Renew every due login; True unless one failed. Nothing due is not a failure."""
+        # The two sweeps serialize separately; each re-reads under the shared lock.
         with _RENEW_LOCK:
             with claude_renewal_lock() as acquired:
                 if not acquired:

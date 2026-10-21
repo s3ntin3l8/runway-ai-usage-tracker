@@ -1,8 +1,10 @@
 """The real transport talks only to synthetic subprocesses, never Security.framework."""
 
+import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -163,24 +165,30 @@ def test_failed_protocol_does_not_leak_payload(client_factory):
     assert "private" not in repr(caught.value)
 
 
-def test_worker_native_watchdog_terminates_stalled_call(tmp_path):
+def test_worker_native_watchdog_terminates_stalled_call(tmp_path, monkeypatch):
     from scripts.sidecar_pkg.keychain_client import KeychainClient
 
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2]))
+    marker = tmp_path / "native-call-started"
     script = tmp_path / "worker.py"
-    script.write_text("""import time
+    script.write_text("""import time,sys
+from pathlib import Path
 from scripts.sidecar_pkg import keychain_worker as w
 class API:
-    def call(self,*args): time.sleep(20)
+    def call(self,*args):
+        Path(sys.argv[1]).write_text("started")
+        time.sleep(20)
 w._NativeAPI=API
 w.TIMEOUT=.1
 w.worker_main()
 """)
-    with_cleanup = KeychainClient(command=[sys.executable, str(script)], timeout=2)
+    with_cleanup = KeychainClient(command=[sys.executable, str(script), str(marker)], timeout=2)
     try:
         with pytest.raises(store.KeychainError, match="unavailable"):
             with_cleanup.call("copy", {}, {}, group="synthetic")
     finally:
         with_cleanup.close()
+    assert marker.read_text() == "started"
 
 
 def test_worker_exits_when_parent_dies_during_native_call(tmp_path):
@@ -212,7 +220,10 @@ print('started',flush=True)
 os._exit(0)
 """)
     result = subprocess.run(
-        [sys.executable, str(controller), str(worker), str(marker)], capture_output=True, timeout=4
+        [sys.executable, str(controller), str(worker), str(marker)],
+        capture_output=True,
+        timeout=4,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])},
     )
     assert result.returncode == 0 and result.stdout == b"started\n" and result.stderr == b""
     assert marker.read_text() == "started"

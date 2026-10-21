@@ -232,10 +232,8 @@ class KeychainRenewer:
         self._save(store, ref, record)
         current = _read_target(store, item)
         data, oauth = _oauth(current)
-        if oauth.get("refreshToken") == replacement_oauth["refreshToken"]:
+        if oauth == replacement_oauth:
             # A previous write succeeded; verification/cleanup was interrupted.
-            if oauth != replacement_oauth:
-                self._log(ref, "superseded")
             self._clear(store, ref)
             return True
         if oauth.get("refreshToken") != record["refresh"]:
