@@ -338,18 +338,38 @@ Workflows live in `.github/workflows/`.
     advisory: none of them is a required status check.
   - Required checks on `main`: `test-python / lint`,
     `test-python / type-and-test`, `test-frontend / lint-and-test`, and
-    CodeQL.
+    CodeQL. They are **not** required to be up to date with `main` — see
+    *The merge queue* below.
 - **The merge queue.** `ci-cd.yml` and `codeql.yml` listen for `merge_group`,
-    so a ruleset can require the queue: GitHub builds current `main` plus the
+    so a ruleset *can* require the queue: GitHub builds current `main` plus the
     pull request, runs the required checks against *that* merge commit, and
-    merges when they are green. This is what removes the rebase treadmill —
+    merges when they are green. That is what removes the rebase treadmill —
     a branch no longer has to be up to date to merge, because the thing being
-    tested is the merge result rather than the branch. The advisory jobs skip
-    the `merge_group` event: the queue only waits on the checks that decide
-    the merge. Job-level `concurrency` on the reusable-workflow calls keeps a
-    new push from leaving the previous run going; it is deliberately *not*
-    workflow-level in the shared workflows, because inside a called workflow
-    `github.workflow` is the caller's name and two calls to the same shared
+    tested is the merge result rather than the branch.
+
+    **It is not switched on here.** The merge queue is available on public
+    repositories owned by *organizations* (and GitHub Enterprise Cloud), not
+    on personal accounts, and this repository is owned by a personal
+    account — GitHub's ruleset API rejects the `merge_queue` rule with
+    *"Invalid rule 'merge_queue'"*. What does the job today is
+    `required_status_checks.strict = false`: a pull request no longer has to
+    be up to date with `main` to merge, so it does not need a rebase, and a
+    rebase is what used to re-trigger all five workflows.
+
+    The safety that the up-to-date rule was standing in for is covered
+    elsewhere: the release pull request carries its own required checks, and
+    release-please regenerates it on every `main` push, so a broken `main`
+    makes that pull request red and it cannot be merged — no release is cut
+    from a broken `main`. The `:edge` image is gated the same way:
+    `build-docker` needs `test-python`, `test-frontend` and
+    `dependency-audit` to pass on `main`.
+
+    Moving the repositories to an organization would enable the queue; the
+    `merge_group` triggers and the job-level `concurrency` on the
+    reusable-workflow calls are already in place for it. The
+    reusable-workflow calls keep *job-level* concurrency deliberately:
+    inside a called workflow `github.workflow` is the caller's name and the
+    group is namespaced by the caller, so two calls to the same shared
     workflow from one caller would cancel each other.
 - **`windows-native-suite.yml`** — the whole pytest suite on a native Windows
     runner, in four parallel shards, on `main` pushes and nightly. It used to
