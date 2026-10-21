@@ -191,6 +191,7 @@ The project uses GitHub Actions for CI/CD, with workflow files in `.github/workf
 
 - **Linting**: ruff (style/format) plus mypy, detect-secrets, and pip-audit.
 - **Testing**: `test-python` runs pytest with coverage (floor 70%); `test-frontend` runs vitest (floor 85%).
+- **Native Windows**: `windows-native-lint` runs the static checks and `windows-native-pytest` runs the suite as four parallel shards (see `scripts/pytest_shard.py`).
 - **Build & Push**: `build-docker` pushes the `:edge` image to GHCR on push to `main`; releases publish `:latest` + the version tag.
 
 To run tests the way CI does:

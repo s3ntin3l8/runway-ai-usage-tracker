@@ -23,6 +23,8 @@ sets UTF-8 mode for Python child processes, installs the lockfile dependency
 graph with `npm ci`, and gives pytest fresh owned home, config, app-data and
 temporary directories so discovery fixtures cannot touch developer logins.
 For example: `python scripts/dev_checks.py test tests/unit/test_self_update.py`.
+`install-python` is the Python-only half of `install` — no npm, no git hooks —
+which is what the native Windows CI jobs use.
 Git Bash is needed for the registry-login shell action's tests on Windows.
 Symlink tests require Windows Developer Mode or an elevated process; a missing
 symlink privilege is reported as a specific skip, not Windows acceptance of those checks.
@@ -43,13 +45,26 @@ npm command to downgrade a `devEngines` mismatch to a warning.
 The `libc` field is worth understanding before you regenerate the lockfile.
 npm copies it verbatim from an optional platform package's published manifest,
 and it is the only thing that tells npm whether to install the glibc or the
-musl build of `sharp`, `rollup` and `rolldown` — without it npm installs both,
+musl build of `sharp`, `rollup` and `rolldown` - without it npm installs both,
 which grew `node_modules/@img` from 19M to 37M on a glibc host. npm 10 does
 not write the field at all, so `npm install --package-lock-only` under npm 10
 silently removes it from all 35 platform entries; npm 11 and 12 write it. That
 is why the npm version is pinned rather than left to whatever happens to be
 installed. `tests/unit/test_webapp_lockfile.py` fails if the field goes
 missing.
+
+The native Windows CI job runs the suite as four parallel shards. The same
+split is available locally:
+
+```bash
+make test-shard SHARD=1 SHARDS=4   # one shard
+python scripts/pytest_shard.py plan # show the whole split
+```
+
+A shard owns whole test modules, never part of one. The plan is balanced by
+measured per-module runtime (`tests/shard_durations.json`), so re-measure it
+with `make shard-weights` after the suite's shape changes materially - that
+command runs the full suite once and rewrites the table.
 
 Git hooks live in the repository's shared `.git/hooks`, so every worktree of
 this repository writes into the same two hook files. Install them once from the
