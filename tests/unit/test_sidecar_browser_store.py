@@ -59,6 +59,55 @@ def _firefox_store(path):
     return path
 
 
+class _Refused(sqlite3.OperationalError):
+    """A sqlite open failure that reports SQLITE_CANTOPEN on every platform.
+
+    A directory is the usual stand-in for a file the OS refuses to open, but
+    sqlite reports it differently per platform: Windows says "unable to open
+    database file" (SQLITE_CANTOPEN) and Linux says "disk I/O error"
+    (SQLITE_IOERR). Provoking the failure therefore would exercise a different
+    code path per platform, so the failure is injected instead.
+    """
+
+    @property
+    def sqlite_errorcode(self) -> int:
+        return sqlite3.SQLITE_CANTOPEN
+
+
+class _SqliteProxy:
+    """The real sqlite3 module with ``connect`` replaced.
+
+    Only ``browser_store.sqlite3`` is patched, so the module's own use of
+    sqlite3 stays untouched — and so does every other module's.
+    """
+
+    def __init__(self, connect):
+        # An instance attribute, so ``connect`` is never looked up on the real
+        # module by ``__getattr__``.
+        self.connect = connect
+
+    def __getattr__(self, name):
+        return getattr(sqlite3, name)
+
+
+def _refuses_to_open(monkeypatch):
+    """Make every sqlite open of a store fail the way a sharing violation does."""
+
+    def _connect(*args, **kwargs):
+        raise _Refused("unable to open database file")
+
+    monkeypatch.setattr(browser_store, "sqlite3", _SqliteProxy(_connect))
+
+
+def _held_open(monkeypatch):
+    """Report the store as held open by another process, as Win32 would."""
+    monkeypatch.setattr(
+        browser_store,
+        "_win32_access_state",
+        lambda target: (StoreState.LOCKED, "held open by another process"),
+    )
+
+
 def test_a_missing_store_is_reported_as_missing(tmp_path):
     probe = browser_store.probe_store(_target(tmp_path / "Cookies"))
     assert probe.state is StoreState.MISSING
@@ -134,14 +183,10 @@ def test_a_sqlite_lock_is_read_from_a_copy(tmp_path):
 
 def test_a_sharing_violation_is_not_retried_with_a_copy(tmp_path, monkeypatch):
     """A file the OS refuses to open cannot be copied either."""
-    # A directory stands in for such a file: sqlite reports CANTOPEN for it.
     path = tmp_path / "Cookies"
-    path.mkdir()
-    monkeypatch.setattr(
-        browser_store,
-        "_win32_access_state",
-        lambda target: (StoreState.LOCKED, "held open by another process"),
-    )
+    path.touch()
+    _refuses_to_open(monkeypatch)
+    _held_open(monkeypatch)
     copies = []
     monkeypatch.setattr(browser_store, "_copy_store", lambda target: copies.append(target))
 
@@ -151,14 +196,35 @@ def test_a_sharing_violation_is_not_retried_with_a_copy(tmp_path, monkeypatch):
     assert copies == []
 
 
+def test_a_store_the_os_refuses_to_open_is_unreadable_without_a_win32_verdict(
+    tmp_path, monkeypatch
+):
+    """Only Win32 can tell a sharing violation from an ordinary refusal.
+
+    Elsewhere a store that will not open has no known reason, so it is
+    reported as unreadable rather than as held open by another process.
+    """
+    path = tmp_path / "Cookies"
+    path.touch()
+    _refuses_to_open(monkeypatch)
+    monkeypatch.setattr(browser_store, "_win32_access_state", lambda target: (None, ""))
+
+    probe = browser_store.probe_store(_target(path))
+
+    assert probe.state is StoreState.UNREADABLE
+
+
+def test_the_win32_probe_answers_nothing_on_other_platforms(tmp_path, monkeypatch):
+    """POSIX has no sharing violation to detect, so the probe stays silent."""
+    monkeypatch.setattr(browser_store.sys, "platform", "linux")
+    assert browser_store._win32_access_state(tmp_path / "Cookies") == (None, "")
+
+
 def test_a_locked_store_is_skipped_without_a_warning(tmp_path, monkeypatch, caplog):
     path = tmp_path / "Cookies"
-    path.mkdir()
-    monkeypatch.setattr(
-        browser_store,
-        "_win32_access_state",
-        lambda target: (StoreState.LOCKED, "held open by another process"),
-    )
+    path.touch()
+    _refuses_to_open(monkeypatch)
+    _held_open(monkeypatch)
     monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
 
     with caplog.at_level(logging.WARNING):
@@ -172,12 +238,9 @@ def test_a_locked_store_is_skipped_without_a_warning(tmp_path, monkeypatch, capl
 
 def test_a_locked_store_is_reported_once_per_cycle(tmp_path, monkeypatch, caplog):
     path = tmp_path / "Cookies"
-    path.mkdir()
-    monkeypatch.setattr(
-        browser_store,
-        "_win32_access_state",
-        lambda target: (StoreState.LOCKED, "held open by another process"),
-    )
+    path.touch()
+    _refuses_to_open(monkeypatch)
+    _held_open(monkeypatch)
     monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
 
     with caplog.at_level(logging.WARNING):
@@ -196,12 +259,9 @@ def test_a_locked_store_is_reported_once_per_cycle(tmp_path, monkeypatch, caplog
 
 def test_the_report_names_the_environment_variable_that_would_work(tmp_path, monkeypatch, caplog):
     path = tmp_path / "Cookies"
-    path.mkdir()
-    monkeypatch.setattr(
-        browser_store,
-        "_win32_access_state",
-        lambda target: (StoreState.LOCKED, "held open by another process"),
-    )
+    path.touch()
+    _refuses_to_open(monkeypatch)
+    _held_open(monkeypatch)
     monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
 
     with caplog.at_level(logging.WARNING):
@@ -233,12 +293,9 @@ def test_a_locked_store_whose_copy_is_unreadable_reports_why(tmp_path, monkeypat
 
 def test_the_blocked_providers_are_forgotten_between_cycles(tmp_path, monkeypatch):
     path = tmp_path / "Cookies"
-    path.mkdir()
-    monkeypatch.setattr(
-        browser_store,
-        "_win32_access_state",
-        lambda target: (StoreState.LOCKED, "held open by another process"),
-    )
+    path.touch()
+    _refuses_to_open(monkeypatch)
+    _held_open(monkeypatch)
     monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
 
     sidecar.BrowserCookieExtractor.get_cookie("ollama.com", "session", "ollama", "session_cookie")
