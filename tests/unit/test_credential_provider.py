@@ -333,6 +333,27 @@ def test_expand_rule_paths_sees_a_nested_expiry_key_of_any_spelling(tmp_path):
     assert matches == [str(live), str(dead)]
 
 
+def test_expand_rule_paths_sees_a_top_level_expiry_key_of_any_spelling(tmp_path):
+    """The top-level pass must accept the same expiry keys as the picker.
+
+    A top-level ``expiry_date`` is selectable by ``_record_expiry``; if the
+    freshness probe only recognised ``expires``, the file would never sort as
+    fresh. A millisecond epoch must be read as milliseconds, not as a
+    timestamp that is always in the future.
+    """
+    from app.services.credential_provider import _expand_rule_paths
+
+    live = tmp_path / "top-level-expiry-date.json"
+    live.write_text(json.dumps({"accessToken": "mmoat_live", "expiry_date": 4102444800000}))
+    dead = tmp_path / "top-level-expired.json"
+    dead.write_text(json.dumps({"accessToken": "mmoat_dead", "expiry_date": 1600000000000}))
+    os.utime(live, (1000, 1000))  # older mtime …
+    os.utime(dead, (2000, 2000))  # … but the dead file is the recently-touched one
+
+    matches = _expand_rule_paths([str(tmp_path / "top-level-*.json")])
+    assert matches == [str(live), str(dead)]
+
+
 def test_expand_rule_paths_plain_exact_match(tmp_path):
     """Non-glob entries keep exact-match behavior; missing files are skipped."""
     from app.services.credential_provider import _expand_rule_paths

@@ -215,12 +215,16 @@ def _expiry_in_nested_records(data: dict) -> bool:
 
 def _has_unexpired_token(path: str) -> bool:
     """Best-effort freshness probe: True when the file's JSON carries an
-    '*expires*' key with a numeric epoch value still in the future (+60s
-    skew). Unknown/absent/unparseable -> False (ordering falls back to mtime).
+    '*expires*'/'*expiry*' key with a numeric epoch value still in the future
+    (+60s skew). Unknown/absent/unparseable -> False (ordering falls back to
+    mtime).
 
     A store that keeps several logins in one file nests the expiry inside each
     record rather than at the top level (the MiniMax Code app does), so a
-    second pass looks one level into those records for the same shape.
+    second pass looks one level into those records for the same shape. Both
+    passes share one expiry-key predicate and one epoch reader, so a record
+    the picker accepts is also a record the probe sees — and a millisecond
+    epoch is read as milliseconds, not as a timestamp that is always ahead.
     """
     try:
         with open(path) as f:
@@ -231,12 +235,11 @@ def _has_unexpired_token(path: str) -> bool:
         return False
     now = time.time()
     for key, val in data.items():
-        if "expires" in str(key).lower():
-            try:
-                if float(val) > now + 60:
-                    return True
-            except (TypeError, ValueError):
-                continue
+        if not _is_expiry_key(str(key)):
+            continue
+        moment = _expiry_seconds(val)
+        if moment is not None and moment > now + 60:
+            return True
     return _expiry_in_nested_records(data)
 
 

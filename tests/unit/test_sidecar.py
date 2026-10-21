@@ -434,6 +434,20 @@ class TestXaiCredentialRules:
         assert cards[0]["metadata"]["xai_refresh"] == "real-refresh-token"
 
 
+class TestFreshnessProbe:
+    """The sidecar's freshness probe must accept the same expiry keys as the
+    server's picker, and read a millisecond epoch as milliseconds."""
+
+    def test_top_level_expiry_key_of_any_spelling(self, tmp_path):
+        live = tmp_path / "live.json"
+        live.write_text(json.dumps({"accessToken": "mmoat_live", "expiry_date": 4102444800000}))
+        dead = tmp_path / "dead.json"
+        dead.write_text(json.dumps({"accessToken": "mmoat_dead", "expiry_date": 1600000000000}))
+
+        assert sidecar.has_unexpired_token(live) is True
+        assert sidecar.has_unexpired_token(dead) is False
+
+
 class TestAntigravityTokenStamp:
     """The agy token file carries no email, so the token card must be stamped with
     the resolved account identity (else the server hashes the refresh_token into a
