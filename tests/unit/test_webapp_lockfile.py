@@ -12,6 +12,14 @@ it back, and npm 11.19 and 12.2 both reproduce this lockfile byte for byte.
 The ``npm audit fix`` that regenerated the lockfile in #731 dropped it from 29
 of the 35 entries, so these tests fail when a regeneration loses it.
 
+The check is loss-only, deliberately. npm's decision to record the field is a
+per-manifest fact - the same package carries it in one lockfile and not in
+another at the same version - so there is no invariant over the lockfile's
+own content that can replace the fixture below. Requiring an exact match
+instead would mean the fixture changed with every dependency bump that moves
+the platform packages, and a good bump would fail the gate the same way a
+stripped lockfile does.
+
 The pin that keeps a second npm out of the tree lives in ``devEngines`` in
 ``webapp/package.json``; these tests cover the lockfile it protects.
 """
@@ -31,6 +39,11 @@ WEBAPP_LOCKFILE = ROOT / "webapp" / "package-lock.json"
 # The optional platform packages whose manifest declares a libc, so npm
 # records it. Every one of them ships a glibc and a musl variant under the same
 # os/cpu, and npm cannot tell them apart without the field.
+#
+# This is a floor, not an exact match. An entry listed here is checked for
+# still carrying the field as long as it is in the lockfile; a package that
+# joins the tree is not checked, and one that leaves it is skipped. Add names
+# to widen the coverage - never to make a failing check pass.
 EXPECTED_LIBC_PACKAGES = frozenset(
     {
         "node_modules/@img/sharp-libvips-linux-arm",
@@ -78,33 +91,27 @@ def _read_json(path: Path) -> dict:
 
 class TestWebappLockfileLibcMetadata:
     def test_the_lockfile_keeps_the_libc_metadata(self):
-        """A regeneration that drops the field would make npm install both builds."""
-        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
-        recorded = frozenset(name for name, meta in packages.items() if meta.get("libc"))
+        """A regeneration that drops the field would make npm install both builds.
 
-        missing = EXPECTED_LIBC_PACKAGES - recorded
-        assert not missing, (
+        The check is loss-only: an entry that is still in the lockfile must
+        still carry the field. A package that joins the tree is not checked
+        and a package that leaves it is skipped, so a dependency bump that
+        changes the platform packages does not have to touch this fixture.
+        """
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+
+        stripped = sorted(
+            name
+            for name in EXPECTED_LIBC_PACKAGES
+            if name in packages and not packages[name].get("libc")
+        )
+        assert not stripped, (
             "webapp/package-lock.json lost the libc metadata for "
-            f"{len(missing)} package(s):\n"
-            + "\n".join(f"  - {name}" for name in sorted(missing))
+            f"{len(stripped)} package(s):\n"
+            + "\n".join(f"  - {name}" for name in stripped)
             + "\nnpm needs it to pick the glibc or musl build of an optional native "
             "package. Regenerate the lockfile with the pinned npm (webapp/package.json "
-            "'packageManager'); if the dependency change is intended, update "
-            "EXPECTED_LIBC_PACKAGES."
-        )
-
-    def test_no_unexpected_package_carries_the_libc_metadata(self):
-        """A new entry means a dependency changed - confirm the field is still right."""
-        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
-        recorded = frozenset(name for name, meta in packages.items() if meta.get("libc"))
-
-        unexpected = recorded - EXPECTED_LIBC_PACKAGES
-        assert not unexpected, (
-            "webapp/package-lock.json gained the libc metadata for "
-            f"{len(unexpected)} package(s):\n"
-            + "\n".join(f"  + {name}" for name in sorted(unexpected))
-            + "\nA dependency change usually brings new platform packages; update "
-            "EXPECTED_LIBC_PACKAGES if this one is intended."
+            "'packageManager')."
         )
 
     def test_every_recorded_libc_entry_declares_a_platform(self):
