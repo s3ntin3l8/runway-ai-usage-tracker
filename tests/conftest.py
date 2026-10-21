@@ -291,6 +291,20 @@ def mock_db_session(monkeypatch):
             module.Session = Session
 
 
+@pytest.fixture(autouse=True)
+def close_managed_test_clients():
+    """Close the TestClients a test created (see tests/fixtures/test_client).
+
+    The client in ``tests/fixtures/test_client`` enters itself so that every
+    request it makes shares one event loop; this is where that loop — and
+    the socket pair it holds — is released.
+    """
+    from tests.fixtures.test_client import close_open_clients
+
+    yield
+    close_open_clients()
+
+
 @pytest.fixture
 def env_vars(monkeypatch):
     """Provide a helper to set environment variables during tests using monkeypatch."""

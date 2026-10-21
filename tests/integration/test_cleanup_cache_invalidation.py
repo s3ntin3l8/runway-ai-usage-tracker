@@ -5,13 +5,13 @@ TTL after they mutate LatestUsage."""
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 import app.core.db as db_module
 from app.core.cache import cache_get, cache_set
 from app.main import app
+from tests.fixtures.test_client import TestClient
 
 get_session = db_module.get_session
 

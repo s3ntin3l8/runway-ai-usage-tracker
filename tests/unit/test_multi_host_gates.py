@@ -142,9 +142,8 @@ def test_validator_accepts_non_localhost_with_trusted_proxy_and_no_key(monkeypat
 
 def test_security_headers_present_on_dashboard(monkeypatch):
     """Every response carries the defence-in-depth header set."""
-    from fastapi.testclient import TestClient
-
     from app.main import app
+    from tests.fixtures.test_client import TestClient
 
     client = TestClient(app)
     resp = client.get("/api/v1/system/health")

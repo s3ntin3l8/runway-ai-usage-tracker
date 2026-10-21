@@ -4,13 +4,13 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.db import get_session
 from app.main import app as fastapi_app
 from app.models.db import LatestUsage, QuotaSnapshot
+from tests.fixtures.test_client import TestClient
 
 
 @pytest.fixture(name="session")

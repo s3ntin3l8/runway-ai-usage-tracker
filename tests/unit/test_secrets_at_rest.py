@@ -12,10 +12,11 @@ from unittest.mock import patch
 
 import pytest
 from cryptography.fernet import Fernet
-from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine, select
 from sqlmodel.orm.session import Session
 from sqlmodel.pool import StaticPool
+
+from tests.fixtures.test_client import TestClient
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
