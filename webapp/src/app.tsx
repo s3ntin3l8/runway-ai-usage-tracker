@@ -11,7 +11,6 @@ import { ExcludeCacheProvider } from '@/hooks/useExcludeCache';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import { HomePage } from '@/features/home/HomePage';
 import { createAuthRedirectGuard, createQueryErrorAuthRedirectHandler } from '@/lib/authRedirect';
-import { reloadPage } from '@/lib/reload';
 
 const ProviderPage = lazy(() =>
   import('@/features/provider/ProviderPage').then((m) => ({ default: m.ProviderPage })),
@@ -36,7 +35,7 @@ const KitPage = lazy(() => import('@/features/dev/KitPage').then((m) => ({ defau
 // case of the session expiring while the dashboard is already open.
 const handleAuthRedirect = createAuthRedirectGuard(() => {
   toast.error('Your session has expired. Signing in again…');
-  window.setTimeout(() => reloadPage(), 1500);
+  window.setTimeout(() => window.location.reload(), 1500);
 });
 
 const queryClient = new QueryClient({
