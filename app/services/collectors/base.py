@@ -89,6 +89,11 @@ class BaseCollector(ABC):
 
     # Subclasses override these to auto-populate Phase 0B fields on every card.
     PROVIDER_ID: str = "unknown"
+    # Whether this provider's account label is a *display name* — a name a human
+    # chose for the account, which need not be the account's identity. Such a
+    # label must never file a card under another account, so a card that carries
+    # none of its own falls back to the account it belongs to.
+    ACCOUNT_LABEL_IS_DISPLAY_NAME: bool = False
     DEFAULT_WINDOW_TYPE: str = "unknown"
     # True when cache credentials are stored by the collector's resolved
     # account identity instead of the shared `default` credential slot.
@@ -502,19 +507,19 @@ class BaseCollector(ABC):
     def _fallback_account_label(self) -> str:
         """A name for a card that carries none of its own.
 
-        A card's label may be what keys it to its account. When the collector
-        already knows its account, a name that would key the card to a
-        *different* one files the card under that other account, so the
-        account's own id is the safe name then. A name that keys the card where
-        it already belongs — the account's identity, or a plain display name —
-        is kept.
+        A card's label may be what keys it to its account. For a provider whose
+        account label is a display name (see ``ACCOUNT_LABEL_IS_DISPLAY_NAME``),
+        a name that would key the card to a *different* account files the card
+        under that other account, so the account's own id is the safe name then.
+        A name that keys the card where it already belongs is kept.
         """
         label = self.account_label or self._account_label_cache
         account_id = self.account_id
         if not label:
             return account_id or "Default"
         if (
-            account_id
+            self.ACCOUNT_LABEL_IS_DISPLAY_NAME
+            and account_id
             and account_id != "default"
             and (
                 resolve_account_id(self.PROVIDER_ID, account_id, label)
@@ -550,7 +555,9 @@ class BaseCollector(ABC):
                 # Fallback to org pattern or standalone username after separator (· or |)
                 org_match = re.search(r"org:\s*([^\s·\[\]|]+)", detail)
                 if org_match:
-                    discovered_label = f"org: {org_match.group(1)}"
+                    # The marker tells the tagger an organization apart from a
+                    # member; a name a human reads is just the organization's.
+                    discovered_label = org_match.group(1)
                     break
 
                 # Standalone username after a dot/separator

@@ -895,3 +895,73 @@ async def test_a_claude_name_never_carries_the_organization_marker():
     assert all(card.get("account_label") == "Acme" for card in result)
     # The detail still carries the marker, so the tagger can read it back.
     assert any("org: Acme" in (card.get("detail") or "") for card in result)
+
+
+@pytest.mark.asyncio
+async def test_the_limits_shape_carries_the_name_not_the_marker():
+    """The newer response shape names its cards like the legacy one does."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {
+                "limits": [
+                    {
+                        "kind": "session",
+                        "group": "session",
+                        "percent": 10,
+                        "severity": "normal",
+                        "resets_at": None,
+                        "scope": {"model": {"id": None, "display_name": "Fable"}},
+                        "is_active": True,
+                    }
+                ]
+            },
+            org_data={"name": "Acme"},
+        )
+    assert result
+    assert all(card.get("account_label") == "Acme" for card in result)
+
+
+@pytest.mark.asyncio
+async def test_rediscovery_never_puts_the_marker_in_a_name():
+    """The tagger reads the detail, but a name it rediscovers is a name."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"name": "Acme"},
+        )
+    collector._tag_results(result)
+    assert collector.account_label == "Acme"
+
+
+def test_a_provider_whose_label_is_the_account_keeps_its_label():
+    """Only a display name is unsafe: chatgpt's label *is* its account."""
+    from app.services.collectors.chatgpt import ChatGPTCollector
+
+    collector = ChatGPTCollector(account_id="acct-uuid-123", account_label="person@example.com")
+    tagged = collector._tag_results(
+        [
+            {
+                "service_name": "ChatGPT",
+                "variant": "Usage",
+                "window_type": "rolling",
+                "remaining": "80.0%",
+            }
+        ]
+    )
+    assert tagged[0]["account_label"] == "person@example.com"

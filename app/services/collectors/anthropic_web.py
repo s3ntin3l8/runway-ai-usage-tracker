@@ -303,7 +303,7 @@ class AnthropicWebMixin:
                 build_anthropic_limit_cards(
                     limits,
                     tier=tier,
-                    identity_str=identity_str,
+                    account_label=name_str,
                     identity_suffix=identity_suffix,
                     data_source=self.DATA_SOURCE_WEB,
                     input_source=getattr(self, "_current_input_source", "unknown"),

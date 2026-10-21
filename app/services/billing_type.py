@@ -1,9 +1,12 @@
 """Detect how an account bills from the shape of the cards it publishes.
 
-Follows the dashboard's card shapes (``webapp/src/lib/quota.ts``): a card
-that reports a percentage of a limit describes a subscription, a card that
-reports a currency balance describes pay-as-you-go spend. A card that only
-counts tokens says nothing about the billing model, so it never decides one.
+Reads the same card shapes as the dashboard (``webapp/src/lib/quota.ts``),
+but the way billing asks: a card that reports a currency balance describes
+pay-as-you-go spend, a card that reports a percentage of a limit describes a
+subscription. The order is deliberate — the dashboard ranks the percentage
+first because it picks a hero metric, while money against a cap is still
+money. A card that only counts tokens says nothing about the billing model, so
+it never decides one.
 """
 
 from __future__ import annotations

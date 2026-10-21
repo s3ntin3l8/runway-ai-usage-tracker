@@ -372,10 +372,11 @@ The name is written to `ProviderConfig.account_label` when the account row is
 created, and an `account_label` nobody set is filled in on a later poll. A
 label the operator chose is never overwritten.
 
-A card reports the identity that keys it. A claude.ai card carries the
-member's email, because those cards are keyed by their label; a Console card
-carries the account's name, because its account id is the organization UUID
-and the label there is display-only.
+A card's label is the account's *name* — the member's email for a claude.ai
+account, the organization's name for a Console account — and it is what keys the
+card to its account, so a name a human chose never files a card under another
+account. The *identity* a card proved, which an organization-scoped one marks
+with `org: `, lives in the card's detail, where the tagger reads it back.
 
 The billing model is read off the shape of the cards the account publishes: a
 card reporting a percentage of a limit describes a subscription, a card

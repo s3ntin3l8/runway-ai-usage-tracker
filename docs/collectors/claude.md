@@ -207,10 +207,12 @@ prepaid balance and bills as pay-as-you-go. Both are detected when the account
 is first recorded. A name or billing type set in Settings afterwards is never
 overwritten by a later poll.
 
-A card reports the identity that keys it. A claude.ai card carries the
-member's email, because those cards are keyed by their label; a Console card
-carries the account's name, because its account id is the organization UUID
-and the label there is display-only.
+A card's label is the account's *name* — the member's email for a claude.ai
+account, the organization's name for a Console account — and it is what keys the
+card to its account, so a name a human chose never files a card under another
+account. The *identity* a card proved, which an organization-scoped one marks
+with `org: `, lives in the card's detail, where the tagger reads it back; that
+detail is the only place the marker appears.
 
 ### Manual fallback
 

@@ -203,6 +203,9 @@ def parse_console_balance(data: Any, *, now: datetime | None = None) -> dict[str
 
 class AnthropicConsoleCollector(BaseCollector):
     PROVIDER_ID = "anthropic_console"
+    # A Console account is keyed by its organization id, so the account's label
+    # is a name a human chose: it must never file a card elsewhere.
+    ACCOUNT_LABEL_IS_DISPLAY_NAME = True
     DEFAULT_WINDOW_TYPE = "rolling"
     COMPLETE_SNAPSHOT = True
     CREDENTIALS_KEYED_BY_ACCOUNT_ID = True
