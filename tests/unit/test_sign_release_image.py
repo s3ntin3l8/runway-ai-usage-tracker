@@ -145,7 +145,7 @@ def test_a_missing_cosign_fails_closed(monkeypatch):
         raise FileNotFoundError(2, "No such file or directory")
 
     monkeypatch.setattr(sign_release_image.subprocess, "run", run)
-    with pytest.raises(RuntimeError, match="cosign is not installed"):
+    with pytest.raises(RuntimeError, match="cosign could not be run"):
         sign_release_image.sign_image(REFERENCE)
 
 
@@ -322,3 +322,29 @@ def test_the_retry_warning_is_flushed(monkeypatch):
         sign_release_image.sign_image(REFERENCE)
     monkeypatch.undo()
     assert any("::warning::" in line for line in flushed)
+
+
+def test_a_non_executable_cosign_fails_closed(monkeypatch):
+    # A cosign that exists but cannot be executed raises PermissionError,
+    # not FileNotFoundError. Both are OSError, and neither can have written
+    # a signature.
+    def run(command, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(sign_release_image.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="cosign could not be run"):
+        sign_release_image.sign_image(REFERENCE)
+
+
+def test_cosign_stdout_without_a_newline_is_terminated(monkeypatch, capsys):
+    # A stdout chunk with no trailing newline would otherwise be glued to
+    # the next `::warning::` line, and the runner only reads a command from
+    # the start of a line.
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, "partial output without a newline", "")
+
+    monkeypatch.setattr(sign_release_image.subprocess, "run", run)
+    with pytest.raises(RuntimeError):
+        sign_release_image.sign_image(REFERENCE)
+    out = capsys.readouterr().out
+    assert "partial output without a newline\n" in out

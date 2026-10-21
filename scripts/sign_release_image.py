@@ -157,8 +157,13 @@ def sign_image(reference: str) -> None:
                 timeout=_ATTEMPT_TIMEOUT_SECONDS,
                 check=False,
             )
-        except FileNotFoundError as exc:
-            raise RuntimeError("cosign is not installed; the image was not signed") from exc
+        except OSError as exc:
+            # cosign missing (FileNotFoundError) or present but not
+            # executable (PermissionError). Both are OSError, and neither
+            # can have written a signature.
+            raise RuntimeError(
+                f"cosign could not be run ({exc}); the image was not signed"
+            ) from exc
         except subprocess.TimeoutExpired as exc:
             # The process was killed mid-sign, so the signature may or may not
             # have been written. Fail closed either way - the digest is
@@ -168,8 +173,13 @@ def sign_image(reference: str) -> None:
                 "no public tags were promoted."
             ) from exc
         # Keep cosign's own output in the job log: it is the only diagnostic a
-        # failed signing attempt leaves behind.
+        # failed signing attempt leaves behind. stdout is terminated with a
+        # newline so a chunk that lacks one cannot be glued to the next
+        # `::warning::` line - the runner's parser only reads a command from
+        # the start of a line.
         print(result.stdout, end="")
+        if result.stdout and not result.stdout.endswith("\n"):
+            print()
         print(result.stderr, end="", file=sys.stderr)
         if result.returncode == 0:
             return
