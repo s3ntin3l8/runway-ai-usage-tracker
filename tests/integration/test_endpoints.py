@@ -49,7 +49,7 @@ def _empty_db_session():
 @pytest.fixture
 async def test_client():
     """Create a test client for FastAPI app."""
-    from fastapi.testclient import TestClient
+    from tests.fixtures.test_client import TestClient
 
     return TestClient(app)
 
@@ -61,7 +61,7 @@ class TestLimitsEndpoint:
 
     async def test_limits_endpoint_success(self):
         """Test successful response from /api/limits with multiple collectors."""
-        from fastapi.testclient import TestClient
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
 
@@ -99,7 +99,7 @@ class TestLimitsEndpoint:
 
     async def test_limits_endpoint_partial_failure(self):
         """Test endpoint gracefully handles one collector failing."""
-        from fastapi.testclient import TestClient
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
 
@@ -141,7 +141,7 @@ class TestLimitsEndpoint:
 
     async def test_limits_endpoint_all_collectors_fail(self):
         """Test endpoint when all collectors fail."""
-        from fastapi.testclient import TestClient
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
 
@@ -187,7 +187,7 @@ class TestIngestEndpoint:
         """Test successful metric ingestion."""
         from unittest.mock import patch
 
-        from fastapi.testclient import TestClient
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
         test_key = "test-secret-key-for-ingest-tests"
@@ -231,7 +231,7 @@ class TestIngestEndpoint:
 
     async def test_ingest_invalid_signature(self):
         """Test that invalid signatures are rejected."""
-        from fastapi.testclient import TestClient
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
 
@@ -257,7 +257,7 @@ class TestIngestEndpoint:
         """Verify that tokens are extracted from structured metadata."""
         from unittest.mock import patch
 
-        from fastapi.testclient import TestClient
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
         test_key = "test-secret-key-for-ingest-tests"
@@ -313,7 +313,7 @@ class TestIngestEndpoint:
 
     async def test_ingest_invalid_payload(self):
         """Test that invalid payloads are rejected with correct HMAC."""
-        from fastapi.testclient import TestClient
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
         test_key = "test-secret-key-for-ingest-tests"
@@ -337,7 +337,7 @@ class TestIngestEndpoint:
 
     async def test_ingest_rejects_when_api_key_empty(self):
         """C1: ingest endpoint must return 503 when INGEST_API_KEY is empty."""
-        from fastapi.testclient import TestClient
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
 
@@ -360,9 +360,8 @@ class TestIngestEndpoint:
 
     async def test_ingest_rejects_when_api_key_is_default(self):
         """C3: ingest endpoint must return 503 when INGEST_API_KEY is the default insecure value."""
-        from fastapi.testclient import TestClient
-
         from app.core.config import DEFAULT_INGEST_API_KEY
+        from tests.fixtures.test_client import TestClient
 
         test_client = TestClient(app)
 
@@ -464,9 +463,8 @@ class TestSourceRefresh:
         """xAI keeps its refresh token as ``xai_refresh`` — the endpoint must not 400 it."""
         from unittest.mock import AsyncMock
 
-        from fastapi.testclient import TestClient
-
         from app.services.token_cache import TokenCache
+        from tests.fixtures.test_client import TestClient
 
         fresh = TokenCache()
         await fresh.store(
@@ -492,9 +490,8 @@ class TestSourceRefresh:
     async def test_refresh_unknown_source_does_not_copy_default_credential(self, monkeypatch):
         """A source that isn't in the cache must 404 — not silently refresh the ``default``
         account's credential and store the result under the unknown id."""
-        from fastapi.testclient import TestClient
-
         from app.services.token_cache import TokenCache
+        from tests.fixtures.test_client import TestClient
 
         fresh = TokenCache()
         await fresh.store(

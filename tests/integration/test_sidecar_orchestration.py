@@ -4,7 +4,6 @@ import json
 import time
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -14,6 +13,7 @@ from app.models.db import LatestUsage, ProviderConfig, SystemConfig
 from app.services.accumulator import merge_card_json
 from app.services.fleet_registry import fleet_registry
 from scripts.sidecar_pkg.transport import signing_timestamp
+from tests.fixtures.test_client import TestClient
 
 
 @pytest.fixture(name="session")

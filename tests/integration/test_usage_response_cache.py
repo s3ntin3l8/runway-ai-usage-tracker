@@ -12,7 +12,6 @@ exercised by nothing at the HTTP layer.
 from datetime import UTC, datetime
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import delete
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
@@ -21,6 +20,7 @@ from app.core.cache import cache_clear
 from app.core.db import get_session
 from app.main import app
 from app.models.db import LatestUsage, UsageEvent, UsagePeriodRollup
+from tests.fixtures.test_client import TestClient
 
 # ---------------------------------------------------------------------------
 # Fixture

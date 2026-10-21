@@ -6,7 +6,6 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -15,6 +14,7 @@ from app.main import app
 from app.models.db import SidecarRegistry, UsageEvent
 from app.services.pricing_seed import seed_pricing_table
 from scripts.sidecar_pkg.transport import signing_timestamp
+from tests.fixtures.test_client import TestClient
 
 TEST_KEY = "test-ingest-key-phase3"
 

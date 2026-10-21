@@ -6,7 +6,6 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -15,6 +14,7 @@ from app.main import app
 from app.models.db import AuditLog, CredentialSource
 from app.services import credential_inventory
 from app.services.token_cache import TokenCache
+from tests.fixtures.test_client import TestClient
 
 ALICE = "alice@example.com"
 
