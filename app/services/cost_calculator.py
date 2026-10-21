@@ -12,6 +12,7 @@ from typing import NamedTuple
 from sqlmodel import Session, func, select
 
 from app.models.db import ProviderPricing
+from app.services.model_normalization import is_free_tier_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,15 @@ def resolve_price_row(
         return _price_row_ci(session, provider_id, candidate, ts)
 
     row = exact_lookup(model_id)
-    if row is None:
+    # A free-tier id is priced at $0, not a model with a missing rate: it
+    # must never reach a paid sibling row through the fallbacks below.
+    # Trimming "MiniMax-M3.1-Flash-free" lands on the paid
+    # "MiniMax-M3.1-Flash" row, and version-stripping a free id that ends in
+    # a number ("openrouter/free/gpt-4" -> "openrouter/free/gpt") does the
+    # same. Guarded here, ahead of both, so the invariant is structural
+    # rather than a property of which fallback happens to fire.
+    free_tier = is_free_tier_model_id(model_id)
+    if row is None and not free_tier:
         # Versioned ids ("opus-4.8") have no dedicated pricing row, so strip
         # the version suffix and bill at the family rate ("opus"). Providers
         # that price per version (Gemini "pro-2.5", ChatGPT "gpt-5.4-mini")
@@ -170,7 +179,7 @@ def resolve_price_row(
         family = _VERSION_SUFFIX.sub("", model_id)
         if family != model_id:
             row = exact_lookup(family)
-    if row is None:
+    if row is None and not free_tier:
         # Codenamed/unseeded variants ("gpt-5.7-nova") don't end in a bare
         # digit, so _VERSION_SUFFIX above never fires. Progressively
         # right-trim "-"-separated segments and retry each ("gpt-5.7-nova" ->

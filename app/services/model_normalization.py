@@ -21,6 +21,43 @@ def is_openrouter_model_id(model_id: str | None) -> bool:
     return "/" in lower and lower.endswith(":free")
 
 
+def is_free_tier_model_id(model_id: str | None) -> bool:
+    """True for a model id that names a free-tier route.
+
+    A free route is billed at $0 — it is not a paid model that happens to be
+    missing a rate. The suffix forms are the ones the sidecar's
+    ``_is_free_model`` recognises: a trailing ``":free"``, ``"-free"`` or
+    ``"/free"``, or a bare ``"free"`` id. That covers OpenCode's ``-free``
+    catalog entries (``deepseek-v4-flash-free``) and OpenRouter's ``:free``
+    entries (``vendor/model:free``). The ``openrouter/free/*`` prefix form is
+    included as well.
+
+    This is the *pricing* notion of "free tier", and it is deliberately
+    broader than the sidecar's ``_is_free_model`` — that one decides which
+    provider bucket a session files under, and widening it would re-route
+    ``openrouter/free/*`` sessions between providers. See
+    ``scripts/sidecar_pkg/event_extractors/hermes.py``.
+
+    The cost calculator uses this to keep a free id from reaching a paid
+    sibling row through its version-strip or segment-trim fallbacks, and the
+    Data Health ``unpriced_models`` check uses it to leave free ids out of
+    its report.
+    """
+    m = (model_id or "").strip().lower()
+    if not m:
+        return False
+    if m == "openrouter/free" or m.startswith("openrouter/free/"):
+        return True
+    if m.endswith((":free", "-free", "/free")):
+        return True
+    last_token = m.replace(":", "/").split("/")[-1]
+    # Only the bare "free" id reaches here. A last token that ends in
+    # "-free" implies the whole id does, so the suffix check above already
+    # returned for it; the sidecar's copy of this predicate keeps the
+    # equivalent (dead) clause, and this one does not.
+    return last_token == "free"
+
+
 # ── Gemini 4 Argon ──
 
 # Google prices Gemini 4 Argon as one family (issue #686). The seeded pricing
