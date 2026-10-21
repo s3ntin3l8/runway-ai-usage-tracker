@@ -47,6 +47,22 @@ def deny_writes_to(monkeypatch):
     return denied
 
 
+def test_an_explicit_temproot_is_left_alone(tmp_path, temproot_env, deny_writes_to):
+    # The operator has already chosen a root (the escape hatch for a machine
+    # whose %TEMP% is unusable) — pytest reads that variable itself.
+    root = _pytest_root_dir(tmp_path)
+    root.mkdir()
+    deny_writes_to.append(root)
+    chosen = tmp_path / "chosen-root"
+    os.environ["PYTEST_DEBUG_TEMPROOT"] = str(chosen)
+
+    _ensure_writable_pytest_root(temproot=tmp_path)
+
+    assert os.environ["PYTEST_DEBUG_TEMPROOT"] == str(chosen)
+    # pytest's own mkdir has no parents=True, so the root has to exist.
+    assert chosen.is_dir()
+
+
 def test_a_missing_root_is_created(tmp_path, temproot_env):
     root = _pytest_root_dir(tmp_path)
     assert not root.exists()

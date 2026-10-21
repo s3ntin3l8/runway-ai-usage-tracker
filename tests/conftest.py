@@ -104,7 +104,20 @@ def _ensure_writable_pytest_root(temproot: Path | None = None) -> None:
     per-run root keeps concurrent runs from sharing anything. The cost is
     that a killed run can leave its fallback behind — pytest's own numbered
     directories are cleaned up on exit, this one only on a normal exit.
+
+    An explicit ``PYTEST_DEBUG_TEMPROOT`` is left alone: the operator has
+    already chosen a root, and pytest reads that variable itself. The
+    directory is created if it is missing — pytest's own ``mkdir`` has no
+    ``parents=True``, so a root that does not exist yet would fail every
+    test.
     """
+    chosen = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+    if chosen:
+        try:
+            Path(chosen).mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        return
     root = Path(tempfile.gettempdir()) if temproot is None else temproot
     if _pytest_root_usable(_pytest_root_dir(root)):
         return
