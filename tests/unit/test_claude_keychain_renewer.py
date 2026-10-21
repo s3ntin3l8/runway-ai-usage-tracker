@@ -8,6 +8,7 @@ import pytest
 
 from scripts.sidecar_pkg import claude_code_keychain as discovery
 from scripts.sidecar_pkg import claude_keychain_renewer as renewal
+from scripts.sidecar_pkg import keychain_client
 from scripts.sidecar_pkg.macos_keychain_store import KeychainError, KeychainItem
 
 
@@ -70,7 +71,6 @@ def unlocked():
 
 @pytest.fixture
 def env(monkeypatch):
-    monkeypatch.setattr(discovery, "_DENIED", set())
     monkeypatch.setattr(renewal.sys, "platform", "darwin")
     monkeypatch.setattr(renewal, "account_name", lambda: "test-user")
     monkeypatch.setattr(renewal, "claude_renewal_lock", unlocked)
@@ -244,7 +244,7 @@ def test_failed_response_journal_retries_save_in_memory(env, monkeypatch):
     assert not worker.renew()
     assert len(calls) == 1 and store.journal["phase"] == "intent"
     store.fail_save = False
-    monkeypatch.setattr(discovery, "_DENIED", set())
+    monkeypatch.setattr(keychain_client, "_CLIENT", None)
     assert worker.renew()
     assert len(calls) == 1
     assert store.data["claudeAiOauth"]["refreshToken"] == "new-refresh"
@@ -262,7 +262,7 @@ def test_failed_response_journal_restart_blocks_second_exchange(env, monkeypatch
     monkeypatch.setattr(renewal, "request_refresh", fail_after_exchange)
     assert not make().renew()
     store.fail_save = False
-    monkeypatch.setattr(discovery, "_DENIED", set())
+    monkeypatch.setattr(keychain_client, "_CLIENT", None)
     assert not make().renew()
     assert len(calls) == 1
 

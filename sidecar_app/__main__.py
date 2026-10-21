@@ -15,7 +15,7 @@ from scripts.sidecar_pkg.signatures import verification_command
 # Run before desktop imports/initialization so this diagnostic works headlessly.
 verification_command(sys.argv[1:])
 if sys.argv[1:] == ["--runway-keychain-worker"]:
-    from scripts.sidecar_pkg.macos_keychain_store import worker_main
+    from scripts.sidecar_pkg.keychain_worker import worker_main
 
     worker_main()
     raise SystemExit(0)

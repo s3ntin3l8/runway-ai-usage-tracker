@@ -62,9 +62,11 @@ FALLBACK_EXPIRES_IN = 3600
 class RenewalTarget(Protocol):
     """Optional secondary credential store, without coupling the file renewer to it."""
 
-    def due(self) -> bool: ...
+    def due(self) -> bool:
+        raise NotImplementedError
 
-    def renew(self) -> bool: ...
+    def renew(self) -> bool:
+        raise NotImplementedError
 
 
 @dataclass

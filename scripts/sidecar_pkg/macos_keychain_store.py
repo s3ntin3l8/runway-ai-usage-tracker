@@ -6,26 +6,18 @@ prints errors or token values. Frameworks are loaded only inside the Darwin help
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import hashlib
 import plistlib
-import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
+from scripts.sidecar_pkg.keychain_protocol import KeychainError
+
 RECOVERY_SERVICE = "Runway Claude Code renewal"
-TIMEOUT = 30
-
-
-class KeychainError(Exception):
-    """A sanitized Keychain failure, safe to log without native diagnostic output."""
-
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
 
 
 @dataclass(frozen=True)
@@ -37,32 +29,18 @@ class KeychainItem:
 
 
 class _WorkerAPI:
+    def __init__(
+        self, *, group: str = "claude-code", allowed: Callable[[], bool] = lambda: False
+    ) -> None:
+        self._group = group
+        self._allowed = allowed
+
     def call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
-        command = (
-            [sys.executable, "--runway-keychain-worker"]
-            if getattr(sys, "frozen", False)
-            else [sys.executable, str(Path(__file__).resolve())]
+        from scripts.sidecar_pkg.keychain_client import get_keychain_client
+
+        return get_keychain_client().call(
+            operation, query, values, group=self._group, allowed=self._allowed
         )
-        try:
-            result = subprocess.run(
-                command,
-                input=plistlib.dumps({"operation": operation, "query": query, "values": values}),
-                capture_output=True,
-                timeout=TIMEOUT,
-            )
-            if result.returncode:
-                raise KeychainError("unavailable")
-            response = plistlib.loads(result.stdout)
-        except subprocess.TimeoutExpired:
-            raise KeychainError("timed_out") from None
-        except (OSError, ValueError, plistlib.InvalidFileException):
-            raise KeychainError("unavailable") from None
-        if response.get("error"):
-            reason = response["error"]
-            raise KeychainError(
-                reason if reason in {"denied", "missing", "failed"} else "unavailable"
-            )
-        return response.get("result")
 
     def copy(self, query: dict[str, Any]) -> Any:
         return self.call("copy", query, {})
@@ -80,15 +58,24 @@ class _WorkerAPI:
 class KeychainStore:
     """Exact-reference updates; the only creatable items are Runway recovery records."""
 
-    def __init__(self, api: Any = None, *, allowed: Callable[[], bool] = lambda: True) -> None:
+    def __init__(
+        self,
+        api: Any = None,
+        *,
+        allowed: Callable[[], bool] = lambda: False,
+        group: str = "claude-code",
+    ) -> None:
         if api is None and sys.platform != "darwin":
             raise KeychainError("unsupported")
-        self.api = api if api is not None else _WorkerAPI()
         self._allowed = allowed
+        self.api = api if api is not None else _WorkerAPI(group=group, allowed=allowed)
 
-    def find(self, service: str, account: str) -> KeychainItem | None:
+    def find(self, service: str, account: str | None) -> KeychainItem | None:
         try:
-            matches = self.api.copy({"service": service, "account": account})
+            query = {"service": service}
+            if account is not None:
+                query["account"] = account
+            matches = self.api.copy(query)
         except KeychainError as exc:
             if exc.reason == "missing":
                 return None
@@ -98,9 +85,13 @@ class KeychainStore:
         if len(matches) != 1:
             raise KeychainError("ambiguous")
         item = self.read(matches[0]["persistent"])
-        if item.service != service or item.account != account:
+        if item.service != service or (account is not None and item.account != account):
             raise KeychainError("identity changed")
         return item
+
+    def read_secret(self, service: str, account: str | None = None) -> bytes | None:
+        item = self.find(service, account)
+        return item.data if item is not None else None
 
     def read(self, reference: bytes) -> KeychainItem:
         item = self.api.copy({"persistent": reference})
@@ -153,6 +144,13 @@ class KeychainStore:
             self.api.delete({"persistent": item.reference})
 
 
+def read_secret(service: str, account: str | None = None, *, group: str) -> bytes | None:
+    """Read-only entrypoint shared by background discovery sources."""
+    if service == "Claude Code-credentials" or service.startswith("Claude Code-credentials-"):
+        group = "claude-code"
+    return KeychainStore(group=group, allowed=lambda: False).read_secret(service, account)
+
+
 class _NativeAPI:
     """Small CoreFoundation property-list bridge; no third-party runtime dependency."""
 
@@ -179,6 +177,13 @@ class _NativeAPI:
         self._bind(self.sec, "SecItemUpdate", [ptr, ptr], status)
         self._bind(self.sec, "SecItemAdd", [ptr, ptr], status)
         self._bind(self.sec, "SecItemDelete", [ptr], status)
+        self._bind(
+            self.sec,
+            "SecKeychainGetUserInteractionAllowed",
+            [ctypes.POINTER(ctypes.c_ubyte)],
+            status,
+        )
+        self._bind(self.sec, "SecKeychainSetUserInteractionAllowed", [ctypes.c_ubyte], status)
 
     @staticmethod
     def _bind(lib: Any, name: str, args: list[Any], result: Any) -> None:
@@ -236,7 +241,24 @@ class _NativeAPI:
                 result[key] = self._decode(item)
         return result
 
+    @contextlib.contextmanager
+    def _without_interaction(self) -> Iterator[None]:
+        previous = ctypes.c_ubyte()
+        if self.sec.SecKeychainGetUserInteractionAllowed(ctypes.byref(previous)):
+            raise KeychainError("unavailable")
+        try:
+            if self.sec.SecKeychainSetUserInteractionAllowed(False):
+                raise KeychainError("unavailable")
+            yield
+        finally:
+            if self.sec.SecKeychainSetUserInteractionAllowed(bool(previous.value)):
+                raise KeychainError("unavailable")
+
     def call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
+        with self._without_interaction():
+            return self._call(operation, query, values)
+
+    def _call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
         names = {
             "service": "kSecAttrService",
             "account": "kSecAttrAccount",
@@ -278,7 +300,7 @@ class _NativeAPI:
                     "missing"
                     if code == -25300
                     else "denied"
-                    if code in {-25293, -25308, -128}
+                    if code in {-25293, -25308, -25315, -128}
                     else "failed"
                 )
                 raise KeychainError(reason)
@@ -290,20 +312,3 @@ class _NativeAPI:
                 self.cf.CFRelease(result)
             self.cf.CFRelease(q)
             self.cf.CFRelease(a)
-
-
-def worker_main() -> None:
-    """Private subprocess entrypoint. Never propagate native diagnostics to the parent."""
-    try:
-        request = plistlib.loads(sys.stdin.buffer.read())
-        result = _NativeAPI().call(request["operation"], request["query"], request["values"])
-        response = {"result": result} if result is not None else {}
-    except KeychainError as exc:
-        response = {"error": exc.reason}
-    except Exception:
-        response = {"error": "unavailable"}
-    sys.stdout.buffer.write(plistlib.dumps(response))
-
-
-if __name__ == "__main__":
-    worker_main()

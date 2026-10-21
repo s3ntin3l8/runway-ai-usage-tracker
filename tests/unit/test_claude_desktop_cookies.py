@@ -11,6 +11,8 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from scripts import sidecar
+from scripts.sidecar_pkg import macos_keychain_store as keychain
+from scripts.sidecar_pkg.macos_keychain_store import KeychainError
 
 
 @pytest.fixture
@@ -48,8 +50,8 @@ def write_cookie(path, *, host=".claude.ai", digest_host=None, expired=False, co
 
 
 def storage_key(monkeypatch):
-    lookup = Mock(return_value=subprocess.CompletedProcess([], 0, "synthetic-storage-key\n", ""))
-    monkeypatch.setattr(sidecar.subprocess, "run", lookup)
+    lookup = Mock(return_value=(b"synthetic-storage-key\n"))
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     return lookup
 
 
@@ -63,8 +65,8 @@ def test_desktop_cookie_is_discovered_and_host_prefix_removed(desktop, monkeypat
 
 def test_unavailable_keychain_is_backed_off_and_logs_no_secret(desktop, monkeypatch, caplog):
     write_cookie(desktop)
-    lookup = Mock(return_value=subprocess.CompletedProcess([], 44, "", "sensitive stderr"))
-    monkeypatch.setattr(sidecar.subprocess, "run", lookup)
+    lookup = Mock(side_effect=KeychainError("missing"))
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     for _ in range(2):
         assert sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") is None
     assert lookup.call_count == 1
@@ -174,9 +176,7 @@ def test_desktop_cookie_database_is_closed_after_read(desktop, monkeypatch):
 @pytest.mark.parametrize(
     "failure",
     [
-        subprocess.TimeoutExpired(
-            "security", 5, output="sensitive output", stderr="sensitive error"
-        ),
+        KeychainError("timed_out"),
         FileNotFoundError("sensitive path"),
     ],
 )
@@ -186,7 +186,7 @@ def test_keychain_command_failure_is_reported_and_backed_off(desktop, monkeypatc
     monkeypatch.setattr(claude_desktop, "_WARNED", set())
     write_cookie(desktop)
     lookup = Mock(side_effect=failure)
-    monkeypatch.setattr(sidecar.subprocess, "run", lookup)
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     for _ in range(2):
         assert sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") is None
     assert lookup.call_count == 1
@@ -291,7 +291,6 @@ def test_desktop_opt_out_preserves_browser_without_keychain(desktop, monkeypatch
 @pytest.fixture(autouse=True)
 def isolate_host_credentials(monkeypatch, tmp_path):
     """Synthetic tests must never inspect host browser stores or Keychain."""
-    import subprocess
     from pathlib import Path
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)

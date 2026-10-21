@@ -5,12 +5,12 @@ import hmac
 import json
 import logging
 import sqlite3
-import subprocess
 import threading
 import time
 from contextlib import closing
 from pathlib import Path
 
+from scripts.sidecar_pkg import macos_keychain_store as keychain
 from scripts.sidecar_pkg.cookie_scan import ScanStatus, StoreScan
 
 _KEY_CACHE: dict[str, bytes | None] = {}
@@ -25,24 +25,22 @@ def storage_key(service: str) -> bytes | None:
         key = None
         status: ScanStatus = "inaccessible"
         try:
-            result = subprocess.run(
-                ["security", "find-generic-password", "-s", service, "-w"],
-                capture_output=True,
-                text=True,
-                timeout=30 if service == "Claude Safe Storage" else 5,
-            )
-            status = {44: "missing", 128: "denied", 51: "denied"}.get(
-                result.returncode, "inaccessible"
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                key = hashlib.pbkdf2_hmac(
-                    "sha1", result.stdout.strip().encode(), b"saltysalt", 1003, 16
-                )
-        except subprocess.TimeoutExpired:
-            status = "timed_out"
-        except (OSError, subprocess.SubprocessError):
-            # Fall through to cache the failure and suppress further prompts until restart.
-            pass
+            raw = keychain.read_secret(service, group="storage:" + service)
+            if raw and raw.strip():
+                key = hashlib.pbkdf2_hmac("sha1", raw.strip(), b"saltysalt", 1003, 16)
+            else:
+                status = "missing"
+        except keychain.KeychainError as exc:
+            if exc.reason == "cancelled":
+                return None  # Lifecycle cancellation must not poison the process cache.
+            status = {
+                "timed_out": "timed_out",
+                "denied": "denied",
+                "missing": "missing",
+                "unsupported": "unsupported",
+            }.get(exc.reason, "inaccessible")
+        except OSError:
+            pass  # Cache unavailable IO without exposing native diagnostic text.
         if key is None:
             logging.warning("Cookie Keychain access unavailable; restart sidecar to retry")
         _KEY_STATUS[service] = "candidates" if key is not None else status

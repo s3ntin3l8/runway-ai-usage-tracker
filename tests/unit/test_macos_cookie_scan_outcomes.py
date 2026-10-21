@@ -11,6 +11,8 @@ import pytest
 
 from scripts import sidecar
 from scripts.sidecar_pkg import macos_cookies
+from scripts.sidecar_pkg import macos_keychain_store as keychain
+from scripts.sidecar_pkg.macos_keychain_store import KeychainError
 from tests.macos_cookie_fixtures import chromium_store, encrypted, safari_blob
 
 
@@ -113,10 +115,10 @@ def test_chromium_outcomes_do_not_treat_missing_or_unsupported_as_empty(tmp_path
 @pytest.mark.parametrize(
     "failure,status",
     [
-        (subprocess.TimeoutExpired("security", 30), "timed_out"),
-        (subprocess.CompletedProcess([], 128, "", ""), "denied"),
-        (subprocess.CompletedProcess([], 44, "", ""), "missing"),
-        (subprocess.CompletedProcess([], 36, "", ""), "inaccessible"),
+        (KeychainError("timed_out"), "timed_out"),
+        (KeychainError("denied"), "denied"),
+        (KeychainError("missing"), "missing"),
+        (KeychainError("unavailable"), "inaccessible"),
     ],
 )
 def test_failed_keychain_outcomes_are_cached_without_repeated_prompts(
@@ -133,7 +135,7 @@ def test_failed_keychain_outcomes_are_cached_without_repeated_prompts(
             raise failure
         return failure
 
-    monkeypatch.setattr(subprocess, "run", lookup)
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     for _ in range(2):
         result = macos_cookies.scan_cookies(path, "Chrome Safe Storage", "claude.ai", "sessionKey")
         assert result.status == status
@@ -168,9 +170,9 @@ def test_desktop_cookie_scan_uses_shared_key_cache_and_reports_expired(tmp_path,
 
     def lookup(*args, **kwargs):
         calls.append(True)
-        return subprocess.CompletedProcess([], 0, "synthetic-key", "")
+        return b"synthetic-key"
 
-    monkeypatch.setattr(subprocess, "run", lookup)
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     assert claude_desktop._storage_key(path)
     assert claude_desktop.scan_session_cookie(path).values == ["synthetic-session"]
     assert len(calls) == 1
@@ -247,9 +249,7 @@ def test_desktop_preserves_exact_host_and_observed_cipher_allowlist(
 
     path = tmp_path / "Cookies"
     chromium_store(path, [(host, prefix + encrypted(host)[3:], 0)])
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess([], 0, "synthetic-key", "")
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: b"synthetic-key")
     assert claude_desktop.read_session_cookie(path) is None
 
 
@@ -353,9 +353,11 @@ def test_chromium_denial_outcome_does_not_depend_on_row_order(tmp_path, monkeypa
     path = tmp_path / "Cookies"
     rows = [(".claude.ai", encrypted(".claude.ai"), 0), (".claude.ai", b"v20bad", 0)]
     chromium_store(path, rows[::-1] if reverse else rows)
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess([], 128, "", "")
-    )
+
+    def deny(*args, **kwargs):
+        raise KeychainError("denied")
+
+    monkeypatch.setattr(keychain, "read_secret", deny)
     result = macos_cookies.scan_cookies(path, "Chrome Safe Storage", "claude.ai", "sessionKey")
     assert result.status == "denied"
     assert result.rejected_count == 2

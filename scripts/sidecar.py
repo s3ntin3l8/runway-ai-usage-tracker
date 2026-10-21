@@ -3903,22 +3903,13 @@ class GenericCollector:
             # 3. Legacy generic macOS Keychain rules
             elif rule_type == "keychain" and platform.system() == "Darwin":
                 try:
-                    cmd = [
-                        "security",
-                        "find-generic-password",
-                        "-s",
-                        rule.get("service_name"),
-                        "-w",
-                    ]
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        creationflags=_subprocess_creationflags(),
+                    from scripts.sidecar_pkg.macos_keychain_store import read_secret
+
+                    raw_bytes = read_secret(
+                        rule.get("service_name"), group="registry:" + str(rule.get("service_name"))
                     )
-                    if result.returncode == 0:
-                        raw = result.stdout.strip()
+                    if raw_bytes is not None:
+                        raw = raw_bytes.decode().strip()
                         fmt = rule.get("format", "raw")
                         if fmt == "json":
                             data = json.loads(raw)
@@ -3945,7 +3936,7 @@ class GenericCollector:
                                 (candidate_tokens, f"keychain:{service}", "keychain")
                             )
                 except Exception:
-                    logging.debug("File credential extraction failed", exc_info=True)
+                    logging.debug("Keychain credential unavailable")
 
             # 4. Windows Credential Manager
             elif rule_type == "windows_credential" and platform.system() == "Windows":
@@ -5680,6 +5671,9 @@ class DaemonRunner:
 
     def start(self) -> None:
         """Spawn a background daemon thread running the collection loop."""
+        from scripts.sidecar_pkg.keychain_client import reopen_keychain_client
+
+        reopen_keychain_client()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, name="DaemonRunner", daemon=True)
         self._thread.start()
@@ -5687,6 +5681,9 @@ class DaemonRunner:
     def stop(self) -> None:
         """Signal the loop to exit and join the background thread."""
         self._stop_event.set()
+        from scripts.sidecar_pkg.keychain_client import close_keychain_client
+
+        close_keychain_client()
         if self._thread is not None:
             self._thread.join(timeout=30)
             if self._thread.is_alive():
@@ -6061,7 +6058,7 @@ def main():
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--runway-keychain-worker"]:
-        from scripts.sidecar_pkg.macos_keychain_store import worker_main
+        from scripts.sidecar_pkg.keychain_worker import worker_main
 
         worker_main()
     else:

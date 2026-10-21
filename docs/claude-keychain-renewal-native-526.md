@@ -50,7 +50,9 @@ The user reported approximately **15+ permission prompts**. That is unacceptable
 for routine background renewal and is tracked in #764. The per-operation helper
 process lifecycle is a likely contributor; this run did not establish the exact
 cause or attribute each prompt to a particular operation. No further native
-requests were started after completion.
+requests were started by the completed acceptance helpers. Later investigation
+and the implementation's test-isolation incident are recorded in
+[macos-keychain-prompt-repair-764.md](macos-keychain-prompt-repair-764.md).
 
 Native IO ran through the production app's packaged helper; the supervising
 renewal state machine came from matching source modules. An end-to-end packaged

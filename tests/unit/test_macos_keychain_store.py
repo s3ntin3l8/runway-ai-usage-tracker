@@ -49,7 +49,7 @@ class API:
 
 def test_find_uses_account_and_rejects_ambiguous_results():
     api = API()
-    adapter = store.KeychainStore(api)
+    adapter = store.KeychainStore(api, allowed=lambda: True)
     item = adapter.find("service", "user")
     assert item.reference == b"exact"
     assert api.calls[0][1]["account"] == "user"
@@ -60,14 +60,14 @@ def test_find_uses_account_and_rejects_ambiguous_results():
 
 def test_update_only_changes_data_on_exact_item():
     api = API()
-    adapter = store.KeychainStore(api)
+    adapter = store.KeychainStore(api, allowed=lambda: True)
     adapter.update(b"exact", b"new-data")
     assert api.calls == [("update", {"persistent": b"exact"}, {"data": b"new-data"})]
 
 
 def test_journal_is_keychain_only_and_verifies_write():
     api = API()
-    adapter = store.KeychainStore(api)
+    adapter = store.KeychainStore(api, allowed=lambda: True)
     adapter.save_journal(b"target", {"phase": "intent", "payload": "synthetic"})
     assert api.calls[0][1]["service"] == store.RECOVERY_SERVICE
     assert not any("target" in str(call) for call in api.calls)
@@ -78,34 +78,6 @@ def test_native_api_is_lazy_and_unavailable_off_darwin(monkeypatch):
     monkeypatch.setattr(store.sys, "platform", "linux")
     with pytest.raises(store.KeychainError, match="unsupported"):
         store.KeychainStore()
-
-
-def test_worker_timeout_discards_native_output(monkeypatch):
-    def timeout(*args, **kwargs):
-        raise store.subprocess.TimeoutExpired(args[0], 30, output=b"private-token")
-
-    monkeypatch.setattr(store.subprocess, "run", timeout)
-    with pytest.raises(store.KeychainError, match="^timed_out$"):
-        store._WorkerAPI().copy({"persistent": b"exact"})
-
-
-def test_worker_uses_private_stdin_and_filters_errors(monkeypatch):
-    import plistlib
-
-    seen = []
-
-    def run(command, **kwargs):
-        seen.append((command, kwargs))
-        return store.subprocess.CompletedProcess(
-            command, 0, plistlib.dumps({"error": "private-secret"}), b""
-        )
-
-    monkeypatch.setattr(store.subprocess, "run", run)
-    with pytest.raises(store.KeychainError, match="^unavailable$"):
-        store._WorkerAPI().update({"persistent": b"exact"}, {"data": b"private-token"})
-    assert "private-token" not in str(seen[0][0])
-    assert plistlib.loads(seen[0][1]["input"])["values"]["data"] == b"private-token"
-    assert seen[0][1]["timeout"] == 30
 
 
 def test_permission_is_rechecked_after_journal_lookup():
@@ -143,7 +115,12 @@ def native_stub(result=None, status=0):
         calls.append(("update", query, values))
         return status
 
-    api.sec = SimpleNamespace(SecItemCopyMatching=copy, SecItemUpdate=update)
+    api.sec = SimpleNamespace(
+        SecItemCopyMatching=copy,
+        SecItemUpdate=update,
+        SecKeychainGetUserInteractionAllowed=lambda ptr: 0,
+        SecKeychainSetUserInteractionAllowed=lambda state: 0,
+    )
     return api, calls
 
 
@@ -185,24 +162,22 @@ def test_native_status_is_sanitized(code, reason):
         api.call("copy", {"persistent": b"exact"}, {})
 
 
-def test_source_helper_runs_outside_repository_without_credential_io(tmp_path, monkeypatch):
-    """An invalid operation exercises bootstrap only, never SecItemCopyMatching."""
+def test_source_helper_runs_outside_repository_without_credential_io(tmp_path):
+    import subprocess
+    import sys
     from pathlib import Path
 
-    monkeypatch.chdir(tmp_path)
-    run = store.subprocess.run
-    completed = []
+    from scripts.sidecar_pkg import keychain_worker
+    from scripts.sidecar_pkg.keychain_client import encode_frame
 
-    def record(*args, **kwargs):
-        result = run(*args, **kwargs)
-        completed.append(result)
-        return result
-
-    monkeypatch.setattr(store.subprocess, "run", record)
-    with pytest.raises(store.KeychainError, match="unavailable"):
-        store._WorkerAPI().call("invalid", {}, {})
-    assert completed[0].returncode == 0
-    assert Path(completed[0].args[1]).is_absolute()
+    result = subprocess.run(
+        [sys.executable, str(Path(keychain_worker.__file__).resolve())],
+        input=encode_frame({"operation": "invalid", "query": {}, "values": {}}),
+        capture_output=True,
+        cwd=tmp_path,
+        timeout=5,
+    )
+    assert result.returncode == 0 and result.stdout == b"" and result.stderr == b""
 
 
 @pytest.mark.skipif(store.sys.platform != "darwin", reason="memory-only macOS framework test")
@@ -255,6 +230,83 @@ def test_native_attributes_ignore_opaque_acl_objects():
 
 def test_identity_change_between_lookup_and_read_fails_closed():
     api = API()
-    adapter = store.KeychainStore(api)
+    adapter = store.KeychainStore(api, allowed=lambda: True)
     with pytest.raises(store.KeychainError, match="identity changed"):
         adapter.find("unexpected-service", "user")
+
+
+@pytest.mark.parametrize("operation", ["copy", "update", "add", "delete"])
+def test_native_calls_disable_and_restore_interaction(operation):
+    api, calls = native_stub([])
+    state = [1]
+    events = []
+
+    def get_state(ptr):
+        ptr._obj.value = state[0]
+        return 0
+
+    def set_state(value):
+        events.append(value)
+        state[0] = value
+        return 0
+
+    api.sec.SecKeychainGetUserInteractionAllowed = get_state
+    api.sec.SecKeychainSetUserInteractionAllowed = set_state
+
+    def native(*args):
+        assert state[0] == 0
+        return 0
+
+    api.sec.SecItemCopyMatching = native
+    api.sec.SecItemUpdate = native
+    api.sec.SecItemAdd = native
+    api.sec.SecItemDelete = native
+    values = {"service": store.RECOVERY_SERVICE} if operation == "add" else {}
+    api.call(operation, {"persistent": b"exact"}, values)
+    assert events == [False, True]
+    assert state == [1]
+
+
+def test_native_interaction_policy_failure_prevents_item_access():
+    api, calls = native_stub([])
+    api.sec.SecKeychainGetUserInteractionAllowed = lambda ptr: -50
+    with pytest.raises(store.KeychainError, match="unavailable"):
+        api.call("copy", {"persistent": b"exact"}, {})
+    assert calls == []
+
+
+def test_native_interaction_required_is_permission_denial():
+    api, _ = native_stub(status=-25315)
+    api.sec.SecKeychainGetUserInteractionAllowed = lambda ptr: 0
+    api.sec.SecKeychainSetUserInteractionAllowed = lambda value: 0
+    with pytest.raises(store.KeychainError, match="^denied$"):
+        api.call("copy", {"persistent": b"exact"}, {})
+
+
+@pytest.mark.parametrize("failure", ["disable", "restore"])
+def test_interaction_policy_failures_are_closed(failure):
+    api, calls = native_stub([])
+
+    def get_state(ptr):
+        ptr._obj.value = 1
+        return 0
+
+    def set_state(value):
+        return -50 if (bool(value) == (failure == "restore")) else 0
+
+    api.sec.SecKeychainGetUserInteractionAllowed = get_state
+    api.sec.SecKeychainSetUserInteractionAllowed = set_state
+    with pytest.raises(store.KeychainError, match="unavailable"):
+        api.call("copy", {"persistent": b"exact"}, {})
+    if failure == "disable":
+        assert calls == []
+
+
+def test_service_only_lookup_rejects_ambiguity():
+    api = API()
+    adapter = store.KeychainStore(api)
+    assert adapter.read_secret("service") == api.data
+    assert api.calls[0] == ("copy", {"service": "service"})
+    api.matches *= 2
+    with pytest.raises(store.KeychainError, match="ambiguous"):
+        adapter.read_secret("service")

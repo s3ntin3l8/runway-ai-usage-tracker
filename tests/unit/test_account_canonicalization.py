@@ -536,23 +536,19 @@ class TestSidecarIdentityPrecedence:
         ]
 
     def test_anthropic_keychain_identity_comes_from_its_own_payload(self, monkeypatch):
-        from types import SimpleNamespace
-
         import scripts.sidecar as sidecar
+        from scripts.sidecar_pkg import macos_keychain_store
 
         monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(
-            sidecar.subprocess,
-            "run",
-            lambda *_args, **_kwargs: SimpleNamespace(
-                returncode=0,
-                stdout=json.dumps(
-                    {
-                        "claudeAiOauth": {"accessToken": "sk-ant-keychain"},
-                        "oauthAccount": {"emailAddress": "Keychain@Example.com"},
-                    }
-                ),
-            ),
+            macos_keychain_store,
+            "read_secret",
+            lambda *_args, **_kwargs: json.dumps(
+                {
+                    "claudeAiOauth": {"accessToken": "sk-ant-keychain"},
+                    "oauthAccount": {"emailAddress": "Keychain@Example.com"},
+                }
+            ).encode(),
         )
         cards, blocked = sidecar.GenericCollector.collect_provider(
             "anthropic",

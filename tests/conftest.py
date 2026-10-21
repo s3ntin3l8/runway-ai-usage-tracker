@@ -522,3 +522,30 @@ def isolated_git(tmp_path: Path):
         )
 
     return run
+
+
+@pytest.fixture(autouse=True)
+def forbid_native_keychain_access(monkeypatch):
+    """Unit/integration tests must explicitly supply synthetic credential IO."""
+    from scripts.sidecar_pkg import keychain_client
+    from scripts.sidecar_pkg.macos_keychain_store import KeychainError, _WorkerAPI
+
+    monkeypatch.setattr(keychain_client, "_CLIENT", None)
+    original = subprocess.run
+
+    def guarded_run(command, *args, **kwargs):
+        if (
+            isinstance(command, (list, tuple))
+            and command
+            and Path(str(command[0])).name == "security"
+        ):
+            raise AssertionError("Native Keychain lookup prohibited in tests")
+        return original(command, *args, **kwargs)
+
+    def forbidden(*args, **kwargs):
+        raise KeychainError("unavailable")
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    monkeypatch.setattr(_WorkerAPI, "call", forbidden)
+    yield
+    keychain_client.close_keychain_client()
