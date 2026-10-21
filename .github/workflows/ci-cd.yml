@@ -5,21 +5,56 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  # The merge queue builds a merge commit from the current tip of `main` plus
+  # the pull request, and runs the required checks against *that* commit. The
+  # workflows that produce the required checks have to listen for this event,
+  # or the queue waits for checks that never report.
+  merge_group:
+    types: [ checks_requested ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a merge-queue run: the queue needs the run to finish before
+  # it can merge, and a cancelled run reads as a failed check.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   test-python:
-    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
+    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@52bfd26fb9f61007728a7a3a81f79c4b3289133d # main
     with:
       python-version: '3.12'
       coverage-fail-under: '70'
+      # mypy and pip-audit are advisory-only by default in the shared
+      # workflow. This repo's baseline is clean, so make them hard gates here
+      # rather than leaving the type check to the Windows job.
+      strict-checks: true
+      # Run the suite in four workers. `--dist loadfile` keeps every test
+      # module inside one worker, so module-scoped fixtures and import-time
+      # setup stay together. This is the difference between a 5-minute test
+      # step and a 90-second one.
+      test-parallel: '4'
+      # Only the files this push touched can have introduced a secret, and the
+      # baseline is keyed by filename and line number, so an unchanged file
+      # keeps its entry and the scan stays consistent.
+      detect-secrets-scope: 'changed'
+      # Without this the pip cache key comes from `**/requirements.txt`, so a
+      # change to requirements-dev.txt never busts it.
+      cache-dependency-path: |
+        requirements.txt
+        requirements-dev.txt
+    # Job-level concurrency, so a new push to this pull request cancels the
+    # previous run of *this* job without touching the rest of the workflow.
+    # It has to live here rather than in the shared workflow: inside a called
+    # workflow `github.workflow` is the caller's name and the group is
+    # namespaced by the caller, so two calls to the same shared workflow from
+    # one caller would share a group and cancel each other.
+    concurrency:
+      group: test-python-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name != 'merge_group' }}
     secrets: inherit
 
   test-frontend:
-    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
+    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@52bfd26fb9f61007728a7a3a81f79c4b3289133d # main
     with:
       # Node 24 ships npm 11, the first npm that writes the libc metadata
       # npm needs to pick the glibc or musl build of an optional native
@@ -34,11 +69,22 @@ jobs:
       # Gate on total line coverage (currently ~93%); buffer for variance.
       coverage-fail-under: '85'
       strict-checks: true
+      # The Python job above already scans the whole repository for secrets.
+      # Doing it again here cost ~50s per run for the same answer.
+      detect-secrets: false
+    concurrency:
+      group: test-frontend-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name != 'merge_group' }}
     secrets: inherit
 
   windows-native-lint:
     # Native Windows coverage of the static checks. The suite itself runs in
     # the sharded windows-native-pytest matrix below.
+    #
+    # Advisory: it is not a required status check. The merge queue therefore
+    # skips it -- the queue only needs the checks that decide the merge, and
+    # the Windows runner is the slowest thing in this workflow.
+    if: ${{ github.event_name != 'merge_group' }}
     runs-on: windows-latest
     # ruff + mypy + pip-audit take ~1.2 minutes on a healthy runner; the budget
     # only has to absorb a very slow runner, not the suite.
@@ -76,6 +122,8 @@ jobs:
     # frontend suite is platform independent - re-running it here only added
     # 2.5 minutes to the critical path.
     name: windows-native-pytest (shard ${{ matrix.shard }}/4)
+    # Advisory, like the job above: the merge queue does not wait on it.
+    if: ${{ github.event_name != 'merge_group' }}
     runs-on: windows-latest
     # 45 minutes survives a runner several times slower than median: a shard
     # is about a quarter of the suite, so even a 4x-slow runner finishes it in
@@ -105,6 +153,8 @@ jobs:
         run: python scripts/dev_checks.py test-shard
 
   dependency-audit:
+    # Advisory: the merge queue does not wait on it.
+    if: ${{ github.event_name != 'merge_group' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -132,6 +182,9 @@ jobs:
     # Compile the Windows NSIS installer on every PR (placeholder exe — the real
     # one is built on windows-latest by sidecar-build.yml) so a broken .nsi or
     # a missing installer asset fails here, not at release time.
+    #
+    # Advisory: the merge queue does not wait on it.
+    if: ${{ github.event_name != 'merge_group' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

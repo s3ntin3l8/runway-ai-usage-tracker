@@ -7,6 +7,13 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+
+concurrency:
+  # Without a group, every push to a pull request leaves the previous
+  # two-arch build and scan running until it finishes on its own.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   candidate:
     if: github.event_name == 'pull_request'
