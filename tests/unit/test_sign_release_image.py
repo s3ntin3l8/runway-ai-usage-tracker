@@ -168,7 +168,41 @@ def test_main_annotates_a_failure(monkeypatch, capsys):
     with pytest.raises(SystemExit) as exc:
         sign_release_image.main()
     assert exc.value.code == 1
-    assert "::error::" in capsys.readouterr().err
+    # stdout, like the repository's other workflow-command emitters.
+    assert "::error::" in capsys.readouterr().out
+
+
+def test_the_error_annotation_is_a_single_line(monkeypatch, capsys):
+    # A workflow command ends at the newline, so a multi-line message would
+    # truncate the annotation to its first line.
+    monkeypatch.setattr(
+        sign_release_image,
+        "sign_image",
+        lambda reference: (_ for _ in ()).throw(RuntimeError("signing failed\ndetail line")),
+    )
+    monkeypatch.setattr(sys, "argv", ["sign_release_image", REFERENCE])
+    with pytest.raises(SystemExit):
+        sign_release_image.main()
+    annotation = capsys.readouterr().out.strip()
+    assert annotation.startswith("::error::")
+    assert "\n" not in annotation
+    assert "detail line" in annotation
+
+
+def test_the_retry_warning_is_a_single_line(monkeypatch, capsys):
+    # Same reason as the error annotation: a workflow command ends at the
+    # newline.
+    def run(command, **kwargs):
+        return _completed(TRANSIENT)
+
+    monkeypatch.setattr(sign_release_image.subprocess, "run", run)
+    monkeypatch.setattr(sign_release_image.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError):
+        sign_release_image.sign_image(REFERENCE)
+    out = capsys.readouterr().out
+    warnings = [line for line in out.splitlines() if line.startswith("::warning::")]
+    assert warnings
+    assert all("\n" not in line for line in warnings)
 
 
 def test_the_backoff_escalates_and_stays_bounded(monkeypatch):

@@ -178,6 +178,11 @@ ignore_missing_imports = true
 # module named". CI never builds those trees, so only contributors who ran
 # `make sidecar-app` locally hit it.
 exclude_gitignore = true
+# `scripts/` is excluded wholesale: it is a namespace package, so mypy finds
+# `scripts/demo/env.py` under two module names and aborts the run, and
+# bringing the directory in surfaces 70 pre-existing errors across 59 files.
+# The exclusion is narrowed for `scripts/sign_release_image.py` so the
+# release-signing step is type-checked like the rest of the tree.
 exclude = ["tests", "scripts/(?!sign_release_image).*\\.py$", "sidecar_app", "scratch", "evidence"]
 
 [[tool.mypy.overrides]]

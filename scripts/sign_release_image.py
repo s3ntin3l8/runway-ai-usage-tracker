@@ -104,6 +104,15 @@ _BACKOFF_SECONDS = 10
 _ATTEMPT_TIMEOUT_SECONDS = 60
 
 
+def _first_line(message: str) -> str:
+    """The first line of ``message``, with newlines flattened.
+
+    A GitHub Actions workflow command is terminated by the newline, so an
+    annotation whose message spans lines is truncated to the first one.
+    """
+    return " ".join(message.splitlines())
+
+
 def is_transient(stderr: str) -> bool:
     """Whether this failure is a transient OIDC token fault worth retrying."""
     status = _STATUS_RE.search(stderr)
@@ -158,10 +167,7 @@ def sign_image(reference: str) -> None:
                 "promotion. The audit candidate is retained for diagnosis.\n"
                 f"{result.stderr.strip()}"
             )
-        print(
-            f"::warning::Ambient OIDC token fault on attempt {attempt}/{_ATTEMPTS}; retrying.",
-            file=sys.stderr,
-        )
+        print(f"::warning::Ambient OIDC token fault on attempt {attempt}/{_ATTEMPTS}; retrying.")
         time.sleep(_BACKOFF_SECONDS * attempt)
 
 
@@ -172,8 +178,14 @@ def main() -> None:
         sign_image(sys.argv[1])
     except RuntimeError as exc:
         # The same annotation the inline step emitted, so a failed signing
-        # attempt is still obvious in the job log.
-        print(f"::error::{exc}", file=sys.stderr)
+        # attempt is still obvious in the job log. It goes to stdout, like
+        # the repository's other workflow-command emitters.
+        #
+        # A workflow command ends at the newline, so a multi-line message
+        # would truncate the annotation to its first line. The detail is
+        # already in the log - cosign's own output is echoed by sign_image -
+        # so the annotation carries the summary alone.
+        print(f"::error::{_first_line(str(exc))}")
         raise SystemExit(1) from exc
 
 
