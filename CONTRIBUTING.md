@@ -6,7 +6,7 @@
 make install    # venv + Python deps + webapp deps + git hooks (pre-commit & pre-push)
 ```
 
-On native Windows, install Python 3.12+ and Node.js 22.22+ (including npm 11.19+).
+On native Windows, install Python 3.12+ and Node.js 22.22+ (including npm 11.11+).
 `winget install OpenJS.NodeJS.LTS` puts Node in the per-user PATH, and that
 only applies to *new* processes — start a fresh shell (or a fresh agent
 session) before `node`/`npm` resolve. Then run these commands in PowerShell
@@ -34,13 +34,20 @@ use a fixed test locale, while the dashboard retains the user's locale.
 
 The frontend toolchain is pinned. `webapp/package.json` declares
 `packageManager: npm@11.19.0` and a `devEngines` block requiring Node 22.22+
-and npm 11.19+, so npm refuses to install with a node or npm outside that
+and npm 11.11+, so npm refuses to install with a node or npm outside that
 range instead of quietly producing a different lockfile. Node 22.22 is the
-floor because `react-router` 8.3.0 requires it. npm 11.19 is the floor because
-npm 10 never writes the `libc` metadata described below and strips it from
-every lockfile it rewrites. Node 24 ships npm 11.19, so
-`winget install OpenJS.NodeJS.LTS` is the simplest route. Add `--force` to an
-npm command to downgrade a `devEngines` mismatch to a warning.
+floor because `react-router` 8.3.0 requires it. npm 11.11 is the floor
+because npm 10 never writes the `libc` metadata described below and strips it
+from every lockfile it rewrites, and npm 11.11 is the first release that
+writes it. Node 24 ships npm 11.19, so `winget install OpenJS.NodeJS.LTS` is
+the simplest route. Add `--force` to an npm command to downgrade a
+`devEngines` mismatch to a warning.
+
+The pin lives in `webapp/package.json` and not in the repository root: the
+root manifest is a script wrapper with no dependencies and no lockfile, and
+`actions/setup-node` v7 enables its npm cache whenever the manifest at the
+repository root names npm as the package manager - it then looks for a
+`package-lock.json` there and fails every workflow that sets up Node.
 
 The `libc` field is worth understanding before you regenerate the lockfile.
 npm copies it verbatim from an optional platform package's published manifest,
@@ -48,9 +55,9 @@ and it is the only thing that tells npm whether to install the glibc or the
 musl build of `sharp`, `rollup` and `rolldown` - without it npm installs both,
 which grew `node_modules/@img` from 19M to 37M on a glibc host. npm 10 does
 not write the field at all, so `npm install --package-lock-only` under npm 10
-silently removes it from all 35 platform entries; npm 11 and 12 write it. That
-is why the npm version is pinned rather than left to whatever happens to be
-installed. `tests/unit/test_webapp_lockfile.py` fails if the field goes
+silently removes it from all 35 platform entries; npm 11.11 and later write
+it. That is why the npm version is pinned rather than left to whatever happens
+to be installed. `tests/unit/test_webapp_lockfile.py` fails if the field goes
 missing.
 
 The native Windows CI job runs the suite as four parallel shards. The same

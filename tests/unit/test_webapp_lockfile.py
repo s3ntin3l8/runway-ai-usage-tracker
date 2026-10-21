@@ -7,10 +7,10 @@ Without it npm installs both, which grew ``node_modules/@img`` from 19M to 37M
 on a glibc host.
 
 npm 10 does not write the field at all: it is missing from npm 10's
-``pkgMetaKeys``, so every lockfile npm 10 rewrites loses it. npm 11 added it
-back, and npm 11 and 12 both reproduce this lockfile byte for byte. The
-``npm audit fix`` that regenerated the lockfile in #731 dropped it from 29 of
-the 35 entries, so these tests fail when a regeneration loses it.
+``pkgMetaKeys``, so every lockfile npm 10 rewrites loses it. npm 11.11 added
+it back, and npm 11.19 and 12.2 both reproduce this lockfile byte for byte.
+The ``npm audit fix`` that regenerated the lockfile in #731 dropped it from 29
+of the 35 entries, so these tests fail when a regeneration loses it.
 
 The pin that keeps a second npm out of the tree lives in ``devEngines`` in
 ``webapp/package.json``; these tests cover the lockfile it protects.
@@ -129,17 +129,24 @@ class TestFrontendToolchainPin:
         }
         assert dev_engines["packageManager"] == {
             "name": "npm",
-            "version": ">=11.19.0",
+            "version": ">=11.11.0",
             "onFail": "error",
         }
 
-    def test_the_root_manifest_declares_the_same_pin(self):
-        """The root scripts forward to the webapp, so both roots must agree."""
-        root = _read_json(ROOT_PACKAGE_JSON)
-        webapp = _read_json(WEBAPP_PACKAGE_JSON)
+    def test_the_root_manifest_declares_no_package_manager(self):
+        """The root holds no lockfile, so a root package manager declaration is a trap.
 
-        assert root["packageManager"] == webapp["packageManager"]
-        assert root["devEngines"] == webapp["devEngines"]
+        ``actions/setup-node`` v7 enables its npm cache whenever the manifest at
+        the repository root names npm as the package manager, and then looks for
+        a ``package-lock.json`` there. The lockfile lives in ``webapp/``, so a
+        root declaration makes every workflow that sets up Node fail with
+        "Dependencies lock file is not found". The pin belongs to the project
+        that owns the lockfile.
+        """
+        root = _read_json(ROOT_PACKAGE_JSON)
+
+        assert "packageManager" not in root
+        assert "devEngines" not in root
 
     @pytest.mark.parametrize(
         "document",
