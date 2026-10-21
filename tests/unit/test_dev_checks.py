@@ -50,6 +50,48 @@ def test_gate_stops_after_a_failed_step(monkeypatch):
     assert calls == ["lint", "test"]
 
 
+def test_gate_forwards_the_worker_count_to_its_steps(monkeypatch):
+    """`--jobs` reaches the gate's test step, not just the standalone tasks."""
+    seen = []
+    original = dc.check
+
+    def check(task, extra, **kwargs):
+        if task == "gate":
+            return original(task, extra, **kwargs)
+        seen.append((task, kwargs.get("jobs")))
+        return None
+
+    monkeypatch.setattr(dc, "check", check)
+    dc.check("gate", [], jobs=4)
+    assert seen == [("lint", 4), ("test", 4), ("web-test", 4)]
+
+
+@pytest.mark.parametrize(
+    ("jobs", "expected"),
+    [
+        (4, ["-n", "4", "--dist", "loadfile"]),
+        (1, []),
+        (0, []),
+        (-1, []),
+    ],
+)
+def test_parallel_args_pins_the_worker_grouping(jobs, expected):
+    """`--dist loadfile` is load-bearing: the default would split a module.
+
+    The default `--dist load` hands individual tests to workers, so a
+    module-scoped fixture and a module's import-time setup would end up
+    spread across workers. `loadfile` keeps every module in one worker.
+    """
+    assert dc.parallel_args(jobs) == expected
+
+
+def test_jobs_is_rejected_for_tasks_that_do_not_run_tests(monkeypatch):
+    """`--jobs` is meaningless for a task that never starts pytest."""
+    monkeypatch.setattr(sys, "argv", ["dev_checks.py", "lint", "--jobs", "4"])
+    with pytest.raises(SystemExit):
+        dc.main()
+
+
 def test_install_uses_lockfile_and_both_hooks(monkeypatch):
     commands = []
     dc.venv_python().unlink()

@@ -28,12 +28,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Only a pull request supersedes its own previous run. On the default
-  # branch the nightly schedule and a push share this group, and cancelling
-  # on either would silently drop one of them -- the nightly run is the
+  # The event name is part of the group, so the nightly schedule and a push
+  # to `main` -- which share `github.ref` -- do not land in the same group
+  # and cannot cancel or queue behind each other. The nightly run is the
   # backstop for the narrowed per-pull-request Windows gate.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

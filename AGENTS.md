@@ -102,10 +102,12 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
 - `make sidecar-registry` — regenerate the sidecar's baked credential rules after
   editing `app/core/registry.json` (the baked block is generated, never hand-edited).
 - `make secrets` / `make secrets-baseline` — detect-secrets gate / regenerate
-  the baseline after vetting a new detection. The baseline pins **line
-  numbers**, so editing a baselined file shifts them: re-run
-  `make secrets-baseline` in the same change or the CI gate fails — and the
-  baseline conflicts on the next rebase.
+  the baseline after vetting a new detection. detect-secrets matches a known
+  secret by **filename, hash and type** — not by line number — but it carries
+  the line number as metadata, and the hook rewrites it when it rescans. So
+  editing a baselined file moves that number: re-run `make secrets-baseline`
+  in the same change or the CI gate fails — and the baseline conflicts on the
+  next rebase.
 
 ## Core invariants
 
