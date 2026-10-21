@@ -25,6 +25,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 
+# The native Windows gate runs the modules marked ``windows``; see
+# `scripts/dev_checks.py test-windows`. These tests are about the Windows
+# console code pages, so they belong to that gate.
+pytestmark = pytest.mark.windows
+
 
 def _non_ascii(text: str) -> set[str]:
     """Characters outside ASCII — not encodable on every Windows code page."""

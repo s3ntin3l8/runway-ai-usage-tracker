@@ -301,42 +301,75 @@ semantics.
 
 Workflows live in `.github/workflows/`.
 
-- **`ci-cd.yml`** — on push/PR to `main`:
+- **`ci-cd.yml`** — on push/PR to `main`, and on `merge_group`:
   - **`test-python`** — reusable `s3ntin3l8/.github` `ci-python.yml`:
     `lint` (ruff check + format) and `type-and-test` (mypy, detect-secrets
-    against `.secrets.baseline`, pip-audit, pytest with Codecov). Coverage
-    floor 70%.
+    against `.secrets.baseline`, pip-audit, pytest with Codecov). This repo
+    passes `strict-checks: true`, so mypy and pip-audit are hard gates here
+    rather than advisory findings, and `test-parallel: '4'` runs the suite in
+    four workers (`--dist loadfile`, so every test module stays in one
+    worker). `detect-secrets-scope: changed` scans only the files the push
+    touched. Coverage floor 85% (the suite covers 91.6%).
   - **`test-frontend`** — reusable `ci-node.yml` against `webapp/` with
-    strict checks: typecheck, Vite build, vitest coverage. Floor 85%.
-  - **`windows-native-lint`** — ruff, mypy and pip-audit on a native Windows
-    runner.
-  - **`windows-native-pytest`** — the pytest suite on a native Windows runner,
-    split into four parallel shards. The suite takes 11-27 minutes on a hosted
-    Windows runner depending on how fast the runner is, which used to push the
-    single monolithic job into its 30-minute timeout (#712). That job was
-    advisory, so the timeout reddened the `CI/CD` run without blocking the
-    `edge` publish; the shards remove the timeout as a possibility. `scripts/pytest_shard.py` owns the split: it keeps whole
-    test modules together (so the fixed-port helpers and `tests/conftest.py`'s
-    import-time setup stay in one process) and balances them by measured
-    runtime, recorded in `tests/shard_durations.json`. A shard runs the whole
-    suite with the other shards' modules deselected by node id prefix, so
-    pytest's own `collect_ignore` still decides what is collectible. Re-measure
-    with `make shard-weights`. The frontend is not part of this job —
-    `test-frontend / lint-and-test` already covers it on Linux.
+    strict checks: typecheck, Vite build, vitest coverage. Floor 85%. It
+    passes `detect-secrets: false`: the Python job above already scans the
+    repository, and doing it twice cost ~50s per run for the same answer.
+  - **`windows`** — ruff, mypy and pip-audit on a native Windows runner.
+  - **`windows/specific`** — the test modules whose subject is the Windows
+    platform (native socket and handle semantics, installer packaging,
+    console code pages), marked with the `windows` marker and selected by
+    `scripts/dev_checks.py test-windows`.
   - **`installer-check`** — compiles the Windows NSIS installer with a
     placeholder exe on every PR, so a broken `.nsi` or missing installer
     asset fails here, not at release time.
-  - **`build-docker`** — on push only: GHCR image via the shared
-    `docker-publish.yml` with `push-edge: true` → the `:edge` tag.
+  - **`image-changed` + **`build-docker`** — on push only: GHCR image via the
+    shared `docker-publish.yml` with `push-edge: true` → the `:edge` tag.
+    `image-changed` compares the push against the Dockerfile's `COPY` sources
+    (the Dockerfile, `requirements.txt`, `app/`, `webapp/`) and skips the
+    rebuild when the image would be byte-identical; if the base commit cannot
+    be resolved it rebuilds.
     The checked-out commit is passed as the `BUILD_SHA` build arg and baked
     in as `RUNWAY_BUILD_SHA`, so the running server reports the exact build
     it is in Settings → About — every `:edge` image ships the same version
     string, so the SHA is what tells two of them apart. The Dockerfile has
     to declare `ARG BUILD_SHA` in its **final** stage (a builder-stage ARG
     never reaches the running image); the build fails loudly if it doesn't.
+  - Every job above except the two `test-*` ones and `image-changed` is
+    advisory: none of them is a required status check.
   - Required checks on `main`: `test-python / lint`,
     `test-python / type-and-test`, `test-frontend / lint-and-test`, and
-    CodeQL — enforced *strict* (branch must be up to date).
+    CodeQL.
+- **The merge queue.** `ci-cd.yml` and `codeql.yml` listen for `merge_group`,
+    so a ruleset can require the queue: GitHub builds current `main` plus the
+    pull request, runs the required checks against *that* merge commit, and
+    merges when they are green. This is what removes the rebase treadmill —
+    a branch no longer has to be up to date to merge, because the thing being
+    tested is the merge result rather than the branch. The advisory jobs skip
+    the `merge_group` event: the queue only waits on the checks that decide
+    the merge. Job-level `concurrency` on the reusable-workflow calls keeps a
+    new push from leaving the previous run going; it is deliberately *not*
+    workflow-level in the shared workflows, because inside a called workflow
+    `github.workflow` is the caller's name and two calls to the same shared
+    workflow from one caller would cancel each other.
+- **`windows-native-suite.yml`** — the whole pytest suite on a native Windows
+    runner, in four parallel shards, on `main` pushes and nightly. It used to
+    run on every pull request, where it cost ~11 runner-minutes — the largest
+    advisory cost in the repository — for coverage a Windows runner is not
+    the only way to get. `scripts/pytest_shard.py` owns the split: it keeps
+    whole test modules together (so the fixed-port helpers and
+    `tests/conftest.py`'s import-time setup stay in one process) and balances
+    them by measured runtime, recorded in `tests/shard_durations.json`. A
+    shard runs the whole suite with the other shards' modules deselected by
+    node id prefix, so pytest's own `collect_ignore` still decides what is
+    collectible. Re-measure with `make shard-weights`. The frontend is not
+    part of this job — `test-frontend / lint-and-test` already covers it on
+    Linux.
+- **`image-security.yml` / `image-security-arm64.yml`** — the candidate
+    image is built and scanned for known vulnerabilities. The amd64 leg runs
+    on every pull request; the arm64 leg is a native build on an ARM runner
+    and lives in its own workflow, filtered to the paths that can change the
+    image. The daily `published` job audits the arm64 image that actually
+    ships.
 - **`release-please.yml`** — on push to `main`: opens/merges the release PR
   from Conventional Commits (see *Releases*). When it cuts a release it also
   runs `docker-publish.yml` with `push-release: true` (stable → `:latest` +

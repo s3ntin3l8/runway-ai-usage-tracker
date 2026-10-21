@@ -83,7 +83,7 @@ and pytest hooks resolve the interpreter from the checkout being committed.
 worktree is enough, because the runner takes the repository root from its own
 path and runs the tests with that root as the working directory, so the
 checkout's own sources are the ones under test. The pre-push hook runs the
-full suite, so allow it several minutes.
+full suite in four workers, so allow it a minute or so.
 
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
 note that `make dev` alone no longer sees your local CLI logins (Gemini, Claude,
@@ -110,7 +110,7 @@ make lint && make test && make web-test
   Release Please parses the **PR title**, not the individual commits, to cut
   versions/changelogs — an unprefixed title silently drops from the release.
 - **CI must pass**: `test-python / lint`, `test-python / type-and-test`,
-  `test-frontend / lint-and-test`, and CodeQL, with coverage floors of 70%
+  `test-frontend / lint-and-test`, and CodeQL, with coverage floors of 85%
   (Python) and 85% (frontend).
 - **Schema changes are forward-safe** (no Alembic): new columns go into
   `app/core/db.py`'s idempotent `ALTER TABLE` list so existing databases
