@@ -103,6 +103,25 @@ def test_a_stated_rejection_is_permanent():
         assert not sign_release_image.is_transient(message)
 
 
+def test_a_stated_server_error_is_transient():
+    # cosign v3.1.4 reports a 5xx as "failed with status 502", with no
+    # "invalid character" in the message at all. Classifying by status keeps
+    # the retry firing when the pinned cosign moves forward.
+    message = (
+        "retrieving ID token: reading ID token: fetching ambient OIDC credentials: "
+        "identity token request to provider github-actions failed with status 502 Bad Gateway"
+    )
+    assert sign_release_image.is_transient(message)
+
+
+def test_a_stated_rate_limit_is_transient():
+    message = (
+        "fetching ambient OIDC credentials: identity token request to provider "
+        "github-actions failed with status 429 Too Many Requests"
+    )
+    assert sign_release_image.is_transient(message)
+
+
 def test_a_stated_rejection_wins_over_the_decode_markers():
     # A v3.1.4 rejection whose body was also unparseable carries both the
     # status and a decode error. The permanent verdict must win.
@@ -112,6 +131,13 @@ def test_a_stated_rejection_wins_over_the_decode_markers():
         "looking for beginning of value"
     )
     assert not sign_release_image.is_transient(message)
+
+
+def test_a_stated_status_wins_over_a_missing_ambient_marker():
+    # The status is decisive on its own: the endpoint answered, so the
+    # answer says whether another attempt is worth making.
+    message = "identity token request to provider github-actions failed with status 502 Bad Gateway"
+    assert sign_release_image.is_transient(message)
 
 
 def test_a_missing_cosign_fails_closed(monkeypatch):

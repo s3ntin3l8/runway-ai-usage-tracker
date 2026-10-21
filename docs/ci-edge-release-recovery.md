@@ -112,10 +112,15 @@ endpoint's HTTP status before decoding the body, so a plain-text `403`
 reaches cosign as the same JSON decode error and is indistinguishable from
 the transient fault. Such a rejection is retried before the step fails; it
 still fails and still promotes nothing, but the failure arrives later than
-it otherwise would. cosign v3.1.4 checks the status and reports it as
-`failed with status 403 Forbidden`, which the script already treats as
-permanent - so moving the pin forward tightens the retry with no code
-change.
+it otherwise would.
+
+cosign v3.1.4 checks the status first and reports it, and the script
+classifies by that status whenever one is present: a `5xx` or a `429` is
+retried, any other status is not. That keeps the retry effective across the
+change - v3.1.4 reports a transient `5xx` as `failed with status 502`, with
+no `invalid character` anywhere in the message, so a script that matched
+only the decode error would silently stop retrying - and it makes the
+retry narrower at the same time.
 
 **The retry budget has to fit inside the job's timeout.** The `merge` job
 allows 15 minutes and the steps ahead of the signing measured about 132

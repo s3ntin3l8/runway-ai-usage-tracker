@@ -22,10 +22,12 @@ One caveat, because the pinned cosign v3.1.3 does not check the token
 endpoint's HTTP status before decoding the body: a plain-text rejection
 reaches cosign as a JSON decode error and is indistinguishable from the
 transient fault, so it is retried before the step fails. It still fails,
-and nothing is promoted; only the failure is slower to arrive. cosign
-v3.1.4 checks the status, and this script already treats a stated
-rejection as permanent, so moving the pin forward tightens the retry
-without a code change.
+and nothing is promoted; only the failure is slower to arrive.
+
+cosign v3.1.4 checks the status first and reports it, and this script
+classifies by that status when one is present: a 5xx or a 429 is retried,
+any other status is not. So moving the pin forward makes the retry both
+narrower and still effective, with no change here.
 
 The retry mirrors ``scripts/sign_release_assets.py``, which retries
 Rekor's equivalent-entry conflict and nothing else.
@@ -33,6 +35,7 @@ Rekor's equivalent-entry conflict and nothing else.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import time
@@ -48,26 +51,34 @@ _TRANSIENT_MARKERS = (
     "invalid character",
 )
 
-# A rejection the token endpoint states outright is permanent and must never
-# be retried, whatever else the message contains.
-#
-# cosign v3.1.3 - the version this repository pins - does not check the
-# token endpoint's HTTP status before decoding the body, so a plain-text 403
-# reaches cosign as a JSON decode error and looks exactly like the transient
-# fault. The two are indistinguishable in v3.1.3's output. cosign v3.1.4 adds
-# the status check, and then a rejection is reported as such:
+# cosign reports the token endpoint's HTTP status in this shape:
 #
 #     identity token request to provider github-actions failed with status
-#     403 Forbidden
+#     502 Bad Gateway
 #
-# Treating that as permanent is what keeps a real misconfiguration from
-# being retried once the pinned cosign is moved forward. The marker is
-# checked first so it wins over the decode-error markers above: a v3.1.4
-# rejection whose body also happens to be unparseable carries both.
-_PERMANENT_MARKERS = (
-    "failed with status 403",
-    "failed with status 401",
-)
+# cosign v3.1.3 - the version this repository pins - does not report it at
+# all, because it decodes the body without checking the status first. The
+# status is therefore optional in a message, and its presence is what
+# separates the two failure kinds:
+#
+#   * a status of 5xx means the endpoint is unwell, which is the transient
+#     fault worth retrying;
+#   * a status of 4xx means the endpoint refused the request - a rejected
+#     identity, a missing `id-token: write` permission - which a retry
+#     cannot fix;
+#   * no status at all means cosign could not decode the body, which is
+#     what v3.1.3 reports for every non-JSON answer.
+#
+# Classifying by status rather than by the decode error is what keeps the
+# retry firing when the pinned cosign moves to v3.1.4 or later: those
+# versions report a 5xx as "failed with status 502", with no "invalid
+# character" anywhere in the message.
+_STATUS_RE = re.compile(r"failed with status (\d{3})")
+
+# Statuses worth retrying: the endpoint is unwell (5xx) or is rate limiting
+# (429). Every other status is the endpoint refusing the request, which a
+# retry does not fix.
+_TRANSIENT_STATUSES = frozenset({429})
 
 # Four attempts with an escalating ten-second backoff: about 60 seconds of
 # waiting in total, matching the bound the issue asks for and the pattern in
@@ -95,8 +106,17 @@ _ATTEMPT_TIMEOUT_SECONDS = 60
 
 def is_transient(stderr: str) -> bool:
     """Whether this failure is a transient OIDC token fault worth retrying."""
-    if any(marker in stderr for marker in _PERMANENT_MARKERS):
-        return False
+    status = _STATUS_RE.search(stderr)
+    if status is not None:
+        # The endpoint answered, so its status decides: an unwell or
+        # rate-limiting endpoint is worth another attempt, a refusal is
+        # not. This wins over the decode markers below, because a
+        # rejection whose body also failed to parse carries both.
+        code = int(status.group(1))
+        return code >= 500 or code in _TRANSIENT_STATUSES
+    # No status: cosign could not decode the body. That is the observed
+    # transient fault - and, under cosign v3.1.3, also what a plain-text
+    # rejection looks like.
     return all(marker in stderr for marker in _TRANSIENT_MARKERS)
 
 
