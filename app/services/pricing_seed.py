@@ -650,6 +650,30 @@ PRICING_SEED: list[dict] = [
     # scripts/sidecar_pkg/event_extractors/opencode.py) a notional "what this
     # would have cost on the API" figure, the same way Anthropic subscription
     # usage gets priced against Claude API rates above.
+    # M3.1-Flash has no published tier split (the pricing page lists it flat,
+    # outside the Standard/Priority tabs that carry M3's context-length tiers),
+    # so one row covers every call length.
+    # Keyed on the canonical "MiniMax-M3.1-Flash" id; the lowercase
+    # "minimax-m3.1-flash" spelling OpenCode reports resolves through the
+    # cost_calculator's case-insensitive fallback (same path as "minimax-m3"
+    # -> "MiniMax-M3"). The "-free" spellings stay deliberately unpriced —
+    # the cost calculator skips its segment-trim fallback for free-tier ids,
+    # so neither casing can reach this row (see the Data Health
+    # `unpriced_models` check, which excludes them for the same reason).
+    {
+        "provider_id": "minimax",
+        "model_id": "MiniMax-M3.1-Flash",
+        "effective_from": "2026-10-19",
+        "input_per_mtok": 0.15,
+        "output_per_mtok": 0.60,
+        "cache_read_per_mtok": 0.015,
+        "cache_create_per_mtok": 0.0,
+        "notes": "MiniMax M3.1 Flash, released 2026-10-19. Rates per "
+        "https://platform.minimax.io/docs/pricing/overview (checked 2026-10-20). "
+        "Flat rate — no Standard/Priority tier split and no context-length tier "
+        "published for this model. No cache-write rate is published, so "
+        "cache_create stays 0.0 (same as M3).",
+    },
     # M3 has an undocumented >512k-input pricing cliff ($0.60/$2.40, cache read
     # $0.12) that this schema doesn't model per-event — fine at the token
     # volumes seen so far (well under 512k), but a >512k call will undercount.

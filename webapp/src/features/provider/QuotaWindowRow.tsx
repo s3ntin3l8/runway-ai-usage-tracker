@@ -10,7 +10,7 @@ import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
 import { cn } from '@/lib/cn';
 import { formatPct } from '@/lib/format';
-import { cardPct, cardStale, cardStatus, chipLabel, staleTitle, windowLabel } from '@/lib/quota';
+import { cardHeroLabel, cardPct, cardStale, cardStatus, cardTooltip, chipLabel, staleTitle, windowLabel } from '@/lib/quota';
 import { formatLocalDateTime } from '@/lib/tz';
 
 function statusColor(status: ForecastStatus | undefined): string {
@@ -70,7 +70,11 @@ export function QuotaWindowRow({
     <div>
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[13px] font-medium">{chipLabel(card, siblings)}</span>
-        <span className="font-mono text-[13px] font-semibold tabular">
+        <span
+          className="font-mono text-[13px] font-semibold tabular"
+          title={cardTooltip(card)}
+          aria-label={cardHeroLabel(card, used != null ? formatPct(used) : (card.remaining ?? '—'))}
+        >
           {used != null ? formatPct(used) : (card.remaining ?? '—')}
         </span>
       </div>

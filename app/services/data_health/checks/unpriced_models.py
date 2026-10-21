@@ -4,10 +4,10 @@ that computes to $0 is verified by the configured price table; a source
 reported $0 without a matching computed positive cost is informational, not
 claimed as independently verified; and no rate/no report needs a seed row.
 
-`:free`-suffixed models, `-free`-suffixed models under OpenCode providers
-(`opencode`, `opencode-byok`, `opencode-zen`, `hermes-auto`), `openrouter/free/*`,
-sentinels (`unknown`, empty), and the `opencode-free` provider are excluded
-outright — priced at $0 on purpose, not missing a seed.
+Free-tier model ids (`:free`-, `-free`- and `/free`-suffixed, plus the
+`openrouter/free/*` prefix form), sentinels (`unknown`, empty), and the
+`opencode-free` provider are excluded outright — priced at $0 on purpose,
+not missing a seed.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from typing import Any
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
-from app.services.account_identity import _CONFIG_TO_USAGE_PROVIDER_IDS
 from app.services.cost_calculator import PricingIndex, resolve_price_row
 from app.services.data_health.base import (
     AsyncHook,
@@ -31,19 +30,20 @@ from app.services.data_health.base import (
 )
 from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.maintenance.recost import apply_recost, plan_recost
-
-_OPENCODE_PROVIDERS = _CONFIG_TO_USAGE_PROVIDER_IDS["opencode"] | {"opencode-byok"}
+from app.services.model_normalization import is_free_tier_model_id
 
 
 def _is_excluded(provider_id: str, model_id: str) -> bool:
     if provider_id == "opencode-free":
         return True
     m = model_id.lower()
-    if m.endswith(":free"):
+    # Free-tier ids are excluded for every provider, not just the OpenCode
+    # ones: the cost calculator's segment-trim fallback is blocked for them
+    # too, so a "-free" id can never reach a paid sibling row and be billed
+    # at list price.
+    if is_free_tier_model_id(m):
         return True
-    if provider_id in _OPENCODE_PROVIDERS and m.endswith("-free"):
-        return True
-    if m.startswith("openrouter/free") or m in ("unknown", ""):
+    if m in ("unknown", ""):
         return True
     return False
 
