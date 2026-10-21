@@ -18,6 +18,21 @@ on:
       - 'sidecar_app/**'
       - 'package.json'
       - 'installer/**'
+      # The sidecar binary bundles app/ modules too (the CLI spec bundles
+      # scripts/sidecar.py, which imports app.services.model_normalization
+      # among others), so a change to one of them has to rebuild the sidecar
+      # as well. PR #693 shipped the Argon id canonicalisation to the server
+      # and the sidecar only by luck: it touched app/ alone, which this
+      # filter did not watch, and the sidecar build that finally carried the
+      # fix was triggered by an unrelated installer/ change. Watch the
+      # directories the sidecar actually imports from; the filter stays
+      # narrower than 'app/**' so a server-only change does not spend a
+      # sidecar build.
+      - 'app/__init__.py'
+      - 'app/core/**'
+      - 'app/models/**'
+      - 'app/services/__init__.py'
+      - 'app/services/model_normalization.py'
       - '.github/workflows/sidecar-build.yml'
       - '.github/workflows/sidecar-edge.yml'
   workflow_dispatch:
