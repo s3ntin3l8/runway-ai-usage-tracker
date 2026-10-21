@@ -24,6 +24,46 @@ APPS = {
     "foo.ghe.com:Iv1.b507a08c87ecfe98": {"oauth_token": "tok-ghe"},
 }
 
+# The MiniMax Code desktop app's auth store: one record per (buildEnv, region),
+# keyed by "<service> <account-hash>". The registry rule reaches the token with
+# a `records.*` wildcard, which has to span the dots AND the space in that key.
+MINIMAX_CODE_AUTH = {
+    "schemaVersion": 1,
+    "records": {
+        "com.minimax.mcode.oauth.prod.en whmxAo4Y9iIPa1gPWcGzY9bdtkLxQaMy3kWpwXHjJjA": {
+            "schemaVersion": 1,
+            "accessToken": "mmoat_x",
+            "refreshToken": "mmort_x",
+            "clientId": "mcode-public",
+            "expiresAtMs": 1792518384753,
+        }
+    },
+}
+
+# Two logins in one store: the stale China record sorts before the live
+# English one, so a resolver that took the first match would hand out a dead
+# token. The live record has to win — and both the token and the expiry have
+# to come from THAT record, not from two different ones.
+MINIMAX_CODE_AUTH_TWO_RECORDS = {
+    "schemaVersion": 1,
+    "records": {
+        "com.minimax.mcode.oauth.prod.cn deadbeef": {
+            "schemaVersion": 1,
+            "accessToken": "mmoat_dead",
+            "refreshToken": "mmort_dead",
+            "clientId": "mcode-public",
+            "expiresAtMs": 1_600_000_000_000,  # long expired
+        },
+        "com.minimax.mcode.oauth.prod.en cafebabe": {
+            "schemaVersion": 1,
+            "accessToken": "mmoat_live",
+            "refreshToken": "mmort_live",
+            "clientId": "mcode-public",
+            "expiresAtMs": 4_102_444_800_000,  # year 2100
+        },
+    },
+}
+
 CASES = [
     # id, data, path, expected
     ("plain nested", {"a": {"b": 1}}, "a.b", 1),
@@ -88,6 +128,45 @@ CASES = [
     ("non-dict data", "text", "a.b", None),
     ("empty dict", {}, "a", None),
     ("scalar in the middle of a path", {"a": 5}, "a.b", None),
+    # MiniMax Code's auth store — the record key carries dots AND a space.
+    (
+        "minimax code: wildcard record key spans dots and a space",
+        MINIMAX_CODE_AUTH,
+        "records.*.accessToken",
+        "mmoat_x",
+    ),
+    (
+        "minimax code: wildcard record key reaches the refresh token",
+        MINIMAX_CODE_AUTH,
+        "records.*.refreshToken",
+        "mmort_x",
+    ),
+    (
+        "minimax code: wildcard record key reaches the expiry",
+        MINIMAX_CODE_AUTH,
+        "records.*.expiresAtMs",
+        1792518384753,
+    ),
+    # Two logins in one store: the unexpired record wins over the dead one
+    # that sorts first.
+    (
+        "minimax code: the unexpired record wins over the dead one that sorts first",
+        MINIMAX_CODE_AUTH_TWO_RECORDS,
+        "records.*.accessToken",
+        "mmoat_live",
+    ),
+    (
+        "minimax code: the expiry comes from the same record as the token",
+        MINIMAX_CODE_AUTH_TWO_RECORDS,
+        "records.*.expiresAtMs",
+        4_102_444_800_000,
+    ),
+    (
+        "minimax code: the refresh token comes from the same record too",
+        MINIMAX_CODE_AUTH_TWO_RECORDS,
+        "records.*.refreshToken",
+        "mmort_live",
+    ),
 ]
 
 

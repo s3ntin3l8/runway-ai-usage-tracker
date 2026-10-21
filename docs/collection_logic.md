@@ -74,6 +74,24 @@ The "Runs in" column shows where the strategy executes. The server-side collecto
 | OpenCode | local (SQLite events) | enrichment | sidecar |
 | **Antigravity** | api (Code Assist cloud) | quota | server |
 | Antigravity | local (LSP probe — legacy enrichment) | enrichment | sidecar |
+| **MiniMax** | api (coding plan) | quota | server |
+| MiniMax | api (open platform — MiniMax Code app login) | quota | server |
+
+The two MiniMax strategies need different credentials: the platform API secret
+(`sk-…`) and the MiniMax Code app's OAuth token (`mmoat_…`). Each host accepts
+only its own — sending the wrong kind comes back as **HTTP 200** with
+`base_resp.status_code` 1004 "login fail", so the failure is only visible in the
+body. The collector reports that as an **error card**, not as an empty plan:
+this collector reports complete snapshots, so a healthy-looking "No active plan"
+card would retire the user's real session and weekly rows. Which kind a
+credential is comes from the `mmoat_` prefix, so a token pasted into Settings
+or the database is still routed to the host that accepts it.
+
+The app's auth store keeps one record per build and region, each with its own
+expiry. The registry reaches it with a `records.*` wildcard, and both the
+server and the sidecar pick the record whose expiry is still in the future — a
+dead record must not win just because its key sorts first, and the token and
+its expiry must come from the *same* record.
 
 ## Collection Pipeline
 

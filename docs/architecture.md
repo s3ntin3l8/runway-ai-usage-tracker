@@ -225,10 +225,10 @@ the login itself on every push, so a re-login simply moves the source to the new
 
 ### Who refreshes an OAuth login
 
-A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT and xAI
-**rotate** it, so a refresh invalidates the copy still sitting in the CLI's own
-credentials file and signs that CLI out (the new token never goes back to it).
-Google does not rotate Gemini's.
+A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT, xAI and
+MiniMax Code **rotate** it, so a refresh invalidates the copy still sitting in the
+CLI's own credentials file and signs that CLI out (the new token never goes back
+to it). Google does not rotate Gemini's.
 
 - **Machine-owned** (a sidecar discovered it, or any sidecar bundle holds the same
   refresh secret) and the provider rotates: the server **never** refreshes it. The
@@ -241,6 +241,14 @@ Google does not rotate Gemini's.
 - The server reads no CLI login file from its own host (`~/.claude/.credentials.json`,
   `~/.codex/auth.json`, ...); only sidecars do. A rotating provider's CLI login therefore
   always arrives as a machine-owned bundle, and the sidecar keep-alive (xAI, Claude Code, Codex, agy) renews it.
+- **MiniMax Code** is a machine-owned login with no keep-alive: the desktop app owns
+  `~/.minimax/auth/<env>/<region>/mcode-public/auth.json` and renews the token in place
+  (the stored `generation` counter increments) whenever it runs. Runway never refreshes
+  it — there is no MiniMax refresh endpoint in `_REFRESH_ENDPOINTS`, so the server
+  cannot rotate the app's refresh token even by accident. `minimax` is listed in
+  `ROTATING_REFRESH_PROVIDERS` so the machine-ownership is explicit in the inventory
+  (`refreshed_by: "machine"`) rather than an accident of the provider having no
+  refresh endpoint.
 - A machine-renewed login that stays expired for more than 3 days raises the usual
   credential alert (an idle CLI is normal for a day or two, not for a week).
 - While a machine's access token is expired and its CLI is idle, collection skips that
