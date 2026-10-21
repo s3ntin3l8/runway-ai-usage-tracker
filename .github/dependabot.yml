@@ -32,3 +32,19 @@ updates:
       npm-deps:
         patterns:
           - "*"
+        # Weekly pull requests carry minor and patch bumps only. A major is a
+        # migration, not a weekly batch: the first run of this group proposed
+        # 34 updates including four majors, and could not be reviewed or
+        # merged as one.
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # TypeScript 7 is the Go rewrite and the tooling around it has not
+      # caught up - typescript-eslint 8.72 peers typescript < 6.1.0, so a
+      # typescript 7 pull request lands with an unsatisfiable peer range.
+      # Take the major when the ecosystem is ready.
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
+        update-types:
+          - version-update:semver-major
