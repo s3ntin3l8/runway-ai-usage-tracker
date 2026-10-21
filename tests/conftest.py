@@ -185,6 +185,8 @@ os.environ["PYSTRAY_BACKEND"] = "dummy"
 
 import httpx
 import pytest
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from app.core.config import Settings, settings
 from app.core.net import LOOPBACK_HOSTS
@@ -200,6 +202,36 @@ from tests.fixtures.mock_data import (
     KIMI_RESPONSE,
     OPENCODE_GO_RESPONSE,
 )
+from tests.fixtures.sqlite import disable_fsync, skip_fsync_requested
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _fast_sqlite_writes():
+    """Stop SQLite from fsyncing every write the suite makes.
+
+    The suite builds its own throwaway SQLite engines (a per-test
+    ``SQLModel.metadata.create_all()`` plus a commit or two), and those
+    engines never go through ``app.core.db.configure_sqlite_engine``. They
+    therefore keep SQLite's default ``synchronous=FULL`` and fsync on every
+    commit, which made the suite I/O-bound: profiling showed ~80% of the
+    local run's wall time spent waiting on the filesystem rather than running
+    code.
+
+    The app engine is exempt -- it sets ``synchronous=NORMAL`` and WAL on
+    purpose, and those are production decisions the suite must not change
+    behind our back. See ``tests/fixtures/sqlite.py``.
+
+    Set ``RUNWAY_TEST_SQLITE_SYNC=1`` to restore the durable default.
+    """
+    if skip_fsync_requested():
+        yield
+        return
+
+    event.listen(Engine, "connect", disable_fsync)
+    try:
+        yield
+    finally:
+        event.remove(Engine, "connect", disable_fsync)
 
 
 @pytest.fixture(autouse=True)
