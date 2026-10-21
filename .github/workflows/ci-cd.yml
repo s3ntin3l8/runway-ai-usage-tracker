@@ -21,7 +21,10 @@ jobs:
   test-frontend:
     uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
-      node-version: '22'
+      # Node 24 ships npm 11, the first npm that writes the libc metadata
+      # npm needs to pick the glibc or musl build of an optional native
+      # package. npm 10 strips it from every lockfile it rewrites.
+      node-version: '24'
       working-directory: 'webapp'
       cache-dependency-path: 'webapp/package-lock.json'
       build-script: 'build'
@@ -51,7 +54,7 @@ jobs:
             requirements-dev.txt
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: webapp/package-lock.json
       - name: Install canonical dependencies and hooks
@@ -70,7 +73,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: webapp/package-lock.json
       - name: Audit server, desktop and build dependencies
