@@ -44,6 +44,7 @@ def test_extracts_assistant_messages_only():
     )
     assert len(evts) == 2
     assert all(e.provider_id == "anthropic" for e in evts)
+    assert all(e.source_app == "claude_code" for e in evts)
     assert {e.model_id for e in evts} == {"sonnet-4.5", "opus-4.5"}
 
 

@@ -14,6 +14,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from app.core.source_apps import XAI_CLI  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 
 _MAX_COUNTER = 2**63 - 1
@@ -139,6 +140,7 @@ def _usage_row(
         return None
     return UsageEventPush(
         provider_id="xai",
+        source_app=XAI_CLI,
         account_id=account_id,
         event_id=f"xai|grok|{session_id}|{prompt_id}|{model}",
         ts=ts.isoformat(),

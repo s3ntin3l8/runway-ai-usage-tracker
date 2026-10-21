@@ -38,6 +38,7 @@ from app.services.queries.snapshots import (
     query_window_detail,
     query_windows,
 )
+from app.services.queries.source_apps import query_source_apps
 from app.services.queries.top_models import query_top_models
 from app.services.queries.top_projects import query_projects, query_top_projects
 from app.services.queries.top_tools import query_top_tools
@@ -64,6 +65,7 @@ __all__ = [
     "query_sessions",
     "query_sessions_paginated",
     "query_snapshots",
+    "query_source_apps",
     "query_top_models",
     "query_top_projects",
     "query_top_tools",

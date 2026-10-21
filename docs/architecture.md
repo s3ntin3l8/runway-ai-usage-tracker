@@ -51,7 +51,7 @@ live in `app/models/db.py`.
 
 | Table | Role |
 |-------|------|
-| `usage_events` | Per-message events. Unique on `(provider_id, event_id)` — a re-push under a new account from the *same* sidecar re-attributes the row and moves its rollups (retag-safe); another sidecar can't steal it. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — raw per-message `cwd`, indexed `project` (the session's root basename, derived in `EventIngestor` via `app/services/project_label.py` — worktree/tmp cwds collapse at the `/.claude/` boundary, and `scripts/consolidate_session_projects.py` consolidates per-session subfolder drift offline; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. |
+| `usage_events` | Per-message events. Unique on `(provider_id, event_id)` — a re-push under a new account from the *same* sidecar re-attributes the row and moves its rollups (retag-safe); another sidecar can't steal it. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — raw per-message `cwd`, indexed `project` (the session's root basename, derived in `EventIngestor` via `app/services/project_label.py` — worktree/tmp cwds collapse at the `/.claude/` boundary, and `scripts/consolidate_session_projects.py` consolidates per-session subfolder drift offline; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. Also carries `source_app` — the **client app** that made the call (`opencode`, `claude_code`, `minimax_code`, ...), which is not the same thing as `provider_id`, the upstream provider the request was billed to: several client apps share one provider, and a canonical-provider retag (`scripts/sidecar_pkg/canonical_providers.py`) folds them onto one id. `source_app` survives that retag, so "which app spent the quota" stays answerable; it falls back to `provider_id` when a pushing sidecar reports none (an older sidecar), and pre-column rows are backfilled the same way. |
 | `usage_period_rollup` | Pre-aggregated rollups (hour/day/month/year/lifetime × model × sidecar grain). Updated incrementally on each event ingest. |
 | `usage_windows` | Closed-window archive — totals frozen at each authoritative `reset_at` boundary by `app/services/window_closer.py`. |
 | `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`) — what scrapers see. Merged via `merge_card_json` in `app/services/accumulator.py`. |
@@ -84,6 +84,10 @@ computes cost via `cost_calculator`, updates rollups, and triggers
 - `/usage/fleet` adds `window_aggregations.longest` — per-model +
   per-sidecar splits aligned to the provider's longest active window
   (Claude weekly, Gemini daily, etc.), computed on demand from `usage_events`.
+- `/usage/source-apps` ranks the **client apps** that produced events in a
+  range — the same `model_remains`-style breakdown as `/usage/top-models`,
+  but grouped by `source_app` instead of model, and filterable by
+  `provider_id`/`account_id`/`sidecar_id`.
 - `history/chart` takes `group=provider` for a cross-provider stack;
   `sessions/paginated` adds server-side sort + `project` filter; snapshot
   bucketing runs SQL-side via the `ix_quota_snapshots_series_ts` covering

@@ -46,6 +46,11 @@ function mockAll() {
   vi.mocked(api.fetchEvents).mockResolvedValue(emptyEvents());
   vi.mocked(api.fetchHistoryChart).mockResolvedValue(historyChart(true));
   vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
+  vi.mocked(api.fetchSourceApps).mockResolvedValue({
+    apps: [],
+    metric: 'tokens',
+    generated_at: '2026-10-20T12:00:00Z',
+  });
 }
 
 describe('OverviewTab', () => {
@@ -257,5 +262,64 @@ describe('OverviewTab', () => {
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [session()] } as never);
     renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
     expect(await screen.findByText('Recent sessions · Last 7 days')).toBeInTheDocument();
+  });
+
+  // Several client apps can share one provider (MiniMax Code, OpenCode and a
+  // plain API script can all spend the same MiniMax plan), so the provider id
+  // alone can't say which app spent the quota.
+  it('renders a per-app split when client apps reported usage', async () => {
+    vi.mocked(api.fetchSourceApps).mockResolvedValue({
+      apps: [
+        {
+          source_app: 'minimax_code',
+          msgs: 5,
+          tokens_total: 300,
+          tokens_input: 200,
+          tokens_output: 100,
+          tokens_cache_read: 0,
+          tokens_cache_create: 0,
+          tokens_reasoning: 0,
+          cost_usd: 0.1,
+          cost_cache: 0,
+          cost_input: 0.05,
+          cost_output: 0.05,
+          cost_cache_read: 0,
+          cost_cache_create: 0,
+          providers: ['minimax'],
+        },
+        {
+          source_app: 'opencode',
+          msgs: 1,
+          tokens_total: 50,
+          tokens_input: 50,
+          tokens_output: 0,
+          tokens_cache_read: 0,
+          tokens_cache_create: 0,
+          tokens_reasoning: 0,
+          cost_usd: 0.01,
+          cost_cache: 0,
+          cost_input: 0.01,
+          cost_output: 0,
+          cost_cache_read: 0,
+          cost_cache_create: 0,
+          providers: ['minimax'],
+        },
+      ],
+      metric: 'tokens',
+      generated_at: '2026-10-20T12:00:00Z',
+    });
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
+    expect(await screen.findByText(/Tokens by app/)).toBeInTheDocument();
+  });
+
+  it('omits the per-app split when no app reported usage', async () => {
+    vi.mocked(api.fetchSourceApps).mockResolvedValue({
+      apps: [],
+      metric: 'tokens',
+      generated_at: '2026-10-20T12:00:00Z',
+    });
+    renderWithProviders(<OverviewTab entry={fleetEntry()} scope={scope} />);
+    expect(await screen.findByText('Token mix · Last 7 days')).toBeInTheDocument();
+    expect(screen.queryByText(/Tokens by app/)).not.toBeInTheDocument();
   });
 });

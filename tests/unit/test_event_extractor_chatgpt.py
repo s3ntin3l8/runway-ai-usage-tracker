@@ -96,6 +96,7 @@ def test_extracts_response_messages_only():
     )
     assert len(evts) == 3
     assert all(e.provider_id == "chatgpt" for e in evts)
+    assert all(e.source_app == "codex" for e in evts)
 
 
 def test_preserves_full_model_slugs():

@@ -12,6 +12,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from app.core.source_apps import CLAUDE_CODE  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 
 
@@ -132,6 +133,7 @@ def parse_anthropic_events(
                         events.append(
                             UsageEventPush(
                                 provider_id="anthropic",
+                                source_app=CLAUDE_CODE,
                                 account_id=account_id,
                                 event_id=event_id,
                                 ts=ts.isoformat(),

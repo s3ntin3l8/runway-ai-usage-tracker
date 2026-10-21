@@ -68,6 +68,7 @@ def test_extracts_gemini_type_records_only():
     # Fixture has 2 gemini records with tokens and 2 non-gemini records
     assert len(evts) == 2
     assert all(e.provider_id == "gemini" for e in evts)
+    assert all(e.source_app == "gemini_cli" for e in evts)
 
 
 def test_normalizes_model_ids():
