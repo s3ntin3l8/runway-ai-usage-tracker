@@ -8,6 +8,7 @@
 // lumped into a fake "SHARED" pool.
 
 import type { ForecastEntry, LimitCard, TokenUsage } from '@/api/types';
+import { formatCurrency, formatPct, formatTokens } from '@/lib/format';
 
 export function sameQuota(a: LimitCard, b: LimitCard): boolean {
   return a.quota_pool_id != null && a.quota_pool_id === b.quota_pool_id;
@@ -192,6 +193,25 @@ export function windowLabel(card: LimitCard): string | null {
 export function cardTooltip(card: LimitCard): string | undefined {
   if (!card.detail) return undefined;
   return card.unit_type === 'currency' ? card.detail : undefined;
+}
+
+// The hero text of a card: what its big number means. Quota cards show the
+// percentage used, token cards the token count, spend cards the money. The
+// home grid and the at-risk rail share it so their labels stay consistent —
+// a card without a derivable percentage (an exhausted credits balance) must
+// not be announced as "— used".
+export function cardHeroText(card: LimitCard, excludeCache = false): string {
+  const kind = cardKind(card);
+  if (kind === 'tokens') {
+    const tokens = tokenUsageTotal(card.token_usage, excludeCache) ?? card.used_value ?? null;
+    return `${formatTokens(tokens)} tokens used`;
+  }
+  if (kind === 'spend') {
+    const amount =
+      card.used_value != null ? formatCurrency(card.used_value, card.currency) : (card.remaining ?? '—');
+    return `${amount} ${card.unit ?? ''}`.trimEnd();
+  }
+  return `${formatPct(cardPct(card))} used`;
 }
 
 // Accessible label for a quota hero: the visible hero text plus the detail

@@ -34,7 +34,7 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
 import { maskAccountId } from '@/lib/accountDisplay';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
-import { cardHeroLabel, cardKind, cardPct, cardStale, cardStatus, cardTooltip, chipLabel, staleTitle, tokenUsageTotal, windowLabel } from '@/lib/quota';
+import { cardHeroLabel, cardHeroText, cardKind, cardPct, cardStale, cardStatus, cardTooltip, chipLabel, staleTitle, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
 import type { RiskItem } from './risk';
@@ -129,12 +129,7 @@ function SortableProviderCard({
       : status;
 
   // Hero label for the aria-label — meaningful per kind.
-  const heroLabel =
-    kind === 'quota'
-      ? `${formatPct(cardPct(gauge))} used`
-      : kind === 'tokens'
-        ? `${formatTokens(tokenUsageTotal(gauge.token_usage, excludeCache) ?? gauge.used_value ?? null)} tokens used`
-        : `${gauge.used_value != null ? formatCurrency(gauge.used_value, gauge.currency) : (gauge.remaining ?? '—')} ${gauge.unit ?? ''}`.trimEnd();
+  const heroLabel = cardHeroText(gauge, excludeCache);
 
   // The detail line rides along in the accessible name: the card is a
   // role="button", and children of a button are presentational, so a nested

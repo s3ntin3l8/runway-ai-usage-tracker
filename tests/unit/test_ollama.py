@@ -965,6 +965,14 @@ class TestOllamaApiCollector:
         assert cards == []
         assert collector._last_error_reason == "missing_data"
 
+    def test_build_cards_from_api_usage_payload_without_limits_is_malformed(self):
+        """Only an explicit limits block proves there is no monthly cap."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage({})
+        assert cards == []
+        assert collector._no_monthly_cap is False
+        assert collector._last_error_reason == "missing_data"
+
     @pytest.mark.asyncio
     async def test_collect_no_cap_response_returns_no_parse_error_card(self):
         collector = OllamaCollector(account_id="acc_test")

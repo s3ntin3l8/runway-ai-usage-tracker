@@ -652,14 +652,17 @@ class OllamaCollector(BaseCollector):
         now_iso = now.isoformat()
 
         limits = body.get("limits")
+        if "limits" not in body:
+            # Not the legacy shape: either a spend report (the account has
+            # usage whose quota we cannot read here) or a payload we do not
+            # understand. Both are malformed — only an explicit limits block
+            # proves the account has no monthly cap, and treating anything
+            # else as "no cap" would let the snapshot reconciliation retire a
+            # working card.
+            self._set_error_reason("missing_data")
+            return []
         if limits is None:
-            # No legacy limit block. A spend report means the account does have
-            # usage data whose quota we cannot read here — say so instead of
-            # silently retiring the card. Anything else is a plan without a
-            # monthly cap: a clean no-cap state.
-            if isinstance(body.get("totals"), dict) or body.get("buckets"):
-                self._set_error_reason("missing_data")
-                return []
+            # An explicit null limit block: a plan without a monthly cap.
             self._no_monthly_cap = True
             return []
         if not isinstance(limits, dict):
