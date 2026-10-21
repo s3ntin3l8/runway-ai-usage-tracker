@@ -81,6 +81,9 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   logins (the server reads no credential files); use `make dev-all` to collect
   from them.
 - `make test` — pytest; a single file: `pytest tests/path/to/test_file.py`.
+- `make test-shard SHARD=1 SHARDS=4` — one shard of the suite, the split the
+  native Windows CI uses; `make shard-weights` re-measures the per-module
+  durations that balance it.
 - `make lint` / `make format` — ruff + mypy + pip-audit; auto-fix formatting.
 - `make web-test` / `make web` — frontend vitest; production SPA build into
   `webapp/dist`.
