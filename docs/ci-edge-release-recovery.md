@@ -96,7 +96,7 @@ cosign v3.1.3 and not the image. It is the first time this path ran cosign
 v3, so it is new surface that no earlier run exercised.
 
 `scripts/sign_release_image.py` now owns the step. It retries only that
-ambient-credential fault, at most four times, with an escalating ten-second
+ambient-credential fault, at most three times, with an escalating ten-second
 backoff (about 60 seconds in total); every other failure - a rejected
 identity, a missing `id-token: write` permission, a digest the registry does
 not have - is reported immediately, so a real misconfiguration surfaces in

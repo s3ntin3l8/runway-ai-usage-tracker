@@ -148,6 +148,12 @@ def sign_image(reference: str) -> None:
                 ["cosign", "sign", "--yes", reference],
                 capture_output=True,
                 text=True,
+                # cosign's output is not guaranteed to be UTF-8, and a
+                # decode error would escape this function uncaught - the step
+                # would die on a traceback instead of the annotated failure
+                # it is supposed to report. Replace what cannot be decoded;
+                # the text is only used for the log and the failure marker.
+                errors="replace",
                 timeout=_ATTEMPT_TIMEOUT_SECONDS,
                 check=False,
             )
@@ -174,7 +180,14 @@ def sign_image(reference: str) -> None:
                 "promotion. The audit candidate is retained for diagnosis.\n"
                 f"{result.stderr.strip()}"
             )
-        print(f"::warning::Ambient OIDC token fault on attempt {attempt}/{_ATTEMPTS}; retrying.")
+        # flush: stdout is block-buffered when it is not a tty, and the
+        # runner does not set PYTHONUNBUFFERED. Without the flush the
+        # warning only reaches the log when the process exits, so an
+        # operator watching a slow release sees nothing while it retries.
+        print(
+            f"::warning::Ambient OIDC token fault on attempt {attempt}/{_ATTEMPTS}; retrying.",
+            flush=True,
+        )
         time.sleep(_BACKOFF_SECONDS * attempt)
 
 
@@ -191,7 +204,7 @@ def main() -> None:
         # A workflow command ends at the newline, so the message is escaped
         # into a single physical line. The whole diagnostic survives, and
         # the runner renders the escaped newlines as they were.
-        print(f"::error::{_as_command_data(str(exc))}")
+        print(f"::error::{_as_command_data(str(exc))}", flush=True)
         raise SystemExit(1) from exc
 
 

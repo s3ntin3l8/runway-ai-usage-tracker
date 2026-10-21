@@ -285,3 +285,40 @@ def test_the_retry_budget_fits_inside_the_enclosing_job_timeout():
         sign_release_image._BACKOFF_SECONDS * n for n in range(1, sign_release_image._ATTEMPTS)
     )
     assert worst_case + pre_sign_overhead < job_timeout
+
+
+def test_non_utf8_output_is_replaced_not_raised(monkeypatch):
+    # cosign's output is not guaranteed to be UTF-8. A decode error must not
+    # escape the script as an uncaught exception - the step has to report its
+    # annotated failure, not die on a traceback.
+    def run(command, **kwargs):
+        assert kwargs.get("errors") == "replace"
+        return subprocess.CompletedProcess(command, 1, "", "bad byte: \udcff")
+
+    monkeypatch.setattr(sign_release_image.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="signing failed"):
+        sign_release_image.sign_image(REFERENCE)
+
+
+def test_the_retry_warning_is_flushed(monkeypatch):
+    # stdout is block-buffered off a tty and the runner does not set
+    # PYTHONUNBUFFERED, so an unflushed warning only reaches the log when
+    # the process exits.
+    flushed = []
+    real_print = print
+
+    def run(command, **kwargs):
+        return _completed(TRANSIENT)
+
+    def fake_print(*args, **kwargs):
+        if kwargs.get("flush"):
+            flushed.append(args[0] if args else "")
+        return real_print(*args, **kwargs)
+
+    monkeypatch.setattr(sign_release_image.subprocess, "run", run)
+    monkeypatch.setattr(sign_release_image.time, "sleep", lambda _: None)
+    monkeypatch.setattr("builtins.print", fake_print)
+    with pytest.raises(RuntimeError):
+        sign_release_image.sign_image(REFERENCE)
+    monkeypatch.undo()
+    assert any("::warning::" in line for line in flushed)
