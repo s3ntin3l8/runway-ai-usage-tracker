@@ -202,7 +202,11 @@ def test_the_retry_warning_is_a_single_line(monkeypatch, capsys):
     out = capsys.readouterr().out
     warnings = [line for line in out.splitlines() if line.startswith("::warning::")]
     assert warnings
-    assert all("\n" not in line for line in warnings)
+    # A workflow command ends at the newline, so the annotation must be a
+    # single complete command - not a prefix with the rest spilling into
+    # the log as loose text.
+    assert all(line.endswith("retrying.") for line in warnings)
+    assert all(line.count("::") == 2 for line in warnings)
 
 
 def test_the_backoff_escalates_and_stays_bounded(monkeypatch):

@@ -104,11 +104,12 @@ _BACKOFF_SECONDS = 10
 _ATTEMPT_TIMEOUT_SECONDS = 60
 
 
-def _first_line(message: str) -> str:
-    """The first line of ``message``, with newlines flattened.
+def _one_line(message: str) -> str:
+    """``message`` with its newlines flattened to spaces.
 
     A GitHub Actions workflow command is terminated by the newline, so an
-    annotation whose message spans lines is truncated to the first one.
+    annotation whose message spans lines is truncated to the first one. The
+    whole message is kept, on one line, so no diagnostic is lost.
     """
     return " ".join(message.splitlines())
 
@@ -182,10 +183,9 @@ def main() -> None:
         # the repository's other workflow-command emitters.
         #
         # A workflow command ends at the newline, so a multi-line message
-        # would truncate the annotation to its first line. The detail is
-        # already in the log - cosign's own output is echoed by sign_image -
-        # so the annotation carries the summary alone.
-        print(f"::error::{_first_line(str(exc))}")
+        # would truncate the annotation to its first line. The message is
+        # flattened instead, so the whole diagnostic survives on one line.
+        print(f"::error::{_one_line(str(exc))}")
         raise SystemExit(1) from exc
 
 
