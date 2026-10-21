@@ -313,8 +313,9 @@ Workflows live in `.github/workflows/`.
   - **`windows-native-pytest`** — the pytest suite on a native Windows runner,
     split into four parallel shards. The suite takes 11-27 minutes on a hosted
     Windows runner depending on how fast the runner is, which used to push the
-    single monolithic job into its 30-minute timeout and fail the release
-    publish (#712). `scripts/pytest_shard.py` owns the split: it keeps whole
+    single monolithic job into its 30-minute timeout (#712). That job was
+    advisory, so the timeout reddened the `CI/CD` run without blocking the
+    `edge` publish; the shards remove the timeout as a possibility. `scripts/pytest_shard.py` owns the split: it keeps whole
     test modules together (so the fixed-port helpers and `tests/conftest.py`'s
     import-time setup stay in one process) and balances them by measured
     runtime, recorded in `tests/shard_durations.json`. A shard runs the whole

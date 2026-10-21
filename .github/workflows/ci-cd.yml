@@ -59,10 +59,14 @@ jobs:
   windows-native-pytest:
     # The suite takes 11-27 minutes on hosted Windows runners depending on how
     # fast the runner is, which is what pushed the old monolithic job into its
-    # 30-minute timeout and failed the release publish (#712). Four parallel
-    # shards keep every shard far below the timeout: the plan splits whole test
-    # modules and balances them by measured runtime, so no shard runs long
-    # enough to matter even on a slow runner.
+    # 30-minute timeout (#712). Four parallel shards keep every shard far
+    # below the timeout: the plan splits whole test modules and balances them
+    # by measured runtime, so no shard runs long enough to matter even on a
+    # slow runner.
+    #
+    # The old job was advisory - it is not a required status check and nothing
+    # depends on it - so a timeout turned the CI/CD run red without blocking
+    # the edge publish. The split removes the timeout as a possibility.
     #
     # The frontend is deliberately not part of this job. `test-frontend /
     # lint-and-test` already runs vitest and builds the SPA on Linux, and the
