@@ -1,0 +1,57 @@
+name: Image Security (arm64)
+
+# The arm64 half of the candidate image scan.
+#
+# It is a *native* build on an ARM runner, which costs about as much as the
+# amd64 leg, and it only matters when something that goes into the image
+# changed. So it runs on its own: on the pull requests that touch the image,
+# and on demand.
+#
+# The arm64 image that actually ships is covered by the daily published-image
+# audit in image-security.yml, which scans both arches of the published edge
+# image and of the newest release.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      # The COPY lines in the Dockerfile, which is what decides the image's
+      # contents: the Dockerfile, requirements.txt, app/ and the webapp/ the
+      # frontend builder compiles. The scanner and the policy are here too:
+      # they do not change the image, but a change to them should re-scan it.
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'requirements.txt'
+      - 'app/**'
+      - 'webapp/**'
+      - 'scripts/audit_release_image.py'
+      - 'scripts/image_policy.py'
+      - '.github/workflows/image-security-arm64.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    name: candidate (ubuntu-24.04-arm, arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build and scan candidate without publishing
+        env:
+          ARCH: arm64
+        run: |
+          docker build -t runway-candidate .
+          docker run --rm -e APP_HOST=127.0.0.1 -e RUNWAY_CONFIG_DIR=/tmp/ci --entrypoint python runway-candidate -c 'import app.main, sqlite3; print(sqlite3.sqlite_version)'
+          docker save --output /tmp/candidate.tar runway-candidate
+          python -m scripts.audit_release_image --archive /tmp/candidate.tar --architecture "$ARCH" --output image-audit
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: image-security-arm64
+          path: image-audit
+          retention-days: 90

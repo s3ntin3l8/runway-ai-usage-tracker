@@ -35,8 +35,10 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   `python scripts/dev_checks.py gate`).
   `make install` wires the same checks into git hooks: pre-commit runs ruff,
   mypy, detect-secrets, and the unit tests; pre-push runs the full suite.
+  Both run the suite in four workers, so the gates take about a minute
+  rather than five.
   CI must stay green — `test-python / lint`, `test-python / type-and-test`,
-  `test-frontend / lint-and-test`, and CodeQL — with coverage floors of 70%
+  `test-frontend / lint-and-test`, and CodeQL — with coverage floors of 85%
   (Python) and 85% (frontend).
 - **Get a review, and close the loop on it.** Hermes auto-reviews each PR
   once on open (`.github/workflows/hermes.yml`) — don't request another one

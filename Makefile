@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-shard test-cov shard-weights lint format web web-dev web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights lint format web web-dev web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -76,8 +76,11 @@ sidecar-installer: ## Compile the Windows NSIS installer from dist/RunwaySidecar
 	@[ -f dist/RunwaySidecar.exe ] || { echo "dist/RunwaySidecar.exe missing — build it on Windows with pyinstaller sidecar_app/spec/windows.spec"; exit 1; }
 	$(PYTHON) -m scripts.build_windows_installer --from-package-version --out-dir dist
 
-test: ## Run test suite (matches CI)
-	$(PYTHON) scripts/dev_checks.py test
+test: ## Run test suite (matches CI); JOBS=N parallel workers, JOBS=1 serial
+	$(PYTHON) scripts/dev_checks.py test --jobs $(or $(JOBS),4)
+
+test-unit: ## Run the unit tests only (what the pre-commit hook runs); JOBS=N workers
+	$(PYTHON) scripts/dev_checks.py unit --jobs $(or $(JOBS),4)
 
 test-shard: ## Run one shard of the suite (SHARD=1 SHARDS=4), as the Windows CI does
 	$(PYTHON) scripts/dev_checks.py test-shard --shard-id $(or $(SHARD),1) --shards $(or $(SHARDS),4)

@@ -243,11 +243,16 @@ class _NativeAPI:
 
     @contextlib.contextmanager
     def _without_interaction(self) -> Iterator[None]:
+        with self._interaction(False):
+            yield
+
+    @contextlib.contextmanager
+    def _interaction(self, enabled: bool) -> Iterator[None]:
         previous = ctypes.c_ubyte()
         if self.sec.SecKeychainGetUserInteractionAllowed(ctypes.byref(previous)):
             raise KeychainError("unavailable")
         try:
-            if self.sec.SecKeychainSetUserInteractionAllowed(False):
+            if self.sec.SecKeychainSetUserInteractionAllowed(enabled):
                 raise KeychainError("unavailable")
             yield
         finally:
@@ -257,6 +262,13 @@ class _NativeAPI:
     def call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
         with self._without_interaction():
             return self._call(operation, query, values)
+
+    def authorize_read(self, reference: bytes) -> Any:
+        """One foreground read; deliberately absent from the worker protocol."""
+        if not isinstance(reference, bytes) or not reference:
+            raise KeychainError("unavailable")
+        with self._interaction(True):
+            return self._call("copy", {"persistent": reference}, {})
 
     def _call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
         names = {
@@ -303,7 +315,7 @@ class _NativeAPI:
                     if code in {-25293, -25308, -25315, -128}
                     else "failed"
                 )
-                raise KeychainError(reason)
+                raise KeychainError(reason, native_status=int(code))
             if operation != "copy":
                 return None
             return self._decode_matches(result)

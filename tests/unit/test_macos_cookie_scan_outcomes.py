@@ -13,7 +13,7 @@ from scripts import sidecar
 from scripts.sidecar_pkg import macos_cookies
 from scripts.sidecar_pkg import macos_keychain_store as keychain
 from scripts.sidecar_pkg.macos_keychain_store import KeychainError
-from tests.macos_cookie_fixtures import chromium_store, encrypted, safari_blob
+from tests.macos_cookie_fixtures import FIXED_EXPIRY, chromium_store, encrypted, safari_blob
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +45,16 @@ def test_safari_expiry_is_filtered_by_existing_candidate_interface(tmp_path, mon
 
 
 @pytest.mark.parametrize(
-    "bad", [b"cook", b"cook" + struct.pack(">I", 0xFFFFFFFF), b"wrong", safari_blob()[:-2]]
+    "bad",
+    [
+        b"cook",
+        b"cook" + struct.pack(">I", 0xFFFFFFFF),
+        b"wrong",
+        # A fixed expiry keeps the blob's bytes -- and therefore this test's
+        # id -- reproducible; the default expiry comes from the clock, which
+        # gave every process a different id and broke pytest-xdist.
+        pytest.param(safari_blob(expiry=FIXED_EXPIRY)[:-2], id="truncated-blob"),
+    ],
 )
 def test_safari_malformed_is_unsupported_not_empty(tmp_path, bad):
     from scripts.sidecar_pkg.safari_cookies import scan_cookies

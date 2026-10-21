@@ -109,6 +109,7 @@ a = Analysis(
         "scripts.sidecar_pkg.keychain_client",
         "scripts.sidecar_pkg.keychain_protocol",
         "scripts.sidecar_pkg.keychain_worker",
+        "scripts.sidecar_pkg.keychain_authorization",
         "scripts.sidecar_pkg.claude_renewal_lock",
         "scripts.sidecar_pkg.agy_version",
         "scripts.sidecar_pkg.codex_renewer",

@@ -4,6 +4,12 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  # Without a group, every push to a pull request leaves the previous run
+  # going until it finishes on its own.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dependency-review:
     # The dependency-review API is free on public repos but requires GitHub

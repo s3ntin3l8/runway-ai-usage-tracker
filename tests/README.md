@@ -16,6 +16,10 @@ make install    # from the repo root: venv, Python deps, webapp deps, git hooks
 make test       # or: pytest
 ```
 
+`make test` runs the suite in four parallel workers. Override with
+`make test JOBS=1` for a serial run (easier to read a single traceback) or
+`make test JOBS=8` on a bigger machine.
+
 ### Run Specific Test Categories
 
 ```bash
@@ -85,6 +89,34 @@ Shared fixtures used across unit and integration tests:
   - `mock_opencode_go_response`
   - `mock_zai_response`
   - `mock_kimi_response`
+
+### SQLite writes skip fsyncing (`tests/fixtures/sqlite.py`)
+
+The suite builds its own throwaway SQLite engines rather than reusing the app
+engine, and those engines used to keep SQLite's default `synchronous=FULL` —
+an fsync on every commit. That made the suite I/O-bound: roughly 80% of the
+local run's wall time was spent waiting on the filesystem instead of running
+code.
+
+A session-scoped fixture in `tests/conftest.py` now turns fsyncing off for
+the suite's own engines. The app's engine is exempt — it sets
+`synchronous=NORMAL` and WAL on purpose, and the suite must not change a
+production durability decision to buy speed.
+
+Set `RUNWAY_TEST_SQLITE_SYNC=1` to restore the durable default for a run.
+
+### Running in parallel
+
+The suite runs in four workers (`make test`, or `--jobs N` on
+`scripts/dev_checks.py`). Workers split by *file*, so a module's
+module-scoped fixtures and anything it sets up at import time stay together.
+
+That means collection has to be reproducible: a parametrised value that
+changes between processes produces a different test id in each worker, and
+pytest-xdist rejects the run with *"different tests were collected between
+gw0 and gw1"*. If you add a parametrised argument, keep it free of the
+clock, randomness and other per-process state — or give it an explicit
+`pytest.param(..., id="...")`.
 
 ## Running Tests with Markers
 
@@ -189,9 +221,10 @@ pytest -s tests/
 
 The project uses GitHub Actions for CI/CD, with workflow files in `.github/workflows/` (full detail in [`docs/architecture.md`](../docs/architecture.md#cicd)):
 
-- **Linting**: ruff (style/format) plus mypy, detect-secrets, and pip-audit.
-- **Testing**: `test-python` runs pytest with coverage (floor 70%); `test-frontend` runs vitest (floor 85%).
-- **Native Windows**: `windows-native-lint` runs the static checks and `windows-native-pytest` runs the suite as four parallel shards (see `scripts/pytest_shard.py`).
+- **Linting**: ruff (style/format) plus mypy, detect-secrets, and pip-audit. mypy and pip-audit are hard gates on the Linux job (`strict-checks: true`).
+- **Testing**: `test-python` runs pytest with coverage (floor 85%) in four parallel workers; `test-frontend` runs vitest (floor 85%).
+- **Native Windows**: `windows` runs the static checks and `windows/specific` runs the modules whose subject is the Windows platform. The full suite runs on a Windows runner on `main` pushes and nightly (`windows-native-suite.yml`), as four parallel shards (see `scripts/pytest_shard.py`).
+- **Merge queue**: `ci-cd.yml` and `codeql.yml` listen for `merge_group`, so the required checks can run against the merge commit a merge queue builds. The advisory jobs skip that event.
 - **Build & Push**: `build-docker` pushes the `:edge` image to GHCR on push to `main`; releases publish `:latest` + the version tag.
 
 To run tests the way CI does:

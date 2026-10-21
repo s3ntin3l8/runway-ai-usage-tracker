@@ -6057,7 +6057,11 @@ def main():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--runway-keychain-worker"]:
+    if sys.argv[1:2] == ["--authorize-claude-keychain"]:
+        from scripts.sidecar_pkg.keychain_authorization import authorization_command
+
+        authorization_command(sys.argv[1:])
+    elif sys.argv[1:] == ["--runway-keychain-worker"]:
         from scripts.sidecar_pkg.keychain_worker import worker_main
 
         worker_main()

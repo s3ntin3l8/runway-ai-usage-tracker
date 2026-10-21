@@ -162,6 +162,60 @@ def test_native_status_is_sanitized(code, reason):
         api.call("copy", {"persistent": b"exact"}, {})
 
 
+def test_explicit_authorization_restores_policy_and_reads_only_exact_reference():
+    api, calls = native_stub({"data": b"synthetic-private"})
+    policy = []
+
+    def previous(output):
+        output._obj.value = 0
+        return 0
+
+    api.sec.SecKeychainGetUserInteractionAllowed = previous
+    api.sec.SecKeychainSetUserInteractionAllowed = lambda value: policy.append(bool(value)) or 0
+    assert api.authorize_read(b"exact") == {"data": b"synthetic-private"}
+    assert policy == [True, False]
+    assert calls == [
+        (
+            "copy",
+            {
+                "kSecValuePersistentRef": b"exact",
+                "kSecClass": "kSecClassGenericPassword",
+                "kSecUseDataProtectionKeychain": False,
+                "kSecReturnAttributes": True,
+                "kSecReturnPersistentRef": True,
+                "kSecReturnData": True,
+            },
+        )
+    ]
+
+
+def test_explicit_authorization_denial_retains_numeric_status_and_restores_policy():
+    api, calls = native_stub(status=-25308)
+    policy = []
+    api.sec.SecKeychainSetUserInteractionAllowed = lambda value: policy.append(bool(value)) or 0
+    with pytest.raises(store.KeychainError) as caught:
+        api.authorize_read(b"exact")
+    assert caught.value.reason == "denied"
+    assert caught.value.native_status == -25308
+    assert str(caught.value) == "denied"
+    assert policy == [True, False]
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("failure", ["read_policy", "enable", "restore"])
+def test_explicit_authorization_policy_failure_is_closed(failure):
+    api, calls = native_stub()
+    api.sec.SecKeychainGetUserInteractionAllowed = lambda output: int(failure == "read_policy")
+
+    def policy(enabled):
+        return int(failure == ("enable" if enabled else "restore"))
+
+    api.sec.SecKeychainSetUserInteractionAllowed = policy
+    with pytest.raises(store.KeychainError, match="^unavailable$"):
+        api.authorize_read(b"exact")
+    assert len(calls) == int(failure == "restore")
+
+
 def test_source_helper_runs_outside_repository_without_credential_io(tmp_path):
     import subprocess
     import sys

@@ -14,8 +14,9 @@ OPERATIONS = frozenset({"copy", "update", "add", "delete"})
 class KeychainError(Exception):
     """A sanitized Keychain failure, safe to log without native diagnostic output."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, *, native_status: int | None = None) -> None:
         self.reason = reason
+        self.native_status = native_status
         super().__init__(reason)
 
 
