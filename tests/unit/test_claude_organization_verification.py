@@ -853,3 +853,45 @@ def test_the_verified_name_and_billing_model_reach_the_promotion():
     assert kwargs["organization_id"] == "org-1"
     assert kwargs["account_label"] == "API org"
     assert kwargs["billing_type"] == "pay_as_you_go"
+
+
+def test_a_card_without_a_name_keeps_its_own_account():
+    """An email-shaped name would file the card under a different account."""
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="person@example.com", account_label="ops@acme.com")
+    tagged = collector._tag_results(
+        [
+            {
+                "service_name": "Claude",
+                "variant": "5-Hour Limit",
+                "window_type": "session",
+                "remaining": "80.0%",
+            }
+        ]
+    )
+    # The card's label can be what keys it to its account, so it may not be a
+    # name that points somewhere else.
+    assert tagged[0]["account_label"] == "person@example.com"
+
+
+@pytest.mark.asyncio
+async def test_a_claude_name_never_carries_the_organization_marker():
+    """The marker belongs in the card detail, not in a name."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"name": "Acme"},
+        )
+    assert collector.account_label == "Acme"
+    assert all(card.get("account_label") == "Acme" for card in result)
+    # The detail still carries the marker, so the tagger can read it back.
+    assert any("org: Acme" in (card.get("detail") or "") for card in result)

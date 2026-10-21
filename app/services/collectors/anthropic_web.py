@@ -194,6 +194,16 @@ class AnthropicWebMixin:
             else ""
         )
         identity_suffix = f" | {identity_str}" if identity_str else ""
+        # The account's *name* is what a human reads. The identity string may
+        # carry the "org: " marker that tells an organization-scoped identity
+        # apart from a member's email; a name is not a marker.
+        from app.services.claude_verification import claude_account_label
+
+        name_str = (
+            claude_account_label(self.PROVIDER_ID, org_data, account_data)
+            if org_data or account_data
+            else ""
+        )
 
         # Identity Promotion: sync discovered email/name back to the token cache metadata
         if identity_str and hasattr(self, "account_id"):
@@ -213,15 +223,13 @@ class AnthropicWebMixin:
                 self.account_id = normalize_account_id(identity_str)
             if self.account_id:
                 task = asyncio.create_task(
-                    token_cache.update_account_metadata(
-                        "anthropic", self.account_id, name=identity_str
-                    )
+                    token_cache.update_account_metadata("anthropic", self.account_id, name=name_str)
                 )
                 _pending_tasks.add(task)
                 task.add_done_callback(_pending_tasks.discard)
             if is_placeholder_label(self.account_label):
                 # A name the operator chose is theirs: never overwrite it.
-                self.account_label = identity_str
+                self.account_label = name_str
 
         # Tier discovery - use regex to extract pro/max/team and multiplier (e.g. 5x)
         # Check both account_data and org_data for rate_limit_tier
@@ -356,7 +364,7 @@ class AnthropicWebMixin:
                         "data_source": self.DATA_SOURCE_WEB,
                         "input_source": getattr(self, "_current_input_source", "unknown"),
                         "tier": tier,
-                        "account_label": identity_str,
+                        "account_label": name_str,
                         "usage_url": "https://claude.ai/settings/usage",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
@@ -387,7 +395,7 @@ class AnthropicWebMixin:
                             "data_source": self.DATA_SOURCE_WEB,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
-                            "account_label": identity_str,
+                            "account_label": name_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -442,7 +450,7 @@ class AnthropicWebMixin:
                             "data_source": self.DATA_SOURCE_WEB,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
-                            "account_label": identity_str,
+                            "account_label": name_str,
                             "usage_url": "https://claude.ai/settings/usage",
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
@@ -475,7 +483,7 @@ class AnthropicWebMixin:
                                 "data_source": self.DATA_SOURCE_WEB,
                                 "input_source": getattr(self, "_current_input_source", "unknown"),
                                 "tier": tier,
-                                "account_label": identity_str,
+                                "account_label": name_str,
                                 "usage_url": "https://claude.ai/settings/usage",
                                 "updated_at": datetime.now(UTC).isoformat(),
                             }

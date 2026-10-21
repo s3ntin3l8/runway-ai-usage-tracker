@@ -22,7 +22,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.core.date_utils import normalize_iso_date
-from app.services.account_identity import is_placeholder_label
+from app.services.account_identity import is_placeholder_label, resolve_account_id
 
 logger = logging.getLogger(__name__)
 
@@ -499,6 +499,31 @@ class BaseCollector(ABC):
 
         return primary
 
+    def _fallback_account_label(self) -> str:
+        """A name for a card that carries none of its own.
+
+        A card's label may be what keys it to its account. When the collector
+        already knows its account, a name that would key the card to a
+        *different* one files the card under that other account, so the
+        account's own id is the safe name then. A name that keys the card where
+        it already belongs — the account's identity, or a plain display name —
+        is kept.
+        """
+        label = self.account_label or self._account_label_cache
+        account_id = self.account_id
+        if not label:
+            return account_id or "Default"
+        if (
+            account_id
+            and account_id != "default"
+            and (
+                resolve_account_id(self.PROVIDER_ID, account_id, label)
+                != resolve_account_id(self.PROVIDER_ID, account_id, None)
+            )
+        ):
+            return account_id
+        return label
+
     def _tag_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Add account identifiers to every card in the result list.
@@ -571,9 +596,7 @@ class BaseCollector(ABC):
             if "account_id" not in card_data or not card_data.get("account_id"):
                 card_data["account_id"] = self.account_id or "default"
             if is_placeholder_label(card_data.get("account_label")):
-                card_data["account_label"] = (
-                    self.account_label or self._account_label_cache or "Default"
-                )
+                card_data["account_label"] = self._fallback_account_label()
 
             # Tag input source (origin of credentials)
             if "input_source" not in card_data or card_data.get("input_source") == "unknown":
