@@ -8,9 +8,9 @@ import { Card } from '@/components/ui/Card';
 import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
-import { formatPct } from '@/lib/format';
+import { formatCurrency, formatPct } from '@/lib/format';
 import { maskAccountId } from '@/lib/accountDisplay';
-import { cardPct, windowLabel } from '@/lib/quota';
+import { cardHeroLabel, cardHeroText, cardKind, cardPct, cardTooltip, windowLabel } from '@/lib/quota';
 import { forecastLabel, type RiskItem } from './risk';
 
 interface AtRiskRailProps {
@@ -51,11 +51,19 @@ function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Ma
   const { card: gauge, status } = item.lead;
   const name = providerNames.get(entry.provider_id) ?? entry.provider_id;
   const fLabel = forecastLabel(forecast);
+  // The card is a role="button": children of a button are presentational, so
+  // the detail line rides along in the button's accessible name. The rail
+  // can hold a card without a percentage (an exhausted credits balance is
+  // critical), so the hero text follows the card kind, like the home grid.
+  const kind = cardKind(gauge);
+  const heroText = cardHeroText(gauge);
+  const accessibleHero = cardHeroLabel(gauge, heroText) ?? heroText;
 
   return (
     <Card
       role="button"
       tabIndex={0}
+      aria-label={`${name}, ${accessibleHero}`}
       onClick={() => navigate(providerPath(entry.provider_id, entry.account_id))}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -80,15 +88,21 @@ function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Ma
         ) : null}
       </div>
       <div className="mt-4 flex items-baseline justify-between gap-2">
-        <span className="font-mono text-2xl font-semibold tabular">
-          {formatPct(cardPct(gauge))}
+        <span className="font-mono text-2xl font-semibold tabular" title={cardTooltip(gauge)}>
+          {kind === 'spend'
+            ? gauge.used_value != null
+              ? formatCurrency(gauge.used_value, gauge.currency)
+              : (gauge.remaining ?? '—')
+            : formatPct(cardPct(gauge))}
         </span>
         <span className="truncate text-[11px] text-fg-muted">
           {gauge.service_name}
           {windowLabel(gauge) ? ` · ${windowLabel(gauge)}` : ''}
         </span>
       </div>
-      <Gauge pct={cardPct(gauge)} status={status} size="lg" className="mt-2" />
+      {kind === 'spend' ? null : (
+        <Gauge pct={cardPct(gauge)} status={status} size="lg" className="mt-2" />
+      )}
       <div className="mt-2 flex items-center justify-between">
         <Countdown until={gauge.reset_at} />
         {gauge.error_type ? (
