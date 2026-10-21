@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-cov lint format web web-dev web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-shard test-cov shard-weights lint format web web-dev web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -78,6 +78,12 @@ sidecar-installer: ## Compile the Windows NSIS installer from dist/RunwaySidecar
 
 test: ## Run test suite (matches CI)
 	$(PYTHON) scripts/dev_checks.py test
+
+test-shard: ## Run one shard of the suite (SHARD=1 SHARDS=4), as the Windows CI does
+	$(PYTHON) scripts/dev_checks.py test-shard --shard-id $(or $(SHARD),1) --shards $(or $(SHARDS),4)
+
+shard-weights: ## Re-measure per-test-module durations for the CI shard plan
+	$(PYTHON) scripts/dev_checks.py record-shard-weights
 
 test-cov: ## Run tests with coverage report
 	$(PYTEST) --cov=app --cov-report=term-missing
