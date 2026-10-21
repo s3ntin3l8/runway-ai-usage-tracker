@@ -4,10 +4,17 @@ Ollama Cloud quota collector.
 Collection Strategies:
 1. ``api`` (PRIMARY, when an API key is available):
    - Bearer `Authorization: Bearer <key>` against
-     `GET https://ollama.com/api/usage`.
-   - Returns structured monthly quota (``limits.monthly.usage`` plus a
-     per-model breakdown and ``activity.period`` reset window). Cleaner
-     than the HTML scrape and unaffected by WorkOS redesign churn.
+     `GET https://ollama.com/api/balance`.
+   - Returns the included allowance — the plan's credit for the current
+     period (``balance_usd`` left of ``allowance_usd``, plus the period the
+     allowance refills on). That is the quota the web dashboard renders as
+     "Free usage 0% used · refills in 3 weeks". Cleaner than the HTML scrape
+     and unaffected by WorkOS redesign churn.
+   - `GET /api/usage` is only used as a fallback for deployments that do not
+     serve `/api/balance`, and only for its legacy monthly-limit shape
+     (``limits.monthly.usage``). Its spend report is deliberately ignored:
+     usage comes from the CLI sidecar, so a spend card would only duplicate
+     it (and read as "$0.00" whenever the CLI week was quiet).
 
 2. ``web`` (FALLBACK, when only a session cookie is available):
    - Scrape `https://ollama.com/settings`.
@@ -41,6 +48,19 @@ from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
+
+
+def _to_float(value: Any) -> float | None:
+    """Parse an upstream number, rejecting NaN, infinity and non-numeric input."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
 
 
 class OllamaCollector(BaseCollector):
@@ -107,6 +127,11 @@ class OllamaCollector(BaseCollector):
     WINDOW_PLAN = 400
     WINDOW_USAGE = 800
     TIMEOUT_SECONDS = 15
+
+    # Upstream endpoints. `/api/balance` carries the quota; `/api/usage` is a
+    # spend report and only used as a fallback for the legacy limit shape.
+    BALANCE_URL = "https://ollama.com/api/balance"
+    USAGE_URL = "https://ollama.com/api/usage"
 
     # Error handling
     ERROR_TYPE_MAP = {
@@ -313,7 +338,7 @@ class OllamaCollector(BaseCollector):
         return []
 
     async def _get_ollama_api(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        """Bearer-token path: GET https://ollama.com/api/usage."""
+        """Bearer-token path: GET https://ollama.com/api/balance."""
         api_key = await self._get_api_key()
         if not api_key:
             return []  # No API key — base collector falls through to ``web``.
@@ -326,16 +351,60 @@ class OllamaCollector(BaseCollector):
             resp = await http_request_with_retry(
                 client,
                 "GET",
-                "https://ollama.com/api/usage",
+                self.BALANCE_URL,
                 headers=headers,
                 timeout=self.TIMEOUT_SECONDS,
                 follow_redirects=True,
             )
         except httpx.TimeoutException as exc:
-            logger.warning("Ollama API fetch timed out: %s", scrub_log(str(exc)))
+            logger.warning("Ollama balance fetch timed out: %s", scrub_log(str(exc)))
             return []
         except Exception as exc:
-            logger.warning("Ollama API fetch failed: %s", scrub_log(str(exc)))
+            logger.warning("Ollama balance fetch failed: %s", scrub_log(str(exc)))
+            return []
+        if resp.status_code in (401, 403):
+            self._set_error_reason("invalid_api_key")
+            return []
+        if resp.status_code in (404, 405):
+            # No balance endpoint on this deployment — fall back to the legacy
+            # monthly-limit shape of /api/usage.
+            logger.debug("Ollama balance endpoint unavailable — falling back to /api/usage")
+            return await self._get_ollama_usage_legacy(client, headers)
+        if resp.status_code != 200:
+            return []
+        try:
+            body = resp.json()
+        except Exception:
+            self._set_error_reason("missing_data")
+            return []
+        if not isinstance(body, dict):
+            self._set_error_reason("missing_data")
+            return []
+        return self._build_cards_from_api_balance(body)
+
+    async def _get_ollama_usage_legacy(
+        self, client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        """Fallback for deployments without `/api/balance`: the legacy
+        monthly-limit shape of `/api/usage`.
+
+        The spend report in the same payload is ignored on purpose — usage
+        comes from the CLI sidecar, so a spend card would only duplicate it.
+        """
+        try:
+            resp = await http_request_with_retry(
+                client,
+                "GET",
+                self.USAGE_URL,
+                headers=headers,
+                timeout=self.TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
+        except httpx.TimeoutException as exc:
+            logger.warning("Ollama usage fetch timed out: %s", scrub_log(str(exc)))
+            return []
+        except Exception as exc:
+            logger.warning("Ollama usage fetch failed: %s", scrub_log(str(exc)))
             return []
         if resp.status_code in (401, 403):
             self._set_error_reason("invalid_api_key")
@@ -352,139 +421,290 @@ class OllamaCollector(BaseCollector):
             return []
         return self._build_cards_from_api_usage(body)
 
-    def _build_cards_from_api_usage(self, body: dict[str, Any]) -> list[dict[str, Any]]:
-        """Build usage cards from `/api/usage`.
+    def _build_cards_from_api_balance(self, body: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build the quota card(s) from `/api/balance`.
 
-        Supports two response shapes:
-        1. Time-bucketed usage API (returns range, totals, buckets) with dollar
-           spend and token counts (PAYG).
-        2. Legacy monthly quota limit (fraction from 0 to 1). Plans without a
-           monthly cap report no ``limits.monthly``; that degrades into an empty
-           result rather than a parse error.
+        Two documented shapes:
+        1. Included credits (current plans): ``balance_usd`` (what is left),
+           ``allowance_usd`` (what the period is worth) and the ``period`` the
+           allowance refills on. The web dashboard renders exactly this as
+           "Free usage 0% used · refills in 3 weeks".
+        2. Legacy plan limits: ``session`` / ``weekly`` entries carrying
+           ``remaining_percent`` and ``resets_at``.
+
+        Anything else is malformed quota data rather than a silent no-quota
+        account.
+        """
+        self._no_monthly_cap = False
+        included = body.get("included")
+        purchased = self._purchased_balance(body)
+        if included is None:
+            if purchased is None:
+                # Not a balance payload at all — an error page, or a schema
+                # we do not know. Only an explicit purchased block proves
+                # there is no included allowance; anything else is malformed
+                # data, and reporting it as "no quota" would let the snapshot
+                # reconciliation retire a working card.
+                self._set_error_reason("missing_data")
+                return []
+            # A pay-as-you-go account. Report the purchased credits even at
+            # $0 — an exhausted account is exactly when the card matters.
+            return [self._make_credits_card(purchased)]
+        if not isinstance(included, dict):
+            self._set_error_reason("missing_data")
+            return []
+
+        cards = self._cards_from_included_credits(included, purchased)
+        if cards is not None:
+            return cards
+        cards = self._cards_from_legacy_limits(included)
+        if cards is not None:
+            return cards
+        self._set_error_reason("missing_data")
+        return []
+
+    def _cards_from_included_credits(
+        self, included: dict[str, Any], purchased: float | None
+    ) -> list[dict[str, Any]] | None:
+        """Build the monthly allowance card from the included credits.
+
+        Returns ``None`` when the payload is not the credits shape (so the
+        caller can try the legacy limits shape), and a list otherwise — empty
+        when the account has no allowance to meter.
+        """
+        if "balance_usd" not in included and "allowance_usd" not in included:
+            return None
+        balance = _to_float(included.get("balance_usd"))
+        allowance = _to_float(included.get("allowance_usd"))
+        if balance is None or allowance is None or balance < 0:
+            self._set_error_reason("missing_data")
+            return []
+        if allowance <= 0:
+            # Nothing to meter. Purchased credits are the balance then.
+            if purchased is not None:
+                return [self._make_credits_card(purchased)]
+            self._no_monthly_cap = True
+            return []
+        balance = min(balance, allowance)
+
+        period = included.get("period")
+        reset_at = None
+        if isinstance(period, dict):
+            reset_at = self._parse_timestamp(period.get("until"))
+
+        spent = allowance - balance
+        pct = max(min(spent / allowance * 100.0, 100.0), 0.0)
+
+        detail = f"${spent:.2f} of ${allowance:.2f} used"
+        if purchased:
+            detail += f" · +${purchased:.2f} usage credits"
+        if reset_at:
+            detail += f" · refills {reset_at.strftime('%b %d')}"
+
+        now = datetime.now(UTC)
+        return [
+            {
+                "service_name": "Ollama Cloud",
+                "icon": "🦙",
+                "remaining": f"{100 - pct:.1f}%",
+                "unit": "remaining",
+                "reset": human_delta(reset_at),
+                "health": HealthCalculator.from_percentage(pct),
+                "pace": PaceCalculator.estimate_longevity(pct, reset_at),
+                "detail": detail,
+                # Raw dollars: what the period cost against what it was worth.
+                "used_value": spent,
+                "limit_value": allowance,
+                "pct_used": pct,
+                "is_unlimited": False,
+                "unit_type": "currency",
+                "currency": "USD",
+                "reset_at": reset_at.isoformat() if reset_at else None,
+                "account_label": self.account_label or "",
+                "window_type": "monthly",
+                # A distinct pool: the card's unit changed from percent (the
+                # legacy monthly-limit shape) to currency, and merge_card_json
+                # freezes the quota fields of a stored card whose unit differs.
+                # A new pool lets the stale one be reconciled away instead.
+                "variant": "allowance",
+                "provider_id": "ollama",
+                "tier": "cloud",
+                "data_source": self.DATA_SOURCE_API,
+                "input_source": getattr(self, "_current_input_source", "unknown"),
+                "usage_url": "https://ollama.com/settings/billing",
+                "updated_at": now.isoformat(),
+            }
+        ]
+
+    def _cards_from_legacy_limits(self, included: dict[str, Any]) -> list[dict[str, Any]] | None:
+        """Build cards for the legacy plan limits (`session` / `weekly`).
+
+        Those plans meter a percentage per window instead of a dollar
+        allowance; ``remaining_percent`` is what is left of the limit.
+        Returns ``None`` when the payload carries neither window.
+        """
+        windows = (("session", "session"), ("weekly", "weekly"))
+        if not any(isinstance(included.get(key), dict) for key, _ in windows):
+            return None
+
+        now = datetime.now(UTC)
+        cards: list[dict[str, Any]] = []
+        for key, window_type in windows:
+            limit = included.get(key)
+            if not isinstance(limit, dict):
+                continue
+            remaining_pct = _to_float(limit.get("remaining_percent"))
+            if remaining_pct is None or not 0 <= remaining_pct <= 100:
+                # One unreadable window must not cost the account its other
+                # meters — skip it and keep the siblings.
+                logger.warning("Ollama: skipping unreadable %s limit window", key)
+                continue
+            resets_at = self._parse_timestamp(limit.get("resets_at"))
+            pct = 100.0 - remaining_pct
+            cards.append(
+                {
+                    "service_name": "Ollama Cloud",
+                    "icon": "🦙",
+                    "remaining": f"{remaining_pct:.1f}%",
+                    "unit": "remaining",
+                    "reset": human_delta(resets_at),
+                    "health": HealthCalculator.from_percentage(pct),
+                    "pace": PaceCalculator.estimate_longevity(pct, resets_at),
+                    "detail": f"{remaining_pct:.1f}% remaining · Ollama Cloud",
+                    "used_value": pct,
+                    "limit_value": 100.0,
+                    "pct_used": pct,
+                    "is_unlimited": False,
+                    "unit_type": "percent",
+                    "reset_at": resets_at.isoformat() if resets_at else None,
+                    "account_label": self.account_label or "",
+                    "window_type": window_type,
+                    "provider_id": "ollama",
+                    "tier": "cloud",
+                    "data_source": self.DATA_SOURCE_API,
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
+                    "usage_url": "https://ollama.com/settings/billing",
+                    "updated_at": now.isoformat(),
+                }
+            )
+        if not cards:
+            # Every window we could read was unreadable.
+            self._set_error_reason("missing_data")
+            return []
+        return cards
+
+    def _make_credits_card(self, purchased: float) -> dict[str, Any]:
+        """Card for a pay-as-you-go account: purchased credits, no allowance."""
+        now = datetime.now(UTC)
+        return {
+            "service_name": "Ollama Cloud",
+            "icon": "🦙",
+            "remaining": f"${purchased:.2f}",
+            "unit": "remaining",
+            "reset": "—",
+            "health": HealthCalculator.from_balance(purchased),
+            "pace": "Prepaid balance",
+            "detail": "Usage credits · Ollama Cloud",
+            "used_value": None,
+            "limit_value": None,
+            "pct_used": None,
+            "is_unlimited": False,
+            "unit_type": "currency",
+            "currency": "USD",
+            "reset_at": None,
+            "account_label": self.account_label or "",
+            "window_type": "rolling",
+            "variant": "credits",
+            "provider_id": "ollama",
+            "tier": "cloud",
+            "data_source": self.DATA_SOURCE_API,
+            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "usage_url": "https://ollama.com/settings/billing",
+            "updated_at": now.isoformat(),
+        }
+
+    def _purchased_balance(self, body: dict[str, Any]) -> float | None:
+        """Purchased (prepaid) credit balance in USD, if the payload reports one."""
+        purchased = body.get("purchased")
+        if not isinstance(purchased, dict):
+            return None
+        return _to_float(purchased.get("balance_usd"))
+
+    def _parse_timestamp(self, value: Any) -> datetime | None:
+        """Parse an upstream timestamp, tolerating missing or malformed values."""
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            return parse_iso8601_utc(value)
+        except ValueError:
+            logger.debug("Failed to parse Ollama reset date %r", value, exc_info=True)
+            return None
+
+    def _build_cards_from_api_usage(self, body: dict[str, Any]) -> list[dict[str, Any]]:
+        """Legacy monthly limit shape of `/api/usage` (`limits.monthly.usage`).
+
+        Only used when `/api/balance` is unavailable. The spend report in the
+        same payload is deliberately ignored: usage comes from the CLI
+        sidecar, so a spend card would only duplicate it.
         """
         self._no_monthly_cap = False
         now = datetime.now(UTC)
         now_iso = now.isoformat()
 
-        # Format 2: Monthly quota cap.
-        # Prefer limits when present: a payload carrying both limits.monthly and
-        # totals retains the monthly quota card rather than retiring it.
         limits = body.get("limits")
-        if isinstance(limits, dict) and limits.get("monthly") is not None:
-            monthly = limits["monthly"]
-            if not isinstance(monthly, dict):
-                self._set_error_reason("missing_data")
-                return []
-            usage_raw = monthly.get("usage")
-            if usage_raw is None:
-                self._set_error_reason("missing_data")
-                return []
-            try:
-                usage = float(usage_raw)
-            except (TypeError, ValueError):
-                self._set_error_reason("missing_data")
-                return []
-            if not math.isfinite(usage) or not 0 <= usage <= 1:
-                self._set_error_reason("missing_data")
-                return []
-            pct = usage * 100.0
-            card = {
-                "service_name": "Ollama",
-                "icon": "🦙",
-                "remaining": f"{100 - pct:.1f}%",
-                "unit": "remaining",
-                "reset": "—",
-                "health": HealthCalculator.from_percentage(pct),
-                "pace": "—",
-                "detail": f"{pct:.1f}% used · Ollama API",
-                "used_value": pct,
-                "limit_value": 100.0,
-                "pct_used": pct,
-                "is_unlimited": False,
-                "unit_type": "percent",
-                "reset_at": None,
-                "account_label": self.account_label or "",
-                "window_type": "monthly",
-                "provider_id": "ollama",
-                "tier": "cloud",
-                "data_source": self.DATA_SOURCE_API,
-                "input_source": getattr(self, "_current_input_source", "unknown"),
-                "usage_url": "https://ollama.com/settings/billing",
-                "updated_at": now_iso,
-            }
-            return [card]
-
-        # Format 1: Time-bucketed usage API (returns range, totals, buckets).
-        # Require at least one recognised counter to avoid fabricating a PAYG
-        # card from an empty dictionary.
-        totals = body.get("totals")
-        if isinstance(totals, dict) and any(
-            k in totals for k in ("usage_usd", "request_count", "input_tokens", "output_tokens")
-        ):
-            range_val = str(body.get("range", "7d")).lower()
-            window_map = {"24h": "daily", "7d": "weekly", "30d": "monthly"}
-            window_type = window_map.get(range_val, "weekly")
-            try:
-                usage_usd = float(totals.get("usage_usd", 0.0) or 0.0)
-                if not math.isfinite(usage_usd) or usage_usd < 0:
-                    usage_usd = 0.0
-            except (TypeError, ValueError):
-                usage_usd = 0.0
-
-            def _to_int(val: Any) -> int:
-                try:
-                    return int(val or 0)
-                except (TypeError, ValueError):
-                    return 0
-
-            request_count = _to_int(totals.get("request_count"))
-            input_tokens = _to_int(totals.get("input_tokens"))
-            output_tokens = _to_int(totals.get("output_tokens"))
-            cached_tokens = _to_int(totals.get("cached_input_tokens"))
-
-            detail = f"${usage_usd:.2f} spent · {request_count} requests · Ollama Cloud"
-            card = {
-                "service_name": "Ollama Cloud",
-                "icon": "🦙",
-                "remaining": "—",
-                "unit": "USD",
-                "reset": "—",
-                "health": "good",
-                "pace": "Stable",
-                "detail": detail,
-                "used_value": usage_usd,
-                "limit_value": None,
-                "pct_used": None,
-                "is_unlimited": True,
-                "unit_type": "currency",
-                "currency": "USD",
-                "token_usage": {
-                    "input": input_tokens,
-                    "output": output_tokens,
-                    "cache_read": cached_tokens,
-                },
-                "reset_at": None,
-                "account_label": self.account_label or "",
-                "window_type": window_type,
-                "provider_id": "ollama",
-                "tier": "cloud",
-                "data_source": self.DATA_SOURCE_API,
-                "input_source": getattr(self, "_current_input_source", "unknown"),
-                "usage_url": "https://ollama.com/settings/billing",
-                "updated_at": now_iso,
-            }
-            return [card]
-
-        # No monthly entry is a valid no-cap plan (for example, free tier,
-        # limits: null, or an activity-only payload). It is a successful empty
-        # result, not malformed quota data.
-        limits_val = body.get("limits")
-        if limits_val is not None and not isinstance(limits_val, dict):
+        if "limits" not in body:
+            # Not the legacy shape: either a spend report (the account has
+            # usage whose quota we cannot read here) or a payload we do not
+            # understand. Both are malformed — only an explicit limits block
+            # proves the account has no monthly cap, and treating anything
+            # else as "no cap" would let the snapshot reconciliation retire a
+            # working card.
             self._set_error_reason("missing_data")
             return []
-
-        self._no_monthly_cap = True
-        return []
+        if limits is None:
+            # An explicit null limit block: a plan without a monthly cap.
+            self._no_monthly_cap = True
+            return []
+        if not isinstance(limits, dict):
+            self._set_error_reason("missing_data")
+            return []
+        monthly = limits.get("monthly")
+        if monthly is None:
+            self._no_monthly_cap = True
+            return []
+        if not isinstance(monthly, dict):
+            self._set_error_reason("missing_data")
+            return []
+        usage = _to_float(monthly.get("usage"))
+        if usage is None or not 0 <= usage <= 1:
+            self._set_error_reason("missing_data")
+            return []
+        pct = usage * 100.0
+        card = {
+            "service_name": "Ollama Cloud",
+            "icon": "🦙",
+            "remaining": f"{100 - pct:.1f}%",
+            "unit": "remaining",
+            "reset": "—",
+            "health": HealthCalculator.from_percentage(pct),
+            "pace": "—",
+            "detail": f"{pct:.1f}% used · Ollama API",
+            "used_value": pct,
+            "limit_value": 100.0,
+            "pct_used": pct,
+            "is_unlimited": False,
+            "unit_type": "percent",
+            "reset_at": None,
+            "account_label": self.account_label or "",
+            "window_type": "monthly",
+            "provider_id": "ollama",
+            "tier": "cloud",
+            "data_source": self.DATA_SOURCE_API,
+            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "usage_url": "https://ollama.com/settings/billing",
+            "updated_at": now_iso,
+        }
+        return [card]
 
     async def _get_ollama_web(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Cookie-scrape fallback — WorkOS /settings page parse."""
