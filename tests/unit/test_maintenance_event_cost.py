@@ -129,3 +129,58 @@ def test_1h_5m_split_is_honored_not_dropped():
     # fable seeds a dedicated 1h rate (2x input) distinct from the 5m rate
     # (1.25x input) — a real split must cost more than treating it all as 5m.
     assert with_split.breakdown.cache_create > without_split.breakdown.cache_create
+
+
+def test_minimax_m31_flash_subscription_uses_the_seeded_rate():
+    """A MiniMax coding-plan subscription account prices M3.1 Flash at the
+    seeded API rate — the notional "what this would have cost on the API"
+    figure — rather than at a reported $0."""
+    s = _seeded_session()
+    result = resolve_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="MiniMax-M3.1-Flash",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=0,
+        billing_type="subscription",
+        reported_cost=None,
+    )
+    assert result.cost_usd == 0.15 + 0.60 + 0.015
+    assert result.cost_estimated_usd == 0.15 + 0.60 + 0.015
+
+
+def test_opencode_free_variant_keeps_its_reported_zero_alongside_a_seeded_sibling():
+    """Seeding MiniMax-M3.1-Flash must not re-price OpenCode's `-free` traffic.
+
+    `opencode/minimax-m3.1-flash-free` resolves to no row (OpenCode's free
+    route), so resolve_event_cost keeps OpenCode's reported $0. The sibling
+    `minimax/MiniMax-M3.1-Flash` row must not leak into it — the segment-trim
+    fallback is skipped for free-tier ids, and the case-insensitive fallback
+    compares the whole id.
+
+    The canonical casing is the one that would have leaked: trimming
+    "MiniMax-M3.1-Flash-free" lands exactly on the seeded row.
+    """
+    s = _seeded_session()
+    for model_id in (
+        "minimax-m3.1-flash-free",
+        "MiniMax-M3.1-Flash-free",
+        "MiniMax-M3-free",
+    ):
+        result = resolve_event_cost(
+            s,
+            provider_id="opencode",
+            model_id=model_id,
+            ts=datetime.now(UTC),
+            tokens_input=1_000_000,
+            tokens_output=1_000_000,
+            tokens_cache_read=1_000_000,
+            tokens_cache_create=0,
+            billing_type="subscription",
+            reported_cost=0.0,
+        )
+        assert result.cost_usd == 0.0, model_id
+        assert result.cost_estimated_usd == 0.0, model_id

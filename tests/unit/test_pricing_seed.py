@@ -799,3 +799,63 @@ def test_seed_opencode_and_anthropic_claude_haiku_rates():
             5.00,
             0.10,
         )
+
+
+# ── MiniMax pricing rows ───────────────────────────────────────────────────────
+
+
+def test_seed_minimax_m31_flash_rates():
+    """Per https://platform.minimax.io/docs/pricing/overview (checked 2026-10-20).
+
+    M3.1 Flash shipped 2026-10-19. The pricing page lists it flat — outside
+    the Standard/Priority tabs that carry M3's context-length tiers — and
+    publishes no cache-write rate, so cache_create stays 0.0.
+    """
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "minimax",
+            ProviderPricing.model_id == "MiniMax-M3.1-Flash",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 0.15
+    assert row.output_per_mtok == 0.60
+    assert row.cache_read_per_mtok == 0.015
+    assert row.cache_create_per_mtok == 0.0
+    assert row.effective_from.isoformat() == "2026-10-19"
+
+
+def test_seed_minimax_m31_flash_resolves_for_the_lowercase_opencode_spelling():
+    """OpenCode reports `minimax-m3.1-flash`; the canonical row is keyed on
+    "MiniMax-M3.1-Flash", so the lowercase id has to reach it through the
+    cost_calculator's case-insensitive fallback rather than billing $0."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = _row(s, "minimax", "minimax-m3.1-flash", date(2026, 10, 20))
+    assert row is not None
+    assert row.model_id == "MiniMax-M3.1-Flash"
+    assert row.input_per_mtok == 0.15
+
+
+def test_seed_minimax_m31_flash_free_variant_has_no_row():
+    """The `-free` spellings stay unseeded on purpose — OpenCode's free route
+    is priced at $0, not at the M3.1-Flash API rate (see the Data Health
+    `unpriced_models` check, which excludes these outright).
+
+    No row is seeded for either casing, and the cost calculator's
+    segment-trim fallback is skipped for free-tier ids, so neither spelling
+    can reach the paid row.
+    """
+    s = _make_session()
+    seed_pricing_table(s)
+    for model_id in ("minimax-m3.1-flash-free", "MiniMax-M3.1-Flash-free"):
+        row = s.exec(
+            select(ProviderPricing).where(
+                ProviderPricing.provider_id == "minimax",
+                ProviderPricing.model_id == model_id,
+            )
+        ).first()
+        assert row is None, model_id
+        assert _row(s, "minimax", model_id, date(2026, 10, 20)) is None, model_id

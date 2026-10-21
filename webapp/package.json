@@ -61,6 +61,19 @@
     "vite-plugin-pwa": "^1.3.0",
     "vitest": "^5.0.0"
   },
+  "packageManager": "npm@11.19.0",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=22.22.0",
+      "onFail": "error"
+    },
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.11.0",
+      "onFail": "error"
+    }
+  },
   "allowScripts": {
     "sharp@0.33.5": true
   },

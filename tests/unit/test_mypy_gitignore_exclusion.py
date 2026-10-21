@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import io
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -20,30 +19,25 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _git(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=ROOT,
-        input=stdin,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
 @pytest.fixture
-def git_checkout() -> None:
+def git_checkout(isolated_git) -> None:
     """Skip when git is missing or the tree is not a checkout (sdist, image)."""
     if shutil.which("git") is None:
         pytest.skip("git is required to inspect the tracked sources")
-    listed = _git("ls-files")
+    listed = isolated_git("ls-files", cwd=ROOT)
     if listed.returncode != 0 or not listed.stdout.split():
         pytest.skip("not a git checkout - there is nothing to assert")
 
 
-def _gitignore_lines() -> set[str]:
+def _ignore_rules() -> set[str]:
+    """The literal rules in .gitignore, without comments or blank lines."""
     raw = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    return {line.strip() for line in raw.splitlines()}
+    rules = set()
+    for line in raw.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            rules.add(line)
+    return rules
 
 
 def test_mypy_honours_gitignore(monkeypatch):
@@ -67,29 +61,36 @@ def test_mypy_honours_gitignore(monkeypatch):
     assert "Unrecognized option" not in stdout.getvalue() + stderr.getvalue()
 
 
-@pytest.mark.parametrize("root", ["build/", "dist/"])
+@pytest.mark.parametrize("root", ["build", "dist"])
 def test_pyinstaller_output_roots_stay_gitignored(root: str):
-    """Dropping these .gitignore entries would bring the abort back."""
-    assert root in _gitignore_lines()
+    """Dropping these .gitignore entries would bring the abort back.
+
+    Either spelling of the rule is fine: what matters is that the tree stays
+    ignored, not whether the rule carries a trailing slash.
+    """
+    rules = _ignore_rules()
+    assert root in rules or f"{root}/" in rules
 
 
-def test_no_tracked_python_source_is_gitignored(git_checkout: None):
+def test_no_tracked_python_source_is_gitignored(git_checkout: None, isolated_git):
     """Honouring .gitignore must never hide a tracked source file from mypy."""
-    tracked = _git("ls-files", "--", "*.py", "*.pyi").stdout.split()
+    tracked = isolated_git("ls-files", "--", "*.py", "*.pyi", cwd=ROOT).stdout.split()
     assert tracked, "expected tracked Python sources in the checkout"
 
     # --no-index forces the pattern check: without it git skips tracked files
     # and the assertion below would hold for the wrong reason.
-    ignored = _git("check-ignore", "--no-index", "--stdin", stdin="\n".join(tracked)).stdout.split()
+    ignored = isolated_git(
+        "check-ignore", "--no-index", "--stdin", cwd=ROOT, stdin="\n".join(tracked)
+    ).stdout.split()
     assert ignored == []
 
 
 @pytest.mark.parametrize("root", ["build", "dist"])
-def test_the_generated_bundle_really_is_excluded(git_checkout: None, root: str):
+def test_the_generated_bundle_really_is_excluded(git_checkout: None, isolated_git, root: str):
     """Some file under the ignored tree must match the .gitignore rules.
 
     The path stays neutral on purpose: the .gitignore rule covers the whole
     directory, so this must not depend on the bundle's name.
     """
-    result = _git("check-ignore", "--no-index", "-v", "--", f"{root}/bundle/x.py")
+    result = isolated_git("check-ignore", "--no-index", "-v", "--", f"{root}/bundle/x.py", cwd=ROOT)
     assert result.returncode == 0, f"{root}/ is expected to be gitignored"

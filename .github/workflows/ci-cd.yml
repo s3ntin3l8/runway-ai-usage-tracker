@@ -21,7 +21,10 @@ jobs:
   test-frontend:
     uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
     with:
-      node-version: '22'
+      # Node 24 ships npm 11, the first npm that writes the libc metadata
+      # npm needs to pick the glibc or musl build of an optional native
+      # package. npm 10 strips it from every lockfile it rewrites.
+      node-version: '24'
       working-directory: 'webapp'
       cache-dependency-path: 'webapp/package-lock.json'
       build-script: 'build'
@@ -33,11 +36,13 @@ jobs:
       strict-checks: true
     secrets: inherit
 
-  windows-native-gate:
+  windows-native-lint:
+    # Native Windows coverage of the static checks. The suite itself runs in
+    # the sharded windows-native-pytest matrix below.
     runs-on: windows-latest
-    # Pytest alone has taken ~17.5 minutes on hosted Windows runners; allow
-    # room for setup, lint, and frontend tests as well as runner variance.
-    timeout-minutes: 30
+    # ruff + mypy + pip-audit take ~1.2 minutes on a healthy runner; the budget
+    # only has to absorb a very slow runner, not the suite.
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -49,15 +54,55 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Install canonical Python dependencies
+        run: python scripts/dev_checks.py install-python
+      - name: Run the native Windows static gate
+        run: python scripts/dev_checks.py lint
+
+  windows-native-pytest:
+    # The suite takes 11-27 minutes on hosted Windows runners depending on how
+    # fast the runner is, which is what pushed the old monolithic job into its
+    # 30-minute timeout (#712). Four parallel shards keep every shard far
+    # below the timeout: the plan splits whole test modules and balances them
+    # by measured runtime, so no shard runs long enough to matter even on a
+    # slow runner.
+    #
+    # The old job was advisory - it is not a required status check and nothing
+    # depends on it - so a timeout turned the CI/CD run red without blocking
+    # the edge publish. The split removes the timeout as a possibility.
+    #
+    # The frontend is deliberately not part of this job. `test-frontend /
+    # lint-and-test` already runs vitest and builds the SPA on Linux, and the
+    # frontend suite is platform independent - re-running it here only added
+    # 2.5 minutes to the critical path.
+    name: windows-native-pytest (shard ${{ matrix.shard }}/4)
+    runs-on: windows-latest
+    # 45 minutes survives a runner several times slower than median: a shard
+    # is about a quarter of the suite, so even a 4x-slow runner finishes it in
+    # well under 15 minutes.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: webapp/package-lock.json
-      - name: Install canonical dependencies and hooks
-        run: python scripts/dev_checks.py install
-      - name: Run the complete native Windows gate
-        run: python scripts/dev_checks.py gate
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install canonical Python dependencies
+        run: python scripts/dev_checks.py install-python
+      - name: Run the shard
+        env:
+          RUNWAY_PYTEST_SHARD_ID: ${{ matrix.shard }}
+          RUNWAY_PYTEST_SHARDS: '4'
+        run: python scripts/dev_checks.py test-shard
 
   dependency-audit:
     runs-on: ubuntu-latest
@@ -70,7 +115,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: webapp/package-lock.json
       - name: Audit server, desktop and build dependencies

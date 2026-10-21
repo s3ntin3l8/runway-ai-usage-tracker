@@ -67,8 +67,11 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   worktree of the repository, so install them once from the main checkout
   (`make install-hooks`); a hook installed from a worktree keeps pointing at
   that worktree's interpreter and stops working when the worktree is removed.
-  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.12+
-  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`); on Windows
+  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22+
+  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, and `react-router`
+  8.3.0 pins `>=22.22.0`) and npm 11.11+ (Node 24 ships npm 11.19) — `webapp/package.json`
+  pins both with `devEngines`, so a mismatched toolchain refuses to install
+  rather than quietly rewriting the lockfile. On Windows
   `winget install OpenJS.NodeJS.LTS` puts it in the per-user PATH, and a new
   shell (or session) is needed for that to take effect.
 
@@ -81,6 +84,9 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   logins (the server reads no credential files); use `make dev-all` to collect
   from them.
 - `make test` — pytest; a single file: `pytest tests/path/to/test_file.py`.
+- `make test-shard SHARD=1 SHARDS=4` — one shard of the suite, the split the
+  native Windows CI uses; `make shard-weights` re-measures the per-module
+  durations that balance it.
 - `make lint` / `make format` — ruff + mypy + pip-audit; auto-fix formatting.
 - `make web-test` / `make web` — frontend vitest; production SPA build into
   `webapp/dist`.

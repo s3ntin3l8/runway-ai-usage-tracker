@@ -8,11 +8,118 @@ Provides:
 - Mock response data for various providers
 """
 
+import atexit
+import getpass
 import json
 import os
+import shutil
+import stat
+import subprocess
 import sys
 import tempfile
+import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _pytest_user() -> str:
+    """The name pytest files its per-run temp directories under."""
+    try:
+        return getpass.getuser() or "unknown"
+    except (ImportError, KeyError, OSError):
+        return "unknown"
+
+
+def _pytest_root_dir(temproot: Path) -> Path:
+    """Where pytest keeps its per-run temp directories."""
+    return temproot / f"pytest-of-{_pytest_user()}"
+
+
+def _current_uid() -> int | None:
+    """The current user's id, or None on a platform that has no such concept."""
+    if os.name == "nt":
+        return None
+    try:
+        return os.getuid()
+    except AttributeError:  # pragma: no cover - platform dependent
+        return None
+
+
+def _pytest_root_usable(pytest_root: Path) -> bool:
+    """Whether pytest can use this root for its per-run directories.
+
+    Mirrors pytest's own rules (``_pytest/tmpdir.py``): the root must not be
+    a symlink, must belong to the current user, and must accept a new
+    directory. The write is actually attempted — a root left behind by an
+    elevated process is typically readable but *not* writable, and a read
+    check would wave it through.
+
+    A missing root is fine: pytest creates it itself.
+    """
+    try:
+        info = pytest_root.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        try:
+            pytest_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError:
+            return False
+        try:
+            info = pytest_root.stat(follow_symlinks=False)
+        except OSError:
+            return False
+    except OSError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        return False
+    uid = _current_uid()
+    if uid is not None and info.st_uid != uid:
+        return False
+    # A direct mkdir, not tempfile.mkdtemp: on Windows tempfile retries a
+    # PermissionError up to TMP_MAX times (it cannot tell an unusable
+    # directory from a reserved device name), which turns "this directory is
+    # unusable" into a multi-minute hang.
+    probe = pytest_root / f".write-probe-{os.getpid()}-{uuid.uuid4().hex}"
+    try:
+        probe.mkdir()
+    except OSError:
+        return False
+    try:
+        probe.rmdir()
+    except OSError:
+        return False
+    return True
+
+
+def _ensure_writable_pytest_root(temproot: Path | None = None) -> None:
+    """Point pytest at a temp root this user can actually use.
+
+    pytest keeps its per-run directories in ``%TEMP%\\pytest-of-<user>``. A
+    directory left behind by another user's (or an elevated) process can carry
+    an ACL that leaves this user unable to use it — pytest then fails *every*
+    test with ``PermissionError`` before a single one runs. The repo's own
+    runner sidesteps this with a unique ``--basetemp``
+    (``scripts/dev_checks.py``); this keeps a bare ``pytest`` working too.
+
+    The fallback is a fresh directory per run, not a shared one: pytest
+    allocates its per-run directories under the root it is given, and a
+    per-run root keeps concurrent runs from sharing anything. The cost is
+    that a killed run can leave its fallback behind — pytest's own numbered
+    directories are cleaned up on exit, this one only on a normal exit.
+    """
+    root = Path(tempfile.gettempdir()) if temproot is None else temproot
+    if _pytest_root_usable(_pytest_root_dir(root)):
+        return
+    fallback = root / f"runway-pytest-{os.getpid()}-{uuid.uuid4().hex}"
+    try:
+        fallback.mkdir()
+    except OSError:
+        return  # Nothing left to try — let pytest report the real error.
+    # PYTEST_DEBUG_TEMPROOT is the env var pytest reads for its temp root.
+    os.environ["PYTEST_DEBUG_TEMPROOT"] = str(fallback)
+    atexit.register(shutil.rmtree, fallback, True)
+
+
+_ensure_writable_pytest_root()
 
 # Force a localhost / un-secured configuration for tests, BEFORE any app
 # module is imported. config.py runs _validate_security_invariants at import
@@ -316,3 +423,45 @@ def make_symlink():
             raise
 
     return create
+
+
+@pytest.fixture
+def isolated_git(tmp_path: Path):
+    """Run git with every user-level ignore source taken out of the way.
+
+    ``git check-ignore`` consults the system config, the global config and the
+    default excludes file (``$XDG_CONFIG_HOME/git/ignore``). A developer's own
+    ignore rules would otherwise decide the answer, and an assertion about
+    this repository's .gitignore would pass for the wrong reason.
+
+    The pre-commit hooks export ``GIT_DIR`` so that their own staging does not
+    touch the checkout; in a worktree ``.git`` is a file, so an inherited
+    ``GIT_DIR`` makes git refuse to run outside a work tree, and an inherited
+    ``GIT_DIR`` would also make ``git init`` reinitialise the checkout running
+    the test. Every ``GIT_*`` variable is therefore dropped.
+    """
+    empty_config = tmp_path / "gitconfig"
+    empty_config.write_text("", encoding="utf-8")
+    empty_excludes = tmp_path / "gitignore"
+    empty_excludes.write_text("", encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = str(empty_config)
+
+    def run(
+        *args: str,
+        cwd: Path | None = None,
+        stdin: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        command = ["git", "-c", f"core.excludesFile={empty_excludes}", *args]
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    return run
