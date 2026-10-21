@@ -11,13 +11,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
 from app.models.db import AuditLog, SidecarRegistry
+from tests.fixtures.test_client import TestClient
 
 
 @pytest.fixture(name="session")

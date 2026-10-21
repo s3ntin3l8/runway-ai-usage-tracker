@@ -55,6 +55,12 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
      ```
      Get `thread_id` from a `reviewThreads` query on the PR, not the REST
      comment id.
+  An `APPROVED` review can still carry an open inline comment, so check
+  `reviewThreads`/`isResolved` — not just the review state — before merging:
+  the branch requires every conversation resolved
+  (`required_conversation_resolution`), so an open thread blocks the merge.
+  Don't merge through the REST `PUT /pulls/<n>/merge` endpoint: it accepts a
+  PR with an unresolved thread and silently skips that gate.
 - **Run a review pass on your own diff before declaring done.**
 - **File a GitHub issue for anything a plan defers, blocks, or descopes**, and
   link it from the PR — a footnote in a plan doc is not a durable record.
@@ -94,7 +100,10 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
 - `make sidecar-registry` — regenerate the sidecar's baked credential rules after
   editing `app/core/registry.json` (the baked block is generated, never hand-edited).
 - `make secrets` / `make secrets-baseline` — detect-secrets gate / regenerate
-  the baseline after vetting a new detection.
+  the baseline after vetting a new detection. The baseline pins **line
+  numbers**, so editing a baselined file shifts them: re-run
+  `make secrets-baseline` in the same change or the CI gate fails — and the
+  baseline conflicts on the next rebase.
 
 ## Core invariants
 

@@ -4,11 +4,11 @@ import os
 import tempfile
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.main import app
 from app.models.db import LatestUsage
+from tests.fixtures.test_client import TestClient
 
 
 @pytest.fixture(name="session")

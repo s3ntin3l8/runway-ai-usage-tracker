@@ -356,10 +356,19 @@ Workflows live in `.github/workflows/`.
   `sidecar-release.yml` is a manual wrapper (`workflow_dispatch`; empty
   `tag` = build-only artifacts, handy for testing installers from a branch).
 - **`sidecar-edge.yml`** — on push to `main` touching sidecar/installer
-  code; calls `sidecar-build.yml` with `label: edge` (version stamped
+  code *or the shared `app/` modules the sidecar bundles*; calls
+  `sidecar-build.yml` with `label: edge` (version stamped
   `<base>+edge.<sha>`) and publishes to the always-overwritten `edge`
   prerelease — the sidecar analog of the Docker `:edge` tag. A flaky
-  non-Linux runner doesn't block the rest (`allow-partial`).
+  non-Linux runner doesn't block the rest (`allow-partial`). The sidecar
+  binary bundles `app/` code (`app.services.model_normalization` decides
+  the cost bucket every collected event is billed under), so a change to
+  those modules has to rebuild the sidecar too;
+  `tests/unit/test_sidecar_edge_app_paths.py` computes the bundled `app/`
+  import closure — from every spec's entry point and declared hiddenimports,
+  following relative imports, and counting the package `__init__.py` files
+  the bundle carries — and fails when the workflow's `paths:` filter stops
+  covering it.
 - **`hermes.yml`** — automated PR review. Auto-reviews exactly once per PR
   (`opened` when non-draft, or `ready_for_review`); on-demand re-reviews via
   a `@s3ntin3l8-hermes Review` comment. Deliberately no `synchronize`
