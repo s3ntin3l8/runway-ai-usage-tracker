@@ -104,14 +104,20 @@ _BACKOFF_SECONDS = 10
 _ATTEMPT_TIMEOUT_SECONDS = 60
 
 
-def _one_line(message: str) -> str:
-    """``message`` with its newlines flattened to spaces.
+def _as_command_data(message: str) -> str:
+    """``message`` escaped for use as a workflow command's data.
 
-    A GitHub Actions workflow command is terminated by the newline, so an
-    annotation whose message spans lines is truncated to the first one. The
-    whole message is kept, on one line, so no diagnostic is lost.
+    A GitHub Actions workflow command is terminated by the newline, so the
+    data has to be a single physical line. GitHub's documented escaping
+    keeps the content intact: ``%0A`` for a newline, ``%0D`` for a carriage
+    return and ``%25`` for a percent sign. The runner decodes them when it
+    renders the annotation.
+
+    The percent sign is escaped first, because the escape sequences
+    themselves contain one - otherwise ``%0A`` in the original message would
+    be decoded as a newline.
     """
-    return " ".join(message.splitlines())
+    return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
 def is_transient(stderr: str) -> bool:
@@ -182,10 +188,10 @@ def main() -> None:
         # attempt is still obvious in the job log. It goes to stdout, like
         # the repository's other workflow-command emitters.
         #
-        # A workflow command ends at the newline, so a multi-line message
-        # would truncate the annotation to its first line. The message is
-        # flattened instead, so the whole diagnostic survives on one line.
-        print(f"::error::{_one_line(str(exc))}")
+        # A workflow command ends at the newline, so the message is escaped
+        # into a single physical line. The whole diagnostic survives, and
+        # the runner renders the escaped newlines as they were.
+        print(f"::error::{_as_command_data(str(exc))}")
         raise SystemExit(1) from exc
 
 

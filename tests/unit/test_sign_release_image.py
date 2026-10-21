@@ -186,7 +186,28 @@ def test_the_error_annotation_is_a_single_line(monkeypatch, capsys):
     annotation = capsys.readouterr().out.strip()
     assert annotation.startswith("::error::")
     assert "\n" not in annotation
+    # The newline survives as GitHub's %0A escape, so the runner renders it
+    # as a line break rather than truncating the message.
+    assert "%0A" in annotation
     assert "detail line" in annotation
+
+
+def test_the_error_annotation_escapes_a_percent_sign(monkeypatch, capsys):
+    # cosign's stderr can carry a percent-encoded URL. A raw % would be
+    # read by the runner's command parser as the start of an escape.
+    monkeypatch.setattr(
+        sign_release_image,
+        "sign_image",
+        lambda reference: (_ for _ in ()).throw(RuntimeError("token endpoint said %0A was bad")),
+    )
+    monkeypatch.setattr(sys, "argv", ["sign_release_image", REFERENCE])
+    with pytest.raises(SystemExit):
+        sign_release_image.main()
+    annotation = capsys.readouterr().out.strip()
+    assert "%250A" in annotation
+    # Exactly one escape sequence, so the runner decodes it back to the
+    # literal text the signer produced.
+    assert annotation.count("%25") == 1
 
 
 def test_the_retry_warning_is_a_single_line(monkeypatch, capsys):

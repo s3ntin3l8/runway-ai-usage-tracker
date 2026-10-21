@@ -122,6 +122,14 @@ no `invalid character` anywhere in the message, so a script that matched
 only the decode error would silently stop retrying - and it makes the
 retry narrower at the same time.
 
+**The annotation has to be a single escaped command.** A GitHub Actions
+workflow command ends at the newline, so a multi-line message would truncate
+the annotation to its first line - and the message carries cosign's stderr,
+which is multi-line. The script escapes it the way the runner expects
+(`%0A`, `%0D`, `%25`), so the whole diagnostic survives on one physical line
+and the runner renders the line breaks as they were. The percent sign is
+escaped first, because the escape sequences contain one.
+
 **The retry budget has to fit inside the job's timeout.** The `merge` job
 allows 15 minutes and the steps ahead of the signing measured about 132
 seconds on the run that signed, so the signing step is capped well below
