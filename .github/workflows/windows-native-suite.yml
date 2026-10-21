@@ -29,7 +29,11 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a pull request supersedes its own previous run. On the default
+  # branch the nightly schedule and a push share this group, and cancelling
+  # on either would silently drop one of them -- the nightly run is the
+  # backstop for the narrowed per-pull-request Windows gate.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -59,11 +63,11 @@ jobs:
             requirements-dev.txt
       - name: Install canonical Python dependencies
         run: python scripts/dev_checks.py install-python
+      # Four workers inside the shard as well: the runner has four cores,
+      # and `--dist loadfile` keeps each test module in one worker.
       - name: Run the shard
         env:
           RUNWAY_PYTEST_SHARD_ID: ${{ matrix.shard }}
           RUNWAY_PYTEST_SHARDS: '4'
-        # Four workers inside the shard as well: the runner has four cores,
-        # and `--dist loadfile` keeps each test module in one worker.
           RUNWAY_TEST_JOBS: '4'
         run: python scripts/dev_checks.py test-shard

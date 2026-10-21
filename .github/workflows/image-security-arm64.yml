@@ -14,12 +14,15 @@ on:
   pull_request:
     branches: [main]
     paths:
+      # The COPY lines in the Dockerfile, which is what decides the image's
+      # contents: the Dockerfile, requirements.txt, app/ and the webapp/ the
+      # frontend builder compiles. The scanner and the policy are here too:
+      # they do not change the image, but a change to them should re-scan it.
       - 'Dockerfile'
+      - '.dockerignore'
       - 'requirements.txt'
-      - 'requirements-dev.txt'
-      - 'pyproject.toml'
       - 'app/**'
-      - 'sidecar_app/**'
+      - 'webapp/**'
       - 'scripts/audit_release_image.py'
       - 'scripts/image_policy.py'
       - '.github/workflows/image-security-arm64.yml'
@@ -33,7 +36,6 @@ concurrency:
 
 jobs:
   candidate:
-    if: github.event_name == 'pull_request'
     name: candidate (ubuntu-24.04-arm, arm64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30

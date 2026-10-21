@@ -2,14 +2,27 @@ name: Image Security
 
 # Scans the candidate image for known vulnerabilities.
 #
-# The amd64 leg runs on every pull request. The arm64 leg lives in its own
-# workflow (image-security-arm64.yml) because it is a *native* build on an
-# ARM runner, which costs about as much as the amd64 leg, and because a
-# change that cannot affect the image -- a frontend-only or docs-only change
-# -- should not pay for either of them.
+# The candidate leg runs on the pull requests that touch the image: the
+# paths below are the COPY lines in the Dockerfile, which is what decides the
+# image's contents -- the Dockerfile, requirements.txt, app/ and the webapp/
+# the frontend builder compiles. A change that cannot affect the image does
+# not pay for a build and a scan.
+#
+# The arm64 leg lives in its own workflow (image-security-arm64.yml) because
+# it is a *native* build on an ARM runner, which costs about as much as the
+# amd64 leg.
 on:
   pull_request:
     branches: [main]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'requirements.txt'
+      - 'app/**'
+      - 'webapp/**'
+      - 'scripts/audit_release_image.py'
+      - 'scripts/image_policy.py'
+      - '.github/workflows/image-security.yml'
   schedule:
     - cron: '23 6 * * *'
   workflow_dispatch:

@@ -326,8 +326,13 @@ Workflows live in `.github/workflows/`.
     shared `docker-publish.yml` with `push-edge: true` → the `:edge` tag.
     `image-changed` compares the push against the Dockerfile's `COPY` sources
     (the Dockerfile, `requirements.txt`, `app/`, `webapp/`) and skips the
-    rebuild when the image would be byte-identical; if the base commit cannot
-    be resolved it rebuilds.
+    rebuild when the image's *contents* cannot have changed; if the base
+    commit cannot be resolved it rebuilds.
+    Because the Dockerfile bakes the commit in as `RUNWAY_BUILD_SHA`, a
+    rebuilt image is never byte-identical to its predecessor, so a skipped
+    rebuild leaves `:edge` serving the previous commit's image and that
+    image's SHA. The SHA still names the exact build that is running — it is
+    the SHA of the *build*, not of `main` — but it is no longer `main`'s tip.
     The checked-out commit is passed as the `BUILD_SHA` build arg and baked
     in as `RUNWAY_BUILD_SHA`, so the running server reports the exact build
     it is in Settings → About — every `:edge` image ships the same version

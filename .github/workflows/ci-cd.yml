@@ -190,17 +190,27 @@ jobs:
 
   image-changed:
     # Did this push change anything that goes into the image? A docs-only or
-    # frontend-only merge does not, and rebuilding and re-pushing both image
-    # arches for it is four minutes of runner time for the same bytes.
+    # test-only merge does not, and rebuilding and re-pushing both image
+    # arches for it is four minutes of runner time.
     #
     # The paths below mirror the COPY lines in the Dockerfile, which is what
     # decides the image's contents: the Dockerfile, requirements.txt, app/ and
     # the webapp/ the frontend builder compiles. A change to anything else
-    # produces a byte-identical image.
+    # leaves the contents unchanged.
+    #
+    # One thing does change on every commit: the Dockerfile bakes the commit
+    # in as RUNWAY_BUILD_SHA, so a rebuilt image is never byte-identical to
+    # its predecessor. Skipping the rebuild therefore leaves :edge serving
+    # the previous commit's image, and that image's SHA. The SHA still names
+    # the exact build that is running -- it is the SHA of the *build*, not of
+    # main -- but it is no longer main's tip. Rebuilding every time costs
+    # about four minutes per main push, roughly one percent of this
+    # repository's CI; this keeps the contents honest and accepts the lag.
     #
     # If the base commit cannot be found the answer is "changed", so an
     # unresolvable comparison rebuilds rather than silently skipping the
     # publish.
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
