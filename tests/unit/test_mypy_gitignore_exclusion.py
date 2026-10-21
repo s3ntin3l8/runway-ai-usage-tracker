@@ -21,12 +21,29 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _git(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+@pytest.fixture
+def git_env(tmp_path: Path) -> dict[str, str]:
+    """A git environment in which only this repository's .gitignore decides.
+
+    Without the isolation, a developer's global ``core.excludesFile`` could
+    make a path match that this repository's .gitignore does not cover, and
+    the assertions below would pass for the wrong reason.
+    """
+    empty = tmp_path / "gitconfig"
+    empty.write_text("", encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = str(empty)
+    return env
+
+
+def _git(
+    *args: str, env: dict[str, str], stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
     # pre-commit exports GIT_DIR and the other GIT_* variables so its hooks
     # stage into their own index. In a worktree .git is a file, so an
     # inherited GIT_DIR makes git refuse to run outside a work tree. Run
     # with a clean environment instead.
-    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     return subprocess.run(
         ["git", *args],
         cwd=ROOT,
@@ -39,11 +56,11 @@ def _git(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[st
 
 
 @pytest.fixture
-def git_checkout() -> None:
+def git_checkout(git_env: dict[str, str]) -> None:
     """Skip when git is missing or the tree is not a checkout (sdist, image)."""
     if shutil.which("git") is None:
         pytest.skip("git is required to inspect the tracked sources")
-    listed = _git("ls-files")
+    listed = _git("ls-files", env=git_env)
     if listed.returncode != 0 or not listed.stdout.split():
         pytest.skip("not a git checkout - there is nothing to assert")
 
@@ -91,23 +108,27 @@ def test_pyinstaller_output_roots_stay_gitignored(root: str):
     assert root in rules or f"{root}/" in rules
 
 
-def test_no_tracked_python_source_is_gitignored(git_checkout: None):
+def test_no_tracked_python_source_is_gitignored(git_checkout: None, git_env: dict[str, str]):
     """Honouring .gitignore must never hide a tracked source file from mypy."""
-    tracked = _git("ls-files", "--", "*.py", "*.pyi").stdout.split()
+    tracked = _git("ls-files", "--", "*.py", "*.pyi", env=git_env).stdout.split()
     assert tracked, "expected tracked Python sources in the checkout"
 
     # --no-index forces the pattern check: without it git skips tracked files
     # and the assertion below would hold for the wrong reason.
-    ignored = _git("check-ignore", "--no-index", "--stdin", stdin="\n".join(tracked)).stdout.split()
+    ignored = _git(
+        "check-ignore", "--no-index", "--stdin", env=git_env, stdin="\n".join(tracked)
+    ).stdout.split()
     assert ignored == []
 
 
 @pytest.mark.parametrize("root", ["build", "dist"])
-def test_the_generated_bundle_really_is_excluded(git_checkout: None, root: str):
+def test_the_generated_bundle_really_is_excluded(
+    git_checkout: None, git_env: dict[str, str], root: str
+):
     """Some file under the ignored tree must match the .gitignore rules.
 
     The path stays neutral on purpose: the .gitignore rule covers the whole
     directory, so this must not depend on the bundle's name.
     """
-    result = _git("check-ignore", "--no-index", "-v", "--", f"{root}/bundle/x.py")
+    result = _git("check-ignore", "--no-index", "-v", "--", f"{root}/bundle/x.py", env=git_env)
     assert result.returncode == 0, f"{root}/ is expected to be gitignored"
