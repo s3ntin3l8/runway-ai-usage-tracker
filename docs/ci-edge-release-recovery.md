@@ -75,3 +75,35 @@ misleading second failure when signing, rather than a platform build, failed.
 Live release signing remains a post-merge check. Windows provisioning now runs
 on PRs, but a feed outage occurring only after merge can still fail a release
 after the bounded recovery is exhausted. Such a failure must remain visible.
+
+## Image signing after #627
+
+A separate failure hit the `edge` publish on 2026-10-20, on the merge commit
+of #627 (`bd163d0c`). The `build-docker / merge` job failed on its first
+attempt:
+
+```
+Error: signing [ghcr.io/s3ntin3l8/runway@sha256:9228...]: getting keypair
+and token: retrieving ID token: reading ID token: fetching ambient OIDC
+credentials: invalid character 'u' looking for beginning of value
+```
+
+The signature was not written and no tag was promoted - the step failed
+closed, as its error message promises. Attempt 2 of the same run signed
+successfully with cosign v3.1.3 and promoted `:edge`. The fault is the
+ambient GitHub OIDC token endpoint returning a body that is not JSON, not
+cosign v3.1.3 and not the image. It is the first time this path ran cosign
+v3, so it is new surface that no earlier run exercised.
+
+`scripts/sign_release_image.py` now owns the step. It retries only that
+ambient-credential fault, at most four times, with an escalating ten-second
+backoff (about 60 seconds in total); every other failure - a rejected
+identity, a missing `id-token: write` permission, a digest the registry does
+not have - is reported immediately, so a real misconfiguration surfaces in
+one attempt instead of four. The step still fails closed: nothing is
+promoted unless the signature was written, so the retry changes *when* the
+publish fails, never *whether* it fails.
+
+This is the same narrow-retry rule the release asset signer already follows
+for Rekor's equivalent-entry conflict: recover the one observed transient
+external fault, and never mask a permanent one behind a slow failure.

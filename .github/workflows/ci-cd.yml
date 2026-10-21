@@ -239,6 +239,11 @@ jobs:
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
   build-docker:
+    # A failed dependency-audit stops the edge publish: GitHub skips a
+    # dependent job when one of its `needs:` fails, so no `:edge` tag is
+    # moved until the audit is green. That is deliberate - a vulnerable
+    # dependency graph must not ship - but it means a fresh advisory
+    # reddens `main` and freezes the moving tag until it is fixed. See #744.
     needs: [test-python, test-frontend, dependency-audit, image-changed]
     if: github.event_name == 'push' && needs.image-changed.outputs.changed == 'true'
     permissions:
