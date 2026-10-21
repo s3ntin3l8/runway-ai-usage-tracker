@@ -102,7 +102,7 @@ class StoreProbe:
         return "/".join(part for part in (self.browser, self.profile, self.store) if part)
 
 
-_probe_cache: dict[str, StoreProbe] = {}
+_probe_cache: dict[tuple[str, str], StoreProbe] = {}
 _copy_dirs: list[Path] = []
 _cache_lock = threading.Lock()
 
@@ -133,7 +133,7 @@ def probe_store(target: Mapping[str, Any]) -> StoreProbe:
     store = str(target.get("store") or path.name)
     kind = str(target.get("type") or "")
 
-    key = f"{path}|{kind}"
+    key = (str(path), kind)
     with _cache_lock:
         cached = _probe_cache.get(key)
     if cached is not None:

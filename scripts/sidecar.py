@@ -2566,6 +2566,11 @@ class BrowserCookieExtractor:
                                     "browser": "Chromium (Flatpak)",
                                     "type": "chromium",
                                     "path": p,
+                                    # Name the store so a failure can be
+                                    # reported as "Chromium (Flatpak)/Default/Network/Cookies"
+                                    # instead of an anonymous path.
+                                    "profile": profile,
+                                    "store": rel[len(profile) + 1 :],
                                 }
                             )
 
@@ -2585,6 +2590,8 @@ class BrowserCookieExtractor:
                                     "browser": "Chromium (Snap)",
                                     "type": "chromium",
                                     "path": p,
+                                    "profile": profile,
+                                    "store": "Cookies",
                                 }
                             )
                 elif "firefox" in str(base).lower():

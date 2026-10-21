@@ -329,6 +329,31 @@ def test_windows_chromium_stores_carry_their_profile_and_store(tmp_path):
     assert chromium == {"Default": "Network/Cookies", "Profile 1": "Network/Cookies"}
 
 
+def test_linux_chromium_stores_carry_their_profile_and_store(tmp_path, monkeypatch):
+    """Every Chromium store is named, wherever it lives on disk."""
+    monkeypatch.setattr(sidecar.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    flatpak = tmp_path / ".var/app/org.chromium.Chromium/config/chromium"
+    snap = tmp_path / "snap/chromium/common/chromium"
+    for base, relative in (
+        (flatpak, "Default/Network/Cookies"),
+        (snap, "Profile 1/Cookies"),
+    ):
+        path = base / relative
+        path.parent.mkdir(parents=True)
+        path.touch()
+
+    named = {
+        target["browser"]: (target["profile"], target["store"])
+        for target in sidecar.BrowserCookieExtractor.get_all_paths()
+        if target["type"] == "chromium"
+    }
+    assert named == {
+        "Chromium (Flatpak)": ("Default", "Network/Cookies"),
+        "Chromium (Snap)": ("Profile 1", "Cookies"),
+    }
+
+
 def test_a_store_name_distinguishes_two_profiles_of_one_browser(tmp_path):
     base = tmp_path / "AppData/Local/Google/Chrome/User Data"
     for profile in ("Default", "Profile 1"):
