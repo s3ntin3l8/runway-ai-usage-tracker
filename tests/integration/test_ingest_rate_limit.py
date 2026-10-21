@@ -11,12 +11,12 @@ without ever passing auth.
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app.core.rate_limit import limiter
 from app.main import (
     app,  # noqa: F401 — imported for slowapi side effects (decorator-time registration)
 )
+from tests.fixtures.test_client import TestClient
 
 _INGEST_ROUTE_KEY = "app.api.endpoints.fleet.ingest_metrics"
 

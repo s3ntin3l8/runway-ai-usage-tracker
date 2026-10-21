@@ -14,9 +14,9 @@ from __future__ import annotations
 import pathlib
 
 import pytest
-from fastapi.testclient import TestClient
 
 import app.main as main
+from tests.fixtures.test_client import TestClient
 
 
 @pytest.fixture()
