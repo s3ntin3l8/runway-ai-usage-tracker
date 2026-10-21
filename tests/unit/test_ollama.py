@@ -582,6 +582,25 @@ def _usage_body(usage: float = 0.002) -> dict:
     }
 
 
+def _balance_body(
+    balance: float = 2.5,
+    allowance: float = 2.5,
+    purchased: float | None = 0.0,
+    until: str = "2026-11-12T06:45:12Z",
+) -> dict:
+    """The `/api/balance` payload of a plan with a monthly credit allowance."""
+    body: dict = {
+        "included": {
+            "balance_usd": balance,
+            "allowance_usd": allowance,
+            "period": {"from": "2026-10-12T06:45:12Z", "until": until},
+        }
+    }
+    if purchased is not None:
+        body["purchased"] = {"balance_usd": purchased}
+    return body
+
+
 def _make_response(body, status=200):
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status
@@ -675,7 +694,7 @@ class TestOllamaApiCollector:
         assert collector._current_input_source == "config"
 
     @pytest.mark.asyncio
-    async def test_api_strategy_emits_monthly_card(self):
+    async def test_api_strategy_emits_monthly_allowance_card(self):
         collector = OllamaCollector(account_id="acc_test")
         # Stale label from a prior poll cycle must not survive when
         # get_with_metadata returns None (PR #340 review, finding 4).
@@ -697,22 +716,77 @@ class TestOllamaApiCollector:
             patch(
                 "app.services.collectors.ollama.http_request_with_retry",
                 new_callable=AsyncMock,
-                return_value=_make_response(_usage_body(usage=0.002)),
+                return_value=_make_response(_balance_body(balance=2.0, allowance=2.5)),
+            ) as http_mock,
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["provider_id"] == "ollama"
+        assert card["window_type"] == "monthly"
+        assert card["unit_type"] == "currency"
+        assert card["currency"] == "USD"
+        assert card["data_source"] == OllamaCollector.DATA_SOURCE_API
+        assert card["input_source"] == "sidecar"
+        # $0.50 spent of a $2.50 allowance = 20% used.
+        assert card["used_value"] == pytest.approx(0.5)
+        assert card["limit_value"] == pytest.approx(2.5)
+        assert card["pct_used"] == pytest.approx(20.0)
+        assert card["remaining"] == "80.0%"
+        assert card["is_unlimited"] is False
+        assert card["reset_at"] == "2026-11-12T06:45:12+00:00"
+        assert card["detail"].startswith("$0.50 of $2.50 used")
+        assert collector._current_input_source == "sidecar"
+        # The quota lives on /api/balance — /api/usage is a spend report.
+        assert http_mock.await_args.args[2] == OllamaCollector.BALANCE_URL
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_reports_purchased_credits_in_detail(self):
+        collector = OllamaCollector(account_id="acc_test")
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value="test-key",
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                return_value=_make_response(_balance_body(purchased=25.0)),
             ),
         ):
             cards = await collector._get_ollama_api(MagicMock())
 
         assert len(cards) == 1
-        assert cards[0]["provider_id"] == "ollama"
-        assert cards[0]["window_type"] == "monthly"
+        assert "+$25.00 usage credits" in cards[0]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_api_strategy_falls_back_to_usage_when_balance_endpoint_missing(self):
+        """Deployments without /api/balance still get the legacy limit card."""
+        collector = OllamaCollector(account_id="acc_test")
+
+        with (
+            patch(
+                "app.services.collectors.ollama.credential_provider.get_provider_api_key",
+                return_value="test-key",
+            ),
+            patch(
+                "app.services.collectors.ollama.http_request_with_retry",
+                new_callable=AsyncMock,
+                side_effect=[
+                    _make_response({"error": "not found"}, status=404),
+                    _make_response(_usage_body(usage=0.25)),
+                ],
+            ) as http_mock,
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert len(cards) == 1
+        assert cards[0]["pct_used"] == pytest.approx(25.0)
         assert cards[0]["unit_type"] == "percent"
-        assert cards[0]["data_source"] == OllamaCollector.DATA_SOURCE_API
-        assert cards[0]["input_source"] == "sidecar"
-        assert cards[0]["used_value"] == pytest.approx(0.2)
-        assert cards[0]["limit_value"] == 100
-        assert cards[0]["reset_at"] is None
-        assert cards[0]["reset"] == "—"
-        assert collector._current_input_source == "sidecar"
+        assert http_mock.await_args_list[0].args[2] == OllamaCollector.BALANCE_URL
+        assert http_mock.await_args_list[1].args[2] == OllamaCollector.USAGE_URL
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -742,7 +816,7 @@ class TestOllamaApiCollector:
             patch(
                 "app.services.collectors.ollama.http_request_with_retry",
                 new_callable=AsyncMock,
-                return_value=_make_response(_usage_body(usage=0.002)),
+                return_value=_make_response(_balance_body()),
             ),
         ):
             cards = await collector._get_ollama_api(MagicMock())
@@ -881,13 +955,31 @@ class TestOllamaApiCollector:
         assert cards == []
         assert collector._last_error_reason == "missing_data"
 
+    def test_build_cards_from_api_usage_spend_report_without_limits_is_malformed(self):
+        """A spend report means the account has usage whose quota we cannot
+        read here — that is malformed data, not a plan without a cap."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage(
+            {"range": "7d", "totals": {"request_count": 3, "usage_usd": 0.5}, "buckets": []}
+        )
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    def test_build_cards_from_api_usage_payload_without_limits_is_malformed(self):
+        """Only an explicit limits block proves there is no monthly cap."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_usage({})
+        assert cards == []
+        assert collector._no_monthly_cap is False
+        assert collector._last_error_reason == "missing_data"
+
     @pytest.mark.asyncio
     async def test_collect_no_cap_response_returns_no_parse_error_card(self):
         collector = OllamaCollector(account_id="acc_test")
         smart = SmartCollector(collector, "Ollama", ttl=0, error_retry_delay=0)
-        no_cap_response = _make_response({"limits": {}, "activity": {}})
+        no_cap_response = _make_response({"included": {"balance_usd": 0, "allowance_usd": 0}})
         malformed_response = _make_response(
-            {"limits": {"monthly": {"usage": "not-a-number"}}, "activity": {}}
+            {"included": {"balance_usd": "not-a-number", "allowance_usd": 2.5}}
         )
 
         with (
@@ -926,143 +1018,192 @@ class TestOllamaApiCollector:
         assert cards == []
         assert collector._last_error_reason == "missing_data"
 
-    def test_build_cards_from_api_usage_time_bucketed_totals(self):
-        """Ollama Cloud usage API returning totals and range."""
-        collector = OllamaCollector(account_id="acc_test", account_label="user@example.com")
-        body = {
-            "range": "7d",
-            "scope": "self",
-            "granularity": "day",
-            "totals": {
-                "request_count": 42,
-                "usage_usd": 1.25,
-                "input_tokens": 10000,
-                "cached_input_tokens": 2000,
-                "output_tokens": 5000,
-            },
-            "buckets": [],
-        }
-        cards = collector._build_cards_from_api_usage(body)
+
+class TestOllamaBalanceCollector:
+    """`GET /api/balance` — the endpoint that carries the quota."""
+
+    def test_modern_shape_reports_allowance_and_reset(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance(_balance_body(balance=2.0, allowance=2.5))
         assert len(cards) == 1
         card = cards[0]
         assert card["service_name"] == "Ollama Cloud"
         assert card["provider_id"] == "ollama"
-        assert card["window_type"] == "weekly"
-        assert card["is_unlimited"] is True
-        assert card["used_value"] == 1.25
-        assert card["remaining"] == "—"
-        assert card["token_usage"] == {
-            "input": 10000,
-            "output": 5000,
-            "cache_read": 2000,
-        }
-        assert "$1.25 spent · 42 requests · Ollama Cloud" in card["detail"]
-        assert card["account_label"] == "user@example.com"
+        assert card["window_type"] == "monthly"
+        assert card["unit_type"] == "currency"
+        assert card["currency"] == "USD"
+        assert card["used_value"] == pytest.approx(0.5)
+        assert card["limit_value"] == pytest.approx(2.5)
+        assert card["pct_used"] == pytest.approx(20.0)
+        assert card["remaining"] == "80.0%"
+        assert card["health"] == "good"
+        assert card["reset_at"] == "2026-11-12T06:45:12+00:00"
+        assert card["reset"] != "—"
+        assert card["detail"].startswith("$0.50 of $2.50 used")
+        assert card["data_source"] == OllamaCollector.DATA_SOURCE_API
 
-    def test_build_cards_from_api_usage_zero_spend_time_bucketed(self):
-        """Zero spend / 0 request response creates a valid active PAYG card."""
+    def test_full_allowance_reports_nothing_used(self):
         collector = OllamaCollector(account_id="acc_test")
-        body = {
-            "range": "24h",
-            "scope": "self",
-            "granularity": "hour",
-            "totals": {
-                "request_count": 0,
-                "usage_usd": 0,
-                "input_tokens": 0,
-                "cached_input_tokens": 0,
-                "output_tokens": 0,
-            },
-            "buckets": [],
-        }
-        cards = collector._build_cards_from_api_usage(body)
+        cards = collector._build_cards_from_api_balance(_balance_body())
         assert len(cards) == 1
         card = cards[0]
-        assert card["window_type"] == "daily"
-        assert card["remaining"] == "—"
-        assert card["used_value"] == 0.0
+        assert card["pct_used"] == pytest.approx(0.0)
+        assert card["remaining"] == "100.0%"
+        assert card["used_value"] == pytest.approx(0.0)
         assert card["health"] == "good"
 
-    def test_build_cards_from_api_usage_prefers_limits_when_both_present(self):
-        """When payload carries both limits.monthly and totals, monthly quota is preferred."""
+    def test_exhausted_allowance_is_critical(self):
         collector = OllamaCollector(account_id="acc_test")
-        body = {
-            "limits": {"monthly": {"usage": 0.25}},
-            "totals": {
-                "request_count": 10,
-                "usage_usd": 5.0,
-                "input_tokens": 1000,
-                "output_tokens": 500,
-            },
-        }
-        cards = collector._build_cards_from_api_usage(body)
+        cards = collector._build_cards_from_api_balance(_balance_body(balance=0.0, allowance=2.5))
         assert len(cards) == 1
         card = cards[0]
-        assert card["service_name"] == "Ollama"
-        assert card["remaining"] == "75.0%"
-        assert card["window_type"] == "monthly"
+        assert card["pct_used"] == pytest.approx(100.0)
+        assert card["remaining"] == "0.0%"
+        assert card["health"] == "critical"
 
-    def test_build_cards_from_api_usage_empty_totals_falls_through(self):
-        """Empty totals dict does not fabricate a card and falls through."""
+    def test_purchased_credits_appear_in_detail(self):
         collector = OllamaCollector(account_id="acc_test")
-        body = {"range": "7d", "totals": {}}
-        cards = collector._build_cards_from_api_usage(body)
+        cards = collector._build_cards_from_api_balance(_balance_body(purchased=25.0))
+        assert "+$25.00 usage credits" in cards[0]["detail"]
+
+    def test_legacy_session_and_weekly_cards(self):
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "included": {
+                "session": {"remaining_percent": 75, "resets_at": "2026-10-01T07:00:00Z"},
+                "weekly": {"remaining_percent": 40, "resets_at": "2026-10-05T00:00:00Z"},
+            },
+            "purchased": {"balance_usd": 25},
+        }
+        cards = collector._build_cards_from_api_balance(body)
+        assert len(cards) == 2
+        session, weekly = cards
+        assert session["window_type"] == "session"
+        assert session["remaining"] == "75.0%"
+        assert session["pct_used"] == pytest.approx(25.0)
+        assert session["unit_type"] == "percent"
+        assert session["reset_at"] == "2026-10-01T07:00:00+00:00"
+        assert weekly["window_type"] == "weekly"
+        assert weekly["remaining"] == "40.0%"
+        assert weekly["pct_used"] == pytest.approx(60.0)
+
+    def test_purchased_only_account_reports_credits_balance(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance({"purchased": {"balance_usd": 25}})
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["remaining"] == "$25.00"
+        assert card["unit_type"] == "currency"
+        assert card["pct_used"] is None
+        assert card["window_type"] == "rolling"
+
+    def test_exhausted_credits_still_report_a_card(self):
+        """An account with no credits left is exactly when the card matters."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance({"purchased": {"balance_usd": 0}})
+        assert len(cards) == 1
+        assert cards[0]["remaining"] == "$0.00"
+        assert cards[0]["health"] == "critical"
+
+    def test_zero_allowance_falls_back_to_purchased_credits(self):
+        """No allowance to meter, but purchased credits are still the balance."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance(
+            {"included": {"balance_usd": 0, "allowance_usd": 0}, "purchased": {"balance_usd": 25}}
+        )
+        assert len(cards) == 1
+        assert cards[0]["remaining"] == "$25.00"
+        assert cards[0]["variant"] == "credits"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {},  # not a balance payload at all
+            {"included": None},  # no purchased block to prove there is no allowance
+            {"included": None, "purchased": {"balance_usd": "not-a-number"}},
+        ],
+    )
+    def test_payload_without_evidence_is_malformed_not_no_quota(self, body):
+        """Only an explicit purchased block proves there is no included
+        allowance. Anything else is unreadable data — reporting it as "no
+        quota" would let the snapshot reconciliation retire a working card."""
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance(body)
         assert cards == []
-        assert collector._no_monthly_cap is True
+        assert collector._no_monthly_cap is False
+        assert collector._last_error_reason == "missing_data"
 
-    def test_build_cards_from_api_usage_activity_only_payload_is_no_cap(self):
-        """A free-tier payload with only activity and no limits/totals is a valid no-cap result."""
+    def test_allowance_card_uses_its_own_pool(self):
+        """A distinct variant: the stored percent card (legacy monthly limit)
+        would otherwise freeze its quota fields when the unit changes."""
         collector = OllamaCollector(account_id="acc_test")
-        body = {"activity": {"cost": "0.00000"}}
-        cards = collector._build_cards_from_api_usage(body)
+        cards = collector._build_cards_from_api_balance(_balance_body())
+        assert cards[0]["variant"] == "allowance"
+
+    def test_credits_card_uses_its_own_pool(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance({"purchased": {"balance_usd": 25}})
+        assert cards[0]["variant"] == "credits"
+
+    def test_unreadable_legacy_window_does_not_cost_the_sibling(self):
+        """One broken window must not discard the account's other meter."""
+        collector = OllamaCollector(account_id="acc_test")
+        body = {
+            "included": {
+                "session": {"remaining_percent": 75, "resets_at": "2026-10-01T07:00:00Z"},
+                "weekly": {"remaining_percent": "not-a-number"},
+            }
+        }
+        cards = collector._build_cards_from_api_balance(body)
+        assert len(cards) == 1
+        assert cards[0]["window_type"] == "session"
+        assert cards[0]["remaining"] == "75.0%"
+
+    def test_all_legacy_windows_unreadable_is_malformed(self):
+        collector = OllamaCollector(account_id="acc_test")
+        body = {"included": {"session": {"remaining_percent": "bad"}}}
+        cards = collector._build_cards_from_api_balance(body)
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    @pytest.mark.parametrize(
+        "included",
+        [
+            {"balance_usd": "not-a-number", "allowance_usd": 2.5},
+            {"balance_usd": 2.5, "allowance_usd": "not-a-number"},
+            {"balance_usd": -1.0, "allowance_usd": 2.5},
+            {"balance_usd": 2.5, "allowance_usd": float("nan")},
+            {"balance_usd": 2.5},  # allowance missing
+            {"unexpected": True},
+        ],
+    )
+    def test_malformed_included_is_a_parse_error(self, included):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance({"included": included})
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    def test_malformed_included_container_is_a_parse_error(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance({"included": "nope"})
+        assert cards == []
+        assert collector._last_error_reason == "missing_data"
+
+    def test_zero_allowance_is_a_successful_empty_result(self):
+        collector = OllamaCollector(account_id="acc_test")
+        cards = collector._build_cards_from_api_balance(
+            {"included": {"balance_usd": 0, "allowance_usd": 0}}
+        )
         assert cards == []
         assert collector._no_monthly_cap is True
         assert collector._last_error_reason != "missing_data"
 
-    def test_build_cards_from_api_usage_null_limits_is_no_cap(self):
-        """Explicit null limits is a clean no-cap result (Hermes r4)."""
+    def test_unparsable_reset_timestamp_is_tolerated(self):
         collector = OllamaCollector(account_id="acc_test")
-        body = {"limits": None}
-        cards = collector._build_cards_from_api_usage(body)
-        assert cards == []
-        assert collector._no_monthly_cap is True
-        assert collector._last_error_reason != "missing_data"
-
-    def test_build_cards_from_api_usage_string_typed_counters(self):
-        """String or null values in totals do not raise and parse safely."""
-        collector = OllamaCollector(account_id="acc_test")
-        body = {
-            "range": "7d",
-            "totals": {
-                "usage_usd": "invalid",
-                "request_count": "10",
-                "input_tokens": None,
-                "output_tokens": "not-a-number",
-                "cached_input_tokens": 5,
-            },
-        }
-        cards = collector._build_cards_from_api_usage(body)
+        cards = collector._build_cards_from_api_balance(_balance_body(until="not-a-date"))
         assert len(cards) == 1
-        card = cards[0]
-        assert card["used_value"] == 0.0
-        assert card["token_usage"]["input"] == 0
-        assert card["token_usage"]["output"] == 0
-        assert card["token_usage"]["cache_read"] == 5
-
-    def test_build_cards_from_api_usage_nan_usage_usd_guarded(self):
-        """NaN or negative usage_usd is guarded to 0.0 without nan in detail."""
-        collector = OllamaCollector(account_id="acc_test")
-        body = {
-            "range": "7d",
-            "totals": {
-                "usage_usd": float("nan"),
-                "request_count": 1,
-            },
-        }
-        cards = collector._build_cards_from_api_usage(body)
-        assert len(cards) == 1
-        assert cards[0]["used_value"] == 0.0
-        assert "$0.00 spent" in cards[0]["detail"]
+        assert cards[0]["reset_at"] is None
+        assert cards[0]["reset"] == "—"
 
 
 def test_the_page_email_is_reported_as_verified_identity(ollama_html):
