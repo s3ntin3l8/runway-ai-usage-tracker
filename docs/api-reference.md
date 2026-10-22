@@ -100,6 +100,12 @@ The grouped pending-events response reports `total_events` across the full queue
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout (admin for reads and writes) |
 | `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` (public) |
 
+Every account in the provider-configs listing names the provider it belongs
+to (`accounts[].provider_id`). The Claude family groups several providers
+under one card, so an account listed under the family is still addressed by
+its own provider — a rename, an archive or a billing model never lands on the
+family's representative.
+
 ### Data health (admin)
 
 See [docs/data-health.md](data-health.md) for what each check finds and fixes.

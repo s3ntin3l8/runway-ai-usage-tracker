@@ -827,6 +827,12 @@ export interface CredentialSourceSummary {
  *  providers expose N of these under a ``ProviderConfig`` envelope. */
 export interface ProviderAccount {
   account_id: string;
+  // Which provider this account belongs to. The Claude family groups several
+  // providers under one card, so an account listed under the family is still
+  // addressed by its own provider — an edit must never land on the family's
+  // representative (#723). Optional for backward compatibility with older
+  // servers; the UI falls back to the provider it was listed under.
+  provider_id?: string;
   enabled?: boolean;
   archived?: boolean; // PR #292 — hide discontinued providers from the dashboard
   has_usage_events?: boolean;

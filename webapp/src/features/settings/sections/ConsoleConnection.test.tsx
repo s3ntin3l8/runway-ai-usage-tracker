@@ -116,7 +116,13 @@ it('shows one Claude settings entry and switches to independent Console account 
   await userEvent.selectOptions(screen.getByLabelText('Claude connection'), 'anthropic_console');
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).getByText('Individual Org')).toBeInTheDocument();
-  expect(within(dialog).queryByText('Subscription login')).not.toBeInTheDocument();
+  // The card counts both connections' accounts, so the dialog lists them both
+  // — each row says which connection it belongs to (#723). The connection
+  // dropdown picks whose *settings* are shown, not whose accounts are listed.
+  expect(within(dialog).getByText('Subscription login')).toBeInTheDocument();
+  const list = within(dialog).getByLabelText('Provider accounts');
+  expect(within(list).getByText('Subscription quotas')).toBeInTheDocument();
+  expect(within(list).getByText('Console API credits')).toBeInTheDocument();
 });
 
 function StatefulPicker({ cookie = 'sample-session', initial = orgId }: { cookie?: string; initial?: string }) {

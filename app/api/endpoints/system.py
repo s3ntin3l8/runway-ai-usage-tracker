@@ -1763,6 +1763,12 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         accounts_out: list[dict[str, Any]] = [
             {
                 "account_id": r.account_id,
+                # Which provider this account belongs to. The Claude family
+                # groups several providers under one card, so an account that
+                # is listed under the family is still addressed by its own
+                # provider — an edit must never land on the family's
+                # representative (#723).
+                "provider_id": p_id,
                 "enabled": r.enabled,
                 "archived": r.archived,
                 "has_usage_events": archived_account_usage.get((p_id, r.account_id), False),
@@ -1810,6 +1816,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             accounts_out.append(
                 {
                     "account_id": c_aid,
+                    "provider_id": p_id,
                     "enabled": True,
                     "archived": False,
                     "has_usage_events": False,
@@ -1839,6 +1846,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 accounts_out.append(
                     {
                         "account_id": live_aid,
+                        "provider_id": p_id,
                         "enabled": True,
                         "archived": False,
                         "has_usage_events": False,

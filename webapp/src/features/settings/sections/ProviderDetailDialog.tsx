@@ -6,7 +6,7 @@ import { claudeConnectionLabel } from '@/lib/providerFamilies';
 // the follow-up PR.
 //
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Archive, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -78,18 +78,47 @@ export function ProviderDetailDialog({
   // confirm copy. They're also excluded from the master toggle so a
   // bulk enable can't resurrect them — the server-side invariant
   // (archived ⇒ enabled=False) is the hard stop; this is the UI layer.
-  const visibleAccounts = (provider?.accounts ?? []).filter((a) => !a.archived);
-  const configAccounts = visibleAccounts.filter((a) => a.source !== 'discovered');
+  // The Claude family groups several providers under one card, and that card
+  // counts every account in the family. The dialog therefore lists every
+  // account in the family too — each row says which connection it belongs to
+  // — instead of only the active connection's. An account the server
+  // discovered for itself was invisible here until now: it could not be
+  // renamed, disabled, or priced (#723).
+  //
+  // Every account carries the provider it belongs to, so an account is always
+  // addressed to that provider — never to the family's representative.
+  const familyAccounts = useMemo(() => {
+    if (!connections || connections.length < 2) return null;
+    return connections.flatMap((connection) =>
+      (connection.accounts ?? []).map((account) => ({
+        ...account,
+        provider_id: account.provider_id ?? connection.provider_id,
+      })),
+    );
+  }, [connections]);
+  const listedAccounts = (familyAccounts ?? provider?.accounts ?? []).filter((a) => !a.archived);
+  const configAccounts = listedAccounts.filter((a) => a.source !== 'discovered');
   const masterEnabled = configAccounts.length > 0 && configAccounts.every((a) => a.enabled);
 
+  // The provider an account is addressed to: its own, not the family's
+  // representative. Falls back to the dialog's provider when the family list
+  // does not know the account (a single-provider dialog).
+  const providerOf = (account: ProviderAccount): ProviderConfig | null => {
+    const id = account.provider_id;
+    if (!id || !provider) return provider;
+    return (connections ?? []).find((c) => c.provider_id === id) ?? provider;
+  };
   const setMasterEnabled = useMutation({
     mutationFn: async (next: boolean) => {
       if (!provider) return;
       const updates = configAccounts
         .filter((a) => a.enabled !== next)
-        .map((a) =>
-          putProviderConfig(provider.provider_id, a.account_id, { enabled: next }),
-        );
+        .flatMap((a) => {
+          const target = providerOf(a);
+          return target
+            ? [putProviderConfig(target.provider_id, a.account_id, { enabled: next })]
+            : [];
+        });
       await Promise.all(updates);
     },
     onSuccess: (_data, next) => {
@@ -115,8 +144,9 @@ export function ProviderDetailDialog({
 
   const archiveAccount = useMutation({
     mutationFn: (account: ProviderAccount) => {
-      if (!provider) throw new Error('no provider');
-      return putProviderConfig(provider.provider_id, account.account_id, {
+      const target = providerOf(account);
+      if (!target) throw new Error('no provider');
+      return putProviderConfig(target.provider_id, account.account_id, {
         archived: true,
       });
     },
@@ -130,14 +160,15 @@ export function ProviderDetailDialog({
   });
 
   const remove = useMutation({
-    mutationFn: (accountId: string) => {
-      if (!provider) throw new Error('no provider');
-      return deleteProviderConfig(provider.provider_id, accountId);
+    mutationFn: (account: ProviderAccount) => {
+      const target = providerOf(account);
+      if (!target) throw new Error('no provider');
+      return deleteProviderConfig(target.provider_id, account.account_id);
     },
-    onSuccess: (_data, accountId) => {
-      toast.success(`${provider?.name} · ${maskAccountId(accountId)} removed`);
+    onSuccess: (_data, account) => {
+      toast.success(`${provider?.name} · ${maskAccountId(account.account_id)} removed`);
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
-      onAccountDeleted?.(provider?.provider_id ?? '', accountId);
+      onAccountDeleted?.(provider?.provider_id ?? '', account.account_id);
       setPendingDelete(null);
       setMenuFor(null);
     },
@@ -145,8 +176,10 @@ export function ProviderDetailDialog({
   });
   const saveDiscoveredLabel = useMutation({
     mutationFn: () => {
-      if (!provider || !editingDiscovered) throw new Error('No discovered account selected');
-      return putDiscoveredAccountLabel(provider.provider_id, editingDiscovered.account_id, discoveredLabel.trim() || null);
+      if (!editingDiscovered) throw new Error('No discovered account selected');
+      const target = providerOf(editingDiscovered);
+      if (!target) throw new Error('no provider');
+      return putDiscoveredAccountLabel(target.provider_id, editingDiscovered.account_id, discoveredLabel.trim() || null);
     },
     onSuccess: () => {
       toast.success('Account label saved');
@@ -171,9 +204,9 @@ export function ProviderDetailDialog({
         title={connections && connections.length > 1 ? 'Claude' : (provider?.name ?? '')}
         description={
           provider
-            ? visibleAccounts.length === 0
+            ? listedAccounts.length === 0
               ? 'Not configured'
-              : `${visibleAccounts.length} ${visibleAccounts.length === 1 ? 'account' : 'accounts'} · poll ${
+              : `${listedAccounts.length} ${listedAccounts.length === 1 ? 'account' : 'accounts'} · poll ${
                   provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
                 }s`
             : ''
@@ -210,7 +243,7 @@ export function ProviderDetailDialog({
               />
             </div>
 
-            {visibleAccounts.length === 0 ? (
+            {listedAccounts.length === 0 ? (
               <EmptyState
                 title="No accounts configured"
                 description="Add a credential to start collecting usage for this provider."
@@ -228,7 +261,7 @@ export function ProviderDetailDialog({
               />
             ) : (
               <ul className="flex flex-col gap-1.5" aria-label="Provider accounts">
-                {visibleAccounts.map((account) => {
+                {listedAccounts.map((account) => {
                   const isMenuOpen = menuFor === account.account_id;
                   return (
                     <li
@@ -243,6 +276,11 @@ export function ProviderDetailDialog({
                         {accountSubtitle(account) ? (
                           <p className="truncate text-[11px] text-fg-subtle">
                             {accountSubtitle(account)}
+                          </p>
+                        ) : null}
+                        {connections && connections.length > 1 ? (
+                          <p className="mt-0.5 truncate text-[11px] text-fg-subtle">
+                            {claudeConnectionLabel(account.provider_id ?? provider.provider_id)}
                           </p>
                         ) : null}
                         {account.credential_source_labels?.length ? (
@@ -357,7 +395,7 @@ export function ProviderDetailDialog({
               </ul>
             )}
 
-            {visibleAccounts.length > 0 ? (
+            {listedAccounts.length > 0 ? (
               onAddAccount ? (
                 <Button
                   variant="secondary"
@@ -392,7 +430,7 @@ export function ProviderDetailDialog({
                   <Button
                     variant="danger"
                     size="sm"
-                    onClick={() => remove.mutate(pendingDelete.account_id)}
+                    onClick={() => remove.mutate(pendingDelete)}
                     loading={remove.isPending}
                   >
                     Remove account
@@ -406,7 +444,7 @@ export function ProviderDetailDialog({
 
       {provider && editingAccount ? (
         <ProviderAccountDialog
-          provider={provider}
+          provider={providerOf(editingAccount) ?? provider}
           accountId={editingAccount.account_id}
           onClose={() => setEditingAccount(null)}
         />

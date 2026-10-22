@@ -2393,3 +2393,38 @@ async def test_cache_only_native_cookie_listing_identifies_client(client, owner)
     assert "synthetic-cookie" not in response.text
     assert "private-profile" not in response.text
     assert "private-fingerprint" not in response.text
+
+
+def test_every_account_carries_the_provider_it_belongs_to(client: TestClient, session: Session):
+    """Every account says which provider it belongs to.
+
+    The Claude family groups several providers under one card, so an account
+    listed under the family is still addressed by its own provider — an edit
+    must never land on the family's representative (#723).
+    """
+    from app.models.db import ProviderConfig
+
+    session.add(
+        ProviderConfig(
+            provider_id="anthropic_console",
+            account_id="11111111-1111-4111-8111-111111111111",
+            enabled=True,
+            account_label="API org",
+        )
+    )
+    session.commit()
+
+    r = client.get("/api/v1/system/provider-configs")
+    assert r.status_code == 200
+    providers = r.json()["providers"]
+
+    console = next(p for p in providers if p["provider_id"] == "anthropic_console")
+    org = next(
+        a for a in console["accounts"] if a["account_id"] == "11111111-1111-4111-8111-111111111111"
+    )
+    assert org["provider_id"] == "anthropic_console"
+
+    # No account of any provider may claim another provider.
+    for provider in providers:
+        for account in provider["accounts"]:
+            assert account["provider_id"] == provider["provider_id"]
