@@ -63,9 +63,9 @@ def test_gate_forwards_the_worker_count_to_its_steps(monkeypatch):
 
     monkeypatch.setattr(dc, "check", check)
     dc.check("gate", [], jobs=4)
-    # Only the pytest step is told the worker count; lint and web-test do
-    # not run the suite.
-    assert seen == [("lint", 0), ("test", 4), ("web-test", 0)]
+    # Only the pytest step is told the worker count; lint, web-lint and
+    # web-test do not run the suite.
+    assert seen == [("lint", 0), ("test", 4), ("web-lint", 0), ("web-test", 0)]
 
 
 @pytest.mark.parametrize(

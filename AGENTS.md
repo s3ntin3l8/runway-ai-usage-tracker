@@ -31,7 +31,7 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   `main` — Release Please parses it to cut versions/changelogs, and an
   unprefixed title silently drops out of the changelog.
 - **Before pushing, run the full gate:**
-  `make lint && make test && make web-test` (or on native Windows,
+  `make lint && make test && make web-lint && make web-test` (or on native Windows,
   `python scripts/dev_checks.py gate`).
   `make install` wires the same checks into git hooks: pre-commit runs ruff,
   mypy, detect-secrets, and the unit tests; pre-push runs the full suite.
@@ -97,6 +97,9 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   native Windows CI uses; `make shard-weights` re-measures the per-module
   durations that balance it.
 - `make lint` / `make format` — ruff + mypy + pip-audit; auto-fix formatting.
+- `make web-lint` — eslint over the frontend. The shared CI workflow runs it
+  inside the required `test-frontend / lint-and-test` job, so a lint error
+  blocks a merge; the local gate runs it for the same reason.
 - `make web-test` / `make web` — frontend vitest; production SPA build into
   `webapp/dist`.
 - `make sidecar` — run the sidecar agent against the dev config dir.

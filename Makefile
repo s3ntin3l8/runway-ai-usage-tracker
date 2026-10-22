@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights lint format web web-dev web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights lint format web web-dev web-lint web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -104,6 +104,9 @@ web: ## Build the SPA for production into webapp/dist (served by `make run`/`mak
 web-dev: ## Live Vite dev server on :5173 with HMR (sources .env so RUNWAY_API_URL/VITE_PORT apply)
 	$(LOAD_ENV); \
 	npm --prefix webapp run dev
+
+web-lint: ## Lint the frontend (eslint)
+	$(PYTHON) scripts/dev_checks.py web-lint
 
 web-test: ## Run frontend unit tests (vitest)
 	$(PYTHON) scripts/dev_checks.py web-test
