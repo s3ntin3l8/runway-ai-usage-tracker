@@ -124,3 +124,37 @@ runtime observation; fresh CI scans independently check both architectures.
 Re-evaluating both retained unfiltered reports with the proposed exceptions
 accepted exactly the 16 new matches per architecture; changing one affected
 package to an unreviewed version remained blocked.
+
+## Util-linux applicability review, 2026-10-22
+
+[Issue #799](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/799)
+records that the 32 `util-linux` exceptions above lapsed at
+`2026-10-22T17:14:08Z` and took every image build with them: the loader
+rejected the whole document on the first expired entry, so the 142 entries that
+were still valid never got to apply.
+
+The Debian tracker was re-read on 2026-10-22 for both advisories. Bookworm ships
+`2.38.1-5+deb12u3` and remains vulnerable; so does bookworm-security at
+`2.38.1-5+deb12u1`. The upstream fix ships in trixie at `2.41.5-0+deb13u1` and in
+sid/forky at `2.42.4-1`. There is no fixed Bookworm point release, so the
+runtime version in the image cannot be moved forward by an upgrade, and the
+exception is still required: the affected packages are still present and the
+advisories are still reported as High and not-fixed.
+
+The exposure rationale was re-checked against the current tree. The server
+still invokes no `mount`, `libmount`, `losetup`, `blkid` or `fstab` path — the
+only `mount` call in `app/` is FastAPI's HTTP route for static assets — and
+still has no file-upload, disk-image or block-device input path. The Dockerfile
+still runs as UID 1000 and strips inherited setuid/setgid permissions from
+`/usr`, and neither compose file gives the `runway` service a privileged
+container, an added capability or a host Docker socket.
+
+The 32 entries were therefore renewed with a fresh review time and the same
+`2026-11-08T12:00:00Z` expiry the rest of the document already carries, so the
+whole exception document now has one horizon and one renewal cycle. The loader
+was changed at the same time: an expired entry now applies to nothing and only
+blocks the finding it covered, naming the advisory and the expiry date, instead
+of invalidating every other entry with it. A malformed document still fails the
+whole audit. The repository test suite now fails when an entry is within seven
+days of expiry, so the next renewal is a scheduled task rather than a build
+outage.

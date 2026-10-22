@@ -4,7 +4,16 @@ Runway blocks image promotion on every Critical/High Grype match unless an exact
 reviewed applicability exception exists. Whether the scanner reports a fix does
 not change this rule. Medium, Low, Negligible and Unknown findings remain visible;
 Python findings are separately enumerated for review. Scanner failures, missing
-architectures, invalid reports, stale databases and expired exceptions fail closed.
+architectures, invalid reports and stale databases fail closed.
+
+An expired exception fails closed too, but only for the finding it covered. A
+lapsed entry applies to nothing, so the Critical/High match it excepted becomes
+unexcepted and blocks promotion, with the advisory and the expiry date named in
+the audit evidence. The rest of the exception document keeps working: one lapsed
+entry no longer invalidates the others. A malformed document — a missing field,
+an unsupported architecture, non-HTTPS evidence, a duplicate entry, a review
+dated in the future or a window longer than 30 days — still fails the whole
+audit, because a broken document is a different failure class from a lapsed one.
 
 ## Build, scan, sign, promote
 
@@ -51,6 +60,18 @@ An exception is a time-limited deployment decision, not a claim that the install
 library is patched. Changes to runtime behavior require re-review even when the
 package version is unchanged. Review the exception document in the same PR as the
 image change. Never add a wildcard, blanket severity suppression or `only-fixed` filter.
+
+The document has a single expiry horizon: every entry expires at the same instant,
+so the whole document is re-reviewed on one cycle and there is one deadline to
+track. A renewal PR re-reviews the applicability rationale and moves that horizon.
+The repository test suite fails when an entry is within seven days of expiry or
+already lapsed, naming the entries that need renewal — so the renewal happens
+during working hours instead of when an image build turns red.
+
+The exact package version is part of the match, and the runtime version moves with
+the base image: the Dockerfile runs `apt-get upgrade -y`, so a new Debian point
+release changes the installed version and invalidates the matching exception.
+Never widen a match to cover it — re-review and pin the new version instead.
 
 Exceptions apply to the documented non-root server runtime: no privileged container,
 Docker socket, arbitrary SQL executor, uploaded SQLite databases, Kerberos acceptor,
