@@ -313,7 +313,7 @@ semantics.
 
 Workflows live in `.github/workflows/`.
 
-- **`ci-cd.yml`** — on push/PR to `main`, and on `merge_group`:
+- **`ci-cd.yml`** — on push/PR to `main`:
   - **`test-python`** — reusable `s3ntin3l8/.github` `ci-python.yml`:
     `lint` (ruff check + format) and `type-and-test` (mypy, detect-secrets
     against `.secrets.baseline`, pip-audit, pytest with Codecov). This repo
@@ -356,22 +356,22 @@ Workflows live in `.github/workflows/`.
   - Required checks on `main`: `test-python / lint`,
     `test-python / type-and-test`, `test-frontend / lint-and-test`, and
     CodeQL. They are **not** required to be up to date with `main` — see
-    *The merge queue* below.
-- **The merge queue.** `ci-cd.yml` and `codeql.yml` listen for `merge_group`,
-    so a ruleset *can* require the queue: GitHub builds current `main` plus the
-    pull request, runs the required checks against *that* merge commit, and
-    merges when they are green. That is what removes the rebase treadmill —
-    a branch no longer has to be up to date to merge, because the thing being
-    tested is the merge result rather than the branch.
+    *The merge queue is not available here* below.
+- **The merge queue is not available here.** The merge queue is documented as
+    available on public repositories owned by *organizations* (and GitHub
+    Enterprise Cloud), not on personal accounts, and this repository is owned
+    by a personal account — GitHub's ruleset API rejects the `merge_queue`
+    rule with *"Invalid rule 'merge_queue'"*.
 
-    **It is not switched on here.** The merge queue is available on public
-    repositories owned by *organizations* (and GitHub Enterprise Cloud), not
-    on personal accounts, and this repository is owned by a personal
-    account — GitHub's ruleset API rejects the `merge_queue` rule with
-    *"Invalid rule 'merge_queue'"*. What does the job today is
-    `required_status_checks.strict = false`: a pull request no longer has to
-    be up to date with `main` to merge, so it does not need a rebase, and a
-    rebase is what used to re-trigger all five workflows.
+    What does the job instead is `required_status_checks.strict = false`: a
+    pull request no longer has to be up to date with `main` to merge, so it
+    does not need a rebase — and a rebase is what used to re-trigger the
+    pull-request workflows. Seven workflows here listen for `pull_request`
+    (`ci-cd`, `codeql`, `dependency-review`, `hermes`, `image-security`,
+    `image-security-arm64`, `security-validation`), and six of them re-run on
+    a rebase; `hermes.yml` opts out with `types: [opened, ready_for_review]`.
+    Measured: `fix/cookie-store-classification`, several commits behind
+    `main`, reports `CLEAN` and merges without a rebase.
 
     The safety that the up-to-date rule was standing in for is covered
     elsewhere: the release pull request carries its own required checks, and
@@ -381,13 +381,12 @@ Workflows live in `.github/workflows/`.
     `build-docker` needs `test-python`, `test-frontend` and
     `dependency-audit` to pass on `main`.
 
-    Moving the repositories to an organization would enable the queue; the
-    `merge_group` triggers and the job-level `concurrency` on the
-    reusable-workflow calls are already in place for it. The
-    reusable-workflow calls keep *job-level* concurrency deliberately:
-    inside a called workflow `github.workflow` is the caller's name and the
-    group is namespaced by the caller, so two calls to the same shared
-    workflow from one caller would cancel each other.
+    Moving the repositories to an organization would enable the queue, but
+    that is not only a settings change: the workflows that produce the
+    required checks would need a `merge_group` trigger, and the advisory jobs
+    would need to skip that event so the queue does not wait on the Windows
+    runner. Neither is in place, because neither could be exercised here —
+    an untested conditional path in CI is worse than no path at all.
 - **`windows-native-suite.yml`** — the whole pytest suite on a native Windows
     runner, in four parallel shards, on `main` pushes and nightly. It used to
     run on every pull request, where it cost ~11 runner-minutes — the largest

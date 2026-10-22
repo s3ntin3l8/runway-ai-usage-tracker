@@ -30,9 +30,11 @@ permissions:
   contents: read
 
 concurrency:
-  # Without a group, every push to a pull request leaves the previous
-  # build and scan running until it finishes on its own.
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # The event name is part of the group: the daily `schedule` run and a
+  # `workflow_dispatch` on `main` share `github.ref`, so without it they
+  # land in the same group and one cancels the other -- and the one that
+  # gets cancelled is a 45-minute audit of the released image.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
