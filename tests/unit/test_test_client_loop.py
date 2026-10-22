@@ -7,12 +7,15 @@ them to fill the Windows ephemeral-port range, and a second run on the same
 machine then could not open a socket at all (``WinError 10055``).
 """
 
+import asyncio
 import socket
+import time
 from collections.abc import Callable
 
+import anyio
 from starlette import testclient
 
-from tests.fixtures.test_client import TestClient
+from tests.fixtures.test_client import TestClient, close_portal
 
 
 def _count_socketpairs(make_requests: Callable[[], None]) -> int:
@@ -111,6 +114,68 @@ def test_many_clients_need_at_most_one_socket_pair():
                 client.shutdown()
 
     assert _count_socketpairs(make_clients) <= 1
+
+
+def test_the_with_form_does_not_start_the_app_lifespan():
+    """``with TestClient(app) as c:`` must not run the app's startup.
+
+    Starlette's own ``__enter__`` starts a portal *and* runs the lifespan.
+    The managed client already has its portal, so entering it is a no-op --
+    otherwise the documented ``with`` form would run the app's startup
+    handlers, which is the one thing this fixture must not do.
+    """
+    from fastapi import FastAPI
+
+    started: list[str] = []
+    app = FastAPI()
+
+    @app.on_event("startup")
+    async def _startup() -> None:
+        started.append("startup")
+
+    @app.get("/ping")
+    def ping() -> dict[str, bool]:
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        assert client.get("/ping").status_code == 200
+    assert started == []
+
+
+def test_closing_a_portal_with_a_leaked_task_does_not_hang():
+    """A task that outlives its test must not wedge the worker at teardown.
+
+    Closing a loop with live tasks waits for them, and a task that never
+    finishes would wait forever -- the same failure this change exists to
+    remove. The remaining tasks are cancelled first, so the close is quick.
+    """
+    stack = anyio.from_thread.start_blocking_portal()
+    portal = stack.__enter__()
+
+    async def leak() -> None:
+        await asyncio.sleep(3600)
+
+    portal.start_task_soon(leak)
+    assert close_portal(stack, portal, timeout=10) is True
+
+
+def test_closing_a_portal_whose_task_blocks_the_loop_is_bounded():
+    """A task the loop cannot interrupt must not wedge the teardown either.
+
+    The cancel is best effort -- a blocking call in the loop thread cannot
+    be interrupted -- so the close has a bound of its own: it reports that
+    it ran out of time rather than waiting forever.
+    """
+    stack = anyio.from_thread.start_blocking_portal()
+    portal = stack.__enter__()
+
+    async def blocked() -> None:
+        # A blocking call: the cancellation cannot be delivered until it
+        # returns, so the loop thread stays stuck.
+        time.sleep(10)
+
+    portal.start_task_soon(blocked)
+    assert close_portal(stack, portal, timeout=2) is False
 
 
 def test_the_managed_client_does_not_start_the_app_lifespan():
