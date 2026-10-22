@@ -32,6 +32,12 @@ export class ApiError extends Error {
     // is gone. Distinct from a genuine backend outage: retrying won't help,
     // and the UI should offer to sign in again, not report "unreachable".
     public readonly authRedirect: boolean = false,
+    // The parsed `detail` of the error body, when the server sent a
+    // structured one — FastAPI's `{"detail": {...}}`. The message above is
+    // the human rendering of that body; this is the payload itself, so a
+    // caller that needs a field out of it (the billing model a 409 proved,
+    // say) reads it here instead of re-parsing a string.
+    public readonly detail?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -98,13 +104,22 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;
+    let parsedDetail: unknown;
     try {
       const data = (await resp.json()) as { detail?: unknown };
-      if (data && data.detail) detail = String(data.detail);
+      if (data && data.detail) {
+        parsedDetail = data.detail;
+        // A structured detail must not reach the operator as
+        // "[object Object]" — that is what `String(detail)` yields for an
+        // object. Render it as JSON; a caller that understands the shape
+        // reads `err.detail` instead of parsing this message.
+        detail =
+          typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+      }
     } catch {
       // non-JSON error body — keep the status message
     }
-    throw new ApiError(resp.status, detail);
+    throw new ApiError(resp.status, detail, false, parsedDetail);
   }
 
   if (resp.status === 204) return undefined as T;

@@ -311,6 +311,24 @@ function Step1({
 // Step 2 — credentials + debounced preview
 // ---------------------------------------------------------------------------
 
+/**
+ * The billing model a 409 conflict body proved, when it proved one.
+ *
+ * The preview endpoint prices the credential before it checks whether the
+ * account already exists, so a conflict response still carries the model the
+ * server just proved. It is read out of the structured body rather than the
+ * message: the message is that body's human rendering, and printing the
+ * body as a string yields "[object Object]".
+ */
+function provenModelFromConflict(err: ApiError): BillingType | undefined {
+  const detail = err.detail;
+  if (typeof detail !== 'object' || detail === null) return undefined;
+  const model = (detail as { suggested_billing_type?: unknown }).suggested_billing_type;
+  return typeof model === 'string' && model in BILLING_TYPE_LABELS
+    ? (model as BillingType)
+    : undefined;
+}
+
 function Step2({
   provider,
   existingAccountIds,
@@ -366,6 +384,18 @@ function Step2({
     onError: (err) => {
       const asked = askedRef.current;
       if (!asked || asked.apiKey !== apiKey.trim() || asked.cookie !== cookie.trim()) return;
+      // The account already exists. The server prices the credential before
+      // it checks that, so the conflict body still carries the model it
+      // proved — keep it, and say what happened in words. The body is a
+      // structured object: printing it would show "[object Object]".
+      if (err instanceof ApiError && err.status === 409) {
+        setDetectedBillingType(provenModelFromConflict(err));
+        setDetectError(
+          'An account with this identity already exists for this provider. Use a ' +
+            'different credential, or edit the existing account.',
+        );
+        return;
+      }
       setDetectedBillingType(undefined);
       setDetectError(errorMessage(err, 'Could not detect the billing model'));
     },
@@ -719,16 +749,28 @@ function Step3({
 }) {
   const queryClient = useQueryClient();
   const accountId = step2Result.preview.suggested_account_id;
-  const [label, setLabel] = useState<string>(step2Result.preview.suggested_label ?? '');
+  // What the operator typed, kept apart from what the server suggested.
+  // `undefined` = they typed nothing, so the suggestion stands. The split
+  // matters because the suggestion can change under us — the operator goes
+  // back, changes the credential, or asks for another preview — and a
+  // mount-time latch would keep answering for the account that was there
+  // before.
+  const [labelOverride, setLabelOverride] = useState<string | undefined>();
+  const label = labelOverride ?? step2Result.preview.suggested_label ?? '';
   const [workspaceId, setWorkspaceId] = useState('');
   const [pollInterval, setPollInterval] = useState('');
   // How the account bills. `undefined` means "nobody chose" — the operator
   // neither picked a model nor asked for a proof — and then the field is not
   // sent, so the server's own proof decides. A choice (the operator's, or a
   // proof they asked for) is sent, and it always wins.
-  const [billingType, setBillingType] = useState<BillingType | undefined>(
-    step2Result.detectedBillingType,
-  );
+  //
+  // The proof is read from the current step-2 result on every render rather
+  // than latched when this component mounted: the operator can go back and
+  // ask for the proof *after* reaching this step, and a latch would drop it
+  // — saving the account unpriced, which is the symptom this whole flow
+  // exists to close.
+  const [chosenBillingType, setChosenBillingType] = useState<BillingType | undefined>();
+  const billingType = chosenBillingType ?? step2Result.detectedBillingType;
   const shownBillingType =
     billingType ?? step2Result.preview.suggested_billing_type ?? 'unknown';
   const [strategies, setStrategies] = useState<{ id: string; enabled: boolean }[]>(() =>
@@ -783,7 +825,7 @@ function Step3({
           <Input
             id="wiz-label"
             value={label}
-            onChange={(e) => setLabel(e.target.value)}
+            onChange={(e) => setLabelOverride(e.target.value)}
             placeholder={accountId === 'default' ? 'Default account' : maskAccountId(accountId)}
           />
           <HelperText>
@@ -813,7 +855,7 @@ function Step3({
           <select
             id="wiz-billing-type"
             value={shownBillingType}
-            onChange={(e) => setBillingType(e.target.value as BillingType)}
+            onChange={(e) => setChosenBillingType(e.target.value as BillingType)}
             className="h-9 rounded-md border border-border bg-surface-1 px-3 text-sm text-fg"
           >
             {(Object.keys(BILLING_TYPE_LABELS) as BillingType[]).map((type) => (

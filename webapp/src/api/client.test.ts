@@ -107,6 +107,20 @@ describe('api', () => {
     });
   });
 
+  it('carries a structured error detail and never renders it as [object Object]', async () => {
+    // FastAPI sends `{"detail": {...}}` for some errors. The payload is
+    // kept so a caller can read a field out of it, and the message is a
+    // readable rendering of it — never "[object Object]".
+    mockFetch().mockResolvedValue(
+      jsonResponse({ detail: { suggested_billing_type: 'subscription' } }, { status: 409 }),
+    );
+    const err = (await api('/api/v1/thing').catch((e) => e)) as ApiError;
+    expect(err.status).toBe(409);
+    expect(err.detail).toEqual({ suggested_billing_type: 'subscription' });
+    expect(err.message).not.toMatch(/\[object Object\]/);
+    expect(err.message).toContain('subscription');
+  });
+
   it('falls back to the HTTP status when the error body is not JSON', async () => {
     mockFetch().mockResolvedValue(
       new Response('boom', { status: 500 }),

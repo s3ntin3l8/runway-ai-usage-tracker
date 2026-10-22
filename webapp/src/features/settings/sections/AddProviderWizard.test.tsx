@@ -849,4 +849,130 @@ describe('AddProviderWizard — the billing model', () => {
       'billing_type',
     );
   });
+
+  it('keeps a proof the operator asked for after they went back to step 2', async () => {
+    // The proof arrives after the wizard already reached step 3 once. A
+    // mount-time latch drops it, and the account is saved unpriced — the
+    // symptom this whole flow exists to close.
+    vi.mocked(api.previewAccount).mockImplementation(async (body) =>
+      (body as { detect_billing?: boolean }).detect_billing
+        ? { ...previewWithoutModel, suggested_billing_type: 'subscription' }
+        : previewWithoutModel,
+    );
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    renderClaudeWizard();
+    await enterSession();
+
+    // First visit to step 3 — nothing has been proved yet.
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    expect(await screen.findByLabelText('Billing model')).toHaveValue('unknown');
+
+    // Back to the credentials, where the operator asks for the proof.
+    await userEvent.click(screen.getByRole('button', { name: /back/i }));
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/Detected: Subscription/)).toBeInTheDocument(),
+    );
+
+    // Forward again — the proof is still the operator's answer.
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    expect(await screen.findByLabelText('Billing model')).toHaveValue('subscription');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() =>
+      expect(api.putProviderConfig).toHaveBeenCalledWith(
+        'anthropic',
+        'alice@example.com',
+        expect.objectContaining({ billing_type: 'subscription' }),
+      ),
+    );
+  });
+
+  it('keeps a model the operator chose over a proof asked for later', async () => {
+    vi.mocked(api.previewAccount).mockImplementation(async (body) =>
+      (body as { detect_billing?: boolean }).detect_billing
+        ? { ...previewWithoutModel, suggested_billing_type: 'subscription' }
+        : previewWithoutModel,
+    );
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    const select = await screen.findByLabelText('Billing model');
+    await userEvent.selectOptions(select, 'pay_as_you_go');
+
+    // The operator goes back and asks for a proof. Their own choice wins.
+    await userEvent.click(screen.getByRole('button', { name: /back/i }));
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/Detected: Subscription/)).toBeInTheDocument(),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+    expect(await screen.findByLabelText('Billing model')).toHaveValue('pay_as_you_go');
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() =>
+      expect(api.putProviderConfig).toHaveBeenCalledWith(
+        'anthropic',
+        'alice@example.com',
+        expect.objectContaining({ billing_type: 'pay_as_you_go' }),
+      ),
+    );
+  });
+
+  it('says what a 409 conflict means and keeps the model the server proved', async () => {
+    // The server prices the credential before it checks whether the account
+    // already exists, so the conflict body still carries the model it
+    // proved. The body is a structured object — printing it would show the
+    // operator "[object Object]".
+    vi.mocked(api.previewAccount).mockImplementation(async (body) => {
+      if ((body as { detect_billing?: boolean }).detect_billing) {
+        throw new ApiError(409, '[object Object]', false, {
+          suggested_account_id: 'alice@example.com',
+          suggested_label: 'alice@example.com',
+          label_source: 'email',
+          suggested_billing_type: 'subscription',
+          already_exists: true,
+        });
+      }
+      return previewWithoutModel;
+    });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/or edit the existing account/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/\[object Object\]/)).not.toBeInTheDocument();
+    // The proof the server had already made survives the collision.
+    expect(screen.getByText(/Detected: Subscription/)).toBeInTheDocument();
+  });
+
+  it('follows the preview for a label the operator never typed', async () => {
+    // The server can rename an account between two passes. A label the
+    // operator typed is theirs; one they never typed follows the server.
+    let suggestedLabel = 'Alice';
+    vi.mocked(api.previewAccount).mockImplementation(async () => ({
+      ...previewWithoutModel,
+      suggested_label: suggestedLabel,
+    }));
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    expect(await screen.findByLabelText(/Account label/i)).toHaveValue('Alice');
+
+    // Back, change the credential, and the account is renamed server-side.
+    await userEvent.click(screen.getByRole('button', { name: /back/i }));
+    suggestedLabel = 'Alice Renamed';
+    const session = screen.getByLabelText('Web session');
+    await userEvent.clear(session);
+    await userEvent.type(session, 'another-session');
+    await waitFor(() => expect(screen.getByText('Alice Renamed')).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    expect(await screen.findByLabelText(/Account label/i)).toHaveValue('Alice Renamed');
+  });
 });
