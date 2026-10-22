@@ -1125,7 +1125,20 @@ async def test_promotion_names_an_existing_account_nobody_named(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_promotion_keeps_the_name_the_operator_gave_a_discovered_account(monkeypatch):
+@pytest.mark.parametrize(
+    "override_label,expected",
+    [
+        # A name the operator chose wins over the one the server discovered.
+        ("Team wallet", "Team wallet"),
+        # An override the operator *cleared* holds nothing, and must not blank
+        # the detected name: an account nobody named still deserves one.
+        (None, "API org"),
+        ("", "API org"),
+    ],
+)
+async def test_promotion_keeps_the_name_the_operator_gave_a_discovered_account(
+    monkeypatch, override_label, expected
+):
     """A rename made before the account had a row is not shadowed by the promotion."""
     from app.models.db import ProviderAccountLabel, ProviderConfig
 
@@ -1156,7 +1169,7 @@ async def test_promotion_keeps_the_name_the_operator_gave_a_discovered_account(m
             ProviderAccountLabel(
                 provider_id="anthropic_console",
                 account_id=org_id,
-                account_label="Team wallet",
+                account_label=override_label,
             )
         )
         session.commit()
@@ -1196,6 +1209,7 @@ async def test_promotion_keeps_the_name_the_operator_gave_a_discovered_account(m
                 ProviderConfig.account_id == org_id,
             )
         ).one()
-    # The name the operator chose wins over the name the server discovered.
-    assert row.account_label == "Team wallet"
+    # The name the operator chose wins over the name the server discovered —
+    # and an override that holds nothing never blanks the detected name.
+    assert row.account_label == expected
     await cache.reset()
