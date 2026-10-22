@@ -44,6 +44,7 @@ from app.services.account_identity import (
     account_usage_provider_ids,
     canonical_account_id,
 )
+from app.services.billing_type import BillingType, detect_billing_type
 from app.services.collector_manager import manager
 from app.services.collectors.anthropic_console import (
     ConsoleAPIError,
@@ -1539,6 +1540,11 @@ class _AccountPreviewRequest(BaseModel):
     api_key: str | None = None
     session_cookie: str | None = None
     organization_id: str | None = None
+    # Ask the server to prove how the account behind this credential bills.
+    # Off by default: the wizard debounces keystrokes into this endpoint, and
+    # a proof costs a round trip to Claude. The operator asks for it
+    # explicitly ("Detect billing model"), so the cost is paid once.
+    detect_billing: bool = False
 
 
 def _supported_saved_strategies(
@@ -1763,6 +1769,12 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         accounts_out: list[dict[str, Any]] = [
             {
                 "account_id": r.account_id,
+                # Which provider this account belongs to. The Claude family
+                # groups several providers under one card, so an account that
+                # is listed under the family is still addressed by its own
+                # provider — an edit must never land on the family's
+                # representative (#723).
+                "provider_id": p_id,
                 "enabled": r.enabled,
                 "archived": r.archived,
                 "has_usage_events": archived_account_usage.get((p_id, r.account_id), False),
@@ -1810,6 +1822,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             accounts_out.append(
                 {
                     "account_id": c_aid,
+                    "provider_id": p_id,
                     "enabled": True,
                     "archived": False,
                     "has_usage_events": False,
@@ -1839,6 +1852,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 accounts_out.append(
                     {
                         "account_id": live_aid,
+                        "provider_id": p_id,
                         "enabled": True,
                         "archived": False,
                         "has_usage_events": False,
@@ -1947,18 +1961,24 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
                 ProviderConfig.account_id == account_id,
             )
         ).first()
+        console_billing_type: BillingType | None = None
         if (
             body.session_cookie
             and not body.clear_session_cookie
             and (existing_console is None or body.session_cookie != existing_console.session_cookie)
         ):
-            label = await _validate_console_connection(body.session_cookie, account_id)
+            label, console_billing_type = await _validate_console_connection(
+                body.session_cookie, account_id
+            )
             if body.account_label is None:
                 body.account_label = label
         if not existing_console and (not body.session_cookie or body.clear_session_cookie):
             raise HTTPException(status_code=422, detail="Enter a Console session cookie")
-        if not existing_console and body.billing_type is None:
-            body.billing_type = "pay_as_you_go"
+        if not existing_console and body.billing_type is None and console_billing_type is not None:
+            # The balance this account publishes is prepaid credit, so the
+            # account spends — proven by the detector, not assumed per
+            # provider.
+            body.billing_type = console_billing_type
 
     await _apply_provider_config_update(session, provider_id, account_id, body)
     response_data: dict[str, str] = {
@@ -2243,8 +2263,15 @@ async def discover_console_organizations(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
-async def _validate_console_connection(cookie: str, organization_id: str) -> str:
-    """Validate membership and billing access; the UUID stays the saved identity."""
+async def _validate_console_connection(
+    cookie: str, organization_id: str
+) -> tuple[str, BillingType]:
+    """Validate membership and billing access; the UUID stays the saved identity.
+
+    Returns the organization's name and how the account bills. The balance
+    card this already reads is the evidence the detector reads — Console
+    publishes prepaid credit, so the account spends.
+    """
     try:
         org_id = str(UUID(organization_id))
     except ValueError as exc:
@@ -2260,12 +2287,36 @@ async def _validate_console_connection(cookie: str, organization_id: str) -> str
             balance = await console_get(
                 client, f"/api/organizations/{org_id}/prepaid/credits", cookie
             )
-            parse_console_balance(balance)
-        return org["name"]
+            card = parse_console_balance(balance)
+        return org["name"], detect_billing_type([card])
     except ConsoleAPIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except (ValueError, TypeError, AttributeError) as exc:
         raise HTTPException(status_code=502, detail="Invalid Console billing response") from exc
+
+
+async def _detect_claude_billing_type(provider: str, cookie: str) -> BillingType | None:
+    """How the Claude account behind a credential bills, proven like the collectors prove it.
+
+    The same verification the automatic path uses reads the account's quota
+    windows; the detector reads the shape of the card they produce.
+
+    ``None`` means the proof was inconclusive — several organizations are
+    accessible, or Claude answered only partly. That is the absence of a
+    proof, not a proof of "unknown": the operator (or the server's own
+    later proof) decides, and an inconclusive answer is never stored as a
+    decision.
+    """
+    from app.services.claude_verification import verify_claude_cookie
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            result = await verify_claude_cookie(client, provider, cookie)
+    except ConsoleAPIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if result.selection_required or not result.complete:
+        return None
+    return result.billing_type
 
 
 @router.post("/provider-config/preview-account")
@@ -2309,12 +2360,15 @@ async def preview_account_identity(
             organization_id = str(UUID(body.organization_id))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Select a Console organization") from exc
-        label = await _validate_console_connection(body.session_cookie, organization_id)
+        label, console_billing_type = await _validate_console_connection(
+            body.session_cookie, organization_id
+        )
         already_exists = _row_exists(session, body.provider_id, organization_id)
         result = {
             "suggested_account_id": organization_id,
             "suggested_label": label,
             "label_source": "organization",
+            "suggested_billing_type": console_billing_type,
             "already_exists": already_exists,
         }
         if already_exists:
@@ -2329,8 +2383,27 @@ async def preview_account_identity(
             "suggested_account_id": "default",
             "suggested_label": None,
             "label_source": "default",
+            "suggested_billing_type": None,
             "already_exists": _row_exists(session, body.provider_id, "default"),
         }
+
+    # The operator asks for the billing model explicitly ("Detect billing
+    # model"): the credential is proven against the Claude API, and the
+    # account's own quota windows decide how it bills. The debounced preview
+    # never asks for it — a proof costs a round trip to Claude.
+    billing_type: BillingType | None = None
+    if body.detect_billing:
+        if body.provider_id != "anthropic":
+            raise HTTPException(
+                status_code=422,
+                detail="Billing detection is available for Claude accounts only",
+            )
+        if not body.session_cookie:
+            raise HTTPException(
+                status_code=422,
+                detail="Enter a Claude web session to detect the billing model",
+            )
+        billing_type = await _detect_claude_billing_type(body.provider_id, body.session_cookie)
 
     email_pattern = r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$"
     email_candidate: str | None = None
@@ -2349,6 +2422,7 @@ async def preview_account_identity(
                     "suggested_account_id": email_candidate,
                     "suggested_label": email_candidate,
                     "label_source": "email",
+                    "suggested_billing_type": billing_type,
                     "already_exists": True,
                 },
             )
@@ -2356,6 +2430,7 @@ async def preview_account_identity(
             "suggested_account_id": email_candidate,
             "suggested_label": email_candidate,
             "label_source": "email",
+            "suggested_billing_type": billing_type,
             "already_exists": False,
         }
 
@@ -2380,6 +2455,7 @@ async def preview_account_identity(
                 "suggested_account_id": suggested_account_id,
                 "suggested_label": suggested_account_id if label_source == "email" else None,
                 "label_source": label_source,
+                "suggested_billing_type": billing_type,
                 "already_exists": True,
             },
         )
@@ -2388,6 +2464,7 @@ async def preview_account_identity(
         "suggested_account_id": suggested_account_id,
         "suggested_label": suggested_account_id if label_source == "email" else None,
         "label_source": label_source,
+        "suggested_billing_type": billing_type,
         "already_exists": False,
     }
 
