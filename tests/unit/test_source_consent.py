@@ -191,3 +191,15 @@ def test_keychain_egress_is_withheld_until_withdrawal_protocol(monkeypatch):
         }
     }
     assert filter_egress({"metrics": [keychain, file]})["metrics"] == [file]
+
+
+def test_withheld_native_scan_is_not_authoritative_logout(monkeypatch):
+    from scripts.sidecar_pkg import source_consent as consent
+
+    monkeypatch.setattr(consent.sys, "platform", "darwin")
+    payload = {
+        "entries": [],
+        "observations": [],
+        "completed_providers": ["anthropic", "openrouter"],
+    }
+    assert consent.filter_egress(payload)["completed_providers"] == ["openrouter"]

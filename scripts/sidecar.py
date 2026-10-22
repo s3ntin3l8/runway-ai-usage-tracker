@@ -5044,9 +5044,16 @@ def _post_credential_manifest(
     # provider omitted from completed_providers is left untouched.
     from scripts.sidecar_pkg.source_consent import filter_egress
 
-    filtered = filter_egress({"entries": entries, "observations": observations})
+    filtered = filter_egress(
+        {
+            "entries": entries,
+            "observations": observations,
+            "completed_providers": completed_providers,
+        }
+    )
     entries = filtered["entries"]
     observations = filtered["observations"]
+    completed_providers = filtered["completed_providers"]
     body = json.dumps(
         {
             "sidecar_id": sidecar_id,

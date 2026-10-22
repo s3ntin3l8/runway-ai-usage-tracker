@@ -247,6 +247,16 @@ def filter_egress(data: dict[str, Any]) -> dict[str, Any]:
     for field in ("entries", "observations"):
         if isinstance(data.get(field), list):
             result[field] = [item for item in data[field] if not keychain_origin(item)]
+    if (
+        sys.platform == "darwin"
+        and "entries" in data
+        and isinstance(data.get("completed_providers"), list)
+    ):
+        # Withholding a source or refusing permission is not proof of logout.
+        protected = {source.provider for source in catalog().values()}
+        result["completed_providers"] = [
+            provider for provider in data["completed_providers"] if provider not in protected
+        ]
     return result
 
 
