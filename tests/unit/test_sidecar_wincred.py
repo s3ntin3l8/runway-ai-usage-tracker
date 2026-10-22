@@ -299,6 +299,26 @@ class TestKeepAliveWindowsSource:
         assert keep_alive.WINDOWS_CREDENTIAL_TARGET == _TARGET
 
     def test_a_windows_credential_is_due_once_it_has_lapsed(self):
+        """A token that has actually lapsed must be due.
+
+        The blob carries a real ``token.expiry`` in the past, so this
+        exercises the lapsed branch - not the unreadable-expiry branch,
+        which is due by default and would pass for the wrong reason.
+        """
+        from scripts.sidecar_pkg import keep_alive
+
+        raw = json.dumps(_blob(_an_hour_ago())).encode()
+        with (
+            patch.object(keep_alive.platform, "system", return_value="Windows"),
+            patch(
+                "scripts.sidecar_pkg.wincred.read_credential_bytes",
+                return_value=raw,
+            ),
+        ):
+            assert keep_alive.local_refresh_due() is True
+
+    def test_a_windows_credential_with_an_unreadable_expiry_is_due(self):
+        """An entry whose expiry cannot be read counts as due - let the CLI decide."""
         from scripts.sidecar_pkg import keep_alive
 
         with (
@@ -306,10 +326,6 @@ class TestKeepAliveWindowsSource:
             patch(
                 "scripts.sidecar_pkg.wincred.read_credential_bytes",
                 return_value=b"{}",
-            ),
-            patch(
-                "scripts.sidecar_pkg.wincred.read_json_credential",
-                return_value=_blob(_an_hour_ago()),
             ),
         ):
             assert keep_alive.local_refresh_due() is True

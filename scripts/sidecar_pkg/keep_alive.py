@@ -133,6 +133,18 @@ def local_expiry_epoch(token_path: Path | None = None) -> float | None:
     return expiry_epoch(DEFAULT_TOKEN_PATH)
 
 
+def _due(expiry: float | None, now: float | None, lead: int) -> bool:
+    """Whether an access token that expires at *expiry* needs renewing.
+
+    An unreadable expiry counts as due - let the CLI decide. The file and
+    the Credential Manager readers both go through this, so the ``lead``
+    semantics cannot drift between the platforms.
+    """
+    if expiry is None:
+        return True
+    return expiry <= (time.time() if now is None else now) + lead
+
+
 def refresh_due(token_path: Path, *, now: float | None = None, lead: int = LEAD_SECONDS) -> bool:
     """True when a keep-alive run could help.
 
@@ -145,10 +157,7 @@ def refresh_due(token_path: Path, *, now: float | None = None, lead: int = LEAD_
     """
     if not token_path.is_file():
         return False
-    expiry = expiry_epoch(token_path)
-    if expiry is None:
-        return True
-    return expiry <= (time.time() if now is None else now) + lead
+    return _due(expiry_epoch(token_path), now, lead)
 
 
 def local_refresh_due(
@@ -175,9 +184,7 @@ def local_refresh_due(
         if not DEFAULT_TOKEN_PATH.is_file():
             return False
         expiry = expiry_epoch(DEFAULT_TOKEN_PATH)
-    if expiry is None:
-        return True
-    return expiry <= (time.time() if now is None else now) + lead
+    return _due(expiry, now, lead)
 
 
 def run_refresh(command: list[str]) -> bool:
