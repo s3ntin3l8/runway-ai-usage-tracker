@@ -19,9 +19,9 @@ name: Frozen Verifier
 # The job is advisory: it never decided whether a pull request merged, so
 # moving it off the pull-request path does not weaken a gate. It still runs
 # on every push to `main` and nightly, and the nightly is the canary for
-# toolchain drift. PyInstaller is installed unpinned, so a new release of it
-# can break the packaging with no change to this repository -- and a push
-# run cannot catch that, because it ran before the release did.
+# toolchain drift. PyInstaller is pinned, so a new release of it only lands
+# when the pin moves -- but it can break the packaging when it does, and a
+# push run cannot catch that, because it ran before the release did.
 
 on:
   push:
@@ -100,7 +100,9 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
-      - run: python -m pip install -e '.[desktop,sidecar]' pyinstaller
+      # `pyinstaller` is pinned: it builds the shipped binary, so a new
+      # release of it would change the artifact with no pull request.
+      - run: python -m pip install -e '.[desktop,sidecar]' 'pyinstaller==6.22.3'
       - run: python sidecar_app/assets/generate_icons.py
       - run: pyinstaller --noconfirm sidecar_app/spec/${{ matrix.spec }}.spec
       - name: Prepare NSIS (Windows)

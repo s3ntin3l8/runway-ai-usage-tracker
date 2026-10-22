@@ -1,22 +1,13 @@
--r requirements.txt
-types-PyYAML
-pytest>=9.1.1
-pytest-asyncio>=1.4.0
-pytest-cov>=7.1.0
-pytest-timeout>=2.4.0
-# Run the suite in parallel workers locally and in CI. `--dist loadfile`
-# keeps every test module inside one worker, so module-scoped fixtures and
-# import-time setup stay together.
-pytest-xdist>=3.6.0
-pip-audit>=2.10.1
-pre-commit>=4.7.0
-ruff>=0.17.1
-mypy>=2.4.0
-detect-secrets>=1.5.0
-
-# Exercise the tray menu on CI without a native display server.
-pystray>=0.19
-Pillow>=12.3.0
-
-# Verify sidecar release signatures in tests and frozen packaging.
-sigstore==4.5.0
+# The union of the two sets, so a local checkout has everything.
+#
+# `requirements-test.txt` is what the *test suite* needs, and
+# `requirements-lint.txt` is what the *static gate* needs. A job that only
+# runs tests installs the first; a job that only lints installs the second.
+#
+# This file stays the union because two things need both: `make install`,
+# and the shared `ci-python.yml` workflow, whose `type-and-test` job runs
+# mypy, detect-secrets and pip-audit *and* pytest in one job.
+#
+# Pinned exactly, not "at least" -- see the note in requirements.txt.
+-r requirements-test.txt
+-r requirements-lint.txt

@@ -35,10 +35,15 @@ jobs:
       # file needs `make secrets-baseline` in the same change.
       detect-secrets-scope: 'changed'
       # Without this the pip cache key comes from `**/requirements.txt`, so a
-      # change to requirements-dev.txt never busts it.
+      # change to requirements-dev.txt never busts it. The two files it
+      # includes have to be listed too: `hashFiles` hashes the files it is
+      # given, it does not follow `-r` includes.
       cache-dependency-path: |
         requirements.txt
         requirements-dev.txt
+        requirements-test.txt
+        requirements-lint.txt
+        requirements-shared.txt
     # Job-level concurrency, so a new push to this pull request cancels the
     # previous run of *this* job without touching the rest of the workflow.
     # It has to live here rather than in the shared workflow: inside a called
@@ -95,9 +100,12 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
-            requirements-dev.txt
+            requirements-shared.txt
+            requirements-lint.txt
       - name: Install canonical Python dependencies
-        run: python scripts/dev_checks.py install-python
+        # The static gate's set, not the union: this job runs ruff, mypy and
+        # pip-audit, and none of them needs the test suite's packages.
+        run: python scripts/dev_checks.py install-python --set lint
       - name: Run the native Windows static gate
         run: python scripts/dev_checks.py lint
 
@@ -126,9 +134,12 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
-            requirements-dev.txt
+            requirements-shared.txt
+            requirements-test.txt
       - name: Install canonical Python dependencies
-        run: python scripts/dev_checks.py install-python
+        # The suite's set, not the union: the lint tooling is about thirty
+        # packages this job's tests never touch.
+        run: python scripts/dev_checks.py install-python --set test
       - name: Run the Windows-specific tests
         run: python scripts/dev_checks.py test-windows
 
@@ -149,8 +160,12 @@ jobs:
           cache-dependency-path: webapp/package-lock.json
       - name: Audit server, desktop and build dependencies
         run: |
-          python -m pip install --upgrade pip 'setuptools>=83.0.0'
-          python -m pip install -r requirements-dev.txt '.[desktop,sidecar]' pyinstaller
+          # `setuptools` is the version `pyproject.toml` pins as the build
+          # backend, and `pyinstaller` builds the shipped binary -- both are
+          # pinned so a new release of either cannot change what is built
+          # without a pull request.
+          python -m pip install --upgrade pip 'setuptools==84.2.1'
+          python -m pip install -r requirements-dev.txt '.[desktop,sidecar]' 'pyinstaller==6.22.3'
           pip-audit --skip-editable
       - name: Audit frontend including build dependencies
         run: |
