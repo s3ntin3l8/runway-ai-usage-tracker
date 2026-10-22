@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -216,6 +217,18 @@ def test_committed_plan_stays_balanced() -> None:
     estimates = [estimate_shard_seconds(shard, weights) for shard in plan]
     mean = sum(estimates) / len(estimates)
     assert max(estimates) <= mean * 1.5, estimates
+
+
+def test_weights_path_is_per_platform() -> None:
+    """Each platform reads the table it measured.
+
+    The durations are platform-specific -- a module that is slow on Linux is
+    not necessarily slow on Windows -- so there is one table per platform and
+    the planner reads the one for the platform it runs on. A single shared
+    table is what left the Windows shards minutes apart.
+    """
+    expected = "windows" if os.name == "nt" else "linux"
+    assert weights_path().name == f"shard_durations.{expected}.json"
 
 
 def test_summarize_reports_every_shard() -> None:

@@ -28,7 +28,8 @@ modules are about 30% of the total - and the number of tests inside a module
 barely predicts how long that module runs (correlation ~0.14 on this suite).
 Splitting by file count or by test count therefore leaves the shards minutes
 apart, so the weights come from measured per-module durations kept in
-``tests/shard_durations.json``.
+``tests/shard_durations.<platform>.json`` -- one table per platform, because
+the durations are platform-specific.
 
 The weights are platform-specific: a module that is slow on Linux is not
 necessarily slow on Windows (``test_multi_account_provider_config.py`` takes
@@ -46,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -63,8 +65,17 @@ _DURATION_ROW = re.compile(
 
 
 def weights_path(root: Path = ROOT) -> Path:
-    """Where the measured per-module durations live."""
-    return root / "tests" / "shard_durations.json"
+    """Where the measured per-module durations live.
+
+    The weights are platform-specific: a module that is slow on Linux is not
+    necessarily slow on Windows (``test_multi_account_provider_config.py``
+    takes 26s on Linux and 136s on Windows, while ``test_macos_frozen_ca.py``
+    goes the other way). Measuring them on one platform and planning the
+    other leaves the shards minutes apart, so each platform has its own
+    table and reads the one it measured.
+    """
+    platform = "windows" if os.name == "nt" else "linux"
+    return root / "tests" / f"shard_durations.{platform}.json"
 
 
 def suite_files(root: Path = ROOT) -> list[str]:

@@ -69,9 +69,11 @@ python scripts/pytest_shard.py plan # show the whole split
 ```
 
 A shard owns whole test modules, never part of one. The plan is balanced by
-measured per-module runtime (`tests/shard_durations.json`), so re-measure it
-with `make shard-weights` after the suite's shape changes materially - that
-command runs the full suite once and rewrites the table.
+measured per-module runtime (`tests/shard_durations.<platform>.json`, one table
+per platform), so re-measure it with `make shard-weights` after the suite's shape
+changes materially - that command runs the full suite once and rewrites the
+table for the platform it ran on. The Windows table is what the native Windows
+shards are planned with; measure it on Windows, not on Linux.
 
 Git hooks live in the repository's shared `.git/hooks`, so every worktree of
 this repository writes into the same two hook files. Install them once from the

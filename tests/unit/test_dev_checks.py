@@ -236,3 +236,32 @@ def test_missing_venv_reports_install_before_running_commands(tmp_path, monkeypa
     monkeypatch.setattr(dc, "execute", lambda *a, **k: pytest.fail("check ran without .venv"))
     with pytest.raises(RuntimeError, match=r"python scripts/dev_checks.py install first"):
         dc.check(task, [])
+
+
+def test_the_system_python_switch_skips_the_venv(monkeypatch):
+    """A CI job can use the runner's Python instead of building a .venv.
+
+    A runner is a fresh virtual machine per job, so its interpreter is
+    already isolated. Building a .venv on top of it costs a venv creation and
+    a second pip upgrade on every run -- a third of a Windows job, for a
+    dependency install that is already cached.
+
+    Locally the .venv is the point: it keeps the contributor's interpreter
+    untouched. So the switch is off unless a job asks for it.
+    """
+    monkeypatch.delenv("RUNWAY_SYSTEM_PYTHON", raising=False)
+    assert not dc.use_system_python()
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(dc, "execute", lambda command, **kwargs: commands.append(command))
+    dc.check("install-python", [])
+    # The repository's .venv, not the interpreter the job is already running.
+    assert [command[0] for command in commands] == [str(dc.venv_python())] * 2, commands
+
+    commands.clear()
+    monkeypatch.setenv("RUNWAY_SYSTEM_PYTHON", "1")
+    assert dc.use_system_python()
+    dc.check("install-python", [])
+    # The current interpreter, and no venv created on top of it.
+    assert [command[0] for command in commands] == [sys.executable] * 2, commands
+    assert [command[1:3] for command in commands] == [["-m", "pip"], ["-m", "pip"]], commands

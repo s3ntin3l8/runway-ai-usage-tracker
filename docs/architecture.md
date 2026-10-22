@@ -394,7 +394,9 @@ Workflows live in `.github/workflows/`.
     the only way to get. `scripts/pytest_shard.py` owns the split: it keeps
     whole test modules together (so the fixed-port helpers and
     `tests/conftest.py`'s import-time setup stay in one process) and balances
-    them by measured runtime, recorded in `tests/shard_durations.json`. A
+    them by measured runtime, recorded per platform in
+    `tests/shard_durations.linux.json` and `tests/shard_durations.windows.json`
+    -- a module that is slow on Linux is not necessarily slow on Windows. A
     shard runs the whole suite with the other shards' modules deselected by
     node id prefix, so pytest's own `collect_ignore` still decides what is
     collectible. Re-measure with `make shard-weights`. The frontend is not
