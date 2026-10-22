@@ -734,6 +734,9 @@ describe('AddProviderWizard — the billing model', () => {
     await waitFor(() =>
       expect(screen.queryByText(/Detected: Subscription/)).not.toBeInTheDocument(),
     );
+    // And the wizard claims nothing about the credential it never asked
+    // about — an absent proof is not a verdict.
+    expect(screen.queryByText(/Could not be determined/)).not.toBeInTheDocument();
   });
 
   it('sends no model when the proof was inconclusive', async () => {
@@ -764,6 +767,34 @@ describe('AddProviderWizard — the billing model', () => {
     await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
     expect(vi.mocked(api.putProviderConfig).mock.calls[0][2]).not.toHaveProperty(
       'billing_type',
+    );
+  });
+
+  it('drops an inconclusive claim when the credential changes', async () => {
+    // The claim was about a credential Claude was never asked about by then.
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      ...previewWithoutModel,
+      suggested_billing_type: null,
+    });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.previewAccount).mock.calls.some(
+          (call) => (call[0] as { detect_billing?: boolean }).detect_billing === true,
+        ),
+      ).toBe(true),
+    );
+    expect(screen.getByText(/Could not be determined/)).toBeInTheDocument();
+
+    const session = screen.getByLabelText('Web session');
+    await userEvent.clear(session);
+    await userEvent.type(session, 'another-session');
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Could not be determined/)).not.toBeInTheDocument(),
     );
   });
 

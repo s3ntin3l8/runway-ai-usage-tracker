@@ -368,10 +368,12 @@ function Step2({
   });
   // A proof belongs to one credential. When the credential changes, the
   // proof is stale — clear it, so the wizard never saves one account's model
-  // onto another.
+  // onto another, and never reports an answer about a credential Claude was
+  // never asked about.
   useEffect(() => {
     setDetectedBillingType(undefined);
     setDetectError(null);
+    detectBilling.reset();
   }, [apiKey, cookie]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inflightRef = useRef<AbortController | null>(null);
