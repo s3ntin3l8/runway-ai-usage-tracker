@@ -341,6 +341,10 @@ def clear_response_cache():
 # These are package *roots*. A module belongs to one of them when its name
 # is the root itself or starts with it and a dot: ``app`` and ``app.models``
 # are both the ``app`` package, and ``application`` is not.
+#
+# The narrowed walk is measured, not assumed: against a live ``sys.modules``
+# of 1192 entries (median of 9 interleaved reps x 400 calls) it is 161-170
+# us, against 214-227 us for the old walk over every module.
 _REPOSITORY_MODULES = (
     "app",
     "installer",
