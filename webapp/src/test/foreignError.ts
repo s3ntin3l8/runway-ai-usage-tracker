@@ -10,10 +10,19 @@
  * browser.
  *
  * The `message` is intact, because that is the part a caller can actually
- * use.
+ * use. So is `String(error)`: the replacement prototype carries
+ * `Error.prototype.toString`, so the error still reads `Error: boom`.
  */
 export function foreignError(message: string): Error {
   const error = new Error(message);
-  Object.setPrototypeOf(error, { constructor: Error, name: 'Error' });
+  Object.setPrototypeOf(error, {
+    constructor: Error,
+    name: 'Error',
+    // `Error.prototype.toString` has to travel with the replacement, or
+    // `String(error)` gives "[object Error]" where a real error gives
+    // "Error: boom". Nothing in the app reads it today, but a test that
+    // stringifies a caught value would be misled.
+    toString: Error.prototype.toString,
+  });
   return error;
 }
