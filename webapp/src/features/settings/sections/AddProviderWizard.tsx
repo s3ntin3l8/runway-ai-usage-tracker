@@ -338,13 +338,15 @@ function Step2({
   // Claude — so it happens once, when the button is pressed.
   const [detectedBillingType, setDetectedBillingType] = useState<BillingType | undefined>();
   const [detectError, setDetectError] = useState<string | null>(null);
+  // The credential a detection was asked about. An answer — or a failure —
+  // that arrives after the credential moved describes a credential Claude was
+  // never asked about, and is dropped instead of shown.
+  const askedRef = useRef<{ apiKey: string; cookie: string } | null>(null);
   const detectBilling = useMutation({
     mutationFn: async () => {
-      // Remember the credential the proof was asked about: a proof describes
-      // the credential it was asked about, and that credential may change
-      // while the request is in flight.
       const asked = { apiKey: apiKey.trim(), cookie: cookie.trim() };
-      const data = await previewAccount({
+      askedRef.current = asked;
+      return await previewAccount({
         provider_id: provider.provider_id,
         organization_id:
           provider.provider_id === 'anthropic_console' ? organizationId : undefined,
@@ -352,16 +354,18 @@ function Step2({
         session_cookie: asked.cookie || undefined,
         detect_billing: true,
       });
-      return { data, asked };
     },
-    onSuccess: ({ data, asked }) => {
-      if (asked.apiKey !== apiKey.trim() || asked.cookie !== cookie.trim()) return;
+    onSuccess: (data) => {
+      const asked = askedRef.current;
+      if (!asked || asked.apiKey !== apiKey.trim() || asked.cookie !== cookie.trim()) return;
       // An inconclusive proof is not a decision: the server proved nothing,
       // so nobody chose a model and the server's own proof decides.
       setDetectedBillingType(data.suggested_billing_type ?? undefined);
       setDetectError(null);
     },
     onError: (err) => {
+      const asked = askedRef.current;
+      if (!asked || asked.apiKey !== apiKey.trim() || asked.cookie !== cookie.trim()) return;
       setDetectedBillingType(undefined);
       setDetectError(errorMessage(err, 'Could not detect the billing model'));
     },

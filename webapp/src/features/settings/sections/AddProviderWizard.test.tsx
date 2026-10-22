@@ -5,7 +5,7 @@
 // These tests stub `previewAccount` directly so the debounce timing is
 // deterministic and the 409 path is reachable.
 
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { toast } from 'sonner';
 import { ApiError } from '@/api/client';
@@ -795,6 +795,40 @@ describe('AddProviderWizard — the billing model', () => {
 
     await waitFor(() =>
       expect(screen.queryByText(/Could not be determined/)).not.toBeInTheDocument(),
+    );
+  });
+
+  it('drops a failure about a credential that was replaced mid-flight', async () => {
+    // The failure describes the credential the request was about. If that
+    // credential is gone, the wizard says nothing about the new one.
+    let fail: (reason: unknown) => void = () => {};
+    vi.mocked(api.previewAccount).mockImplementation((body) => {
+      if ((body as { detect_billing?: boolean }).detect_billing) {
+        return new Promise((_done, reject) => {
+          fail = reject;
+        });
+      }
+      return Promise.resolve(previewWithoutModel);
+    });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.previewAccount).mock.calls.some(
+          (call) => (call[0] as { detect_billing?: boolean }).detect_billing === true,
+        ),
+      ).toBe(true),
+    );
+
+    const session = screen.getByLabelText('Web session');
+    await userEvent.clear(session);
+    await userEvent.type(session, 'another-session');
+    await act(async () => fail(new Error('Claude unreachable')));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Claude unreachable/)).not.toBeInTheDocument(),
     );
   });
 
