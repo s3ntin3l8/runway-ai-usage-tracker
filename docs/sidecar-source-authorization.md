@@ -63,7 +63,9 @@ before credential forwarding resumes, without repeating an unchanged OS grant.
 No token or master-Keychain password is exposed
 in the local web page, logs or status responses.
 
-A source has an enable control, collection state and renewal state. Enabling
+A source has an enable control, collection state and renewal state. The enable
+action discloses its collection and eligible automatic-renewal scope; Fleet cannot
+add a capability the user did not enable. Enabling
 records local intent and reveals the appropriate setup action; saving a checkbox
 or rendering a page never opens a macOS permission dialog. An explicit local
 Authorize/Connect action starts one bounded foreground setup attempt. Some
@@ -180,9 +182,13 @@ available strategies are:
    refresh/recovery credentials locally in a Runway-owned Keychain item. Another
    application's refresh token copied into this item is still shared ownership
    and does not qualify.
-2. A documented owner-cooperation mechanism that provides the required access
-   without Runway modifying or invalidating the owner's login. Prove its behavior
-   and permission continuity before enabling unattended renewal.
+2. A proved shared-store or documented owner-cooperation mechanism. Existing
+   file renewers are not removed simply because their grant is shared: retain
+   them where exact write-back, identity, permissions, concurrency and owning-CLI
+   acceptance are proved. User-authorized shared-store renewal updates the same
+   login safely; storing a second copy of its token does not create independence.
+   Claude Keychain writes retain their current policy guard until equivalent
+   permission preservation and coexistence are proved.
 3. A read-only external source while neither renewal strategy is established.
    Report the limitation; do not label this the final unattended solution.
 
