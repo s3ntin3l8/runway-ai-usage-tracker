@@ -2667,7 +2667,7 @@ def test_the_oauth_token_preview_detects_the_billing_model_when_asked(client, mo
         "/api/v1/system/provider-config/preview-account",
         json={
             "provider_id": "anthropic",
-            "api_key": "sk-ant-oat-sample",
+            "api_key": "sk-ant-oat-sample",  # pragma: allowlist secret
             "detect_billing": True,
         },
     )
@@ -2693,10 +2693,11 @@ def test_a_conflict_still_carries_the_proof(client, monkeypatch, session):
 
     calls: list[str] = []
     _mock_oauth_usage(monkeypatch, calls, {"five_hour": {"utilization": 25.0}})
+    api_key = "sk-ant-oat-sample"  # pragma: allowlist secret
     # The credential's own account id: the preview is what derives it.
     account_id = client.post(
         "/api/v1/system/provider-config/preview-account",
-        json={"provider_id": "anthropic", "api_key": "sk-ant-oat-sample"},
+        json={"provider_id": "anthropic", "api_key": api_key},
     ).json()["suggested_account_id"]
     session.add(
         ProviderConfig(
@@ -2710,7 +2711,7 @@ def test_a_conflict_still_carries_the_proof(client, monkeypatch, session):
         "/api/v1/system/provider-config/preview-account",
         json={
             "provider_id": "anthropic",
-            "api_key": "sk-ant-oat-sample",
+            "api_key": "sk-ant-oat-sample",  # pragma: allowlist secret
             "detect_billing": True,
         },
     )

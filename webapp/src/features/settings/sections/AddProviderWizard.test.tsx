@@ -685,7 +685,7 @@ describe('AddProviderWizard — the billing model', () => {
     vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
     renderClaudeWizard();
     await userEvent.click(screen.getByRole('button', { name: /Anthropic/ }));
-    await userEvent.type(screen.getByLabelText('API key'), 'sk-ant-oat-token');
+    await userEvent.type(screen.getByLabelText('API key'), 'sk-ant-oat-token'); // pragma: allowlist secret
     await waitFor(() => expect(api.previewAccount).toHaveBeenCalled());
 
     // The detection needs a credential, and an OAuth token is one.
@@ -703,7 +703,7 @@ describe('AddProviderWizard — the billing model', () => {
     // The token itself is what the server was asked about.
     expect(
       vi.mocked(api.previewAccount).mock.calls.some(
-        (call) => (call[0] as { api_key?: string }).api_key === 'sk-ant-oat-token',
+        (call) => (call[0] as { api_key?: string }).api_key === 'sk-ant-oat-token', // pragma: allowlist secret
       ),
     ).toBe(true);
     expect(screen.getByText(/Detected: Subscription/)).toBeInTheDocument();

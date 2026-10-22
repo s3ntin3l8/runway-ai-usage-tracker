@@ -124,8 +124,9 @@ async def test_a_bundle_replaced_mid_flight_publishes_no_proof():
         client.request.side_effect = _replace_then_read
         async with token_cache.using_source("anthropic", "default", "source-a"):
             await collector._get_claude_oauth(
-                client, "sk-ant-oat-first"
-            )  # pragma: allowlist secret
+                client,
+                "sk-ant-oat-first",  # pragma: allowlist secret
+            )
 
         assert collector.verified_billing_type is None
         assert getattr(collector, "verified_source_generation", None) is None
@@ -159,8 +160,9 @@ async def test_a_credential_that_cannot_be_read_publishes_no_proof():
         collector = AnthropicCollector()
         async with token_cache.using_source("anthropic", "default", "source-a"):
             cards = await collector._get_claude_oauth(
-                client, "sk-ant-oat-test"
-            )  # pragma: allowlist secret
+                client,
+                "sk-ant-oat-test",  # pragma: allowlist secret
+            )
 
         # The failure is reported as a card, and it decides no model.
         assert cards and cards[0].get("error_type") == "auth_failed"
@@ -225,5 +227,9 @@ async def test_the_manual_path_claims_nothing_when_the_token_is_not_readable():
     client.request.return_value = response
 
     assert (
-        await billing_model_from_oauth_usage(client, "sk-ant-oat-test") is None
-    )  # pragma: allowlist secret
+        await billing_model_from_oauth_usage(
+            client,
+            "sk-ant-oat-test",  # pragma: allowlist secret
+        )
+        is None
+    )
