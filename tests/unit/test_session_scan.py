@@ -14,19 +14,26 @@ The guard and the scan share one predicate -- ``is_repository_module`` -- so
 they cannot drift apart again. A predicate that matched the submodules but
 not the package roots would leave ``sys.modules["app"]`` unrepaired, and a
 guard derived from the prefix list rather than from the predicate would not
-have noticed that.
+have noticed that. The scan itself is exercised here too, because the
+narrow loop it runs is inlined for speed and the predicate cannot check it.
 """
 
 from __future__ import annotations
 
+import importlib
 import shutil
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from sqlmodel import Session
 
-from tests.conftest import _REPOSITORY_MODULES, is_repository_module
+from tests.conftest import (
+    _REPOSITORY_MODULES,
+    is_repository_module,
+    repair_captured_session,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -81,6 +88,33 @@ def test_the_scan_matches_the_package_roots_and_not_only_their_modules() -> None
     assert is_repository_module("app")
     assert is_repository_module("app.models")
     assert not is_repository_module("application")
+
+
+def test_the_scan_repairs_a_capture_on_a_package_root() -> None:
+    """The scan itself, not only the predicate the guard shares with it.
+
+    The scan is what runs at the end of every test, so it is exercised
+    here rather than through the predicate: the two read the same
+    constants, but only this test would notice if the *loop* stopped
+    matching the package roots -- and the loop is what the predicate
+    cannot check.
+
+    The narrow loop is inlined for speed, so this is the one place where
+    the guarantee is measured rather than assumed.
+    """
+    module = importlib.import_module("app")
+    had = "Session" in vars(module)
+    before = vars(module).get("Session")
+    mock_session = MagicMock()
+    module.Session = mock_session
+    try:
+        repair_captured_session(mock_session, Session)
+        assert module.Session is Session
+    finally:
+        if had:
+            module.Session = before
+        else:
+            del module.Session
 
 
 def test_the_scan_covers_the_module_the_fixture_patches() -> None:
