@@ -53,6 +53,11 @@ acceptance tracker; #526 must remain open until its full acceptance passes.
 
 ## Partition-policy guard
 
+The historical synthetic probe in claude-keychain-policy-probe-773.json changed
+only authorization 65538 on its first data update: a fresh writer could then read
+the item it previously could not read. Its cached cleanup checks came from the
+unsafe older harness and are not evidence of isolation.
+
 Apple's classic Keychain data-update implementation regenerates the partition ACL
 for the writer. A protected item owned by another application or by multiple
 partitions can therefore change policy even on a data-only update. The new
@@ -67,8 +72,8 @@ Runway process locking and token re-reads do not exclude independently running
 Claude Code. The Keychain API provides no atomic token comparison; that race
 limitation remains.
 
-Full repository gate passed: make lint, make test (5,357 passed; 62 skipped),
-and make web-test (1,208 passed). No additional review was requested.
+Full repository gate passed: make lint, make test (5,441 passed; 63 skipped),
+and make web-test (1,222 passed). No additional review was requested.
 
 Apple source references: [StorageManager private-Keychain creation](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/StorageManager.cpp)
 and [classic Keychain data update](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/Item.cpp).
