@@ -1,22 +1,26 @@
 -r requirements.txt
-types-PyYAML
-pytest>=9.1.1
-pytest-asyncio>=1.4.0
-pytest-cov>=7.1.0
-pytest-timeout>=2.4.0
+
+# Pinned exactly, not "at least" -- see the note in requirements.txt. The
+# versions are what a fresh install resolves to today; Dependabot proposes
+# the bumps.
+types-PyYAML==6.0.12.20260906
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+pytest-timeout==2.4.0
 # Run the suite in parallel workers locally and in CI. `--dist loadfile`
 # keeps every test module inside one worker, so module-scoped fixtures and
 # import-time setup stay together.
-pytest-xdist>=3.6.0
-pip-audit>=2.10.1
-pre-commit>=4.7.0
-ruff>=0.17.1
-mypy>=2.4.0
-detect-secrets>=1.5.0
+pytest-xdist==3.8.0
+pip-audit==2.10.1
+pre-commit==4.7.0
+ruff==0.17.1
+mypy==2.4.0
+detect-secrets==1.5.0
 
 # Exercise the tray menu on CI without a native display server.
-pystray>=0.19
-Pillow>=12.3.0
+pystray==0.19.5
+Pillow==13.0.0
 
 # Verify sidecar release signatures in tests and frozen packaging.
 sigstore==4.5.0

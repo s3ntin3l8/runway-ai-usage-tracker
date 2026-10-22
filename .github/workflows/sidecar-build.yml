@@ -81,7 +81,9 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install -e '.[desktop,sidecar]' pyinstaller
+        # `pyinstaller` is pinned: it builds the shipped binary, so a new
+        # release of it would change the artifact with no pull request.
+        run: pip install -e '.[desktop,sidecar]' 'pyinstaller==6.22.3'
 
       - name: Stamp edge version
         # Mark the bundled package.json so the binary reports `<base>+edge.<sha>`
