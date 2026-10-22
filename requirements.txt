@@ -1,14 +1,27 @@
-fastapi>=0.111.0,!=0.136.3
-uvicorn[standard]>=0.29.0
-httpx>=0.27.0
-python-dotenv>=1.0.0
-aiosqlite>=0.20.0
-pydantic>=2.7.0
-pydantic-settings>=2.2.0
-keyring>=24.0.0
+# Pinned exactly, not "at least".
+#
+# A floating range means a new release of a dependency lands in CI on the
+# next run, with no pull request and no commit, and can turn `main` red on
+# its own: the repository's own history shows that, in
+# `fastapi>=0.111.0,!=0.136.3`, where a bad release was worked around with
+# an exclusion instead of a pin. Dependabot is configured for pip (weekly,
+# Monday, grouped), so with exact pins its pull requests are the upgrade
+# path: the bump is proposed, CI validates it, and the pin moves
+# deliberately.
+#
+# These are the versions a fresh install resolves to today. To move one, let
+# Dependabot propose it, or edit the pin and run `make install`.
+fastapi==0.159.1
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+python-dotenv==1.2.4
+aiosqlite==0.22.1
+pydantic==2.14.1
+pydantic-settings==2.16.1
+keyring==25.7.0
 cryptography==50.0.2
-secretstorage>=3.3.0
-PyYAML>=6.0.0
+secretstorage==3.5.0
+PyYAML==6.0.3
 slowapi==0.1.10
 sqlmodel==0.0.48
-tzdata>=2026.5; sys_platform == "win32"
+tzdata==2026.5; sys_platform == "win32"

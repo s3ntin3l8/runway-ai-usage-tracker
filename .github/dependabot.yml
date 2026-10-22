@@ -20,6 +20,14 @@ updates:
       python-deps:
         patterns:
           - "*"
+        # The requirements are pinned exactly, so a weekly pull request is a
+        # proposal to move a pin. Weekly pull requests carry minor and patch
+        # bumps only: a major is a migration, not a weekly batch, and the
+        # same rule the npm group below already follows. A security update is
+        # not one of these -- Dependabot proposes those regardless.
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: npm
     # The npm project lives in webapp/; the repository root only holds a
