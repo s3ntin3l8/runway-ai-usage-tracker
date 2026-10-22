@@ -1,10 +1,15 @@
 """Safety boundaries for the explicit native acceptance harness (no Keychain IO)."""
 
+import sys
 from pathlib import Path
 
 import pytest
 
 from tests import native_claude_keychain_acceptance as acceptance
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="native fixture safety relies on POSIX ownership and mode bits"
+)
 
 
 def test_harness_never_changes_user_preferences_or_locks_keychains():
