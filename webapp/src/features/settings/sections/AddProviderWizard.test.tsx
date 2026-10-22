@@ -675,6 +675,53 @@ describe('AddProviderWizard — the billing model', () => {
     );
   });
 
+  it('proves the model from an OAuth token alone', async () => {
+    // An OAuth token has no Claude organization to read, but it publishes
+    // usage of its own — enough to price the account.
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      ...previewWithoutModel,
+      suggested_billing_type: 'subscription',
+    });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    renderClaudeWizard();
+    await userEvent.click(screen.getByRole('button', { name: /Anthropic/ }));
+    await userEvent.type(screen.getByLabelText('API key'), 'sk-ant-oat-token');
+    await waitFor(() => expect(api.previewAccount).toHaveBeenCalled());
+
+    // The detection needs a credential, and an OAuth token is one.
+    const detect = screen.getByRole('button', { name: /detect billing model/i });
+    expect(detect).toBeEnabled();
+
+    await userEvent.click(detect);
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.previewAccount).mock.calls.some(
+          (call) => (call[0] as { detect_billing?: boolean }).detect_billing === true,
+        ),
+      ).toBe(true),
+    );
+    // The token itself is what the server was asked about.
+    expect(
+      vi.mocked(api.previewAccount).mock.calls.some(
+        (call) => (call[0] as { api_key?: string }).api_key === 'sk-ant-oat-token',
+      ),
+    ).toBe(true);
+    expect(screen.getByText(/Detected: Subscription/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    const select = await screen.findByLabelText('Billing model');
+    expect(select).toHaveValue('subscription');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() =>
+      expect(api.putProviderConfig).toHaveBeenCalledWith(
+        'anthropic',
+        'alice@example.com',
+        expect.objectContaining({ billing_type: 'subscription' }),
+      ),
+    );
+  });
+
   it('lets the operator override the detected model', async () => {
     vi.mocked(api.previewAccount).mockResolvedValue({
       ...previewWithoutModel,
