@@ -20,6 +20,15 @@ from scripts.sidecar_pkg.keychain_protocol import KeychainError
 RECOVERY_SERVICE = "Runway Claude Code renewal"
 
 
+def _partition_write_supported(
+    partitions: list[list[str]], integrity: bool, current: str | None
+) -> bool:
+    """Classic data updates regenerate the partition list for their writer (#773)."""
+    if not partitions:
+        return not integrity  # Legacy Keychains have neither protection entry.
+    return current is not None and partitions == [[current]]
+
+
 @dataclass(frozen=True)
 class KeychainItem:
     reference: bytes
@@ -101,6 +110,11 @@ class KeychainStore:
         self._check_write()
         self.api.update({"persistent": reference}, {"data": data})
 
+    def check_update(self, reference: bytes) -> bool:
+        """Preflight policy preservation before spending a refresh token."""
+        self._check_write()
+        return self.api.call("check_update", {"persistent": reference}, {}) is True
+
     def _check_write(self) -> None:
         if self._allowed() is not True:
             raise KeychainError("permission disabled")
@@ -177,6 +191,19 @@ class _NativeAPI:
         self._bind(self.sec, "SecItemUpdate", [ptr, ptr], status)
         self._bind(self.sec, "SecItemAdd", [ptr, ptr], status)
         self._bind(self.sec, "SecItemDelete", [ptr], status)
+        self._bind(self.sec, "SecKeychainItemCopyAccess", [ptr, ctypes.POINTER(ptr)], status)
+        self._bind(self.sec, "SecAccessCopyACLList", [ptr, ctypes.POINTER(ptr)], status)
+        self._bind(
+            self.sec, "SecACLGetAuthorizations", [ptr, ptr, ctypes.POINTER(ctypes.c_uint32)], status
+        )
+        self._bind(self.sec, "SecACLCopyContents", [ptr, ptr, ptr, ptr], status)
+        self._bind(self.sec, "SecCodeCopySelf", [ctypes.c_uint32, ctypes.POINTER(ptr)], status)
+        self._bind(
+            self.sec,
+            "SecCodeCopySigningInformation",
+            [ptr, ctypes.c_uint32, ctypes.POINTER(ptr)],
+            status,
+        )
         self._bind(
             self.sec,
             "SecKeychainGetUserInteractionAllowed",
@@ -270,7 +297,107 @@ class _NativeAPI:
         with self._interaction(True):
             return self._call("copy", {"persistent": reference}, {})
 
+    def _writer_partition(self) -> str | None:
+        code, info = ctypes.c_void_p(), ctypes.c_void_p()
+        try:
+            if self.sec.SecCodeCopySelf(0, ctypes.byref(code)):
+                return None
+            if self.sec.SecCodeCopySigningInformation(code, 2, ctypes.byref(info)):
+                return None
+            for name, prefix in (
+                ("kSecCodeInfoTeamIdentifier", "teamid:"),
+                ("kSecCodeInfoUnique", "cdhash:"),
+            ):
+                key = ctypes.c_void_p.in_dll(self.sec, name)
+                value = self.cf.CFDictionaryGetValue(info, key)
+                if value:
+                    decoded = self._decode(value)
+                    if prefix == "teamid:" and isinstance(decoded, str) and decoded:
+                        return prefix + decoded
+                    if prefix == "cdhash:" and isinstance(decoded, bytes) and decoded:
+                        return prefix + decoded.hex()
+            return None
+        finally:
+            if info:
+                self.cf.CFRelease(info)
+            if code:
+                self.cf.CFRelease(code)
+
+    def _write_policy_supported(self, reference: bytes) -> bool:
+        """Metadata only. Never edit ACLs or request owner authorization."""
+        refs: list[Any] = []
+
+        def output() -> Any:
+            value = ctypes.c_void_p()
+            refs.append(value)
+            return value
+
+        def checked(status: int) -> None:
+            if status:
+                raise KeychainError("missing" if status == -25300 else "unavailable")
+
+        query = self._encode(
+            {
+                self.key("kSecClass"): self.key("kSecClassGenericPassword"),
+                self.key("kSecValuePersistentRef"): reference,
+                self.key("kSecReturnRef"): True,
+                self.key("kSecUseDataProtectionKeychain"): False,
+            }
+        )
+        try:
+            item, access, acls = output(), output(), output()
+            checked(self.sec.SecItemCopyMatching(query, ctypes.byref(item)))
+            checked(self.sec.SecKeychainItemCopyAccess(item, ctypes.byref(access)))
+            checked(self.sec.SecAccessCopyACLList(access, ctypes.byref(acls)))
+            partitions: list[list[str]] = []
+            integrity = False
+            for index in range(self.cf.CFArrayGetCount(acls)):
+                acl = self.cf.CFArrayGetValueAtIndex(acls, index)
+                tags, count = (ctypes.c_int32 * 64)(), ctypes.c_uint32(64)
+                checked(self.sec.SecACLGetAuthorizations(acl, tags, ctypes.byref(count)))
+                authorizations = tuple(tags[: count.value])
+                integrity = integrity or 65539 in authorizations
+                if 65538 not in authorizations:
+                    continue
+                if authorizations != (65538,):
+                    return False
+                apps, description = output(), output()
+                selector = ctypes.create_string_buffer(4)
+                checked(
+                    self.sec.SecACLCopyContents(
+                        acl, ctypes.byref(apps), ctypes.byref(description), selector
+                    )
+                )
+                try:
+                    data = plistlib.loads(bytes.fromhex(self._decode(description)))
+                    values = data.get("Partitions") if isinstance(data, dict) else None
+                    if (
+                        not isinstance(values, list)
+                        or set(data) != {"Partitions"}
+                        or not all(isinstance(value, str) for value in values)
+                    ):
+                        return False
+                    partitions.append(values)
+                except (ValueError, TypeError, plistlib.InvalidFileException):
+                    return False
+            return _partition_write_supported(
+                partitions, integrity, self._writer_partition() if partitions else None
+            )
+        finally:
+            for value in reversed(refs):
+                if value:
+                    self.cf.CFRelease(value)
+            self.cf.CFRelease(query)
+
     def _call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
+        if operation in {"check_update", "update"}:
+            if set(query) != {"persistent"} or not isinstance(query["persistent"], bytes):
+                raise KeychainError("unavailable")
+            supported = self._write_policy_supported(query["persistent"])
+            if operation == "check_update":
+                return supported
+            if not supported:
+                raise KeychainError("policy unavailable")
         names = {
             "service": "kSecAttrService",
             "account": "kSecAttrAccount",
@@ -317,6 +444,8 @@ class _NativeAPI:
                 )
                 raise KeychainError(reason, native_status=int(code))
             if operation != "copy":
+                if operation == "update" and not self._write_policy_supported(query["persistent"]):
+                    raise KeychainError("policy unavailable")
                 return None
             return self._decode_matches(result)
         finally:

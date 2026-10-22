@@ -40,7 +40,7 @@ def compare(before: PolicySnapshot, after: PolicySnapshot) -> dict[str, Any]:
     }
 
 
-def capture(service: str, account: str) -> PolicySnapshot:
+def capture(service: str, account: str, *, keychain: Any = None) -> PolicySnapshot:
     """Read metadata without UI, releasing legacy handles before any update.
 
     The caller must first establish unique selection with KeychainStore.find.
@@ -86,7 +86,7 @@ def capture(service: str, account: str) -> PolicySnapshot:
             svc, acct = service.encode(), account.encode()
             checked(
                 api.sec.SecKeychainFindGenericPassword(
-                    None, len(svc), svc, len(acct), acct, None, None, c.byref(item)
+                    keychain, len(svc), svc, len(acct), acct, None, None, c.byref(item)
                 )
             )
             checked(api.sec.SecKeychainItemCopyAccess(item, c.byref(access)))

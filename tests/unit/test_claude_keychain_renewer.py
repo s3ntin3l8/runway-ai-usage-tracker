@@ -57,6 +57,9 @@ class MemoryStore:
             raise KeychainError("failed")
         self.journal = None
 
+    def check_update(self, reference):
+        return True
+
     def update(self, reference, data):
         if self.fail_write:
             raise KeychainError("failed")
@@ -396,3 +399,39 @@ def test_nonrotating_write_with_failed_cleanup_never_exchanges_again(env, monkey
     store.fail_delete = False
     assert worker.renew()
     assert store.writes == 1 and len(calls) == 1 and store.journal is None
+
+
+def test_unsupported_partition_policy_blocks_exchange_and_intent(env, caplog):
+    store, calls, make = env
+    store.check_update = lambda ref: False
+    worker = make()
+    assert not worker.renew()
+    assert not worker.renew()
+    assert not calls and not store.saved and store.writes == 0
+    messages = [r.getMessage() for r in caplog.records if "access policy" in r.getMessage()]
+    assert len(messages) == 1
+    assert "old-refresh" not in " ".join(messages)
+
+
+def test_policy_change_after_intent_blocks_exchange_and_clears_unspent_intent(env):
+    store, calls, make = env
+    checks = iter([True, False])
+    store.check_update = lambda ref: next(checks)
+    assert not make().renew()
+    assert not calls and store.journal is None and store.writes == 0
+
+
+def test_pending_replacement_waits_for_safe_policy_without_another_exchange(env):
+    store, calls, make = env
+    store.fail_write = True
+    worker = make()
+    assert not worker.renew()
+    assert len(calls) == 1
+    store.fail_write = False
+    store.check_update = lambda ref: False
+    restarted = make()
+    assert not restarted.renew()
+    assert len(calls) == 1 and store.journal["phase"] == "pending"
+    store.check_update = lambda ref: True
+    assert restarted.renew()
+    assert len(calls) == 1 and store.journal is None

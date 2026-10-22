@@ -105,6 +105,7 @@ def native_stub(result=None, status=0):
     api.key = lambda name: name
     api._encode = lambda value: value
     api._decode_matches = lambda value: result
+    api._write_policy_supported = lambda reference: True
     api.cf = SimpleNamespace(CFRelease=lambda value: None)
 
     def copy(query, output):
@@ -364,3 +365,33 @@ def test_service_only_lookup_rejects_ambiguity():
     api.matches *= 2
     with pytest.raises(store.KeychainError, match="ambiguous"):
         adapter.read_secret("service")
+
+
+def test_native_update_refuses_unsafe_policy_before_changing_data():
+    api, calls = native_stub()
+    api._write_policy_supported = lambda reference: False
+    with pytest.raises(store.KeychainError, match="policy unavailable"):
+        api.call("update", {"persistent": b"exact"}, {"data": b"replacement"})
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "partitions,integrity,current,supported",
+    [
+        ([], False, None, True),
+        ([], True, "cdhash:synthetic-writer", False),
+        ([["cdhash:synthetic-writer"]], True, "cdhash:synthetic-writer", True),
+        ([["cdhash:synthetic-owner"]], True, "cdhash:synthetic-writer", False),
+        ([["cdhash:synthetic-writer", "apple-tool:"]], True, "cdhash:synthetic-writer", False),
+        ([["cdhash:synthetic-writer"]], True, None, False),
+        ([["teamid:synthetic-writer"]], True, "teamid:synthetic-writer", True),
+        (
+            [["cdhash:synthetic-writer"], ["cdhash:synthetic-writer"]],
+            True,
+            "cdhash:synthetic-writer",
+            False,
+        ),
+    ],
+)
+def test_partition_write_precondition(partitions, integrity, current, supported):
+    assert store._partition_write_supported(partitions, integrity, current) is supported

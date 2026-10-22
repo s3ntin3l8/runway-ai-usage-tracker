@@ -272,6 +272,7 @@ class KeepAliveController:
         self._local = False
         self._remote: bool | None = None
         self._fleet = False
+        self._allowed_providers: frozenset[str] | None = None
 
     @property
     def armed(self) -> bool:
@@ -283,7 +284,9 @@ class KeepAliveController:
 
         Startup and unpaired tray instances must not claim keep-alive is off.
         """
-        return self.effective if self._armed else None
+        if not self._armed:
+            return None
+        return self._running if self._allowed_providers is not None else self.effective
 
     def reported_providers(self) -> dict[str, bool] | None:
         """Keep-alive per login to report on ingest; ``None`` before daemon start."""
@@ -300,18 +303,23 @@ class KeepAliveController:
 
     def effective_for(self, provider: str) -> bool:
         """Whether one login is kept alive: its own override, else the sidecar-level setting."""
+        if self._allowed_providers is not None and provider not in self._allowed_providers:
+            return False
         override = self._providers.get(provider)
         return self.effective if override is None else override
 
     @property
     def _running(self) -> bool:
+        if self._allowed_providers is not None:
+            return any(self.effective_for(name) for name in self._allowed_providers)
         return self.effective or any(self._providers.values())
 
-    def arm(self, local: bool) -> None:
-        """Daemon start: take the local flag and begin controlling the thread."""
+    def arm(self, local: bool, *, providers: Iterable[str] | None = None) -> None:
+        """Start within this entrypoint's capabilities; Fleet cannot expand them."""
         with self._lock:
             self._armed = True
             self._local = bool(local)
+            self._allowed_providers = frozenset(providers) if providers is not None else None
             self._reconcile()
 
     def set_remote(self, desired: bool | None) -> None:

@@ -20,6 +20,8 @@ class API:
     def call(self, operation, query, values):
         items = plistlib.loads(snapshot.read_bytes())
         mode = fault.read_text() if fault.exists() else ""
+        if operation == "check_update":
+            return True
         stage = ""
         if operation == "copy":
             if "persistent" in query:

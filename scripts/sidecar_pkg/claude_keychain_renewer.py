@@ -184,6 +184,11 @@ class KeychainRenewer:
         if expiry / 1000 > time.time() + LEAD_SECONDS:
             self._log(ref, "not due")
             return True
+        if not store.check_update(ref):
+            self._log(
+                ref, "permission unavailable; existing access policy requires owning-app renewal"
+            )
+            return False
         # Re-read immediately before intent/exchange; never spend a stale snapshot.
         current = _read_target(store, item)
         if _oauth(current)[1].get("refreshToken") != refresh:
@@ -197,6 +202,12 @@ class KeychainRenewer:
             self._log(ref, "superseded")
             return True
         self._require_permission()
+        if not store.check_update(ref):
+            self._clear(store, ref)  # No exchange has occurred; this intent is unspent.
+            self._log(
+                ref, "permission unavailable; existing access policy requires owning-app renewal"
+            )
+            return False
         scopes = oauth.get("scopes")
         try:
             response = request_refresh(
@@ -233,6 +244,9 @@ class KeychainRenewer:
         current = _read_target(store, item)
         data, oauth = _oauth(current)
         if oauth == replacement_oauth:
+            if not store.check_update(ref):
+                self._log(ref, "recovery pending; access policy unavailable")
+                return False
             # A previous write succeeded; verification/cleanup was interrupted.
             self._clear(store, ref)
             return True
@@ -252,6 +266,9 @@ class KeychainRenewer:
                 oauth[key] = replacement_oauth[key]
         data["claudeAiOauth"] = oauth
         self._require_permission()
+        if not store.check_update(ref):
+            self._log(ref, "recovery pending; access policy unavailable")
+            return False
         store.update(ref, json.dumps(data).encode())
         verified = _oauth(_read_target(store, item))[1]
         if verified != oauth:

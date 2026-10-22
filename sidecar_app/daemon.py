@@ -1,5 +1,6 @@
 """TrayDaemon — wraps DaemonRunner with a tray-friendly interface."""
 
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -32,7 +33,7 @@ class TrayDaemon:
 
             try:
                 reopen_keychain_client()
-                _sidecar._KEEP_ALIVE.arm(self._config.get("keep_alive") is True)
+                self._arm_keep_alive()
                 self._runner.start()
             except BaseException:
                 _sidecar._KEEP_ALIVE.stop()
@@ -57,7 +58,14 @@ class TrayDaemon:
             self._config = config
             self._runner._config = config
             if self._started:
-                _sidecar._KEEP_ALIVE.arm(config.get("keep_alive") is True)
+                self._arm_keep_alive()
+
+    def _arm_keep_alive(self) -> None:
+        # #526 accepts macOS Claude only. Other tray renewers stay gated by #548.
+        _sidecar._KEEP_ALIVE.arm(
+            self._config.get("keep_alive") is True,
+            providers={"anthropic"} if sys.platform == "darwin" else set(),
+        )
 
     def pause(self) -> None:
         """Pause collection cycles."""

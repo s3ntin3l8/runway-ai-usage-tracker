@@ -1,0 +1,709 @@
+{
+  "scope": "explicitly-scoped-source-native-synthetic",
+  "packaged_native_io_exercised": false,
+  "real_credential_reads": 0,
+  "real_credential_writes": 0,
+  "real_oauth_exchanges": 0,
+  "cases": [
+    {
+      "case": "normal",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": true,
+        "native_operations": 24,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: renewed"
+        ],
+        "fault_injected": false
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 3,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: not due"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "suffix",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": true,
+        "native_operations": 24,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: renewed"
+        ],
+        "fault_injected": false
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 3,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: not due"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "intent_failed",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": false,
+        "native_operations": 7,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: failed"
+        ],
+        "fault_injected": true
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 24,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: renewed"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 0,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "pending_before_save",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "simulated_crash": true
+      },
+      "restart": {
+        "renew_result": false,
+        "native_operations": 4,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: recovery pending; renew or log in with Claude Code"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "pending_after_save",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "simulated_crash": true
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 17,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: renewed"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "target_after_save",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "simulated_crash": true
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 14,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "cleanup_after_save",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "simulated_crash": true
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 3,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: not due"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "pending_failed",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": true,
+        "native_operations": 29,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: failed",
+          "Claude Code Keychain keep-alive: renewed"
+        ],
+        "fault_injected": true
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 3,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: not due"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "target_failed",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": false,
+        "native_operations": 20,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: failed"
+        ],
+        "fault_injected": true
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 17,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: renewed"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "response_lost",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": false,
+        "native_operations": 11,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: recovery pending; exchange outcome unknown"
+        ],
+        "fault_injected": false
+      },
+      "restart": {
+        "renew_result": false,
+        "native_operations": 4,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: recovery pending; renew or log in with Claude Code"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "concurrent_rotation",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": true,
+        "native_operations": 23,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: superseded"
+        ],
+        "fault_injected": false
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 3,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: not due"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "deleted_target",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": false,
+        "native_operations": 20,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: missing"
+        ],
+        "fault_injected": false
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 1,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "deleted_target_not_recreated": true,
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "permission_off",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": false,
+        "native_operations": 20,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: failed"
+        ],
+        "fault_injected": true
+      },
+      "disabled": {
+        "renew_result": true,
+        "native_operations": 0,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: local permission disabled or unavailable"
+        ],
+        "fault_injected": false
+      },
+      "restart": {
+        "renew_result": true,
+        "native_operations": 17,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: renewed"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 1,
+      "fake_exchanges_after_restart": 1,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "malformed_expiry",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": true,
+        "native_operations": 6,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: unsupported expiry; renew in Claude Code"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 0,
+      "fake_exchanges_after_restart": 0,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "missing_expiry",
+      "created_authorization_tags": [
+        24,
+        28,
+        35,
+        37,
+        38,
+        59,
+        115,
+        65536,
+        65538,
+        65539
+      ],
+      "first": {
+        "renew_result": true,
+        "native_operations": 6,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: unsupported expiry; renew in Claude Code"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 0,
+      "fake_exchanges_after_restart": 0,
+      "policy": {
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": []
+      },
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    },
+    {
+      "case": "ambiguous",
+      "created_authorization_tags": [],
+      "first": {
+        "renew_result": false,
+        "native_operations": 1,
+        "diagnostics_secret_free": true,
+        "diagnostics_deduplicated": true,
+        "outcomes": [
+          "Claude Code Keychain keep-alive: ambiguous"
+        ],
+        "fault_injected": false
+      },
+      "fake_exchanges_before_restart": 0,
+      "fake_exchanges_after_restart": 0,
+      "unselected_items_preserved": true,
+      "cleanup": {
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true
+      },
+      "outcome": "passed"
+    }
+  ],
+  "outcome": "passed",
+  "validation_date": "2026-10-22",
+  "important_boundary": "Source native IO only. Packaged worker execution is rejected by this harness."
+}

@@ -8,7 +8,7 @@ from typing import Any
 
 MAX_FRAME = 4 * 1024 * 1024
 TIMEOUT = 30
-OPERATIONS = frozenset({"copy", "update", "add", "delete"})
+OPERATIONS = frozenset({"copy", "check_update", "update", "add", "delete"})
 
 
 class KeychainError(Exception):

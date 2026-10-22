@@ -194,7 +194,9 @@ class KeychainClient:
             if "error" in response:
                 reason = response["error"]
                 raise KeychainError(
-                    reason if reason in {"denied", "missing", "failed"} else "unavailable"
+                    reason
+                    if reason in {"denied", "missing", "failed", "policy unavailable"}
+                    else "unavailable"
                 )
             return response.get("result")
         except (OSError, ValueError, TypeError, plistlib.InvalidFileException):

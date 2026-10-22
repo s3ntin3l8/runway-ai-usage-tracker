@@ -1,5 +1,6 @@
 """Tray lifecycle must control the same keep-alive policy as the CLI daemon."""
 
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -22,7 +23,9 @@ def test_start_arms_local_policy_once(isolated, flag):
     instance = daemon.TrayDaemon({"keep_alive": flag})
     instance.start()
     instance.start()
-    controller.arm.assert_called_once_with(flag is True)
+    controller.arm.assert_called_once_with(
+        flag is True, providers={"anthropic"} if sys.platform == "darwin" else set()
+    )
     runner.start.assert_called_once()
 
 
@@ -78,7 +81,7 @@ def test_restart_reopens_native_transport_before_arming_renewers(isolated):
     controller, _ = isolated
     client = get_keychain_client()
     client.close()
-    controller.arm.side_effect = lambda flag: (
+    controller.arm.side_effect = lambda flag, **kwargs: (
         pytest.fail("transport still closed") if client._closed else None
     )
     instance = daemon.TrayDaemon({"keep_alive": True})
@@ -87,6 +90,9 @@ def test_restart_reopens_native_transport_before_arming_renewers(isolated):
 
 
 def test_tray_accepts_fleet_claude_activation_but_cannot_grant_keychain_permission(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(daemon, "sys", SimpleNamespace(platform="darwin"))
     from scripts.sidecar_pkg import keep_alive
 
     thread = Mock()
@@ -108,4 +114,50 @@ def test_tray_accepts_fleet_claude_activation_but_cannot_grant_keychain_permissi
         assert not daemon._sidecar._claude_keychain_renewal_enabled()
     finally:
         instance.stop()
+        keep_alive.disable()
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_tray_scope_cannot_enable_unaccepted_provider_paths(monkeypatch, platform):
+    from types import SimpleNamespace
+
+    from scripts.sidecar_pkg import keep_alive
+
+    providers = ["anthropic", "xai", "chatgpt", "antigravity"]
+    thread = Mock()
+    controller = keep_alive.KeepAliveController(lambda: thread, lambda: providers)
+    monkeypatch.setattr(daemon, "sys", SimpleNamespace(platform=platform), raising=False)
+    monkeypatch.setattr(daemon._sidecar, "_KEEP_ALIVE", controller)
+    monkeypatch.setattr(daemon, "DaemonRunner", Mock(return_value=Mock()))
+    instance = daemon.TrayDaemon({"keep_alive": True})
+    try:
+        instance.start()
+        controller.set_remote(True)
+        controller.set_remote_providers(dict.fromkeys(providers, True))
+        assert controller.reported_providers() == {
+            name: platform == "darwin" and name == "anthropic" for name in providers
+        }
+        assert thread.start.call_count == (1 if platform == "darwin" else 0)
+        controller.set_remote_providers({"anthropic": False, "xai": True})
+        assert controller._thread is None
+        assert not controller.reported()
+        instance.configure({"keep_alive": False})
+        assert controller._thread is None
+    finally:
+        instance.stop()
+        keep_alive.disable()
+
+
+def test_cli_controller_retains_all_provider_capabilities():
+    from scripts.sidecar_pkg import keep_alive
+
+    thread = Mock()
+    providers = ["anthropic", "xai", "chatgpt", "antigravity"]
+    controller = keep_alive.KeepAliveController(lambda: thread, lambda: providers)
+    try:
+        controller.arm(True)
+        assert controller.reported_providers() == dict.fromkeys(providers, True)
+        thread.start.assert_called_once()
+    finally:
+        controller.stop()
         keep_alive.disable()
