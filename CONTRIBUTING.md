@@ -98,7 +98,7 @@ detect-secrets, and the unit tests; `pre-push` additionally runs the full
 suite. Run the same gate by hand:
 
 ```bash
-make lint && make test && make web-test
+make lint && make test && make web-lint && make web-test
 ```
 
 - **Branch off `origin/main`**, never your local `main`, and keep the branch

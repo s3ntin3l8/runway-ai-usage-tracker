@@ -137,7 +137,10 @@ def check(
     jobs: int = 0,
 ) -> None:
     interpreter = venv_python()
-    if task not in {"install", "install-python", "web-test"} and not interpreter.is_file():
+    if (
+        task not in {"install", "install-python", "web-test", "web-lint"}
+        and not interpreter.is_file()
+    ):
         raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
     python = str(interpreter)
     if task == "install-python":
@@ -243,12 +246,22 @@ def check(
             print(f"Wrote {len(durations)} module durations to {target}")
     elif task == "web-test":
         execute([*npm_command(), "--prefix", "webapp", "test", *(["--", *extra] if extra else [])])
+    elif task == "web-lint":
+        # The frontend's lint. The shared CI workflow runs it inside the
+        # required `test-frontend / lint-and-test` job, so a lint error blocks
+        # a merge -- which means the local gate has to run it too, or
+        # `make lint && make test && make web-test` can be green while CI is
+        # red.
+        # `npm lint` is not a builtin the way `npm test` is, so the
+        # script has to be named explicitly.
+        execute([*npm_command(), "--prefix", "webapp", "run", "lint"])
     elif task == "gate":
         # Only the pytest step runs the suite, so only it is told how many
-        # workers to use. `lint` runs ruff and mypy; `web-test` runs vitest,
-        # which has its own pool knob.
+        # workers to use. `lint` runs ruff and mypy; `web-lint` runs eslint;
+        # `web-test` runs vitest, which has its own pool knob.
         check("lint", [])
         check("test", [], jobs=jobs)
+        check("web-lint", [])
         check("web-test", [])
 
 
@@ -266,6 +279,7 @@ def main() -> int:
             "test-shard",
             "test-windows",
             "unit",
+            "web-lint",
             "web-test",
             "gate",
             "record-shard-weights",

@@ -39,10 +39,31 @@ export default tseslint.config(
     },
   },
   {
+    // The scripts are plain Node, not the browser: they render the brand
+    // rasters and take the screenshots. Without this they are enumerated by
+    // `eslint .` and checked by no rule at all.
+    files: ['**/*.mjs'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: globals.node,
+    },
+  },
+  {
+    // The screenshot driver is a Node script, but two of its callbacks are
+    // serialised and evaluated *in the page* by Playwright, so they see the
+    // browser's globals. Declared here rather than by giving every script
+    // the browser's globals.
+    files: ['scripts/screenshots.mjs'],
+    languageOptions: {
+      globals: { document: 'readonly' },
+    },
+  },
+  {
     // The test files use `any` for the shapes a mock returns, where the
     // point of the test is the call, not the type. The same convention the
-    // Python side follows for `tests/*`.
-    files: ['**/*.test.{ts,tsx}', 'src/test/**'],
+    // Python side follows for `tests/*`. The Playwright specs are tests too.
+    files: ['**/*.test.{ts,tsx}', '**/*.spec.{ts,tsx}', 'src/test/**'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
     },

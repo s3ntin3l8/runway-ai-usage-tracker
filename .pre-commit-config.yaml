@@ -68,3 +68,11 @@ repos:
         types: [python]
         pass_filenames: false
         stages: [pre-push]
+
+      - id: web-lint
+        name: eslint (frontend)
+        entry: python scripts/dev_checks.py web-lint
+        language: python
+        files: ^webapp/
+        pass_filenames: false
+        stages: [pre-push]
