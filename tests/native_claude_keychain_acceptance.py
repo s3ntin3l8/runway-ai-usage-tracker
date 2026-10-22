@@ -207,8 +207,9 @@ class Fixture:
 
     def __exit__(self, *args):
         try:
-            for kc in self.keychains:
-                self.check(self.api.sec.SecKeychainDelete(kc))
+            with self.api._without_interaction():
+                for kc in self.keychains:
+                    self.check(self.api.sec.SecKeychainDelete(kc))
         finally:
             for ref in (*self.keychains, *reversed(self.refs)):
                 if ref:
