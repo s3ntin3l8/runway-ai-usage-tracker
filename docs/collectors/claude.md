@@ -193,6 +193,35 @@ that store entirely empty can therefore leave stale source metadata until explic
 cleanup or later positive replacement evidence. Failed or expired credentials retain
 the existing rejection behavior; an empty scan does not prove logout.
 
+### Naming and pricing a discovered account
+
+An automatically discovered Claude account is named after what it is, not after
+the browser session that happened to find it. A subscription belongs to one
+member, so its email names it. A Console account is the organization itself —
+every member shares its credit — so the organization's name names it, and one
+organization keeps that name no matter which member signed in last.
+
+The billing model follows the cards the account publishes: a plan publishes
+percentage quotas and bills as a subscription, a Console account publishes a
+prepaid balance and bills as pay-as-you-go. Both are detected when the account
+is first recorded. A name or billing type set in Settings afterwards is never
+overwritten by a later poll.
+
+An account added **by hand** is priced the same way, from the same cards. The
+Console connection is priced while the organization is picked — the balance it
+publishes is prepaid credit — and a subscription is priced on request: press
+**Detect billing model** in the wizard and the account's own quota windows
+decide. The wizard only *suggests* the model; what the operator picks in the
+next step is what gets saved, and a model nobody picked is left to the
+server's own proof.
+
+A card's label is the account's *name* — the member's email for a claude.ai
+account, the organization's name for a Console account — and it is what keys the
+card to its account, so a name a human chose never files a card under another
+account. The *identity* a card proved, which an organization-scoped one marks
+with `org: `, lives in the card's detail, where the tagger reads it back; that
+detail is the only place the marker appears.
+
 ### Manual fallback
 
 Choose **Claude → Console API credits** when adding a connection. Sign in at
@@ -255,4 +284,24 @@ turn an unverified cache entry into a working connection.
 Desktop and the CLI own renewal. This read-only path issues no refresh request or
 credential write. It does not collect chat contents or exact token-consumption events.
 Desktop OAuth implementation/acceptance is tracked in #679; CLI variants in #673,
-remaining native browser/store acceptance in #672, and renewal/write-back in #526.
+scoped macOS acceptance in #672, optional browser acceptance in #683, and renewal/write-back in #526.
+
+### macOS browser acceptance and store diagnostics
+
+Chrome, Safari and Claude Desktop passed the scoped packaged-app acceptance in
+[#672](../claude-native-macos-acceptance-672.md). Safari discovery covers legacy,
+container and separate profile cookie stores. macOS may require user-controlled
+privacy access; an inaccessible store is never treated as logout.
+
+Internal store diagnostics distinguish candidates, successful empty reads, missing
+stores/items, inaccessible stores, denial, timeout and unsupported layouts. Expired
+cookies are filtered and counted. Malformed relevant Safari records mark the scan
+incomplete while preserving independently decoded candidates. Unknown Chromium schema
+versions remain unsupported and report the observed version. Diagnostic store IDs use
+a random process-local HMAC key, so they correlate scans only until restart and do not
+expose profile paths. Per-store outcomes are DEBUG logs/internal diagnostic sinks, not ingestion fields;
+INFO logs contain one aggregate count summary per scan call.
+Safe Storage failures are cached until sidecar
+restart. `RUNWAY_CLAUDE_DESKTOP_CREDENTIALS=0` still disables both Desktop OAuth and
+Desktop cookie discovery. Empty scans preserve last-good source metadata; explicit
+cleanup remains available. Optional-browser native acceptance is tracked in #683.

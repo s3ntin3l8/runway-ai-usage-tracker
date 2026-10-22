@@ -25,6 +25,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from app.core.source_apps import GEMINI_CLI  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.model_normalization import (
     normalize_gemini_model as _normalize_gemini_model,  # noqa: E402,E501
@@ -129,6 +130,7 @@ def parse_gemini_events(
                     events.append(
                         UsageEventPush(
                             provider_id="gemini",
+                            source_app=GEMINI_CLI,
                             account_id=account_id,
                             event_id=event_id,
                             ts=ts.isoformat(),

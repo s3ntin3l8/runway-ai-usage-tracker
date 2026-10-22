@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { PendingUsageEventsCard } from '@/features/fleet/PendingUsageEventsCard';
 import {
   UntaggedCredentialsDialog,
+  displayOrigin,
   sourceDescription,
   sourceLabel,
 } from '@/features/fleet/UntaggedCredentialsDialog';
@@ -100,7 +101,7 @@ export function NeedsMappingView({ pendingUsageEvents }: { pendingUsageEvents: n
                     ) : null}
                   </p>
                   <p className="text-[11px] text-fg-subtle">
-                    <span className="font-mono">{item.credential_origin}</span>
+                    <span className="font-mono">{displayOrigin(item.credential_origin)}</span>
                     {' · on '}
                     {names.get(item.sidecar_id) ?? item.sidecar_id}
                     {' · first seen '}

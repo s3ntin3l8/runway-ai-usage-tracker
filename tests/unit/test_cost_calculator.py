@@ -670,6 +670,136 @@ def test_minimax_model_id_case_insensitive_fallback():
     assert differently_cased == exact > 0.0
 
 
+def test_minimax_m31_flash_cost_basic():
+    """1M input + 1M output + 1M cache read on MiniMax-M3.1-Flash
+    = $0.15 + $0.60 + $0.015."""
+    s = _seeded_session()
+    cost = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="MiniMax-M3.1-Flash",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=1_000_000,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 0.15 + 0.60 + 0.015
+
+
+def test_minimax_m31_flash_model_id_case_insensitive_fallback():
+    """OpenCode reports `minimax-m3.1-flash` — the seed row is
+    'MiniMax-M3.1-Flash', so the differently-cased id must still price
+    through the case-insensitive fallback rather than costing zero."""
+    s = _seeded_session()
+    exact = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="MiniMax-M3.1-Flash",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    differently_cased = compute_event_cost(
+        s,
+        provider_id="minimax",
+        model_id="minimax-m3.1-flash",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert differently_cased == exact > 0.0
+
+
+def test_free_tier_model_ids_are_never_priced_at_a_paid_sibling():
+    """A `-free` id is a free route, so it bills $0 — not the paid sibling's
+    rate.
+
+    Trimming "MiniMax-M3.1-Flash-free" lands on the seeded
+    "MiniMax-M3.1-Flash" row, so the segment-trim fallback has to skip
+    free-tier ids; otherwise a free route bills at list price. The lowercase
+    spellings happened to survive only because the exact lookup is
+    case-sensitive — the canonical casing was the leak.
+    """
+    s = _seeded_session()
+    cases = [
+        ("minimax", "MiniMax-M3.1-Flash-free"),
+        ("minimax", "minimax-m3.1-flash-free"),
+        ("minimax", "MiniMax-M3-free"),
+        ("minimax", "minimax-m3-free"),
+        ("minimax", "MiniMax-M2.5-free"),
+        ("opencode", "deepseek-v4-flash-free"),
+        ("opencode", "minimax-m3.1-flash-free"),
+    ]
+    for provider_id, model_id in cases:
+        assert resolve_price_row(s, provider_id, model_id, datetime.now(UTC)) is None, model_id
+        cost = compute_event_cost(
+            s,
+            provider_id=provider_id,
+            model_id=model_id,
+            ts=datetime.now(UTC),
+            tokens_input=1_000_000,
+            tokens_output=1_000_000,
+            tokens_cache_read=1_000_000,
+            tokens_cache_create=0,
+            tokens_reasoning=0,
+        )
+        assert cost == 0.0, model_id
+
+
+def test_free_tier_guard_covers_the_version_strip_path():
+    """The free-tier guard sits ahead of the version-strip fallback too.
+
+    "openrouter/free/gpt-4" ends in a digit, so _VERSION_SUFFIX strips it to
+    "openrouter/free/gpt" — a path that ran before the guard and could have
+    reached a paid row. No seeded row matches it today, so nothing bills
+    either way; the test pins the invariant rather than a current value.
+    """
+    s = _seeded_session()
+    assert resolve_price_row(s, "openrouter", "openrouter/free/gpt-4", datetime.now(UTC)) is None
+    assert resolve_price_row(s, "openrouter", "openrouter/free/gpt", datetime.now(UTC)) is None
+
+
+def test_free_tier_guard_does_not_block_paid_ids_that_merely_mention_free():
+    """The free-tier guard keys on the suffix forms only — a paid id that
+    merely contains "free" still resolves and prices normally."""
+    s = _seeded_session()
+    s.add(
+        ProviderPricing(
+            provider_id="zztest",
+            model_id="free-tier-model",
+            effective_from=date(2026, 1, 1),
+            input_per_mtok=1.00,
+            output_per_mtok=2.00,
+            cache_read_per_mtok=0.0,
+            cache_create_per_mtok=0.0,
+        )
+    )
+    s.commit()
+    row = resolve_price_row(s, "zztest", "free-tier-model", datetime.now(UTC))
+    assert row is not None
+    assert row.model_id == "free-tier-model"
+    cost = compute_event_cost(
+        s,
+        provider_id="zztest",
+        model_id="free-tier-model",
+        ts=datetime.now(UTC),
+        tokens_input=1_000_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+        tokens_reasoning=0,
+    )
+    assert cost == 3.00
+
+
 # ── Antigravity cost resolution ───────────────────────────────────────────────
 
 

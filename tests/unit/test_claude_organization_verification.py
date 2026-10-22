@@ -246,6 +246,9 @@ async def test_organization_picker_persists_exact_source_binding(claude_db, monk
         config = session.exec(select(ProviderConfig)).one()
         assert config.account_id == "person@example.com"
         assert config.claude_organization_id == ORG_B
+        # The picker names and prices the account it discovered, too.
+        assert config.account_label == "person@example.com"
+        assert config.billing_type == "subscription"
         assert session.exec(select(CredentialSource)).one().account_id == "person@example.com"
         assert session.exec(select(PendingCredentialTag)).all() == []
 
@@ -648,3 +651,456 @@ async def test_pending_organization_metadata_is_robust_and_not_returned(claude_d
     import json
 
     assert "never-output-secret" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_verified_subscription_account_is_named_after_its_member(claude_db):
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": "person@example.com"})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(200, json=[{"uuid": ORG_A, "name": "Org"}])
+        return httpx.Response(200, json={"five_hour": {"utilization": 10}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic", "test-cookie")
+    assert result.account_label == "person@example.com"
+    # A plan publishes percentage quotas, so it bills by subscription.
+    assert result.billing_type == "subscription"
+
+
+@pytest.mark.asyncio
+async def test_verified_console_account_is_named_after_its_organization(claude_db):
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic_console", "test-cookie")
+    # Console credit is shared by the whole organization, so the organization names it.
+    assert result.account_label == "API org"
+    # A prepaid balance is spend, not a quota.
+    assert result.billing_type == "pay_as_you_go"
+
+
+@pytest.mark.asyncio
+async def test_console_cards_carry_the_organization_name(claude_db):
+    """The Console account must not render as an unnamed "Default" account."""
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            result = await collector._primary_strategy(client)
+    assert collector.account_label == "API org"
+    assert collector.verified_billing_type == "pay_as_you_go"
+    assert result[0]["remaining"] == "$12.34"
+
+
+@pytest.mark.asyncio
+async def test_console_credit_never_borrows_the_signed_in_members_email():
+    """Two members of one organization share the account, so the label must not flap."""
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "uuid": ORG_A,
+                        "name": "API org",
+                        "capabilities": ["api"],
+                        "membership": {"user": {"email": "member@example.com"}},
+                    }
+                ],
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic_console", "test-cookie")
+    assert result.account_label == "API org"
+
+
+@pytest.mark.asyncio
+async def test_console_card_keeps_the_name_the_operator_chose(claude_db):
+    """A renamed Console account must not wear the organization's name again."""
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default", account_label="Team wallet")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            result = await collector._primary_strategy(client)
+    assert collector.account_label == "Team wallet"
+    assert collector._tag_results(result)[0]["account_label"] == "Team wallet"
+
+
+@pytest.mark.asyncio
+async def test_subscription_card_keeps_the_name_the_operator_chose():
+    """A renamed subscription account must not revert to the member's email."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default", account_label="Team wallet")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"membership": {"user": {"email": "member@example.com"}}},
+        )
+    # The collector keeps the name the operator chose.
+    assert collector.account_label == "Team wallet"
+    # The card still reports the identity that keys it: ``anthropic`` is not a
+    # login-keyed provider, so an email-shaped card label is what files the
+    # card under its account.
+    assert all(card.get("account_label") == "member@example.com" for card in result)
+
+
+@pytest.mark.asyncio
+async def test_a_placeholder_name_is_filled_in_on_the_subscription_path():
+    """The placeholder is a placeholder in any spelling, so it may be filled in."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default", account_label="DEFAULT")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"membership": {"user": {"email": "member@example.com"}}},
+        )
+    assert collector.account_label == "member@example.com"
+
+
+@pytest.mark.asyncio
+async def test_console_card_fills_in_a_placeholder_name(claude_db):
+    """The Console path treats every spelling of the placeholder as unset."""
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default", account_label="default")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            await collector._primary_strategy(client)
+    assert collector.account_label == "API org"
+
+
+def test_a_name_never_carries_the_card_details_marker():
+    """A name a human reads must be a name, not the card detail's marker."""
+    from app.services.claude_verification import (
+        claude_account_label,
+        claude_identity_string,
+    )
+
+    org_data = {"name": "Acme", "membership": {}}
+    assert claude_account_label("anthropic", org_data) == "Acme"
+    assert claude_account_label("anthropic_console", org_data) == "Acme"
+    # The card detail keeps the marker, so the tagger can tell it apart.
+    assert claude_identity_string(org_data) == "org: Acme"
+
+
+def test_the_verified_name_and_billing_model_reach_the_promotion():
+    """What the collector proved must be what the promotion writes."""
+
+    class _Proved:
+        verified_source_generation = "gen-1"
+        verified_organization_id = "org-1"
+        verified_account_label = "API org"
+        verified_billing_type = "pay_as_you_go"
+
+    from app.services.collector_manager import CollectorManager
+
+    kwargs = CollectorManager._source_proof_kwargs(_Proved())
+    assert kwargs["organization_id"] == "org-1"
+    assert kwargs["account_label"] == "API org"
+    assert kwargs["billing_type"] == "pay_as_you_go"
+
+
+def test_a_card_without_a_name_keeps_its_own_account():
+    """An email-shaped name would file the card under a different account."""
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="person@example.com", account_label="ops@acme.com")
+    tagged = collector._tag_results(
+        [
+            {
+                "service_name": "Claude",
+                "variant": "5-Hour Limit",
+                "window_type": "session",
+                "remaining": "80.0%",
+            }
+        ]
+    )
+    # The card's label can be what keys it to its account, so it may not be a
+    # name that points somewhere else.
+    assert tagged[0]["account_label"] == "person@example.com"
+
+
+@pytest.mark.asyncio
+async def test_a_claude_name_never_carries_the_organization_marker():
+    """The marker belongs in the card detail, not in a name."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"name": "Acme"},
+        )
+    assert collector.account_label == "Acme"
+    assert all(card.get("account_label") == "Acme" for card in result)
+    # The detail still carries the marker, so the tagger can read it back.
+    assert any("org: Acme" in (card.get("detail") or "") for card in result)
+
+
+@pytest.mark.asyncio
+async def test_the_limits_shape_carries_the_name_not_the_marker():
+    """The newer response shape names its cards like the legacy one does."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {
+                "limits": [
+                    {
+                        "kind": "session",
+                        "group": "session",
+                        "percent": 10,
+                        "severity": "normal",
+                        "resets_at": None,
+                        "scope": {"model": {"id": None, "display_name": "Fable"}},
+                        "is_active": True,
+                    }
+                ]
+            },
+            org_data={"name": "Acme"},
+        )
+    assert result
+    assert all(card.get("account_label") == "Acme" for card in result)
+
+
+@pytest.mark.asyncio
+async def test_rediscovery_never_puts_the_marker_in_a_name():
+    """The tagger reads the detail, but a name it rediscovers is a name."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"name": "Acme"},
+        )
+    collector._tag_results(result)
+    assert collector.account_label == "Acme"
+
+
+def test_a_provider_whose_label_is_the_account_keeps_its_label():
+    """Only a display name is unsafe: chatgpt's label *is* its account."""
+    from app.services.collectors.chatgpt import ChatGPTCollector
+
+    collector = ChatGPTCollector(account_id="acct-uuid-123", account_label="person@example.com")
+    tagged = collector._tag_results(
+        [
+            {
+                "service_name": "ChatGPT",
+                "variant": "Usage",
+                "window_type": "rolling",
+                "remaining": "80.0%",
+            }
+        ]
+    )
+    assert tagged[0]["account_label"] == "person@example.com"
+
+
+@pytest.mark.asyncio
+async def test_the_oauth_strategy_names_the_organization_not_its_contact():
+    """The organization's contact is not who holds the token."""
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    result = collector._parse_oauth_response(
+        {"five_hour": {"utilization": 10}},
+        name_map={},
+        api_account_info={"organization": "Acme", "email": "contact@acme.com"},
+    )
+    # The contact address would file the card under an account that is not the
+    # credential's; the organization's name files it under the right one.
+    assert all(card.get("account_label") == "Acme" for card in result)
+    assert collector.account_label == "Acme"
+
+
+@pytest.mark.asyncio
+async def test_a_rename_is_not_overwritten_by_the_next_poll():
+    """The rediscovery must not take a name the operator chose back."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="person@example.com", account_label=None)
+    # The operator renames the account in Settings; the manager propagates the
+    # name, but the collector's label cache still holds the placeholder.
+    collector.account_label = "Team wallet"
+    with patch(
+        "app.services.collectors.anthropic_web.token_cache.update_account_metadata",
+        AsyncMock(),
+    ):
+        result = collector._parse_web_api_response(
+            {"five_hour": {"utilization": 10}},
+            org_data={"membership": {"user": {"email": "member@example.com"}}},
+        )
+    collector._tag_results(result)
+    assert collector.account_label == "Team wallet"
+
+
+def test_a_credential_digest_is_never_a_label():
+    """The dashboard renders a label whole, and a digest is withheld for that."""
+    from app.services.collectors.openrouter import OpenRouterCollector
+
+    digest = "a" * 64
+    collector = OpenRouterCollector(account_id=digest, account_label=None)
+    tagged = collector._tag_results(
+        [
+            {
+                "service_name": "OpenRouter",
+                "variant": "Key Limit",
+                "window_type": "rolling",
+                "remaining": "$15.00",
+            }
+        ]
+    )
+    assert tagged[0]["account_label"] == "Default"
+
+
+@pytest.mark.asyncio
+async def test_the_verified_name_reaches_the_promotion(claude_db):
+    """The name a verification proved must reach the promotion.
+
+    The billing model has its own pinned test; the name is the headline
+    behaviour, so it is walked the way production walks it: a real collector,
+    a real verification, the proof the manager would read.
+    """
+    from app.services.claude_verification import verify_collector_cookie
+    from app.services.collector_manager import CollectorManager
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            await verify_collector_cookie(collector, client, "anthropic_console", "test-cookie")
+
+    kwargs = CollectorManager._source_proof_kwargs(collector)
+    assert kwargs["organization_id"] == ORG_A
+    assert kwargs["account_label"] == "API org"
+    assert kwargs["billing_type"] == "pay_as_you_go"
+
+
+@pytest.mark.asyncio
+async def test_the_organization_picker_names_and_prices_a_console_account(claude_db, monkeypatch):
+    """A Console account the picker discovered is named and priced as well."""
+    from sqlmodel import select
+
+    from app.api.endpoints.fleet import (
+        ClaudeOrganizationSelection,
+        get_claude_source_organizations,
+        select_claude_source_organization,
+    )
+    from app.models.db import ProviderConfig
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200,
+                json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}],
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(transport=httpx.MockTransport(upstream), **kwargs),
+    )
+    with RealSession(claude_db) as session:
+        await get_claude_source_organizations(source_id, "anthropic_console", session, None)
+        await select_claude_source_organization(
+            source_id,
+            ClaudeOrganizationSelection(provider_id="anthropic_console", organization_id=ORG_A),
+            session,
+            None,
+        )
+    with RealSession(claude_db) as session:
+        config = session.exec(select(ProviderConfig)).one()
+        # Console credit is shared by the organization, so the organization
+        # names the account — and a prepaid balance is spend.
+        assert config.account_label == "API org"
+        assert config.billing_type == "pay_as_you_go"

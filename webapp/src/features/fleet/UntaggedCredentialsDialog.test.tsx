@@ -748,8 +748,11 @@ it('uses source organization verification for Claude browser entries without exp
   vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
   vi.mocked(api.fetchClaudeSourceOrganizations).mockResolvedValue({ organizations: [], complete: false, selection_required: true });
   renderWithProviders(<UntaggedCredentialsDialog open onClose={vi.fn()} />);
-  // The source is named in words: a browser cookie, and which browser holds it.
-  expect(await screen.findByText(/Browser cookie · Chrome · Work/)).toBeInTheDocument();
+  // The source is named the way a Claude browser cookie always was: the browser
+  // and the profile it came from.
+  expect(await screen.findByText('Chrome · Work')).toBeInTheDocument();
+  // The fingerprint is never displayed.
+  expect(screen.queryByText(/secretfingerprint/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Tag' })).not.toBeInTheDocument();
   expect(await screen.findByText(/verification is incomplete/i)).toBeInTheDocument();
 });

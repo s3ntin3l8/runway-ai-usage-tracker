@@ -396,7 +396,7 @@ function UntaggedRow({
             ) : null}
           </p>
           <p className="truncate text-[11px] text-fg-subtle">
-            <span className="font-mono">{entry.credential_origin}</span>
+            <span className="font-mono">{displayOrigin(entry.credential_origin)}</span>
             {' · from '}
             <span className="font-mono">{machineName ?? entry.sidecar_id}</span>
             {allMachines && <span className="text-accent"> · applies to all machines</span>}
@@ -517,7 +517,7 @@ function UntaggedRow({
             <div
               className="flex shrink-0 rounded-md border border-border bg-surface-1 p-0.5"
               role="radiogroup"
-              aria-label={`Tag scope for ${entry.credential_origin} on ${machineName ?? entry.sidecar_id}`}
+              aria-label={`Tag scope for ${displayOrigin(entry.credential_origin)} on ${machineName ?? entry.sidecar_id}`}
             >
               <button
                 type="button"
@@ -562,6 +562,27 @@ function isClaudeBrowserSource(entry: UntaggedCredential): boolean {
 }
 
 /**
+ * The origin without its fingerprint: the diagnostics line must not print a
+ * secret-derived hash (the fingerprint is never displayed).
+ */
+export function displayOrigin(origin: string): string {
+  return origin.split('#', 1)[0];
+}
+
+/**
+ * The Claude browser cookie, named the way this dialog has always named it.
+ *
+ * A Claude cookie origin carries the browser and the profile it came from, and
+ * that pair is what the operator recognises; the naming below is for the
+ * sources that used to read like another credential file.
+ */
+function claudeSourceLabel(entry: UntaggedCredential): string {
+  if (!isClaudeBrowserSource(entry)) return entry.credential_origin;
+  const [, browser, profile] = entry.credential_origin.split('#', 1)[0].split('/');
+  return browser ? [browser, profile].filter(Boolean).join(' · ') : 'Claude browser login';
+}
+
+/**
  * The source in words: "Browser cookie", "Keychain entry".
  *
  * A file or env origin ("path:/home/u/.codex/auth.json") already says what it
@@ -597,7 +618,8 @@ export function sourceDescription(entry: UntaggedCredential): {
 
 /** The source as one line: "Browser cookie · Chrome · Profile 1". */
 export function sourceLabel(entry: UntaggedCredential): string {
+  if (isClaudeBrowserSource(entry)) return claudeSourceLabel(entry);
   const { label, detail } = sourceDescription(entry);
-  if (!label) return entry.credential_origin;
+  if (!label) return displayOrigin(entry.credential_origin);
   return detail ? `${label} · ${detail}` : label;
 }

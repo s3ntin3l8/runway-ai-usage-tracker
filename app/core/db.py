@@ -154,6 +154,7 @@ def init_db() -> None:
         _rebuild_quota_snapshot_table_for_variant(conn)
         _rebuild_quota_snapshot_indexes(conn)
         _backfill_quota_snapshot_variant(conn)
+        _backfill_source_app(conn)
         _migrate_webhook_uniqueness(conn)
         _migrate_credential_tag_scoping(conn)
         _drop_redundant_credential_tag_indexes(conn)
@@ -201,6 +202,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("sidecar_registry", "login_dirs_desired", "TEXT"),
     ("sidecar_registry", "login_dirs_report", "TEXT"),
     ("usage_events", "credential_origin", "VARCHAR"),
+    ("usage_events", "source_app", "VARCHAR"),
     ("credential_sources", "credential_expires_at", "DATETIME"),
     ("credential_sources", "token_types_json", "TEXT"),
     ("credential_sources", "last_attempt_at", "DATETIME"),
@@ -285,6 +287,7 @@ _DEFERRED_INDEXES: list[tuple[str, str, str]] = [
     # so it can be rebuilt with variant included on existing databases.
     ("ix_usage_events_project_ts", "usage_events", "project, ts"),
     ("ix_usage_events_kind_ts", "usage_events", "kind, ts"),
+    ("ix_usage_events_source_app_ts", "usage_events", "source_app, ts"),
 ]
 
 
@@ -526,6 +529,30 @@ def _backfill_quota_snapshot_variant(conn: Any) -> None:
     if result.rowcount:
         logger.info(
             "Migrated: backfilled %d quota_snapshots rows (variant '' <- 'default')",
+            result.rowcount,
+        )
+
+
+def _backfill_source_app(conn: Any) -> None:
+    """Give pre-``source_app`` events the provider id as their source app.
+
+    The column arrived after the events did, so historical rows have no client
+    app recorded. ``provider_id`` is the best available guess and is exactly
+    what the ingestor falls back to for a sidecar that doesn't report one, so
+    the two agree and no row reads as "unknown".
+
+    Rows pushed after the column landed already carry the extractor's app name
+    and are left alone.
+    """
+    from sqlalchemy import text
+
+    result = conn.execute(
+        text("UPDATE usage_events SET source_app = provider_id WHERE source_app IS NULL")
+    )
+    conn.commit()
+    if result.rowcount:
+        logger.info(
+            "Migrated: backfilled %d usage_events rows (source_app <- provider_id)",
             result.rowcount,
         )
 

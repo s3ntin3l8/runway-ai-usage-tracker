@@ -89,6 +89,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from app.core.source_apps import OPENCODE  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.model_normalization import is_openrouter_model_id  # noqa: E402
 from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
@@ -488,6 +489,7 @@ def parse_opencode_events(
                     events.append(
                         UsageEventPush(
                             provider_id=runway_provider_id,
+                            source_app=OPENCODE,
                             account_id=event_account_id,
                             account_source=event_account_source,
                             event_id=event_id,
@@ -504,6 +506,7 @@ def parse_opencode_events(
                 events.append(
                     UsageEventPush(
                         provider_id=runway_provider_id,
+                        source_app=OPENCODE,
                         account_id=event_account_id,
                         account_source=event_account_source,
                         event_id=event_id,

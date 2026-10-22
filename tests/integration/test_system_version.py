@@ -11,11 +11,10 @@ from, which is what distinguishes one `:edge` image from the next.
 import json
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from app import __version__
 from app.api.endpoints import system as system_endpoint
 from app.main import app
+from tests.fixtures.test_client import TestClient
 
 # Assembled from short literals so detect-secrets doesn't read the fixture as a
 # high-entropy hex string (a real secret).

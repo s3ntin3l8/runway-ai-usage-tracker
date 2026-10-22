@@ -66,9 +66,16 @@ export const MAPPING_HINT: Record<CredentialMapping, string> = {
   pending: 'No account is known yet. Assign one under "Needs mapping".',
 };
 
+/** Include a named owning client; generic browser attribution adds no information. */
+export function hasNamedOriginApp(app: string | null | undefined): app is string {
+  return Boolean(app && app !== 'Browser');
+}
+
 /** "Codex CLI · auth.json", "Browser cookie", "GITHUB_TOKEN" — what a credential is. */
 export function originTitle(s: CredentialSourceView): string {
-  if (s.origin_app && s.origin_type !== 'cookie') return `${s.origin_app} · ${s.label}`;
+  if (hasNamedOriginApp(s.origin_app)) {
+    return `${s.origin_app} · ${s.label}`;
+  }
   return s.label;
 }
 

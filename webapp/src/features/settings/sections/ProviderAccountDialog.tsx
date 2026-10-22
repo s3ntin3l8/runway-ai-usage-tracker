@@ -30,7 +30,12 @@ import {
   putProviderConfig,
   type ProviderConfigUpdate,
 } from '@/api/endpoints';
-import type { CollectionStrategy, CredentialSourceSummary, ProviderConfig } from '@/api/types';
+import type {
+  BillingType,
+  CollectionStrategy,
+  CredentialSourceSummary,
+  ProviderConfig,
+} from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { HelperText, Input, Label } from '@/components/ui/Input';
@@ -41,6 +46,7 @@ import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialVie
 import { GitHubLoginSection } from './GitHubLoginSection';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { displayAccountName, accountSubtitle, maskAccountId } from '@/lib/accountDisplay';
+import { BILLING_TYPE_LABELS } from '@/lib/billingType';
 
 interface ProviderAccountDialogProps {
   // The provider envelope — passed for label/help text and supported_strategies
@@ -249,9 +255,9 @@ function ProviderAccountForm({
           onChange={(event) => setBillingType(event.target.value as typeof billingType)}
           className="h-9 rounded-md border border-border bg-surface-1 px-3 text-sm text-fg"
         >
-          <option value="unknown">Unknown · show usage value</option>
-          <option value="subscription">Subscription · show estimated usage value</option>
-          <option value="pay_as_you_go">Pay as you go · show reported cost when available</option>
+          {(Object.keys(BILLING_TYPE_LABELS) as BillingType[]).map((type) => (
+            <option key={type} value={type}>{BILLING_TYPE_LABELS[type]}</option>
+          ))}
         </select>
         <HelperText>
           Estimated usage value uses configured API rates. Reported cost comes from the provider log.

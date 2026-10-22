@@ -71,8 +71,9 @@ export interface LimitCard {
   collection_failing?: boolean;
 }
 
-// Live aggregation of usage_events over a quota window, split by model and
-// sidecar. Computed on demand by /usage/fleet for the longest active window.
+// Live aggregation of usage_events over a quota window, split by model,
+// sidecar and client app. Computed on demand by /usage/fleet for the longest
+// active window.
 export interface WindowAggregation {
   window_type: string;
   window_start: string;
@@ -80,6 +81,7 @@ export interface WindowAggregation {
   token_usage: TokenUsage;
   by_model: Record<string, CumulativeModelBucket>;
   by_sidecar: Record<string, CumulativeModelBucket>;
+  by_source_app?: Record<string, CumulativeModelBucket>;
 }
 
 export interface FleetEntry {
@@ -120,6 +122,7 @@ export interface CumulativeModelBucket {
 export interface CumulativeBucket extends CumulativeModelBucket {
   by_model?: Record<string, CumulativeModelBucket>;
   by_sidecar?: Record<string, CumulativeModelBucket>;
+  by_source_app?: Record<string, CumulativeModelBucket>;
 }
 
 export interface CumulativeEntry {
@@ -217,6 +220,10 @@ export interface HeatmapResponse {
 
 export interface UsageSourcesResponse {
   sidecar_ids: string[];
+  // The client apps that produced the events ("opencode", "claude_code", ...).
+  // Several apps share one provider, so the provider id alone can't say which
+  // app spent the quota.
+  source_apps?: string[];
 }
 
 export interface SessionModelSplit extends CumulativeModelBucket {
@@ -826,8 +833,19 @@ export interface CredentialSourceSummary {
 
 /** Per-account row in a provider's ``accounts`` list. Multi-account
  *  providers expose N of these under a ``ProviderConfig`` envelope. */
+// The billing models an account can have. Mirrors `BillingType` in
+// `app/services/billing_type.py` — the detector, the API and the UI speak
+// about the same set.
+export type BillingType = 'subscription' | 'pay_as_you_go' | 'unknown';
+
 export interface ProviderAccount {
   account_id: string;
+  // Which provider this account belongs to. The Claude family groups several
+  // providers under one card, so an account listed under the family is still
+  // addressed by its own provider — an edit must never land on the family's
+  // representative (#723). Optional for backward compatibility with older
+  // servers; the UI falls back to the provider it was listed under.
+  provider_id?: string;
   enabled?: boolean;
   archived?: boolean; // PR #292 — hide discontinued providers from the dashboard
   has_usage_events?: boolean;
@@ -838,7 +856,7 @@ export interface ProviderAccount {
   collection_strategies?: CollectionStrategy[] | null;
   opencode_workspace_id?: string | null;
   claude_organization_id?: string | null;
-  billing_type?: 'subscription' | 'pay_as_you_go' | 'unknown';
+  billing_type?: BillingType;
   // Set by the server (#281 hardening + #286 follow-up). Lets the UI surface
   // orphaned `account_id="default"` rows that have been shadowed by a real
   // sibling account on the same provider. Safe to remove. The flag only
@@ -904,12 +922,19 @@ export interface AccountPreviewRequest {
   organization_id?: string;
   api_key?: string | null;
   session_cookie?: string | null;
+  // Ask the server to prove how the account behind this credential bills.
+  // Off by default — the wizard debounces keystrokes into the preview, and a
+  // proof costs a round trip to Claude. The operator asks for it explicitly.
+  detect_billing?: boolean;
 }
 
 export interface AccountPreviewResponse {
   suggested_account_id: string;
   suggested_label: string | null;
   label_source: AccountPreviewLabelSource;
+  // How the account bills, when the server proved it. Absent when it did
+  // not — the operator then decides.
+  suggested_billing_type?: BillingType | null;
   already_exists: boolean;
 }
 
@@ -1119,6 +1144,31 @@ export interface TopModelEntry {
 
 export interface TopModelsResponse {
   models: TopModelEntry[];
+  metric: string; // "tokens" | "cost"
+  generated_at: string;
+}
+
+// One client app's totals in the per-app usage breakdown.
+export interface SourceAppEntry {
+  source_app: string;
+  msgs: number;
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+  tokens_reasoning: number;
+  cost_usd: number;
+  cost_cache: number; // cache_read + cache_create cost, for exclude-cache
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_create: number;
+  providers: string[];
+}
+
+export interface SourceAppsResponse {
+  apps: SourceAppEntry[];
   metric: string; // "tokens" | "cost"
   generated_at: string;
 }

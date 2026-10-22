@@ -20,6 +20,8 @@ MiniMax coding-plan quota collector.
 Set `MINIMAX_HOST=minimaxi.com` to switch to the China host
 (`https://api.minimaxi.com/v1/coding_plan/remains`). `MINIMAX_HOST` must be a **bare domain**
 — the collector prefixes it with `api.` (and, for the dashboard link, `platform.`) itself.
+A value that arrives with a scheme is normalised to its host, so it is never pasted into
+the middle of a URL.
 **Auth:** Bearer token.
 
 **Response** (real payload, one entry per quota bucket in `model_remains[]` — not one per
@@ -110,6 +112,7 @@ the API" figure that Claude subscription usage gets against Claude API rates:
 
 | Model | Input | Output | Cache read | Confidence |
 |---|---|---|---|---|
+| `MiniMax-M3.1-Flash` | $0.15 | $0.60 | $0.015 | High — MiniMax's own pricing page (checked 2026-10-20) |
 | `MiniMax-M3` | $0.30 | $1.20 | $0.06 | High — cross-checked against two sources |
 | `MiniMax-M2.7` | $0.30 | $1.20 | $0.06 | Medium |
 | `MiniMax-M2.5` | $0.30 | $1.20 | $0.03 | Medium — one source instead quotes $0.27/$0.95 |
@@ -117,8 +120,22 @@ the API" figure that Claude subscription usage gets against Claude API rates:
 
 M3 has an undocumented pricing cliff above 512K input tokens (doubles to $0.60/$2.40, cache
 read $0.12); this isn't modeled per-event (the schema has no context-length tiering), so a
->512K-token call will undercount. Verify the legacy (M2/M2.5/M2.7) rates against
-`platform.minimax.io`'s pricing page before relying on them for anything beyond a rough figure.
+>512K-token call will undercount. M3.1-Flash has no published tier split — MiniMax lists it
+flat, outside the Standard/Priority tabs that carry M3's context-length tiers — so a single
+row covers every call length.
+
+The legacy rows (M2/M2.5/M2.7) are kept so historical events keep their original figure, but
+none of them is listed on MiniMax's pricing page any more: M2 is retired, and M2.5/M2.7 are
+retired on 2026-11-18 (they were closed to new users on 2026-10-19, when M Plan and Token Plan
+traffic on them was automatically rerouted to M3.1 Flash). Their rates came from third-party
+sources rather than MiniMax, so treat them as a rough figure rather than a list price.
+
+Rows are keyed on the canonical id (`MiniMax-M3.1-Flash`), so OpenCode's lowercase
+`minimax-m3.1-flash` spelling prices through the cost calculator's case-insensitive fallback.
+The `-free` spellings (`minimax-m3.1-flash-free`, `MiniMax-M3.1-Flash-free`) stay deliberately
+unpriced — that is OpenCode's free route, billed at $0 on purpose, not a missing seed row.
+The cost calculator skips its segment-trim fallback for free-tier ids, so a `-free` id can
+never reach a paid sibling row and be billed at list price.
 
 ## OpenCode traffic
 

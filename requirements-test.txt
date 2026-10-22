@@ -1,0 +1,33 @@
+-r requirements.txt
+-r requirements-shared.txt
+
+# Pinned exactly, not "at least" -- see the note in requirements.txt. The
+# versions are what a fresh install resolves to today; Dependabot proposes
+# the bumps.
+#
+# This is the set the *test suite* needs. The lint gate's set is
+# `requirements-lint.txt`, and the union of the two is
+# `requirements-dev.txt`.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+pytest-timeout==2.4.0
+# Run the suite in parallel workers locally and in CI. `--dist loadfile`
+# keeps every test module inside one worker, so module-scoped fixtures and
+# import-time setup stay together.
+pytest-xdist==3.8.0
+# `tests/unit/test_sidecar_signatures.py` imports `sigstore` at module level,
+# so the suite cannot even be collected without it.
+sigstore==4.5.0
+# `tests/unit/test_tray_update_check.py` and `tests/unit/test_tray_refresh.py`
+# import `sidecar_app.tray`, which imports `pystray` and `PIL` at module
+# level. The two tray modules that guard their import with `importorskip`
+# would skip without these; the two that do not would fail to collect.
+pystray==0.19.5
+Pillow==13.0.0
+# `mypy` is in the lint set and not here, on purpose: only
+# `tests/unit/test_mypy_gitignore_exclusion.py` needs it, and it guards its
+# import with `importorskip`, so that test skips rather than fails on the
+# jobs that install this set. It still runs on Linux, where the shared
+# workflow installs the union -- and the `dist/` abort it guards is a
+# local-checkout problem anyway.

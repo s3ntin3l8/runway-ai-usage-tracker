@@ -30,7 +30,6 @@ import socket
 import sqlite3
 import ssl
 import stat
-import struct
 import subprocess
 import sys
 import threading
@@ -39,6 +38,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
@@ -51,6 +51,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from scripts.sidecar_pkg import browser_store
 from scripts.sidecar_pkg import transport as server_http
 from scripts.sidecar_pkg.opencode_credentials import (
     key_binding as opencode_key_binding,
@@ -372,6 +373,19 @@ __REGISTRY__: dict[str, Any] = {
                     ],
                     "mapping": {
                         "minimax-coding-plan.key": "api_key",
+                    },
+                },
+                {
+                    "type": "file",
+                    "paths": [
+                        "~/.minimax/auth/*/*/mcode-public/auth.json",
+                    ],
+                    "format": "json",
+                    "mapping": {
+                        "records.*.accessToken": "oauth_token",
+                        "records.*.refreshToken": "refresh_token",
+                        "records.*.clientId": "client_id",
+                        "records.*.expiresAtMs": "expiry_date",
                     },
                 },
             ],
@@ -740,7 +754,7 @@ __REGISTRY__: dict[str, Any] = {
                 # Primary: the opencode CLI stores the ollama-cloud API key in
                 # ~/.local/share/opencode/auth.json["ollama-cloud"].key. The collector
                 # uses it as `Authorization: Bearer ...` against
-                # https://ollama.com/api/usage for monthly quota.
+                # https://ollama.com/api/balance for the monthly allowance (quota).
                 {
                     "type": "file",
                     "paths": [
@@ -923,14 +937,30 @@ def _codex_login_paths() -> list[Path]:
     return expand_file_rule_paths(paths)
 
 
+# Bound to the current runner, so replacement on local config reload is observed.
+_CLAUDE_KEYCHAIN_PERMISSION: Callable[[], bool] | None = None
+
+
+def _claude_keychain_renewal_enabled() -> bool:
+    return _CLAUDE_KEYCHAIN_PERMISSION is not None and _CLAUDE_KEYCHAIN_PERMISSION() is True
+
+
 def _make_keep_alive_renewers() -> list:
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
+    from scripts.sidecar_pkg.claude_keychain_renewer import KeychainRenewer
     from scripts.sidecar_pkg.codex_renewer import CodexRenewer
+    from scripts.sidecar_pkg.keep_alive import is_enabled
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     return [
         XaiRenewer(),
-        AnthropicRenewer(_claude_login_paths),
+        AnthropicRenewer(
+            _claude_login_paths,
+            keychain=KeychainRenewer(
+                lambda: custom_login_dirs("CLAUDE_CONFIG_DIR"),
+                lambda: _claude_keychain_renewal_enabled() and is_enabled("anthropic"),
+            ),
+        ),
         CodexRenewer(_codex_login_paths),
     ]
 
@@ -2180,8 +2210,16 @@ def resolve_paths(path_str: str) -> list[Path]:
 
 def has_unexpired_token(path: Path) -> bool:
     """Best-effort freshness probe: True when the file's JSON carries an
-    '*expires*' key with a numeric epoch value still in the future (+60s
-    skew). Unknown/absent/unparseable -> False (ordering falls back to mtime).
+    '*expires*'/'*expiry*' key with a numeric epoch value still in the future
+    (+60s skew). Unknown/absent/unparseable -> False (ordering falls back to
+    mtime).
+
+    A store that keeps several logins in one file nests the expiry inside each
+    record rather than at the top level (the MiniMax Code app does), so a
+    second pass looks one level into those records for the same shape. Both
+    passes share one expiry-key predicate and one epoch reader, so a record
+    the picker accepts is also a record the probe sees — and a millisecond
+    epoch is read as milliseconds, not as a timestamp that is always ahead.
     """
     try:
         data = json.loads(path.read_text())
@@ -2191,12 +2229,23 @@ def has_unexpired_token(path: Path) -> bool:
         return False
     now = time.time()
     for key, val in data.items():
-        if "expires" in str(key).lower():
-            try:
-                if float(val) > now + 60:
-                    return True
-            except (TypeError, ValueError):
+        if not _is_expiry_key(str(key)):
+            continue
+        moment = _expiry_seconds(val)
+        if moment is not None and moment > now + 60:
+            return True
+    for mapping in data.values():
+        if not isinstance(mapping, dict):
+            continue
+        for record in mapping.values():
+            if not isinstance(record, dict):
                 continue
+            for key, val in record.items():
+                if not _is_expiry_key(str(key)):
+                    continue
+                moment = _expiry_seconds(val)
+                if moment is not None and moment > now + 60:
+                    return True
     return False
 
 
@@ -2338,6 +2387,90 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome", host=None, s
     return None
 
 
+# Which provider wanted a cookie from a store that could not be read, so the
+# cycle report can name the environment variable that would work instead.
+_cookie_store_blocked: dict[str, dict[str, str]] = {}
+
+
+def reset_cookie_store_tracking() -> None:
+    """Forget this cycle's store probes and the providers they blocked."""
+    browser_store.reset_store_probe_cache()
+    _cookie_store_blocked.clear()
+
+
+def _session_cookie_env_var(provider_id: str, mapping_value: str) -> str | None:
+    """The environment variable that supplies the same credential as a cookie.
+
+    The registry pairs a cookie rule with an environment rule for some
+    providers (Ollama's ``OLLAMA_SESSION_TOKEN``, Kimi's ``KIMI_AUTH_TOKEN``).
+    """
+    if not mapping_value:
+        return None
+    rules = __REGISTRY__.get("providers", {}).get(provider_id, {}).get("rules", [])
+    for rule in rules:
+        if rule.get("type") != "env":
+            continue
+        if (rule.get("mapping") or {}).get("value") == mapping_value:
+            variable = rule.get("variable")
+            if isinstance(variable, str) and variable:
+                return variable
+    return None
+
+
+def _cookie_store_advice(probe: browser_store.StoreProbe) -> str:
+    """What the operator can do about a store that could not be used.
+
+    Returns an empty string when the store's own detail already says it.
+    """
+    if probe.state is browser_store.StoreState.LOCKED:
+        if probe.browser.lower() in {"chrome", "chromium", "edge"}:
+            return (
+                "closing the browser releases the lock but not the encryption on "
+                "Chrome 127+, so it does not make these cookies readable"
+            )
+        return "another program is holding the store open"
+    return ""
+
+
+def report_cookie_stores() -> None:
+    """Report the cookie stores this cycle could not use, one line each.
+
+    A store that cannot be read used to raise the same
+    ``sqlite3.OperationalError`` once per cookie name, for every store, on
+    every cycle. One classified line per store is enough to act on and
+    leaves the rest of the log readable.
+    """
+    unusable = browser_store.unusable_stores()
+    if not unusable:
+        return
+    for probe in unusable:
+        blocked = _cookie_store_blocked.get(probe.identity(), {})
+        variables = sorted(
+            {
+                variable
+                for provider, mapping_value in blocked.items()
+                if (variable := _session_cookie_env_var(provider, mapping_value))
+            }
+        )
+        remedy = "paste the cookie in Settings → Providers"
+        if variables:
+            remedy = f"set {', '.join(variables)} (or {remedy})"
+        advice = _cookie_store_advice(probe)
+        reason = f"{probe.detail}; {advice}" if advice else probe.detail
+        logging.warning(
+            "Cookie store unavailable: %s — %s. %s.",
+            probe.identity(),
+            reason,
+            remedy,
+        )
+    logging.info(
+        "Cookie stores: %d of %d unusable this cycle (%s)",
+        len(unusable),
+        browser_store.probed_stores(),
+        ", ".join(sorted({probe.state.value for probe in unusable})),
+    )
+
+
 class BrowserCookieExtractor:
     """Unified extractor for cookies across multiple browsers."""
 
@@ -2418,7 +2551,16 @@ class BrowserCookieExtractor:
                             p = base / rel
                             if p.exists():
                                 results.append(
-                                    {"browser": v["name"], "type": "chromium", "path": p}
+                                    {
+                                        "browser": v["name"],
+                                        "type": "chromium",
+                                        "path": p,
+                                        # Name the store so a failure can be
+                                        # reported as "Chrome/Default/Network/Cookies"
+                                        # instead of an anonymous path.
+                                        "profile": profile,
+                                        "store": rel[len(profile) + 1 :],
+                                    }
                                 )
 
         # 2. Linux Flatpak / Snap
@@ -2440,6 +2582,11 @@ class BrowserCookieExtractor:
                                     "browser": "Chromium (Flatpak)",
                                     "type": "chromium",
                                     "path": p,
+                                    # Name the store so a failure can be
+                                    # reported as "Chromium (Flatpak)/Default/Network/Cookies"
+                                    # instead of an anonymous path.
+                                    "profile": profile,
+                                    "store": rel[len(profile) + 1 :],
                                 }
                             )
 
@@ -2459,6 +2606,8 @@ class BrowserCookieExtractor:
                                     "browser": "Chromium (Snap)",
                                     "type": "chromium",
                                     "path": p,
+                                    "profile": profile,
+                                    "store": "Cookies",
                                 }
                             )
                 elif "firefox" in str(base).lower():
@@ -2469,6 +2618,8 @@ class BrowserCookieExtractor:
                                     "browser": "Firefox (Snap)",
                                     "type": "firefox",
                                     "path": p / "cookies.sqlite",
+                                    "profile": p.name,
+                                    "store": "cookies.sqlite",
                                 }
                             )
 
@@ -2490,27 +2641,31 @@ class BrowserCookieExtractor:
                             "browser": "Firefox",
                             "type": "firefox",
                             "path": p / "cookies.sqlite",
+                            "profile": p.name,
+                            "store": "cookies.sqlite",
                         }
                     )
 
-        # 4. Safari
-        if system == "Darwin" and (home / "Library/Cookies/Cookies.binarycookies").exists():
-            results.append(
-                {
-                    "browser": "Safari",
-                    "type": "safari",
-                    "path": home / "Library/Cookies/Cookies.binarycookies",
-                }
-            )
+        # 4. Safari (legacy, sandbox container and separate profile stores).
+        if system == "Darwin":
+            from scripts.sidecar_pkg.safari_cookies import stores
+
+            results.extend(stores(home))
 
         return results
 
     @staticmethod
-    def get_macos_candidates(provider, domains, name):
-        """Return independently attributable macOS sources, never merge accounts."""
-        from scripts.sidecar_pkg.identity import credential_fingerprint, keyed_credential_origin
-        from scripts.sidecar_pkg.macos_cookies import read_cookies
+    def get_macos_candidates(provider, domains, name, *, scan_outcomes=None):
+        """Return independent sources; optional scan_outcomes is an internal diagnostic sink.
 
+        Production emits the same sanitized outcomes to logs, not ingestion manifests.
+        """
+        from scripts.sidecar_pkg.cookie_scan import report_scan, report_scan_summary
+        from scripts.sidecar_pkg.identity import credential_fingerprint, keyed_credential_origin
+        from scripts.sidecar_pkg.macos_cookies import scan_cookies
+
+        scan_outcomes = scan_outcomes if scan_outcomes is not None else []
+        first_outcome = len(scan_outcomes)
         candidates = []
         allowed_domains = (
             {"claude.ai"}
@@ -2521,14 +2676,15 @@ class BrowserCookieExtractor:
         if provider == "anthropic" and os.getenv(
             "RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "1"
         ).strip().lower() not in {"0", "false", "off", "no"}:
-            from scripts.sidecar_pkg.claude_desktop import read_session_cookie
+            from scripts.sidecar_pkg.claude_desktop import scan_session_cookie
 
-            value = read_session_cookie(Path.home() / "Library/Application Support/Claude/Cookies")
-            if value:
-                origin = keyed_credential_origin(
-                    f"cookie:{provider}/Claude Desktop/Default/Cookies",
-                    credential_fingerprint(value),
-                )
+            base_origin = f"cookie:{provider}/Claude Desktop/Default/Cookies"
+            scanned = scan_session_cookie(
+                Path.home() / "Library/Application Support/Claude/Cookies"
+            )
+            report_scan("Claude Desktop", base_origin, scanned, scan_outcomes)
+            for value in scanned.values:
+                origin = keyed_credential_origin(base_origin, credential_fingerprint(value))
                 candidates.append((value, origin))
         for target in BrowserCookieExtractor.get_all_paths():
             browser = target["browser"]
@@ -2541,17 +2697,20 @@ class BrowserCookieExtractor:
                 values = []
                 try:
                     if target["type"] == "chromium":
-                        values = read_cookies(target["path"], service, bare, name)
+                        scanned = scan_cookies(target["path"], service, bare, name)
+                        values = scanned.values
+                        report_scan(browser, origin, scanned, scan_outcomes)
                     elif target["type"] == "safari":
-                        values = [
-                            cookie["value"]
-                            for cookie in BrowserCookieExtractor.parse_safari(target["path"])
-                            if cookie.get("name") == name
-                            and (
-                                cookie.get("domain", "").lstrip(".") == bare
-                                or cookie.get("domain", "").endswith("." + bare)
-                            )
-                        ]
+                        from scripts.sidecar_pkg.safari_cookies import scan_cookies as scan_safari
+
+                        if target.get("discovery_status") == "inaccessible":
+                            from scripts.sidecar_pkg.cookie_scan import StoreScan
+
+                            scanned = StoreScan("inaccessible")
+                        else:
+                            scanned = scan_safari(target["path"], bare, name)
+                        report_scan(browser, origin, scanned, scan_outcomes)
+                        values = [cookie["value"] for cookie in scanned.values]
                     elif target["type"] == "firefox":
                         from contextlib import closing
 
@@ -2578,49 +2737,18 @@ class BrowserCookieExtractor:
                     )
                     if candidate not in candidates:
                         candidates.append(candidate)
+        report_scan_summary(scan_outcomes[first_outcome:])
         return candidates
 
     @staticmethod
     def parse_safari(path):
-        """Minimal safari binary cookie parser."""
-        try:
-            with open(path, "rb") as f:
-                if f.read(4) != b"cook":
-                    return []
-                num_pages = struct.unpack(">I", f.read(4))[0]
-                page_sizes = [struct.unpack(">I", f.read(4))[0] for _ in range(num_pages)]
-                all_cookies = []
-                for size in page_sizes:
-                    data = f.read(size)
-                    if len(data) < 12:
-                        continue
-                    num_c = struct.unpack("<I", data[4:8])[0]
-                    off = [
-                        struct.unpack("<I", data[8 + (i * 4) : 12 + (i * 4)])[0]
-                        for i in range(num_c)
-                    ]
-                    for o in off:
-                        c = data[o:]
-                        u_o, n_o = (
-                            struct.unpack("<I", c[16:20])[0],
-                            struct.unpack("<I", c[20:24])[0],
-                        )
-                        v_o = struct.unpack("<I", c[28:32])[0]
+        """Compatibility wrapper; malformed/inaccessible stores yield no cookies."""
+        from scripts.sidecar_pkg.safari_cookies import scan_cookies
 
-                        def r_s(at):
-                            e = c.find(b"\x00", at)
-                            return c[at:e].decode("utf-8", errors="replace") if e != -1 else ""
-
-                        all_cookies.append(
-                            {"domain": r_s(u_o), "name": r_s(n_o), "value": r_s(v_o)}
-                        )
-                return all_cookies
-        except Exception:
-            logging.debug("Failed to parse Safari cookies", exc_info=True)
-            return []
+        return scan_cookies(path).values
 
     @staticmethod
-    def get_cookie(domain, name):
+    def get_cookie(domain, name, provider=None, mapping_value=None):
         # Normalise the domain to its bare form (no leading dot) so we can
         # express a precise suffix match. The previous LIKE %{domain}% was
         # a substring match — "anthropic.com" matched "evil-anthropic.com"
@@ -2641,11 +2769,21 @@ class BrowserCookieExtractor:
             not in {"0", "false", "off", "no"}
         ):
             try:
-                from scripts.sidecar_pkg.claude_desktop import read_session_cookie
+                from scripts.sidecar_pkg.claude_desktop import scan_session_cookie
+                from scripts.sidecar_pkg.cookie_scan import report_scan, report_scan_summary
 
-                desktop_cookie = read_session_cookie(
+                scanned = scan_session_cookie(
                     Path.home() / "Library/Application Support/Claude/Cookies"
                 )
+                outcomes = []
+                report_scan(
+                    "Claude Desktop",
+                    "cookie:anthropic/Claude Desktop/Default/Cookies",
+                    scanned,
+                    outcomes,
+                )
+                report_scan_summary(outcomes)
+                desktop_cookie = next(iter(scanned.values), None)
                 if desktop_cookie:
                     logging.info("Claude session cookie source: Claude Desktop")
                     return desktop_cookie
@@ -2655,62 +2793,98 @@ class BrowserCookieExtractor:
                 )
 
         for target in BrowserCookieExtractor.get_all_paths():
-            try:
-                if target["type"] == "safari":
-                    for c in BrowserCookieExtractor.parse_safari(target["path"]):
-                        host = (c.get("domain") or "").lower()
-                        if c["name"] == name and (
-                            host == bare or host == dotted or host.endswith(dotted)
-                        ):
-                            logging.info("Cookie source: %s", target.get("browser", target["type"]))
-                            return c["value"]
-                elif target["type"] == "chromium" and platform.system() == "Darwin":
-                    from scripts.sidecar_pkg.macos_cookies import read_cookies
-
-                    browser = target["browser"]
-                    service = (
-                        "Microsoft Edge Safe Storage"
-                        if "Edge" in browser
-                        else f"{browser} Safe Storage"
-                    )
-                    values = read_cookies(target["path"], service, bare, name)
-                    if values:
-                        return values[0]
-                else:
-                    with sqlite3.connect(
-                        f"file:{str(target['path'])}?mode=ro&uri=1", uri=True
-                    ) as conn:
-                        cursor = conn.cursor()
-                        if target["type"] == "chromium":
-                            cursor.execute(
-                                "SELECT encrypted_value FROM cookies "
-                                "WHERE name = ? "
-                                "AND (host_key = ? OR host_key = ? OR host_key LIKE ?)",
-                                (name, bare, dotted, like_subdomain),
-                            )
-                            row = cursor.fetchone()
-                            if row:
-                                val = decrypt_chromium_cookie(row[0], target["browser"])
-                                if val:
-                                    logging.info(
-                                        "Cookie source: %s", target.get("browser", target["type"])
-                                    )
-                                    return val
-                        else:  # Firefox
-                            cursor.execute(
-                                "SELECT value FROM moz_cookies "
-                                "WHERE name = ? "
-                                "AND (host = ? OR host = ? OR host LIKE ?)",
-                                (name, bare, dotted, like_subdomain),
-                            )
-                            row = cursor.fetchone()
-                            if row:
+            # Safari's store is not a SQLite database and macOS keeps its own
+            # decryption path, so neither is probed. Only the SQLite stores
+            # (Chromium and Firefox outside macOS) are classified, and they
+            # are classified once per cycle rather than once per cookie name.
+            if target["type"] == "safari" or (
+                target["type"] == "chromium" and platform.system() == "Darwin"
+            ):
+                try:
+                    if target["type"] == "safari":
+                        for c in BrowserCookieExtractor.parse_safari(target["path"]):
+                            host = (c.get("domain") or "").lower()
+                            if c["name"] == name and (
+                                host == bare or host == dotted or host.endswith(dotted)
+                            ):
                                 logging.info(
                                     "Cookie source: %s", target.get("browser", target["type"])
                                 )
-                                return row[0]
+                                return c["value"]
+                    else:
+                        from scripts.sidecar_pkg.macos_cookies import read_cookies
+
+                        browser = target["browser"]
+                        service = (
+                            "Microsoft Edge Safe Storage"
+                            if "Edge" in browser
+                            else f"{browser} Safe Storage"
+                        )
+                        values = read_cookies(target["path"], service, bare, name)
+                        if values:
+                            return values[0]
+                except Exception:
+                    logging.warning(
+                        "Cookie extraction failed for browser target (%s, name=%s)",
+                        target.get("browser"),
+                        name,
+                        exc_info=True,
+                    )
+                continue
+
+            try:
+                probe = browser_store.probe_store(target)
             except Exception:
-                logging.warning(
+                # A store that cannot even be classified must not break the
+                # provider that was asking for it.
+                logging.debug("Cookie store probe failed", exc_info=True)
+                continue
+            if not probe.readable:
+                # A store that cannot be read is skipped for the rest of the
+                # cycle. The reason is reported once per cycle by
+                # ``report_cookie_stores`` instead of once per cookie name.
+                if provider:
+                    _cookie_store_blocked.setdefault(probe.identity(), {})[provider] = (
+                        mapping_value or ""
+                    )
+                continue
+            try:
+                conn = browser_store.open_store(probe)
+                if conn is None:
+                    continue
+                with closing(conn):
+                    cursor = conn.cursor()
+                    if target["type"] == "chromium":
+                        cursor.execute(
+                            "SELECT encrypted_value FROM cookies "
+                            "WHERE name = ? "
+                            "AND (host_key = ? OR host_key = ? OR host_key LIKE ?)",
+                            (name, bare, dotted, like_subdomain),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            val = decrypt_chromium_cookie(row[0], target["browser"])
+                            if val:
+                                logging.info(
+                                    "Cookie source: %s", target.get("browser", target["type"])
+                                )
+                                return val
+                    else:  # Firefox
+                        cursor.execute(
+                            "SELECT value FROM moz_cookies "
+                            "WHERE name = ? "
+                            "AND (host = ? OR host = ? OR host LIKE ?)",
+                            (name, bare, dotted, like_subdomain),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            logging.info("Cookie source: %s", target.get("browser", target["type"]))
+                            return row[0]
+            except Exception:
+                # The store opened, so this is a schema or decoding problem
+                # rather than an access problem: it is per-cookie detail and
+                # belongs at debug level.
+                logging.debug(
                     "Cookie extraction failed for browser target (%s, name=%s)",
                     target.get("browser"),
                     name,
@@ -3623,6 +3797,48 @@ def read_kimi_cli_device_id(credential_path: Path) -> str | None:
         return None
 
 
+def _is_expiry_key(name):
+    """Whether a key name holds an expiry timestamp."""
+    lowered = name.lower()
+    return "expires" in lowered or "expiry" in lowered
+
+
+def _expiry_seconds(value):
+    """Epoch seconds of *value*, normalising epoch milliseconds.
+
+    Returns None when *value* isn't a number.
+    """
+    try:
+        moment = float(value)
+    except (TypeError, ValueError):
+        return None
+    # Epoch milliseconds are ~1e3x the seconds value.
+    if moment > 1e11:
+        moment /= 1000.0
+    return moment
+
+
+def _record_expiry(record):
+    """The latest expiry a credential *record* carries, in epoch seconds.
+
+    A credential store that keeps several logins in one file nests the expiry
+    inside each record — the MiniMax Code app stores one record per build and
+    region. Returns None when the record carries no expiry at all.
+    """
+    if not isinstance(record, dict):
+        return None
+    best = None
+    for key, value in record.items():
+        if not _is_expiry_key(str(key)):
+            continue
+        moment = _expiry_seconds(value)
+        if moment is None:
+            continue
+        if best is None or moment > best:
+            best = moment
+    return best
+
+
 def _key_glob(pattern: str) -> "re.Pattern[str]":
     """Compile a mapping-key glob. ``*`` is the only special character and matches zero or
     more characters (dots and colons included) within ONE dict key. Same rule as
@@ -3700,7 +3916,8 @@ class GenericCollector:
         # A key may itself contain dots (gh's ``github.com`` host), so try the
         # longest matching prefix at each level, like the server's resolver. A prefix
         # containing ``*`` is a glob over that level's keys (sorted, so a rewritten file
-        # can't change which entry wins); a glob returns the first truthy match.
+        # can't change which entry wins); a glob returns the match whose record is
+        # still valid, falling back to the first truthy match.
         parts = key_path.split(".")
         if not isinstance(data, dict):
             return None
@@ -3710,10 +3927,27 @@ class GenericCollector:
             last = i == len(parts)
             if "*" in head:
                 pattern = _key_glob(head)
+                candidates = []
                 for key in sorted(k for k in data if isinstance(k, str) and pattern.fullmatch(k)):
                     found = data[key] if last else GenericCollector.get_nested(data[key], rest)
                     if found:
-                        return found
+                        candidates.append((data[key], found))
+                if candidates:
+                    # A glob must not hand out a dead record just because its
+                    # key sorts first. When the matched records carry an
+                    # expiry, the one that is still valid wins — and because
+                    # the choice depends only on the record, every mapping key
+                    # walking the same glob picks the same record, so a token
+                    # and its expiry never come from two different records.
+                    dated = []
+                    for record, found in candidates:
+                        expiry = _record_expiry(record)
+                        if expiry is not None:
+                            dated.append((found, expiry))
+                    if dated:
+                        live = [pair for pair in dated if pair[1] > time.time() + 60]
+                        return max(live or dated, key=lambda pair: pair[1])[0]
+                    return candidates[0][1]
             elif head in data:
                 if last:
                     return data[head]
@@ -3903,22 +4137,13 @@ class GenericCollector:
             # 3. Legacy generic macOS Keychain rules
             elif rule_type == "keychain" and platform.system() == "Darwin":
                 try:
-                    cmd = [
-                        "security",
-                        "find-generic-password",
-                        "-s",
-                        rule.get("service_name"),
-                        "-w",
-                    ]
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        creationflags=_subprocess_creationflags(),
+                    from scripts.sidecar_pkg.macos_keychain_store import read_secret
+
+                    raw_bytes = read_secret(
+                        rule.get("service_name"), group="registry:" + str(rule.get("service_name"))
                     )
-                    if result.returncode == 0:
-                        raw = result.stdout.strip()
+                    if raw_bytes is not None:
+                        raw = raw_bytes.decode().strip()
                         fmt = rule.get("format", "raw")
                         if fmt == "json":
                             data = json.loads(raw)
@@ -3945,7 +4170,7 @@ class GenericCollector:
                                 (candidate_tokens, f"keychain:{service}", "keychain")
                             )
                 except Exception:
-                    logging.debug("File credential extraction failed", exc_info=True)
+                    logging.debug("Keychain credential unavailable")
 
             # 4. Windows Credential Manager
             elif rule_type == "windows_credential" and platform.system() == "Windows":
@@ -3974,7 +4199,12 @@ class GenericCollector:
                 if provider_id == "anthropic_console":
                     continue
                 for domain in rule.get("domains", []):
-                    val = BrowserCookieExtractor.get_cookie(domain, name_to_find)
+                    val = BrowserCookieExtractor.get_cookie(
+                        domain,
+                        name_to_find,
+                        provider_id,
+                        mapping.get("value"),
+                    )
                     if val:
                         target = mapping.get("value")
                         if target:
@@ -4811,6 +5041,11 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     Returns collected metrics, extracted events, errors, and completed provider
     snapshots for the ingest payload.
     """
+    # Every store is re-examined once per cycle: a browser that held one
+    # open a moment ago may have released it, and a store that was readable
+    # may have been locked since.
+    reset_cookie_store_tracking()
+
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
         from scripts.sidecar_pkg.event_watermark import EventWatermark
@@ -5288,6 +5523,10 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     except Exception as _e:
         logging.debug(f"manifest: skipped ({_e})")
 
+    # One classified line per cookie store that could not be used, instead
+    # of a traceback per cookie name per store per cycle.
+    report_cookie_stores()
+
     return CollectionResult(
         all_metrics, all_events, error_count, completed_providers_this_cycle, cowork_batch
     )
@@ -5302,6 +5541,8 @@ class DaemonRunner:
         on_status_change: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config
+        global _CLAUDE_KEYCHAIN_PERMISSION
+        _CLAUDE_KEYCHAIN_PERMISSION = self._keychain_renewal_allowed
         # Heartbeat: how often the sidecar pings the server for instructions.
         # The server (via /fleet/ingest's poll_providers field) is the cadence
         # authority — it tells the sidecar which providers are due. A short
@@ -5337,6 +5578,9 @@ class DaemonRunner:
     # ------------------------------------------------------------------
     # Status property (computed)
     # ------------------------------------------------------------------
+
+    def _keychain_renewal_allowed(self) -> bool:
+        return self._config.get("claude_keychain_renewal") is True
 
     @property
     def status(self) -> str:
@@ -5675,6 +5919,9 @@ class DaemonRunner:
 
     def start(self) -> None:
         """Spawn a background daemon thread running the collection loop."""
+        from scripts.sidecar_pkg.keychain_client import reopen_keychain_client
+
+        reopen_keychain_client()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, name="DaemonRunner", daemon=True)
         self._thread.start()
@@ -5682,6 +5929,9 @@ class DaemonRunner:
     def stop(self) -> None:
         """Signal the loop to exit and join the background thread."""
         self._stop_event.set()
+        from scripts.sidecar_pkg.keychain_client import close_keychain_client
+
+        close_keychain_client()
         if self._thread is not None:
             self._thread.join(timeout=30)
             if self._thread.is_alive():
@@ -6055,4 +6305,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["--authorize-claude-keychain"]:
+        from scripts.sidecar_pkg.keychain_authorization import authorization_command
+
+        authorization_command(sys.argv[1:])
+    elif sys.argv[1:] == ["--runway-keychain-worker"]:
+        from scripts.sidecar_pkg.keychain_worker import worker_main
+
+        worker_main()
+    else:
+        main()

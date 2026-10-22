@@ -57,6 +57,9 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("grok", "auth.json"), "Grok CLI"),
     (("kimi", "config.json"), "Kimi CLI"),
     (("k2", "tokens.json"), "Kimi K2"),
+    # The MiniMax Code desktop app stores its OAuth bundle under the OAuth
+    # client id, so the directory names the client, not the app.
+    (("mcode-public", "auth.json"), "MiniMax Code"),
     # Last resort, for a login under a user-chosen dir (``CLAUDE_CONFIG_DIR=/data/work``).
     # Only filenames no other tool uses; ``auth.json`` is shared (Codex/OpenCode/Grok).
     (("credentials.json",), "Claude Code"),
@@ -73,6 +76,7 @@ _LOGIN_HINTS = {
     "Gemini CLI": "run `gemini`, then `/auth`",
     "Grok CLI": "sign in again in the Grok CLI",
     "Antigravity CLI": "sign in again in the Antigravity CLI",
+    "MiniMax Code": "sign in again in the MiniMax Code app",
 }
 
 
@@ -129,6 +133,16 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
             path=_collapse_home(raw) if raw else None,
         )
     if value.startswith("cookie:"):
+        # Native acceptance covers these clients (#672); optional browser labels
+        # and their regression cases must accompany acceptance in #683.
+        parts = value.split("#", 1)[0].split("/")
+        if (
+            len(parts) >= 4
+            and parts[0] in {"cookie:anthropic", "cookie:anthropic_console"}
+            and parts[1] in {"Chrome", "Safari", "Claude Desktop"}
+        ):
+            # The client is named; the private profile and the fingerprint are not.
+            return OriginDisplay("cookie", "Session cookie", app=parts[1])
         return OriginDisplay(
             "cookie",
             "Browser cookie",
@@ -155,6 +169,8 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
 def describe_origin(origin: str | None) -> tuple[str, str]:
     """Return a UI-safe source kind and label for a sidecar credential origin."""
     display = describe_origin_full(origin)
+    if display.kind == "cookie" and display.label == "Session cookie" and display.app:
+        return display.kind, f"{display.app} cookie"
     return display.kind, display.label
 
 
@@ -195,11 +211,16 @@ def cookie_origin_detail(origin: str | None) -> str | None:
     A cookie origin reads ``cookie:<provider>/<browser>/<profile>/<store>`` when the
     machine could name the jar, and ``cookie:<provider>/session`` when it could not.
     The first part is the provider, so only the segments after it are inspected.
+
+    An Anthropic cookie origin carries a private browser profile (#672): it is named
+    by its client instead, so no profile is ever read out of it.
     """
     if not origin or not origin.startswith("cookie:"):
         return None
     rest = origin.removeprefix("cookie:").split("#", 1)[0]
     parts = [part for part in rest.split("/") if part]
+    if parts and parts[0] in {"anthropic", "anthropic_console"}:
+        return None
     for index, part in enumerate(parts[1:], start=1):
         lowered = part.lower()
         if not any(token in lowered for token in _BROWSER_TOKENS):

@@ -22,6 +22,11 @@ import httpx
 from pydantic import ValidationError
 
 from app.core.date_utils import normalize_iso_date
+from app.services.account_identity import (
+    HASH_RE,
+    is_placeholder_label,
+    resolve_account_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +93,11 @@ class BaseCollector(ABC):
 
     # Subclasses override these to auto-populate Phase 0B fields on every card.
     PROVIDER_ID: str = "unknown"
+    # Whether this provider's account label is a *display name* — a name a human
+    # chose for the account, which need not be the account's identity. Such a
+    # label must never file a card under another account, so a card that carries
+    # none of its own falls back to the account it belongs to.
+    ACCOUNT_LABEL_IS_DISPLAY_NAME: bool = False
     DEFAULT_WINDOW_TYPE: str = "unknown"
     # True when cache credentials are stored by the collector's resolved
     # account identity instead of the shared `default` credential slot.
@@ -103,6 +113,11 @@ class BaseCollector(ABC):
     # providers that never reveal an email. Compared with the value recorded for the source:
     # a change means the browser behind a cookie switched users. Reset like ``verified_identity``.
     verified_subject: str | None = None
+    # The human name of the account a verification proved, and the billing model its
+    # cards describe. Reset like ``verified_identity``; the poller uses them to name
+    # and price an account the server discovered on its own.
+    verified_account_label: str | None = None
+    verified_billing_type: str | None = None
 
     @property
     def successful_empty_result(self) -> bool:
@@ -493,6 +508,35 @@ class BaseCollector(ABC):
 
         return primary
 
+    def _fallback_account_label(self) -> str:
+        """A name for a card that carries none of its own.
+
+        A card's label may be what keys it to its account. For a provider whose
+        account label is a display name (see ``ACCOUNT_LABEL_IS_DISPLAY_NAME``),
+        a name that would key the card to a *different* account files the card
+        under that other account, so the account's own id is the safe name then.
+        A name that keys the card where it already belongs is kept.
+        """
+        label = self.account_label or self._account_label_cache
+        account_id = self.account_id
+        if not label:
+            # A credential-derived id is not a display name: the dashboard
+            # renders a label whole, and the digest is withheld for that reason.
+            if account_id and not HASH_RE.match(account_id):
+                return account_id
+            return "Default"
+        if (
+            self.ACCOUNT_LABEL_IS_DISPLAY_NAME
+            and account_id
+            and account_id != "default"
+            and (
+                resolve_account_id(self.PROVIDER_ID, account_id, label)
+                != resolve_account_id(self.PROVIDER_ID, account_id, None)
+            )
+        ):
+            return account_id
+        return label
+
     def _tag_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Add account identifiers to every card in the result list.
@@ -503,7 +547,9 @@ class BaseCollector(ABC):
 
         # Phase 0C: Auto-discover account label from detail if not already set by user
         # Avoid running discovery if a custom label is already present or cached.
-        if not self._account_label_cache or self._account_label_cache.lower() == "default":
+        if is_placeholder_label(self.account_label) and is_placeholder_label(
+            self._account_label_cache
+        ):
             discovered_label = None
             for card in results:
                 detail = card.get("detail", "")
@@ -519,7 +565,9 @@ class BaseCollector(ABC):
                 # Fallback to org pattern or standalone username after separator (· or |)
                 org_match = re.search(r"org:\s*([^\s·\[\]|]+)", detail)
                 if org_match:
-                    discovered_label = f"org: {org_match.group(1)}"
+                    # The marker tells the tagger an organization apart from a
+                    # member; a name a human reads is just the organization's.
+                    discovered_label = org_match.group(1)
                     break
 
                 # Standalone username after a dot/separator
@@ -564,14 +612,8 @@ class BaseCollector(ABC):
             # Tag account identifiers
             if "account_id" not in card_data or not card_data.get("account_id"):
                 card_data["account_id"] = self.account_id or "default"
-            if (
-                "account_label" not in card_data
-                or not card_data.get("account_label")
-                or card_data.get("account_label").lower() == "default"
-            ):
-                card_data["account_label"] = (
-                    self.account_label or self._account_label_cache or "Default"
-                )
+            if is_placeholder_label(card_data.get("account_label")):
+                card_data["account_label"] = self._fallback_account_label()
 
             # Tag input source (origin of credentials)
             if "input_source" not in card_data or card_data.get("input_source") == "unknown":

@@ -118,6 +118,13 @@ class UsageEventPush(BaseModel):
     event_id: str  # dedup key
     ts: str  # ISO-8601 (UTC) of the actual event
     model_id: str | None = None
+    # The client app that produced the event ("opencode", "claude_code",
+    # "minimax_code", ...). provider_id names the upstream provider billed,
+    # which several client apps share — a canonical-provider retag would
+    # otherwise erase where the traffic came from. Optional so an older
+    # sidecar still pushes valid events; the server then falls back to
+    # provider_id.
+    source_app: str | None = None
     session_id: str | None = None
     subagent_type: str | None = None  # "Explore" | "Plan" | None for main thread
     # Working-directory / project context (enrichment). cwd = raw per-message
@@ -306,6 +313,32 @@ class TopModelEntry(BaseModel):
 
 class TopModelsResponse(BaseModel):
     models: list[TopModelEntry]
+    metric: str  # "tokens" | "cost" — the sort key used
+    generated_at: str  # ISO-8601 UTC
+
+
+class SourceAppEntry(BaseModel):
+    """One client app's totals in the per-app usage breakdown."""
+
+    source_app: str
+    msgs: int
+    tokens_total: int
+    tokens_input: int
+    tokens_output: int
+    tokens_cache_read: int
+    tokens_cache_create: int
+    tokens_reasoning: int
+    cost_usd: float
+    cost_cache: float  # cache_read + cache_create cost, for exclude-cache
+    cost_input: float = 0.0
+    cost_output: float = 0.0
+    cost_cache_read: float = 0.0
+    cost_cache_create: float = 0.0
+    providers: list[str]  # distinct providers this app's usage was billed to
+
+
+class SourceAppsResponse(BaseModel):
+    apps: list[SourceAppEntry]
     metric: str  # "tokens" | "cost" — the sort key used
     generated_at: str  # ISO-8601 UTC
 

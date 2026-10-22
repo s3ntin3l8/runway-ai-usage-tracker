@@ -34,7 +34,7 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '@/lib/format';
 import { maskAccountId } from '@/lib/accountDisplay';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
-import { cardKind, cardPct, cardStale, cardStatus, chipLabel, staleTitle, tokenUsageTotal, windowLabel } from '@/lib/quota';
+import { cardHeroLabel, cardHeroText, cardKind, cardPct, cardStale, cardStatus, cardTooltip, chipLabel, staleTitle, tokenUsageTotal, windowLabel } from '@/lib/quota';
 import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
 import type { RiskItem } from './risk';
@@ -129,12 +129,12 @@ function SortableProviderCard({
       : status;
 
   // Hero label for the aria-label — meaningful per kind.
-  const heroLabel =
-    kind === 'quota'
-      ? `${formatPct(cardPct(gauge))} used`
-      : kind === 'tokens'
-        ? `${formatTokens(tokenUsageTotal(gauge.token_usage, excludeCache) ?? gauge.used_value ?? null)} tokens used`
-        : `${gauge.used_value != null ? formatCurrency(gauge.used_value, gauge.currency) : (gauge.remaining ?? '—')} ${gauge.unit ?? ''}`.trimEnd();
+  const heroLabel = cardHeroText(gauge, excludeCache);
+
+  // The detail line rides along in the accessible name: the card is a
+  // role="button", and children of a button are presentational, so a nested
+  // aria-label would never be exposed.
+  const accessibleHero = cardHeroLabel(gauge, heroLabel) ?? heroLabel;
 
   return (
     <Card
@@ -145,7 +145,7 @@ function SortableProviderCard({
       role="button"
       tabIndex={0}
       aria-label={
-        accountLabel ? `${name} (${accountLabel}), ${heroLabel}` : `${name}, ${heroLabel}`
+        accountLabel ? `${name} (${accountLabel}), ${accessibleHero}` : `${name}, ${accessibleHero}`
       }
       onClick={() => {
         if (!isDragging) navigate(providerPath(entry.provider_id, entry.account_id));
@@ -175,7 +175,10 @@ function SortableProviderCard({
       {kind === 'quota' && (
         <>
           <div className="mt-3 flex items-baseline justify-between gap-2">
-            <span className="font-mono text-lg font-semibold tabular">
+            <span
+              className="font-mono text-lg font-semibold tabular"
+              title={cardTooltip(gauge)}
+            >
               {formatPct(cardPct(gauge))}
             </span>
             <span className="truncate text-[11px] text-fg-subtle">

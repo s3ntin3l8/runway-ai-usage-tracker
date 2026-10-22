@@ -52,10 +52,14 @@ function isCookieStore(part: string): boolean {
  *
  * `cookie:opencode/Chrome/Profile 1/Cookies` → "Chrome · Profile 1";
  * `cookie:opencode/session` → nothing (the machine could not name the jar).
+ *
+ * An Anthropic cookie origin carries a private browser profile (#672): it is
+ * named by its client instead, so no profile is ever read out of it.
  */
 export function cookieOriginDetail(origin: string): string | undefined {
   const rest = origin.slice('cookie:'.length).split('#')[0];
   const parts = rest.split('/').filter(Boolean);
+  if (parts[0] === 'anthropic' || parts[0] === 'anthropic_console') return undefined;
   for (let index = 1; index < parts.length; index += 1) {
     const part = parts[index];
     const lowered = part.toLowerCase();
@@ -67,13 +71,24 @@ export function cookieOriginDetail(origin: string): string | undefined {
   return undefined;
 }
 
+/** The clients whose native acceptance covers their cookies (#672, #683). */
+const NATIVE_COOKIE_CLIENTS = ['Chrome', 'Safari', 'Claude Desktop'];
+
 /** Describe a raw credential origin for display. Never exposes a secret. */
 export function describeCredentialOrigin(origin: string): CredentialOriginDescription {
   if (origin.startsWith('cookie:')) {
+    // Same rule as the server: a native Anthropic cookie is named by its client
+    // ("Session cookie"), and its private profile never becomes a detail.
+    const segments = origin.split('#')[0].split('/').filter(Boolean);
+    const provider = segments[0]?.replace(/^cookie:/, '');
+    const native =
+      segments.length >= 4 &&
+      (provider === 'anthropic' || provider === 'anthropic_console') &&
+      NATIVE_COOKIE_CLIENTS.includes(segments[1]);
     return {
       kind: 'cookie',
-      label: 'Browser cookie',
-      detail: cookieOriginDetail(origin),
+      label: native ? 'Session cookie' : 'Browser cookie',
+      detail: native ? undefined : cookieOriginDetail(origin),
     };
   }
   if (origin.startsWith('keychain:')) {

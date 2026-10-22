@@ -102,6 +102,34 @@ reg delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ApplicationBoundEncryption
 
 After relaunching the browser with ABE disabled, run `python3 scripts/sidecar.py --log-level DEBUG --once` and confirm the cookie-found log line appears. Then extract your session token into an environment variable (see the Alternative section above) and re-enable ABE.
 
+## Cookie store unavailable (the browser holds it open)
+
+On Windows, Chrome 127+ opens the active profile's `Cookies` database with a lock that
+denies reads to any other process, and encrypts every value with App-Bound Encryption.
+The sidecar cannot read such a store at all, and it reports that once per cycle
+instead of raising an error for every cookie name:
+
+```
+WARNING Cookie store unavailable: Chrome/Default/Network/Cookies — held open by another
+        process; closing the browser releases the lock but not the encryption on Chrome
+        127+, so it does not make these cookies readable. set OLLAMA_SESSION_TOKEN (or
+        paste the cookie in Settings → Providers).
+INFO    Cookie stores: 1 of 3 unusable this cycle (locked)
+```
+
+**How to tell the two apart.** The reason in the message says which one you hit:
+
+| Reason | Meaning | Fix |
+|---|---|---|
+| `held open by another process` | The browser owns the file exclusively | Use Firefox, or supply the cookie another way — closing the browser alone is not enough on Chrome 127+, because the values are also app-bound encrypted |
+| `values are app-bound encrypted (v20)` | The store opened, but the values cannot be decrypted | Use Firefox, or disable ABE as described above |
+
+**What actually works on Windows.** Firefox stores its cookies unencrypted and keeps them
+readable while it is running, so signing into the provider in Firefox is enough — the
+sidecar reads it directly, with no restart and no policy change. The environment
+variable and the Settings → Providers paste both work regardless of which browser you
+use.
+
 ## Dashboard cards or account attribution look wrong
 
 Before digging into logs, check Settings → Data health — a stale `default`-keyed

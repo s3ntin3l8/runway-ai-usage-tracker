@@ -8,8 +8,10 @@ real identity-provider validation tracked in #603.
 
 ## Portable release capture and frozen validation
 
-Dispatch **Security Validation** on the trusted source branch with `release-tag`
-set to a versioned release such as `v3.0.0-beta.8`. Rolling edge is deliberately
+Dispatch **Frozen Verifier** on the trusted source branch with `release-tag`
+set to a versioned release such as `v3.0.0-beta.8`. (The workflow used to be
+called Security Validation; the packaging half of it moved to its own
+workflow when it stopped running on every pull request.) Rolling edge is deliberately
 unsupported. The capture job requires Linux CLI, Linux desktop, Windows ZIP and
 macOS ZIP, each with a checksum and modern Sigstore bundle. It records the release
 ID, tag commit, asset IDs, sizes, GitHub digests when supplied, and locally computed

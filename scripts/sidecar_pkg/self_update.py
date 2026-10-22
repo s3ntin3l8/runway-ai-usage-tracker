@@ -51,6 +51,7 @@ from typing import Any
 from urllib import error, request
 
 from scripts.sidecar_pkg import asset_names, runtime_cleanup
+from scripts.sidecar_pkg.keychain_client import close_keychain_client, reopen_keychain_client
 from scripts.sidecar_pkg.signatures import UpdateVerificationError, verify_update
 from scripts.sidecar_pkg.update_check import (
     _BETA_RELEASES_API_URL,
@@ -1002,6 +1003,7 @@ def _apply_windows(
         # The helper relaunches once we exit; leave the loop / process to wind down.
         # Release the lock first — os._exit bypasses the context manager cleanup.
         _release_lock()
+        close_keychain_client()
         os._exit(0)
     return True
 
@@ -1203,6 +1205,7 @@ def _relaunch_posix(
                 "Update installed; exiting (%d) for systemd to restart %s", exit_code, install
             )
             logging.shutdown()
+            close_keychain_client()
             os._exit(exit_code)
             return  # unreachable
         # No such supervisor: re-exec in place. The Python process gets a NEW pid (the
@@ -1210,12 +1213,14 @@ def _relaunch_posix(
         # lingers idle until the next restart, so only its runtime dir is reclaimed.
         logger.info("Re-executing %s", install)
         try:
+            close_keychain_client()
             os.execve(
                 str(install),
                 [str(install), *sys.argv[1:]],
                 _fresh_runtime_env(hand_off_runtime=True),
             )
         except OSError:
+            reopen_keychain_client()
             # execve failed (unreadable/ENOEXEC binary): this image keeps running, so hand back
             # what the hooks released before the caller logs the failed update.
             _undo_pre_exec_hooks()
@@ -1236,6 +1241,7 @@ def _relaunch_posix(
         )
     logger.info("Relaunched %s; exiting old process", install)
     _release_lock()
+    close_keychain_client()
     os._exit(0)
 
 

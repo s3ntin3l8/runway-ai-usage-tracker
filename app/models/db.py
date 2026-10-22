@@ -415,6 +415,10 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
         # sidecar contributions) filter only on these two columns.
         Index("ix_usage_events_kind_ts", "kind", "ts"),
         Index("ix_usage_events_project_ts", "project", "ts"),
+        # Covers query_source_apps' WHERE kind='message' AND source_app IS NOT
+        # NULL AND ts >= :since scan (the per-app breakdown, which is
+        # identity-agnostic unless a provider/account filter narrows it).
+        Index("ix_usage_events_source_app_ts", "source_app", "ts"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -423,6 +427,13 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     attribution_source: str = "unknown"  # local | tag | default | unknown
     credential_origin: str | None = None  # directory-scoped events; None for legacy streams
     sidecar_id: str = Field(default="local")  # hostname that pushed this
+    # The client app that produced the event ("opencode", "claude_code",
+    # "minimax_code", ...). provider_id names the upstream provider billed, which
+    # several client apps share, so a canonical-provider retag (see
+    # scripts/sidecar_pkg/canonical_providers.py) would erase where the traffic
+    # came from. source_app keeps that fact. Falls back to provider_id when the
+    # pushing sidecar doesn't report one.
+    source_app: str | None = None
     event_id: str  # provider's msg_id / request_id
     ts: UTCDateTime = Field(index=True)  # actual log timestamp (UTC)
     kind: str = Field(

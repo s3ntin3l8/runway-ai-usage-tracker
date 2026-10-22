@@ -24,6 +24,11 @@ import pytest
 from scripts import build_windows_installer, prepare_nsis
 from scripts.sidecar_pkg import asset_names
 
+# The native Windows gate runs the modules marked ``windows``; see
+# `scripts/dev_checks.py test-windows`. The installer is a Windows artefact,
+# so its packaging rules belong to that gate.
+pytestmark = pytest.mark.windows
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 NSI = (ROOT / "installer" / "windows" / "runway-sidecar.nsi").read_text(encoding="utf-8")
@@ -288,7 +293,7 @@ def test_the_installer_must_be_a_windows_executable(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("workflow", ["sidecar-build.yml", "security-validation.yml", "ci-cd.yml"])
+@pytest.mark.parametrize("workflow", ["sidecar-build.yml", "frozen-verifier.yml", "ci-cd.yml"])
 def test_the_workflows_use_the_shared_installer_helper(workflow):
     text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
     assert "scripts.build_windows_installer" in text
@@ -311,16 +316,22 @@ def test_the_release_build_labels_the_installer_with_its_release_label():
     assert '--label "${{ inputs.label }}"' in build
 
 
-def test_the_pull_request_gates_build_the_edge_installer():
-    gate = (WORKFLOWS / "security-validation.yml").read_text(encoding="utf-8")
+def test_the_edge_installer_is_built_with_the_edge_label():
+    """Both places that build the edge installer build it with that label.
+
+    The pull-request gate is the installer check in `ci-cd.yml`; the frozen
+    verifier builds the real one for the packaging smoke test, on pushes to
+    `main` and nightly.
+    """
+    verifier = (WORKFLOWS / "frozen-verifier.yml").read_text(encoding="utf-8")
     check = (WORKFLOWS / "ci-cd.yml").read_text(encoding="utf-8")
-    assert "--label edge" in gate
+    assert "--label edge" in verifier
     assert "--label edge" in check
 
 
-def test_the_pull_request_windows_gate_builds_the_real_executable():
-    """The gate compiles the installer from the freshly built executable."""
-    gate = (WORKFLOWS / "security-validation.yml").read_text(encoding="utf-8")
+def test_the_windows_verifier_builds_the_real_executable():
+    """The verifier compiles the installer from the freshly built executable."""
+    gate = (WORKFLOWS / "frozen-verifier.yml").read_text(encoding="utf-8")
     build_index = gate.index("pyinstaller --noconfirm")
     installer_index = gate.index("scripts.build_windows_installer")
     assert build_index < installer_index

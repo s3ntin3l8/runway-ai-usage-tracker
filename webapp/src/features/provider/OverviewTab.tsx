@@ -17,6 +17,7 @@ import { TrajectoryChart } from '@/components/charts/TrajectoryChart';
 import { hasTokenData, sumTokens } from '@/lib/cumulative';
 import { formatNumber, formatPct, formatTokens } from '@/lib/format';
 import { cardKind, findForecast } from '@/lib/quota';
+import { sourceAppLabel } from '@/lib/sourceApps';
 import { CostOutlookCard } from './CostOutlookCard';
 import { ProviderErrorBanner } from './ProviderErrorBanner';
 import { ProviderAnomalies } from './ProviderAnomalies';
@@ -31,6 +32,7 @@ import {
   useProviderCumulativeMonth,
   useProviderCumulativeRange,
   useProviderForecast,
+  useProviderSourceApps,
 } from './queries';
 
 
@@ -113,6 +115,49 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
       excludeCache={excludeCache}
     />
   );
+
+  // Which client app produced the usage. Several apps share one provider
+  // (MiniMax Code, OpenCode and a plain API script can all spend the same
+  // MiniMax plan), so the provider id alone can't say who spent the quota.
+  const sourceApps = useProviderSourceApps(
+    entry.provider_id,
+    entry.account_id,
+    scope.range,
+  );
+  const appSplitByLabel = useMemo<Record<string, CumulativeModelBucket>>(() => {
+    const out: Record<string, CumulativeModelBucket> = {};
+    for (const app of sourceApps.data?.apps ?? []) {
+      out[sourceAppLabel(app.source_app)] = {
+        tokens_input: app.tokens_input,
+        tokens_output: app.tokens_output,
+        tokens_cache_read: app.tokens_cache_read,
+        tokens_cache_create: app.tokens_cache_create,
+        tokens_reasoning: app.tokens_reasoning,
+        msgs: app.msgs,
+        cost_usd: app.cost_usd,
+        cost_input: app.cost_input,
+        cost_output: app.cost_output,
+        cost_cache_read: app.cost_cache_read,
+        cost_cache_create: app.cost_cache_create,
+      };
+    }
+    return out;
+  }, [sourceApps.data]);
+  const sourceAppsCard = Object.keys(appSplitByLabel).length > 0 ? (
+    <Card>
+      <CardHeader>
+        <CardTitle>Tokens by app · {scopeLabel}</CardTitle>
+        <span className="text-[11px] text-fg-subtle">Client app</span>
+      </CardHeader>
+      <CardContent>
+        {sourceApps.isPending ? (
+          <Skeleton className="h-44 w-full" />
+        ) : (
+          <ModelDonut byModel={appSplitByLabel} className="h-44" excludeCache={excludeCache} />
+        )}
+      </CardContent>
+    </Card>
+  ) : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -253,6 +298,8 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
 
         {kind !== 'quota' ? sourceSplitCard : null}
       </div>
+
+      {sourceAppsCard}
 
       <RecentSessions
         providerId={entry.provider_id}

@@ -143,6 +143,17 @@
           "type": "file",
           "paths": ["~/.local/share/opencode/auth.json", "~/.opencode/auth.json"],
           "mapping": { "minimax-coding-plan.key": "api_key" }
+        },
+        {
+          "type": "file",
+          "paths": ["~/.minimax/auth/*/*/mcode-public/auth.json"],
+          "format": "json",
+          "mapping": {
+            "records.*.accessToken": "oauth_token",
+            "records.*.refreshToken": "refresh_token",
+            "records.*.clientId": "client_id",
+            "records.*.expiresAtMs": "expiry_date"
+          }
         }
       ]
     },
@@ -399,7 +410,7 @@
       "icon": "🦙",
       "description": "Monitor Ollama Cloud quota with an API key or session cookie.",
       "api_key_label": "Ollama Cloud API Key (api)",
-      "api_key_help": "Used with https://ollama.com/api/usage; monthly.usage must be a fraction from 0 to 1.",
+      "api_key_help": "Used with https://ollama.com/api/balance to read the monthly allowance (quota) and its reset.",
       "session_cookie_label": "Web Session (web)",
       "session_cookie_help": "Paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings",
       "rules": [

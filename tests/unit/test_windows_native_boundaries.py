@@ -17,6 +17,11 @@ from scripts import sidecar
 from scripts.sidecar_pkg import self_update
 from sidecar_app.settings_server import SettingsServer
 
+# The native Windows gate runs the modules marked ``windows``; see
+# `scripts/dev_checks.py test-windows`. These are the tests that exercise
+# Windows APIs, so they are the ones a Windows runner can actually run.
+pytestmark = pytest.mark.windows
+
 
 def make_settings(port: int, owner: str) -> SettingsServer:
     return SettingsServer(

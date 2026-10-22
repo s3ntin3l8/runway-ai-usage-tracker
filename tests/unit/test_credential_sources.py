@@ -55,9 +55,6 @@ def test_cookie_origin_names_the_browser_and_profile_it_came_from():
     assert describe_origin_full("cookie:opencode/Chrome/Profile 1/Cookies").detail == (
         "Chrome · Profile 1"
     )
-    assert describe_origin_full("cookie:anthropic/Claude Desktop/Default/Cookies").detail == (
-        "Claude Desktop · Default"
-    )
     # The generic origin names no jar: only the kind is known.
     assert describe_origin_full("cookie:opencode/session").detail is None
     assert describe_origin_full("cookie:opencode/session").label == "Browser cookie"
@@ -65,6 +62,22 @@ def test_cookie_origin_names_the_browser_and_profile_it_came_from():
     assert describe_origin_full("cookie:opencode/Chrome/Default/Cookies#abc123").detail == (
         "Chrome · Default"
     )
+
+
+def test_an_anthropic_cookie_origin_never_reads_out_its_profile():
+    """An Anthropic cookie carries a private browser profile (#672): it is named by
+    its client instead, so no profile — and no fingerprint — ever reaches a label."""
+    native = describe_origin_full("cookie:anthropic/Claude Desktop/Default/Cookies")
+    assert (native.label, native.app) == ("Session cookie", "Claude Desktop")
+    assert native.detail is None
+    assert "Default" not in repr(native)
+    # A browser that native acceptance has not covered yet stays unnamed too.
+    other = describe_origin_full("cookie:anthropic/Firefox/private-profile/Cookies")
+    assert (other.label, other.app) == ("Browser cookie", "Browser")
+    assert other.detail is None
+    assert "private-profile" not in repr(other)
+    # The console variant is the same origin.
+    assert describe_origin_full("cookie:anthropic_console/Chrome/private/Cookies").detail is None
 
 
 def test_cookie_origin_never_reads_the_store_folder_as_a_profile():
@@ -872,3 +885,15 @@ def test_custom_dir_claude_credentials_still_name_claude_code():
 def test_custom_dir_auth_json_is_not_guessed():
     # Shared filename (Codex / OpenCode / Grok): don't mislabel it.
     assert describe_origin_full("path:/home/alice/elsewhere/auth.json").app is None
+
+
+@pytest.mark.parametrize("client", ["Chrome", "Safari", "Claude Desktop"])
+@pytest.mark.parametrize("provider", ["anthropic", "anthropic_console"])
+def test_native_cookie_source_labels_identify_client_without_private_profile(client, provider):
+    origin = f"cookie:{provider}/{client}/private-profile/Cookies#private-fingerprint"
+    display = describe_origin_full(origin)
+    assert display.app == client
+    assert display.label == "Session cookie"
+    assert describe_origin(origin) == ("cookie", f"{client} cookie")
+    assert "private-profile" not in repr(display)
+    assert "private-fingerprint" not in repr(display)

@@ -119,10 +119,9 @@ async def test_token_cache_keys_are_canonical():
 
 
 def test_provider_config_put_stores_canonical_id(session: Session):
-    from fastapi.testclient import TestClient
-
     from app.core.db import get_session
     from app.main import app
+    from tests.fixtures.test_client import TestClient
 
     app.dependency_overrides[get_session] = lambda: session
     try:
@@ -145,10 +144,9 @@ def test_provider_config_put_stores_canonical_id(session: Session):
 
 def test_provider_config_put_preserves_opencode_cookie_and_workspace(session: Session):
     """OpenCode cookie and workspace settings persist in the account row."""
-    from fastapi.testclient import TestClient
-
     from app.core.db import get_session
     from app.main import app
+    from tests.fixtures.test_client import TestClient
 
     app.dependency_overrides[get_session] = lambda: session
     try:
@@ -191,11 +189,10 @@ def test_provider_config_put_preserves_opencode_cookie_and_workspace(session: Se
 
 def test_provider_config_put_stores_xai_bearer_as_access_only(session: Session):
     """A manually pasted xAI bearer is not a refresh token."""
-    from fastapi.testclient import TestClient
-
     from app.api.endpoints.system import token_cache
     from app.core.db import get_session
     from app.main import app
+    from tests.fixtures.test_client import TestClient
 
     app.dependency_overrides[get_session] = lambda: session
     try:
@@ -539,23 +536,19 @@ class TestSidecarIdentityPrecedence:
         ]
 
     def test_anthropic_keychain_identity_comes_from_its_own_payload(self, monkeypatch):
-        from types import SimpleNamespace
-
         import scripts.sidecar as sidecar
+        from scripts.sidecar_pkg import macos_keychain_store
 
         monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(
-            sidecar.subprocess,
-            "run",
-            lambda *_args, **_kwargs: SimpleNamespace(
-                returncode=0,
-                stdout=json.dumps(
-                    {
-                        "claudeAiOauth": {"accessToken": "sk-ant-keychain"},
-                        "oauthAccount": {"emailAddress": "Keychain@Example.com"},
-                    }
-                ),
-            ),
+            macos_keychain_store,
+            "read_secret",
+            lambda *_args, **_kwargs: json.dumps(
+                {
+                    "claudeAiOauth": {"accessToken": "sk-ant-keychain"},
+                    "oauthAccount": {"emailAddress": "Keychain@Example.com"},
+                }
+            ).encode(),
         )
         cards, blocked = sidecar.GenericCollector.collect_provider(
             "anthropic",

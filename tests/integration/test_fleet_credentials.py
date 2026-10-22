@@ -20,7 +20,6 @@ import json
 import time
 
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
@@ -29,6 +28,7 @@ from app.api.endpoints.fleet import CredentialManifestRequest
 from app.core.db import get_session
 from app.main import app
 from app.models.db import CredentialSource, ProviderConfig
+from tests.fixtures.test_client import TestClient
 
 SECRET = "test-sidecar-secret-for-redeem"
 

@@ -9,13 +9,14 @@ import logging
 import math
 import os
 import re
-import subprocess
 import time
 import unicodedata
 from pathlib import Path
 from typing import Any
 
-_DENIED: set[tuple[str, str]] = set()
+from scripts.sidecar_pkg import macos_keychain_store as keychain
+from scripts.sidecar_pkg.keychain_client import get_keychain_client
+
 _WARNED: set[tuple[str, str]] = set()
 
 
@@ -40,7 +41,7 @@ def service_candidates(directories: list[Path]) -> list[str]:
 def _warn(service: str, reason: str) -> None:
     if (service, reason) not in _WARNED:
         _WARNED.add((service, reason))
-        logging.warning("Claude Code Keychain %s: %s", service, reason)
+        logging.warning("Claude Code Keychain: %s", reason)
 
 
 def _mapped_value(data: dict[str, Any], field: str) -> Any:
@@ -54,43 +55,51 @@ def _mapped_value(data: dict[str, Any], field: str) -> Any:
     return None
 
 
-def read_candidates(
-    directories: list[Path], mapping: dict[str, str]
-) -> list[tuple[dict[str, Any], str]]:
-    if ("*", "*") in _DENIED:
-        return []
+def account_name() -> str:
     try:
         account = os.getenv("USER") or getpass.getuser()
     except (OSError, KeyError):
         account = "claude-code-user"
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", account):
         account = "claude-code-user"
+    return account
+
+
+def access_blocked() -> bool:
+    """Discovery and renewal share a process-wide denial/timeout circuit breaker."""
+    return get_keychain_client().access_blocked("claude-code")
+
+
+def block_access() -> None:
+    get_keychain_client().block_access("claude-code")
+
+
+def read_candidates(
+    directories: list[Path], mapping: dict[str, str]
+) -> list[tuple[dict[str, Any], str]]:
+    if access_blocked():
+        return []
+    account = account_name()
     candidates = []
     for service in service_candidates(directories):
-        if (service, account) in _DENIED:
-            continue
         try:
-            result = subprocess.run(
-                ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
-                capture_output=True,
-                text=True,
-                timeout=30,
+            raw = keychain.read_secret(service, account, group="claude-code")
+        except keychain.KeychainError as exc:
+            if exc.reason == "cancelled":
+                break
+            block_access()
+            _warn(
+                service,
+                "unavailable or timed out; restart sidecar to retry"
+                if exc.reason == "timed_out"
+                else "access unavailable; restart sidecar to retry",
             )
-        except (OSError, subprocess.SubprocessError):
-            _DENIED.add((service, account))
-            _DENIED.add(("*", "*"))
-            _warn(service, "unavailable or timed out; restart sidecar to retry")
             break
-        if result.returncode == 44:
+        if raw is None:
             _warn(service, "item missing")
             continue
-        if result.returncode:
-            _DENIED.add((service, account))
-            _DENIED.add(("*", "*"))
-            _warn(service, "access unavailable; restart sidecar to retry")
-            break
         try:
-            data = json.loads(result.stdout)
+            data = json.loads(raw)
             if not isinstance(data, dict):
                 raise ValueError("Unsupported layout")
             tokens = {

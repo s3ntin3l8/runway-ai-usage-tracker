@@ -6,6 +6,7 @@ import type { ProviderConfig } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { groupProviderFamilies } from '@/lib/providerFamilies';
 import { AddProviderWizard } from './AddProviderWizard';
+import { foreignError } from '@/test/foreignError';
 import { ConsoleOrganizationPicker } from './ConsoleOrganizationPicker';
 import { ProvidersSection } from './ProvidersSection';
 
@@ -30,7 +31,8 @@ it('groups Claude connections without changing their original configurations', (
 it('selects Console under Claude, verifies an organization, and saves a PAYG connection', async () => {
   vi.mocked(api.discoverConsoleOrganizations).mockResolvedValue({ organizations: [{ id: orgId, name: 'Individual Org' }] });
   vi.mocked(api.previewAccount).mockResolvedValue({
-    suggested_account_id: orgId, suggested_label: 'Individual Org', label_source: 'organization', already_exists: false,
+    suggested_account_id: orgId, suggested_label: 'Individual Org', label_source: 'organization',
+    suggested_billing_type: 'pay_as_you_go', already_exists: false,
   });
   vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved', account_id: orgId });
   renderWithProviders(<AddProviderWizard providers={[quota, consoleProvider]} existingAccountIdsByProvider={new Map()} onClose={vi.fn()} />);
@@ -49,9 +51,13 @@ it('selects Console under Claude, verifies an organization, and saves a PAYG con
   await userEvent.click(screen.getByRole('button', { name: /Next/ }));
   fireEvent.change(screen.getByLabelText('Account label'), { target: { value: 'alias@example.com' } });
   await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+  // The wizard does not hardcode a billing model: the server proves it from
+  // the balance the account publishes, and the select shows what it proved.
+  expect(screen.getByLabelText('Billing model')).toHaveValue('pay_as_you_go');
   await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalledWith('anthropic_console', orgId, expect.objectContaining({
-    session_cookie: 'sample-session', billing_type: 'pay_as_you_go', account_label: 'alias@example.com',
+    session_cookie: 'sample-session', account_label: 'alias@example.com',
   })));
+  expect(vi.mocked(api.putProviderConfig).mock.calls[0][2]).not.toHaveProperty('billing_type');
 });
 
 it('requires an explicit choice when multiple organizations are accessible', async () => {
@@ -66,7 +72,7 @@ it('requires an explicit choice when multiple organizations are accessible', asy
 });
 
 it('shows discovery errors and empty organization lists', async () => {
-  vi.mocked(api.discoverConsoleOrganizations).mockRejectedValueOnce(new Error('Session expired')).mockResolvedValueOnce({ organizations: [] });
+  vi.mocked(api.discoverConsoleOrganizations).mockRejectedValueOnce(foreignError('Session expired')).mockResolvedValueOnce({ organizations: [] });
   renderWithProviders(<ConsoleOrganizationPicker cookie="sample-session" value="" onSelect={vi.fn()} />);
   await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
   await screen.findByText('Session expired');
@@ -86,6 +92,21 @@ it('discards stale discovery results when the cookie changes', async () => {
   expect(onSelect).toHaveBeenCalledExactlyOnceWith('');
 });
 
+it('does not report an error for a request it aborted', async () => {
+  let reject: (reason: unknown) => void = () => {};
+  vi.mocked(api.discoverConsoleOrganizations)
+    .mockImplementationOnce(() => new Promise((_done, fail) => { reject = fail; }));
+  const onSelect = vi.fn();
+  const view = renderWithProviders(<ConsoleOrganizationPicker cookie="old-session" value="" onSelect={onSelect} />);
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  // A new cookie aborts the request that is in flight.
+  view.rerender(<ConsoleOrganizationPicker cookie="new-session" value="" onSelect={onSelect} />);
+  await act(async () => { reject(foreignError('Session expired')); });
+  // The aborted request failed anyway; its error must not be shown, because
+  // the component has already moved on to the new cookie.
+  expect(screen.queryByText('Session expired')).not.toBeInTheDocument();
+});
+
 it('shows one Claude settings entry and switches to independent Console account settings', async () => {
   const configuredQuota = { ...quota, accounts: [{ account_id: 'alice@example.com', account_label: 'Subscription login', enabled: true }], account_count: 1 };
   const configuredConsole = { ...consoleProvider, accounts: [{ account_id: orgId, account_label: 'Individual Org', enabled: false, session_cookie_set: true }], account_count: 1 };
@@ -100,7 +121,13 @@ it('shows one Claude settings entry and switches to independent Console account 
   await userEvent.selectOptions(screen.getByLabelText('Claude connection'), 'anthropic_console');
   const dialog = screen.getByRole('dialog');
   expect(within(dialog).getByText('Individual Org')).toBeInTheDocument();
-  expect(within(dialog).queryByText('Subscription login')).not.toBeInTheDocument();
+  // The card counts both connections' accounts, so the dialog lists them both
+  // — each row says which connection it belongs to (#723). The connection
+  // dropdown picks whose *settings* are shown, not whose accounts are listed.
+  expect(within(dialog).getByText('Subscription login')).toBeInTheDocument();
+  const list = within(dialog).getByLabelText('Provider accounts');
+  expect(within(list).getByText('Subscription quotas')).toBeInTheDocument();
+  expect(within(list).getByText('Console API credits')).toBeInTheDocument();
 });
 
 function StatefulPicker({ cookie = 'sample-session', initial = orgId }: { cookie?: string; initial?: string }) {

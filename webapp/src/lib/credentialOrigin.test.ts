@@ -17,9 +17,19 @@ describe('describeCredentialOrigin', () => {
     expect(describeCredentialOrigin('cookie:opencode/Chrome/Profile 1/Cookies').detail).toBe(
       'Chrome · Profile 1',
     );
-    expect(describeCredentialOrigin('cookie:anthropic/Claude Desktop/Default/Cookies').detail).toBe(
-      'Claude Desktop · Default',
-    );
+  });
+
+  it('never reads out the profile of an Anthropic cookie', () => {
+    // An Anthropic cookie carries a private browser profile (#672): it is named
+    // by its client instead.
+    const native = describeCredentialOrigin('cookie:anthropic/Claude Desktop/Default/Cookies');
+    expect(native.label).toBe('Session cookie');
+    expect(native.detail).toBeUndefined();
+    // A browser native acceptance has not covered yet stays unnamed too.
+    const other = describeCredentialOrigin('cookie:anthropic/Firefox/private-profile/Cookies');
+    expect(other.label).toBe('Browser cookie');
+    expect(other.detail).toBeUndefined();
+    expect(describeCredentialOrigin('cookie:anthropic_console/Chrome/private/Cookies').detail).toBeUndefined();
   });
 
   it('never reads the store folder as a profile', () => {

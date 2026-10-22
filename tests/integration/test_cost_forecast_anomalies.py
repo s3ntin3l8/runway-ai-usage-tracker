@@ -3,7 +3,6 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
@@ -11,6 +10,7 @@ from app.core.db import get_session
 from app.main import app
 from app.models.db import UsagePeriodRollup
 from app.services.pricing_seed import seed_pricing_table
+from tests.fixtures.test_client import TestClient
 
 
 @pytest.fixture

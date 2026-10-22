@@ -1,0 +1,16 @@
+# The packages both sets need.
+#
+# Pinned exactly, not "at least" -- see the note in requirements.txt. The
+# versions are what a fresh install resolves to today; Dependabot proposes
+# the bumps.
+#
+# A package listed in both `requirements-test.txt` and
+# `requirements-lint.txt` would be listed twice, and the two copies could
+# drift: a Dependabot bump landing in one of them leaves the union with
+# two conflicting pins, and `pip install -r requirements-dev.txt` fails with
+# `ResolutionImpossible`. One list, one pin, one place to bump it.
+#
+# `detect-secrets` is here because `scripts/check_secrets.py` imports it
+# (so `make secrets` needs it), because a test imports it through that
+# script (so the suite needs it), and because the secrets gate runs it.
+detect-secrets==1.5.0

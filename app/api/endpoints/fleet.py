@@ -1839,6 +1839,8 @@ async def select_claude_source_organization(
         expected_generation=token_cache.credential_generation(candidate["tokens"]),
         organization_id=organization_id,
         allow_selection=True,
+        account_label=result.account_label,
+        billing_type=result.billing_type,
     )
     if not promoted:
         raise HTTPException(status_code=409, detail="Claude source changed; retry")

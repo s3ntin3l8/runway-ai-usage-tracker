@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from app.core.utils import IdentityExtractor, has_refresh_credential, scrub_log
+from app.services.account_identity import is_placeholder_label
 from app.services.collectors.anthropic import AnthropicCollector
 from app.services.collectors.anthropic_console import AnthropicConsoleCollector
 from app.services.collectors.antigravity import AntigravityCollector
@@ -1090,6 +1091,8 @@ class CollectorManager:
         return {
             "expected_generation": generation,
             "organization_id": getattr(collector, "verified_organization_id", None),
+            "account_label": getattr(collector, "verified_account_label", None),
+            "billing_type": getattr(collector, "verified_billing_type", None),
         }
 
     @staticmethod
@@ -1241,16 +1244,19 @@ class CollectorManager:
         organization_id: str | None,
         *,
         allow_selection: bool = False,
+        account_label: str | None = None,
+        billing_type: str | None = None,
     ) -> bool:
         from sqlmodel import select
 
-        from app.models.db import ProviderConfig
+        from app.models.db import ProviderAccountLabel, ProviderConfig
 
         row = session.exec(
             select(ProviderConfig).where(
                 ProviderConfig.provider_id == provider_id, ProviderConfig.account_id == account_id
             )
         ).first()
+        created = row is None
         if row is None:
             row = ProviderConfig(provider_id=provider_id, account_id=account_id)
         if (not row.enabled or row.archived) and not allow_selection:
@@ -1263,6 +1269,20 @@ class CollectorManager:
             return False
         if organization_id:
             row.claude_organization_id = organization_id
+        if account_label and (created or is_placeholder_label(row.account_label)):
+            # Name a discovered account after what it is. An operator's own label
+            # is never overwritten; an account that never got one still deserves it.
+            override = session.exec(
+                select(ProviderAccountLabel).where(
+                    ProviderAccountLabel.provider_id == provider_id,
+                    ProviderAccountLabel.account_id == account_id,
+                )
+            ).first()
+            row.account_label = (override.account_label if override else None) or account_label
+        if created and billing_type:
+            # A detected billing type only ever describes a new account: an
+            # existing row's type is the operator's to choose.
+            row.billing_type = billing_type
         session.add(row)
         return True
 
@@ -1275,6 +1295,9 @@ class CollectorManager:
             # on a later poll.
             collector.account_id = "default"
             collector.account_label = default_label
+            # The label cache is the other half of that memory: a name one
+            # attempt proved must not be stamped on the next attempt's card.
+            collector._account_label_cache = default_label
         if hasattr(collector, "credential_account_id"):
             collector.credential_account_id = account_id
         # Proof from one source's response must never be read as another's.
@@ -1282,6 +1305,8 @@ class CollectorManager:
         collector.verified_subject = None
         collector.verified_organization_id = None
         collector.verified_source_generation = None
+        collector.verified_account_label = None
+        collector.verified_billing_type = None
 
     async def _cookie_switched_account(
         self,
@@ -1564,6 +1589,8 @@ class CollectorManager:
         expected_generation: str | None = None,
         organization_id: str | None = None,
         allow_selection: bool = False,
+        account_label: str | None = None,
+        billing_type: str | None = None,
     ) -> bool:
         """Commit a proved identity and move the same credential generation atomically."""
 
@@ -1576,6 +1603,8 @@ class CollectorManager:
                 cache_account_id=cache_account_id,
                 organization_id=organization_id,
                 allow_selection=allow_selection,
+                account_label=account_label,
+                billing_type=billing_type,
             )
 
         if expected_generation is not None:
@@ -1608,6 +1637,8 @@ class CollectorManager:
         cache_account_id: str | None = None,
         organization_id: str | None = None,
         allow_selection: bool = False,
+        account_label: str | None = None,
+        billing_type: str | None = None,
     ) -> bool:
         from datetime import UTC, datetime
 
@@ -1662,7 +1693,13 @@ class CollectorManager:
                 )
                 return False
             if organization_id and not self._claude_binding_allowed(
-                session, provider_id, target, organization_id, allow_selection=allow_selection
+                session,
+                provider_id,
+                target,
+                organization_id,
+                allow_selection=allow_selection,
+                account_label=account_label,
+                billing_type=billing_type,
             ):
                 return False
             existing_target = session.exec(

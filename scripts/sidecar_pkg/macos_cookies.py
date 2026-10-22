@@ -5,14 +5,17 @@ import hmac
 import json
 import logging
 import sqlite3
-import subprocess
 import threading
 import time
 from contextlib import closing
 from pathlib import Path
 
+from scripts.sidecar_pkg import macos_keychain_store as keychain
+from scripts.sidecar_pkg.cookie_scan import ScanStatus, StoreScan
+
 _KEY_CACHE: dict[str, bytes | None] = {}
 _KEY_LOCK = threading.Lock()
+_KEY_STATUS: dict[str, ScanStatus] = {}
 
 
 def storage_key(service: str) -> bytes | None:
@@ -20,22 +23,27 @@ def storage_key(service: str) -> bytes | None:
         if service in _KEY_CACHE:
             return _KEY_CACHE[service]
         key = None
+        status: ScanStatus = "inaccessible"
         try:
-            result = subprocess.run(
-                ["security", "find-generic-password", "-s", service, "-w"],
-                capture_output=True,
-                text=True,
-                timeout=30 if service == "Claude Safe Storage" else 5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                key = hashlib.pbkdf2_hmac(
-                    "sha1", result.stdout.strip().encode(), b"saltysalt", 1003, 16
-                )
-        except (OSError, subprocess.SubprocessError):
-            # Fall through to cache the failure and suppress further prompts until restart.
-            pass
+            raw = keychain.read_secret(service, group="storage:" + service)
+            if raw and raw.strip():
+                key = hashlib.pbkdf2_hmac("sha1", raw.strip(), b"saltysalt", 1003, 16)
+            else:
+                status = "missing"
+        except keychain.KeychainError as exc:
+            if exc.reason == "cancelled":
+                return None  # Lifecycle cancellation must not poison the process cache.
+            status = {
+                "timed_out": "timed_out",
+                "denied": "denied",
+                "missing": "missing",
+                "unsupported": "unsupported",
+            }.get(exc.reason, "inaccessible")
+        except OSError:
+            pass  # Cache unavailable IO without exposing native diagnostic text.
         if key is None:
             logging.warning("Cookie Keychain access unavailable; restart sidecar to retry")
+        _KEY_STATUS[service] = "candidates" if key is not None else status
         _KEY_CACHE[service] = key
         return key
 
@@ -103,25 +111,84 @@ def profiles(base: Path) -> list[Path]:
     return result
 
 
-def read_cookies(path: Path, service: str, domain: str, name: str) -> list[str]:
-    values = []
+def scan_cookies(
+    path: Path,
+    service: str,
+    domain: str,
+    name: str,
+    *,
+    include_subdomains: bool = True,
+    prefixes: tuple[bytes, ...] = (b"v10", b"v11"),
+) -> StoreScan[str]:
+    values: list[str] = []
+    expired = rejected = 0
     try:
-        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        path.stat()
+        with closing(
+            sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
+        ) as conn:
             row = conn.execute("SELECT value FROM meta WHERE key = 'version'").fetchone()
-            if row is None:
-                return []
+            if row is None or not 1 <= int(row[0]) <= 24:
+                return StoreScan("unsupported", schema_version=int(row[0]) if row else None)
             version = int(row[0])
+            host_clause = "(host_key = ? OR host_key = ?)"
+            params = [name, domain, "." + domain]
+            if include_subdomains:
+                host_clause = "(host_key = ? OR host_key = ? OR host_key LIKE ?)"
+                params.append("%." + domain)
             rows = conn.execute(
-                "SELECT host_key, encrypted_value, expires_utc FROM cookies WHERE name = ? AND (host_key = ? OR host_key = ? OR host_key LIKE ?)",
-                (name, domain, "." + domain, "%." + domain),
+                "SELECT host_key, encrypted_value, expires_utc FROM cookies WHERE name = ? AND "
+                + host_clause
+                + " ORDER BY expires_utc DESC",
+                params,
             ).fetchall()
+        failures: set[ScanStatus] = set()
         for host, blob, expires in rows:
             if expires and expires <= (time.time() + 11644473600) * 1_000_000:
+                expired += 1
+                continue
+            if not isinstance(blob, bytes) or not blob.startswith(prefixes):
+                rejected += 1
+                failures.add("unsupported")
                 continue
             value = decrypt(blob, service, host, version)
-            if value and value not in values:
-                values.append(value)
-    except (OSError, sqlite3.Error, ValueError, TypeError):
-        # An unreadable or unsupported store yields only values already validated, if any.
-        pass
-    return values
+            if value:
+                if value not in values:
+                    values.append(value)
+            else:
+                rejected += 1
+                failures.add(
+                    _KEY_STATUS.get(service, "inaccessible")
+                    if service in _KEY_CACHE and _KEY_CACHE[service] is None
+                    else "unsupported"
+                )
+        failure = next(
+            (
+                status
+                for status in ("timed_out", "denied", "inaccessible", "missing", "unsupported")
+                if status in failures
+            ),
+            None,
+        )
+        # Partial decoding must not be mistaken for a successful completed scan.
+        return StoreScan(
+            failure or ("candidates" if values else "empty"), values, expired, rejected, version
+        )
+    except FileNotFoundError:
+        return StoreScan("missing")
+    except sqlite3.OperationalError as exc:
+        # SQLite reports unsupported tables/columns with SQLITE_ERROR; access and
+        # locking failures have distinct native codes. Never log raw SQL errors.
+        code = getattr(exc, "sqlite_errorcode", None)
+        return StoreScan("unsupported" if code == sqlite3.SQLITE_ERROR else "inaccessible")
+    except PermissionError:
+        return StoreScan("inaccessible")
+    except OSError:
+        return StoreScan("inaccessible")
+    except (sqlite3.Error, ValueError, TypeError, OverflowError):
+        return StoreScan("unsupported")
+
+
+def read_cookies(path: Path, service: str, domain: str, name: str) -> list[str]:
+    """Compatibility wrapper; extraction callers retain their list-returning API."""
+    return scan_cookies(path, service, domain, name).values

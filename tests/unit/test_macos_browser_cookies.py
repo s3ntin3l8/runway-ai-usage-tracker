@@ -1,25 +1,16 @@
 """Synthetic Chromium stores; no real browser or Keychain access."""
 
-import hashlib
 import json
 import sqlite3
 import subprocess
 from unittest.mock import Mock
 
 import pytest
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from scripts import sidecar
-
-
-def encrypted(host, value=b"synthetic-session", version=24):
-    raw = (hashlib.sha256(host.encode()).digest() if version >= 24 else b"") + value
-    pad = padding.PKCS7(128).padder()
-    raw = pad.update(raw) + pad.finalize()
-    key = hashlib.pbkdf2_hmac("sha1", b"synthetic-key", b"saltysalt", 1003, 16)
-    enc = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).encryptor()
-    return b"v10" + enc.update(raw) + enc.finalize()
+from scripts.sidecar_pkg import macos_keychain_store as keychain
+from scripts.sidecar_pkg.macos_keychain_store import KeychainError
+from tests.macos_cookie_fixtures import encrypted
 
 
 @pytest.fixture
@@ -27,8 +18,8 @@ def helper(monkeypatch):
     from scripts.sidecar_pkg import macos_cookies
 
     monkeypatch.setattr(macos_cookies, "_KEY_CACHE", {})
-    lookup = Mock(return_value=subprocess.CompletedProcess([], 0, "synthetic-key", ""))
-    monkeypatch.setattr(subprocess, "run", lookup)
+    lookup = Mock(return_value=(b"synthetic-key"))
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     return macos_cookies, lookup
 
 
@@ -61,7 +52,7 @@ def test_invalid_binding_or_ciphertext_rejected(helper, blob, host):
 
 @pytest.mark.parametrize(
     "failure",
-    [subprocess.CompletedProcess([], 44, "", ""), subprocess.TimeoutExpired("security", 5)],
+    [KeychainError("missing"), KeychainError("timed_out")],
 )
 def test_keychain_failure_suppressed_until_restart(helper, monkeypatch, failure):
     module, lookup = helper
@@ -139,11 +130,11 @@ def test_desktop_keychain_failure_does_not_retry_after_ten_minutes(tmp_path, mon
     from scripts.sidecar_pkg import claude_desktop, macos_cookies
 
     monkeypatch.setattr(macos_cookies, "_KEY_CACHE", {})
-    lookup = Mock(return_value=subprocess.CompletedProcess([], 44, "", ""))
-    monkeypatch.setattr(subprocess, "run", lookup)
-    monkeypatch.setattr(claude_desktop.time, "monotonic", lambda: 0)
+    lookup = Mock(side_effect=KeychainError("missing"))
+    monkeypatch.setattr(keychain, "read_secret", lookup)
+    monkeypatch.setattr(macos_cookies.time, "monotonic", lambda: 0)
     assert claude_desktop._storage_key(tmp_path) is None
-    monkeypatch.setattr(claude_desktop.time, "monotonic", lambda: 10000)
+    monkeypatch.setattr(macos_cookies.time, "monotonic", lambda: 10000)
     assert claude_desktop._storage_key(tmp_path) is None
     assert lookup.call_count == 1
 
@@ -175,7 +166,6 @@ def test_get_cookie_browser_wrapper_passes_schema_and_exact_host(tmp_path, monke
 @pytest.fixture(autouse=True)
 def isolate_host_credentials(monkeypatch, tmp_path):
     """Synthetic tests must never inspect host browser stores or Keychain."""
-    import subprocess
     from pathlib import Path
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -244,11 +234,10 @@ def test_existing_plaintext_browser_candidates_are_preserved(tmp_path, monkeypat
         "get_all_paths",
         lambda: [{"browser": browser_type.title(), "type": browser_type, "path": path}],
     )
-    monkeypatch.setattr(
-        sidecar.BrowserCookieExtractor,
-        "parse_safari",
-        lambda _: [{"domain": ".claude.ai", "name": "sessionKey", "value": "synthetic-safari"}],
-    )
+    if browser_type == "safari":
+        from tests.macos_cookie_fixtures import safari_blob
+
+        path.write_bytes(safari_blob(value="synthetic-safari"))
     candidates = sidecar.BrowserCookieExtractor.get_macos_candidates(
         "anthropic", ["claude.ai"], "sessionKey"
     )
@@ -400,7 +389,11 @@ def test_desktop_session_rotation_has_distinct_final_origins(monkeypatch):
     from scripts.sidecar_pkg import claude_desktop
 
     values = iter(["desktop-session-one", "desktop-session-two"])
-    monkeypatch.setattr(claude_desktop, "read_session_cookie", lambda _: next(values))
+    from scripts.sidecar_pkg.cookie_scan import StoreScan
+
+    monkeypatch.setattr(
+        claude_desktop, "scan_session_cookie", lambda _: StoreScan("candidates", [next(values)])
+    )
     monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [])
     first = sidecar.BrowserCookieExtractor.get_macos_candidates(
         "anthropic", ["claude.ai"], "sessionKey"
