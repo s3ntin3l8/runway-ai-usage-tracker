@@ -10,7 +10,7 @@ from uuid import UUID
 
 import httpx
 
-from app.services.billing_type import detect_billing_type
+from app.services.billing_type import BillingType, detect_billing_type
 from app.services.collectors.anthropic_console import (
     CONSOLE_URL,
     ConsoleAPIError,
@@ -152,7 +152,7 @@ class ClaudeVerification:
     # Human name of the verified account (a member's email, or the organization's
     # name for Console credit) and the billing model its cards describe.
     account_label: str | None = None
-    billing_type: str | None = None
+    billing_type: BillingType | None = None
 
     @property
     def selection_required(self) -> bool:

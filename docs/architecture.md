@@ -424,9 +424,10 @@ Workflows live in `.github/workflows/`.
     with a release tag, because that is what `capture-release` produces. It
     now runs on pushes to `main` and nightly, and the release path is
     unchanged: dispatch this workflow with a release tag. The nightly is the
-    canary for toolchain drift — PyInstaller is installed unpinned, so a new
-    release of it can break the packaging with no change to this repository,
-    and a push run cannot catch that, because it ran before the release did.
+    canary for toolchain drift — PyInstaller is pinned, so a new release of
+    it only lands when the pin moves — but it can break the packaging when
+    it does, and a push run cannot catch that, because it ran before the
+    release did.
 - **`security-validation.yml`** — the trust-boundary and recovery tests: the
     browser boundaries and the real reverse-proxy boundaries on Linux, and the
     native Windows swap, rollback and recovery regressions. The packaging half
@@ -443,8 +444,11 @@ Workflows live in `.github/workflows/`.
   version tags; beta → `:beta` + version tag, selected by `release-channel`)
   and calls `sidecar-build.yml` via `build-sidecar`/`publish-sidecar` —
   for stable and beta releases alike.
-- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix, the
-  only place PyInstaller runs. Per release label (`vX.Y.Z`, `vX.Y.Z-beta.N`,
+- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix. It
+  builds the release artifacts; the other two places that build with
+  PyInstaller are `frozen-verifier.yml`, which smoke-tests the frozen binary,
+  and the CI audit job, which installs it to audit it. Per release label
+  (`vX.Y.Z`, `vX.Y.Z-beta.N`,
   or `edge`) it
   builds the macOS **`.dmg`** (ad-hoc signed `.app`, `create-dmg`) and
   Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`)

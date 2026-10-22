@@ -2,13 +2,22 @@
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from scripts import audit_release_image as audit_module
-from scripts.image_policy import check_database, evaluate, load_exceptions
+from scripts.image_policy import (
+    ExceptionSet,
+    check_database,
+    evaluate,
+    load_exceptions,
+    renewal_due,
+)
 
 NOW = datetime(2026, 10, 10, 12, tzinfo=UTC)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SHIPPED_EXCEPTIONS = REPO_ROOT / "docs" / "security" / "image-exceptions.json"
 
 
 def database(**overrides):
@@ -32,8 +41,8 @@ def finding(severity="High", state="not-fixed", kind="deb"):
     }
 
 
-def exception():
-    return {
+def exception(**overrides):
+    entry = {
         "id": "CVE-2026-TEST",
         "namespace": "debian:12",
         "package": "test-package",
@@ -46,6 +55,17 @@ def exception():
         "reviewed_at": NOW.isoformat(),
         "expires_at": (NOW + timedelta(days=30)).isoformat(),
     }
+    entry.update(overrides)
+    return entry
+
+
+def expired_exception(**overrides):
+    """An entry whose review window closed before NOW."""
+    return exception(
+        reviewed_at=(NOW - timedelta(days=30)).isoformat(),
+        expires_at=(NOW - timedelta(days=1)).isoformat(),
+        **overrides,
+    )
 
 
 def write_exceptions(tmp_path, entries):
@@ -58,14 +78,14 @@ def write_exceptions(tmp_path, entries):
 @pytest.mark.parametrize("state", ["fixed", "not-fixed", "wont-fix", "unknown"])
 def test_blocks_without_applicability_review(severity, state):
     report = {"matches": [finding(severity, state)]}
-    result = evaluate(report, "amd64", {})
+    result = evaluate(report, "amd64", ExceptionSet())
     assert not result["passed"]
     assert result["blocked"][0]["fix_state"] == state
     assert report["matches"]  # raw evidence remains untouched
 
 
 def test_lower_severities_and_python_are_reported():
-    result = evaluate({"matches": [finding("Medium", kind="python")]}, "arm64", {})
+    result = evaluate({"matches": [finding("Medium", kind="python")]}, "arm64", ExceptionSet())
     assert result["passed"]
     assert result["counts"] == {"Medium": 1}
     assert len(result["python_findings"]) == 1
@@ -91,7 +111,6 @@ def test_exception_only_accepts_exact_package_version_arch_and_advisory(tmp_path
 @pytest.mark.parametrize(
     "change",
     [
-        {"expires_at": NOW.isoformat()},
         {"expires_at": (NOW + timedelta(days=31)).isoformat()},
         {"reviewed_at": (NOW + timedelta(seconds=1)).isoformat()},
         {"architecture": "*"},
@@ -102,14 +121,112 @@ def test_exception_only_accepts_exact_package_version_arch_and_advisory(tmp_path
         {"reviewed_at": "2026-10-10"},
     ],
 )
-def test_rejects_unreviewed_or_expired_exceptions(tmp_path, change):
+def test_rejects_malformed_exceptions(tmp_path, change):
     with pytest.raises(ValueError):
         load_exceptions(write_exceptions(tmp_path, [{**exception(), **change}]), NOW)
+
+
+def test_malformed_exception_names_the_offending_entry(tmp_path):
+    with pytest.raises(ValueError, match="CVE-2026-TEST test-package 1.0 amd64"):
+        load_exceptions(write_exceptions(tmp_path, [exception(evidence="http://example.com")]), NOW)
 
 
 def test_duplicate_exception_rejected(tmp_path):
     with pytest.raises(ValueError):
         load_exceptions(write_exceptions(tmp_path, [exception(), exception()]), NOW)
+
+
+def test_duplicate_of_an_expired_entry_is_still_rejected(tmp_path):
+    with pytest.raises(ValueError, match="Duplicate"):
+        load_exceptions(write_exceptions(tmp_path, [expired_exception(), exception()]), NOW)
+
+
+def test_expired_entry_is_reported_instead_of_invalidating_the_document(tmp_path):
+    loaded = load_exceptions(write_exceptions(tmp_path, [expired_exception()]), NOW)
+    assert loaded.active == {}
+    assert len(loaded.expired) == 1
+    entry = next(iter(loaded.expired.values()))
+    assert entry["id"] == "CVE-2026-TEST"
+
+
+def test_expired_entry_blocks_its_finding_and_names_the_expiry(tmp_path):
+    loaded = load_exceptions(write_exceptions(tmp_path, [expired_exception()]), NOW)
+    result = evaluate({"matches": [finding()]}, "amd64", loaded)
+    assert not result["passed"]
+    blocked = result["blocked"][0]
+    assert blocked["id"] == "CVE-2026-TEST"
+    assert blocked["expired_exception"]["expires_at"] == (NOW - timedelta(days=1)).isoformat()
+    assert blocked["expired_exception"]["package"] == "test-package"
+    assert blocked["expired_exception"]["architecture"] == "amd64"
+
+
+def test_expired_entry_does_not_invalidate_the_other_entries(tmp_path):
+    loaded = load_exceptions(
+        write_exceptions(tmp_path, [expired_exception(package="gone-package"), exception()]), NOW
+    )
+    report = {"matches": [finding()]}
+    # The live entry still waives the finding, even though a sibling lapsed.
+    assert evaluate(report, "amd64", loaded)["passed"]
+    assert len(loaded.active) == 1
+    assert len(loaded.expired) == 1
+
+
+def test_expired_entry_for_an_absent_package_does_not_apply_to_other_findings(tmp_path):
+    loaded = load_exceptions(
+        write_exceptions(tmp_path, [expired_exception(package="gone-package")]), NOW
+    )
+    result = evaluate({"matches": [finding()]}, "amd64", loaded)
+    # Nothing excepts this finding, so it blocks -- but the lapsed entry for a
+    # different package must not be credited to it.
+    assert not result["passed"]
+    assert "expired_exception" not in result["blocked"][0]
+
+
+def test_expired_entry_cannot_waive_a_finding_on_another_architecture(tmp_path):
+    loaded = load_exceptions(write_exceptions(tmp_path, [expired_exception()]), NOW)
+    result = evaluate({"matches": [finding()]}, "arm64", loaded)
+    assert not result["passed"]
+    assert "expired_exception" not in result["blocked"][0]
+
+
+def test_shipped_exception_document_needs_no_renewal():
+    now = datetime.now(UTC)
+    loaded = load_exceptions(SHIPPED_EXCEPTIONS, now)
+    due = renewal_due(loaded, now)
+    assert due == [], (
+        "these shipped exceptions are lapsed or expire within the warning window and "
+        "must be renewed (see docs/security/image-policy.md): "
+        + ", ".join(
+            f"{entry['id']} {entry['package']} {entry['version']} {entry['architecture']}"
+            for entry in due
+        )
+    )
+
+
+def test_shipped_exception_document_has_a_single_expiry_horizon():
+    horizons = {
+        entry["expires_at"]
+        for entry in load_exceptions(SHIPPED_EXCEPTIONS, datetime.now(UTC)).active.values()
+    }
+    assert len(horizons) == 1, (
+        "the shipped exception document must have a single expiry horizon, so the whole "
+        "document is re-reviewed on one cycle; give a new entry the same expires_at as the "
+        f"rest of the document. Found several: {sorted(horizons)}"
+    )
+
+
+def test_scheduled_exception_check_passes_on_the_shipped_document():
+    from scripts import check_image_exceptions
+
+    assert check_image_exceptions.main() == 0
+
+
+def test_scheduled_exception_check_reports_a_lapse(tmp_path, monkeypatch):
+    from scripts import check_image_exceptions
+
+    lapsed = write_exceptions(tmp_path, [expired_exception()])
+    monkeypatch.setattr(check_image_exceptions, "DEFAULT_EXCEPTIONS", lapsed)
+    assert check_image_exceptions.main() == 1
 
 
 @pytest.mark.parametrize(
@@ -227,7 +344,7 @@ def test_prepare_database_rejects_an_unusable_listing(tmp_path, monkeypatch, lis
 @pytest.mark.parametrize("report", [{}, {"matches": None}, {"matches": [{}]}])
 def test_incomplete_report_rejected(report):
     with pytest.raises((ValueError, KeyError)):
-        evaluate(report, "amd64", {})
+        evaluate(report, "amd64", ExceptionSet())
 
 
 def test_scan_failure_retains_failed_evidence(tmp_path, monkeypatch):
@@ -255,6 +372,43 @@ def test_scan_failure_retains_failed_evidence(tmp_path, monkeypatch):
     evidence = json.loads((output / "evidence.json").read_text())
     assert evidence["passed"] is False
     assert evidence["error"] == "scanner failed"
+
+
+def test_audit_records_the_expired_exceptions(tmp_path, monkeypatch):
+    exceptions = write_exceptions(
+        tmp_path, [expired_exception(package="gone-package"), exception()]
+    )
+    monkeypatch.setattr(
+        audit_module,
+        "prepare_database",
+        lambda _: (database(), {"status": "active", "checksum": "sha256:" + "a" * 64}),
+    )
+    monkeypatch.setattr(audit_module, "check_database", lambda *args: None)
+    monkeypatch.setattr(
+        audit_module,
+        "scan_archive",
+        lambda *args, **kwargs: {"matches": [finding()]},
+    )
+    output = tmp_path / "audit"
+    audit_module.audit(
+        None,
+        output,
+        archive=tmp_path / "image.tar",
+        architecture="amd64",
+        exceptions_path=exceptions,
+    )
+    evidence = json.loads((output / "evidence.json").read_text())
+    assert evidence["expired_exceptions"] == [
+        {
+            "id": "CVE-2026-TEST",
+            "package": "gone-package",
+            "version": "1.0",
+            "architecture": "amd64",
+            "expires_at": (NOW - timedelta(days=1)).isoformat(),
+        }
+    ]
+    # The live entry still waives the finding, so the audit passes.
+    assert evidence["passed"] is True
 
 
 def test_missing_architecture_never_passes(tmp_path, monkeypatch):
@@ -291,7 +445,7 @@ def test_missing_architecture_never_passes(tmp_path, monkeypatch):
 @pytest.mark.parametrize("severity", ["HIGH", "", None, "unrecognized"])
 def test_unknown_severity_cannot_bypass_policy(severity):
     with pytest.raises(ValueError, match="severity"):
-        evaluate({"matches": [finding(severity)]}, "amd64", {})
+        evaluate({"matches": [finding(severity)]}, "amd64", ExceptionSet())
 
 
 @pytest.mark.parametrize(
