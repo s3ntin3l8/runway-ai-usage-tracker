@@ -8,12 +8,11 @@ import pytest
 
 from scripts import audit_release_image as audit_module
 from scripts.image_policy import (
-    EXPIRY_WARNING_WINDOW,
     ExceptionSet,
     check_database,
     evaluate,
     load_exceptions,
-    timestamp,
+    renewal_due,
 )
 
 NOW = datetime(2026, 10, 10, 12, tzinfo=UTC)
@@ -190,20 +189,16 @@ def test_expired_entry_cannot_waive_a_finding_on_another_architecture(tmp_path):
     assert "expired_exception" not in result["blocked"][0]
 
 
-def test_shipped_exception_document_is_valid_and_not_near_expiry():
+def test_shipped_exception_document_needs_no_renewal():
     now = datetime.now(UTC)
     loaded = load_exceptions(SHIPPED_EXCEPTIONS, now)
-    assert loaded.expired == {}, "the shipped exception document contains lapsed entries"
-    soon = [
-        entry
-        for entry in loaded.active.values()
-        if timestamp(entry["expires_at"]) - now < EXPIRY_WARNING_WINDOW
-    ]
-    assert soon == [], (
-        "these shipped exceptions expire within the warning window and must be renewed: "
+    due = renewal_due(loaded, now)
+    assert due == [], (
+        "these shipped exceptions are lapsed or expire within the warning window and "
+        "must be renewed (see docs/security/image-policy.md): "
         + ", ".join(
             f"{entry['id']} {entry['package']} {entry['version']} {entry['architecture']}"
-            for entry in soon
+            for entry in due
         )
     )
 
@@ -213,7 +208,30 @@ def test_shipped_exception_document_has_a_single_expiry_horizon():
         entry["expires_at"]
         for entry in load_exceptions(SHIPPED_EXCEPTIONS, datetime.now(UTC)).active.values()
     }
-    assert len(horizons) == 1, f"the shipped exception document has several horizons: {horizons}"
+    assert len(horizons) == 1, (
+        "the shipped exception document must have a single expiry horizon, so the whole "
+        "document is re-reviewed on one cycle; give a new entry the same expires_at as the "
+        f"rest of the document. Found several: {sorted(horizons)}"
+    )
+
+
+def test_scheduled_exception_check_passes_on_the_shipped_document():
+    from scripts import check_image_exceptions
+
+    assert check_image_exceptions.main() == 0
+
+
+def test_scheduled_exception_check_reports_a_lapse(tmp_path, monkeypatch):
+    from scripts import check_image_exceptions
+
+    lapsed = write_exceptions(tmp_path, [expired_exception()])
+    monkeypatch.setattr(check_image_exceptions, "DEFAULT_EXCEPTIONS", lapsed)
+    monkeypatch.setattr(
+        check_image_exceptions,
+        "load_exceptions",
+        lambda path, now: load_exceptions(path, now),
+    )
+    assert check_image_exceptions.main() == 1
 
 
 @pytest.mark.parametrize(

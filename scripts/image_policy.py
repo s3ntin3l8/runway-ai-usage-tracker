@@ -93,6 +93,22 @@ def exception_key(entry: dict[str, Any]) -> tuple[str, ...]:
     return tuple(entry[k] for k in ("id", "namespace", "package", "version", "architecture"))
 
 
+def renewal_due(loaded: ExceptionSet, now: datetime) -> list[dict[str, Any]]:
+    """Entries whose review window has closed or is about to close.
+
+    A lapsed entry applies to nothing and a closing one is about to stop
+    applying, so both mean the document needs a renewal. The unit test and the
+    scheduled check share this, so both agree on what "due" means.
+    """
+    due = list(loaded.expired.values())
+    due.extend(
+        entry
+        for entry in loaded.active.values()
+        if timestamp(entry["expires_at"]) - now < EXPIRY_WARNING_WINDOW
+    )
+    return due
+
+
 def load_exceptions(path: Path, now: datetime) -> ExceptionSet:
     """Load the exception document, splitting it into live and lapsed entries.
 

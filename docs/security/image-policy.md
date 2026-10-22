@@ -63,10 +63,18 @@ image change. Never add a wildcard, blanket severity suppression or `only-fixed`
 
 The document has a single expiry horizon: every entry expires at the same instant,
 so the whole document is re-reviewed on one cycle and there is one deadline to
-track. A renewal PR re-reviews the applicability rationale and moves that horizon.
-The repository test suite fails when an entry is within seven days of expiry or
-already lapsed, naming the entries that need renewal — so the renewal happens
-during working hours instead of when an image build turns red.
+track. This is a policy on the document, not a limit on a single entry — the
+loader accepts any entry whose own review window is at most 30 days, but a new
+entry must carry the same `expires_at` as the rest of the document rather than a
+window of its own. A renewal PR re-reviews the applicability rationale and moves
+that horizon. The repository test suite fails when an entry is within seven days
+of expiry or already lapsed, naming the entries that need renewal — so the
+renewal happens during working hours instead of when an image build turns red.
+The daily `Image Security` run carries the same check
+(`python -m scripts.check_image_exceptions`), so the deadline is enforced even
+when no pull request is open. The exception document is in the path filters of
+both image-security workflows, so a renewal is scanned like any other change
+to the policy.
 
 The exact package version is part of the match, and the runtime version moves with
 the base image: the Dockerfile runs `apt-get upgrade -y`, so a new Debian point

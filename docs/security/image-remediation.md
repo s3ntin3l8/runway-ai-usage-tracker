@@ -156,5 +156,7 @@ was changed at the same time: an expired entry now applies to nothing and only
 blocks the finding it covered, naming the advisory and the expiry date, instead
 of invalidating every other entry with it. A malformed document still fails the
 whole audit. The repository test suite now fails when an entry is within seven
-days of expiry, so the next renewal is a scheduled task rather than a build
-outage.
+days of expiry, and the daily `Image Security` run carries the same check, so
+the next renewal is a scheduled task rather than a build outage even when no
+pull request is open. The exception document is in both image-security path
+filters, so a renewal is scanned like any other change to the policy.
