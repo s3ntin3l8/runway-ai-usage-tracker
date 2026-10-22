@@ -95,7 +95,7 @@ The grouped pending-events response reports `total_events` across the full queue
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/system/webhooks[...]` | CRUD + test for Discord/Slack threshold alerts; optional `account_id` scopes an alert to one account; `credential_alerts` (default true) also fires the same webhook when a matching credential's Token Health goes expired/invalid (admin) |
 | `GET`/`PUT`/`DELETE` | `/api/v1/system/provider-config[s]/{...}` | Per-provider config CRUD (admin write); DELETE soft-archives and clears any matching `credential_tags` hints |
 | `PATCH` | `/api/v1/system/provider-config/{provider_id}/{account_id}/credential-sources` | Set enabled state and zero-based order for every known source on this account (admin); duplicate priorities are allowed and ties sort by `source_id`; optional `all_machines` applies each listed source preference to matching sidecar origins across hosts; values are never returned |
-| `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it |
+| `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it; `detect_billing: true` additionally proves how the account bills and returns it as `suggested_billing_type` (a proof costs a round trip to Claude, so it is asked for, not done on every keystroke) |
 | `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write); includes `sidecar_update_channel`, `sidecar_auto_update` and `sidecar_keep_alive_default` (fleet-wide keep-alive default: on for every sidecar without its own override; omitted fields in a `PUT` keep their stored value) |
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout (admin for reads and writes) |
 | `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` (public) |
@@ -391,6 +391,12 @@ reporting a currency balance describes pay-as-you-go, and a quota card wins
 when an account publishes both. It is written to `ProviderConfig.billing_type`
 when the account row is created. An existing row keeps the type the operator
 chose — change it in Settings, and no later poll undoes that.
+
+An account added **by hand** is priced the same way: the preview returns the
+model it proved as `suggested_billing_type` (a Console connection is priced
+while the organization is picked; a subscription is priced on request with
+`detect_billing: true`), and the wizard offers it as a suggestion. The
+operator's own choice wins; a model nobody chose is left to the server's proof.
 
 ### Native Claude OAuth token metadata
 

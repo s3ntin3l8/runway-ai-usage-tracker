@@ -2428,3 +2428,86 @@ def test_every_account_carries_the_provider_it_belongs_to(client: TestClient, se
     for provider in providers:
         for account in provider["accounts"]:
             assert account["provider_id"] == provider["provider_id"]
+
+
+CLAUDE_ORG_ID = "22222222-2222-4222-8222-222222222222"
+
+
+def _mock_claude_api(monkeypatch, calls: list[str]) -> None:
+    """Serve the claude.ai endpoints the verification reads."""
+    import httpx
+
+    original_client = httpx.AsyncClient
+
+    def upstream(request):
+        calls.append(str(request.url))
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": "person@example.com"})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(200, json=[{"uuid": CLAUDE_ORG_ID, "name": "Acme"}])
+        return httpx.Response(200, json={"five_hour": {"utilization": 10}})
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(transport=httpx.MockTransport(upstream), **kwargs),
+    )
+
+
+def test_the_console_preview_suggests_the_billing_model(client, session, monkeypatch):
+    """Console publishes prepaid credit, so the account spends — proved, not assumed."""
+    _mock_console_access(monkeypatch)
+    preview = client.post(
+        "/api/v1/system/provider-config/preview-account",
+        json={
+            "provider_id": "anthropic_console",
+            "session_cookie": "sample-session",
+            "organization_id": CONSOLE_ORG_ID,
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["suggested_billing_type"] == "pay_as_you_go"
+
+
+def test_the_subscription_preview_detects_the_billing_model_when_asked(client, monkeypatch):
+    """The operator asks for the model; the account's own quota windows decide."""
+    calls: list[str] = []
+    _mock_claude_api(monkeypatch, calls)
+    preview = client.post(
+        "/api/v1/system/provider-config/preview-account",
+        json={
+            "provider_id": "anthropic",
+            "session_cookie": "sample-session",
+            "detect_billing": True,
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    # A claude.ai plan publishes percentage-of-limit windows — a subscription.
+    assert preview.json()["suggested_billing_type"] == "subscription"
+    assert calls, "the detection must actually ask Claude"
+
+
+def test_the_subscription_preview_does_not_call_claude_unless_asked(client, monkeypatch):
+    """The wizard debounces keystrokes into the preview; a proof costs a round trip."""
+    calls: list[str] = []
+    _mock_claude_api(monkeypatch, calls)
+    preview = client.post(
+        "/api/v1/system/provider-config/preview-account",
+        json={"provider_id": "anthropic", "session_cookie": "sample-session"},
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["suggested_billing_type"] is None
+    assert calls == []
+
+
+def test_billing_detection_is_refused_for_a_provider_that_has_no_claude_account(
+    client, monkeypatch
+):
+    calls: list[str] = []
+    _mock_claude_api(monkeypatch, calls)
+    preview = client.post(
+        "/api/v1/system/provider-config/preview-account",
+        json={"provider_id": "chatgpt", "session_cookie": "sample-session", "detect_billing": True},
+    )
+    assert preview.status_code == 422
+    assert calls == []

@@ -31,7 +31,8 @@ it('groups Claude connections without changing their original configurations', (
 it('selects Console under Claude, verifies an organization, and saves a PAYG connection', async () => {
   vi.mocked(api.discoverConsoleOrganizations).mockResolvedValue({ organizations: [{ id: orgId, name: 'Individual Org' }] });
   vi.mocked(api.previewAccount).mockResolvedValue({
-    suggested_account_id: orgId, suggested_label: 'Individual Org', label_source: 'organization', already_exists: false,
+    suggested_account_id: orgId, suggested_label: 'Individual Org', label_source: 'organization',
+    suggested_billing_type: 'pay_as_you_go', already_exists: false,
   });
   vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved', account_id: orgId });
   renderWithProviders(<AddProviderWizard providers={[quota, consoleProvider]} existingAccountIdsByProvider={new Map()} onClose={vi.fn()} />);
@@ -50,9 +51,13 @@ it('selects Console under Claude, verifies an organization, and saves a PAYG con
   await userEvent.click(screen.getByRole('button', { name: /Next/ }));
   fireEvent.change(screen.getByLabelText('Account label'), { target: { value: 'alias@example.com' } });
   await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+  // The wizard does not hardcode a billing model: the server proves it from
+  // the balance the account publishes, and the select shows what it proved.
+  expect(screen.getByLabelText('Billing model')).toHaveValue('pay_as_you_go');
   await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalledWith('anthropic_console', orgId, expect.objectContaining({
-    session_cookie: 'sample-session', billing_type: 'pay_as_you_go', account_label: 'alias@example.com',
+    session_cookie: 'sample-session', account_label: 'alias@example.com',
   })));
+  expect(vi.mocked(api.putProviderConfig).mock.calls[0][2]).not.toHaveProperty('billing_type');
 });
 
 it('requires an explicit choice when multiple organizations are accessible', async () => {

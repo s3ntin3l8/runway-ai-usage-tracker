@@ -207,6 +207,14 @@ prepaid balance and bills as pay-as-you-go. Both are detected when the account
 is first recorded. A name or billing type set in Settings afterwards is never
 overwritten by a later poll.
 
+An account added **by hand** is priced the same way, from the same cards. The
+Console connection is priced while the organization is picked — the balance it
+publishes is prepaid credit — and a subscription is priced on request: press
+**Detect billing model** in the wizard and the account's own quota windows
+decide. The wizard only *suggests* the model; what the operator picks in the
+next step is what gets saved, and a model nobody picked is left to the
+server's own proof.
+
 A card's label is the account's *name* — the member's email for a claude.ai
 account, the organization's name for a Console account — and it is what keys the
 card to its account, so a name a human chose never files a card under another

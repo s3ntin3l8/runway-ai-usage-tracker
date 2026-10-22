@@ -1,3 +1,4 @@
+import { BILLING_TYPE_LABELS, BILLING_TYPE_SHORT_LABELS } from '@/lib/billingType';
 import { claudeConnectionLabel, groupProviderFamilies, providerFamilyId } from '@/lib/providerFamilies';
 import { ConsoleOrganizationPicker } from './ConsoleOrganizationPicker';
 // AddProviderWizard — 3-step dialog for adding a new provider account (Issue
@@ -21,7 +22,12 @@ import {
   putProviderConfig,
   type ProviderConfigUpdate,
 } from '@/api/endpoints';
-import type { AccountPreviewResponse, CollectionStrategy, ProviderConfig } from '@/api/types';
+import type {
+  AccountPreviewResponse,
+  BillingType,
+  CollectionStrategy,
+  ProviderConfig,
+} from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -54,6 +60,9 @@ interface Step2Result {
   apiKey: string;
   sessionCookie: string;
   preview: AccountPreviewResponse;
+  // How the account bills, when the operator asked the server to prove it.
+  // Undefined when nothing was proven — the operator then decides.
+  detectedBillingType?: BillingType;
 }
 
 export function AddProviderWizard({
@@ -324,6 +333,30 @@ function Step2({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [conflict, setConflict] = useState(false);
+  // How the account bills, when the operator asked the server to prove it.
+  // The debounced preview never proves it — that costs a round trip to
+  // Claude — so it happens once, when the button is pressed.
+  const [detectedBillingType, setDetectedBillingType] = useState<BillingType | undefined>();
+  const [detectError, setDetectError] = useState<string | null>(null);
+  const detectBilling = useMutation({
+    mutationFn: () =>
+      previewAccount({
+        provider_id: provider.provider_id,
+        organization_id:
+          provider.provider_id === 'anthropic_console' ? organizationId : undefined,
+        api_key: apiKey.trim() || undefined,
+        session_cookie: cookie.trim() || undefined,
+        detect_billing: true,
+      }),
+    onSuccess: (data) => {
+      setDetectedBillingType(data.suggested_billing_type ?? undefined);
+      setDetectError(null);
+    },
+    onError: (err) => {
+      setDetectedBillingType(undefined);
+      setDetectError(errorMessage(err, 'Could not detect the billing model'));
+    },
+  });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inflightRef = useRef<AbortController | null>(null);
   // Mirror `existingAccountIds` into a ref so the debounce effect can read
@@ -490,6 +523,35 @@ function Step2({
         <ConsoleOrganizationPicker cookie={cookie} value={organizationId} onSelect={setOrganizationId} />
       ) : null}
 
+      {provider.provider_id === 'anthropic' ? (
+        // The Console connection prices itself while the organization is
+        // picked; a subscription has no such step, so the operator asks for
+        // the proof here. What they choose in the next step still wins.
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => detectBilling.mutate()}
+              loading={detectBilling.isPending}
+              disabled={cookie.trim() === ''}
+            >
+              Detect billing model
+            </Button>
+            {detectedBillingType ? (
+              <HelperText>Detected: {BILLING_TYPE_SHORT_LABELS[detectedBillingType]}</HelperText>
+            ) : null}
+          </div>
+          {detectError ? <HelperText>{detectError}</HelperText> : null}
+          <HelperText>
+            Reads how the account bills from the quota windows Claude publishes for it — a
+            web session is needed. It only suggests a value; your choice in the next step
+            still wins.
+          </HelperText>
+        </div>
+      ) : null}
+
       {credentialless ? (
         // Providers without an api_key OR session_cookie (antigravity,
         // opencode-free, future file-only collectors) can't accept any
@@ -526,7 +588,7 @@ function Step2({
             disabled={!canProceed}
             onClick={() =>
               preview
-                ? onNext({ apiKey, sessionCookie: cookie, preview })
+                ? onNext({ apiKey, sessionCookie: cookie, preview, detectedBillingType })
                 : undefined
             }
           >
@@ -632,6 +694,15 @@ function Step3({
   const [label, setLabel] = useState<string>(step2Result.preview.suggested_label ?? '');
   const [workspaceId, setWorkspaceId] = useState('');
   const [pollInterval, setPollInterval] = useState('');
+  // How the account bills. `undefined` means "nobody chose" — the operator
+  // neither picked a model nor asked for a proof — and then the field is not
+  // sent, so the server's own proof decides. A choice (the operator's, or a
+  // proof they asked for) is sent, and it always wins.
+  const [billingType, setBillingType] = useState<BillingType | undefined>(
+    step2Result.detectedBillingType,
+  );
+  const shownBillingType =
+    billingType ?? step2Result.preview.suggested_billing_type ?? 'unknown';
   const [strategies, setStrategies] = useState<{ id: string; enabled: boolean }[]>(() =>
     initStrategies(provider),
   );
@@ -640,13 +711,15 @@ function Step3({
     step2Result.preview.label_source === 'credential_hash' && EMAIL_RE.test(label.trim())
       ? label.trim().toLowerCase()
       : accountId;
+  // Only the Claude family bills by a model Runway knows how to present.
+  const isClaudeFamily = providerFamilyId(provider.provider_id) === 'anthropic';
   const maskedEffectiveAccountId = maskAccountId(effectiveAccountId);
 
   const save = useMutation({
     mutationFn: () => {
       const body: ProviderConfigUpdate = {
         enabled: true,
-        ...(provider.provider_id === 'anthropic_console' ? { billing_type: 'pay_as_you_go' as const } : {}),
+        ...(isClaudeFamily && billingType ? { billing_type: billingType } : {}),
         // Empty string means "clear" server-side (mirrors the provider account form's
         // behaviour); trimmed value otherwise.
         account_label: label.trim(),
@@ -705,6 +778,26 @@ function Step3({
           />
         </div>
       </div>
+
+      {isClaudeFamily ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="wiz-billing-type">Billing model</Label>
+          <select
+            id="wiz-billing-type"
+            value={shownBillingType}
+            onChange={(e) => setBillingType(e.target.value as BillingType)}
+            className="h-9 rounded-md border border-border bg-surface-1 px-3 text-sm text-fg"
+          >
+            {(Object.keys(BILLING_TYPE_LABELS) as BillingType[]).map((type) => (
+              <option key={type} value={type}>{BILLING_TYPE_LABELS[type]}</option>
+            ))}
+          </select>
+          <HelperText>
+            How the account is billed. Runway suggests it from the cards the account
+            publishes; your choice is what gets saved.
+          </HelperText>
+        </div>
+      ) : null}
 
       {provider.provider_id === 'opencode' ? (
         <div className="flex flex-col gap-1.5">

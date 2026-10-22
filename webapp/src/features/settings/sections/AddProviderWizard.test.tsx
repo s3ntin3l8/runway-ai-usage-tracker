@@ -595,3 +595,133 @@ describe('AddProviderWizard', () => {
     expect(next).toBeEnabled();
   });
 });
+
+// #722 — the manual wizard detects the billing model the same way the
+// automatic path does, and offers it as a suggestion the operator can change.
+describe('AddProviderWizard — the billing model', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const claudeProvider: ProviderConfig = {
+    ...anthropicProvider,
+    supports_session_cookie: true,
+    session_cookie_label: 'Web session',
+  };
+
+  const previewWithoutModel = {
+    suggested_account_id: 'alice@example.com',
+    suggested_label: 'alice@example.com',
+    label_source: 'email' as const,
+    already_exists: false,
+  };
+
+  function renderClaudeWizard() {
+    return renderWithProviders(
+      <AddProviderWizard
+        providers={[claudeProvider]}
+        existingAccountIdsByProvider={new Map()}
+        onClose={() => {}}
+      />,
+    );
+  }
+
+  async function enterSession(): Promise<void> {
+    await userEvent.click(screen.getByRole('button', { name: /Anthropic/ }));
+    await userEvent.type(screen.getByLabelText('Web session'), 'session-token');
+    await waitFor(() => expect(api.previewAccount).toHaveBeenCalled());
+  }
+
+  it('never proves the model on the debounced preview', async () => {
+    vi.mocked(api.previewAccount).mockResolvedValue(previewWithoutModel);
+    renderClaudeWizard();
+    await enterSession();
+    // A proof costs a round trip to Claude — the debounced preview must not
+    // ask for one.
+    expect(
+      vi.mocked(api.previewAccount).mock.calls.every(
+        (call) => !(call[0] as { detect_billing?: boolean }).detect_billing,
+      ),
+    ).toBe(true);
+  });
+
+  it('proves the model on request and suggests it', async () => {
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      ...previewWithoutModel,
+      suggested_billing_type: 'subscription',
+    });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.previewAccount).mock.calls.some(
+          (call) => (call[0] as { detect_billing?: boolean }).detect_billing === true,
+        ),
+      ).toBe(true),
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    const select = await screen.findByLabelText('Billing model');
+    expect(select).toHaveValue('subscription');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() =>
+      expect(api.putProviderConfig).toHaveBeenCalledWith(
+        'anthropic',
+        'alice@example.com',
+        expect.objectContaining({ billing_type: 'subscription' }),
+      ),
+    );
+  });
+
+  it('lets the operator override the detected model', async () => {
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      ...previewWithoutModel,
+      suggested_billing_type: 'subscription',
+    });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.previewAccount).mock.calls.some(
+          (call) => (call[0] as { detect_billing?: boolean }).detect_billing === true,
+        ),
+      ).toBe(true),
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    const select = await screen.findByLabelText('Billing model');
+    await userEvent.selectOptions(select, 'pay_as_you_go');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() =>
+      expect(api.putProviderConfig).toHaveBeenCalledWith(
+        'anthropic',
+        'alice@example.com',
+        expect.objectContaining({ billing_type: 'pay_as_you_go' }),
+      ),
+    );
+  });
+
+  it('sends no model when nobody chose one', async () => {
+    vi.mocked(api.previewAccount).mockResolvedValue(previewWithoutModel);
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    const select = await screen.findByLabelText('Billing model');
+    expect(select).toHaveValue('unknown');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
+    // Nobody chose a model and nothing was proved — the server decides.
+    expect(vi.mocked(api.putProviderConfig).mock.calls[0][2]).not.toHaveProperty(
+      'billing_type',
+    );
+  });
+});
