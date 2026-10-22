@@ -376,14 +376,17 @@ Workflows live in `.github/workflows/`.
 
     The safety that the up-to-date rule was standing in for is covered
     elsewhere, in two layers. The required checks run again on the push to
-    `main`, so a merge that breaks the integration is caught on `main` — the
-    difference from the up-to-date rule is *when* (after the merge, not
-    before) and *who* (whoever picks up a red `main`, not the author whose
-    pull request was bounced back). And the release pull request is
-    regenerated on every `main` push, so it always builds current `main`: a
-    broken `main` makes its checks red, and the maintainer's approval —
-    which the release pull request deliberately requires — is the gate. No
-    release is cut from a broken `main`. The `:edge` image is gated the same way:
+    `main` — `ci-cd.yml` and `codeql.yml` both have a `push` trigger — so a
+    merge that breaks the integration is caught on `main`: the difference
+    from the up-to-date rule is *when* (after the merge, not before) and
+    *who* (whoever picks up a red `main`, not the author whose pull request
+    was bounced back). `dependency-review` is the exception: it is a
+    pull-request-only check, so it does not re-run on `main` — it has nothing
+    to say about a merge that changes no dependency. And the release pull
+    request is regenerated on every `main` push, so it always builds current
+    `main`: a broken `main` makes its checks red, and the maintainer's
+    approval — which the release pull request deliberately requires — is the
+    gate. No release is cut from a broken `main`. The `:edge` image is gated the same way:
     `build-docker` needs `test-python`, `test-frontend` and
     `dependency-audit` to pass on `main`.
 

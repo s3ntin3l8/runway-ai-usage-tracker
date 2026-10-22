@@ -1,4 +1,5 @@
 {
+  "generated_by": "python scripts/dev_checks.py record-shard-weights",
   "generated_at": "2026-10-22T13:36:25Z",
   "total_seconds": 479.9,
   "files": {

@@ -49,6 +49,10 @@ permissions:
 
 jobs:
   windows-native-pytest:
+    # The recording replaces the shards: it runs the whole suite to measure
+    # it, so running the shards as well would spend four runner-minutes
+    # re-running the same tests.
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.record-weights) }}
     name: windows-native-pytest (shard ${{ matrix.shard }}/4)
     runs-on: windows-latest
     # 45 minutes survives a runner several times slower than median: a shard

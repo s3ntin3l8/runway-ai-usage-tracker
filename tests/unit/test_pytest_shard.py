@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
-import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -219,16 +219,53 @@ def test_committed_plan_stays_balanced() -> None:
     assert max(estimates) <= mean * 1.5, estimates
 
 
-def test_weights_path_is_per_platform() -> None:
-    """Each platform reads the table it measured.
+def test_weights_path_names_this_platform() -> None:
+    """The table a platform reads is named for it.
 
     The durations are platform-specific -- a module that is slow on Linux is
     not necessarily slow on Windows -- so there is one table per platform and
     the planner reads the one for the platform it runs on. A single shared
     table is what left the Windows shards minutes apart.
     """
-    expected = "windows" if os.name == "nt" else "linux"
+    expected = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
     assert weights_path().name == f"shard_durations.{expected}.json"
+
+
+def test_every_committed_table_is_well_formed() -> None:
+    """Every committed table is checked, not only this platform's.
+
+    The Windows shards are planned from the Windows table and no CI job runs
+    on Windows, so on a Linux runner that table would otherwise be read by
+    nobody: it could be deleted, or left stale, and no guard would go red.
+    """
+    root = Path(__file__).resolve().parents[2]
+    for name in ("shard_durations.linux.json", "shard_durations.windows.json"):
+        target = root / "tests" / name
+        assert target.is_file(), f"{name} is missing"
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        assert payload["generated_by"], f"{name} does not say what generated it"
+        files = payload["files"]
+        assert files, f"{name} must not be empty"
+        for module, seconds in files.items():
+            assert module.startswith("tests/"), module
+            assert module.endswith(".py"), module
+            assert isinstance(seconds, float), module
+            assert seconds >= 0.0, module
+
+
+def test_the_committed_tables_agree_with_the_modules_on_disk() -> None:
+    """A table must not name a module that has moved or gone.
+
+    The planner falls back to a flat split for a module it has no weight
+    for, which is slower but correct -- so a stale table is not a failure,
+    only a loss. A module that *no longer exists* is worth catching.
+    """
+    root = Path(__file__).resolve().parents[2]
+    known = set(suite_files(root))
+    for name in ("shard_durations.linux.json", "shard_durations.windows.json"):
+        weights = load_weights(root / "tests" / name)
+        gone = sorted(set(weights) - known)
+        assert not gone, f"{name} names modules that are gone: {gone}"
 
 
 def test_summarize_reports_every_shard() -> None:

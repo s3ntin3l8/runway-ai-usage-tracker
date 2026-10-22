@@ -310,7 +310,11 @@ def main() -> int:
         shards = int(os.environ.get("RUNWAY_PYTEST_SHARDS", str(DEFAULT_SHARDS)))
     jobs = args.jobs
     if jobs is None:
-        jobs = int(os.environ.get("RUNWAY_TEST_JOBS", "0"))
+        # The recording has to measure what the shards run, and the shards
+        # run four workers -- so the default here is four too, and the same
+        # numbers come out whether the table is recorded locally or in CI.
+        default = "4" if args.task == "record-shard-weights" else "0"
+        jobs = int(os.environ.get("RUNWAY_TEST_JOBS", default))
     try:
         check(args.task, extra, shard_id=shard_id, shards=shards, jobs=jobs)
     except subprocess.CalledProcessError as exc:
