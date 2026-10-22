@@ -76,9 +76,11 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   worktree of the repository, so install them once from the main checkout
   (`make install-hooks`); a hook installed from a worktree keeps pointing at
   that worktree's interpreter and stops working when the worktree is removed.
-  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22+
-  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, and `react-router`
-  8.3.0 pins `>=22.22.0`) and npm 11.11+ (Node 24 ships npm 11.19) — `webapp/package.json`
+  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22.2+
+  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, `react-router` pins
+  `>=22.22.0`, and the `jsdom` 30 upgrade pins
+  `^22.22.2 || ^24.15.0 || >=26.0.0`) and npm 11.11+ (Node 24 ships npm 11.19) —
+  `webapp/package.json`
   pins both with `devEngines`, so a mismatched toolchain refuses to install
   rather than quietly rewriting the lockfile. On Windows
   `winget install OpenJS.NodeJS.LTS` puts it in the per-user PATH, and a new

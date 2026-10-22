@@ -6,7 +6,7 @@
 make install    # venv + Python deps + webapp deps + git hooks (pre-commit & pre-push)
 ```
 
-On native Windows, install Python 3.12+ and Node.js 22.22+ (including npm 11.11+).
+On native Windows, install Python 3.12+ and Node.js 22.22.2+ (including npm 11.11+).
 `winget install OpenJS.NodeJS.LTS` puts Node in the per-user PATH, and that
 only applies to *new* processes — start a fresh shell (or a fresh agent
 session) before `node`/`npm` resolve. Then run these commands in PowerShell
@@ -33,10 +33,14 @@ credential contents and temporary-file cleanup. Frontend English date-label test
 use a fixed test locale, while the dashboard retains the user's locale.
 
 The frontend toolchain is pinned. `webapp/package.json` declares
-`packageManager: npm@11.19.0` and a `devEngines` block requiring Node 22.22+
+`packageManager: npm@11.19.0` and a `devEngines` block requiring Node 22.22.2+
 and npm 11.11+, so npm refuses to install with a node or npm outside that
-range instead of quietly producing a different lockfile. Node 22.22 is the
-floor because `react-router` 8.3.0 requires it. npm 11.11 is the floor
+range instead of quietly producing a different lockfile. Node 22.22.2 is the
+floor for the `jsdom` 30 upgrade — it pins
+`^22.22.2 || ^24.15.0 || >=26.0.0`, which is also the intersection with
+vitest 5's `^22.12.0 || ^24.0.0 || >=26.0.0` and `react-router`'s
+`>=22.22.0` — so the floor is raised ahead of that bump, and it stays correct
+whether or not the bump has landed. npm 11.11 is the floor
 because npm 10 never writes the `libc` metadata described below and strips it
 from every lockfile it rewrites, and npm 11.11 is the first release that
 writes it. Node 24 ships npm 11.19, so `winget install OpenJS.NodeJS.LTS` is
