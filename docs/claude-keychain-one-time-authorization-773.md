@@ -58,6 +58,37 @@ this issue, add a password store, grant all applications access, migrate/recreat
 Claude's item, or silently use a system interpreter's identity to bypass the
 application boundary. Those are different designs with different permissions.
 
+## Public update alternatives checked
+
+A follow-up source and installed-SDK check on 2026-10-22 examined the public
+legacy update APIs and a combined data/access update. In the pinned Apple
+implementation, `SecItemUpdate` reaches `SecKeychainItemModifyContent`, whose
+`ItemImpl::modifyContent` stores replacement data and calls `update()`.
+`SecKeychainItemModifyAttributesAndData` also reaches the same item update path.
+Switching to a legacy public data setter therefore does not avoid secure-storage
+group replacement.
+
+Passing the saved `kSecAttrAccess` in the same `SecItemUpdate` call does not
+install it atomically with the replacement data: `_UpdateKeychainItem` performs
+the data update first and then calls `SecKeychainItemSetAccess`. The reserved
+partition checks described above still apply to that second operation. A
+failure there cannot be interpreted as proof that the data was not written.
+This is source-derived evidence, not a newly executed native mutation.
+
+The installed macOS SDK public `SecKeychainItem.h` declares
+`SecKeychainItemSetAccess` and the legacy data setter, but does not declare
+`SecKeychainItemSetAccessWithPassword`. No private password-based API or
+low-level storage bypass has been added to the product. These checks narrow the
+remaining investigation; they do not prove that every possible supported
+authorization architecture is unavailable. No real credentials were read,
+updated, or refreshed during this follow-up.
+
+Source pointers at the same pinned Apple revision:
+
+- [SecItem combined update order](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_keychain/lib/SecItem.cpp#L2517-L2526).
+- [Public legacy API entry points](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_keychain/lib/SecKeychainItem.cpp#L130-L186).
+- [Item data updates share secure-storage handling](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_keychain/lib/Item.cpp#L819-L861).
+
 ## Delegating refresh to Claude Code
 
 The current official [CLI reference](https://code.claude.com/docs/en/cli-reference)
