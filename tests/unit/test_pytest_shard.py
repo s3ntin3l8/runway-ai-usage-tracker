@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from scripts.pytest_shard import (
     DEFAULT_SHARDS,
+    PLATFORM_TABLES,
     ROOT,
     estimate_shard_seconds,
     load_weights,
@@ -216,6 +218,91 @@ def test_committed_plan_stays_balanced() -> None:
     estimates = [estimate_shard_seconds(shard, weights) for shard in plan]
     mean = sum(estimates) / len(estimates)
     assert max(estimates) <= mean * 1.5, estimates
+
+
+def test_the_platform_mapping_is_what_it_should_be() -> None:
+    """The mapping is asserted on its own, not derived from the host.
+
+    Deriving the expectation from `sys.platform` the way the implementation
+    does cannot fail: an implementation that returned the Linux table for
+    every platform would pass on a Linux runner. This says what the mapping
+    *is*, so a typo in it is caught wherever the tests run.
+    """
+    assert PLATFORM_TABLES == {"win32": "windows", "darwin": "macos"}
+
+
+def test_weights_path_names_this_platform() -> None:
+    """The table a platform reads is named for it.
+
+    The durations are platform-specific -- a module that is slow on Linux is
+    not necessarily slow on Windows -- so there is one table per platform and
+    the planner reads the one for the platform it runs on. A single shared
+    table is what left the Windows shards minutes apart.
+    """
+    expected = PLATFORM_TABLES.get(sys.platform, "linux")
+    assert weights_path().name == f"shard_durations.{expected}.json"
+
+
+def test_the_path_follows_the_mapping_on_every_platform(monkeypatch) -> None:
+    """The path comes from the mapping, not from a constant.
+
+    The expectation cannot be derived from the host the way the
+    implementation derives it: an implementation that returned the Linux
+    table for every platform would pass on a Linux runner, and the Windows
+    shards would be planned with the wrong table. So the platform is set and
+    the path is checked, here and on every runner.
+    """
+    for platform, table in (
+        ("win32", "shard_durations.windows.json"),
+        ("darwin", "shard_durations.macos.json"),
+        ("linux", "shard_durations.linux.json"),
+    ):
+        monkeypatch.setattr(sys, "platform", platform)
+        assert weights_path().name == table, platform
+
+
+def test_every_committed_table_is_well_formed() -> None:
+    """Every committed table is checked, not only this platform's.
+
+    The Windows shards are planned from the Windows table and no CI job runs
+    on Windows, so on a Linux runner that table would otherwise be read by
+    nobody: it could be deleted, or left stale, and no guard would go red.
+    """
+    root = Path(__file__).resolve().parents[2]
+    tables = sorted((root / "tests").glob("shard_durations.*.json"))
+    # The Windows table is what the Windows shards are planned from and no
+    # CI job runs on Windows, so on a Linux runner it has to be checked
+    # here or it could be deleted without a guard going red.
+    assert {t.name for t in tables} >= {
+        "shard_durations.linux.json",
+        "shard_durations.windows.json",
+    }, tables
+    for target in tables:
+        name = target.name
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        assert payload["generated_by"], f"{name} does not say what generated it"
+        files = payload["files"]
+        assert files, f"{name} must not be empty"
+        for module, seconds in files.items():
+            assert module.startswith("tests/"), module
+            assert module.endswith(".py"), module
+            assert isinstance(seconds, float), module
+            assert seconds >= 0.0, module
+
+
+def test_the_committed_tables_agree_with_the_modules_on_disk() -> None:
+    """A table must not name a module that has moved or gone.
+
+    The planner falls back to a flat split for a module it has no weight
+    for, which is slower but correct -- so a stale table is not a failure,
+    only a loss. A module that *no longer exists* is worth catching.
+    """
+    root = Path(__file__).resolve().parents[2]
+    known = set(suite_files(root))
+    for target in sorted((root / "tests").glob("shard_durations.*.json")):
+        weights = load_weights(target)
+        gone = sorted(set(weights) - known)
+        assert not gone, f"{target.name} names modules that are gone: {gone}"
 
 
 def test_summarize_reports_every_shard() -> None:

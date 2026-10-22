@@ -221,6 +221,10 @@ def check(
     elif task == "record-shard-weights":
         # Measure how long every test module takes so the shard planner can
         # balance by runtime instead of by file or test count.
+        #
+        # The measurement runs with the same worker count the shards use, so
+        # the numbers describe the runs they plan: a module's cost inside a
+        # four-worker shard is not its serial cost.
         with isolated_environment() as (root, isolated_paths):
             report = root / "durations.txt"
             print("Running the suite to measure per-module durations ...")
@@ -231,6 +235,7 @@ def check(
                     "pytest",
                     "--durations=0",
                     "-vv",
+                    *parallel_args(jobs),
                     "--basetemp",
                     str(root / "tests"),
                 ],
@@ -290,10 +295,12 @@ def main() -> int:
         "unit",
         "test-shard",
         "test-windows",
+        "record-shard-weights",
         "gate",
     }:
         parser.error(
-            "--jobs is supported only for the test, unit, test-shard, test-windows and gate tasks"
+            "--jobs is supported only for the test, unit, test-shard, test-windows, "
+            "record-shard-weights and gate tasks"
         )
     shard_id = args.shard_id
     if shard_id is None:
@@ -303,7 +310,11 @@ def main() -> int:
         shards = int(os.environ.get("RUNWAY_PYTEST_SHARDS", str(DEFAULT_SHARDS)))
     jobs = args.jobs
     if jobs is None:
-        jobs = int(os.environ.get("RUNWAY_TEST_JOBS", "0"))
+        # The recording has to measure what the shards run, and the shards
+        # run four workers -- so the default here is four too, and the same
+        # numbers come out whether the table is recorded locally or in CI.
+        default = "4" if args.task == "record-shard-weights" else "0"
+        jobs = int(os.environ.get("RUNWAY_TEST_JOBS", default))
     try:
         check(args.task, extra, shard_id=shard_id, shards=shards, jobs=jobs)
     except subprocess.CalledProcessError as exc:
