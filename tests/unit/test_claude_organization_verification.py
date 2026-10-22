@@ -246,6 +246,9 @@ async def test_organization_picker_persists_exact_source_binding(claude_db, monk
         config = session.exec(select(ProviderConfig)).one()
         assert config.account_id == "person@example.com"
         assert config.claude_organization_id == ORG_B
+        # The picker names and prices the account it discovered, too.
+        assert config.account_label == "person@example.com"
+        assert config.billing_type == "subscription"
         assert session.exec(select(CredentialSource)).one().account_id == "person@example.com"
         assert session.exec(select(PendingCredentialTag)).all() == []
 
@@ -1024,3 +1027,80 @@ def test_a_credential_digest_is_never_a_label():
         ]
     )
     assert tagged[0]["account_label"] == "Default"
+
+
+@pytest.mark.asyncio
+async def test_the_verified_name_reaches_the_promotion(claude_db):
+    """The name a verification proved must reach the promotion.
+
+    The billing model has its own pinned test; the name is the headline
+    behaviour, so it is walked the way production walks it: a real collector,
+    a real verification, the proof the manager would read.
+    """
+    from app.services.claude_verification import verify_collector_cookie
+    from app.services.collector_manager import CollectorManager
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            await verify_collector_cookie(collector, client, "anthropic_console", "test-cookie")
+
+    kwargs = CollectorManager._source_proof_kwargs(collector)
+    assert kwargs["organization_id"] == ORG_A
+    assert kwargs["account_label"] == "API org"
+    assert kwargs["billing_type"] == "pay_as_you_go"
+
+
+@pytest.mark.asyncio
+async def test_the_organization_picker_names_and_prices_a_console_account(claude_db, monkeypatch):
+    """A Console account the picker discovered is named and priced as well."""
+    from sqlmodel import select
+
+    from app.api.endpoints.fleet import (
+        ClaudeOrganizationSelection,
+        get_claude_source_organizations,
+        select_claude_source_organization,
+    )
+    from app.models.db import ProviderConfig
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200,
+                json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}],
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(transport=httpx.MockTransport(upstream), **kwargs),
+    )
+    with RealSession(claude_db) as session:
+        await get_claude_source_organizations(source_id, "anthropic_console", session, None)
+        await select_claude_source_organization(
+            source_id,
+            ClaudeOrganizationSelection(provider_id="anthropic_console", organization_id=ORG_A),
+            session,
+            None,
+        )
+    with RealSession(claude_db) as session:
+        config = session.exec(select(ProviderConfig)).one()
+        # Console credit is shared by the organization, so the organization
+        # names the account — and a prepaid balance is spend.
+        assert config.account_label == "API org"
+        assert config.billing_type == "pay_as_you_go"
