@@ -106,6 +106,13 @@ Derive registry-backed descriptors from the canonical registry/generator; never
 hand-edit scripts/sidecar.py's generated credential block. Supplemental sources
 such as local logs and Desktop storage need explicit descriptors and owners.
 
+Permission binds to the trusted catalog's resources and operations plus locally
+approved directories/accounts, not a source ID supplied by the server. Remote
+registry rules cannot reuse an enabled ID to add a foreign path, executable,
+Keychain service or cookie domain. Remote directory suggestions stay inactive
+until within that locally approved scope. Test resource substitution even when
+the claimed provider/source ID is enabled.
+
 Consent is a versioned local, owner-only configuration record containing source
 IDs, exact booleans, requested capabilities and a persisted policy revision and a fresh runtime
 policy generation. It contains no provider tokens or Keychain passwords. Unknown
