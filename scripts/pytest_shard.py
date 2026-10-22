@@ -72,7 +72,9 @@ _DURATION_ROW = re.compile(
 #
 # macOS has a table of its own so that a contributor recording the weights
 # on a Mac cannot overwrite the Linux one, which is what the Windows shards
-# are planned against and what the Linux CI job measures.
+# are planned against and what the Linux CI job measures. Only the Linux and
+# Windows tables are committed: the shards are only ever planned on Windows,
+# so a macOS table is a local file for whoever records one.
 PLATFORM_TABLES = {
     "win32": "windows",
     "darwin": "macos",
