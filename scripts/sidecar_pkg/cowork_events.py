@@ -156,7 +156,6 @@ def collect_cowork(
                 and 0 <= start <= stat.st_size
                 and old.get("device") == stat.st_dev
                 and old.get("inode") == stat.st_ino
-                and start > 0
                 and old.get("prefix") == _prefix(path, start)
             )
             if not valid:
