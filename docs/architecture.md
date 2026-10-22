@@ -405,9 +405,29 @@ Workflows live in `.github/workflows/`.
     -- a module that is slow on Linux is not necessarily slow on Windows. A
     shard runs the whole suite with the other shards' modules deselected by
     node id prefix, so pytest's own `collect_ignore` still decides what is
-    collectible. Re-measure with `make shard-weights`. The frontend is not
+    collectible. Re-measure with `make shard-weights`; the Windows table is
+    measured on a Windows runner by the workflow's manual `record-weights`
+    job, because the durations are platform-specific. The frontend is not
     part of this job — `test-frontend / lint-and-test` already covers it on
     Linux.
+- **`frozen-verifier.yml`** — the packaging smoke test: the sidecar is built
+    with PyInstaller on each platform and the frozen binary is verified
+    against a signed fixture. It used to run on every pull request, in four
+    parallel jobs, which made it the largest advisory cost in the repository
+    (7.6 runner-minutes per pull request, and the macOS leg is billed at ten
+    times a Linux minute). On a pull request it verified the *standard signed
+    fixture*; the release half of the job — the one that answers "does the
+    packaged binary match the release" — only ever ran on a manual dispatch
+    with a release tag, because that is what `capture-release` produces. It
+    now runs on pushes to `main` and nightly, and the release path is
+    unchanged: dispatch this workflow with a release tag. The nightly is the
+    canary for toolchain drift — PyInstaller is installed unpinned, so a new
+    release of it can break the packaging with no change to this repository,
+    and a push run cannot catch that, because it ran before the release did.
+- **`security-validation.yml`** — the trust-boundary and recovery tests: the
+    browser boundaries and the real reverse-proxy boundaries on Linux, and the
+    native Windows swap, rollback and recovery regressions. The packaging half
+    of the old workflow lives in `frozen-verifier.yml`.
 - **`image-security.yml` / `image-security-arm64.yml`** — the candidate
     image is built and scanned for known vulnerabilities. The amd64 leg runs
     on every pull request; the arm64 leg is a native build on an ARM runner
