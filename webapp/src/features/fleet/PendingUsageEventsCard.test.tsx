@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import * as api from '@/api/endpoints';
+import { foreignError } from '@/test/foreignError';
 import { renderWithProviders } from '@/test/utils';
 import { PendingUsageEventsCard } from './PendingUsageEventsCard';
 
@@ -330,6 +331,46 @@ describe('PendingUsageEventsCard', () => {
     await waitFor(() => expect(api.assignPendingUsageEventsBatch).toHaveBeenCalledWith([
       { event_ids: [1, 2, 3], account_id: 'alice@example.com' },
     ]));
+  });
+
+  it('shows the error when selecting every matching group fails', async () => {
+    const user = userEvent.setup();
+    // The card's own load uses limit 100; the bulk selection re-fetches with
+    // limit 500, and that is the call that fails.
+    vi.mocked(api.fetchPendingUsageSessions).mockImplementation(
+      async ({ offset = 0, limit = 100 } = {}) => {
+        if (limit === 500) throw foreignError('Could not reach the sidecar');
+        return {
+          items: [
+            {
+              provider_id: 'xai',
+              sidecar_id: 'laptop',
+              session_id: 'session-0',
+              event_ids: [1],
+              event_count: 1,
+              first_ts: '2026-09-01T10:00:00Z',
+              last_ts: '2026-09-01T10:00:00Z',
+              model_ids: ['grok-4'],
+            },
+          ],
+          total_events: 1,
+          matching_events: 1,
+          total_groups: 1,
+          sidecars: ['laptop'],
+          providers: ['xai'],
+          offset,
+          limit,
+        };
+      },
+    );
+    renderWithProviders(<PendingUsageEventsCard />);
+
+    await user.selectOptions(
+      await screen.findByRole('combobox', { name: 'Filter unassigned usage by host' }),
+      'laptop',
+    );
+    await user.click(screen.getByRole('button', { name: /Select all/ }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not reach the sidecar'));
   });
 
   it('hides itself when there are no queued events', async () => {

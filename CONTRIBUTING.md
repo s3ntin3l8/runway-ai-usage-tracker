@@ -6,7 +6,7 @@
 make install    # venv + Python deps + webapp deps + git hooks (pre-commit & pre-push)
 ```
 
-On native Windows, install Python 3.12+ and Node.js 22.22+ (including npm 11.11+).
+On native Windows, install Python 3.12+ and Node.js 22.22.2+ (including npm 11.11+).
 `winget install OpenJS.NodeJS.LTS` puts Node in the per-user PATH, and that
 only applies to *new* processes — start a fresh shell (or a fresh agent
 session) before `node`/`npm` resolve. Then run these commands in PowerShell
@@ -33,10 +33,14 @@ credential contents and temporary-file cleanup. Frontend English date-label test
 use a fixed test locale, while the dashboard retains the user's locale.
 
 The frontend toolchain is pinned. `webapp/package.json` declares
-`packageManager: npm@11.19.0` and a `devEngines` block requiring Node 22.22+
+`packageManager: npm@11.19.0` and a `devEngines` block requiring Node 22.22.2+
 and npm 11.11+, so npm refuses to install with a node or npm outside that
-range instead of quietly producing a different lockfile. Node 22.22 is the
-floor because `react-router` 8.3.0 requires it. npm 11.11 is the floor
+range instead of quietly producing a different lockfile. Node 22.22.2 is the
+floor for the `jsdom` 30 upgrade — it pins
+`^22.22.2 || ^24.15.0 || >=26.0.0`, which is also the intersection with
+vitest 5's `^22.12.0 || ^24.0.0 || >=26.0.0` and `react-router`'s
+`>=22.22.0` — so the floor is raised ahead of that bump, and it stays correct
+whether or not the bump has landed. npm 11.11 is the floor
 because npm 10 never writes the `libc` metadata described below and strips it
 from every lockfile it rewrites, and npm 11.11 is the first release that
 writes it. Node 24 ships npm 11.19, so `winget install OpenJS.NodeJS.LTS` is
@@ -69,9 +73,11 @@ python scripts/pytest_shard.py plan # show the whole split
 ```
 
 A shard owns whole test modules, never part of one. The plan is balanced by
-measured per-module runtime (`tests/shard_durations.json`), so re-measure it
-with `make shard-weights` after the suite's shape changes materially - that
-command runs the full suite once and rewrites the table.
+measured per-module runtime (`tests/shard_durations.<platform>.json`, one table
+per platform), so re-measure it with `make shard-weights` after the suite's shape
+changes materially - that command runs the full suite once and rewrites the
+table for the platform it ran on. The Windows table is what the native Windows
+shards are planned with; measure it on Windows, not on Linux.
 
 Git hooks live in the repository's shared `.git/hooks`, so every worktree of
 this repository writes into the same two hook files. Install them once from the
@@ -98,7 +104,7 @@ detect-secrets, and the unit tests; `pre-push` additionally runs the full
 suite. Run the same gate by hand:
 
 ```bash
-make lint && make test && make web-test
+make lint && make test && make web-lint && make web-test
 ```
 
 - **Branch off `origin/main`**, never your local `main`, and keep the branch
@@ -110,7 +116,8 @@ make lint && make test && make web-test
   Release Please parses the **PR title**, not the individual commits, to cut
   versions/changelogs — an unprefixed title silently drops from the release.
 - **CI must pass**: `test-python / lint`, `test-python / type-and-test`,
-  `test-frontend / lint-and-test`, and CodeQL, with coverage floors of 85%
+  `test-frontend / lint-and-test`, `dependency-review / dependency-review`,
+  and CodeQL, with coverage floors of 85%
   (Python) and 85% (frontend).
 - **Schema changes are forward-safe** (no Alembic): new columns go into
   `app/core/db.py`'s idempotent `ALTER TABLE` list so existing databases

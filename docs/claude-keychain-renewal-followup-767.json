@@ -1,0 +1,138 @@
+{
+  "date": "2026-10-21",
+  "commit": "494530d6",
+  "approval": "User authorized all necessary bounded verification on existing main login; at most one exchange in this follow-up run.",
+  "foreground_authorization": {
+    "first_attempt": "timed_out",
+    "subsequent_one_time_read": "succeeded; user chose Allow; fresh background read denied",
+    "persistent_read": "foreground command succeeded; fresh background read/API checks passed"
+  },
+  "read_only_before_renewal": {
+    "attempt": "after-persistent-foreground-authorization",
+    "oauth_exchanges": 0,
+    "credential_writes": 0,
+    "exact_item_selected": true,
+    "access_present": true,
+    "refresh_present": true,
+    "expiry_valid": true,
+    "expiry_in_future": true,
+    "renewal_due": false,
+    "profile_http_status": 200,
+    "profile_object_shape": true,
+    "usage_http_status": 200,
+    "usage_object_shape": true,
+    "outcome": "passed",
+    "helper_reaped": true
+  },
+  "bounded_renewal": {
+    "scope": "main-login-authorized-at-most-one-refresh",
+    "refresh_attempts": 1,
+    "target_writes": 1,
+    "native_operations": 30,
+    "supervisor": "matching source",
+    "native_io": "packaged helper",
+    "credentials_persisted_outside_keychain": false,
+    "automatic_background_enabled": false,
+    "profile_before_http": 200,
+    "normal_not_due_cycle_passed": true,
+    "early_acceptance_due_threshold_only": true,
+    "intent_verified": true,
+    "replacement_journal_verified": true,
+    "journal_cleanup_completed": true,
+    "same_item_reference": true,
+    "same_service_account": true,
+    "access_changed": true,
+    "refresh_changed": true,
+    "expiry_advanced": true,
+    "expiry_future": true,
+    "access_policy_preserved": false,
+    "recovery_absent": true,
+    "unrelated_json_preserved": true,
+    "profile_after_http": 200,
+    "upstream_identity_preserved": true,
+    "usage_after_http": 200,
+    "usage_shape_valid": true,
+    "claude_signed_in": false,
+    "cli_matches_verified_account": false,
+    "outcome": "stopped_sanitized",
+    "helper_reaped": true,
+    "unexpected_security_agent_process": true
+  },
+  "read_only_after_renewal": {
+    "mode": "post-renewal-read-only",
+    "new_refreshes": 0,
+    "new_credential_writes": 0,
+    "expiry_future": true,
+    "recovery_absent": true,
+    "restart_read_matches": true,
+    "new_helper_started": true,
+    "profile_http": 200,
+    "claude_exit": 0,
+    "claude_signed_in": true,
+    "cli_matches_verified_account": true,
+    "outcome": "passed",
+    "helper_reaped": true
+  },
+  "synthetic_policy_fixture": {
+    "scope": "isolated_synthetic_only",
+    "real_credential_reads": 0,
+    "oauth_exchanges": 0,
+    "real_credential_writes": 0,
+    "roles": {},
+    "cleanup": {
+      "search_list_restored": true,
+      "default_restored": true,
+      "temporary_keychain_deleted": true
+    },
+    "outcome": "passed",
+    "security_agent_baseline_count": 0,
+    "operations": [
+      {
+        "group": "synthetic",
+        "operation": "copy",
+        "outcome": "success"
+      },
+      {
+        "group": "synthetic",
+        "operation": "update",
+        "outcome": "success"
+      },
+      {
+        "group": "synthetic",
+        "operation": "copy",
+        "outcome": "success"
+      }
+    ],
+    "changed_authorization_tags": [],
+    "full_snapshot_changed": false,
+    "all_access_policy_entries_preserved": true,
+    "unexpected_security_agent_process": false
+  },
+  "human_dialog_observations": {
+    "two_additional_dialogs": {
+      "owner": "not recalled",
+      "user_choice": "Always Allow on both"
+    },
+    "later_cli_status_dialog": {
+      "owner": "security",
+      "count_reported": 1
+    }
+  },
+  "verification_limits": [
+    "The full real-item ACL snapshot differed; semantic access-policy preservation is not established. The synthetic exact-data-update fixture preserved all policy entries and did not reproduce this difference.",
+    "Renewal supervisor ran matching source modules; native IO used the rebuilt packaged helper. A full packaged-daemon renewal was not run. Tray keep-alive is intentionally unarmed, tracked in #548.",
+    "Configured/suffixed real-login and physical recovery fault-injection acceptance remain under #750.",
+    "Ad-hoc signing does not establish permission persistence across rebuilds/updates; #767 remains open.",
+    "SecurityAgent process observation is a UI activity proxy. Dialog owners for two later user approvals are unknown; do not claim prompt-free acceptance."
+  ],
+  "followups": [
+    "#526",
+    "#750",
+    "#764",
+    "#767",
+    "#548"
+  ],
+  "further_refreshes_attempted": 0,
+  "production_configuration_changed": false,
+  "production_sidecar_restarted": false
+}

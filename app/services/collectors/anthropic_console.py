@@ -10,6 +10,7 @@ import httpx
 
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import HealthCalculator, error_card, http_request_with_retry
+from app.services.account_identity import is_placeholder_label
 from app.services.collectors.base import BaseCollector
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
@@ -202,6 +203,9 @@ def parse_console_balance(data: Any, *, now: datetime | None = None) -> dict[str
 
 class AnthropicConsoleCollector(BaseCollector):
     PROVIDER_ID = "anthropic_console"
+    # A Console account is keyed by its organization id, so the account's label
+    # is a name a human chose: it must never file a card elsewhere.
+    ACCOUNT_LABEL_IS_DISPLAY_NAME = True
     DEFAULT_WINDOW_TYPE = "rolling"
     COMPLETE_SNAPSHOT = True
     CREDENTIALS_KEYED_BY_ACCOUNT_ID = True
@@ -234,6 +238,15 @@ class AnthropicConsoleCollector(BaseCollector):
                 verified = await verify_collector_cookie(self, client, self.PROVIDER_ID, cookie)
                 if not verified.organization_id or verified.usage is None:
                     return []
+                if verified.account_label and is_placeholder_label(self.account_label):
+                    # Console credit is shared by every member of the organization,
+                    # so the organization names the account, not the signed-in member.
+                    # A name the operator chose is theirs: never overwrite it.
+                    #
+                    # The label cache is deliberately left alone: it outlives a
+                    # source attempt, and the next organization must not inherit
+                    # this one's name.
+                    self.account_label = verified.account_label
                 return [parse_console_balance(verified.usage)]
             org_id = str(UUID(self.account_id or ""))
             data = await console_get(client, f"/api/organizations/{org_id}/prepaid/credits", cookie)

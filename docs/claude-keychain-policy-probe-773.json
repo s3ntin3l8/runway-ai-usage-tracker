@@ -1,0 +1,43 @@
+{
+  "real_oauth_exchanges": 0,
+  "real_credential_operations": 0,
+  "initial_read": "denied",
+  "write": "succeeded",
+  "comparison": {
+    "access_policy_preserved": false,
+    "integrity_changed": false,
+    "changed_policy_authorizations": [
+      [
+        65538
+      ]
+    ]
+  },
+  "before_partition": {
+    "count": 1,
+    "categories": {
+      "apple": false,
+      "apple-tool": false,
+      "cdhash": true,
+      "unsigned": false,
+      "teamid": false
+    }
+  },
+  "after_partition": {
+    "count": 1,
+    "categories": {
+      "apple": false,
+      "apple-tool": false,
+      "cdhash": true,
+      "unsigned": false,
+      "teamid": false
+    }
+  },
+  "read_after_write": true,
+  "outcome": "completed",
+  "cleanup": {
+    "search_list_restored": true,
+    "default_restored": true,
+    "temporary_keychains_deleted": true
+  },
+  "cleanup_evidence_limit": "Historical probe used the unsafe global-preference harness. Cached CF cleanup checks are insufficient; this record is evidence of the synthetic item policy delta only."
+}

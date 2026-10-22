@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { fetchAppConfig, fetchSettings, login } from '@/api/endpoints';
 import { ApiError, clearAdminKey, getAdminKey } from '@/api/client';
+import { reloadPage } from '@/lib/reload';
 import { setTzConfig } from '@/lib/tz';
 import { SKIP_AUTH_REDIRECT_GUARD_META, clearAuthReloadCount } from '@/lib/authRedirect';
 import { RunwayMark } from '@/components/layout/RunwayMark';
@@ -89,7 +90,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
           </p>
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={() => reloadPage()}
             className="mt-4 h-9 cursor-pointer rounded-sm bg-accent px-4 text-sm font-medium text-accent-fg transition-colors duration-150 hover:bg-accent-hover"
           >
             Sign in

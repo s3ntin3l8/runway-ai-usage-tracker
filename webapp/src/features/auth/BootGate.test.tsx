@@ -7,12 +7,19 @@ import type { ReactNode } from 'react';
 import { BootGate } from './BootGate';
 import { fetchAppConfig, fetchSettings, login } from '@/api/endpoints';
 import { ApiError, clearAdminKey, getAdminKey } from '@/api/client';
+import { reloadPage } from '@/lib/reload';
 
 vi.mock('@/api/endpoints', () => ({
   fetchSettings: vi.fn(),
   fetchAppConfig: vi.fn(),
   login: vi.fn(),
 }));
+
+// `window.location` cannot be replaced in every environment: jsdom inside a
+// vm context makes it non-configurable, so `vi.stubGlobal('location', ...)`
+// throws, and `location.reload` is not writable either. The reload goes
+// through a module, which is mockable.
+vi.mock('@/lib/reload', () => ({ reloadPage: vi.fn() }));
 
 vi.mock('@/api/client', async () => {
   // Keep the real ApiError export — BootGate does `instanceof ApiError` to
@@ -30,6 +37,7 @@ const mockSettings = vi.mocked(fetchSettings);
 const mockAppConfig = vi.mocked(fetchAppConfig);
 const mockLogin = vi.mocked(login);
 const mockGetAdminKey = vi.mocked(getAdminKey);
+const mockReload = vi.mocked(reloadPage);
 const mockClearAdminKey = vi.mocked(clearAdminKey);
 
 beforeEach(() => {
@@ -74,15 +82,12 @@ describe('BootGate', () => {
 
   it('reloads the page when "Sign in" is clicked on the session-expired screen', async () => {
     const user = userEvent.setup();
-    const reload = vi.fn();
-    vi.stubGlobal('location', { ...window.location, reload });
     mockSettings.mockRejectedValue(new ApiError(0, 'Authentication required', true));
     mockAppConfig.mockResolvedValue({} as never);
     renderGate();
 
     await user.click(await screen.findByRole('button', { name: /sign in/i }));
-    expect(reload).toHaveBeenCalledTimes(1);
-    vi.unstubAllGlobals();
+    expect(mockReload).toHaveBeenCalledTimes(1);
   });
 
   it('shows the admin-key screen when the instance is locked', async () => {

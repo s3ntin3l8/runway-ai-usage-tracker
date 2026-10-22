@@ -5,18 +5,15 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  # The merge queue runs the required checks against the merge commit, so
-  # CodeQL has to report on that commit too.
-  merge_group:
-    types: [ checks_requested ]
   schedule:
     - cron: '37 1 * * 4'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Never cancel a merge-queue run: the queue needs it to finish before it
-  # can merge, and a cancelled run reads as a failed check.
-  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+  # The event name is part of the group: a `schedule` run and a `push` to
+  # `main` share `github.ref`, so without it the weekly scan and a push
+  # land in the same group and the newer cancels the older.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   analyze:

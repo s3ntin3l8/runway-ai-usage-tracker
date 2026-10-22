@@ -26,6 +26,16 @@ from scripts.pytest_shard import (  # noqa: E402
     write_weights,
 )
 
+#: The dependency sets, by name. The suite needs one set, the static gate
+#: another, and a checkout that wants to do both needs the union -- so a job
+#: that only runs tests installs about 30 packages fewer than one that
+#: installs everything, which is a third of a Windows job's install step.
+REQUIREMENTS_FILES = {
+    "all": "requirements-dev.txt",
+    "test": "requirements-test.txt",
+    "lint": "requirements-lint.txt",
+}
+
 
 def venv_python() -> Path:
     return ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -84,6 +94,15 @@ def isolated_environment() -> Iterator[tuple[Path, dict[str, str]]]:
 
     Yields the temporary root plus the environment overrides that point HOME,
     APPDATA, the XDG directories and RUNWAY_CONFIG_DIR at it.
+
+    The paths exported here are the serial run's. ``TEST_ISOLATION_ROOT``
+    carries the root itself so the suite can specialise it per xdist worker:
+    the four workers of a parallel run must not share one app database file,
+    or two tests writing to the app engine at the same time contend on it.
+    That specialisation happens in the worker (see ``tests/conftest.py``),
+    because the worker id is only known there, so on the parallel path the
+    exported HOME and config directory are the fallback the conftest
+    re-derives per worker -- not the paths the workers end up using.
     """
     # A unique owned root avoids old pytest roots with another user's Windows ACLs.
     with tempfile.TemporaryDirectory(prefix="runway-pytest-") as tmp:
@@ -100,6 +119,7 @@ def isolated_environment() -> Iterator[tuple[Path, dict[str, str]]]:
             "XDG_CONFIG_HOME": str(home / ".config"),
             "XDG_DATA_HOME": str(home / ".local/share"),
             "RUNWAY_CONFIG_DIR": str(config),
+            "TEST_ISOLATION_ROOT": str(root),
         }
         yield root, isolated_paths
 
@@ -125,16 +145,20 @@ def check(
     shard_id: int = 1,
     shards: int = DEFAULT_SHARDS,
     jobs: int = 0,
+    requirements_set: str = "all",
 ) -> None:
     interpreter = venv_python()
-    if task not in {"install", "install-python", "web-test"} and not interpreter.is_file():
+    if (
+        task not in {"install", "install-python", "web-test", "web-lint"}
+        and not interpreter.is_file()
+    ):
         raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
     python = str(interpreter)
     if task == "install-python":
         if not venv_python().is_file():
             execute([sys.executable, "-m", "venv", str(ROOT / ".venv")])
         execute([python, "-m", "pip", "install", "--upgrade", "pip"])
-        execute([python, "-m", "pip", "install", "-r", "requirements-dev.txt"])
+        execute([python, "-m", "pip", "install", "-r", REQUIREMENTS_FILES[requirements_set]])
     elif task == "install":
         check("install-python", [])
         execute([*npm_command(), "--prefix", "webapp", "ci"])
@@ -211,6 +235,10 @@ def check(
     elif task == "record-shard-weights":
         # Measure how long every test module takes so the shard planner can
         # balance by runtime instead of by file or test count.
+        #
+        # The measurement runs with the same worker count the shards use, so
+        # the numbers describe the runs they plan: a module's cost inside a
+        # four-worker shard is not its serial cost.
         with isolated_environment() as (root, isolated_paths):
             report = root / "durations.txt"
             print("Running the suite to measure per-module durations ...")
@@ -221,6 +249,7 @@ def check(
                     "pytest",
                     "--durations=0",
                     "-vv",
+                    *parallel_args(jobs),
                     "--basetemp",
                     str(root / "tests"),
                 ],
@@ -233,9 +262,23 @@ def check(
             print(f"Wrote {len(durations)} module durations to {target}")
     elif task == "web-test":
         execute([*npm_command(), "--prefix", "webapp", "test", *(["--", *extra] if extra else [])])
+    elif task == "web-lint":
+        # The frontend's lint. The shared CI workflow runs it inside the
+        # required `test-frontend / lint-and-test` job, so a lint error blocks
+        # a merge -- which means the local gate has to run it too, or
+        # `make lint && make test && make web-test` can be green while CI is
+        # red.
+        # `npm lint` is not a builtin the way `npm test` is, so the
+        # script has to be named explicitly.
+        execute([*npm_command(), "--prefix", "webapp", "run", "lint"])
     elif task == "gate":
-        for step in ("lint", "test", "web-test"):
-            check(step, [], jobs=jobs)
+        # Only the pytest step runs the suite, so only it is told how many
+        # workers to use. `lint` runs ruff and mypy; `web-lint` runs eslint;
+        # `web-test` runs vitest, which has its own pool knob.
+        check("lint", [])
+        check("test", [], jobs=jobs)
+        check("web-lint", [])
+        check("web-test", [])
 
 
 def main() -> int:
@@ -252,6 +295,7 @@ def main() -> int:
             "test-shard",
             "test-windows",
             "unit",
+            "web-lint",
             "web-test",
             "gate",
             "record-shard-weights",
@@ -268,12 +312,32 @@ def main() -> int:
         default=None,
         help="run the suite in this many parallel workers (1 = serial)",
     )
+    parser.add_argument(
+        "--set",
+        dest="requirements_set",
+        choices=tuple(REQUIREMENTS_FILES),
+        default="all",
+        help="which dependency set to install: 'test' for the suite's, "
+        "'lint' for the static gate's, 'all' for both. Only "
+        "'install-python' takes it -- 'install' is the full setup, hooks "
+        "included",
+    )
     args, extra = parser.parse_known_args()
     if extra and args.task not in {"test", "unit", "test-shard", "test-windows", "web-test"}:
         parser.error("additional arguments are supported only for test commands")
-    if args.jobs is not None and args.task not in {"test", "unit", "test-shard", "test-windows"}:
+    if args.requirements_set != "all" and args.task != "install-python":
+        parser.error("--set is supported only for the install-python task")
+    if args.jobs is not None and args.task not in {
+        "test",
+        "unit",
+        "test-shard",
+        "test-windows",
+        "record-shard-weights",
+        "gate",
+    }:
         parser.error(
-            "--jobs is supported only for the test, unit, test-shard and test-windows tasks"
+            "--jobs is supported only for the test, unit, test-shard, test-windows, "
+            "record-shard-weights and gate tasks"
         )
     shard_id = args.shard_id
     if shard_id is None:
@@ -283,9 +347,20 @@ def main() -> int:
         shards = int(os.environ.get("RUNWAY_PYTEST_SHARDS", str(DEFAULT_SHARDS)))
     jobs = args.jobs
     if jobs is None:
-        jobs = int(os.environ.get("RUNWAY_TEST_JOBS", "0"))
+        # The recording has to measure what the shards run, and the shards
+        # run four workers -- so the default here is four too, and the same
+        # numbers come out whether the table is recorded locally or in CI.
+        default = "4" if args.task == "record-shard-weights" else "0"
+        jobs = int(os.environ.get("RUNWAY_TEST_JOBS", default))
     try:
-        check(args.task, extra, shard_id=shard_id, shards=shards, jobs=jobs)
+        check(
+            args.task,
+            extra,
+            shard_id=shard_id,
+            shards=shards,
+            jobs=jobs,
+            requirements_set=args.requirements_set,
+        )
     except subprocess.CalledProcessError as exc:
         return exc.returncode
     except RuntimeError as exc:

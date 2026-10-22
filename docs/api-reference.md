@@ -26,6 +26,7 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/usage/top-projects` | Top projects ranked by `metric=tokens\|cost\|sessions`, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/top-tools` | Top tools by invocation volume, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/top-models` | Cross-provider Top Models ranked by `metric=tokens\|cost`, optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/source-apps` | Client apps that produced events, ranked by `metric=tokens\|cost`; several apps can share one provider, so this is what says which app spent the quota. Optionally scoped by `provider_id`/`account_id`/`sidecar_id` |
 | `GET` | `/api/v1/usage/global-stats` | Global cross-provider snapshot; optional `sidecar_id` and `exclude_cache` filters |
 | `GET` | `/api/v1/usage/cost-forecast` | MTD cost + 7-day burn extrapolated to EOM; optional `exclude_cache` |
 | `GET` | `/api/v1/usage/anomalies` | Z-score spike detection vs. historical mean; omitted/empty `sidecar_id` selects the all-source rollup, while a non-empty ID selects that source |
@@ -94,10 +95,16 @@ The grouped pending-events response reports `total_events` across the full queue
 | `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/system/webhooks[...]` | CRUD + test for Discord/Slack threshold alerts; optional `account_id` scopes an alert to one account; `credential_alerts` (default true) also fires the same webhook when a matching credential's Token Health goes expired/invalid (admin) |
 | `GET`/`PUT`/`DELETE` | `/api/v1/system/provider-config[s]/{...}` | Per-provider config CRUD (admin write); DELETE soft-archives and clears any matching `credential_tags` hints |
 | `PATCH` | `/api/v1/system/provider-config/{provider_id}/{account_id}/credential-sources` | Set enabled state and zero-based order for every known source on this account (admin); duplicate priorities are allowed and ties sort by `source_id`; optional `all_machines` applies each listed source preference to matching sidecar origins across hosts; values are never returned |
-| `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it |
+| `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it; `detect_billing: true` additionally proves how the account bills and returns it as `suggested_billing_type` (a proof costs a round trip to Claude, so it is asked for, not done on every keystroke) |
 | `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write); includes `sidecar_update_channel`, `sidecar_auto_update` and `sidecar_keep_alive_default` (fleet-wide keep-alive default: on for every sidecar without its own override; omitted fields in a `PUT` keep their stored value) |
 | `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout (admin for reads and writes) |
 | `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` (public) |
+
+Every account in the provider-configs listing names the provider it belongs
+to (`accounts[].provider_id`). The Claude family groups several providers
+under one card, so an account listed under the family is still addressed by
+its own provider — a rename, an archive or a billing model never lands on the
+family's representative.
 
 ### Data health (admin)
 
@@ -359,6 +366,37 @@ the usual `session_cookie` field. Organization identity remains stable across
 cookie replacement and display-label changes. API responses expose only the
 credential's configured status. Clear it using `clear_session_cookie: true`.
 
+
+### Automatically discovered Claude accounts
+
+A Claude account the server discovers for itself — a sidecar console whose
+cookie proves which organization it belongs to — is named after what it
+actually is instead of the placeholder "Default". A subscription belongs to one
+member, so its email names it; a Console account *is* the organization, because
+every member shares its credit, so the organization's name names it.
+
+The name is written to `ProviderConfig.account_label` when the account row is
+created, and an `account_label` nobody set is filled in on a later poll. A
+label the operator chose is never overwritten.
+
+A card's label is the account's *name* — the member's email for a claude.ai
+account, the organization's name for a Console account — and it is what keys the
+card to its account, so a name a human chose never files a card under another
+account. The *identity* a card proved, which an organization-scoped one marks
+with `org: `, lives in the card's detail, where the tagger reads it back.
+
+The billing model is read off the shape of the cards the account publishes: a
+card reporting a percentage of a limit describes a subscription, a card
+reporting a currency balance describes pay-as-you-go, and a quota card wins
+when an account publishes both. It is written to `ProviderConfig.billing_type`
+when the account row is created. An existing row keeps the type the operator
+chose — change it in Settings, and no later poll undoes that.
+
+An account added **by hand** is priced the same way: the preview returns the
+model it proved as `suggested_billing_type` (a Console connection is priced
+while the organization is picked; a subscription is priced on request with
+`detect_billing: true`), and the wizard offers it as a suggestion. The
+operator's own choice wins; a model nobody chose is left to the server's proof.
 
 ### Native Claude OAuth token metadata
 

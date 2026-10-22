@@ -22,6 +22,8 @@ import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.fixtures.isolation import worker_paths
+
 
 def _pytest_user() -> str:
     """The name pytest files its per-run temp directories under."""
@@ -183,6 +185,31 @@ os.environ["DB_ENCRYPTION_KEY"] = ""
 # pystray's dummy backend allows tray menu tests on headless Linux CI.
 os.environ["PYSTRAY_BACKEND"] = "dummy"
 
+# The test environment is isolated: a throwaway HOME, XDG directories and
+# config root, so the suite never reads the operator's or the runner's real
+# files. The runner (scripts/dev_checks.py locally, the shared CI workflow)
+# points the whole run at one throwaway root and exports it as
+# TEST_ISOLATION_ROOT.
+#
+# Each xdist worker then gets its own root. Without that, the four workers
+# of a parallel run share a single app database file -- and two tests writing
+# to the app engine at the same time would contend on it. The worker id is
+# only known inside the worker, so the split happens here, before the app is
+# imported and its settings singleton reads the paths.
+_worker = os.environ.get("PYTEST_XDIST_WORKER", "").strip()
+_isolation_root = os.environ.get("TEST_ISOLATION_ROOT", "").strip()
+if _isolation_root:
+    _home, _config = worker_paths(Path(_isolation_root), _worker)
+    _home.mkdir(parents=True, exist_ok=True)
+    _config.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(_home)
+    os.environ["USERPROFILE"] = str(_home)
+    os.environ["APPDATA"] = str(_home / "AppData/Roaming")
+    os.environ["LOCALAPPDATA"] = str(_home / "AppData/Local")
+    os.environ["XDG_CONFIG_HOME"] = str(_home / ".config")
+    os.environ["XDG_DATA_HOME"] = str(_home / ".local/share")
+    os.environ["RUNWAY_CONFIG_DIR"] = str(_config)
+
 import httpx
 import pytest
 from sqlalchemy import event
@@ -302,6 +329,75 @@ def clear_response_cache():
     cache_clear()
 
 
+# The modules that can hold a reference to the mocked ``Session``.
+#
+# A module captures the mock by reading ``sqlmodel.Session`` at runtime, and
+# the only ones that do are the ones this repository owns. The scan used to
+# walk every module in ``sys.modules`` -- about 1900 of them, all cold, so
+# 1.2ms a test: 5.3 seconds of CPU and 1.9 seconds of wall clock for a run
+# of the suite, which is 5% of it. The scan is what keeps a captured mock
+# from outliving the test that captured it.
+#
+# These are package *roots*. A module belongs to one of them when its name
+# is the root itself or starts with it and a dot: ``app`` and ``app.models``
+# are both the ``app`` package, and ``application`` is not.
+#
+# The narrowed walk is measured, not assumed: against a live ``sys.modules``
+# of 1192 entries (median of 9 interleaved reps x 400 calls) it is 161-170
+# us, against 214-227 us for the old walk over every module.
+_REPOSITORY_MODULES = (
+    "app",
+    "installer",
+    "scratch",
+    "scripts",
+    "sidecar_app",
+    "sqlmodel",
+    "tests",
+    "webapp",
+)
+# The roots' submodules, for the one ``startswith`` that covers them, and the
+# roots themselves as a set. Both tests are C-level, and both are inlined in
+# the scan below rather than routed through a predicate: a call per module,
+# ~1100 of them per test, costs more than the walk it saves.
+_REPOSITORY_MODULE_ROOTS = frozenset(_REPOSITORY_MODULES)
+_REPOSITORY_MODULE_PREFIXES = tuple(f"{root}." for root in _REPOSITORY_MODULES)
+
+
+def is_repository_module(name: str) -> bool:
+    """Whether ``name`` is a module this repository owns.
+
+    The guard that pins the scan imports this, so the two cannot drift
+    apart: they read the same two constants. A prefix that matched the
+    submodules but not the package root would skip ``sys.modules["app"]``
+    -- and a capture of the mocked ``Session`` in ``app/__init__.py`` would
+    survive the teardown.
+    """
+    return name in _REPOSITORY_MODULE_ROOTS or name.startswith(_REPOSITORY_MODULE_PREFIXES)
+
+
+def repair_captured_session(mock_session: MagicMock, session: type) -> None:
+    """Put the real ``Session`` back in any module that captured the mock.
+
+    A module that reads ``sqlmodel.Session`` at runtime captures the mock,
+    and the capture outlives the test that made it. This walks the modules
+    this repository owns and restores the real one in any of them that
+    still holds the mock.
+
+    The walk is the expensive part, so it is narrowed to those modules --
+    and the narrowing is inlined here rather than routed through
+    ``is_repository_module``: the call per module costs more than the walk
+    it saves. The two read the same constants.
+    """
+    for name, module in tuple(sys.modules.items()):
+        if module is None or (
+            name not in _REPOSITORY_MODULE_ROOTS
+            and not name.startswith(_REPOSITORY_MODULE_PREFIXES)
+        ):
+            continue
+        if vars(module).get("Session") is mock_session:
+            module.Session = session
+
+
 @pytest.fixture(autouse=True)
 def mock_db_session(monkeypatch):
     """Mock DB access without leaking patched Session classes across tests."""
@@ -318,9 +414,7 @@ def mock_db_session(monkeypatch):
     # leaving its mock installed globally for subsequent tests.
     monkeypatch.setattr("sqlmodel.Session", mock_session)
     yield mock_db
-    for module in tuple(sys.modules.values()):
-        if module is not None and vars(module).get("Session") is mock_session:
-            module.Session = Session
+    repair_captured_session(mock_session, Session)
 
 
 @pytest.fixture(autouse=True)
@@ -554,3 +648,31 @@ def isolated_git(tmp_path: Path):
         )
 
     return run
+
+
+@pytest.fixture(autouse=True)
+def forbid_native_keychain_access(monkeypatch):
+    """Unit/integration tests must explicitly supply synthetic credential IO."""
+    from scripts.sidecar_pkg import keychain_authorization, keychain_client
+    from scripts.sidecar_pkg.macos_keychain_store import KeychainError, _WorkerAPI
+
+    monkeypatch.setattr(keychain_client, "_CLIENT", None)
+    original = subprocess.run
+
+    def guarded_run(command, *args, **kwargs):
+        if (
+            isinstance(command, (list, tuple))
+            and command
+            and Path(str(command[0])).name == "security"
+        ):
+            raise AssertionError("Native Keychain lookup prohibited in tests")
+        return original(command, *args, **kwargs)
+
+    def forbidden(*args, **kwargs):
+        raise KeychainError("unavailable")
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    monkeypatch.setattr(_WorkerAPI, "call", forbidden)
+    monkeypatch.setattr(keychain_authorization, "_NativeAPI", forbidden)
+    yield
+    keychain_client.close_keychain_client()

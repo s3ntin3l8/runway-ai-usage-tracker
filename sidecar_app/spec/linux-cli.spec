@@ -64,6 +64,10 @@ a = Analysis(
         # Declared explicitly (guarded by tests/unit/test_sidecar_release_contract.py) so a
         # lazily imported module can never be left out of a frozen build.
         "scripts.sidecar_pkg.credentials",
+        # Classified browser cookie stores (locked / app-bound). Imported at
+        # module level in scripts/sidecar.py, which this spec bundles as data,
+        # so PyInstaller never scans it.
+        "scripts.sidecar_pkg.browser_store",
         "scripts.sidecar_pkg.claude_desktop",
         "scripts.sidecar_pkg.claude_code_keychain",
         "scripts.sidecar_pkg.macos_cookies",
@@ -88,6 +92,13 @@ a = Analysis(
         "scripts.sidecar_pkg.xai_renewer",
         "scripts.sidecar_pkg.opencode_credentials",
         "scripts.sidecar_pkg.anthropic_renewer",
+        "scripts.sidecar_pkg.claude_keychain_renewer",
+        "scripts.sidecar_pkg.macos_keychain_store",
+        "scripts.sidecar_pkg.keychain_client",
+        "scripts.sidecar_pkg.keychain_protocol",
+        "scripts.sidecar_pkg.keychain_worker",
+        "scripts.sidecar_pkg.keychain_authorization",
+        "scripts.sidecar_pkg.claude_renewal_lock",
         "scripts.sidecar_pkg.agy_version",
         "scripts.sidecar_pkg.codex_renewer",
         "scripts.sidecar_pkg.oauth_renewal",

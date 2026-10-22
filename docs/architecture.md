@@ -51,7 +51,7 @@ live in `app/models/db.py`.
 
 | Table | Role |
 |-------|------|
-| `usage_events` | Per-message events. Unique on `(provider_id, event_id)` — a re-push under a new account from the *same* sidecar re-attributes the row and moves its rollups (retag-safe); another sidecar can't steal it. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — raw per-message `cwd`, indexed `project` (the session's root basename, derived in `EventIngestor` via `app/services/project_label.py` — worktree/tmp cwds collapse at the `/.claude/` boundary, and `scripts/consolidate_session_projects.py` consolidates per-session subfolder drift offline; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. |
+| `usage_events` | Per-message events. Unique on `(provider_id, event_id)` — a re-push under a new account from the *same* sidecar re-attributes the row and moves its rollups (retag-safe); another sidecar can't steal it. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — raw per-message `cwd`, indexed `project` (the session's root basename, derived in `EventIngestor` via `app/services/project_label.py` — worktree/tmp cwds collapse at the `/.claude/` boundary, and `scripts/consolidate_session_projects.py` consolidates per-session subfolder drift offline; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. Also carries `source_app` — the **client app** that made the call (`opencode`, `claude_code`, `minimax_code`, ...), which is not the same thing as `provider_id`, the upstream provider the request was billed to: several client apps share one provider, and a canonical-provider retag (`scripts/sidecar_pkg/canonical_providers.py`) folds them onto one id. `source_app` survives that retag, so "which app spent the quota" stays answerable; it falls back to `provider_id` when a pushing sidecar reports none (an older sidecar), and pre-column rows are backfilled the same way. |
 | `usage_period_rollup` | Pre-aggregated rollups (hour/day/month/year/lifetime × model × sidecar grain). Updated incrementally on each event ingest. |
 | `usage_windows` | Closed-window archive — totals frozen at each authoritative `reset_at` boundary by `app/services/window_closer.py`. |
 | `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`) — what scrapers see. Merged via `merge_card_json` in `app/services/accumulator.py`. |
@@ -84,6 +84,10 @@ computes cost via `cost_calculator`, updates rollups, and triggers
 - `/usage/fleet` adds `window_aggregations.longest` — per-model +
   per-sidecar splits aligned to the provider's longest active window
   (Claude weekly, Gemini daily, etc.), computed on demand from `usage_events`.
+- `/usage/source-apps` ranks the **client apps** that produced events in a
+  range — the same `model_remains`-style breakdown as `/usage/top-models`,
+  but grouped by `source_app` instead of model, and filterable by
+  `provider_id`/`account_id`/`sidecar_id`.
 - `history/chart` takes `group=provider` for a cross-provider stack;
   `sessions/paginated` adds server-side sort + `project` filter; snapshot
   bucketing runs SQL-side via the `ix_quota_snapshots_series_ts` covering
@@ -221,10 +225,10 @@ the login itself on every push, so a re-login simply moves the source to the new
 
 ### Who refreshes an OAuth login
 
-A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT and xAI
-**rotate** it, so a refresh invalidates the copy still sitting in the CLI's own
-credentials file and signs that CLI out (the new token never goes back to it).
-Google does not rotate Gemini's.
+A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT, xAI and
+MiniMax Code **rotate** it, so a refresh invalidates the copy still sitting in the
+CLI's own credentials file and signs that CLI out (the new token never goes back
+to it). Google does not rotate Gemini's.
 
 - **Machine-owned** (a sidecar discovered it, or any sidecar bundle holds the same
   refresh secret) and the provider rotates: the server **never** refreshes it. The
@@ -237,6 +241,14 @@ Google does not rotate Gemini's.
 - The server reads no CLI login file from its own host (`~/.claude/.credentials.json`,
   `~/.codex/auth.json`, ...); only sidecars do. A rotating provider's CLI login therefore
   always arrives as a machine-owned bundle, and the sidecar keep-alive (xAI, Claude Code, Codex, agy) renews it.
+- **MiniMax Code** is a machine-owned login with no keep-alive: the desktop app owns
+  `~/.minimax/auth/<env>/<region>/mcode-public/auth.json` and renews the token in place
+  (the stored `generation` counter increments) whenever it runs. Runway never refreshes
+  it — there is no MiniMax refresh endpoint in `_REFRESH_ENDPOINTS`, so the server
+  cannot rotate the app's refresh token even by accident. `minimax` is listed in
+  `ROTATING_REFRESH_PROVIDERS` so the machine-ownership is explicit in the inventory
+  (`refreshed_by: "machine"`) rather than an accident of the provider having no
+  refresh endpoint.
 - A machine-renewed login that stays expired for more than 3 days raises the usual
   credential alert (an idle CLI is normal for a day or two, not for a week).
 - While a machine's access token is expired and its CLI is idle, collection skips that
@@ -301,7 +313,7 @@ semantics.
 
 Workflows live in `.github/workflows/`.
 
-- **`ci-cd.yml`** — on push/PR to `main`, and on `merge_group`:
+- **`ci-cd.yml`** — on push/PR to `main`:
   - **`test-python`** — reusable `s3ntin3l8/.github` `ci-python.yml`:
     `lint` (ruff check + format) and `type-and-test` (mypy, detect-secrets
     against `.secrets.baseline`, pip-audit, pytest with Codecov). This repo
@@ -342,40 +354,48 @@ Workflows live in `.github/workflows/`.
   - Every job above except the two `test-*` ones and `image-changed` is
     advisory: none of them is a required status check.
   - Required checks on `main`: `test-python / lint`,
-    `test-python / type-and-test`, `test-frontend / lint-and-test`, and
-    CodeQL. They are **not** required to be up to date with `main` — see
-    *The merge queue* below.
-- **The merge queue.** `ci-cd.yml` and `codeql.yml` listen for `merge_group`,
-    so a ruleset *can* require the queue: GitHub builds current `main` plus the
-    pull request, runs the required checks against *that* merge commit, and
-    merges when they are green. That is what removes the rebase treadmill —
-    a branch no longer has to be up to date to merge, because the thing being
-    tested is the merge result rather than the branch.
+    `test-python / type-and-test`, `test-frontend / lint-and-test`,
+    `dependency-review / dependency-review`, and CodeQL. They are **not**
+    required to be up to date with `main` — see *The merge queue is not
+    available here* below.
+- **The merge queue is not available here.** The merge queue is documented as
+    available on public repositories owned by *organizations* (and GitHub
+    Enterprise Cloud), not on personal accounts, and this repository is owned
+    by a personal account — GitHub's ruleset API rejects the `merge_queue`
+    rule with *"Invalid rule 'merge_queue'"*.
 
-    **It is not switched on here.** The merge queue is available on public
-    repositories owned by *organizations* (and GitHub Enterprise Cloud), not
-    on personal accounts, and this repository is owned by a personal
-    account — GitHub's ruleset API rejects the `merge_queue` rule with
-    *"Invalid rule 'merge_queue'"*. What does the job today is
-    `required_status_checks.strict = false`: a pull request no longer has to
-    be up to date with `main` to merge, so it does not need a rebase, and a
-    rebase is what used to re-trigger all five workflows.
+    What does the job instead is `required_status_checks.strict = false`: a
+    pull request no longer has to be up to date with `main` to merge, so it
+    does not need a rebase — and a rebase is what used to re-trigger the
+    pull-request workflows. Seven workflows here listen for `pull_request`
+    (`ci-cd`, `codeql`, `dependency-review`, `hermes`, `image-security`,
+    `image-security-arm64`, `security-validation`), and six of them re-run on
+    a rebase; `hermes.yml` opts out with `types: [opened, ready_for_review]`.
+    Measured: `fix/cookie-store-classification`, several commits behind
+    `main`, reports `CLEAN` and merges without a rebase.
 
     The safety that the up-to-date rule was standing in for is covered
-    elsewhere: the release pull request carries its own required checks, and
-    release-please regenerates it on every `main` push, so a broken `main`
-    makes that pull request red and it cannot be merged — no release is cut
-    from a broken `main`. The `:edge` image is gated the same way:
+    elsewhere, in two layers. The required checks run again on the push to
+    `main` — `ci-cd.yml` and `codeql.yml` both have a `push` trigger — so a
+    merge that breaks the integration is caught on `main`: the difference
+    from the up-to-date rule is *when* (after the merge, not before) and
+    *who* (whoever picks up a red `main`, not the author whose pull request
+    was bounced back). `dependency-review` is the exception: it is a
+    pull-request-only check, so it does not re-run on `main` — it has nothing
+    to say about a merge that changes no dependency. And the release pull
+    request is regenerated on every `main` push, so it always builds current
+    `main`: a broken `main` makes its checks red, and the maintainer's
+    approval — which the release pull request deliberately requires — is the
+    gate. No release is cut from a broken `main`. The `:edge` image is gated the same way:
     `build-docker` needs `test-python`, `test-frontend` and
     `dependency-audit` to pass on `main`.
 
-    Moving the repositories to an organization would enable the queue; the
-    `merge_group` triggers and the job-level `concurrency` on the
-    reusable-workflow calls are already in place for it. The
-    reusable-workflow calls keep *job-level* concurrency deliberately:
-    inside a called workflow `github.workflow` is the caller's name and the
-    group is namespaced by the caller, so two calls to the same shared
-    workflow from one caller would cancel each other.
+    Moving the repositories to an organization would enable the queue, but
+    that is not only a settings change: the workflows that produce the
+    required checks would need a `merge_group` trigger, and the advisory jobs
+    would need to skip that event so the queue does not wait on the Windows
+    runner. Neither is in place, because neither could be exercised here —
+    an untested conditional path in CI is worse than no path at all.
 - **`windows-native-suite.yml`** — the whole pytest suite on a native Windows
     runner, in four parallel shards, on `main` pushes and nightly. It used to
     run on every pull request, where it cost ~11 runner-minutes — the largest
@@ -383,12 +403,35 @@ Workflows live in `.github/workflows/`.
     the only way to get. `scripts/pytest_shard.py` owns the split: it keeps
     whole test modules together (so the fixed-port helpers and
     `tests/conftest.py`'s import-time setup stay in one process) and balances
-    them by measured runtime, recorded in `tests/shard_durations.json`. A
+    them by measured runtime, recorded per platform in
+    `tests/shard_durations.linux.json` and `tests/shard_durations.windows.json`
+    -- a module that is slow on Linux is not necessarily slow on Windows. A
     shard runs the whole suite with the other shards' modules deselected by
     node id prefix, so pytest's own `collect_ignore` still decides what is
-    collectible. Re-measure with `make shard-weights`. The frontend is not
+    collectible. Re-measure with `make shard-weights`; the Windows table is
+    measured on a Windows runner by the workflow's manual `record-weights`
+    job, because the durations are platform-specific. The frontend is not
     part of this job — `test-frontend / lint-and-test` already covers it on
     Linux.
+- **`frozen-verifier.yml`** — the packaging smoke test: the sidecar is built
+    with PyInstaller on each platform and the frozen binary is verified
+    against a signed fixture. It used to run on every pull request, in four
+    parallel jobs, which made it the largest advisory cost in the repository
+    (7.6 runner-minutes per pull request, and the macOS leg is billed at ten
+    times a Linux minute). On a pull request it verified the *standard signed
+    fixture*; the release half of the job — the one that answers "does the
+    packaged binary match the release" — only ever ran on a manual dispatch
+    with a release tag, because that is what `capture-release` produces. It
+    now runs on pushes to `main` and nightly, and the release path is
+    unchanged: dispatch this workflow with a release tag. The nightly is the
+    canary for toolchain drift — PyInstaller is pinned, so a new release of
+    it only lands when the pin moves — but it can break the packaging when
+    it does, and a push run cannot catch that, because it ran before the
+    release did.
+- **`security-validation.yml`** — the trust-boundary and recovery tests: the
+    browser boundaries and the real reverse-proxy boundaries on Linux, and the
+    native Windows swap, rollback and recovery regressions. The packaging half
+    of the old workflow lives in `frozen-verifier.yml`.
 - **`image-security.yml` / `image-security-arm64.yml`** — the candidate
     image is built and scanned for known vulnerabilities. The amd64 leg runs
     on every pull request; the arm64 leg is a native build on an ARM runner
@@ -401,8 +444,11 @@ Workflows live in `.github/workflows/`.
   version tags; beta → `:beta` + version tag, selected by `release-channel`)
   and calls `sidecar-build.yml` via `build-sidecar`/`publish-sidecar` —
   for stable and beta releases alike.
-- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix, the
-  only place PyInstaller runs. Per release label (`vX.Y.Z`, `vX.Y.Z-beta.N`,
+- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix. It
+  builds the release artifacts; the other two places that build with
+  PyInstaller are `frozen-verifier.yml`, which smoke-tests the frozen binary,
+  and the CI audit job, which installs it to audit it. Per release label
+  (`vX.Y.Z`, `vX.Y.Z-beta.N`,
   or `edge`) it
   builds the macOS **`.dmg`** (ad-hoc signed `.app`, `create-dmg`) and
   Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`)

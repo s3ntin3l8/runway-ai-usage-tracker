@@ -224,7 +224,11 @@ The project uses GitHub Actions for CI/CD, with workflow files in `.github/workf
 - **Linting**: ruff (style/format) plus mypy, detect-secrets, and pip-audit. mypy and pip-audit are hard gates on the Linux job (`strict-checks: true`).
 - **Testing**: `test-python` runs pytest with coverage (floor 85%) in four parallel workers; `test-frontend` runs vitest (floor 85%).
 - **Native Windows**: `windows` runs the static checks and `windows/specific` runs the modules whose subject is the Windows platform. The full suite runs on a Windows runner on `main` pushes and nightly (`windows-native-suite.yml`), as four parallel shards (see `scripts/pytest_shard.py`).
-- **Merge queue**: `ci-cd.yml` and `codeql.yml` listen for `merge_group`, so the required checks can run against the merge commit a merge queue builds. The advisory jobs skip that event.
+- **Up to date with `main`**: the required checks are *not* required to have run against the
+  current tip of `main`, so a pull request does not need a rebase to merge — and a rebase is
+  what re-triggered all five pull-request workflows. The merge queue, which would test the
+  merge commit itself, needs the repository to be owned by an organization; see
+  [`docs/architecture.md`](../docs/architecture.md#cicd).
 - **Build & Push**: `build-docker` pushes the `:edge` image to GHCR on push to `main`; releases publish `:latest` + the version tag.
 
 To run tests the way CI does:

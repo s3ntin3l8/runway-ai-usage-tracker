@@ -14,6 +14,16 @@ from scripts.sidecar_pkg.signatures import verification_command
 
 # Run before desktop imports/initialization so this diagnostic works headlessly.
 verification_command(sys.argv[1:])
+if sys.argv[1:2] == ["--authorize-claude-keychain"]:
+    from scripts.sidecar_pkg.keychain_authorization import authorization_command
+
+    authorization_command(sys.argv[1:])
+
+if sys.argv[1:] == ["--runway-keychain-worker"]:
+    from scripts.sidecar_pkg.keychain_worker import worker_main
+
+    worker_main()
+    raise SystemExit(0)
 
 from sidecar_app import __version__
 from sidecar_app.config import (
@@ -163,18 +173,19 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         old_url = config.get("api_url", "")
         new_url = new_config.get("api_url", "")
 
+        config.clear()
         config.update(new_config)
         _apply_login_dirs(new_config)
-        daemon._runner._config = new_config
 
         credentials_changed = (new_key != old_key) or (new_url != old_url)
         if credentials_changed:
             logging.info("Config reloaded: credentials changed — restarting daemon")
             daemon.stop()
+            daemon.configure(new_config)
             if new_key and new_key != "REPLACE_ME":
-                daemon._runner._stop_event.clear()
                 daemon.start()
         else:
+            daemon.configure(new_config)
             logging.info("Config reloaded (no credentials change)")
 
     def _manual_reload() -> None:
@@ -269,12 +280,14 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
                 "Runway Sidecar — Setup Required",
             )
 
-    tray.run(after_start=notify_on_start)
-
-    # 11. Tray exited — stop background threads
-    checker.stop()
-    _watcher_stop.set()
-    settings_server.stop()
+    try:
+        tray.run(after_start=notify_on_start)
+    finally:
+        # Stop credential work before tearing down the tray's supporting threads.
+        daemon.stop()
+        checker.stop()
+        _watcher_stop.set()
+        settings_server.stop()
 
 
 if __name__ == "__main__":

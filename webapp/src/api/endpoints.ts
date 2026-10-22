@@ -42,6 +42,7 @@ import type {
   SidecarChannel,
   SidecarLogLevel,
   SidecarDownloads,
+  SourceAppsResponse,
   SystemSettings,
   TopModelsResponse,
   TopProjectsResponse,
@@ -105,6 +106,9 @@ export const fetchHistoryChart = (params: Params) =>
 
 export const fetchTopModels = (params: Params = {}) =>
   api<TopModelsResponse>(`/api/v1/usage/top-models${qs(params)}`);
+
+export const fetchSourceApps = (params: Params = {}) =>
+  api<SourceAppsResponse>(`/api/v1/usage/source-apps${qs(params)}`);
 
 export const fetchGlobalStats = (params: Params = {}) =>
   api<GlobalStatsResponse>(`/api/v1/usage/global-stats${qs(params)}`);

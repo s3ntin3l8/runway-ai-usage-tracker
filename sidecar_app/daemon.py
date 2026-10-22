@@ -1,5 +1,6 @@
 """TrayDaemon — wraps DaemonRunner with a tray-friendly interface."""
 
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -14,6 +15,8 @@ class TrayDaemon:
 
     def __init__(self, config: dict) -> None:
         self._config = config
+        self._started = False
+        self._lifecycle_lock = threading.RLock()
         self._runner: DaemonRunner = DaemonRunner(config, on_status_change=self._on_runner_status)
         self.on_status_change: Callable[[str], None] | None = None
 
@@ -23,11 +26,46 @@ class TrayDaemon:
 
     def start(self) -> None:
         """Start the background DaemonRunner."""
-        self._runner.start()
+        with self._lifecycle_lock:
+            if self._started:
+                return
+            from scripts.sidecar_pkg.keychain_client import reopen_keychain_client
+
+            try:
+                reopen_keychain_client()
+                self._arm_keep_alive()
+                self._runner.start()
+            except BaseException:
+                _sidecar._KEEP_ALIVE.stop()
+                self._runner.stop()
+                raise
+            self._started = True
 
     def stop(self) -> None:
         """Stop the background DaemonRunner."""
-        self._runner.stop()
+        with self._lifecycle_lock:
+            if not self._started:
+                return
+            self._started = False
+            try:
+                _sidecar._KEEP_ALIVE.stop()
+            finally:
+                self._runner.stop()
+
+    def configure(self, config: dict) -> None:
+        """Replace local permissions before reconciling keep-alive policy."""
+        with self._lifecycle_lock:
+            self._config = config
+            self._runner._config = config
+            if self._started:
+                self._arm_keep_alive()
+
+    def _arm_keep_alive(self) -> None:
+        # #526 accepts macOS Claude only. Other tray renewers stay gated by #548.
+        _sidecar._KEEP_ALIVE.arm(
+            self._config.get("keep_alive") is True,
+            providers={"anthropic"} if sys.platform == "darwin" else set(),
+        )
 
     def pause(self) -> None:
         """Pause collection cycles."""

@@ -50,6 +50,10 @@ Reconciliation only changes the live card view; `quota_snapshots` and
 
 Enrichment events also carry **project context** — the working directory (`cwd`), `git_branch`, and the tool names invoked in the message (`tool_names`). The server derives `project` (the basename of `cwd`) in `EventIngestor` and indexes it, which is what powers the Sessions project column and the Top Projects / Top Tools rankings.
 
+They also carry **the client app that made the call** (`source_app`: `opencode`, `claude_code`, `minimax_code`, ...). That is not the same as the provider the request was billed to — several client apps share one provider, and a canonical-provider retag folds them onto one id. `source_app` survives the retag, so "which app spent the quota" stays answerable (`/usage/source-apps`).
+
+Rows written **before** the column existed are backfilled with `provider_id`, which is exactly what the ingestor falls back to when an older sidecar reports no app. Those rows therefore show the provider id (`minimax`, `opencode`, ...) under the app label until enough new events arrive to separate them — the split is only as precise as the data behind it, not a bug in the chart.
+
 ## Per-Collector Strategy Mapping
 
 The "Runs in" column shows where the strategy executes. The server-side collectors only do `api` / `web`; everything that needs filesystem, CLI, or LSP access lives in the sidecar and reaches the server through `/api/v1/fleet/ingest`.
@@ -70,6 +74,24 @@ The "Runs in" column shows where the strategy executes. The server-side collecto
 | OpenCode | local (SQLite events) | enrichment | sidecar |
 | **Antigravity** | api (Code Assist cloud) | quota | server |
 | Antigravity | local (LSP probe — legacy enrichment) | enrichment | sidecar |
+| **MiniMax** | api (coding plan) | quota | server |
+| MiniMax | api (open platform — MiniMax Code app login) | quota | server |
+
+The two MiniMax strategies need different credentials: the platform API secret
+(`sk-…`) and the MiniMax Code app's OAuth token (`mmoat_…`). Each host accepts
+only its own — sending the wrong kind comes back as **HTTP 200** with
+`base_resp.status_code` 1004 "login fail", so the failure is only visible in the
+body. The collector reports that as an **error card**, not as an empty plan:
+this collector reports complete snapshots, so a healthy-looking "No active plan"
+card would retire the user's real session and weekly rows. Which kind a
+credential is comes from the `mmoat_` prefix, so a token pasted into Settings
+or the database is still routed to the host that accepts it.
+
+The app's auth store keeps one record per build and region, each with its own
+expiry. The registry reaches it with a `records.*` wildcard, and both the
+server and the sidecar pick the record whose expiry is still in the future — a
+dead record must not win just because its key sorts first, and the token and
+its expiry must come from the *same* record.
 
 ## Collection Pipeline
 

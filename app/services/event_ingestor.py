@@ -198,6 +198,7 @@ class EventIngestor:
                         attribution_source=push.account_source or "unknown",
                         credential_origin=push.credential_origin,
                         sidecar_id=sidecar_id or "local",
+                        source_app=push.source_app or push.provider_id,
                         event_id=push.event_id,
                         ts=ts,
                         kind="error",
@@ -249,6 +250,11 @@ class EventIngestor:
                     attribution_source=push.account_source or "unknown",
                     credential_origin=push.credential_origin,
                     sidecar_id=sidecar_id or "local",
+                    # The client app that made the call. provider_id names the
+                    # upstream provider billed, which several client apps share,
+                    # so the fallback keeps old sidecars (that report no app)
+                    # grouped the same way the pre-column rows were backfilled.
+                    source_app=push.source_app or push.provider_id,
                     event_id=push.event_id,
                     ts=ts,
                     kind=push.kind,

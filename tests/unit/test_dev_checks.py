@@ -50,6 +50,101 @@ def test_gate_stops_after_a_failed_step(monkeypatch):
     assert calls == ["lint", "test"]
 
 
+def test_gate_forwards_the_worker_count_to_its_steps(monkeypatch):
+    """`--jobs` reaches the gate's test step, not just the standalone tasks."""
+    seen = []
+    original = dc.check
+
+    def check(task, extra, **kwargs):
+        if task == "gate":
+            return original(task, extra, **kwargs)
+        seen.append((task, kwargs.get("jobs", 0)))
+        return None
+
+    monkeypatch.setattr(dc, "check", check)
+    dc.check("gate", [], jobs=4)
+    # Only the pytest step is told the worker count; lint, web-lint and
+    # web-test do not run the suite.
+    assert seen == [("lint", 0), ("test", 4), ("web-lint", 0), ("web-test", 0)]
+
+
+@pytest.mark.parametrize(
+    ("jobs", "expected"),
+    [
+        (4, ["-n", "4", "--dist", "loadfile"]),
+        (1, []),
+        (0, []),
+        (-1, []),
+    ],
+)
+def test_parallel_args_pins_the_worker_grouping(jobs, expected):
+    """`--dist loadfile` is load-bearing: the default would split a module.
+
+    The default `--dist load` hands individual tests to workers, so a
+    module-scoped fixture and a module's import-time setup would end up
+    spread across workers. `loadfile` keeps every module in one worker.
+    """
+    assert dc.parallel_args(jobs) == expected
+
+
+def test_jobs_is_rejected_for_tasks_that_do_not_run_tests(monkeypatch):
+    """`--jobs` is meaningless for a task that never starts pytest."""
+    monkeypatch.setattr(sys, "argv", ["dev_checks.py", "lint", "--jobs", "4"])
+    with pytest.raises(SystemExit):
+        dc.main()
+
+
+@pytest.mark.parametrize(
+    ("requirements_set", "expected"),
+    [
+        ("all", "requirements-dev.txt"),
+        ("test", "requirements-test.txt"),
+        ("lint", "requirements-lint.txt"),
+    ],
+)
+def test_the_requirements_set_picks_the_file_to_install(monkeypatch, requirements_set, expected):
+    """`--set` picks which dependency set `install-python` installs.
+
+    A job that only runs tests must not install the lint tooling, and a job
+    that only lints must not install the suite's packages: the lint tree is
+    about thirty packages the suite never touches, and unpacking them onto
+    the Windows filesystem is a third of the job's install step.
+    """
+    commands = []
+    monkeypatch.setattr(dc, "execute", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(sys, "argv", ["dev_checks.py", "install-python", "--set", requirements_set])
+    assert dc.main() == 0
+    assert commands[-1][-2:] == ["-r", expected]
+
+
+@pytest.mark.parametrize("task", ["install", "lint"])
+def test_the_requirements_set_is_rejected_for_tasks_that_do_not_install(monkeypatch, task):
+    """`--set` is meaningless for a task that installs nothing.
+
+    ``install`` is the one that separates the old code from the new: it used
+    to accept ``--set`` and then die in ``install-hooks``, which needs
+    ``pre-commit`` -- a package only the lint set carries. ``lint`` was
+    always rejected, so it passes either way; it is here so that the rule
+    is pinned for both.
+    """
+    monkeypatch.setattr(sys, "argv", ["dev_checks.py", task, "--set", "test"])
+    with pytest.raises(SystemExit):
+        dc.main()
+
+
+def test_install_installs_the_union(monkeypatch):
+    """`make install` is the full set, so the hooks work afterwards.
+
+    The hooks need `pre-commit`, which is in the lint set -- so `install`
+    cannot take a narrower set than the union.
+    """
+    commands = []
+    monkeypatch.setattr(dc, "execute", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(dc, "npm_command", lambda: ["node", "npm-cli.js"])
+    dc.check("install", [])
+    assert ["-r", "requirements-dev.txt"] in [command[-2:] for command in commands]
+
+
 def test_install_uses_lockfile_and_both_hooks(monkeypatch):
     commands = []
     dc.venv_python().unlink()
@@ -88,6 +183,9 @@ def test_tests_get_an_owned_root_and_keep_pytest_arguments(monkeypatch):
     assert paths[0]["HOME"] == paths[0]["USERPROFILE"]
     for name in ("APPDATA", "LOCALAPPDATA", "RUNWAY_CONFIG_DIR"):
         assert Path(paths[0][name]).is_relative_to(temp.parent)
+    # The root itself is exported too, so the suite can give each xdist
+    # worker its own home and config directory (tests/conftest.py).
+    assert Path(paths[0]["TEST_ISOLATION_ROOT"]) == temp.parent
 
 
 def test_missing_npm_reports_setup_requirement(monkeypatch):

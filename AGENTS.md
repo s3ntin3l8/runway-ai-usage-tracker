@@ -31,14 +31,15 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   `main` — Release Please parses it to cut versions/changelogs, and an
   unprefixed title silently drops out of the changelog.
 - **Before pushing, run the full gate:**
-  `make lint && make test && make web-test` (or on native Windows,
+  `make lint && make test && make web-lint && make web-test` (or on native Windows,
   `python scripts/dev_checks.py gate`).
   `make install` wires the same checks into git hooks: pre-commit runs ruff,
   mypy, detect-secrets, and the unit tests; pre-push runs the full suite.
   Both run the suite in four workers, so the gates take about a minute
   rather than five.
   CI must stay green — `test-python / lint`, `test-python / type-and-test`,
-  `test-frontend / lint-and-test`, and CodeQL — with coverage floors of 85%
+  `test-frontend / lint-and-test`, `dependency-review / dependency-review`,
+  and CodeQL — with coverage floors of 85%
   (Python) and 85% (frontend).
 - **Get a review, and close the loop on it.** Hermes auto-reviews each PR
   once on open (`.github/workflows/hermes.yml`) — don't request another one
@@ -75,9 +76,11 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   worktree of the repository, so install them once from the main checkout
   (`make install-hooks`); a hook installed from a worktree keeps pointing at
   that worktree's interpreter and stops working when the worktree is removed.
-  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22+
-  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, and `react-router`
-  8.3.0 pins `>=22.22.0`) and npm 11.11+ (Node 24 ships npm 11.19) — `webapp/package.json`
+  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22.2+
+  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, `react-router` pins
+  `>=22.22.0`, and the `jsdom` 30 upgrade pins
+  `^22.22.2 || ^24.15.0 || >=26.0.0`) and npm 11.11+ (Node 24 ships npm 11.19) —
+  `webapp/package.json`
   pins both with `devEngines`, so a mismatched toolchain refuses to install
   rather than quietly rewriting the lockfile. On Windows
   `winget install OpenJS.NodeJS.LTS` puts it in the per-user PATH, and a new
@@ -96,16 +99,21 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   native Windows CI uses; `make shard-weights` re-measures the per-module
   durations that balance it.
 - `make lint` / `make format` — ruff + mypy + pip-audit; auto-fix formatting.
+- `make web-lint` — eslint over the frontend. The shared CI workflow runs it
+  inside the required `test-frontend / lint-and-test` job, so a lint error
+  blocks a merge; the local gate runs it for the same reason.
 - `make web-test` / `make web` — frontend vitest; production SPA build into
   `webapp/dist`.
 - `make sidecar` — run the sidecar agent against the dev config dir.
 - `make sidecar-registry` — regenerate the sidecar's baked credential rules after
   editing `app/core/registry.json` (the baked block is generated, never hand-edited).
 - `make secrets` / `make secrets-baseline` — detect-secrets gate / regenerate
-  the baseline after vetting a new detection. The baseline pins **line
-  numbers**, so editing a baselined file shifts them: re-run
-  `make secrets-baseline` in the same change or the CI gate fails — and the
-  baseline conflicts on the next rebase.
+  the baseline after vetting a new detection. detect-secrets matches a known
+  secret by **filename, hash and type** — not by line number — but it carries
+  the line number as metadata, and the hook rewrites it when it rescans. So
+  editing a baselined file moves that number: re-run `make secrets-baseline`
+  in the same change or the CI gate fails — and the baseline conflicts on the
+  next rebase.
 
 ## Core invariants
 
