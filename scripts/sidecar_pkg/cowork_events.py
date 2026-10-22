@@ -28,16 +28,37 @@ def _load(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _prefix(path: Path, end: int) -> str:
+_HEAD_BYTES = 4 * 1024
+_TAIL_BYTES = 64 * 1024
+
+
+def _fingerprint(path: Path, end: int) -> str:
+    """Digest the head and the tail of a committed region, never all of it.
+
+    The committed region is re-checked on every scan, so hashing it whole
+    would re-read the whole transcript history each cycle and leave the
+    per-cycle byte budget. The head and the tail carry the rewrite: Claude
+    Code rewrites a transcript in place, and the bytes that change sit at
+    the end of the file.
+    """
+    head = min(end, _HEAD_BYTES)
+    tail_start = max(head, end - _TAIL_BYTES)
     digest = hashlib.sha256()
+    digest.update(head.to_bytes(8, "big"))
+    digest.update((end - tail_start).to_bytes(8, "big"))
     with path.open("rb") as f:
-        remaining = end
-        while remaining:
-            block = f.read(min(remaining, 1024 * 1024))
-            if not block:
-                break
+        block = f.read(head)
+        if block:
             digest.update(block)
-            remaining -= len(block)
+        if tail_start > head:
+            f.seek(tail_start)
+            remaining = end - tail_start
+            while remaining > 0:
+                chunk = f.read(min(remaining, 1024 * 1024))
+                if not chunk:
+                    break
+                digest.update(chunk)
+                remaining -= len(chunk)
     return digest.hexdigest()
 
 
@@ -156,7 +177,7 @@ def collect_cowork(
                 and 0 <= start <= stat.st_size
                 and old.get("device") == stat.st_dev
                 and old.get("inode") == stat.st_ino
-                and old.get("prefix") == _prefix(path, start)
+                and old.get("fingerprint") == _fingerprint(path, start)
             )
             if not valid:
                 start = 0
@@ -210,7 +231,7 @@ def collect_cowork(
                     "device": stat.st_dev,
                     "inode": stat.st_ino,
                     "mtime_ns": stat.st_mtime_ns,
-                    "prefix": _prefix(path, end),
+                    "fingerprint": _fingerprint(path, end),
                     "account": account,
                 },
                 required,

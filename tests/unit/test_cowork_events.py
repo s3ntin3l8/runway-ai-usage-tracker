@@ -305,6 +305,44 @@ def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path, clock):
     assert [e["event_id"] for e in collect(base, state).events] == ["new"]
 
 
+def test_same_inode_rewrite_at_the_end_of_a_large_transcript_is_not_skipped(tmp_path):
+    base = tmp_path / "desktop"
+    path = session(base)
+    body = json.dumps({"type": "user", "padding": "x" * 4000}) + "\n"
+    body = body * 100  # past the fingerprint window, so the tail carries the rewrite
+    path.write_text(body + json.dumps(record("old")) + "\n")
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    recorded = path.stat().st_mtime_ns
+    path.write_text(body + json.dumps(record("new")) + "\n")
+    try:
+        os.utime(path, ns=(path.stat().st_atime_ns, recorded))
+    except OSError:
+        pytest.skip("mtime not settable on this filesystem")
+    assert [e["event_id"] for e in collect(base, state).events] == ["new"]
+
+
+def test_fingerprint_covers_the_head_and_the_tail_of_the_committed_region(tmp_path):
+    from scripts.sidecar_pkg.cowork_events import _fingerprint
+
+    path = tmp_path / "transcript.jsonl"
+    body = b"a" * (256 * 1024)
+    path.write_bytes(body + b"tail-one")
+    window = _fingerprint(path, path.stat().st_size)
+    path.write_bytes(body + b"tail-two")
+    assert _fingerprint(path, path.stat().st_size) != window  # the tail carries a rewrite
+    path.write_bytes(b"b" + body[1:] + b"tail-one")
+    assert _fingerprint(path, path.stat().st_size) != window  # the head carries one too
+    middle = bytearray(body)
+    middle[100000:100010] = b"0123456789"
+    path.write_bytes(bytes(middle) + b"tail-one")
+    # The window is bounded on purpose, so a rewrite that touches neither the
+    # head nor the tail of the committed region is not detected. Tracked in
+    # the follow-up issue linked from the pull request.
+    assert _fingerprint(path, path.stat().st_size) == window
+
+
 def test_queue_sync_failure_does_not_own_checkpoint(tmp_path, monkeypatch):
     from scripts import sidecar
 

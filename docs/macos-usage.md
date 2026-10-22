@@ -58,14 +58,19 @@ All available Cowork history is eligible, independently of the CLI timestamp
 watermark and `SIDECAR_BOOTSTRAP_DAYS`. Each cycle scans at most 500 assistant
 records per current range and normally 4 MiB of transcript data. One complete
 record up to 16 MiB may exceed the normal byte budget to ensure progress; larger
-records remain pending with a warning. Every scan re-verifies the committed prefix
-with a streamed fingerprint. A timestamp never proves a transcript is unchanged: a
-rewrite in place inside one filesystem timestamp tick keeps the file's mtime, so the
-fingerprint — not the clock — decides whether the reader resumes at the committed
-offset or re-reads the file. Processing starts with the oldest modified
+records remain pending with a warning. Every scan re-checks the committed prefix
+against a fingerprint of its first 4 KiB and last 64 KiB, so the check stays
+bounded per transcript instead of re-reading the whole history; a tracked
+transcript costs at most another 68 KiB of reads per cycle. A timestamp never
+proves a transcript is unchanged: a rewrite in place inside one filesystem
+timestamp tick keeps the file's mtime, so the fingerprint — not the clock —
+decides whether the reader resumes at the committed offset or re-reads the file.
+Processing starts with the oldest modified
 files. Separate per-file offsets track only complete lines, detect replacement or
 truncation or in-place rewrites, and advance after accepted ingestion or a synchronized offline queue
 write. A crash before checkpointing replays through server event deduplication.
+An upgrade that changes the recorded fingerprint re-reads each transcript once;
+the replay is deduplicated by the server.
 Queued events retain their account binding. A changed known account binding
 quarantines the file rather than relabeling its history. State lives beside the
 sidecar config in `cowork-progress.json`.
