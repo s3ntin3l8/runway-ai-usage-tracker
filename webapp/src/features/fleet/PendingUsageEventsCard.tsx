@@ -23,6 +23,7 @@ import { accountConfigProviderIdForUsage, relatedAccountProviderIds } from '@/li
 import { AddProviderWizard } from '@/features/settings/sections/AddProviderWizard';
 import { buildSidecarNameMap, useSidecars } from './queries';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
+import { errorMessage } from '@/lib/errorMessage';
 
 function sessionKey(group: PendingUsageSession) {
   const sessionIdentity = group.session_id ? `session:${group.session_id}` : `event:${group.event_ids[0]}`;
@@ -276,7 +277,7 @@ export function PendingUsageEventsCard() {
       if (selectionRequestId.current !== requestId) return;
       setSelected(Object.fromEntries(all.map((group) => [sessionKey(group), group])));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not select matching usage groups');
+      toast.error(errorMessage(error, 'Could not select matching usage groups'));
     } finally {
       if (selectionRequestId.current === requestId) setSelectingAll(false);
     }

@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/api/client';
 import * as api from '@/api/endpoints';
 import type { ProviderAccount, ProviderConfig } from '@/api/types';
+import { foreignError } from '@/test/foreignError';
 import { renderWithProviders } from '@/test/utils';
 import { AddProviderWizard } from './AddProviderWizard';
 
@@ -134,6 +135,18 @@ describe('AddProviderWizard', () => {
         api_key: 'sk-ant-new', // pragma: allowlist secret
       },
       expect.objectContaining({ aborted: false }),
+    );
+  });
+
+  it('shows the error when the preview fails', async () => {
+    vi.mocked(api.previewAccount).mockRejectedValue(foreignError('Could not reach the provider'));
+
+    renderWizard();
+    await userEvent.click(await screen.findByText('Anthropic'));
+    await userEvent.type(screen.getByLabelText(/API key/i), 'sk-ant-new');
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not reach the provider')).toBeInTheDocument(),
     );
   });
 
