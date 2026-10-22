@@ -26,6 +26,16 @@ from scripts.pytest_shard import (  # noqa: E402
     write_weights,
 )
 
+#: The dependency sets, by name. The suite needs one set, the static gate
+#: another, and a checkout that wants to do both needs the union -- so a job
+#: that only runs tests installs about 30 packages fewer than one that
+#: installs everything, which is a third of a Windows job's install step.
+REQUIREMENTS_FILES = {
+    "all": "requirements-dev.txt",
+    "test": "requirements-test.txt",
+    "lint": "requirements-lint.txt",
+}
+
 
 def venv_python() -> Path:
     return ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -135,6 +145,7 @@ def check(
     shard_id: int = 1,
     shards: int = DEFAULT_SHARDS,
     jobs: int = 0,
+    requirements_set: str = "all",
 ) -> None:
     interpreter = venv_python()
     if (
@@ -147,9 +158,9 @@ def check(
         if not venv_python().is_file():
             execute([sys.executable, "-m", "venv", str(ROOT / ".venv")])
         execute([python, "-m", "pip", "install", "--upgrade", "pip"])
-        execute([python, "-m", "pip", "install", "-r", "requirements-dev.txt"])
+        execute([python, "-m", "pip", "install", "-r", REQUIREMENTS_FILES[requirements_set]])
     elif task == "install":
-        check("install-python", [])
+        check("install-python", [], requirements_set=requirements_set)
         execute([*npm_command(), "--prefix", "webapp", "ci"])
         check("install-hooks", [])
     elif task == "install-hooks":
@@ -301,9 +312,19 @@ def main() -> int:
         default=None,
         help="run the suite in this many parallel workers (1 = serial)",
     )
+    parser.add_argument(
+        "--set",
+        dest="requirements_set",
+        choices=tuple(REQUIREMENTS_FILES),
+        default="all",
+        help="which dependency set to install: 'test' for the suite's, "
+        "'lint' for the static gate's, 'all' for both",
+    )
     args, extra = parser.parse_known_args()
     if extra and args.task not in {"test", "unit", "test-shard", "test-windows", "web-test"}:
         parser.error("additional arguments are supported only for test commands")
+    if args.requirements_set != "all" and args.task not in {"install", "install-python"}:
+        parser.error("--set is supported only for the install and install-python tasks")
     if args.jobs is not None and args.task not in {
         "test",
         "unit",
@@ -330,7 +351,14 @@ def main() -> int:
         default = "4" if args.task == "record-shard-weights" else "0"
         jobs = int(os.environ.get("RUNWAY_TEST_JOBS", default))
     try:
-        check(args.task, extra, shard_id=shard_id, shards=shards, jobs=jobs)
+        check(
+            args.task,
+            extra,
+            shard_id=shard_id,
+            shards=shards,
+            jobs=jobs,
+            requirements_set=args.requirements_set,
+        )
     except subprocess.CalledProcessError as exc:
         return exc.returncode
     except RuntimeError as exc:
