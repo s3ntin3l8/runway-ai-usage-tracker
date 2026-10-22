@@ -8,6 +8,14 @@ export default tseslint.config(
   { ignores: ['dist', 'coverage', 'node_modules', 'playwright-report'] },
   {
     files: ['**/*.{ts,tsx}'],
+    // The *untyped* preset, and that is a decision rather than an
+    // oversight. The type-aware one
+    // (`tseslint.configs.recommendedTypeChecked`) is where #754's
+    // "unawaited promise" checks live, and it reports 276 findings today:
+    // 57 `no-floating-promises` and 20 `no-misused-promises` in `src/`
+    // alone, plus 199 more from the other type-aware rules. Turning it on
+    // is a refactor of the frontend rather than a lint fix, so the counts
+    // and the decision are recorded in #792.
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       ecmaVersion: 2022,
