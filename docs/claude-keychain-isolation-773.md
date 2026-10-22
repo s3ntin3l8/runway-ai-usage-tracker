@@ -38,6 +38,13 @@ verification passing. The full repository gate passed before committing the sour
 make lint, make test (5,458 passed; 63 skipped), and make web-test (1,222 passed).
 Commit hooks and a self-review passed. No additional review was requested.
 
+A later CodeQL review of the harness exposed swallowed process interruptions. Two
+non-native regression tests reproduced it; the harness now propagates Ctrl-C/exit
+requests after cleanup and records an interrupted outcome. The command source is
+assembled outside its argument list to remove concatenation ambiguity. The full
+gate passed again (5,460 Python; 63 skipped; 1,222 frontend), and all three native
+renewal matrices passed again against the same unchanged packaged worker.
+
 | Run | Cases | Native IO | Target protection and scope |
 | --- | ---: | --- | --- |
 | Source renewal and source worker | 16 | Production source | Protected private Keychains; actual default/suffixed Claude service names |

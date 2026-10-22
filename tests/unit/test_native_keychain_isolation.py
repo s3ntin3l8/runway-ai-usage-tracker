@@ -144,3 +144,47 @@ def test_validated_reference_reaches_data_operation(scoped_stub):
     scoped_stub.calls.assert_called_once_with(
         "update", {"persistent": b"fixture"}, {"data": b"synthetic"}
     )
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_harness_cleans_up_and_propagates_interruption(monkeypatch, tmp_path, interruption):
+    import json
+    from types import SimpleNamespace
+
+    cleanup = []
+
+    class InterruptedFixture:
+        def __init__(self, *args, **kwargs):
+            self.cleanup = {}
+
+        def __enter__(self):
+            return self
+
+        def add(self, *args, **kwargs):
+            raise interruption("synthetic-interruption-detail-must-not-be-logged")
+
+        def __exit__(self, *args):
+            self.cleanup = {"temporary_keychains_deleted": True}
+            cleanup.append(True)
+
+    def codesign_only(command, **kwargs):
+        assert command[:2] == ["/usr/bin/codesign", "--verify"]
+
+    package = tmp_path / "a" / "b" / "RunwaySidecar"
+    package.parent.mkdir(parents=True)
+    package.touch()
+    report = tmp_path / "report.json"
+    monkeypatch.setattr(acceptance, "Fixture", InterruptedFixture)
+    monkeypatch.setattr(acceptance.subprocess, "run", codesign_only)
+    args = SimpleNamespace(
+        package=package,
+        report=report,
+        source_native_io=True,
+        recovery_service_targets=False,
+        cases="normal",
+    )
+    with pytest.raises(interruption):
+        acceptance.main(args)
+    assert cleanup == [True]
+    assert json.loads(report.read_text())["outcome"] == "interrupted"
+    assert "synthetic-interruption-detail" not in report.read_text()

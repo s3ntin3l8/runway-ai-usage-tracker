@@ -42,12 +42,11 @@ def payload(*, refresh="synthetic-old-refresh", expiry: Any = 1) -> bytes:
 
 def environment_snapshot():
     """Fresh-process metadata avoids proving cleanup against a cached CF object."""
-    command = [
-        sys.executable,
-        "-c",
+    source = (
         "import json; from tests.native_keychain_isolation import native_snapshot; "
-        "print(json.dumps(native_snapshot()))",
-    ]
+        "print(json.dumps(native_snapshot()))"
+    )
+    command = [sys.executable, "-c", source]
     result = subprocess.run(command, cwd=ROOT, capture_output=True, timeout=5, check=True)
     return json.loads(result.stdout)
 
@@ -568,7 +567,7 @@ def main(args):
                         value.close()
                 row["cleanup"] = fixture.cleanup
                 row["outcome"] = "passed"
-            except BaseException as exc:
+            except Exception as exc:
                 row["outcome"] = "failed"
                 row["error_type"] = type(exc).__name__
                 row["native_status"] = getattr(exc, "native_status", None)
@@ -583,13 +582,14 @@ def main(args):
             report["cases"].append(row)
             print(json.dumps({"case": mode, "outcome": "passed"}), flush=True)
         report["outcome"] = "passed"
-    except BaseException as exc:
+    except Exception as exc:
         report["outcome"] = "failed"
         report["error_type"] = type(exc).__name__
     finally:
         for value in active:
             value.close()
         os.environ.pop("CLAUDE_SECURESTORAGE_CONFIG_DIR", None)
+        report.setdefault("outcome", "interrupted")
         args.report.write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps({"outcome": report["outcome"], "cases": len(report["cases"])}))
     return 0 if report["outcome"] == "passed" else 1
