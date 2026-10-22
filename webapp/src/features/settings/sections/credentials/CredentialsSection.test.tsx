@@ -113,6 +113,29 @@ describe('CredentialsSection', () => {
     expect(await screen.findByText('Every credential source can be read')).toBeInTheDocument();
   });
 
+  it('says when another source still covers the provider', async () => {
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
+      inventory({
+        blocked_sources: [
+          {
+            sidecar_id: 'host-a',
+            provider_id: 'ollama',
+            credential_origin: 'cookie:ollama/Chrome/Default/Network/Cookies',
+            reason: 'source_locked',
+            collecting: true,
+            first_seen: '2026-10-20T10:00:00Z',
+          },
+        ],
+      }),
+    );
+    renderWithProviders(<CredentialsSection />, { route: '/settings/credentials?view=unavailable' });
+
+    expect(
+      await screen.findByText('This provider is still collecting from another source.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/first seen/i)).toBeInTheDocument();
+  });
+
   it('shows an unknown reason as the server sent it', async () => {
     vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
       inventory({
