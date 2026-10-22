@@ -13,67 +13,106 @@ that terminating processes resolved the prompt loop or identify every requester.
 
 - No default-Keychain or search-list setters and no Keychain locking in the harness.
 - A private directory contains freshly created synthetic Keychains and fake tokens.
-  Passwords remain in memory and are never passed to a process or logged.
-- Source native workers open only the explicit fixture paths. Each item query has
-  an explicit search list and destination Keychain. Before accessing data through a
-  persistent reference, metadata resolves its actual owning Keychain and rejects
-  references outside the fixture. Discovery matches get the same ownership check.
-- Missing paths, symlinks, paths outside the fixture, unexpected filenames, and
-  directories not privately owned with mode 0700 fail before framework loading.
+  Fixture passwords remain in memory, never command arguments or logs.
+- Both source and packaged workers use production native IO. A private transport
+  restriction supplies explicit Keychain files for every query, rather than
+  replacing the native API with a test implementation.
+- Native queries carry an explicit search list and destination Keychain. Before
+  accessing data through a persistent reference, metadata resolves the actual
+  owning Keychain and rejects references outside the scope. Discovery matches
+  receive the same ownership check. Open handles are released on every exit.
+- The harness rejects missing paths, symlinks, paths outside its fixture,
+  unexpected filenames and directories not privately owned with mode 0700 before
+  framework loading. The native restriction additionally requires existing,
+  absolute, owned regular files without multiple hard links.
 - Fresh processes compare the real default, search list and lock state before and
   after every case. Cleanup deletes only the explicitly created fixture Keychains.
-- No provider request is made. Native helper operations are noninteractive and
-  bounded. The former locking fault and experimental owner-authorization probes
-  remain removed or disabled.
+- No provider request is made. Native helpers disable interaction and bound calls.
+  The timeout fault suspends only the test's own idle helper PID; it never locks a
+  Keychain or stops a system process. The helper is then killed and reaped.
 
-## Verification on 2026-10-22
+## Exact-package verification on 2026-10-22
 
-Eight safety tests pass without native IO, including a foreign login-Keychain
-reference rejected before any credential read, update, delete or write preflight.
-The explicitly scoped source-native matrix passed all 16 cases:
-normal and suffixed services; failed intent persistence; interrupted exchange with
-no saved response; saved replacement before crash; successful target write before
-cleanup; interrupted cleanup; failed pending persistence; failed target write;
-ambiguous response; independent rotation; deletion; permission disabled while a
-replacement is pending; malformed expiry; missing expiry; ambiguous item match.
+Package built from source commit d3726328b7f9743cadbb107a38dd373e0acd6adf, with ad-hoc signature
+verification passing. The full repository gate passed before committing the source:
+make lint, make test (5,458 passed; 63 skipped), and make web-test (1,222 passed).
+Commit hooks and a self-review passed. No additional review was requested.
 
-Every case preserved user Keychain metadata, deleted its temporary Keychains,
-preserved unselected items, and performed at most one fake exchange. Pending
-replacements never triggered a second exchange after restart. Protected fixture
-Keychains included partition and integrity ACL entries. Successful writes preserved
-the access policy. Sanitized evidence is in claude-keychain-isolation-773.json.
+| Run | Cases | Native IO | Target protection and scope |
+| --- | ---: | --- | --- |
+| Source renewal and source worker | 16 | Production source | Protected private Keychains; actual default/suffixed Claude service names |
+| Source renewal and packaged worker | 16 | Actual packaged helper | Legacy private Keychains; actual default/suffixed Claude service names |
+| Source renewal and packaged worker | 15 | Actual packaged helper | Protected packaged-owned items under Runway's recovery service; service discovery is substituted only in the test |
+| Packaged worker boundary checks | 4 | Actual packaged helper | Protected private Keychains; foreign policy/reference, denial and timeout |
 
-## Remaining acceptance boundary
+The 16-case matrices cover normal and suffixed service selection; failed intent
+persistence; interrupted exchange with no saved response; saved replacement before
+crash; successful target write before cleanup; interrupted cleanup; failed pending
+persistence; failed target write; ambiguous response; independent rotation;
+deletion; permission disabled while replacement is pending; malformed expiry;
+missing expiry; and ambiguous item selection. The protected packaged-owned
+15-case run omits suffixed Claude service derivation, which the other matrices cover.
 
-The harness refuses packaged native IO before creating a fixture because the
-packaged worker does not yet expose an equivalent test-only scoping boundary.
-These source results must not be reported as packaged acceptance. Earlier real
-packaged evidence predates the new #773 preflight guard. #750 remains the native
-acceptance tracker; #526 must remain open until its full acceptance passes.
+Every matrix case preserved user Keychain metadata, deleted its temporary
+Keychains, preserved unselected items and performed at most one fake exchange.
+Pending replacements never triggered a second exchange after restart. Protected
+fixtures included partition and integrity ACL entries. Successful writes preserved
+the canonical access policy. Diagnostics were asserted secret-free and deduplicated.
 
-## Partition-policy guard
+The four packaged boundary checks separately established:
 
-The historical synthetic probe in claude-keychain-policy-probe-773.json changed
-only authorization 65538 on its first data update: a fresh writer could then read
-the item it previously could not read. Its cached cleanup checks came from the
-unsafe older harness and are not evidence of isolation.
+1. A foreign protected partition is rejected before credential-data mutation;
+   original data and policy remain unchanged.
+2. Actual native read denial retires the helper and suppresses subsequent discovery
+   and renewal after transport reopening, with only one native dispatch.
+3. A timed-out suspended helper is killed and reaped, and subsequent operations
+   are suppressed without another helper start.
+4. An out-of-scope persistent reference is rejected before copy/update/delete/
+   preflight can access the foreign item. Its data remains unchanged.
 
-Apple's classic Keychain data-update implementation regenerates the partition ACL
-for the writer. A protected item owned by another application or by multiple
-partitions can therefore change policy even on a data-only update. The new
-preflight refuses such an update before exchanging a refresh token, repeats the
-check before exchange and before write, and retains any known pending replacement.
-It never attempts an owner-authorization or access-control repair. Legacy items
-without partition/integrity protection and protected items with exactly the
-current writer's partition remain eligible. If Claude Code changes that policy,
-automatic renewal skips the item and reports that owning-app renewal is required.
+Sanitized full results and a separate metadata-only real-item preflight are in
+[claude-keychain-isolation-773.json](claude-keychain-isolation-773.json).
 
-Runway process locking and token re-reads do not exclude independently running
-Claude Code. The Keychain API provides no atomic token comparison; that race
-limitation remains.
+## Remaining real-login acceptance boundary
 
-Full repository gate passed: make lint, make test (5,441 passed; 63 skipped),
-and make web-test (1,222 passed). No additional review was requested.
+The exact new packaged worker found the user's unique existing Claude item, but
+its metadata-only write preflight returned unsupported. This check read no token
+data, wrote no credentials and made no exchange. Safe refusal is not successful
+renewal. The latest build has not passed actual real-login refresh/write-back,
+expiry advancement, policy preservation, Claude Code coexistence or a full
+packaged-tray renewal. Historical actual packaged evidence predates the guard.
 
-Apple source references: [StorageManager private-Keychain creation](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/StorageManager.cpp)
-and [classic Keychain data update](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/Item.cpp).
+The protected packaged-owned matrix verifies actual native recovery IO and policy
+preservation for the writer's own partition. It does not claim a packaged write
+into a foreign protected Claude partition. Provider responses in all matrices are
+synthetic; source renewal orchestration is not full compiled-tray orchestration.
+Keep #526/#750/#773 open and do not call PR #751 acceptance-complete.
+
+## Partition policy and one-time consent
+
+The historical probe in claude-keychain-policy-probe-773.json changed only
+partition authorization 65538 on its first data update. Its cached cleanup checks
+came from the unsafe older harness and are not evidence of isolation.
+
+Apple's classic data update regenerates the partition ACL for the writer. The
+production preflight refuses foreign/multiple/unknown partitions before exchange,
+repeats before exchange/write, and preserves any known pending replacement.
+Legacy items without partition/integrity protection and protected items with
+exactly the writer's partition remain eligible. No production ACL/partition setter,
+owner-authorization repair or password-retention mechanism is added.
+
+A stable identity and Always Allow help reading but do not preserve a second
+application's partition across data writes. Item-owner authorization alone cannot
+restore the reserved partition tag. The only successful private-fixture restore
+prototype used a database password and a private Apple API; it is disabled and is
+not a shippable authorization flow. See the supported-API evidence and unresolved
+architecture in
+[claude-keychain-one-time-authorization-773.md](claude-keychain-one-time-authorization-773.md).
+
+Runway process locking and token re-reads cannot exclude independently running
+Claude Code. Keychain provides no atomic refresh-token comparison. Journaling
+cannot close the interval between provider rotation and durable response saving.
+Stable signing/update consent remains separately tracked in #767.
+
+Apple sources: [private-Keychain creation](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/StorageManager.cpp)
+and [classic data update](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_keychain/lib/Item.cpp).

@@ -1,7 +1,10 @@
 # macOS Claude Code Keychain renewal: bounded main-account test
 
 Date: 2026-10-21. Implementation PR: #751. Remaining acceptance: #750.
-Repeated-prompt blocker: #764. #526 remains open and #751 remains draft.
+Repeated-prompt blocker: #764. This is historical evidence. PR #751 was later
+marked ready at the user's request; #526 remains open. Latest acceptance and the
+current real-item policy blocker are recorded in
+[claude-keychain-isolation-773.md](claude-keychain-isolation-773.md).
 
 ## Authorization and readiness
 

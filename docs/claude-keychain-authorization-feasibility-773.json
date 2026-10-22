@@ -1,0 +1,39 @@
+{
+  "validation_date": "2026-10-22",
+  "apple_security_source_revision": "db15acbe6a7f257a859ad9a3bb86097bfe0679d9",
+  "scope": "disposable-fixtures-and-metadata-only-real-preflight",
+  "real_credential_operations": 0,
+  "real_oauth_exchanges": 0,
+  "existing_item_preflight": {
+    "scope": "metadata-only",
+    "credential_reads": 0,
+    "credential_writes": 0,
+    "oauth_exchanges": 0,
+    "unique_target": true,
+    "policy_update_supported": false
+  },
+  "private_api_prototype": {
+    "real_credential_operations": 0,
+    "real_oauth_exchanges": 0,
+    "owner_permission_changed": false,
+    "partition_setup_status": 0,
+    "child_exit": 0,
+    "data_update_status": 0,
+    "restoration_status": 0,
+    "policy": {
+      "access_policy_preserved": true,
+      "integrity_changed": false,
+      "changed_policy_authorizations": []
+    },
+    "cleanup": {
+      "temporary_keychains_deleted": true,
+      "user_keychain_metadata_unchanged": true
+    }
+  },
+  "public_item_owner_enrollment_proven": false,
+  "one_time_partition_preservation_proven": false,
+  "password_retention_approved": false,
+  "production_acl_setters_added": false,
+  "prototype_disabled_after_investigation": true,
+  "remaining_requirement": "Prove supported one-time authorization and actual existing-login renewal with policy preservation and Claude Code coexistence."
+}
