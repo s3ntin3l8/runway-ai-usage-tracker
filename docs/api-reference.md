@@ -361,6 +361,31 @@ cookie replacement and display-label changes. API responses expose only the
 credential's configured status. Clear it using `clear_session_cookie: true`.
 
 
+### Automatically discovered Claude accounts
+
+A Claude account the server discovers for itself — a sidecar console whose
+cookie proves which organization it belongs to — is named after what it
+actually is instead of the placeholder "Default". A subscription belongs to one
+member, so its email names it; a Console account *is* the organization, because
+every member shares its credit, so the organization's name names it.
+
+The name is written to `ProviderConfig.account_label` when the account row is
+created, and an `account_label` nobody set is filled in on a later poll. A
+label the operator chose is never overwritten.
+
+A card's label is the account's *name* — the member's email for a claude.ai
+account, the organization's name for a Console account — and it is what keys the
+card to its account, so a name a human chose never files a card under another
+account. The *identity* a card proved, which an organization-scoped one marks
+with `org: `, lives in the card's detail, where the tagger reads it back.
+
+The billing model is read off the shape of the cards the account publishes: a
+card reporting a percentage of a limit describes a subscription, a card
+reporting a currency balance describes pay-as-you-go, and a quota card wins
+when an account publishes both. It is written to `ProviderConfig.billing_type`
+when the account row is created. An existing row keeps the type the operator
+chose — change it in Settings, and no later poll undoes that.
+
 ### Native Claude OAuth token metadata
 
 Sidecar token cards may additionally carry `oauth_read_only: "1"` and

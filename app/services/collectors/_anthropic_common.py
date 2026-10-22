@@ -95,7 +95,7 @@ def build_anthropic_limit_cards(
     limits: list[Any],
     *,
     tier: str | None,
-    identity_str: str,
+    account_label: str,
     identity_suffix: str,
     data_source: str,
     input_source: str,
@@ -154,7 +154,7 @@ def build_anthropic_limit_cards(
                 "data_source": data_source,
                 "input_source": input_source,
                 "tier": tier,
-                "account_label": identity_str,
+                "account_label": account_label,
                 "usage_url": usage_url,
                 "updated_at": datetime.now(UTC).isoformat(),
             }

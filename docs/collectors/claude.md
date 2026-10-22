@@ -193,6 +193,27 @@ that store entirely empty can therefore leave stale source metadata until explic
 cleanup or later positive replacement evidence. Failed or expired credentials retain
 the existing rejection behavior; an empty scan does not prove logout.
 
+### Naming and pricing a discovered account
+
+An automatically discovered Claude account is named after what it is, not after
+the browser session that happened to find it. A subscription belongs to one
+member, so its email names it. A Console account is the organization itself —
+every member shares its credit — so the organization's name names it, and one
+organization keeps that name no matter which member signed in last.
+
+The billing model follows the cards the account publishes: a plan publishes
+percentage quotas and bills as a subscription, a Console account publishes a
+prepaid balance and bills as pay-as-you-go. Both are detected when the account
+is first recorded. A name or billing type set in Settings afterwards is never
+overwritten by a later poll.
+
+A card's label is the account's *name* — the member's email for a claude.ai
+account, the organization's name for a Console account — and it is what keys the
+card to its account, so a name a human chose never files a card under another
+account. The *identity* a card proved, which an organization-scoped one marks
+with `org: `, lives in the card's detail, where the tagger reads it back; that
+detail is the only place the marker appears.
+
 ### Manual fallback
 
 Choose **Claude → Console API credits** when adding a connection. Sign in at
