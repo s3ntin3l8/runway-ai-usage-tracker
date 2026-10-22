@@ -32,7 +32,7 @@ export default tseslint.config(
       // - `refs` (3 places) and `purity` (1): reading a ref, and calling
       //   `Date.now()`, during render.
       //
-      // Track them in #791.
+      // Track them in #792.
       'react-hooks/set-state-in-effect': 'off',
       'react-hooks/refs': 'off',
       'react-hooks/purity': 'off',
