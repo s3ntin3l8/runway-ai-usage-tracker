@@ -3018,19 +3018,25 @@ class BrowserCookieExtractor:
                             # decrypted. An app-bound store is readable as a
                             # file, so the probe does not skip it and this is
                             # the only place the block becomes visible.
-                            if provider:
-                                if browser_store.is_app_bound(row[0]):
-                                    # The probe samples one row, and Chrome
-                                    # 127+ keeps the cookies written before
-                                    # the upgrade as v10 while writing v20
-                                    # only for the ones set afterwards. The
-                                    # sample can therefore call a store
-                                    # readable whose provider cookie is
-                                    # app-bound; the value that failed to
-                                    # decrypt is the better evidence.
-                                    probe = browser_store.mark_app_bound(probe)
-                                if probe.state is browser_store.StoreState.UNSUPPORTED_FORMAT:
-                                    _record_cookie_store_block(probe, provider, mapping_value or "")
+                            if provider and browser_store.is_app_bound(row[0]):
+                                # The probe samples one row, and Chrome 127+
+                                # keeps the cookies written before the
+                                # upgrade as v10 while writing v20 only for
+                                # the ones set afterwards. The sample can
+                                # therefore call a store readable whose
+                                # provider cookie is app-bound; the value
+                                # that failed to decrypt is the better
+                                # evidence.
+                                #
+                                # The record is gated on that value too, not
+                                # on the store: reclassifying the probe
+                                # sticks for the rest of the cycle, and a
+                                # value that failed for some other reason
+                                # would then be labelled app-bound when it
+                                # is not. The reclassification still buys
+                                # the store its line in the log.
+                                probe = browser_store.mark_app_bound(probe)
+                                _record_cookie_store_block(probe, provider, mapping_value or "")
                     else:  # Firefox
                         cursor.execute(
                             "SELECT value FROM moz_cookies "

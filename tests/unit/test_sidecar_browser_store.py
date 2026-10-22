@@ -490,6 +490,38 @@ def test_a_mixed_store_is_reported_when_the_provider_cookie_is_the_app_bound_one
     )
 
 
+def test_a_v10_failure_in_a_mixed_store_is_not_labelled_app_bound(tmp_path, monkeypatch):
+    """A value that is not app-bound keeps its own story, even in a store that
+    holds an app-bound one.
+
+    Reclassifying the probe sticks for the rest of the cycle, so the label has
+    to follow the value that actually failed: a v10 cookie that will not
+    decrypt is not app-bound, and saying so would send the operator after the
+    wrong fix.
+    """
+    path = _chromium_store(
+        tmp_path / "Cookies",
+        [("kimi", b"v10" + b"\x01" * 32), ("session", b"v20" + b"\x01" * 32)],
+    )
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
+    monkeypatch.setattr(sidecar, "decrypt_chromium_cookie", lambda *a, **k: None)
+
+    # The app-bound cookie fails first and makes the store app-bound.
+    sidecar.BrowserCookieExtractor.get_cookie("example.com", "session", "ollama", "session_cookie")
+    # A different provider's v10 cookie then fails for another reason.
+    sidecar.BrowserCookieExtractor.get_cookie("example.com", "kimi", "kimi", "session_cookie")
+
+    entries = sidecar.blocked_source_entries()
+    assert [entry["provider_id"] for entry in entries] == ["ollama"]
+    assert entries[0]["reason"] == "source_unsupported"
+
+    # The store is still reclassified for the log: it really does hold an
+    # app-bound value, and the operator should hear about that.
+    assert [probe.identity() for probe in browser_store.unusable_stores()] == [
+        "Chrome/Default/Network/Cookies"
+    ]
+
+
 def test_a_readable_store_is_not_reported_to_the_server(tmp_path, monkeypatch):
     path = _chromium_store(tmp_path / "Cookies", [("session", b"v10" + b"\x01" * 32)])
     monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
