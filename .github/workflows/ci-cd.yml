@@ -5,22 +5,14 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  # The merge queue builds a merge commit from the current tip of `main` plus
-  # the pull request, and runs the required checks against *that* commit. The
-  # workflows that produce the required checks have to listen for this event,
-  # or the queue waits for checks that never report.
-  merge_group:
-    types: [ checks_requested ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # Never cancel a merge-queue run: the queue needs the run to finish before
-  # it can merge, and a cancelled run reads as a failed check.
-  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+  cancel-in-progress: true
 
 jobs:
   test-python:
-    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@52bfd26fb9f61007728a7a3a81f79c4b3289133d # main
+    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@8cbee823b2c24a947211641a99240c37f3055e74 # main
     with:
       python-version: '3.12'
       # Total line coverage is 91.6%; the floor keeps ~6 points of headroom
@@ -35,9 +27,12 @@ jobs:
       # setup stay together. This is the difference between a 5-minute test
       # step and a 90-second one.
       test-parallel: '4'
-      # Only the files this push touched can have introduced a secret, and the
-      # baseline is keyed by filename and line number, so an unchanged file
-      # keeps its entry and the scan stays consistent.
+      # Only the files this push touched can have introduced a secret.
+      # detect-secrets matches a known secret by filename, hash and type -- not
+      # by line number -- so a secret that shifts lines is still recognised,
+      # and the hook rewrites the baseline's line number and fails the build
+      # until the baseline is refreshed. That is why a change to a baselined
+      # file needs `make secrets-baseline` in the same change.
       detect-secrets-scope: 'changed'
       # Without this the pip cache key comes from `**/requirements.txt`, so a
       # change to requirements-dev.txt never busts it.
@@ -52,11 +47,11 @@ jobs:
     # one caller would share a group and cancel each other.
     concurrency:
       group: test-python-${{ github.ref }}
-      cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+      cancel-in-progress: true
     secrets: inherit
 
   test-frontend:
-    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@52bfd26fb9f61007728a7a3a81f79c4b3289133d # main
+    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@8cbee823b2c24a947211641a99240c37f3055e74 # main
     with:
       # Node 24 ships npm 11, the first npm that writes the libc metadata
       # npm needs to pick the glibc or musl build of an optional native
@@ -76,17 +71,16 @@ jobs:
       detect-secrets: false
     concurrency:
       group: test-frontend-${{ github.ref }}
-      cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+      cancel-in-progress: true
     secrets: inherit
 
   windows:
-    # Native Windows coverage of the static checks. The suite itself runs in
-    # the sharded windows-native-pytest matrix below.
+    # Native Windows coverage of the static checks. The Windows *suite* runs
+    # in windows-native-suite.yml, on main pushes and nightly; the modules
+    # whose subject is the Windows platform run in `windows/specific` below.
     #
-    # Advisory: it is not a required status check. The merge queue therefore
-    # skips it -- the queue only needs the checks that decide the merge, and
-    # the Windows runner is the slowest thing in this workflow.
-    if: ${{ github.event_name != 'merge_group' }}
+    # Advisory: it is not a required status check, so it does not decide
+    # whether a pull request merges.
     runs-on: windows-latest
     # ruff + mypy + pip-audit take ~1.2 minutes on a healthy runner; the budget
     # only has to absorb a very slow runner, not the suite.
@@ -119,7 +113,6 @@ jobs:
     # get. The modules below genuinely need one.
     #
     # Advisory: it is not a required status check.
-    if: ${{ github.event_name != 'merge_group' }}
     name: windows/specific
     runs-on: windows-latest
     timeout-minutes: 20
@@ -140,8 +133,7 @@ jobs:
         run: python scripts/dev_checks.py test-windows
 
   dependency-audit:
-    # Advisory: the merge queue does not wait on it.
-    if: ${{ github.event_name != 'merge_group' }}
+    # Advisory: it is not a required status check.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -170,8 +162,7 @@ jobs:
     # one is built on windows-latest by sidecar-build.yml) so a broken .nsi or
     # a missing installer asset fails here, not at release time.
     #
-    # Advisory: the merge queue does not wait on it.
-    if: ${{ github.event_name != 'merge_group' }}
+    # Advisory: it is not a required status check.
     runs-on: ubuntu-latest
     permissions:
       contents: read

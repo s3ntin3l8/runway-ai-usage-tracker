@@ -22,6 +22,8 @@ import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.fixtures.isolation import worker_paths
+
 
 def _pytest_user() -> str:
     """The name pytest files its per-run temp directories under."""
@@ -182,6 +184,31 @@ os.environ["ADMIN_API_KEY"] = ""
 os.environ["DB_ENCRYPTION_KEY"] = ""
 # pystray's dummy backend allows tray menu tests on headless Linux CI.
 os.environ["PYSTRAY_BACKEND"] = "dummy"
+
+# The test environment is isolated: a throwaway HOME, XDG directories and
+# config root, so the suite never reads the operator's or the runner's real
+# files. The runner (scripts/dev_checks.py locally, the shared CI workflow)
+# points the whole run at one throwaway root and exports it as
+# TEST_ISOLATION_ROOT.
+#
+# Each xdist worker then gets its own root. Without that, the four workers
+# of a parallel run share a single app database file -- and two tests writing
+# to the app engine at the same time would contend on it. The worker id is
+# only known inside the worker, so the split happens here, before the app is
+# imported and its settings singleton reads the paths.
+_worker = os.environ.get("PYTEST_XDIST_WORKER", "").strip()
+_isolation_root = os.environ.get("TEST_ISOLATION_ROOT", "").strip()
+if _isolation_root:
+    _home, _config = worker_paths(Path(_isolation_root), _worker)
+    _home.mkdir(parents=True, exist_ok=True)
+    _config.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(_home)
+    os.environ["USERPROFILE"] = str(_home)
+    os.environ["APPDATA"] = str(_home / "AppData/Roaming")
+    os.environ["LOCALAPPDATA"] = str(_home / "AppData/Local")
+    os.environ["XDG_CONFIG_HOME"] = str(_home / ".config")
+    os.environ["XDG_DATA_HOME"] = str(_home / ".local/share")
+    os.environ["RUNWAY_CONFIG_DIR"] = str(_config)
 
 import httpx
 import pytest
