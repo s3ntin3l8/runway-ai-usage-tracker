@@ -271,11 +271,15 @@ async def verify_claude_cookie(
         label = claude_account_label(provider, result.org_data, result.account)
         result.account_label = label or None
         result.billing_type = detect_billing_type([evidence[choice]])
-    elif len(usable) > 1:
+    elif len(usable) > 1 and result.complete:
         # Several organizations are reachable and none of them is the account's:
         # the binding is still the operator's to pick, but the model need not
         # wait for that choice. Every accessible organization describing the
         # same way of billing is what proves it.
+        #
+        # Only a complete read proves it: an organization that answered with
+        # something unusable may well describe a different way of billing, so
+        # the organizations that did answer decide nothing on their own.
         result.billing_type = agreed_billing_type(evidence.values())
     return result
 

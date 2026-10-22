@@ -1950,6 +1950,11 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
             rewritten_from = original_account_id
             account_id = canonical_account_id(body.account_label)
 
+    # A model something proved, as opposed to one a person picked. The source
+    # column tells the two apart, so the repair that prices the accounts
+    # predating detection never mistakes a proof for a choice.
+    detected_billing_type: BillingType | None = None
+
     if provider_id == "anthropic_console":
         try:
             account_id = str(UUID(account_id))
@@ -1977,10 +1982,17 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
         if not existing_console and body.billing_type is None and console_billing_type is not None:
             # The balance this account publishes is prepaid credit, so the
             # account spends — proven by the detector, not assumed per
-            # provider.
-            body.billing_type = console_billing_type
+            # provider. It is a proof, not a choice, and the source column
+            # says which it is.
+            detected_billing_type = console_billing_type
 
-    await _apply_provider_config_update(session, provider_id, account_id, body)
+    await _apply_provider_config_update(
+        session,
+        provider_id,
+        account_id,
+        body,
+        detected_billing_type=detected_billing_type,
+    )
     response_data: dict[str, str] = {
         "status": "saved",
         "provider_id": provider_id,
@@ -2606,12 +2618,19 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     provider_id: str,
     account_id: str,
     body: _ProviderConfigUpdate,
+    *,
+    detected_billing_type: BillingType | None = None,
 ) -> None:
     """Upsert the ``(provider_id, account_id)`` row and propagate credentials
     to the in-memory token cache under the same ``account_id``.
 
     Shared core of the two PUT endpoints. Callers are responsible for any
     row-count / account_id guards before invoking this helper.
+
+    ``detected_billing_type`` is a model something *proved* (the account's own
+    published cards), not one a person picked. It is recorded as a detection, so
+    the repair that prices the accounts predating detection never mistakes it
+    for a choice.
     """
     # Only a credential write/clear earns a fresh auth verdict; a label / enabled /
     # archive-only save must not dismiss a live "provider rejected it" flag (during
@@ -2679,6 +2698,12 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         # A person wrote this value, including a deliberate "unknown": it is
         # theirs, and a later proof never overwrites it.
         row.billing_type_source = "operator"
+    elif detected_billing_type is not None:
+        # Something proved this, nobody chose it: the account's own cards
+        # decided. The source column says so, so the repair that prices the
+        # accounts predating detection never mistakes it for a choice.
+        row.billing_type = detected_billing_type
+        row.billing_type_source = "detected"
     if body.clear_api_key is True:
         # Explicit-clear flag wins over any same-field write in the body
         # (the UI sends one or the other, not both). Wipe the stored encrypted

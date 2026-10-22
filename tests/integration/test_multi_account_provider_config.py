@@ -2251,6 +2251,10 @@ def test_console_discovery_preview_and_save_keep_organization_identity(
         select(ProviderConfig).where(ProviderConfig.provider_id == "anthropic_console")
     ).one()
     assert row.billing_type == "pay_as_you_go"
+    # The balance proved it; nobody chose it, and the source column says so —
+    # the repair that prices the accounts predating detection must not
+    # mistake a proof for a choice.
+    assert row.billing_type_source == "detected"
     assert row.session_cookie == "sample-session"
     assert (
         client.post(
@@ -2568,6 +2572,55 @@ def test_an_inconclusive_detection_is_not_a_decision(client, monkeypatch):
                 ],
             )
         if "33333333" in request.url.path:
+            # An organization that publishes nothing about its billing model.
+            return httpx.Response(200, json={"five_hour": {}})
+        return httpx.Response(200, json={"five_hour": {"utilization": 10}})
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original_client(transport=httpx.MockTransport(upstream), **kwargs),
+    )
+    preview = client.post(
+        "/api/v1/system/provider-config/preview-account",
+        json={
+            "provider_id": "anthropic",
+            "session_cookie": "sample-session",
+            "detect_billing": True,
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["suggested_billing_type"] is None
+
+
+def test_an_incomplete_detection_is_not_a_decision(client, monkeypatch):
+    """A partial read proves nothing, however much the rest agrees.
+
+    Two organizations answer and describe the same way of billing; a third
+    answers with something unusable. The read is therefore partial, and the
+    third may well bill differently — so the two that answered must not decide
+    the model on their own.
+    """
+    import httpx
+
+    calls: list[str] = []
+    original_client = httpx.AsyncClient
+    unusable_org = "44444444-4444-4444-8444-444444444444"
+
+    def upstream(request):
+        calls.append(str(request.url))
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": "person@example.com"})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200,
+                json=[
+                    {"uuid": CLAUDE_ORG_ID, "name": "A"},
+                    {"uuid": "33333333-3333-4333-8333-333333333333", "name": "B"},
+                    {"uuid": unusable_org, "name": "C"},
+                ],
+            )
+        if unusable_org in request.url.path:
             # An organization that publishes nothing about its billing model.
             return httpx.Response(200, json={"five_hour": {}})
         return httpx.Response(200, json={"five_hour": {"utilization": 10}})
