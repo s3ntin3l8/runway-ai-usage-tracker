@@ -109,12 +109,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       const data = (await resp.json()) as { detail?: unknown };
       if (data && data.detail) {
         parsedDetail = data.detail;
-        // A structured detail must not reach the operator as
-        // "[object Object]" — that is what `String(detail)` yields for an
-        // object. Render it as JSON; a caller that understands the shape
-        // reads `err.detail` instead of parsing this message.
-        detail =
-          typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+        detail = summarizeDetail(data.detail);
       }
     } catch {
       // non-JSON error body — keep the status message
@@ -124,6 +119,49 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
+}
+
+// How long a rendered error body may get before it is cut short.
+const MAX_ERROR_MESSAGE = 300;
+
+/**
+ * A short, safe rendering of an error body.
+ *
+ * The message reaches every toast in the app (`toast.error(err.message)`),
+ * so it must not carry more than the operator needs — and never the value
+ * they submitted. A structured body can hold both: FastAPI's validation
+ * errors repeat the offending input under `input`. So the message
+ * *summarises* the body instead of dumping it, while the body itself
+ * stays available on `err.detail` for a caller that wants the fields.
+ *
+ * A string body is already the server's own message and passes through.
+ */
+function summarizeDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  // FastAPI validation errors: an array of {loc, msg, type, input}. The
+  // `input` is the submitted value — name the field and the problem, not
+  // the value.
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .slice(0, 5)
+      .map((item) => {
+        if (typeof item !== 'object' || item === null) return null;
+        const { loc, msg } = item as { loc?: unknown; msg?: unknown };
+        const where = Array.isArray(loc) ? loc.join('.') : '';
+        const what = typeof msg === 'string' ? msg : 'invalid value';
+        return where ? `${where}: ${what}` : what;
+      })
+      .filter((part): part is string => part !== null);
+    if (parts.length === 0) return 'Validation failed';
+    return parts.join('; ');
+  }
+  // A structured error that says what went wrong says it in `message`.
+  if (typeof detail === 'object' && detail !== null) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+  }
+  const text = JSON.stringify(detail);
+  return text.length > MAX_ERROR_MESSAGE ? `${text.slice(0, MAX_ERROR_MESSAGE)}…` : text;
 }
 
 type QueryValue = string | number | boolean | null | undefined;

@@ -950,6 +950,30 @@ describe('AddProviderWizard — the billing model', () => {
     expect(screen.getByText(/Detected: Subscription/)).toBeInTheDocument();
   });
 
+  it('claims no model when a conflict body carries something that is not one', async () => {
+    // The guard must be own-property strict: 'constructor' lives on the
+    // prototype, and `in` would let it through as if it were a model.
+    vi.mocked(api.previewAccount).mockImplementation(async (body) => {
+      if ((body as { detect_billing?: boolean }).detect_billing) {
+        throw new ApiError(409, '[object Object]', false, {
+          suggested_account_id: 'alice@example.com',
+          suggested_billing_type: 'constructor',
+          already_exists: true,
+        });
+      }
+      return previewWithoutModel;
+    });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/or edit the existing account/)).toBeInTheDocument(),
+    );
+    // An unknown value is not a model — the wizard claims nothing.
+    expect(screen.queryByText(/Detected:/)).not.toBeInTheDocument();
+  });
+
   it('follows the preview for a label the operator never typed', async () => {
     // The server can rename an account between two passes. A label the
     // operator typed is theirs; one they never typed follows the server.

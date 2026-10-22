@@ -324,7 +324,10 @@ function provenModelFromConflict(err: ApiError): BillingType | undefined {
   const detail = err.detail;
   if (typeof detail !== 'object' || detail === null) return undefined;
   const model = (detail as { suggested_billing_type?: unknown }).suggested_billing_type;
-  return typeof model === 'string' && model in BILLING_TYPE_LABELS
+  // `Object.hasOwn`, not `in`: `in` walks the prototype chain, so
+  // 'constructor' or '__proto__' would pass a guard meant to accept only
+  // the three real models.
+  return typeof model === 'string' && Object.hasOwn(BILLING_TYPE_LABELS, model)
     ? (model as BillingType)
     : undefined;
 }
