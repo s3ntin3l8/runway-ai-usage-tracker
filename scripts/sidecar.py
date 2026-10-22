@@ -38,6 +38,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
@@ -50,6 +51,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from scripts.sidecar_pkg import browser_store
 from scripts.sidecar_pkg import transport as server_http
 from scripts.sidecar_pkg.opencode_credentials import (
     key_binding as opencode_key_binding,
@@ -2369,6 +2371,90 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome", host=None, s
     return None
 
 
+# Which provider wanted a cookie from a store that could not be read, so the
+# cycle report can name the environment variable that would work instead.
+_cookie_store_blocked: dict[str, dict[str, str]] = {}
+
+
+def reset_cookie_store_tracking() -> None:
+    """Forget this cycle's store probes and the providers they blocked."""
+    browser_store.reset_store_probe_cache()
+    _cookie_store_blocked.clear()
+
+
+def _session_cookie_env_var(provider_id: str, mapping_value: str) -> str | None:
+    """The environment variable that supplies the same credential as a cookie.
+
+    The registry pairs a cookie rule with an environment rule for some
+    providers (Ollama's ``OLLAMA_SESSION_TOKEN``, Kimi's ``KIMI_AUTH_TOKEN``).
+    """
+    if not mapping_value:
+        return None
+    rules = __REGISTRY__.get("providers", {}).get(provider_id, {}).get("rules", [])
+    for rule in rules:
+        if rule.get("type") != "env":
+            continue
+        if (rule.get("mapping") or {}).get("value") == mapping_value:
+            variable = rule.get("variable")
+            if isinstance(variable, str) and variable:
+                return variable
+    return None
+
+
+def _cookie_store_advice(probe: browser_store.StoreProbe) -> str:
+    """What the operator can do about a store that could not be used.
+
+    Returns an empty string when the store's own detail already says it.
+    """
+    if probe.state is browser_store.StoreState.LOCKED:
+        if probe.browser.lower() in {"chrome", "chromium", "edge"}:
+            return (
+                "closing the browser releases the lock but not the encryption on "
+                "Chrome 127+, so it does not make these cookies readable"
+            )
+        return "another program is holding the store open"
+    return ""
+
+
+def report_cookie_stores() -> None:
+    """Report the cookie stores this cycle could not use, one line each.
+
+    A store that cannot be read used to raise the same
+    ``sqlite3.OperationalError`` once per cookie name, for every store, on
+    every cycle. One classified line per store is enough to act on and
+    leaves the rest of the log readable.
+    """
+    unusable = browser_store.unusable_stores()
+    if not unusable:
+        return
+    for probe in unusable:
+        blocked = _cookie_store_blocked.get(probe.identity(), {})
+        variables = sorted(
+            {
+                variable
+                for provider, mapping_value in blocked.items()
+                if (variable := _session_cookie_env_var(provider, mapping_value))
+            }
+        )
+        remedy = "paste the cookie in Settings → Providers"
+        if variables:
+            remedy = f"set {', '.join(variables)} (or {remedy})"
+        advice = _cookie_store_advice(probe)
+        reason = f"{probe.detail}; {advice}" if advice else probe.detail
+        logging.warning(
+            "Cookie store unavailable: %s — %s. %s.",
+            probe.identity(),
+            reason,
+            remedy,
+        )
+    logging.info(
+        "Cookie stores: %d of %d unusable this cycle (%s)",
+        len(unusable),
+        browser_store.probed_stores(),
+        ", ".join(sorted({probe.state.value for probe in unusable})),
+    )
+
+
 class BrowserCookieExtractor:
     """Unified extractor for cookies across multiple browsers."""
 
@@ -2449,7 +2535,16 @@ class BrowserCookieExtractor:
                             p = base / rel
                             if p.exists():
                                 results.append(
-                                    {"browser": v["name"], "type": "chromium", "path": p}
+                                    {
+                                        "browser": v["name"],
+                                        "type": "chromium",
+                                        "path": p,
+                                        # Name the store so a failure can be
+                                        # reported as "Chrome/Default/Network/Cookies"
+                                        # instead of an anonymous path.
+                                        "profile": profile,
+                                        "store": rel[len(profile) + 1 :],
+                                    }
                                 )
 
         # 2. Linux Flatpak / Snap
@@ -2471,6 +2566,11 @@ class BrowserCookieExtractor:
                                     "browser": "Chromium (Flatpak)",
                                     "type": "chromium",
                                     "path": p,
+                                    # Name the store so a failure can be
+                                    # reported as "Chromium (Flatpak)/Default/Network/Cookies"
+                                    # instead of an anonymous path.
+                                    "profile": profile,
+                                    "store": rel[len(profile) + 1 :],
                                 }
                             )
 
@@ -2490,6 +2590,8 @@ class BrowserCookieExtractor:
                                     "browser": "Chromium (Snap)",
                                     "type": "chromium",
                                     "path": p,
+                                    "profile": profile,
+                                    "store": "Cookies",
                                 }
                             )
                 elif "firefox" in str(base).lower():
@@ -2500,6 +2602,8 @@ class BrowserCookieExtractor:
                                     "browser": "Firefox (Snap)",
                                     "type": "firefox",
                                     "path": p / "cookies.sqlite",
+                                    "profile": p.name,
+                                    "store": "cookies.sqlite",
                                 }
                             )
 
@@ -2521,6 +2625,8 @@ class BrowserCookieExtractor:
                             "browser": "Firefox",
                             "type": "firefox",
                             "path": p / "cookies.sqlite",
+                            "profile": p.name,
+                            "store": "cookies.sqlite",
                         }
                     )
 
@@ -2626,7 +2732,7 @@ class BrowserCookieExtractor:
         return scan_cookies(path).values
 
     @staticmethod
-    def get_cookie(domain, name):
+    def get_cookie(domain, name, provider=None, mapping_value=None):
         # Normalise the domain to its bare form (no leading dot) so we can
         # express a precise suffix match. The previous LIKE %{domain}% was
         # a substring match — "anthropic.com" matched "evil-anthropic.com"
@@ -2671,62 +2777,98 @@ class BrowserCookieExtractor:
                 )
 
         for target in BrowserCookieExtractor.get_all_paths():
-            try:
-                if target["type"] == "safari":
-                    for c in BrowserCookieExtractor.parse_safari(target["path"]):
-                        host = (c.get("domain") or "").lower()
-                        if c["name"] == name and (
-                            host == bare or host == dotted or host.endswith(dotted)
-                        ):
-                            logging.info("Cookie source: %s", target.get("browser", target["type"]))
-                            return c["value"]
-                elif target["type"] == "chromium" and platform.system() == "Darwin":
-                    from scripts.sidecar_pkg.macos_cookies import read_cookies
-
-                    browser = target["browser"]
-                    service = (
-                        "Microsoft Edge Safe Storage"
-                        if "Edge" in browser
-                        else f"{browser} Safe Storage"
-                    )
-                    values = read_cookies(target["path"], service, bare, name)
-                    if values:
-                        return values[0]
-                else:
-                    with sqlite3.connect(
-                        f"file:{str(target['path'])}?mode=ro&uri=1", uri=True
-                    ) as conn:
-                        cursor = conn.cursor()
-                        if target["type"] == "chromium":
-                            cursor.execute(
-                                "SELECT encrypted_value FROM cookies "
-                                "WHERE name = ? "
-                                "AND (host_key = ? OR host_key = ? OR host_key LIKE ?)",
-                                (name, bare, dotted, like_subdomain),
-                            )
-                            row = cursor.fetchone()
-                            if row:
-                                val = decrypt_chromium_cookie(row[0], target["browser"])
-                                if val:
-                                    logging.info(
-                                        "Cookie source: %s", target.get("browser", target["type"])
-                                    )
-                                    return val
-                        else:  # Firefox
-                            cursor.execute(
-                                "SELECT value FROM moz_cookies "
-                                "WHERE name = ? "
-                                "AND (host = ? OR host = ? OR host LIKE ?)",
-                                (name, bare, dotted, like_subdomain),
-                            )
-                            row = cursor.fetchone()
-                            if row:
+            # Safari's store is not a SQLite database and macOS keeps its own
+            # decryption path, so neither is probed. Only the SQLite stores
+            # (Chromium and Firefox outside macOS) are classified, and they
+            # are classified once per cycle rather than once per cookie name.
+            if target["type"] == "safari" or (
+                target["type"] == "chromium" and platform.system() == "Darwin"
+            ):
+                try:
+                    if target["type"] == "safari":
+                        for c in BrowserCookieExtractor.parse_safari(target["path"]):
+                            host = (c.get("domain") or "").lower()
+                            if c["name"] == name and (
+                                host == bare or host == dotted or host.endswith(dotted)
+                            ):
                                 logging.info(
                                     "Cookie source: %s", target.get("browser", target["type"])
                                 )
-                                return row[0]
+                                return c["value"]
+                    else:
+                        from scripts.sidecar_pkg.macos_cookies import read_cookies
+
+                        browser = target["browser"]
+                        service = (
+                            "Microsoft Edge Safe Storage"
+                            if "Edge" in browser
+                            else f"{browser} Safe Storage"
+                        )
+                        values = read_cookies(target["path"], service, bare, name)
+                        if values:
+                            return values[0]
+                except Exception:
+                    logging.warning(
+                        "Cookie extraction failed for browser target (%s, name=%s)",
+                        target.get("browser"),
+                        name,
+                        exc_info=True,
+                    )
+                continue
+
+            try:
+                probe = browser_store.probe_store(target)
             except Exception:
-                logging.warning(
+                # A store that cannot even be classified must not break the
+                # provider that was asking for it.
+                logging.debug("Cookie store probe failed", exc_info=True)
+                continue
+            if not probe.readable:
+                # A store that cannot be read is skipped for the rest of the
+                # cycle. The reason is reported once per cycle by
+                # ``report_cookie_stores`` instead of once per cookie name.
+                if provider:
+                    _cookie_store_blocked.setdefault(probe.identity(), {})[provider] = (
+                        mapping_value or ""
+                    )
+                continue
+            try:
+                conn = browser_store.open_store(probe)
+                if conn is None:
+                    continue
+                with closing(conn):
+                    cursor = conn.cursor()
+                    if target["type"] == "chromium":
+                        cursor.execute(
+                            "SELECT encrypted_value FROM cookies "
+                            "WHERE name = ? "
+                            "AND (host_key = ? OR host_key = ? OR host_key LIKE ?)",
+                            (name, bare, dotted, like_subdomain),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            val = decrypt_chromium_cookie(row[0], target["browser"])
+                            if val:
+                                logging.info(
+                                    "Cookie source: %s", target.get("browser", target["type"])
+                                )
+                                return val
+                    else:  # Firefox
+                        cursor.execute(
+                            "SELECT value FROM moz_cookies "
+                            "WHERE name = ? "
+                            "AND (host = ? OR host = ? OR host LIKE ?)",
+                            (name, bare, dotted, like_subdomain),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            logging.info("Cookie source: %s", target.get("browser", target["type"]))
+                            return row[0]
+            except Exception:
+                # The store opened, so this is a schema or decoding problem
+                # rather than an access problem: it is per-cookie detail and
+                # belongs at debug level.
+                logging.debug(
                     "Cookie extraction failed for browser target (%s, name=%s)",
                     target.get("browser"),
                     name,
@@ -4050,7 +4192,12 @@ class GenericCollector:
                 if provider_id == "anthropic_console":
                     continue
                 for domain in rule.get("domains", []):
-                    val = BrowserCookieExtractor.get_cookie(domain, name_to_find)
+                    val = BrowserCookieExtractor.get_cookie(
+                        domain,
+                        name_to_find,
+                        provider_id,
+                        mapping.get("value"),
+                    )
                     if val:
                         target = mapping.get("value")
                         if target:
@@ -4887,6 +5034,11 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     Returns collected metrics, extracted events, errors, and completed provider
     snapshots for the ingest payload.
     """
+    # Every store is re-examined once per cycle: a browser that held one
+    # open a moment ago may have released it, and a store that was readable
+    # may have been locked since.
+    reset_cookie_store_tracking()
+
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
         from scripts.sidecar_pkg.event_watermark import EventWatermark
@@ -5363,6 +5515,10 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
         )
     except Exception as _e:
         logging.debug(f"manifest: skipped ({_e})")
+
+    # One classified line per cookie store that could not be used, instead
+    # of a traceback per cookie name per store per cycle.
+    report_cookie_stores()
 
     return CollectionResult(
         all_metrics, all_events, error_count, completed_providers_this_cycle, cowork_batch

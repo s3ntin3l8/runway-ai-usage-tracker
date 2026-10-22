@@ -460,6 +460,25 @@ tail -f ~/.config/runway/sidecar/sidecar.log
 python3 scripts/sidecar.py --verbose --dry-run
 ```
 
+### Browser cookie stores
+
+Each collection cycle classifies every browser cookie store once, then reads
+from the ones it can. A store it cannot use is reported once per cycle,
+naming the store and the reason:
+
+```
+WARNING Cookie store unavailable: Chrome/Default/Network/Cookies — held open by
+        another process; closing the browser releases the lock but not the
+        encryption on Chrome 127+, so it does not make these cookies readable.
+        set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers).
+INFO    Cookie stores: 1 of 3 unusable this cycle (locked)
+```
+
+The traceback for a store that failed to open is at debug level only, so a
+browser that keeps a store locked cannot flood the log. See
+[troubleshooting.md](troubleshooting.md) for what each reason means and what
+to do about it.
+
 ## Troubleshooting
 
 ### Sidecar not collecting
