@@ -25,5 +25,12 @@ sigstore==4.5.0
 pystray==0.19.5
 Pillow==13.0.0
 # `tests/unit/test_check_secrets.py` imports `scripts.check_secrets`, which
-# imports `detect_secrets` at module level.
+# imports `detect_secrets` at module level. The lint set carries it as well,
+# because `make secrets` needs it.
 detect-secrets==1.5.0
+# `mypy` is in the lint set and not here, on purpose: only
+# `tests/unit/test_mypy_gitignore_exclusion.py` needs it, and it guards its
+# import with `importorskip`, so that test skips rather than fails on the
+# jobs that install this set. It still runs on Linux, where the shared
+# workflow installs the union -- and the `dist/` abort it guards is a
+# local-checkout problem anyway.

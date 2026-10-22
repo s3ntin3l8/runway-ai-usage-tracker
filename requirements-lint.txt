@@ -5,11 +5,15 @@
 # the bumps.
 #
 # This is the set the *static gate* needs: ruff and mypy for the lint, and
-# pip-audit, detect-secrets and pre-commit for the other gates. The test
-# suite's set is `requirements-test.txt`, and the union of the two is
+# pip-audit and pre-commit for the other gates. The test suite's set is
+# `requirements-test.txt`, and the union of the two is
 # `requirements-dev.txt`.
 ruff==0.17.1
 mypy==2.4.0
 types-PyYAML==6.0.12.20260906
 pip-audit==2.10.1
 pre-commit==4.7.0
+# The secrets gate: `scripts/check_secrets.py` imports detect-secrets, so
+# `make secrets` cannot run without it. The test set carries it too -- a
+# test imports it -- so the two sets overlap here on purpose.
+detect-secrets==1.5.0

@@ -160,7 +160,7 @@ def check(
         execute([python, "-m", "pip", "install", "--upgrade", "pip"])
         execute([python, "-m", "pip", "install", "-r", REQUIREMENTS_FILES[requirements_set]])
     elif task == "install":
-        check("install-python", [], requirements_set=requirements_set)
+        check("install-python", [])
         execute([*npm_command(), "--prefix", "webapp", "ci"])
         check("install-hooks", [])
     elif task == "install-hooks":
@@ -318,13 +318,15 @@ def main() -> int:
         choices=tuple(REQUIREMENTS_FILES),
         default="all",
         help="which dependency set to install: 'test' for the suite's, "
-        "'lint' for the static gate's, 'all' for both",
+        "'lint' for the static gate's, 'all' for both. Only "
+        "'install-python' takes it -- 'install' is the full setup, hooks "
+        "included",
     )
     args, extra = parser.parse_known_args()
     if extra and args.task not in {"test", "unit", "test-shard", "test-windows", "web-test"}:
         parser.error("additional arguments are supported only for test commands")
-    if args.requirements_set != "all" and args.task not in {"install", "install-python"}:
-        parser.error("--set is supported only for the install and install-python tasks")
+    if args.requirements_set != "all" and args.task != "install-python":
+        parser.error("--set is supported only for the install-python task")
     if args.jobs is not None and args.task not in {
         "test",
         "unit",
