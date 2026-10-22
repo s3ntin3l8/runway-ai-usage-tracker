@@ -28,14 +28,15 @@ modules are about 30% of the total - and the number of tests inside a module
 barely predicts how long that module runs (correlation ~0.14 on this suite).
 Splitting by file count or by test count therefore leaves the shards minutes
 apart, so the weights come from measured per-module durations kept in
-``tests/shard_durations.json``.
+``tests/shard_durations.<platform>.json`` -- one table per platform, because
+the durations are platform-specific.
 
 The weights are platform-specific: a module that is slow on Linux is not
 necessarily slow on Windows (``test_multi_account_provider_config.py`` takes
-26s on Linux and 136s on Windows, while ``test_macos_frozen_ca.py`` goes the
-other way). Measuring them on one platform and planning the other leaves the
-shards minutes apart -- which is exactly what a per-platform weight file
-fixes.
+13.7s on Linux and 40.1s on Windows, while ``test_macos_frozen_ca.py`` goes
+the other way -- 2.9s and 38.5s). Measuring them on one platform and
+planning the other leaves the shards minutes apart -- which is exactly what a
+per-platform weight file fixes.
 
 Refresh the weights with ``python scripts/dev_checks.py record-shard-weights``.
 The plan itself is a pure function of the module list and the weight table, so
@@ -47,6 +48,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -62,9 +64,27 @@ _DURATION_ROW = re.compile(
 )
 
 
+# The measured durations are per platform: the same module takes 13.7s on
+# Linux and 40.1s on Windows (``test_multi_account_provider_config.py``),
+# and ``test_macos_frozen_ca.py`` goes the other way -- 2.9s on Linux and
+# 38.5s on Windows. Measuring on one platform and planning the other
+# leaves the shards minutes apart, so each platform has its own table.
+#
+# macOS has a table of its own so that a contributor recording the weights
+# on a Mac cannot overwrite the Linux one, which is what the Windows shards
+# are planned against and what the Linux CI job measures. Only the Linux and
+# Windows tables are committed: the shards are only ever planned on Windows,
+# so a macOS table is a local file for whoever records one.
+PLATFORM_TABLES = {
+    "win32": "windows",
+    "darwin": "macos",
+}
+
+
 def weights_path(root: Path = ROOT) -> Path:
-    """Where the measured per-module durations live."""
-    return root / "tests" / "shard_durations.json"
+    """Where the measured per-module durations live for this platform."""
+    platform = PLATFORM_TABLES.get(sys.platform, "linux")
+    return root / "tests" / f"shard_durations.{platform}.json"
 
 
 def suite_files(root: Path = ROOT) -> list[str]:
@@ -174,6 +194,10 @@ def parse_durations(report: str) -> dict[str, float]:
 def write_weights(path: Path, durations: dict[str, float]) -> None:
     """Write the measured per-module durations to the weight table."""
     payload = {
+        # Generated file: `python scripts/dev_checks.py record-shard-weights`
+        # rewrites it wholesale, so a recording run in a dirty tree produces
+        # an unrelated diff. Do not edit it by hand.
+        "generated_by": "python scripts/dev_checks.py record-shard-weights",
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "total_seconds": round(sum(durations.values()), 1),
         "files": {name: round(seconds, 2) for name, seconds in sorted(durations.items())},

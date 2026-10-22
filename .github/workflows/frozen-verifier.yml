@@ -1,0 +1,132 @@
+name: Frozen Verifier
+
+# The packaging smoke test: build the sidecar with PyInstaller on each
+# platform and verify the frozen binary against a signed fixture -- and, on a
+# manual dispatch with a release tag, against a captured release.
+#
+# It used to run on every pull request, in four parallel jobs, which made it
+# the largest advisory cost in the repository: 7.6 runner-minutes per pull
+# request, and the macOS leg alone is billed at ten times a Linux minute.
+#
+# On a pull request it verified the *standard signed fixture*. The release
+# half of the job -- the one that answers "does the packaged binary match
+# the release" -- only runs on a manual dispatch with a release tag, because
+# that is what `capture-release` produces. So the per-pull-request half
+# answered "does the packaging still work", while the question that decides
+# whether a release ships was never asked there. The release path is
+# unchanged: it is this workflow, dispatched with a release tag.
+#
+# The job is advisory: it never decided whether a pull request merged, so
+# moving it off the pull-request path does not weaken a gate. It still runs
+# on every push to `main` and nightly, and the nightly is the canary for
+# toolchain drift. PyInstaller is pinned, so a new release of it only lands
+# when the pin moves -- but it can break the packaging when it does, and a
+# push run cannot catch that, because it ran before the release did.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: Optional versioned release to capture and verify in frozen binaries
+        required: false
+        type: string
+        default: ''
+permissions:
+  contents: read
+
+concurrency:
+  # The event name is part of the group, so the nightly schedule and a push
+  # to `main` -- which share `github.ref` -- do not land in the same group
+  # and cannot cancel or queue behind each other.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release-tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[sidecar]'
+      - name: Capture and verify release updates
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: python -m scripts.capture_release_updates --release-tag "$RELEASE_TAG" --output captured-release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: captured-release-updates
+          path: captured-release
+          if-no-files-found: error
+  frozen-verifier:
+    needs: capture-release
+    if: >-
+      always() && !cancelled() &&
+      (needs.capture-release.result == 'success' ||
+       (needs.capture-release.result == 'skipped' &&
+        (github.event_name != 'workflow_dispatch' || inputs.release-tag == '')))
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            spec: linux-cli
+            platform: Linux-CLI
+            binary: dist/runway-sidecar-cli
+          - os: ubuntu-latest
+            spec: linux
+            platform: Linux
+            binary: dist/RunwaySidecar
+          - os: windows-latest
+            spec: windows
+            platform: Windows
+            binary: dist/RunwaySidecar.exe
+          - os: macos-latest
+            spec: macos
+            platform: macOS
+            binary: dist/Runway Sidecar.app/Contents/MacOS/RunwaySidecar
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      # `pyinstaller` is pinned: it builds the shipped binary, so a new
+      # release of it would change the artifact with no pull request.
+      - run: python -m pip install -e '.[desktop,sidecar]' 'pyinstaller==6.22.3'
+      - run: python sidecar_app/assets/generate_icons.py
+      - run: pyinstaller --noconfirm sidecar_app/spec/${{ matrix.spec }}.spec
+      - name: Prepare NSIS (Windows)
+        if: runner.os == 'Windows'
+        run: python -m scripts.prepare_nsis
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        # The same helper the release build uses, against the real executable
+        # built above: one asset name, one computed output path.
+        run: python -m scripts.build_windows_installer --label edge
+      - name: Verify standard signed fixture
+        run: python -m scripts.security_packaging_smoke --binary '${{ matrix.binary }}' --report fixture-evidence.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: needs.capture-release.result == 'success'
+        with:
+          name: captured-release-updates
+          path: captured-release
+      - name: Verify captured release in frozen binary
+        if: needs.capture-release.result == 'success'
+        run: python -m scripts.security_packaging_smoke --binary '${{ matrix.binary }}' --release-dir captured-release --platform '${{ matrix.platform }}' --report release-evidence.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: frozen-verifier-${{ matrix.spec }}
+          path: '*-evidence.json'
+          if-no-files-found: error
+          retention-days: 90

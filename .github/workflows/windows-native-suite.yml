@@ -26,6 +26,15 @@ on:
   schedule:
     - cron: '41 3 * * *'
   workflow_dispatch:
+    inputs:
+      record-weights:
+        description: >-
+          Record the per-module durations on Windows and upload them as an
+          artifact, instead of running the shards. The artifact is the new
+          `tests/shard_durations.windows.json`; commit it.
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   # The event name is part of the group, so the nightly schedule and a push
@@ -40,6 +49,10 @@ permissions:
 
 jobs:
   windows-native-pytest:
+    # The recording replaces the shards: it runs the whole suite to measure
+    # it, so running the shards as well would spend four runner-minutes
+    # re-running the same tests.
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.record-weights) }}
     name: windows-native-pytest (shard ${{ matrix.shard }}/4)
     runs-on: windows-latest
     # 45 minutes survives a runner several times slower than median: a shard
@@ -71,3 +84,38 @@ jobs:
           RUNWAY_PYTEST_SHARDS: '4'
           RUNWAY_TEST_JOBS: '4'
         run: python scripts/dev_checks.py test-shard
+
+  record-shard-weights:
+    # Measure the per-module durations on Windows, so the shards above are
+    # planned with Windows measurements. Measured on Linux they leave the
+    # shards minutes apart: a module that is slow on Linux is not necessarily
+    # slow on Windows.
+    #
+    # Manual, because the table only changes when the suite's shape does.
+    # The artifact it uploads is the new `tests/shard_durations.windows.json`;
+    # committing that file is the last step.
+    if: github.event_name == 'workflow_dispatch' && inputs.record-weights
+    name: record-shard-weights
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install canonical Python dependencies
+        run: python scripts/dev_checks.py install-python
+      - name: Record the per-module durations
+        run: python scripts/dev_checks.py record-shard-weights --jobs 4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: shard-durations-windows
+          path: tests/shard_durations.windows.json
+          if-no-files-found: error
+          retention-days: 30

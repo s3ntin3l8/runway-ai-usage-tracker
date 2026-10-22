@@ -107,6 +107,74 @@ describe('api', () => {
     });
   });
 
+  it('carries a structured error detail and never renders it as [object Object]', async () => {
+    // FastAPI sends `{"detail": {...}}` for some errors. The payload is
+    // kept so a caller can read a field out of it, and the message is a
+    // readable rendering of it — never "[object Object]".
+    mockFetch().mockResolvedValue(
+      jsonResponse({ detail: { suggested_billing_type: 'subscription' } }, { status: 409 }),
+    );
+    const err = (await api('/api/v1/thing').catch((e) => e)) as ApiError;
+    expect(err.status).toBe(409);
+    expect(err.detail).toEqual({ suggested_billing_type: 'subscription' });
+    expect(err.message).not.toMatch(/\[object Object\]/);
+    expect(err.message).toContain('subscription');
+  });
+
+  it('summarises a validation error without echoing the submitted value', async () => {
+    // FastAPI repeats the offending input under `input`. The message
+    // reaches every toast in the app, so it names the field and the
+    // problem — never the value the operator submitted.
+    mockFetch().mockResolvedValue(
+      jsonResponse(
+        {
+          detail: [
+            {
+              type: 'string_too_short',
+              loc: ['body', 'api_key'],
+              msg: 'String should have at least 1 character',
+              input: 'sk-ant-supersecret', // pragma: allowlist secret
+            },
+          ],
+        },
+        { status: 422 },
+      ),
+    );
+    const err = (await api('/api/v1/thing').catch((e) => e)) as ApiError;
+    expect(err.message).toContain('body.api_key');
+    expect(err.message).toContain('String should have at least 1 character');
+    expect(err.message).not.toContain('sk-ant-supersecret');
+    // The body itself is still there for a caller that needs the field.
+    expect(err.detail).toEqual([
+      {
+        type: 'string_too_short',
+        loc: ['body', 'api_key'],
+        msg: 'String should have at least 1 character',
+        input: 'sk-ant-supersecret', // pragma: allowlist secret
+      },
+    ]);
+  });
+
+  it('uses the message a structured error carries', async () => {
+    mockFetch().mockResolvedValue(
+      jsonResponse(
+        { detail: { message: 'Merge has duplicate history.', collisions: 2 } },
+        { status: 409 },
+      ),
+    );
+    const err = (await api('/api/v1/thing').catch((e) => e)) as ApiError;
+    expect(err.message).toBe('Merge has duplicate history.');
+  });
+
+  it('cuts a long error body short', async () => {
+    mockFetch().mockResolvedValue(
+      jsonResponse({ detail: { note: 'x'.repeat(500) } }, { status: 500 }),
+    );
+    const err = (await api('/api/v1/thing').catch((e) => e)) as ApiError;
+    expect(err.message.length).toBeLessThanOrEqual(301);
+    expect(err.message.endsWith('…')).toBe(true);
+  });
+
   it('falls back to the HTTP status when the error body is not JSON', async () => {
     mockFetch().mockResolvedValue(
       new Response('boom', { status: 500 }),

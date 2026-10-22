@@ -535,3 +535,110 @@ describe('ProviderDetailDialog — header description + close behavior', () => {
     expect(within(dialog).getByText(/1 account · poll —/)).toBeInTheDocument();
   });
 });
+
+// #723 — the Claude family groups several providers under one card. The card
+// counts every account in the family, so the dialog lists every account in the
+// family too — and every account is addressed to the provider it belongs to,
+// never to the family's representative.
+describe('ProviderDetailDialog — the Claude family', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const subscription: ProviderConfig = {
+    ...multiAccount,
+    provider_id: 'anthropic',
+    name: 'Claude',
+    accounts: [{ ...alice, provider_id: 'anthropic' }],
+    account_count: 1,
+  };
+
+  const consoleAccount: ProviderAccount = {
+    account_id: '11111111-1111-4111-8111-111111111111',
+    account_label: 'API org',
+    enabled: false,
+    api_key_set: false,
+    session_cookie_set: true,
+    poll_interval_seconds: null,
+    collection_strategies: null,
+    is_orphaned: false,
+    provider_id: 'anthropic_console',
+  };
+
+  const consoleProvider: ProviderConfig = {
+    ...multiAccount,
+    provider_id: 'anthropic_console',
+    name: 'Console API credits',
+    accounts: [consoleAccount],
+    account_count: 1,
+  };
+
+  function renderFamily(
+    provider: ProviderConfig = subscription,
+    connections: ProviderConfig[] = [subscription, consoleProvider],
+  ) {
+    return renderWithProviders(
+      <ProviderDetailDialog
+        provider={provider}
+        connections={connections}
+        onClose={vi.fn()}
+      />,
+    );
+  }
+
+  it('lists every account in the family, each with its connection', async () => {
+    renderFamily();
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Alice')).toBeInTheDocument();
+    // The account the server discovered for itself belongs to the family too.
+    expect(within(dialog).getByText('API org')).toBeInTheDocument();
+    // Each row says which connection it belongs to.
+    const list = within(dialog).getByLabelText('Provider accounts');
+    expect(within(list).getByText('Subscription quotas')).toBeInTheDocument();
+    expect(within(list).getByText('Console API credits')).toBeInTheDocument();
+    // The card says "2 accounts" — the dialog must agree with it.
+    expect(within(dialog).getByText(/2 accounts/)).toBeInTheDocument();
+  });
+
+  it('addresses every family account to the provider it belongs to', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderFamily();
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    // Alice is enabled, the Console account is not — toggling on writes the
+    // Console account, and it must go to the Console provider.
+    await userEvent.click(toggle);
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalledTimes(1));
+    expect(api.putProviderConfig).toHaveBeenCalledWith(
+      'anthropic_console',
+      consoleAccount.account_id,
+      { enabled: true },
+    );
+  });
+
+  it('saves a discovered family account under its own provider', async () => {
+    vi.mocked(api.putDiscoveredAccountLabel).mockResolvedValue({ status: 'ok' });
+    const discovered = { ...consoleAccount, source: 'discovered' as const };
+    const discoveredConsole: ProviderConfig = {
+      ...consoleProvider,
+      accounts: [discovered],
+      account_count: 1,
+    };
+    // The active connection is the subscription one — the discovered account
+    // belongs to the other connection and must not be addressed to this one.
+    renderFamily(subscription, [subscription, discoveredConsole]);
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /actions for api org/i }));
+    await userEvent.click(within(dialog).getByRole('menuitem', { name: /edit/i }));
+
+    const input = await screen.findByLabelText(/display label/i);
+    await userEvent.clear(input);
+    await userEvent.type(input, 'Team wallet');
+    await userEvent.click(screen.getByRole('button', { name: /^save label$/i }));
+
+    await waitFor(() =>
+      expect(api.putDiscoveredAccountLabel).toHaveBeenCalledWith(
+        'anthropic_console',
+        discovered.account_id,
+        'Team wallet',
+      ),
+    );
+  });
+});

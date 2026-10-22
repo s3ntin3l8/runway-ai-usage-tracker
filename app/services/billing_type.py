@@ -12,11 +12,15 @@ it never decides one.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, Literal
 
-SUBSCRIPTION = "subscription"
-PAY_AS_YOU_GO = "pay_as_you_go"
-UNKNOWN = "unknown"
+# The billing models an account can have. Named once so the detector, the
+# collector wiring and the API all speak about the same set.
+BillingType = Literal["subscription", "pay_as_you_go", "unknown"]
+
+SUBSCRIPTION: BillingType = "subscription"
+PAY_AS_YOU_GO: BillingType = "pay_as_you_go"
+UNKNOWN: BillingType = "unknown"
 
 
 def _number(value: Any) -> float | None:
@@ -37,7 +41,7 @@ def card_pct(card: Mapping[str, Any]) -> float | None:
     return used / limit * 100
 
 
-def card_billing_type(card: Mapping[str, Any]) -> str:
+def card_billing_type(card: Mapping[str, Any]) -> BillingType:
     """The billing model a single card implies (``unknown`` when it implies none).
 
     A card that reports a currency balance is spend, even when it also reports
@@ -52,7 +56,7 @@ def card_billing_type(card: Mapping[str, Any]) -> str:
     return UNKNOWN
 
 
-def detect_billing_type(cards: Iterable[Mapping[str, Any]]) -> str:
+def detect_billing_type(cards: Iterable[Mapping[str, Any]]) -> BillingType:
     """The billing model implied by the cards an account publishes.
 
     A quota card wins over a spend card: an account publishing both is a plan
