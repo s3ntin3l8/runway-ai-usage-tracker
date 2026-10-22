@@ -825,8 +825,19 @@ export interface CredentialSourceSummary {
 
 /** Per-account row in a provider's ``accounts`` list. Multi-account
  *  providers expose N of these under a ``ProviderConfig`` envelope. */
+// The billing models an account can have. Mirrors `BillingType` in
+// `app/services/billing_type.py` — the detector, the API and the UI speak
+// about the same set.
+export type BillingType = 'subscription' | 'pay_as_you_go' | 'unknown';
+
 export interface ProviderAccount {
   account_id: string;
+  // Which provider this account belongs to. The Claude family groups several
+  // providers under one card, so an account listed under the family is still
+  // addressed by its own provider — an edit must never land on the family's
+  // representative (#723). Optional for backward compatibility with older
+  // servers; the UI falls back to the provider it was listed under.
+  provider_id?: string;
   enabled?: boolean;
   archived?: boolean; // PR #292 — hide discontinued providers from the dashboard
   has_usage_events?: boolean;
@@ -837,7 +848,7 @@ export interface ProviderAccount {
   collection_strategies?: CollectionStrategy[] | null;
   opencode_workspace_id?: string | null;
   claude_organization_id?: string | null;
-  billing_type?: 'subscription' | 'pay_as_you_go' | 'unknown';
+  billing_type?: BillingType;
   // Set by the server (#281 hardening + #286 follow-up). Lets the UI surface
   // orphaned `account_id="default"` rows that have been shadowed by a real
   // sibling account on the same provider. Safe to remove. The flag only
@@ -903,12 +914,19 @@ export interface AccountPreviewRequest {
   organization_id?: string;
   api_key?: string | null;
   session_cookie?: string | null;
+  // Ask the server to prove how the account behind this credential bills.
+  // Off by default — the wizard debounces keystrokes into the preview, and a
+  // proof costs a round trip to Claude. The operator asks for it explicitly.
+  detect_billing?: boolean;
 }
 
 export interface AccountPreviewResponse {
   suggested_account_id: string;
   suggested_label: string | null;
   label_source: AccountPreviewLabelSource;
+  // How the account bills, when the server proved it. Absent when it did
+  // not — the operator then decides.
+  suggested_billing_type?: BillingType | null;
   already_exists: boolean;
 }
 

@@ -329,6 +329,75 @@ def clear_response_cache():
     cache_clear()
 
 
+# The modules that can hold a reference to the mocked ``Session``.
+#
+# A module captures the mock by reading ``sqlmodel.Session`` at runtime, and
+# the only ones that do are the ones this repository owns. The scan used to
+# walk every module in ``sys.modules`` -- about 1900 of them, all cold, so
+# 1.2ms a test: 5.3 seconds of CPU and 1.9 seconds of wall clock for a run
+# of the suite, which is 5% of it. The scan is what keeps a captured mock
+# from outliving the test that captured it.
+#
+# These are package *roots*. A module belongs to one of them when its name
+# is the root itself or starts with it and a dot: ``app`` and ``app.models``
+# are both the ``app`` package, and ``application`` is not.
+#
+# The narrowed walk is measured, not assumed: against a live ``sys.modules``
+# of 1192 entries (median of 9 interleaved reps x 400 calls) it is 161-170
+# us, against 214-227 us for the old walk over every module.
+_REPOSITORY_MODULES = (
+    "app",
+    "installer",
+    "scratch",
+    "scripts",
+    "sidecar_app",
+    "sqlmodel",
+    "tests",
+    "webapp",
+)
+# The roots' submodules, for the one ``startswith`` that covers them, and the
+# roots themselves as a set. Both tests are C-level, and both are inlined in
+# the scan below rather than routed through a predicate: a call per module,
+# ~1100 of them per test, costs more than the walk it saves.
+_REPOSITORY_MODULE_ROOTS = frozenset(_REPOSITORY_MODULES)
+_REPOSITORY_MODULE_PREFIXES = tuple(f"{root}." for root in _REPOSITORY_MODULES)
+
+
+def is_repository_module(name: str) -> bool:
+    """Whether ``name`` is a module this repository owns.
+
+    The guard that pins the scan imports this, so the two cannot drift
+    apart: they read the same two constants. A prefix that matched the
+    submodules but not the package root would skip ``sys.modules["app"]``
+    -- and a capture of the mocked ``Session`` in ``app/__init__.py`` would
+    survive the teardown.
+    """
+    return name in _REPOSITORY_MODULE_ROOTS or name.startswith(_REPOSITORY_MODULE_PREFIXES)
+
+
+def repair_captured_session(mock_session: MagicMock, session: type) -> None:
+    """Put the real ``Session`` back in any module that captured the mock.
+
+    A module that reads ``sqlmodel.Session`` at runtime captures the mock,
+    and the capture outlives the test that made it. This walks the modules
+    this repository owns and restores the real one in any of them that
+    still holds the mock.
+
+    The walk is the expensive part, so it is narrowed to those modules --
+    and the narrowing is inlined here rather than routed through
+    ``is_repository_module``: the call per module costs more than the walk
+    it saves. The two read the same constants.
+    """
+    for name, module in tuple(sys.modules.items()):
+        if module is None or (
+            name not in _REPOSITORY_MODULE_ROOTS
+            and not name.startswith(_REPOSITORY_MODULE_PREFIXES)
+        ):
+            continue
+        if vars(module).get("Session") is mock_session:
+            module.Session = session
+
+
 @pytest.fixture(autouse=True)
 def mock_db_session(monkeypatch):
     """Mock DB access without leaking patched Session classes across tests."""
@@ -345,9 +414,7 @@ def mock_db_session(monkeypatch):
     # leaving its mock installed globally for subsequent tests.
     monkeypatch.setattr("sqlmodel.Session", mock_session)
     yield mock_db
-    for module in tuple(sys.modules.values()):
-        if module is not None and vars(module).get("Session") is mock_session:
-            module.Session = Session
+    repair_captured_session(mock_session, Session)
 
 
 @pytest.fixture(autouse=True)
