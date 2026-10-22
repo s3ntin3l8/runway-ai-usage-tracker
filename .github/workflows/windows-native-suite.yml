@@ -35,14 +35,6 @@ on:
         required: false
         type: boolean
         default: false
-      system-python:
-        description: >-
-          Use the runner's Python instead of building a .venv. Set to false
-          to measure the two paths against each other: the .venv costs a venv
-          creation and a second pip upgrade on every run.
-        required: false
-        type: boolean
-        default: true
 
 concurrency:
   # The event name is part of the group, so the nightly schedule and a push
@@ -80,12 +72,6 @@ jobs:
             requirements-dev.txt
       - name: Install canonical Python dependencies
         run: python scripts/dev_checks.py install-python
-        env:
-          # The runner is a fresh virtual machine per job, so its Python is
-          # already isolated. Building a .venv on top of it costs a venv
-          # creation and a second pip upgrade on every run, for a dependency
-          # install that is already cached.
-          RUNWAY_SYSTEM_PYTHON: ${{ inputs.system-python && '1' || '0' }}
       # Four workers inside the shard as well: the runner has four cores,
       # and `--dist loadfile` keeps each test module in one worker.
       - name: Run the shard
@@ -93,7 +79,6 @@ jobs:
           RUNWAY_PYTEST_SHARD_ID: ${{ matrix.shard }}
           RUNWAY_PYTEST_SHARDS: '4'
           RUNWAY_TEST_JOBS: '4'
-          RUNWAY_SYSTEM_PYTHON: ${{ inputs.system-python && '1' || '0' }}
         run: python scripts/dev_checks.py test-shard
 
   record-shard-weights:
@@ -122,12 +107,8 @@ jobs:
             requirements-dev.txt
       - name: Install canonical Python dependencies
         run: python scripts/dev_checks.py install-python
-        env:
-          RUNWAY_SYSTEM_PYTHON: '1'
       - name: Record the per-module durations
         run: python scripts/dev_checks.py record-shard-weights --jobs 4
-        env:
-          RUNWAY_SYSTEM_PYTHON: '1'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: shard-durations-windows

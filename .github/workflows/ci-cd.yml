@@ -87,12 +87,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    env:
-      # The runner is a fresh virtual machine per job, so its Python is
-      # already isolated. Building a .venv on top of it costs a venv creation
-      # and a second pip upgrade on every run -- a third of this job, for a
-      # dependency install that is already cached.
-      RUNWAY_SYSTEM_PYTHON: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -124,12 +118,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    env:
-      # The runner is a fresh virtual machine per job, so its Python is
-      # already isolated. Building a .venv on top of it costs a venv creation
-      # and a second pip upgrade on every run -- a third of this job, for a
-      # dependency install that is already cached.
-      RUNWAY_SYSTEM_PYTHON: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7

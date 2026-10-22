@@ -31,21 +31,6 @@ def venv_python() -> Path:
     return ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
-def use_system_python() -> bool:
-    """Whether to use the current interpreter instead of the repository's ``.venv``.
-
-    A CI runner is a fresh virtual machine per job, so the interpreter the
-    runner provides is already an isolated environment. Building a ``.venv``
-    on top of it costs a venv creation and a second pip upgrade on every run,
-    which on a hosted Windows runner is a third of the job -- and the
-    dependency install is the part that is already cached.
-
-    Locally the ``.venv`` is the point: it keeps the contributor's
-    interpreter untouched, so this stays off unless a job asks for it.
-    """
-    return os.environ.get("RUNWAY_SYSTEM_PYTHON", "").strip().lower() in {"1", "true", "yes"}
-
-
 def npm_command() -> list[str]:
     npm = shutil.which("npm")
     if npm is None:
@@ -152,15 +137,11 @@ def check(
     jobs: int = 0,
 ) -> None:
     interpreter = venv_python()
-    system = use_system_python()
-    if system:
-        python = sys.executable
-    else:
-        if task not in {"install", "install-python", "web-test"} and not interpreter.is_file():
-            raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
-        python = str(interpreter)
+    if task not in {"install", "install-python", "web-test"} and not interpreter.is_file():
+        raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
+    python = str(interpreter)
     if task == "install-python":
-        if not system and not venv_python().is_file():
+        if not venv_python().is_file():
             execute([sys.executable, "-m", "venv", str(ROOT / ".venv")])
         execute([python, "-m", "pip", "install", "--upgrade", "pip"])
         execute([python, "-m", "pip", "install", "-r", "requirements-dev.txt"])
