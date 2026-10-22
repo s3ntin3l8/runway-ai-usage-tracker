@@ -33,6 +33,7 @@ teardown.
 from __future__ import annotations
 
 import threading
+import warnings
 from typing import Any
 
 import anyio
@@ -165,9 +166,15 @@ def close_shared_portal() -> None:
     if stack is None:
         return
     if not close_portal(stack, portal):
-        print(
-            "WARNING: the shared test-client event loop did not close in "
+        # A warning, not a print: pytest captures stdout, so a print here is
+        # swallowed on a passing run and the worker that ran out of time says
+        # nothing. A warning survives the capture and lands in the summary,
+        # which is the only place this diagnostic can still be read.
+        warnings.warn(
+            "the shared test-client event loop did not close in "
             f"{CLOSE_TIMEOUT}s -- a test left a task running on it that "
             "would not be cancelled. The worker will exit anyway; the task "
-            "is abandoned."
+            "is abandoned.",
+            RuntimeWarning,
+            stacklevel=2,
         )
