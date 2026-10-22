@@ -957,7 +957,7 @@ def _make_keep_alive_renewers() -> list:
         AnthropicRenewer(
             _claude_login_paths,
             keychain=KeychainRenewer(
-                lambda: custom_login_dirs("CLAUDE_CONFIG_DIR"),
+                local_keychain_login_dirs,
                 lambda: _claude_keychain_renewal_enabled() and is_enabled("anthropic"),
             ),
         ),
@@ -1933,6 +1933,9 @@ def http_post_signed(
     url: str, data: dict[str, Any], api_key: str, config: dict[str, Any] | None = None
 ) -> tuple[bool, Any, int]:
     """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
+    from scripts.sidecar_pkg.source_consent import filter_egress
+
+    data = filter_egress(data)
     timestamp = server_http.signing_timestamp()
     body = json.dumps(data, separators=(",", ":")).encode("utf-8")
 
@@ -2166,6 +2169,15 @@ def configure_login_dirs(config: dict[str, Any]) -> None:
         dirs = _split_dirs(config.get(key))
         if dirs:
             _LOGIN_DIR_EXTRAS[env_name] = dirs
+
+
+def local_keychain_login_dirs() -> list[Path]:
+    """Only local env/config can authorize additional Claude Keychain targets."""
+    values = [
+        *_split_dirs(os.getenv("CLAUDE_CONFIG_DIR", "")),
+        *_LOGIN_DIR_EXTRAS.get("CLAUDE_CONFIG_DIR", []),
+    ]
+    return list(dict.fromkeys(Path(os.path.expanduser(value)).resolve() for value in values))
 
 
 def custom_login_dirs(env_name: str) -> list[Path]:
@@ -2471,6 +2483,9 @@ def report_cookie_stores() -> None:
     )
 
 
+from scripts.sidecar_pkg.source_consent import cookie_request_scope
+
+
 class BrowserCookieExtractor:
     """Unified extractor for cookies across multiple browsers."""
 
@@ -2655,6 +2670,7 @@ class BrowserCookieExtractor:
         return results
 
     @staticmethod
+    @cookie_request_scope
     def get_macos_candidates(provider, domains, name, *, scan_outcomes=None):
         """Return independent sources; optional scan_outcomes is an internal diagnostic sink.
 
@@ -2671,6 +2687,8 @@ class BrowserCookieExtractor:
             {"claude.ai"}
             if provider == "anthropic"
             else {"platform.claude.com", "console.anthropic.com"}
+            if provider == "anthropic_console"
+            else {domain.lstrip(".") for domain in domains}
         )
         domains = [domain for domain in domains if domain.lstrip(".") in allowed_domains]
         if provider == "anthropic" and os.getenv(
@@ -2733,7 +2751,9 @@ class BrowserCookieExtractor:
                         continue
                     candidate = (
                         value,
-                        keyed_credential_origin(origin, credential_fingerprint(value)),
+                        keyed_credential_origin(origin, credential_fingerprint(value))
+                        if provider in {"anthropic", "anthropic_console"}
+                        else origin,
                     )
                     if candidate not in candidates:
                         candidates.append(candidate)
@@ -2748,6 +2768,7 @@ class BrowserCookieExtractor:
         return scan_cookies(path).values
 
     @staticmethod
+    @cookie_request_scope
     def get_cookie(domain, name, provider=None, mapping_value=None):
         # Normalise the domain to its bare form (no leading dot) so we can
         # express a precise suffix match. The previous LIKE %{domain}% was
@@ -3991,167 +4012,91 @@ class GenericCollector:
         rules = config.get("rules", [])
         provider_hints = (account_label_hints or {}).get(provider_id, {})
 
+        from scripts.sidecar_pkg import source_consent as consent
+        from scripts.sidecar_pkg.source_catalog import catalog, trusted_rule
+
+        tickets = {source_id: consent.POLICY.ticket(source_id) for source_id in catalog()}
         for rule in rules:
-            rule_type = rule.get("type")
-            mapping = rule.get("mapping", {})
+            if (
+                platform.system() == "Darwin"
+                and rule.get("type")
+                in {"claude_code_keychain", "claude_desktop_oauth", "keychain", "cookie", "exec"}
+                and not trusted_rule(provider_id, rule)
+            ):
+                continue
+            with consent.rule_scope(provider_id, rule):
+                rule_type = rule.get("type")
+                mapping = rule.get("mapping", {})
 
-            # 1. Environment Variables
-            if rule_type == "env":
-                val = os.getenv(rule.get("variable"))
-                if val:
-                    target = mapping.get("value")
-                    # GITHUB_TOKEN and GH_TOKEN set to one value are one credential.
-                    already_found = any(c.get(target) == val for c, _, _ in token_candidates)
-                    if target and not already_found:
-                        env_candidate = {target: val}
-                        token_candidates.append(
-                            (
-                                env_candidate,
-                                fingerprinted_credential_origin(
-                                    f"env:{rule.get('variable')}", provider_id, env_candidate
-                                ),
-                                "env",
-                            )
-                        )
-
-            # 2. Local Files (JSON/YAML)
-            elif rule_type == "file":
-                # expand_file_rule_paths resolves plain paths exactly and
-                # expands glob patterns (e.g. kimi-cli's per-install
-                # kimi-code-env-<hash>.json), freshest match last.
-                # Per rule on purpose: two rules may map one file differently.
-                seen_files: set[str] = set()
-                for path, v2_db in _file_rule_paths_with_opencode_v2(rule.get("paths", [])):
-                    # Distinct spellings of one file (`~/.config/gh` vs the
-                    # platform config dir) must yield a single candidate.
-                    try:
-                        real = str(Path(path).resolve())
-                    except OSError:
-                        real = str(path)
-                    if real in seen_files:
-                        continue
-                    seen_files.add(real)
-                    try:
-                        fmt = rule.get("format", "json")
-                        if v2_db is not None:
-                            # opencode v2 keeps credentials in its database and never
-                            # reads auth.json again; the file (if any) is a stale leftover.
-                            # The view has the legacy shape, so the mapping is unchanged.
-                            data = load_auth_view(v2_db)
-                            if data is None:
-                                continue
-                        else:
-                            # JSONC (the Copilot CLI's config.json carries // header lines)
-                            # may start with a BOM on Windows.
-                            with open(path, encoding="utf-8-sig" if fmt == "jsonc" else None) as f:
-                                if fmt == "yaml":
-                                    data = parse_simple_yaml(f.read())
-                                elif fmt == "jsonc":
-                                    data = json.loads(_strip_jsonc(f.read()))
-                                else:
-                                    data = json.load(f)
-
-                        candidate_tokens: dict[str, Any] = {}
-                        for key_path, target in mapping.items():
-                            val = GenericCollector.get_nested(data, key_path)
-                            if val:
-                                candidate_tokens[target] = val
-                        if provider_id == "kimi_coding" and candidate_tokens.get(
-                            "cli_access_token"
-                        ):
-                            device_id = read_kimi_cli_device_id(Path(path))
-                            if device_id:
-                                candidate_tokens["cli_device_id"] = device_id
-                        if provider_id == "anthropic" and isinstance(data, dict):
-                            oauth_account = data.get("oauthAccount", {})
-                            if isinstance(oauth_account, dict):
-                                email = oauth_account.get("emailAddress") or oauth_account.get(
-                                    "email"
-                                )
-                                if email:
-                                    candidate_tokens["account_id"] = email
-                            if not candidate_tokens.get("account_id") and candidate_tokens.get(
-                                "oauth_token"
-                            ):
-                                email = discover_anthropic_oauth_email(Path(path))
-                                if email:
-                                    candidate_tokens["account_id"] = email
-                            oauth_data = data.get("claudeAiOauth")
-                            expires_at = (
-                                oauth_data.get("expiresAt")
-                                if isinstance(oauth_data, dict)
-                                else None
-                            )
-                            if isinstance(expires_at, int | float) and expires_at > 0:
-                                # Anthropic stores this as milliseconds since epoch,
-                                # matching IdentityExtractor.exp_from_tokens.
-                                candidate_tokens["expiry_date"] = str(int(expires_at))
-                        # Two files can hold one token (copilot's apps.json and the
-                        # older hosts.json, or gh's hosts.yml): one credential.
-                        duplicate_key = candidate_tokens.get("api_key")
-                        is_duplicate = bool(duplicate_key) and any(
-                            c.get("api_key") == duplicate_key for c, _, _ in token_candidates
-                        )
-                        if candidate_tokens and not is_duplicate:
+                # 1. Environment Variables
+                if rule_type == "env":
+                    val = os.getenv(rule.get("variable"))
+                    if val:
+                        target = mapping.get("value")
+                        # GITHUB_TOKEN and GH_TOKEN set to one value are one credential.
+                        already_found = any(c.get(target) == val for c, _, _ in token_candidates)
+                        if target and not already_found:
+                            env_candidate = {target: val}
                             token_candidates.append(
                                 (
-                                    candidate_tokens,
+                                    env_candidate,
                                     fingerprinted_credential_origin(
-                                        f"path:{Path(path).resolve()}",
-                                        provider_id,
-                                        candidate_tokens,
+                                        f"env:{rule.get('variable')}", provider_id, env_candidate
                                     ),
-                                    "file",
+                                    "env",
                                 )
                             )
-                            logging.info(f"  [{provider_id}] token file matched: {path}")
-                        elif not candidate_tokens and not rule.get("keyless_ok"):
-                            # A readable file with none of the mapped keys fails silently
-                            # (a logged-out CLI, a moved token). Say so once per file;
-                            # key names only, never values. ``keyless_ok`` rules point at
-                            # files that normally hold no token (e.g. keychain users).
-                            _log_keyless_file_once(provider_id, str(path))
-                    except Exception as e:
-                        logging.debug(f"Error reading file {path}: {e}")
 
-            elif rule_type == "claude_desktop_oauth" and platform.system() == "Darwin":
-                from scripts.sidecar_pkg.claude_desktop import read_oauth_candidates
+                # 2. Local Files (JSON/YAML)
+                elif rule_type == "file":
+                    # expand_file_rule_paths resolves plain paths exactly and
+                    # expands glob patterns (e.g. kimi-cli's per-install
+                    # kimi-code-env-<hash>.json), freshest match last.
+                    # Per rule on purpose: two rules may map one file differently.
+                    seen_files: set[str] = set()
+                    for path, v2_db in _file_rule_paths_with_opencode_v2(rule.get("paths", [])):
+                        # Distinct spellings of one file (`~/.config/gh` vs the
+                        # platform config dir) must yield a single candidate.
+                        try:
+                            real = str(Path(path).resolve())
+                        except OSError:
+                            real = str(path)
+                        if real in seen_files:
+                            continue
+                        seen_files.add(real)
+                        try:
+                            fmt = rule.get("format", "json")
+                            if v2_db is not None:
+                                # opencode v2 keeps credentials in its database and never
+                                # reads auth.json again; the file (if any) is a stale leftover.
+                                # The view has the legacy shape, so the mapping is unchanged.
+                                data = load_auth_view(v2_db)
+                                if data is None:
+                                    continue
+                            else:
+                                # JSONC (the Copilot CLI's config.json carries // header lines)
+                                # may start with a BOM on Windows.
+                                with open(
+                                    path, encoding="utf-8-sig" if fmt == "jsonc" else None
+                                ) as f:
+                                    if fmt == "yaml":
+                                        data = parse_simple_yaml(f.read())
+                                    elif fmt == "jsonc":
+                                        data = json.loads(_strip_jsonc(f.read()))
+                                    else:
+                                        data = json.load(f)
 
-                token_candidates.extend(
-                    (tokens, origin, "claude_oauth")
-                    for tokens, origin in read_oauth_candidates(
-                        Path.home() / "Library/Application Support/Claude/config.json"
-                    )
-                )
-
-            elif rule_type == "claude_code_keychain" and platform.system() == "Darwin":
-                from scripts.sidecar_pkg.claude_code_keychain import read_candidates
-
-                token_candidates.extend(
-                    (tokens, origin, "claude_oauth")
-                    for tokens, origin in read_candidates(
-                        custom_login_dirs(rule.get("config_dir_env", "CLAUDE_CONFIG_DIR")), mapping
-                    )
-                )
-
-            # 3. Legacy generic macOS Keychain rules
-            elif rule_type == "keychain" and platform.system() == "Darwin":
-                try:
-                    from scripts.sidecar_pkg.macos_keychain_store import read_secret
-
-                    raw_bytes = read_secret(
-                        rule.get("service_name"), group="registry:" + str(rule.get("service_name"))
-                    )
-                    if raw_bytes is not None:
-                        raw = raw_bytes.decode().strip()
-                        fmt = rule.get("format", "raw")
-                        if fmt == "json":
-                            data = json.loads(raw)
-                            candidate_tokens = {}
+                            candidate_tokens: dict[str, Any] = {}
                             for key_path, target in mapping.items():
                                 val = GenericCollector.get_nested(data, key_path)
                                 if val:
                                     candidate_tokens[target] = val
+                            if provider_id == "kimi_coding" and candidate_tokens.get(
+                                "cli_access_token"
+                            ):
+                                device_id = read_kimi_cli_device_id(Path(path))
+                                if device_id:
+                                    candidate_tokens["cli_device_id"] = device_id
                             if provider_id == "anthropic" and isinstance(data, dict):
                                 oauth_account = data.get("oauthAccount", {})
                                 if isinstance(oauth_account, dict):
@@ -4160,189 +4105,310 @@ class GenericCollector:
                                     )
                                     if email:
                                         candidate_tokens["account_id"] = email
-                        else:
-                            target = mapping.get("value")
-                            if target:
-                                candidate_tokens = {target: raw}
-                        if candidate_tokens:
-                            service = rule.get("service_name", "")
-                            token_candidates.append(
-                                (candidate_tokens, f"keychain:{service}", "keychain")
+                                if not candidate_tokens.get("account_id") and candidate_tokens.get(
+                                    "oauth_token"
+                                ):
+                                    email = discover_anthropic_oauth_email(Path(path))
+                                    if email:
+                                        candidate_tokens["account_id"] = email
+                                oauth_data = data.get("claudeAiOauth")
+                                expires_at = (
+                                    oauth_data.get("expiresAt")
+                                    if isinstance(oauth_data, dict)
+                                    else None
+                                )
+                                if isinstance(expires_at, int | float) and expires_at > 0:
+                                    # Anthropic stores this as milliseconds since epoch,
+                                    # matching IdentityExtractor.exp_from_tokens.
+                                    candidate_tokens["expiry_date"] = str(int(expires_at))
+                            # Two files can hold one token (copilot's apps.json and the
+                            # older hosts.json, or gh's hosts.yml): one credential.
+                            duplicate_key = candidate_tokens.get("api_key")
+                            is_duplicate = bool(duplicate_key) and any(
+                                c.get("api_key") == duplicate_key for c, _, _ in token_candidates
                             )
-                except Exception:
-                    logging.debug("Keychain credential unavailable")
+                            if candidate_tokens and not is_duplicate:
+                                token_candidates.append(
+                                    (
+                                        candidate_tokens,
+                                        fingerprinted_credential_origin(
+                                            f"path:{Path(path).resolve()}",
+                                            provider_id,
+                                            candidate_tokens,
+                                        ),
+                                        "file",
+                                    )
+                                )
+                                logging.info(f"  [{provider_id}] token file matched: {path}")
+                            elif not candidate_tokens and not rule.get("keyless_ok"):
+                                # A readable file with none of the mapped keys fails silently
+                                # (a logged-out CLI, a moved token). Say so once per file;
+                                # key names only, never values. ``keyless_ok`` rules point at
+                                # files that normally hold no token (e.g. keychain users).
+                                _log_keyless_file_once(provider_id, str(path))
+                        except Exception as e:
+                            logging.debug(f"Error reading file {path}: {e}")
 
-            # 4. Windows Credential Manager
-            elif rule_type == "windows_credential" and platform.system() == "Windows":
-                val = get_windows_credential(rule.get("target"))
-                if val:
-                    target = mapping.get("value")
-                    if target:
-                        token_candidates.append(
-                            ({target: val}, f"keychain:{rule.get('target')}", "keychain")
+                elif rule_type == "claude_desktop_oauth" and platform.system() == "Darwin":
+                    from scripts.sidecar_pkg.claude_desktop import read_oauth_candidates
+
+                    token_candidates.extend(
+                        (tokens, origin, "claude_oauth")
+                        for tokens, origin in read_oauth_candidates(
+                            Path.home() / "Library/Application Support/Claude/config.json"
                         )
-
-            # 5. Browser Cookies
-            elif rule_type == "cookie":
-                name_to_find = rule.get("name")
-                if platform.system() == "Darwin" and provider_id in {
-                    "anthropic",
-                    "anthropic_console",
-                }:
-                    target = mapping.get("value")
-                    if target:
-                        for val, origin in BrowserCookieExtractor.get_macos_candidates(
-                            provider_id, rule.get("domains", []), name_to_find
-                        ):
-                            token_candidates.append(({target: val}, origin, "cookie"))
-                    continue
-                if provider_id == "anthropic_console":
-                    continue
-                for domain in rule.get("domains", []):
-                    val = BrowserCookieExtractor.get_cookie(
-                        domain,
-                        name_to_find,
-                        provider_id,
-                        mapping.get("value"),
                     )
+
+                elif rule_type == "claude_code_keychain" and platform.system() == "Darwin":
+                    from scripts.sidecar_pkg.claude_code_keychain import read_candidates
+
+                    token_candidates.extend(
+                        (tokens, origin, "claude_oauth")
+                        for tokens, origin in read_candidates(
+                            local_keychain_login_dirs(),
+                            mapping,
+                        )
+                    )
+
+                # 3. Legacy generic macOS Keychain rules
+                elif rule_type == "keychain" and platform.system() == "Darwin":
+                    try:
+                        from scripts.sidecar_pkg.macos_keychain_store import read_secret
+
+                        raw_bytes = read_secret(
+                            rule.get("service_name"),
+                            group="registry:" + str(rule.get("service_name")),
+                        )
+                        if raw_bytes is not None:
+                            raw = raw_bytes.decode().strip()
+                            fmt = rule.get("format", "raw")
+                            if fmt == "json":
+                                data = json.loads(raw)
+                                candidate_tokens = {}
+                                for key_path, target in mapping.items():
+                                    val = GenericCollector.get_nested(data, key_path)
+                                    if val:
+                                        candidate_tokens[target] = val
+                                if provider_id == "anthropic" and isinstance(data, dict):
+                                    oauth_account = data.get("oauthAccount", {})
+                                    if isinstance(oauth_account, dict):
+                                        email = oauth_account.get(
+                                            "emailAddress"
+                                        ) or oauth_account.get("email")
+                                        if email:
+                                            candidate_tokens["account_id"] = email
+                            else:
+                                target = mapping.get("value")
+                                if target:
+                                    candidate_tokens = {target: raw}
+                            if candidate_tokens:
+                                service = rule.get("service_name", "")
+                                token_candidates.append(
+                                    (candidate_tokens, f"keychain:{service}", "keychain")
+                                )
+                    except Exception:
+                        logging.debug("Keychain credential unavailable")
+
+                # 4. Windows Credential Manager
+                elif rule_type == "windows_credential" and platform.system() == "Windows":
+                    val = get_windows_credential(rule.get("target"))
                     if val:
                         target = mapping.get("value")
                         if target:
-                            browser_tokens[target] = val
-                            logging.info(
-                                f"  [{provider_id}] cookie '{name_to_find}' found on {domain}"
-                            )
-                            break
-
-            # 6. Execute Command (e.g. git config)
-            elif rule_type == "exec":
-                try:
-                    cmd = rule.get("command")
-                    if cmd:
-                        result = subprocess.run(
-                            cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=5,
-                            creationflags=_subprocess_creationflags(),
-                        )
-                        if result.returncode == 0:
-                            val = result.stdout.strip()
-                            if val:
-                                target = mapping.get("value")
-                                # A command that echoes a token another rule already
-                                # found (`gh auth token` vs hosts.yml) is one credential.
-                                already_found = any(
-                                    c.get(target) == val for c, _, _ in token_candidates
-                                )
-                                if target and not already_found:
-                                    token_candidates.append(
-                                        (
-                                            {target: val},
-                                            credential_origin_for_provider(provider_id),
-                                            "exec",
-                                        )
-                                    )
-                except Exception:
-                    logging.debug("exec credential rule failed", exc_info=True)
-
-            # 7a. Specialized: grok CLI ~/.grok/auth.json uses OIDC-scope URL keys.
-            elif rule_type == "xai_grok_cli_auth":
-                grok_home = os.environ.get("GROK_HOME") or "~/.grok"
-                candidate_paths = []
-                for p in rule.get("paths", []):
-                    candidate_paths.append(
-                        os.path.join(grok_home, "auth.json")
-                        if p == "~/.grok/auth.json" and grok_home != "~/.grok"
-                        else p
-                    )
-                for path in expand_file_rule_paths(candidate_paths):
-                    try:
-                        with open(path, encoding="utf-8") as f:
-                            data = json.load(f)
-                        oidc_block = _grok_auth_scope_entry(data)
-                        if oidc_block is None:
-                            continue
-                        candidate_tokens: dict[str, Any] = {}
-                        key = oidc_block.get("key")
-                        refresh_token = oidc_block.get("refresh_token")
-                        if key:
-                            candidate_tokens["xai_access"] = key
-                        if refresh_token:
-                            candidate_tokens["xai_refresh"] = refresh_token
-                        identity = _grok_account_identity(data)
-                        if identity:
-                            candidate_tokens["account_id"] = identity
-                        first = oidc_block.get("first_name") or ""
-                        last = oidc_block.get("last_name") or ""
-                        label = f"{first} {last}".strip()
-                        if label:
-                            candidate_tokens["account_label"] = label
-                        # Grok quota collection requires an access bearer; a
-                        # refresh-only or identity-only entry is not usable.
-                        if candidate_tokens.get("xai_access"):
                             token_candidates.append(
-                                (
-                                    candidate_tokens,
-                                    fingerprinted_credential_origin(
-                                        f"path:{Path(path).resolve()}",
-                                        provider_id,
-                                        candidate_tokens,
-                                    ),
-                                    "file",
-                                )
+                                ({target: val}, f"keychain:{rule.get('target')}", "keychain")
                             )
-                            logging.info(f"  [{provider_id}] grok CLI auth.json matched: {path}")
-                    except Exception as exc:
-                        logging.debug(
-                            "xai grok CLI auth.json extraction failed for %s: %s", path, exc
+
+                # 5. Browser Cookies
+                elif rule_type == "cookie":
+                    name_to_find = rule.get("name")
+                    if platform.system() == "Darwin":
+                        target = mapping.get("value")
+                        if target:
+                            for val, origin in BrowserCookieExtractor.get_macos_candidates(
+                                provider_id, rule.get("domains", []), name_to_find
+                            ):
+                                token_candidates.append(({target: val}, origin, "cookie"))
+                        continue
+                    if provider_id == "anthropic_console":
+                        continue
+                    for domain in rule.get("domains", []):
+                        val = BrowserCookieExtractor.get_cookie(
+                            domain,
+                            name_to_find,
+                            provider_id,
+                            mapping.get("value"),
+                        )
+                        if val:
+                            target = mapping.get("value")
+                            if target:
+                                browser_tokens[target] = val
+                                logging.info(
+                                    f"  [{provider_id}] cookie '{name_to_find}' found on {domain}"
+                                )
+                                break
+
+                # 6. Execute Command (e.g. git config)
+                elif rule_type == "exec":
+                    if platform.system() == "Darwin":
+                        # gh delegates to native credential helpers; never launch
+                        # an uncontrolled security requester from the scraper.
+                        from scripts.sidecar_pkg.macos_keychain_store import (
+                            KeychainError,
+                            read_secret,
                         )
 
-            # 8. Specialized: Claude Statusline
-            elif rule_type == "file_json_statusline":
-                for path in expand_file_rule_paths(rule.get("paths", [])):
-                    if path.exists():
-                        try:
-                            # Freshness check (5 minutes)
-                            mtime = os.path.getmtime(path)
-                            if (time.time() - mtime) > 300:
-                                continue
-
-                            with open(path) as f:
-                                data = json.load(f)
-
-                            email = discover_anthropic_oauth_email(
-                                path.parent / ".credentials.json"
+                        if (
+                            provider_id == "github"
+                            and consent.service_ticket("gh:github.com") is not None
+                        ):
+                            try:
+                                raw = read_secret("gh:github.com", group="github-cli")
+                                if raw:
+                                    target = mapping.get("value")
+                                    if target:
+                                        token_candidates.append(
+                                            (
+                                                {target: raw.decode()},
+                                                "keychain:GitHub CLI",
+                                                "keychain",
+                                            )
+                                        )
+                            except (KeychainError, UnicodeError):
+                                pass
+                        continue
+                    try:
+                        cmd = rule.get("command")
+                        if cmd:
+                            result = subprocess.run(
+                                cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=5,
+                                creationflags=_subprocess_creationflags(),
                             )
-                            name_map = {"five_hour": "Session Window", "seven_day": "Weekly Window"}
+                            if result.returncode == 0:
+                                val = result.stdout.strip()
+                                if val:
+                                    target = mapping.get("value")
+                                    # A command that echoes a token another rule already
+                                    # found (`gh auth token` vs hosts.yml) is one credential.
+                                    already_found = any(
+                                        c.get(target) == val for c, _, _ in token_candidates
+                                    )
+                                    if target and not already_found:
+                                        token_candidates.append(
+                                            (
+                                                {target: val},
+                                                credential_origin_for_provider(provider_id),
+                                                "exec",
+                                            )
+                                        )
+                    except Exception:
+                        logging.debug("exec credential rule failed", exc_info=True)
 
-                            # Rate Limits
-                            limits = data.get("rate_limits", {})
-                            for key, info in limits.items():
-                                u_type = name_map.get(key, key.replace("_", " ").title())
-                                pct_used = float(info.get("used_percentage", 0.0))
-                                reset_ts = info.get("resets_at")
-                                results.append(
-                                    {
-                                        "service_name": f"Claude ({u_type})",
-                                        "icon": icon,
-                                        "remaining": f"{(100 - pct_used):.1f}%",
-                                        "unit": "capacity",
-                                        "reset": str(datetime.datetime.fromtimestamp(reset_ts))
-                                        if reset_ts
-                                        else "—",
-                                        "health": "good" if pct_used < 70 else "warning",
-                                        "pace": "Active",
-                                        "detail": f"{pct_used:.1f}% used [Sidecar]",
-                                        "data_source": "local",
-                                        "account_id": email or None,
-                                        "account_label": email or None,
-                                        "metadata": {"used": pct_used, "resets_at": reset_ts},
-                                    }
+                # 7a. Specialized: grok CLI ~/.grok/auth.json uses OIDC-scope URL keys.
+                elif rule_type == "xai_grok_cli_auth":
+                    grok_home = os.environ.get("GROK_HOME") or "~/.grok"
+                    candidate_paths = []
+                    for p in rule.get("paths", []):
+                        candidate_paths.append(
+                            os.path.join(grok_home, "auth.json")
+                            if p == "~/.grok/auth.json" and grok_home != "~/.grok"
+                            else p
+                        )
+                    for path in expand_file_rule_paths(candidate_paths):
+                        try:
+                            with open(path, encoding="utf-8") as f:
+                                data = json.load(f)
+                            oidc_block = _grok_auth_scope_entry(data)
+                            if oidc_block is None:
+                                continue
+                            candidate_tokens: dict[str, Any] = {}
+                            key = oidc_block.get("key")
+                            refresh_token = oidc_block.get("refresh_token")
+                            if key:
+                                candidate_tokens["xai_access"] = key
+                            if refresh_token:
+                                candidate_tokens["xai_refresh"] = refresh_token
+                            identity = _grok_account_identity(data)
+                            if identity:
+                                candidate_tokens["account_id"] = identity
+                            first = oidc_block.get("first_name") or ""
+                            last = oidc_block.get("last_name") or ""
+                            label = f"{first} {last}".strip()
+                            if label:
+                                candidate_tokens["account_label"] = label
+                            # Grok quota collection requires an access bearer; a
+                            # refresh-only or identity-only entry is not usable.
+                            if candidate_tokens.get("xai_access"):
+                                token_candidates.append(
+                                    (
+                                        candidate_tokens,
+                                        fingerprinted_credential_origin(
+                                            f"path:{Path(path).resolve()}",
+                                            provider_id,
+                                            candidate_tokens,
+                                        ),
+                                        "file",
+                                    )
                                 )
+                                logging.info(
+                                    f"  [{provider_id}] grok CLI auth.json matched: {path}"
+                                )
+                        except Exception as exc:
+                            logging.debug(
+                                "xai grok CLI auth.json extraction failed for %s: %s", path, exc
+                            )
 
-                        except Exception:
-                            logging.debug("Statusline file rule failed", exc_info=True)
+                # 8. Specialized: Claude Statusline
+                elif rule_type == "file_json_statusline":
+                    for path in expand_file_rule_paths(rule.get("paths", [])):
+                        if path.exists():
+                            try:
+                                # Freshness check (5 minutes)
+                                mtime = os.path.getmtime(path)
+                                if (time.time() - mtime) > 300:
+                                    continue
+
+                                with open(path) as f:
+                                    data = json.load(f)
+
+                                email = discover_anthropic_oauth_email(
+                                    path.parent / ".credentials.json"
+                                )
+                                name_map = {
+                                    "five_hour": "Session Window",
+                                    "seven_day": "Weekly Window",
+                                }
+
+                                # Rate Limits
+                                limits = data.get("rate_limits", {})
+                                for key, info in limits.items():
+                                    u_type = name_map.get(key, key.replace("_", " ").title())
+                                    pct_used = float(info.get("used_percentage", 0.0))
+                                    reset_ts = info.get("resets_at")
+                                    results.append(
+                                        {
+                                            "service_name": f"Claude ({u_type})",
+                                            "icon": icon,
+                                            "remaining": f"{(100 - pct_used):.1f}%",
+                                            "unit": "capacity",
+                                            "reset": str(datetime.datetime.fromtimestamp(reset_ts))
+                                            if reset_ts
+                                            else "—",
+                                            "health": "good" if pct_used < 70 else "warning",
+                                            "pace": "Active",
+                                            "detail": f"{pct_used:.1f}% used [Sidecar]",
+                                            "data_source": "local",
+                                            "account_id": email or None,
+                                            "account_label": email or None,
+                                            "metadata": {"used": pct_used, "resets_at": reset_ts},
+                                        }
+                                    )
+
+                            except Exception:
+                                logging.debug("Statusline file rule failed", exc_info=True)
 
         if browser_tokens:
             token_candidates.append((browser_tokens, f"cookie:{provider_id}/session", "cookie"))
@@ -4360,6 +4426,20 @@ class GenericCollector:
                 )
             ]
 
+        # Cookie fragments may combine only within one browser/profile source.
+        merged_candidates: list[tuple[dict[str, Any], str, str]] = []
+        for candidate_tokens, origin, kind in token_candidates:
+            match = (
+                next((item for item in merged_candidates if item[1:] == (origin, kind)), None)
+                if kind == "cookie" and provider_id not in {"anthropic", "anthropic_console"}
+                else None
+            )
+            if match is not None:
+                match[0].update(candidate_tokens)
+            else:
+                merged_candidates.append((candidate_tokens, origin, kind))
+        token_candidates = merged_candidates
+
         # Convert antigravity's raw ISO8601 token.expiry into expiry_date (ms
         # epoch, matching gemini's oauth_creds.json convention) so the server's
         # token_cache._is_staler can compare freshness. Without this, agy's
@@ -4372,6 +4452,14 @@ class GenericCollector:
         # re-poisoning the shared cache entry every cycle until the user re-runs
         # agy. Let a sidecar with a live agy session keep serving quota instead.
         for tokens, origin, candidate_kind in token_candidates:
+            source_id = (
+                consent.source_for_origin(provider_id, origin)
+                if platform.system() == "Darwin"
+                else None
+            )
+            ticket = tickets.get(source_id) if source_id else None
+            if source_id and not consent.POLICY.current(ticket):
+                continue
             if provider_id == "antigravity" and tokens.get("_raw_expiry"):
                 raw_expiry = tokens.pop("_raw_expiry")
                 try:
@@ -4688,6 +4776,7 @@ class GenericCollector:
                             "account_label": tokens.get("account_label"),
                             "metadata": {
                                 **tokens,
+                                **({"keychain_consent": consent.stamp(ticket)} if ticket else {}),
                                 "provider_id": provider_id,
                                 "credential_origin": origin,
                                 "identity_pending": identity_pending,
@@ -4953,6 +5042,11 @@ def _post_credential_manifest(
     # Empty entries still ship with completed_providers: that means a clean
     # provider scan found no unresolved origins and can clear stale rows. A
     # provider omitted from completed_providers is left untouched.
+    from scripts.sidecar_pkg.source_consent import filter_egress
+
+    filtered = filter_egress({"entries": entries, "observations": observations})
+    entries = filtered["entries"]
+    observations = filtered["observations"]
     body = json.dumps(
         {
             "sidecar_id": sidecar_id,
@@ -5044,6 +5138,9 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     # Every store is re-examined once per cycle: a browser that held one
     # open a moment ago may have released it, and a store that was readable
     # may have been locked since.
+    from scripts.sidecar_pkg.source_consent import POLICY
+
+    POLICY.configure(config)
     reset_cookie_store_tracking()
 
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
@@ -5541,6 +5638,9 @@ class DaemonRunner:
         on_status_change: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config
+        from scripts.sidecar_pkg.source_consent import POLICY
+
+        POLICY.configure(config)
         global _CLAUDE_KEYCHAIN_PERMISSION
         _CLAUDE_KEYCHAIN_PERMISSION = self._keychain_renewal_allowed
         # Heartbeat: how often the sidecar pings the server for instructions.
@@ -5580,7 +5680,9 @@ class DaemonRunner:
     # ------------------------------------------------------------------
 
     def _keychain_renewal_allowed(self) -> bool:
-        return self._config.get("claude_keychain_renewal") is True
+        from scripts.sidecar_pkg.source_consent import POLICY
+
+        return self._config.get("claude_keychain_renewal") is True and POLICY.renewal_allowed()
 
     @property
     def status(self) -> str:
@@ -6305,7 +6407,11 @@ def main():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["--authorize-claude-keychain"]:
+    if sys.argv[1:2] == ["--authorize-keychain-source"]:
+        from scripts.sidecar_pkg.source_setup import authorization_command
+
+        authorization_command(sys.argv[1:])
+    elif sys.argv[1:2] == ["--authorize-claude-keychain"]:
         from scripts.sidecar_pkg.keychain_authorization import authorization_command
 
         authorization_command(sys.argv[1:])

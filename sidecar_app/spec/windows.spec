@@ -77,6 +77,11 @@ a = Analysis(
         # Declared explicitly (guarded by tests/unit/test_sidecar_release_contract.py) so a
         # lazily imported module can never be left out of a frozen build.
         "scripts.sidecar_pkg.credentials",
+        "scripts.sidecar_pkg.source_catalog",
+        "scripts.sidecar_pkg.source_catalog_data",
+        "scripts.sidecar_pkg.source_consent",
+        "scripts.sidecar_pkg.source_settings",
+        "scripts.sidecar_pkg.source_setup",
         # Classified browser cookie stores (locked / app-bound). Imported at
         # module level in scripts/sidecar.py, which this spec bundles as data,
         # so PyInstaller never scans it.

@@ -13,7 +13,13 @@ from scripts import sidecar
 from scripts.sidecar_pkg import macos_cookies
 from scripts.sidecar_pkg import macos_keychain_store as keychain
 from scripts.sidecar_pkg.macos_keychain_store import KeychainError
-from tests.macos_cookie_fixtures import FIXED_EXPIRY, chromium_store, encrypted, safari_blob
+from tests.macos_cookie_fixtures import (
+    FIXED_EXPIRY,
+    approved_keychain_readers,  # noqa: F401
+    chromium_store,
+    encrypted,
+    safari_blob,
+)
 
 
 @pytest.fixture(autouse=True)

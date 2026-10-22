@@ -28,6 +28,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.macos_cookie_fixtures import approved_keychain_readers  # noqa: F401
+
 # ---------------------------------------------------------------------------
 # scripts/sidecar_pkg/credentials — token fetch + redeem
 # ---------------------------------------------------------------------------
@@ -748,6 +750,8 @@ class TestCredentialCandidateOwnership:
     def test_chatgpt_cli_and_cookie_keep_separate_owners(self, tmp_path, monkeypatch):
         import scripts.sidecar as sc
 
+        monkeypatch.setattr(sc.platform, "system", lambda: "Linux")
+
         auth_file = tmp_path / "auth.json"
         auth_file.write_text(
             json.dumps(
@@ -928,6 +932,8 @@ class TestCredentialCandidateOwnership:
 
     def test_env_cookie_alias_does_not_emit_duplicate_cookie_candidate(self, monkeypatch):
         import scripts.sidecar as sc
+
+        monkeypatch.setattr(sc.platform, "system", lambda: "Linux")
 
         monkeypatch.setenv("OLLAMA_SESSION_TOKEN", "env-cookie")
         monkeypatch.setattr(

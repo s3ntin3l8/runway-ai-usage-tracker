@@ -48,6 +48,11 @@ class KeychainClient:
         with self._state_lock:
             self._blocked[group] = reason
 
+    def clear_access(self, group: str) -> None:
+        """Called only after an explicit local setup verified fresh worker access."""
+        with self._state_lock:
+            self._blocked.pop(group, None)
+
     @staticmethod
     def _reap(process: subprocess.Popen[bytes]) -> None:
         with contextlib.suppress(OSError):
@@ -174,7 +179,9 @@ class KeychainClient:
                 raise KeychainError("unavailable")
             frame = encode_frame({"operation": operation, "query": query, "values": values})
             # The caller may have waited behind another operation: check just before dispatch.
-            if operation != "copy" and (allowed is None or allowed() is not True):
+            if (allowed is not None and allowed() is not True) or (
+                operation != "copy" and allowed is None
+            ):
                 raise KeychainError("permission disabled")
             process = self._start()
             assert process.stdin is not None and process.stdout is not None
@@ -198,6 +205,8 @@ class KeychainClient:
                     if reason in {"denied", "missing", "failed", "policy unavailable"}
                     else "unavailable"
                 )
+            if allowed is not None and allowed() is not True:
+                raise KeychainError("permission disabled")
             return response.get("result")
         except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
             if self._cancelled(generation):

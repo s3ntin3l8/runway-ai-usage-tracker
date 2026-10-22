@@ -45,12 +45,43 @@ class _WorkerAPI:
     ) -> None:
         self._group = group
         self._allowed = allowed
+        self._read_ticket: Any = None
 
     def call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
+        from scripts.sidecar_pkg import source_consent as consent
         from scripts.sidecar_pkg.keychain_client import get_keychain_client
 
+        service = query.get("service") or values.get("service")
+        if service is None and self._group.startswith("storage:"):
+            service = self._group.removeprefix("storage:")
+        if (
+            self._group == "claude-code"
+            and service is not None
+            and not (
+                service == RECOVERY_SERVICE
+                or service == "Claude Code-credentials"
+                or service.startswith("Claude Code-credentials-")
+            )
+        ):
+            raise KeychainError("permission disabled")
+        ticket = (
+            consent.POLICY.ticket("anthropic.claude-code")
+            if self._group == "claude-code"
+            else consent.service_ticket(service)
+            if isinstance(service, str)
+            else self._read_ticket
+        )
+        if ticket is None or not consent.POLICY.current(ticket):
+            raise KeychainError("permission disabled")
+        self._read_ticket = ticket
+
+        def permitted() -> bool:
+            return consent.POLICY.current(ticket) and (
+                operation == "copy" or self._allowed() is True
+            )
+
         return get_keychain_client().call(
-            operation, query, values, group=self._group, allowed=self._allowed
+            operation, query, values, group=self._group, allowed=permitted
         )
 
     def copy(self, query: dict[str, Any]) -> Any:

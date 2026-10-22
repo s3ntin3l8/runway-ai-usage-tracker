@@ -409,3 +409,30 @@ Read-only native sources cannot invoke OAuth refresh. Stable machine-bound origi
 identify each Desktop cache slot or CLI Keychain service; changed inferred credentials
 must re-verify their holder and quota. Refresh secrets are not forwarded by either
 new Keychain discovery rule. Ordinary credential-file fallback remains supported.
+
+## Local sidecar Keychain source settings
+
+The loopback sidecar settings UI exposes GET /sources and POST /sources, with the
+existing exact Host and same-origin POST checks. These are local settings routes,
+not server-side authorization endpoints. GET is inert and returns only catalog
+labels, capability revisions, read intent, state, renewal support, dependency and
+new-scraper announcement state. It never returns credentials or opens native UI.
+
+POST accepts action plus source_id for enable, disable, dismiss or authorize;
+enable_all and disable_all operate on currently known sources. The renewal
+action accepts an exact boolean value and requires Claude Code read consent first.
+Authorize is an explicit local, bounded, single-flight packaged-app setup attempt.
+Unknown actions/IDs and malformed requests fail without credential IO.
+
+Local config stores keychain_sources entries with exact-boolean read, catalog
+revision, monotonic generation and approved destination. The separate
+claude_keychain_renewal permission defaults off. keychain_announcements records
+dismissed revisions; keychain_withdrawals records pending source generations.
+Config replacement is atomic and owner-only on macOS. File/env collection is
+unaffected; Windows Credential Manager is outside this macOS permission model.
+
+Until #783's authenticated source lifecycle is implemented, newly opted-in
+Keychain credential cards and matching manifest observations are withheld from
+server forwarding. Existing server credentials are not silently revoked by a
+local checkbox. See #780 and docs/sidecar-source-authorization.md for the full
+consent, withdrawal, remote-control and acceptance contract.

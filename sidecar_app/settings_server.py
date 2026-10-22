@@ -262,6 +262,20 @@ $css</style>
     </div>
   </form>
 
+  <section class="card" aria-labelledby="sources-heading">
+    <h2 class="section-label" id="sources-heading">Keychain scrapers</h2>
+    <p class="field-hint">Choose which scrapers may use your Mac’s Keychain. File and environment sources continue normally. Access credentials may be sent to your paired server; refresh tokens remain local.</p>
+    <p id="sources-announcement" role="status" hidden>New Keychain scraper — opt in now. Review the sources below.</p>
+    <div class="actions" style="margin-top:1rem">
+      <button type="button" class="btn btn-ghost" onclick="sourceAction('enable_all')">Enable all</button>
+      <button type="button" class="btn btn-ghost" onclick="sourceAction('disable_all')">Disable all</button>
+    </div>
+    <div id="sources-list"></div>
+    <label class="field" style="margin-top:1rem"><span><input type="checkbox" id="keychain-renewal" onchange="sourceAction('renewal', null, this.checked)"> Allow Claude Code Keychain renewal/write-back</span></label>
+    <p class="field-hint">Renewal also requires keep-alive and a verified compatible Keychain policy. Keychain credential sharing is unavailable until your server supports source controls.</p>
+    <p id="sources-error" role="alert"></p>
+  </section>
+
   <!-- Quick links -->
   <div class="card" style="padding: 1rem 1.25rem;">
     <div class="section-label">Quick Links</div>
@@ -319,6 +333,56 @@ async function pollStatus() {
 
 pollStatus();
 setInterval(pollStatus, 5000);
+
+async function sourceAction(action, source_id, value) {
+  try {
+    const response = await fetch('/sources', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action, source_id, value})});
+    if (!response.ok) throw new Error('Could not apply source action');
+    document.getElementById('sources-error').textContent = '';
+    await refreshSources();
+  } catch (error) { document.getElementById('sources-error').textContent = error.message; }
+}
+
+let lastSourceReport = null;
+
+async function refreshSources() {
+  const response = await fetch('/sources');
+  if (!response.ok) return;
+  const report = await response.json();
+  const serialized = JSON.stringify(report);
+  if (serialized === lastSourceReport) return;
+  lastSourceReport = serialized;
+  const focusedId = document.activeElement && document.activeElement.id;
+  const list = document.getElementById('sources-list');
+  list.replaceChildren();
+  document.getElementById('sources-announcement').hidden = !report.sources.some(source => source.new);
+  for (const source of report.sources) {
+    const row = document.createElement('div'); row.className = 'field'; row.style.marginTop = '1rem';
+    const label = document.createElement('label');
+    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.id = 'source-' + source.id; checkbox.checked = source.read;
+    checkbox.onchange = () => sourceAction(checkbox.checked ? 'enable' : 'disable', source.id);
+    label.append(checkbox, document.createTextNode(' Use Keychain: ' + source.label));
+    const detail = document.createElement('p'); detail.className = 'field-hint'; detail.textContent = (source.state === 'Withdrawal pending' ? 'Off · server withdrawal pending' : source.state) + ' · ' + source.dependency;
+    row.append(label, detail);
+    if (source.read) {
+      const authorize = document.createElement('button'); authorize.type = 'button'; authorize.className = 'btn btn-ghost'; authorize.textContent = 'Authorize'; authorize.id = 'authorize-' + source.id;
+      authorize.disabled = !report.setup_available || report.sources.some(item => item.state === 'Connecting');
+      if (!report.setup_available) authorize.title = 'Authorization requires the packaged macOS app';
+      authorize.onclick = () => sourceAction('authorize', source.id); row.append(authorize);
+    }
+    if (source.new) {
+      const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.className = 'btn btn-ghost'; dismiss.textContent = 'Dismiss new scraper notice'; dismiss.id = 'dismiss-' + source.id;
+      dismiss.onclick = () => sourceAction('dismiss', source.id); row.append(dismiss);
+    }
+    if (source.id === 'anthropic.claude-code') {
+      const renewal = document.getElementById('keychain-renewal'); renewal.checked = source.renewal_requested; renewal.disabled = !source.read;
+    }
+    list.append(row);
+  }
+  if (focusedId) document.getElementById(focusedId)?.focus();
+}
+refreshSources().catch(() => {});
+setInterval(() => refreshSources().catch(() => {}), 5000);
 
 // ---- Key visibility toggle ------------------------------------------------
 
@@ -526,6 +590,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._serve_settings_page()
         elif path == "/pair":
             self._serve_pair_page()
+        elif path == "/sources":
+            from scripts.sidecar_pkg.source_settings import report
+
+            self._send_json(report(self.server.get_config()))
         elif path == "/status":
             self._serve_status()
         elif path == "/logs":
@@ -555,7 +623,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         path = urlparse(self.path).path
-        if path == "/save":
+        if path == "/sources":
+            self._handle_sources()
+        elif path == "/save":
             self._handle_save()
         elif path == "/pair":
             self._handle_pair()
@@ -592,6 +662,36 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"lines": [line.rstrip() for line in lines]})
         except Exception as exc:
             self._send_json({"lines": [], "error": str(exc)})
+
+    def _handle_sources(self) -> None:
+        from scripts.sidecar_pkg.source_settings import update
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 16384:
+                raise ValueError("Invalid source request size")
+            command = json.loads(self.rfile.read(length))
+            if isinstance(command, dict) and command.get("action") == "authorize":
+                from scripts.sidecar_pkg.source_catalog import catalog
+                from scripts.sidecar_pkg.source_setup import SETUP
+
+                source_id = command.get("source_id")
+                if not isinstance(source_id, str) or source_id not in catalog():
+                    raise ValueError("Unknown scraper")
+                state = SETUP.start(source_id)
+                self._send_json(
+                    {"ok": state != "Off", "state": state}, 200 if state != "Off" else 409
+                )
+                return
+            updated = update(self.server.get_config(), command)
+            self.server.save_config(updated)
+        except (ValueError, TypeError):
+            self._send_json({"ok": False, "error": "Invalid source action"}, 400)
+            return
+        except OSError:
+            self._send_json({"ok": False, "error": "Could not save local source permissions"}, 500)
+            return
+        self._send_json({"ok": True})
 
     def _handle_save(self) -> None:
         length = int(self.headers.get("Content-Length", 0))

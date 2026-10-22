@@ -10,7 +10,7 @@ import pytest
 from scripts import sidecar
 from scripts.sidecar_pkg import macos_keychain_store as keychain
 from scripts.sidecar_pkg.macos_keychain_store import KeychainError
-from tests.macos_cookie_fixtures import encrypted
+from tests.macos_cookie_fixtures import approved_keychain_readers, encrypted  # noqa: F401
 
 
 @pytest.fixture
@@ -328,7 +328,7 @@ def test_cookie_rotation_cannot_inherit_base_or_provider_tag(monkeypatch, provid
             {
                 "type": "cookie",
                 "name": "sessionKey",
-                "domains": ["claude.ai"],
+                "domains": ["claude.ai"] if provider == "anthropic" else ["console.anthropic.com"],
                 "mapping": {"value": field},
             }
         ]

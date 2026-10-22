@@ -77,7 +77,10 @@ def block_access() -> None:
 def read_candidates(
     directories: list[Path], mapping: dict[str, str]
 ) -> list[tuple[dict[str, Any], str]]:
-    if access_blocked():
+    from scripts.sidecar_pkg import source_consent as consent
+
+    ticket = consent.POLICY.ticket("anthropic.claude-code")
+    if ticket is None or access_blocked():
         return []
     account = account_name()
     candidates = []
@@ -127,4 +130,4 @@ def read_candidates(
             candidates.append((tokens, f"keychain:{service}"))
         except (ValueError, TypeError, AttributeError):
             _warn(service, "unsupported JSON layout")
-    return candidates
+    return candidates if consent.POLICY.current(ticket) else []

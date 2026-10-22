@@ -10,6 +10,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from scripts.sidecar_pkg import macos_keychain_store as keychain
 from scripts.sidecar_pkg.macos_keychain_store import KeychainError
+from scripts.sidecar_pkg.source_catalog_data import KEYCHAIN_RULES
+from tests.macos_cookie_fixtures import approved_keychain_readers  # noqa: F401
 
 ACCOUNT = "11111111-1111-4111-8111-111111111111"
 SLOT = f"acct:{ACCOUNT}|client:org:api.anthropic.com:user:profile user:inference"
@@ -26,6 +28,13 @@ def encrypted(value):
 
 @pytest.fixture
 def desktop(tmp_path, monkeypatch):
+    from scripts.sidecar_pkg import source_consent as consent
+    from scripts.sidecar_pkg.source_catalog_data import KEYCHAIN_RULES
+
+    rule = next(
+        r for r in KEYCHAIN_RULES["anthropic"]["rules"] if r["type"] == "claude_desktop_oauth"
+    )
+    token = consent._RULE.set(("anthropic", rule))
     from scripts.sidecar_pkg import macos_cookies
 
     monkeypatch.setattr(macos_cookies, "_KEY_CACHE", {})
@@ -37,7 +46,8 @@ def desktop(tmp_path, monkeypatch):
 
     monkeypatch.setattr(keychain, "read_secret", lookup)
     path = tmp_path / "config.json"
-    return path, calls
+    yield path, calls
+    consent._RULE.reset(token)
 
 
 def test_desktop_deduplicates_v2_and_never_forwards_refresh(desktop):
@@ -188,7 +198,15 @@ def test_production_rule_emits_pending_oauth_without_inheriting_other_account(de
     )
     cards, blocked = sidecar.GenericCollector.collect_provider(
         "anthropic",
-        {"rules": [{"type": "claude_desktop_oauth"}]},
+        {
+            "rules": [
+                next(
+                    rule
+                    for rule in KEYCHAIN_RULES["anthropic"]["rules"]
+                    if rule["type"] == "claude_desktop_oauth"
+                )
+            ]
+        },
         account_label_hints={"anthropic": {"provider:anthropic": "wrong@example.com"}},
     )
     assert len(cards) == len(blocked) == 1
@@ -363,12 +381,23 @@ def test_native_credential_origin_is_not_written_to_diagnostic_logs(
         claude_desktop,
         "read_oauth_candidates",
         lambda path: [
-            ({"oauth_token": "private-access", "oauth_read_only": "1"}, "keychain:private-origin")
+            (
+                {"oauth_token": "private-access", "oauth_read_only": "1"},
+                "keychain:Claude Desktop/oauth/private-origin",
+            )
         ],
     )
     cards, _ = sidecar.GenericCollector.collect_provider(
         "anthropic",
-        {"rules": [{"type": "claude_desktop_oauth"}]},
+        {
+            "rules": [
+                next(
+                    rule
+                    for rule in KEYCHAIN_RULES["anthropic"]["rules"]
+                    if rule["type"] == "claude_desktop_oauth"
+                )
+            ]
+        },
         account_label_hints={"anthropic": {"provider:anthropic": provider_hint}}
         if provider_hint
         else None,

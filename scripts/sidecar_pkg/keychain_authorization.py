@@ -16,12 +16,16 @@ from scripts.sidecar_pkg.macos_keychain_store import _NativeAPI
 AUTHORIZATION_TIMEOUT = 60
 
 
-def authorize_once(api: _NativeAPI, services: list[str], account: str) -> None:
+def authorize_once(api: _NativeAPI, services: list[str], account: str | None) -> None:
     """Select without UI, then allow consent for exactly one existing item read."""
     selected: list[tuple[str, dict[str, Any]]] = []
     for service in services:
         try:
-            matches = api.call("copy", {"service": service, "account": account}, {})
+            matches = api.call(
+                "copy",
+                {"service": service, **({"account": account} if account is not None else {})},
+                {},
+            )
         except KeychainError as exc:
             if exc.reason == "missing":
                 continue
@@ -37,14 +41,18 @@ def authorize_once(api: _NativeAPI, services: list[str], account: str) -> None:
     reference = item.get("persistent")
     if not isinstance(reference, bytes) or not reference:
         raise KeychainError("unavailable")
-    if item.get("service") != service or item.get("account") != account:
+    if (
+        item.get("service") != service
+        or not isinstance(item.get("account"), str)
+        or (account is not None and item.get("account") != account)
+    ):
         raise KeychainError("identity changed")
     result = api.authorize_read(reference)
     if (
         not isinstance(result, dict)
         or result.get("persistent") != reference
         or result.get("service") != service
-        or result.get("account") != account
+        or result.get("account") != item.get("account")
     ):
         raise KeychainError("identity changed")
     if not isinstance(result.get("data"), bytes) or not result["data"]:

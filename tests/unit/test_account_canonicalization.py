@@ -537,7 +537,14 @@ class TestSidecarIdentityPrecedence:
 
     def test_anthropic_keychain_identity_comes_from_its_own_payload(self, monkeypatch):
         import scripts.sidecar as sidecar
-        from scripts.sidecar_pkg import macos_keychain_store
+        from scripts.sidecar_pkg import macos_keychain_store, source_consent
+        from scripts.sidecar_pkg.source_catalog_data import KEYCHAIN_RULES
+
+        monkeypatch.setattr(
+            source_consent,
+            "POLICY",
+            source_consent.SourcePolicy(source_consent.SourcePolicy.enable_all({})),
+        )
 
         monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(
@@ -555,25 +562,16 @@ class TestSidecarIdentityPrecedence:
             {
                 "name": "Claude",
                 "rules": [
-                    {
-                        "type": "keychain",
-                        "service_name": "Claude Code-credentials",
-                        "format": "json",
-                        "mapping": {
-                            "claudeAiOauth.accessToken": "oauth_token",
-                        },
-                    }
+                    next(
+                        rule
+                        for rule in KEYCHAIN_RULES["anthropic"]["rules"]
+                        if rule["type"] == "claude_code_keychain"
+                    )
                 ],
             },
         )
         assert [card["account_id"] for card in cards] == ["keychain@example.com"]
-        assert blocked == [
-            {
-                "provider_id": "anthropic",
-                "credential_origin": "keychain:Claude Code-credentials",
-                "account_id": "keychain@example.com",
-            }
-        ]
+        assert blocked == []
 
     def test_gemini_stamp_reads_collected_id_token(self, tmp_path, monkeypatch):
         """Covers creds under {{CONFIG_DIR:gemini}}, not just ~/.gemini."""

@@ -24,6 +24,13 @@ def unlocked():
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
+    from scripts.sidecar_pkg import source_consent as consent
+
+    monkeypatch.setattr(
+        consent,
+        "POLICY",
+        consent.SourcePolicy(consent.SourcePolicy.enable_all({"claude_keychain_renewal": True})),
+    )
     snapshot = tmp_path / "synthetic-store.plist"
     fault = tmp_path / "synthetic-fault"
     snapshot.write_bytes(
