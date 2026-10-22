@@ -2,7 +2,7 @@
 
 Never collected by pytest. Run only with --isolated-synthetic-only and a packaged
 Runway executable. Source workers use explicit private Keychains on every query.
-Packaged IO is refused until it has an equivalent verified scoping boundary.
+Both source and packaged workers receive explicit scope through the private protocol.
 """
 
 from __future__ import annotations
@@ -53,16 +53,21 @@ def environment_snapshot():
 
 
 class Fixture:
-    def __init__(self, package: Path):
+    def __init__(
+        self, package: Path, *, source_native_io=True, protected=True, package_targets=False
+    ):
         from scripts.sidecar_pkg.macos_keychain_store import _NativeAPI
 
         self.api = _NativeAPI()
         self.package = package
+        self.source_native_io = source_native_io
+        self.package_targets = package_targets
         self.refs = []
         self.keychains = []
         self.password = secrets.token_hex(24).encode()
         self.directory = tempfile.TemporaryDirectory(
-            prefix="runway-native-526-", dir=Path.home() / "Library/Keychains"
+            prefix="runway-native-526-",
+            dir=Path.home() / "Library/Keychains" if protected else None,
         )
         self.cleanup = {}
         p = c.c_void_p
@@ -128,13 +133,41 @@ class Fixture:
         return sorted(Path(self.directory.name).glob("fixture-*.keychain*"))
 
     def command(self):
-        return scoped_command(Path(self.directory.name), self.paths(), self.package)
+        return native_command(self.package, self.source_native_io)
 
     def unlock(self):
         for kc in self.keychains:
             self.check(self.api.sec.SecKeychainUnlock(kc, len(self.password), self.password, True))
 
     def add(self, service=DEFAULT, account=ACCOUNT, data=None, *, keychain=0):
+        if self.package_targets:
+            from scripts.sidecar_pkg.keychain_client import KeychainClient
+            from scripts.sidecar_pkg.macos_keychain_store import RECOVERY_SERVICE
+            from tests.native_keychain_isolation import validate_scope
+
+            assert service == RECOVERY_SERVICE
+            paths = validate_scope(Path(self.directory.name), [self.paths()[keychain]])
+            scope = {"keychains": [str(path) for path in paths]}
+            client = KeychainClient(command=self.command(), timeout=5)
+            try:
+                client.call(
+                    "add",
+                    scope,
+                    {
+                        "service": service,
+                        "account": account,
+                        "data": data if data is not None else payload(),
+                    },
+                    group="claude-code",
+                    allowed=lambda: True,
+                )
+                matches = client.call(
+                    "copy", dict(scope, service=service, account=account), {}, group="claude-code"
+                )
+                assert len(matches) == 1
+                return matches[0]["persistent"]
+            finally:
+                client.close()
         api, p = self.api, c.c_void_p
         trusted = []
         for executable in (None, str(self.package)):
@@ -190,28 +223,10 @@ class Fixture:
             assert all(self.cleanup.values()), "native fixture changed user Keychain metadata"
 
 
-def scoped_command(root, paths, package):
-    command = [
-        sys.executable,
-        str(Path(__file__).resolve()),
-        "--native-worker",
-        "--source-native-io",
-        "--package",
-        str(package),
-        "--fixture-root",
-        str(root),
-    ]
-    for path in paths:
-        command.extend(["--fixture-keychain", str(path)])
-    return command
-
-
-def native_worker(args):
-    from scripts.sidecar_pkg import keychain_worker
-    from tests.native_keychain_isolation import scoped_api
-
-    keychain_worker._NativeAPI = lambda: scoped_api(args.fixture_root, args.fixture_keychain)
-    keychain_worker.worker_main()
+def native_command(package, source_native_io):
+    if source_native_io:
+        return [sys.executable, str(ROOT / "scripts/sidecar_pkg/keychain_worker.py")]
+    return [str(package), "--runway-keychain-worker"]
 
 
 def child(args):
@@ -223,13 +238,19 @@ def child(args):
     from scripts.sidecar_pkg import keychain_client as clients
     from scripts.sidecar_pkg.macos_keychain_store import KeychainError, KeychainStore, _WorkerAPI
 
+    if args.recovery_service_targets:
+        global DEFAULT
+        from scripts.sidecar_pkg.macos_keychain_store import RECOVERY_SERVICE
+
+        DEFAULT = RECOVERY_SERVICE
+        renewal.service_candidates = lambda unused: [RECOVERY_SERVICE]
     assert os.environ.get("RUNWAY_NATIVE_SYNTHETIC_ACCEPTANCE") == "1"
     os.environ.pop("CLAUDE_SECURESTORAGE_CONFIG_DIR", None)
     if args.suffix:
         os.environ["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = CUSTOM_DIR
     renewal.account_name = lambda: ACCOUNT
     client = clients.KeychainClient(
-        command=scoped_command(args.fixture_root, args.fixture_keychain, args.package),
+        command=native_command(args.package, args.source_native_io),
         timeout=5,
     )
     clients._CLIENT = client
@@ -267,6 +288,10 @@ def child(args):
                 os._exit(77)
             if args.mode.endswith("failed"):
                 raise KeychainError("failed")
+        from tests.native_keychain_isolation import validate_scope
+
+        paths = validate_scope(args.fixture_root, args.fixture_keychain)
+        query = dict(query, keychains=[str(path) for path in paths])
         value = original(self, operation, query, values)
         if active and args.mode.endswith("after_save"):
             os._exit(77)
@@ -333,16 +358,22 @@ def child(args):
 
 
 def main(args):
-    if not args.source_native_io:
-        raise ValueError("native acceptance requires the scoped source worker")
+    if args.recovery_service_targets:
+        global DEFAULT
+        from scripts.sidecar_pkg.macos_keychain_store import RECOVERY_SERVICE
+
+        DEFAULT = RECOVERY_SERVICE
     from scripts.sidecar_pkg import keychain_client as clients
     from scripts.sidecar_pkg.claude_code_keychain import service_candidates
     from scripts.sidecar_pkg.macos_keychain_store import KeychainStore
     from tests.keychain_policy_fixture import capture, compare
 
     report = {
-        "scope": "explicitly-scoped-source-native-synthetic",
-        "packaged_native_io_exercised": False,
+        "scope": "explicitly-scoped-native-synthetic",
+        "packaged_native_io_exercised": not args.source_native_io,
+        "protected_targets": args.source_native_io or args.recovery_service_targets,
+        "recovery_service_targets": args.recovery_service_targets,
+        "service_derivation_exercised": not args.recovery_service_targets,
         "real_credential_reads": 0,
         "real_credential_writes": 0,
         "real_oauth_exchanges": 0,
@@ -366,7 +397,12 @@ def main(args):
         )
         active.append(client)
         clients._CLIENT = client
-        return KeychainStore(allowed=lambda: True)
+        from tests.native_keychain_isolation import scope_client_api
+
+        return KeychainStore(
+            api=scope_client_api(Path(fixture.directory.name), fixture.paths()),
+            allowed=lambda: True,
+        )
 
     try:
         cases = [
@@ -387,11 +423,18 @@ def main(args):
             "missing_expiry",
             "ambiguous",
         ]
+        if args.recovery_service_targets:
+            cases.remove("suffix")  # Actual Claude service names are covered in the other matrices.
         if args.cases:
             cases = [name for name in cases if name in args.cases.split(",")]
         for mode in cases:
             row = {"case": mode}
-            fixture = Fixture(args.package)
+            fixture = Fixture(
+                args.package,
+                source_native_io=args.source_native_io,
+                protected=args.source_native_io or args.recovery_service_targets,
+                package_targets=args.recovery_service_targets,
+            )
             try:
                 with fixture:
                     raw = json.loads(payload())
@@ -409,7 +452,7 @@ def main(args):
                     default_decoy = fixture.add() if mode == "suffix" else None
                     if mode == "ambiguous":
                         fixture.add_keychain()
-                        fixture.add(keychain=1)
+                        fixture.add(service=service, keychain=1)
                     initial_policy = (
                         capture(service, ACCOUNT, keychain=fixture.keychains[0])
                         if mode != "ambiguous"
@@ -444,6 +487,8 @@ def main(args):
                         ]
                         if args.source_native_io:
                             command.append("--source-native-io")
+                        if args.recovery_service_targets:
+                            command.append("--recovery-service-targets")
                         if mode == "suffix":
                             command.append("--suffix")
                         for name, enabled in flags.items():
@@ -560,8 +605,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Use source helper for protected same-writer fixtures",
     )
+    parser.add_argument(
+        "--recovery-service-targets",
+        action="store_true",
+        help="Protected packaged-owned synthetic targets under the Runway service",
+    )
     parser.add_argument("--cases", help="Optional comma-separated synthetic cases")
-    parser.add_argument("--native-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--fixture-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--fixture-keychain", type=Path, action="append", default=[], help=argparse.SUPPRESS
@@ -574,19 +623,15 @@ if __name__ == "__main__":
     parser.add_argument("--permission-off", action="store_true", help=argparse.SUPPRESS)
     options = parser.parse_args()
     options.package = options.package.resolve()
-    if sys.platform != "darwin" or not (
-        options.isolated_synthetic_only or options.child or options.native_worker
-    ):
+    if sys.platform != "darwin" or not (options.isolated_synthetic_only or options.child):
         parser.error("requires macOS and explicit isolated synthetic execution")
-    if not options.source_native_io:
-        parser.error("native acceptance requires the scoped source worker")
-    if options.child or options.native_worker:
+    if options.source_native_io and options.recovery_service_targets:
+        parser.error("recovery service targets require the packaged worker")
+    if options.child:
         from tests.native_keychain_isolation import validate_scope
 
         validate_scope(options.fixture_root, options.fixture_keychain)
-    if options.native_worker:
-        native_worker(options)
-    elif options.child:
+    if options.child:
         child(options)
     else:
         if options.report is None:

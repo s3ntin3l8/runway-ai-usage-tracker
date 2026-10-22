@@ -18,12 +18,11 @@ def test_harness_never_changes_user_preferences_or_locks_keychains():
     assert all(name not in source for name in forbidden)
 
 
-def test_packaged_execution_rejected_before_creating_fixture(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(acceptance, "Fixture", lambda *a: pytest.fail("fixture created"))
-    with pytest.raises(ValueError, match="scoped source worker"):
-        acceptance.main(SimpleNamespace(source_native_io=False))
+def test_packaged_worker_uses_the_production_private_entrypoint(tmp_path):
+    package = tmp_path / "RunwaySidecar"
+    assert acceptance.native_command(package, False) == [str(package), "--runway-keychain-worker"]
+    command = acceptance.native_command(package, True)
+    assert command[-1].endswith("scripts/sidecar_pkg/keychain_worker.py")
 
 
 def test_validate_scope_rejects_login_outside_fixture(tmp_path):

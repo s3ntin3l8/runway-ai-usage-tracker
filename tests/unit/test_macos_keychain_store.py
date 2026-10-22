@@ -395,3 +395,125 @@ def test_native_update_refuses_unsafe_policy_before_changing_data():
 )
 def test_partition_write_precondition(partitions, integrity, current, supported):
     assert store._partition_write_supported(partitions, integrity, current) is supported
+
+
+@pytest.mark.parametrize("operation", ["copy", "update", "delete", "check_update", "add"])
+def test_explicit_keychain_scope_is_consumed_before_native_dispatch(operation):
+    import contextlib
+
+    api, unused = native_stub()
+    events = []
+
+    @contextlib.contextmanager
+    def scope(paths):
+        events.append(("open_scope", paths))
+        yield
+        events.append(("close_scope", paths))
+
+    api._keychain_scope = scope
+    api._assert_reference_scope = lambda ref: events.append(("check_reference", ref))
+    api._call = lambda op, query, values: events.append((op, query, values))
+    api.call(operation, {"persistent": b"fixture", "keychains": ["/private/fixture"]}, {})
+    assert events == [
+        ("open_scope", ["/private/fixture"]),
+        ("check_reference", b"fixture"),
+        (operation, {"persistent": b"fixture"}, {}),
+        ("close_scope", ["/private/fixture"]),
+    ]
+
+
+def test_foreign_reference_never_reaches_scoped_credential_operation():
+    import contextlib
+
+    api, unused = native_stub()
+    api._keychain_scope = lambda paths: contextlib.nullcontext()
+    calls = []
+    api._call = lambda *args: calls.append(args)
+
+    def reject(reference):
+        raise store.KeychainError("unavailable")
+
+    api._assert_reference_scope = reject
+    with pytest.raises(store.KeychainError, match="unavailable"):
+        api.call("copy", {"persistent": b"foreign", "keychains": ["/private/fixture"]}, {})
+    assert not calls
+
+
+def test_scoped_discovery_validates_each_reference_before_returning():
+    import contextlib
+
+    api, unused = native_stub()
+    api._keychain_scope = lambda paths: contextlib.nullcontext()
+    api._call = lambda *args: [{"persistent": b"one"}, {"persistent": b"two"}]
+    checked = []
+    api._assert_reference_scope = checked.append
+    assert len(api.call("copy", {"service": "synthetic", "keychains": ["fixture"]}, {})) == 2
+    assert checked == [b"one", b"two"]
+
+
+@pytest.mark.parametrize(
+    "paths", [None, [], "fixture", [None], ["relative.keychain"], ["/missing.keychain"]]
+)
+def test_invalid_explicit_keychain_scope_never_opens_native_file(paths):
+    api, calls = native_stub()
+    with pytest.raises(store.KeychainError, match="unavailable"):
+        api.call("copy", {"service": "synthetic", "keychains": paths}, {})
+    assert not calls
+
+
+@pytest.mark.skipif(store.sys.platform == "win32", reason="native scope uses POSIX ownership")
+@pytest.mark.parametrize("failure", ["none", "second_open", "operation"])
+def test_scope_releases_handles_and_resets_state_on_every_exit(tmp_path, failure):
+    from types import SimpleNamespace
+
+    api, unused = native_stub()
+    paths = [tmp_path / "one.keychain", tmp_path / "two.keychain"]
+    for path in paths:
+        path.touch()
+    opened, released = [], []
+
+    def open_keychain(path, output):
+        number = len(opened) + 1
+        output._obj.value = number
+        opened.append(number)
+        return -50 if failure == "second_open" and number == 2 else 0
+
+    api.sec.SecKeychainOpen = open_keychain
+    api.cf = SimpleNamespace(CFRelease=lambda value: released.append(value.value))
+    try:
+        with api._keychain_scope([str(path) for path in paths]):
+            assert [value.value for value in api._scope_keychains] == [1, 2]
+            if failure == "operation":
+                raise store.KeychainError("synthetic")
+    except store.KeychainError:
+        assert failure != "none"
+    assert released == [2, 1]
+    assert api._scope_keychains is None
+
+
+def test_foreign_scope_ownership_check_never_requests_data():
+    import ctypes
+    from types import SimpleNamespace
+
+    api, calls = native_stub()
+    api._scope_keychains = [ctypes.c_void_p(1)]
+    api._encode_query = lambda value: value
+    released = []
+
+    def resolve(query, output):
+        calls.append(("metadata", query))
+        output._obj.value = 2
+        return 0
+
+    def owner(item, output):
+        output._obj.value = 3
+        return 0
+
+    api.sec.SecItemCopyMatching = resolve
+    api.sec.SecKeychainItemCopyKeychain = owner
+    api.cf = SimpleNamespace(CFRelease=released.append, CFEqual=lambda *args: False)
+    with pytest.raises(store.KeychainError, match="unavailable"):
+        api._assert_reference_scope(b"foreign")
+    assert len(calls) == 1 and calls[0][1]["kSecReturnRef"] is True
+    assert "kSecReturnData" not in calls[0][1]
+    assert len(released) == 3

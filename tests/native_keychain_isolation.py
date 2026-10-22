@@ -181,3 +181,17 @@ def native_snapshot() -> dict[str, Any]:
         for ref in (search, default):
             if ref:
                 api.cf.CFRelease(ref)
+
+
+def scope_client_api(root: Path, paths: list[Path]) -> Any:
+    """Use the production worker boundary; no test replacement of native APIs."""
+    from scripts.sidecar_pkg.macos_keychain_store import _WorkerAPI
+
+    class ScopedWorkerAPI(_WorkerAPI):
+        def call(self, operation, query, values):
+            selected = validate_scope(root, paths)
+            return super().call(
+                operation, dict(query, keychains=[str(path) for path in selected]), values
+            )
+
+    return ScopedWorkerAPI(allowed=lambda: True)

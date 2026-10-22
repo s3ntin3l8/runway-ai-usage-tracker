@@ -9,10 +9,12 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import hashlib
+import os
 import plistlib
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from scripts.sidecar_pkg.keychain_protocol import KeychainError
@@ -171,6 +173,7 @@ class _NativeAPI:
     def __init__(self) -> None:
         if sys.platform != "darwin":
             raise KeychainError("unsupported")
+        self._scope_keychains: list[Any] | None = None
         self.cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
         self.sec = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
         ptr, size, status = ctypes.c_void_p, ctypes.c_long, ctypes.c_int32
@@ -191,6 +194,12 @@ class _NativeAPI:
         self._bind(self.sec, "SecItemUpdate", [ptr, ptr], status)
         self._bind(self.sec, "SecItemAdd", [ptr, ptr], status)
         self._bind(self.sec, "SecItemDelete", [ptr], status)
+        self._bind(self.sec, "SecKeychainOpen", [ctypes.c_char_p, ctypes.POINTER(ptr)], status)
+        self._bind(self.sec, "SecKeychainItemCopyKeychain", [ptr, ctypes.POINTER(ptr)], status)
+        self._bind(self.cf, "CFEqual", [ptr, ptr], ctypes.c_bool)
+        self._bind(self.cf, "CFArrayCreate", [ptr, ptr, size, ptr], ptr)
+        self._bind(self.cf, "CFDictionaryCreateMutableCopy", [ptr, size, ptr], ptr)
+        self._bind(self.cf, "CFDictionarySetValue", [ptr, ptr, ptr], None)
         self._bind(self.sec, "SecKeychainItemCopyAccess", [ptr, ctypes.POINTER(ptr)], status)
         self._bind(self.sec, "SecAccessCopyACLList", [ptr, ctypes.POINTER(ptr)], status)
         self._bind(
@@ -288,7 +297,105 @@ class _NativeAPI:
 
     def call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
         with self._without_interaction():
-            return self._call(operation, query, values)
+            if "keychains" not in query:
+                return self._call(operation, query, values)
+            selected = {key: value for key, value in query.items() if key != "keychains"}
+            with self._keychain_scope(query["keychains"]):
+                if "persistent" in selected:
+                    self._assert_reference_scope(selected["persistent"])
+                result = self._call(operation, selected, values)
+                if operation == "copy" and "persistent" not in selected:
+                    for item in result:
+                        self._assert_reference_scope(item["persistent"])
+                return result
+
+    @contextlib.contextmanager
+    def _keychain_scope(self, paths: Any) -> Iterator[None]:
+        """Private transport restriction: explicit files, never a preference change."""
+        if (
+            not isinstance(paths, list)
+            or not 1 <= len(paths) <= 16
+            or not all(isinstance(path, str) and Path(path).is_absolute() for path in paths)
+        ):
+            raise KeychainError("unavailable")
+        try:
+            for value in paths:
+                path = Path(value)
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or path.stat().st_nlink != 1
+                    or path.stat().st_uid != os.getuid()
+                ):
+                    raise KeychainError("unavailable")
+        except OSError:
+            raise KeychainError("unavailable") from None
+        previous = getattr(self, "_scope_keychains", None)
+        handles: list[Any] = []
+        try:
+            for path in paths:
+                handle = ctypes.c_void_p()
+                status = self.sec.SecKeychainOpen(os.fsencode(path), ctypes.byref(handle))
+                if handle:
+                    handles.append(handle)
+                if status or not handle:
+                    raise KeychainError("unavailable")
+            self._scope_keychains = handles
+            yield
+        finally:
+            self._scope_keychains = previous
+            for handle in reversed(handles):
+                self.cf.CFRelease(handle)
+
+    def _encode_query(self, value: dict[str, Any]) -> Any:
+        encoded = self._encode(value)
+        handles = getattr(self, "_scope_keychains", None)
+        if handles is None:
+            return encoded
+        if not handles:
+            self.cf.CFRelease(encoded)
+            raise KeychainError("unavailable")
+        ptr = ctypes.c_void_p
+        array = self.cf.CFArrayCreate(None, (ptr * len(handles))(*handles), len(handles), None)
+        query = self.cf.CFDictionaryCreateMutableCopy(None, 0, encoded)
+        self.cf.CFRelease(encoded)
+        try:
+            for name, contents in (("kSecMatchSearchList", array), ("kSecUseKeychain", handles[0])):
+                key = self._encode(self.key(name))
+                try:
+                    self.cf.CFDictionarySetValue(query, key, contents)
+                finally:
+                    self.cf.CFRelease(key)
+            return query
+        finally:
+            self.cf.CFRelease(array)
+
+    def _assert_reference_scope(self, reference: bytes) -> None:
+        """Persistent references can bypass search lists; check ownership before data IO."""
+        handles = getattr(self, "_scope_keychains", None)
+        if not handles or not isinstance(reference, bytes) or not reference:
+            raise KeychainError("unavailable")
+        item, keychain = ctypes.c_void_p(), ctypes.c_void_p()
+        query = self._encode_query(
+            {
+                self.key("kSecClass"): self.key("kSecClassGenericPassword"),
+                self.key("kSecValuePersistentRef"): reference,
+                self.key("kSecReturnRef"): True,
+                self.key("kSecUseDataProtectionKeychain"): False,
+            }
+        )
+        try:
+            status = self.sec.SecItemCopyMatching(query, ctypes.byref(item))
+            if status:
+                raise KeychainError("missing" if status == -25300 else "unavailable")
+            if self.sec.SecKeychainItemCopyKeychain(item, ctypes.byref(keychain)):
+                raise KeychainError("unavailable")
+            if not any(self.cf.CFEqual(keychain, handle) for handle in handles):
+                raise KeychainError("unavailable")
+        finally:
+            for ref in (keychain, item, query):
+                if ref:
+                    self.cf.CFRelease(ref)
 
     def authorize_read(self, reference: bytes) -> Any:
         """One foreground read; deliberately absent from the worker protocol."""
@@ -336,7 +443,7 @@ class _NativeAPI:
             if status:
                 raise KeychainError("missing" if status == -25300 else "unavailable")
 
-        query = self._encode(
+        query = self._encode_query(
             {
                 self.key("kSecClass"): self.key("kSecClassGenericPassword"),
                 self.key("kSecValuePersistentRef"): reference,
@@ -420,7 +527,7 @@ class _NativeAPI:
             if values.get("service") != RECOVERY_SERVICE:
                 raise KeychainError("unavailable")
             native.update(attrs)
-        q = self._encode(native)
+        q = self._encode_query(native)
         a = self._encode(attrs)
         result = ctypes.c_void_p()
         try:
