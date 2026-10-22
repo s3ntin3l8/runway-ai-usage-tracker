@@ -594,3 +594,60 @@ describe('Banners remembered dismissals', () => {
     vi.restoreAllMocks();
   });
 });
+
+describe('Banners unreadable credential sources', () => {
+  const blockedSource = (
+    o: Partial<NonNullable<CredentialInventory['blocked_sources']>[number]> = {},
+  ): NonNullable<CredentialInventory['blocked_sources']>[number] => ({
+    sidecar_id: 'host-a',
+    provider_id: 'ollama',
+    credential_origin: 'cookie:ollama/Chrome/Default/Network/Cookies',
+    source_store: 'Chrome/Default/Network/Cookies',
+    reason: 'source_locked',
+    detail: 'held open by another process',
+    remedy: 'set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers)',
+    collecting: false,
+    ...o,
+  });
+
+  const withSources = (
+    sources: NonNullable<CredentialInventory['blocked_sources']>,
+  ): CredentialInventory => ({
+    ...inventoryWith([]),
+    machines: [
+      { machine_id: 'host-a', name: 'Workstation', last_seen: null, credential_count: 1, unmapped_count: 0 },
+    ],
+    blocked_sources: sources,
+  });
+
+  it('names the machine, the store and the fix', () => {
+    renderWithProviders(
+      <Banners credentials={withSources([blockedSource()])} anomalies={[]} />,
+    );
+    expect(screen.getByText(/cookie store unavailable on workstation/i)).toBeInTheDocument();
+    expect(screen.getByText(/Chrome\/Default\/Network\/Cookies is readable/i)).toBeInTheDocument();
+    expect(screen.getByText(/OLLAMA_SESSION_TOKEN/i)).toBeInTheDocument();
+  });
+
+  it('links to the unavailable sources view', () => {
+    renderWithProviders(
+      <Banners credentials={withSources([blockedSource()])} anomalies={[]} />,
+    );
+    expect(screen.getByRole('link', { name: /review sources/i })).toHaveAttribute(
+      'href',
+      '/settings/credentials?view=unavailable',
+    );
+  });
+
+  it('stays quiet while another source covers the provider', () => {
+    renderWithProviders(
+      <Banners credentials={withSources([blockedSource({ collecting: true })])} anomalies={[]} />,
+    );
+    expect(screen.queryByText(/cookie store unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it('does not render when there is no unreadable source', () => {
+    renderWithProviders(<Banners credentials={withSources([])} anomalies={[]} />);
+    expect(screen.queryByText(/cookie store unavailable/i)).not.toBeInTheDocument();
+  });
+});

@@ -99,6 +99,8 @@ export interface FleetEntry {
 export interface FleetResponse {
   fleet: FleetEntry[];
   generated_at: string;
+  /** Credential sources a machine found but could not read. Absent from an older server. */
+  blocked_sources?: BlockedSource[];
 }
 
 // Flat token/cost bucket used by cumulative rollups (also the per-model and
@@ -1093,6 +1095,24 @@ export interface BlockedCollection {
   first_seen?: string | null;
 }
 
+/** A credential source a machine found but could not read — a browser cookie store the
+ * browser holds open, or one whose values are app-bound encrypted. The provider is not
+ * "not signed in": its credential exists, the sidecar just cannot read it. */
+export interface BlockedSource {
+  sidecar_id: string;
+  provider_id: string;
+  credential_origin: string;
+  source_store?: string | null;
+  /** source_locked | source_unsupported | source_unreadable */
+  reason: string;
+  detail?: string | null;
+  remedy?: string | null;
+  /** Whether another source covers the provider anyway. */
+  collecting?: boolean;
+  first_seen?: string | null;
+  last_seen?: string | null;
+}
+
 export interface CredentialFileMigrationNotice {
   providers: { provider_id: string; name: string }[];
   removed_count: number;
@@ -1108,6 +1128,8 @@ export interface CredentialInventory {
   pending_usage_events: number;
   /** Absent from an older server. */
   blocked_collection?: BlockedCollection[];
+  /** Absent from an older server. */
+  blocked_sources?: BlockedSource[];
 }
 
 export interface AuditEntry {

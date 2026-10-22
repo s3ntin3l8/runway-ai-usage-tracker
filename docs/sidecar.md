@@ -522,6 +522,28 @@ browser that keeps a store locked cannot flood the log. See
 [troubleshooting.md](troubleshooting.md) for what each reason means and what
 to do about it.
 
+The sidecar also reports the unusable store to the server, so the provider
+is not silently empty. Each blocked store travels in the credential manifest
+as one entry per provider that wanted a cookie from it:
+
+```json
+{
+  "provider_id": "ollama",
+  "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+  "reason": "source_locked",
+  "source_store": "Chrome/Default/Network/Cookies",
+  "source_detail": "held open by another process",
+  "source_remedy": "set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers)"
+}
+```
+
+`reason` is one of `source_locked` (the browser holds the store open),
+`source_unsupported` (the values are app-bound encrypted) or `source_unreadable`
+(the file could not be read for another reason). The entry carries no cookie
+value, no account id and no filesystem path. The server shows it on the Home
+banner, in Settings → Credentials → Unavailable, and on the provider page, and
+drops it the first cycle the store becomes readable again.
+
 ## Troubleshooting
 
 ### Sidecar not collecting

@@ -39,6 +39,7 @@ describe('CredentialsSection', () => {
   it.each([
     ['machine', 'tab', /by machine/i],
     ['mapping', 'tab', /needs mapping/i],
+    ['unavailable', 'tab', /unavailable/i],
     ['rules', 'tab', /^rules/i],
   ])('deep-links to the %s view', async (view, role, name) => {
     vi.mocked(api.fetchCredentialInventory).mockResolvedValue(multiMachineInventory());
@@ -79,5 +80,36 @@ describe('CredentialsSection', () => {
     vi.mocked(api.fetchCredentialInventory).mockRejectedValue(new Error('server down'));
     renderWithProviders(<CredentialsSection />);
     expect(await screen.findByText(/Couldn't load credentials: server down/)).toBeInTheDocument();
+  });
+
+  it('badges the unavailable tab and lists the sources that could not be read', async () => {
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
+      inventory({
+        blocked_sources: [
+          {
+            sidecar_id: 'host-a',
+            provider_id: 'ollama',
+            credential_origin: 'cookie:ollama/Chrome/Default/Network/Cookies',
+            source_store: 'Chrome/Default/Network/Cookies',
+            reason: 'source_locked',
+            detail: 'held open by another process',
+            remedy: 'set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers)',
+            collecting: false,
+          },
+        ],
+      }),
+    );
+    renderWithProviders(<CredentialsSection />, { route: '/settings/credentials?view=unavailable' });
+
+    expect(await screen.findByRole('tab', { name: /unavailable\s*1/i })).toBeInTheDocument();
+    expect(screen.getByText('Chrome/Default/Network/Cookies')).toBeInTheDocument();
+    expect(screen.getByText(/held open by another process/)).toBeInTheDocument();
+    expect(screen.getByText(/OLLAMA_SESSION_TOKEN/)).toBeInTheDocument();
+  });
+
+  it('explains when every source can be read', async () => {
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue(inventory());
+    renderWithProviders(<CredentialsSection />, { route: '/settings/credentials?view=unavailable' });
+    expect(await screen.findByText('Every credential source can be read')).toBeInTheDocument();
   });
 });

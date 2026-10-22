@@ -417,3 +417,124 @@ def test_local_appdata_is_not_read_when_the_sidecar_runs_on_another_platform(tmp
     (base / "Default/Network/Cookies").touch()
     assert sidecar.BrowserCookieExtractor.get_all_paths() == []
     assert os.environ["LOCALAPPDATA"] == str(tmp_path / "AppData/Local")
+
+
+# --- The report to the server ------------------------------------------------
+
+
+def _locked_store(tmp_path, monkeypatch):
+    """A store the browser holds open, so nothing can read it."""
+    path = tmp_path / "Cookies"
+    path.touch()
+    _refuses_to_open(monkeypatch)
+    _held_open(monkeypatch)
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
+    return path
+
+
+def test_a_locked_store_is_reported_to_the_server(tmp_path, monkeypatch):
+    _locked_store(tmp_path, monkeypatch)
+
+    sidecar.BrowserCookieExtractor.get_cookie("ollama.com", "session", "ollama", "session_cookie")
+
+    assert sidecar.blocked_source_entries() == [
+        {
+            "provider_id": "ollama",
+            "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+            "reason": "source_locked",
+            "source_store": "Chrome/Default/Network/Cookies",
+            "source_detail": "held open by another process",
+            "source_remedy": "set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers)",
+        }
+    ]
+
+
+def test_an_app_bound_store_is_reported_to_the_server(tmp_path, monkeypatch):
+    """The store opened, so the probe does not skip it - the block is only visible
+    where the decryption fails."""
+    path = _chromium_store(tmp_path / "Cookies", [("session", b"v20" + b"\x01" * 32)])
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
+    monkeypatch.setattr(sidecar, "decrypt_chromium_cookie", lambda *a, **k: None)
+
+    sidecar.BrowserCookieExtractor.get_cookie("example.com", "session", "ollama", "session_cookie")
+
+    entries = sidecar.blocked_source_entries()
+    assert [entry["reason"] for entry in entries] == ["source_unsupported"]
+    assert entries[0]["source_detail"] == (
+        "values are app-bound encrypted (v20) and need a browser-side read"
+    )
+
+
+def test_a_readable_store_is_not_reported_to_the_server(tmp_path, monkeypatch):
+    path = _chromium_store(tmp_path / "Cookies", [("session", b"v10" + b"\x01" * 32)])
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
+    monkeypatch.setattr(sidecar, "decrypt_chromium_cookie", lambda *a, **k: "a-session-value")
+
+    sidecar.BrowserCookieExtractor.get_cookie("example.com", "session", "ollama", "session_cookie")
+
+    assert sidecar.blocked_source_entries() == []
+
+
+def test_a_missing_store_is_not_reported_to_the_server(tmp_path, monkeypatch):
+    """A browser without that profile is normal, not a fault to report."""
+    monkeypatch.setattr(
+        sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(tmp_path / "Cookies")]
+    )
+
+    sidecar.BrowserCookieExtractor.get_cookie("example.com", "session", "ollama", "session_cookie")
+
+    assert sidecar.blocked_source_entries() == []
+
+
+def test_the_report_carries_no_credential_material(tmp_path, monkeypatch):
+    _locked_store(tmp_path, monkeypatch)
+
+    sidecar.BrowserCookieExtractor.get_cookie("ollama.com", "session", "ollama", "session_cookie")
+
+    entry = sidecar.blocked_source_entries()[0]
+    assert set(entry) == {
+        "provider_id",
+        "credential_origin",
+        "reason",
+        "source_store",
+        "source_detail",
+        "source_remedy",
+    }
+    assert str(tmp_path) not in " ".join(entry.values())
+
+
+def test_the_remedy_falls_back_to_the_paste(tmp_path, monkeypatch):
+    """A provider the sidecar has no environment variable for gets the paste."""
+    _locked_store(tmp_path, monkeypatch)
+
+    sidecar.BrowserCookieExtractor.get_cookie(
+        "anthropic.com", "sessionKey", "anthropic", "cookie_sessionKey"
+    )
+
+    entry = sidecar.blocked_source_entries()[0]
+    assert entry["source_remedy"] == "paste the cookie in Settings → Providers"
+
+
+def test_one_store_can_block_several_providers(tmp_path, monkeypatch):
+    _locked_store(tmp_path, monkeypatch)
+
+    sidecar.BrowserCookieExtractor.get_cookie("ollama.com", "session", "ollama", "session_cookie")
+    sidecar.BrowserCookieExtractor.get_cookie(
+        "kimi.com", "session", "kimi_coding", "session_cookie"
+    )
+
+    entries = sidecar.blocked_source_entries()
+    assert [entry["provider_id"] for entry in entries] == ["kimi_coding", "ollama"]
+    assert entries[0]["source_remedy"].startswith("set KIMI_AUTH_TOKEN")
+    assert entries[1]["source_remedy"].startswith("set OLLAMA_SESSION_TOKEN")
+
+
+def test_the_report_is_forgotten_between_cycles(tmp_path, monkeypatch):
+    _locked_store(tmp_path, monkeypatch)
+
+    sidecar.BrowserCookieExtractor.get_cookie("ollama.com", "session", "ollama", "session_cookie")
+    assert sidecar.blocked_source_entries()
+
+    sidecar.reset_cookie_store_tracking()
+
+    assert sidecar.blocked_source_entries() == []

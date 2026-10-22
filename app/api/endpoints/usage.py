@@ -460,7 +460,19 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
             }
         )
 
-    return {"fleet": fleet, "generated_at": now.isoformat()}
+    from app.services.blocked_sources import source_block_rows, source_blocks
+
+    # Credential sources a machine found but could not read (a locked or app-bound
+    # browser cookie store). The provider page reads this to say why a provider has
+    # no data instead of showing an unexplained empty state.
+    blocked_sources = [
+        view.model_dump() for view in source_blocks(session, source_block_rows(session))
+    ]
+    return {
+        "fleet": fleet,
+        "generated_at": now.isoformat(),
+        "blocked_sources": blocked_sources,
+    }
 
 
 def _longest_window_card(cards: list[dict[str, Any]]) -> dict[str, Any] | None:

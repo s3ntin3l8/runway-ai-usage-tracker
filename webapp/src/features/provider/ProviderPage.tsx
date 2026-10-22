@@ -9,6 +9,7 @@ import { ArrowLeft, Archive, ArchiveRestore, Ellipsis, RefreshCw, RotateCcw, Sli
 import { toast } from 'sonner';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { collectProvider, putProviderConfigForAccount, resetProvider } from '@/api/endpoints';
+import type { BlockedSource } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -41,6 +42,15 @@ const PERIOD_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events',
 const SOURCE_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events', 'cost']);
 const CACHE_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'forecast', 'cost']);
 
+// Why the provider has no data, when a machine reported a credential source it could
+// not read: the store, the reason and the fix.
+const blockedSourceDescription = (source: BlockedSource): string => {
+  const store = source.source_store ?? source.credential_origin;
+  const detail = source.detail ? ` (${source.detail})` : '';
+  const remedy = source.remedy ? ` ${source.remedy}.` : '';
+  return `${store} could not be read${detail}.${remedy}`;
+};
+
 export function ProviderPage() {
   const { providerId = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -63,6 +73,12 @@ export function ProviderPage() {
 
   const entries = useMemo(
     () => (fleet.data?.fleet ?? []).filter((e) => e.provider_id === providerId),
+    [fleet.data, providerId],
+  );
+  // A credential source the sidecar could not read: the provider is not "not signed in",
+  // its credential is simply unreadable, and the empty state should say so.
+  const blockedSources = useMemo(
+    () => (fleet.data?.blocked_sources ?? []).filter((s) => s.provider_id === providerId),
     [fleet.data, providerId],
   );
   const accountParam = searchParams.get('account');
@@ -211,8 +227,14 @@ export function ProviderPage() {
           </div>
         ) : !entry ? (
           <EmptyState
-            title="No data for this provider"
-            description={`Nothing reported for "${providerId}" yet.`}
+            title={
+              blockedSources.length > 0 ? 'Cookie store unavailable' : 'No data for this provider'
+            }
+            description={
+              blockedSources.length > 0
+                ? blockedSourceDescription(blockedSources[0])
+                : `Nothing reported for "${providerId}" yet.`
+            }
             action={
               <Button size="sm" onClick={() => collect.mutate()} loading={collect.isPending}>
                 Collect now

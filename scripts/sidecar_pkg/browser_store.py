@@ -71,6 +71,27 @@ class StoreState(StrEnum):
     UNREADABLE = "unreadable"
 
 
+# One sentence per unusable state. This is the fixed vocabulary the report to
+# the server uses: a raw sqlite message can embed a filesystem path, and the
+# report must carry no host detail.
+STATE_DETAILS: dict[StoreState, str] = {
+    StoreState.LOCKED: "held open by another process",
+    StoreState.UNSUPPORTED_FORMAT: _FORMAT_DETAIL,
+    StoreState.UNREADABLE: "the file could not be opened",
+    StoreState.NOT_SQLITE: "the file is not a SQLite database",
+}
+
+# Why the server should call a store unavailable, per state. The server
+# mirrors this vocabulary (``app/services/blocked_sources.py``); a parity
+# test keeps the two equal.
+STATE_REASONS: dict[StoreState, str] = {
+    StoreState.LOCKED: "source_locked",
+    StoreState.UNSUPPORTED_FORMAT: "source_unsupported",
+    StoreState.UNREADABLE: "source_unreadable",
+    StoreState.NOT_SQLITE: "source_unreadable",
+}
+
+
 @dataclass(frozen=True)
 class StoreProbe:
     """The classified state of one cookie store.

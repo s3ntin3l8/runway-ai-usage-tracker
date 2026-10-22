@@ -13,9 +13,10 @@ import { ByMachineView } from './ByMachineView';
 import { ByProviderView } from './ByProviderView';
 import { NeedsMappingView } from './NeedsMappingView';
 import { RulesView } from './RulesView';
+import { UnavailableSourcesView } from './UnavailableSourcesView';
 import { useCredentialInventory } from './queries';
 
-const VIEWS = ['provider', 'machine', 'mapping', 'rules'] as const;
+const VIEWS = ['provider', 'machine', 'mapping', 'unavailable', 'rules'] as const;
 type View = (typeof VIEWS)[number];
 
 export function CredentialsSection() {
@@ -45,6 +46,7 @@ export function CredentialsSection() {
 
   const data = inventory.data;
   const needsMapping = data.unmapped_count + data.pending_usage_events;
+  const unavailable = data.blocked_sources ?? [];
 
   return (
     <div className="space-y-4">
@@ -63,6 +65,10 @@ export function CredentialsSection() {
           <TabsTrigger value="mapping">
             Needs mapping
             {needsMapping > 0 ? <Badge variant="warning">{needsMapping}</Badge> : null}
+          </TabsTrigger>
+          <TabsTrigger value="unavailable">
+            Unavailable
+            {unavailable.length > 0 ? <Badge variant="critical">{unavailable.length}</Badge> : null}
           </TabsTrigger>
           <TabsTrigger value="rules">
             Rules
@@ -93,6 +99,9 @@ export function CredentialsSection() {
         </TabsContent>
         <TabsContent value="mapping">
           <NeedsMappingView pendingUsageEvents={data.pending_usage_events} />
+        </TabsContent>
+        <TabsContent value="unavailable">
+          <UnavailableSourcesView sources={unavailable} />
         </TabsContent>
         <TabsContent value="rules">
           <RulesView

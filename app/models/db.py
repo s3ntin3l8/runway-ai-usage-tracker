@@ -896,8 +896,17 @@ class PendingCredentialTag(SQLModel, table=True):  # type: ignore[call-arg]
     next_verify_at: UTCDateTime | None = None
     # Why the sidecar reported this origin: "token_withheld" = the token stayed on the machine
     # (no server-side verifier for the provider), so quota will not collect until an account is
-    # assigned. None = an older sidecar, or an origin that is only awaiting verification.
+    # assigned. "source_locked" / "source_unsupported" / "source_unreadable" = a credential
+    # source the sidecar found but could not read (a browser cookie store the browser holds
+    # open, or one whose values are app-bound encrypted). None = an older sidecar, or an
+    # origin that is only awaiting verification.
     reason: str | None = None
+    # The unusable source behind a "source_*" reason: which store, why it could not be read,
+    # and what the operator can do about it. Never a credential value, an account id or a
+    # filesystem path.
+    source_store: str | None = None
+    source_detail: str | None = None
+    source_remedy: str | None = None
 
 
 class PendingUsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
