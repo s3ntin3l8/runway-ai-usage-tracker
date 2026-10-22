@@ -185,7 +185,11 @@ export default defineConfig({
     // file, and that dominated the run: vitest reported "Environment jsdom
     // was created 117 times, 40% of tracked time". `vmThreads` reuses one
     // environment per worker while keeping per-file isolation, which takes
-    // the suite from 47s to 19s.
+    // the suite from 47s to 14s.
+    //
+    // The trade-off is memory: one environment per worker rather than one
+    // per test file, so they are all alive at once. Peak RSS on a 2-CPU/8GB
+    // host: 422MB (`forks`) -> 1.82GB (`vmThreads`).
     pool: 'vmThreads',
     env: { NODE_ENV: 'development' },
     globals: true,
