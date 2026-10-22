@@ -8,6 +8,8 @@ from unittest.mock import Mock
 import pytest
 
 from scripts import sidecar
+from scripts.sidecar_pkg import macos_keychain_store as keychain
+from scripts.sidecar_pkg.macos_keychain_store import KeychainError
 from tests.macos_cookie_fixtures import encrypted
 
 
@@ -16,8 +18,8 @@ def helper(monkeypatch):
     from scripts.sidecar_pkg import macos_cookies
 
     monkeypatch.setattr(macos_cookies, "_KEY_CACHE", {})
-    lookup = Mock(return_value=subprocess.CompletedProcess([], 0, "synthetic-key", ""))
-    monkeypatch.setattr(subprocess, "run", lookup)
+    lookup = Mock(return_value=(b"synthetic-key"))
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     return macos_cookies, lookup
 
 
@@ -50,7 +52,7 @@ def test_invalid_binding_or_ciphertext_rejected(helper, blob, host):
 
 @pytest.mark.parametrize(
     "failure",
-    [subprocess.CompletedProcess([], 44, "", ""), subprocess.TimeoutExpired("security", 5)],
+    [KeychainError("missing"), KeychainError("timed_out")],
 )
 def test_keychain_failure_suppressed_until_restart(helper, monkeypatch, failure):
     module, lookup = helper
@@ -128,8 +130,8 @@ def test_desktop_keychain_failure_does_not_retry_after_ten_minutes(tmp_path, mon
     from scripts.sidecar_pkg import claude_desktop, macos_cookies
 
     monkeypatch.setattr(macos_cookies, "_KEY_CACHE", {})
-    lookup = Mock(return_value=subprocess.CompletedProcess([], 44, "", ""))
-    monkeypatch.setattr(subprocess, "run", lookup)
+    lookup = Mock(side_effect=KeychainError("missing"))
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     monkeypatch.setattr(macos_cookies.time, "monotonic", lambda: 0)
     assert claude_desktop._storage_key(tmp_path) is None
     monkeypatch.setattr(macos_cookies.time, "monotonic", lambda: 10000)
@@ -164,7 +166,6 @@ def test_get_cookie_browser_wrapper_passes_schema_and_exact_host(tmp_path, monke
 @pytest.fixture(autouse=True)
 def isolate_host_credentials(monkeypatch, tmp_path):
     """Synthetic tests must never inspect host browser stores or Keychain."""
-    import subprocess
     from pathlib import Path
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)

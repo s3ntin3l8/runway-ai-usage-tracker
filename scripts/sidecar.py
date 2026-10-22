@@ -937,14 +937,30 @@ def _codex_login_paths() -> list[Path]:
     return expand_file_rule_paths(paths)
 
 
+# Bound to the current runner, so replacement on local config reload is observed.
+_CLAUDE_KEYCHAIN_PERMISSION: Callable[[], bool] | None = None
+
+
+def _claude_keychain_renewal_enabled() -> bool:
+    return _CLAUDE_KEYCHAIN_PERMISSION is not None and _CLAUDE_KEYCHAIN_PERMISSION() is True
+
+
 def _make_keep_alive_renewers() -> list:
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
+    from scripts.sidecar_pkg.claude_keychain_renewer import KeychainRenewer
     from scripts.sidecar_pkg.codex_renewer import CodexRenewer
+    from scripts.sidecar_pkg.keep_alive import is_enabled
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     return [
         XaiRenewer(),
-        AnthropicRenewer(_claude_login_paths),
+        AnthropicRenewer(
+            _claude_login_paths,
+            keychain=KeychainRenewer(
+                lambda: custom_login_dirs("CLAUDE_CONFIG_DIR"),
+                lambda: _claude_keychain_renewal_enabled() and is_enabled("anthropic"),
+            ),
+        ),
         CodexRenewer(_codex_login_paths),
     ]
 
@@ -4121,22 +4137,13 @@ class GenericCollector:
             # 3. Legacy generic macOS Keychain rules
             elif rule_type == "keychain" and platform.system() == "Darwin":
                 try:
-                    cmd = [
-                        "security",
-                        "find-generic-password",
-                        "-s",
-                        rule.get("service_name"),
-                        "-w",
-                    ]
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        creationflags=_subprocess_creationflags(),
+                    from scripts.sidecar_pkg.macos_keychain_store import read_secret
+
+                    raw_bytes = read_secret(
+                        rule.get("service_name"), group="registry:" + str(rule.get("service_name"))
                     )
-                    if result.returncode == 0:
-                        raw = result.stdout.strip()
+                    if raw_bytes is not None:
+                        raw = raw_bytes.decode().strip()
                         fmt = rule.get("format", "raw")
                         if fmt == "json":
                             data = json.loads(raw)
@@ -4163,7 +4170,7 @@ class GenericCollector:
                                 (candidate_tokens, f"keychain:{service}", "keychain")
                             )
                 except Exception:
-                    logging.debug("File credential extraction failed", exc_info=True)
+                    logging.debug("Keychain credential unavailable")
 
             # 4. Windows Credential Manager
             elif rule_type == "windows_credential" and platform.system() == "Windows":
@@ -5534,6 +5541,8 @@ class DaemonRunner:
         on_status_change: Callable[[str], None] | None = None,
     ) -> None:
         self._config = config
+        global _CLAUDE_KEYCHAIN_PERMISSION
+        _CLAUDE_KEYCHAIN_PERMISSION = self._keychain_renewal_allowed
         # Heartbeat: how often the sidecar pings the server for instructions.
         # The server (via /fleet/ingest's poll_providers field) is the cadence
         # authority — it tells the sidecar which providers are due. A short
@@ -5569,6 +5578,9 @@ class DaemonRunner:
     # ------------------------------------------------------------------
     # Status property (computed)
     # ------------------------------------------------------------------
+
+    def _keychain_renewal_allowed(self) -> bool:
+        return self._config.get("claude_keychain_renewal") is True
 
     @property
     def status(self) -> str:
@@ -5907,6 +5919,9 @@ class DaemonRunner:
 
     def start(self) -> None:
         """Spawn a background daemon thread running the collection loop."""
+        from scripts.sidecar_pkg.keychain_client import reopen_keychain_client
+
+        reopen_keychain_client()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, name="DaemonRunner", daemon=True)
         self._thread.start()
@@ -5914,6 +5929,9 @@ class DaemonRunner:
     def stop(self) -> None:
         """Signal the loop to exit and join the background thread."""
         self._stop_event.set()
+        from scripts.sidecar_pkg.keychain_client import close_keychain_client
+
+        close_keychain_client()
         if self._thread is not None:
             self._thread.join(timeout=30)
             if self._thread.is_alive():
@@ -6287,4 +6305,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["--authorize-claude-keychain"]:
+        from scripts.sidecar_pkg.keychain_authorization import authorization_command
+
+        authorization_command(sys.argv[1:])
+    elif sys.argv[1:] == ["--runway-keychain-worker"]:
+        from scripts.sidecar_pkg.keychain_worker import worker_main
+
+        worker_main()
+    else:
+        main()

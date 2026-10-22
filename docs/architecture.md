@@ -354,9 +354,10 @@ Workflows live in `.github/workflows/`.
   - Every job above except the two `test-*` ones and `image-changed` is
     advisory: none of them is a required status check.
   - Required checks on `main`: `test-python / lint`,
-    `test-python / type-and-test`, `test-frontend / lint-and-test`, and
-    CodeQL. They are **not** required to be up to date with `main` — see
-    *The merge queue is not available here* below.
+    `test-python / type-and-test`, `test-frontend / lint-and-test`,
+    `dependency-review / dependency-review`, and CodeQL. They are **not**
+    required to be up to date with `main` — see *The merge queue is not
+    available here* below.
 - **The merge queue is not available here.** The merge queue is documented as
     available on public repositories owned by *organizations* (and GitHub
     Enterprise Cloud), not on personal accounts, and this repository is owned
@@ -374,10 +375,18 @@ Workflows live in `.github/workflows/`.
     `main`, reports `CLEAN` and merges without a rebase.
 
     The safety that the up-to-date rule was standing in for is covered
-    elsewhere: the release pull request carries its own required checks, and
-    release-please regenerates it on every `main` push, so a broken `main`
-    makes that pull request red and it cannot be merged — no release is cut
-    from a broken `main`. The `:edge` image is gated the same way:
+    elsewhere, in two layers. The required checks run again on the push to
+    `main` — `ci-cd.yml` and `codeql.yml` both have a `push` trigger — so a
+    merge that breaks the integration is caught on `main`: the difference
+    from the up-to-date rule is *when* (after the merge, not before) and
+    *who* (whoever picks up a red `main`, not the author whose pull request
+    was bounced back). `dependency-review` is the exception: it is a
+    pull-request-only check, so it does not re-run on `main` — it has nothing
+    to say about a merge that changes no dependency. And the release pull
+    request is regenerated on every `main` push, so it always builds current
+    `main`: a broken `main` makes its checks red, and the maintainer's
+    approval — which the release pull request deliberately requires — is the
+    gate. No release is cut from a broken `main`. The `:edge` image is gated the same way:
     `build-docker` needs `test-python`, `test-frontend` and
     `dependency-audit` to pass on `main`.
 
@@ -394,12 +403,34 @@ Workflows live in `.github/workflows/`.
     the only way to get. `scripts/pytest_shard.py` owns the split: it keeps
     whole test modules together (so the fixed-port helpers and
     `tests/conftest.py`'s import-time setup stay in one process) and balances
-    them by measured runtime, recorded in `tests/shard_durations.json`. A
+    them by measured runtime, recorded per platform in
+    `tests/shard_durations.linux.json` and `tests/shard_durations.windows.json`
+    -- a module that is slow on Linux is not necessarily slow on Windows. A
     shard runs the whole suite with the other shards' modules deselected by
     node id prefix, so pytest's own `collect_ignore` still decides what is
-    collectible. Re-measure with `make shard-weights`. The frontend is not
+    collectible. Re-measure with `make shard-weights`; the Windows table is
+    measured on a Windows runner by the workflow's manual `record-weights`
+    job, because the durations are platform-specific. The frontend is not
     part of this job — `test-frontend / lint-and-test` already covers it on
     Linux.
+- **`frozen-verifier.yml`** — the packaging smoke test: the sidecar is built
+    with PyInstaller on each platform and the frozen binary is verified
+    against a signed fixture. It used to run on every pull request, in four
+    parallel jobs, which made it the largest advisory cost in the repository
+    (7.6 runner-minutes per pull request, and the macOS leg is billed at ten
+    times a Linux minute). On a pull request it verified the *standard signed
+    fixture*; the release half of the job — the one that answers "does the
+    packaged binary match the release" — only ever ran on a manual dispatch
+    with a release tag, because that is what `capture-release` produces. It
+    now runs on pushes to `main` and nightly, and the release path is
+    unchanged: dispatch this workflow with a release tag. The nightly is the
+    canary for toolchain drift — PyInstaller is installed unpinned, so a new
+    release of it can break the packaging with no change to this repository,
+    and a push run cannot catch that, because it ran before the release did.
+- **`security-validation.yml`** — the trust-boundary and recovery tests: the
+    browser boundaries and the real reverse-proxy boundaries on Linux, and the
+    native Windows swap, rollback and recovery regressions. The packaging half
+    of the old workflow lives in `frozen-verifier.yml`.
 - **`image-security.yml` / `image-security-arm64.yml`** — the candidate
     image is built and scanned for known vulnerabilities. The amd64 leg runs
     on every pull request; the arm64 leg is a native build on an ARM runner

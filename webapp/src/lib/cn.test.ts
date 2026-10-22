@@ -2,7 +2,7 @@ import { cn } from './cn';
 
 describe('cn', () => {
   it('joins truthy class values and skips falsy ones', () => {
-    expect(cn('a', false && 'b', null, undefined, 'c')).toBe('a c');
+    expect(cn('a', false, null, undefined, 'c')).toBe('a c');
   });
 
   it('merges conflicting tailwind classes, last one wins', () => {

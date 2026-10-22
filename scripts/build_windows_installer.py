@@ -1,8 +1,8 @@
 """Compile the Windows NSIS installer under its canonical release asset name.
 
-The release build (``.github/workflows/sidecar-build.yml``) and the
-pull-request gates (``.github/workflows/security-validation.yml`` on Windows,
-``ci-cd.yml``'s NSIS check on Linux) all compile the same
+The release build (``.github/workflows/sidecar-build.yml``), the frozen
+verifier (``.github/workflows/frozen-verifier.yml`` on Windows) and the
+pull-request gate (``ci-cd.yml``'s NSIS check on Linux) all compile the same
 ``installer/windows/runway-sidecar.nsi``. Each used to spell out its own
 ``makensis`` command line, so the asset name, the version defines and the
 output path could change in one workflow and not in the other — the installer
