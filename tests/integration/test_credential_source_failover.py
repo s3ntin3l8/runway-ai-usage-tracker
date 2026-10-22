@@ -1122,3 +1122,80 @@ async def test_promotion_names_an_existing_account_nobody_named(monkeypatch):
     # The row already existed, so its billing type stays the operator's to choose.
     assert row.billing_type == "unknown"
     await cache.reset()
+
+
+@pytest.mark.asyncio
+async def test_promotion_keeps_the_name_the_operator_gave_a_discovered_account(monkeypatch):
+    """A rename made before the account had a row is not shadowed by the promotion."""
+    from app.models.db import ProviderAccountLabel, ProviderConfig
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    source_id = "sidecar:host-a:path:/home/user/console.json"
+    origin = "path:/home/user/console.json"
+    org_id = "11111111-1111-4111-8111-111111111111"
+    with Session(engine) as session:
+        session.add(
+            CredentialSource(
+                provider_id="anthropic_console",
+                account_id="default",
+                source_id=source_id,
+                source_type="file",
+                source_label="host-a",
+                credential_origin=origin,
+                sidecar_id="host-a",
+            )
+        )
+        # The operator named the account in Settings while it was still only a
+        # discovered identity — a rename that has no ProviderConfig row yet.
+        session.add(
+            ProviderAccountLabel(
+                provider_id="anthropic_console",
+                account_id=org_id,
+                account_label="Team wallet",
+            )
+        )
+        session.commit()
+
+    cache = TokenCache()
+    await cache.store(
+        "anthropic_console",
+        {"session_cookie": "fake-console-cookie"},  # pragma: allowlist secret
+        account_id="default",
+        source_id=source_id,
+        source_metadata={
+            "source_type": "file",
+            "sidecar_id": "host-a",
+            "credential_origin": origin,
+            "identity_pending": True,
+        },
+    )
+    monkeypatch.setattr("app.core.db.engine", engine)
+    monkeypatch.setattr("sqlmodel.Session", Session)
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    manager = CollectorManager()
+
+    await manager._promote_source_identity(
+        "anthropic_console",
+        "default",
+        source_id,
+        org_id,
+        organization_id=org_id,
+        account_label="API org",
+        billing_type="pay_as_you_go",
+    )
+
+    with Session(engine) as session:
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "anthropic_console",
+                ProviderConfig.account_id == org_id,
+            )
+        ).one()
+    # The name the operator chose wins over the name the server discovered.
+    assert row.account_label == "Team wallet"
+    await cache.reset()
