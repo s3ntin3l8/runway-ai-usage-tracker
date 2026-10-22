@@ -226,11 +226,6 @@ def test_scheduled_exception_check_reports_a_lapse(tmp_path, monkeypatch):
 
     lapsed = write_exceptions(tmp_path, [expired_exception()])
     monkeypatch.setattr(check_image_exceptions, "DEFAULT_EXCEPTIONS", lapsed)
-    monkeypatch.setattr(
-        check_image_exceptions,
-        "load_exceptions",
-        lambda path, now: load_exceptions(path, now),
-    )
     assert check_image_exceptions.main() == 1
 
 
