@@ -329,6 +329,26 @@ def clear_response_cache():
     cache_clear()
 
 
+# The modules that can hold a reference to the mocked ``Session``.
+#
+# A module captures the mock by reading ``sqlmodel.Session`` at runtime, and
+# the only ones that do are the ones this repository owns. The scan used to
+# walk every module in ``sys.modules`` -- about 1900 of them, all cold, so
+# 1.2ms a test: 5.3 seconds of CPU and 1.9 seconds of wall clock for a run
+# of the suite, which is 5% of it. The scan is what keeps a captured mock
+# from outliving the test that captured it.
+_REPOSITORY_MODULES = (
+    "app.",
+    "installer.",
+    "scratch.",
+    "scripts.",
+    "sidecar_app.",
+    "sqlmodel",
+    "tests.",
+    "webapp.",
+)
+
+
 @pytest.fixture(autouse=True)
 def mock_db_session(monkeypatch):
     """Mock DB access without leaking patched Session classes across tests."""
@@ -345,8 +365,10 @@ def mock_db_session(monkeypatch):
     # leaving its mock installed globally for subsequent tests.
     monkeypatch.setattr("sqlmodel.Session", mock_session)
     yield mock_db
-    for module in tuple(sys.modules.values()):
-        if module is not None and vars(module).get("Session") is mock_session:
+    for name, module in tuple(sys.modules.items()):
+        if module is None or not name.startswith(_REPOSITORY_MODULES):
+            continue
+        if vars(module).get("Session") is mock_session:
             module.Session = Session
 
 
