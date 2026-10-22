@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { discoverConsoleOrganizations } from '@/api/endpoints';
 import { Button } from '@/components/ui/Button';
 import { HelperText, Label } from '@/components/ui/Input';
+import { errorMessage } from '@/lib/errorMessage';
 
 function nextSelection(organizations: { id: string }[], selected: string): string {
   if (organizations.some((org) => org.id === selected)) return selected;
@@ -53,7 +54,7 @@ export function ConsoleOrganizationPicker({ cookie, value, onSelect }: {
       selection.current.onSelect(nextSelection(data.organizations, selected));
       if (data.organizations.length === 0) setError('No API organizations are accessible with this Console session.');
     } catch (err) {
-      if (!ac.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load organizations');
+      if (!ac.signal.aborted) setError(errorMessage(err) ?? 'Could not load organizations');
     } finally {
       if (!ac.signal.aborted) setLoading(false);
     }

@@ -204,11 +204,6 @@ export default defineConfig({
         'src/main.tsx',
         'src/**/*.d.ts',
         'src/api/types.ts',
-        // A two-line wrapper around window.location.reload(). It cannot be
-        // covered: under the vmThreads pool `window.location` is
-        // non-configurable, so no test can replace or spy on the reload.
-        // Callers mock the module instead.
-        'src/lib/reload.ts',
       ],
     },
   },

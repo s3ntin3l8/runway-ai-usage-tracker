@@ -32,6 +32,7 @@ import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Switch } from '@/components/ui/Switch';
 import { cn } from '@/lib/cn';
 import { maskAccountId } from '@/lib/accountDisplay';
+import { errorMessage } from '@/lib/errorMessage';
 
 const PREVIEW_DEBOUNCE_MS = 300;
 
@@ -434,11 +435,8 @@ function Step2({
         } else if (err instanceof ApiError) {
           setPreviewError(err.message);
           setConflict(false);
-        } else if (err instanceof Error) {
-          setPreviewError(err.message);
-          setConflict(false);
         } else {
-          setPreviewError('Preview failed');
+          setPreviewError(errorMessage(err) ?? 'Preview failed');
           setConflict(false);
         }
       } finally {
