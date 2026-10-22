@@ -1,0 +1,262 @@
+"""Tests for app/services/maintenance/claude_billing_type.py.
+
+The repair prices the Claude accounts that were created before detection
+existed. It may only price the rows nobody decided about, and it may only
+price them from what the account itself published.
+"""
+
+from __future__ import annotations
+
+import json
+
+from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel.pool import StaticPool
+
+from app.models.db import LatestUsage, ProviderConfig
+from app.services.maintenance.claude_billing_type import (
+    apply_claude_billing_type,
+    plan_claude_billing_type,
+)
+
+
+def _session() -> Session:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    return Session(engine)
+
+
+def _account(
+    session: Session,
+    provider_id: str = "anthropic",
+    account_id: str = "person@example.com",
+    billing_type: str = "unknown",
+    billing_type_source: str | None = None,
+) -> ProviderConfig:
+    row = ProviderConfig(
+        provider_id=provider_id,
+        account_id=account_id,
+        account_label=account_id,
+        billing_type=billing_type,
+        billing_type_source=billing_type_source,
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _card(session: Session, provider_id: str, account_id: str, card: dict) -> LatestUsage:
+    row = LatestUsage(
+        provider_id=provider_id,
+        account_id=account_id,
+        window_type="weekly",
+        variant="default",
+        model_id="",
+        card_json=json.dumps(card),
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _quota_card(used: float = 25.0) -> dict:
+    return {"unit_type": "percent", "used_value": used, "limit_value": 100.0}
+
+
+def _spend_card() -> dict:
+    return {"unit_type": "currency", "currency": "USD", "used_value": 5.0}
+
+
+def test_the_repair_prices_the_accounts_nobody_decided_about():
+    """An account created before detection existed is priced from what it published."""
+    session = _session()
+    try:
+        _account(session, account_id="old@example.com")
+        _card(session, "anthropic", "old@example.com", _quota_card())
+
+        plan = plan_claude_billing_type(session)
+        assert plan.total == 1
+        assert [c.account_id for c in plan.priced] == ["old@example.com"]
+        assert plan.priced[0].model == "subscription"
+        assert plan.skipped == []
+    finally:
+        session.close()
+
+
+def test_the_repair_leaves_the_operator_own_rows_alone():
+    """A model somebody chose is not the repair's to change."""
+    session = _session()
+    try:
+        _account(
+            session,
+            account_id="chosen@example.com",
+            billing_type="pay_as_you_go",
+            billing_type_source="operator",
+        )
+        _card(session, "anthropic", "chosen@example.com", _quota_card())
+
+        plan = plan_claude_billing_type(session)
+        assert plan.total == 0
+        assert plan.priced == []
+    finally:
+        session.close()
+
+
+def test_the_repair_prices_only_claude_accounts():
+    """Another provider's accounts are not this repair's business."""
+    session = _session()
+    try:
+        _account(session, provider_id="gemini", account_id="someone@example.com")
+        _card(session, "gemini", "someone@example.com", _quota_card())
+
+        plan = plan_claude_billing_type(session)
+        assert plan.total == 0
+    finally:
+        session.close()
+
+
+def test_an_account_that_published_nothing_is_skipped_not_guessed():
+    """No published card is no proof."""
+    session = _session()
+    try:
+        _account(session, account_id="silent@example.com")
+
+        plan = plan_claude_billing_type(session)
+        assert plan.total == 1
+        assert plan.priced == []
+        assert [c.account_id for c in plan.skipped] == ["silent@example.com"]
+        assert plan.skipped[0].model is None
+    finally:
+        session.close()
+
+
+def test_cards_that_say_nothing_are_skipped_not_guessed():
+    """A card that counts tokens says nothing about how an account bills."""
+    session = _session()
+    try:
+        _account(session, account_id="tokenish@example.com")
+        _card(
+            session,
+            "anthropic",
+            "tokenish@example.com",
+            {"unit_type": "token", "used_value": 1000},
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert plan.priced == []
+        assert [c.account_id for c in plan.skipped] == ["tokenish@example.com"]
+    finally:
+        session.close()
+
+
+def test_the_repair_writes_the_model_and_says_who_wrote_it():
+    """A detected model is recorded as detected, so it is never touched again."""
+    session = _session()
+    try:
+        _account(session, account_id="old@example.com")
+        _card(session, "anthropic", "old@example.com", _quota_card())
+
+        result = apply_claude_billing_type(session)
+        assert result.priced == 1
+        assert result.skipped == 0
+
+        row = session.exec(select(ProviderConfig)).one()
+        assert row.billing_type == "subscription"
+        assert row.billing_type_source == "detected"
+    finally:
+        session.close()
+
+
+def test_the_repair_reads_the_account_own_published_cards():
+    """A prepaid balance is spend, and a plan's window is a plan."""
+    session = _session()
+    try:
+        _account(session, account_id="spender@example.com")
+        _card(session, "anthropic", "spender@example.com", _spend_card())
+
+        apply_claude_billing_type(session)
+
+        row = session.exec(select(ProviderConfig)).one()
+        assert row.billing_type == "pay_as_you_go"
+    finally:
+        session.close()
+
+
+def test_the_repair_is_idempotent():
+    """A second run finds nothing left to price."""
+    session = _session()
+    try:
+        _account(session, account_id="old@example.com")
+        _card(session, "anthropic", "old@example.com", _quota_card())
+
+        assert apply_claude_billing_type(session).priced == 1
+        assert apply_claude_billing_type(session).priced == 0
+
+        plan = plan_claude_billing_type(session)
+        assert plan.total == 0
+    finally:
+        session.close()
+
+
+def test_the_operator_choice_during_the_repair_wins():
+    """A row somebody decided about while the plan was read is left alone."""
+    session = _session()
+    try:
+        row = _account(session, account_id="old@example.com")
+        _card(session, "anthropic", "old@example.com", _quota_card())
+
+        plan = plan_claude_billing_type(session)
+        assert len(plan.priced) == 1
+
+        # The operator prices the account themselves before the repair lands.
+        row.billing_type = "pay_as_you_go"
+        row.billing_type_source = "operator"
+        session.add(row)
+        session.commit()
+
+        result = apply_claude_billing_type(session)
+        assert result.priced == 0
+
+        row = session.exec(select(ProviderConfig)).one()
+        assert row.billing_type == "pay_as_you_go"
+        assert row.billing_type_source == "operator"
+    finally:
+        session.close()
+
+
+def test_the_repair_can_be_asked_about_one_provider():
+    """A repair run for one provider leaves the others alone."""
+    session = _session()
+    try:
+        _account(session, provider_id="anthropic", account_id="plan@example.com")
+        _card(session, "anthropic", "plan@example.com", _quota_card())
+        _account(session, provider_id="anthropic_console", account_id="wallet@example.com")
+        _card(session, "anthropic_console", "wallet@example.com", _spend_card())
+
+        apply_claude_billing_type(session, provider_id="anthropic_console")
+
+        rows = {
+            (row.provider_id, row.account_id): row
+            for row in session.exec(select(ProviderConfig)).all()
+        }
+        assert rows[("anthropic_console", "wallet@example.com")].billing_type == "pay_as_you_go"
+        assert rows[("anthropic", "plan@example.com")].billing_type == "unknown"
+        assert rows[("anthropic", "plan@example.com")].billing_type_source is None
+    finally:
+        session.close()
+
+
+def test_the_repair_never_reads_a_credential():
+    """The evidence is what the account published, not what it signed in with."""
+    session = _session()
+    try:
+        row = _account(session, account_id="old@example.com")
+        _card(session, "anthropic", "old@example.com", _quota_card())
+
+        plan = plan_claude_billing_type(session)
+        assert plan.priced[0].model == "subscription"
+        # Nothing about the credential is needed to reach that answer.
+        assert row.billing_type == "unknown"
+    finally:
+        session.close()
