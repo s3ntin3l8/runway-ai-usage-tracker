@@ -350,7 +350,7 @@ function ProvidersSectionV2({
                       await putProviderConfig(provider.provider_id, account.account_id, { archived: false });
                       await configs.refetch();
                     } catch (error) {
-                      toast.error(errorMessage(error) ?? 'Could not restore account');
+                      toast.error(errorMessage(error, 'Could not restore account'));
                     }
                   }}
                 >
@@ -377,7 +377,7 @@ function ProvidersSectionV2({
                             await configs.refetch();
                             toast.success('Archived account permanently deleted');
                           } catch (error) {
-                            toast.error(errorMessage(error) ?? 'Could not delete account');
+                            toast.error(errorMessage(error, 'Could not delete account'));
                           }
                         }}
                       >

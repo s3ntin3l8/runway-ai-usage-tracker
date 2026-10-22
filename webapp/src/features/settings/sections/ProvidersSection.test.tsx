@@ -280,6 +280,25 @@ describe('ProvidersSection', () => {
     ));
   });
 
+  it('shows the error when restoring an archived account fails', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 1,
+        archived_count: 1,
+        accounts: [
+          { account_id: 'old@example.com', account_label: 'Old', enabled: false, archived: true },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.putProviderConfig).mockRejectedValue(new Error('Server refused the restore'));
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Archived accounts (1)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Server refused the restore'));
+  });
+
   it('offers permanent deletion only for empty archived accounts', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
       providers: [provider({

@@ -3,20 +3,20 @@ import { errorMessage } from './errorMessage';
 
 describe('errorMessage', () => {
   it('returns the message of an Error', () => {
-    expect(errorMessage(new Error('boom'))).toBe('boom');
+    expect(errorMessage(new Error('boom'), 'fallback')).toBe('boom');
   });
 
   it('returns the message of an error-like object', () => {
-    expect(errorMessage({ message: 'boom' })).toBe('boom');
+    expect(errorMessage({ message: 'boom' }, 'fallback')).toBe('boom');
   });
 
-  it('returns null for a value with no message', () => {
-    expect(errorMessage('boom')).toBeNull();
-    expect(errorMessage(null)).toBeNull();
-    expect(errorMessage(undefined)).toBeNull();
-    expect(errorMessage(42)).toBeNull();
-    expect(errorMessage({})).toBeNull();
-    expect(errorMessage({ message: 42 })).toBeNull();
+  it('falls back when the value carries no message', () => {
+    expect(errorMessage('boom', 'fallback')).toBe('fallback');
+    expect(errorMessage(null, 'fallback')).toBe('fallback');
+    expect(errorMessage(undefined, 'fallback')).toBe('fallback');
+    expect(errorMessage(42, 'fallback')).toBe('fallback');
+    expect(errorMessage({}, 'fallback')).toBe('fallback');
+    expect(errorMessage({ message: 42 }, 'fallback')).toBe('fallback');
   });
 
   it('answers the same for an error from another realm', () => {
@@ -25,6 +25,6 @@ describe('errorMessage', () => {
     // the `message` property is not.
     const other = new (class extends Error {})('boom');
     Object.setPrototypeOf(other, Error.prototype);
-    expect(errorMessage(other)).toBe('boom');
+    expect(errorMessage(other, 'fallback')).toBe('boom');
   });
 });

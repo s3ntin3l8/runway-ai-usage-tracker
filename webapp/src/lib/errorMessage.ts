@@ -1,5 +1,5 @@
 /**
- * The message of a thrown value, or `null` when it carries none.
+ * The message of a thrown value, or a fallback when it carries none.
  *
  * `instanceof Error` is not reliable across realms. A test pool that runs the
  * test code in a separate realm — Vitest's `vmThreads` does — sees host-created
@@ -11,12 +11,15 @@
  * Reading the `message` property answers the same in every realm. It also
  * covers a rejected promise carrying a plain object with a `message`, which
  * the `instanceof` check silently discarded.
+ *
+ * The fallback lives here rather than at each call site, so a call site is a
+ * single statement with no branch of its own to cover.
  */
-export function errorMessage(value: unknown): string | null {
+export function errorMessage(value: unknown, fallback: string): string {
   if (value instanceof Error) return value.message;
   if (typeof value === 'object' && value !== null) {
     const message = (value as { message?: unknown }).message;
     if (typeof message === 'string') return message;
   }
-  return null;
+  return fallback;
 }

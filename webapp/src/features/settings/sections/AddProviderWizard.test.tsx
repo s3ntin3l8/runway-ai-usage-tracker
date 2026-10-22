@@ -137,6 +137,18 @@ describe('AddProviderWizard', () => {
     );
   });
 
+  it('shows the error when the preview fails', async () => {
+    vi.mocked(api.previewAccount).mockRejectedValue(new Error('Could not reach the provider'));
+
+    renderWizard();
+    await userEvent.click(await screen.findByText('Anthropic'));
+    await userEvent.type(screen.getByLabelText(/API key/i), 'sk-ant-new');
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not reach the provider')).toBeInTheDocument(),
+    );
+  });
+
   it('keeps the last credential winning when multiple debounced fetches land (#287)', async () => {
     // Fake timers let us pace the 300ms debounce deterministically. Each
     // typed value gets its own preview call once the debounce flushes —

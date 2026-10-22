@@ -277,7 +277,7 @@ export function PendingUsageEventsCard() {
       if (selectionRequestId.current !== requestId) return;
       setSelected(Object.fromEntries(all.map((group) => [sessionKey(group), group])));
     } catch (error) {
-      toast.error(errorMessage(error) ?? 'Could not select matching usage groups');
+      toast.error(errorMessage(error, 'Could not select matching usage groups'));
     } finally {
       if (selectionRequestId.current === requestId) setSelectingAll(false);
     }

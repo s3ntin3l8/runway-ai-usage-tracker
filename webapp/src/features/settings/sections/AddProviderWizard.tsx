@@ -436,7 +436,7 @@ function Step2({
           setPreviewError(err.message);
           setConflict(false);
         } else {
-          setPreviewError(errorMessage(err) ?? 'Preview failed');
+          setPreviewError(errorMessage(err, 'Preview failed'));
           setConflict(false);
         }
       } finally {

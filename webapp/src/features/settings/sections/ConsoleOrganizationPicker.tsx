@@ -54,7 +54,7 @@ export function ConsoleOrganizationPicker({ cookie, value, onSelect }: {
       selection.current.onSelect(nextSelection(data.organizations, selected));
       if (data.organizations.length === 0) setError('No API organizations are accessible with this Console session.');
     } catch (err) {
-      if (!ac.signal.aborted) setError(errorMessage(err) ?? 'Could not load organizations');
+      if (!ac.signal.aborted) setError(errorMessage(err, 'Could not load organizations'));
     } finally {
       if (!ac.signal.aborted) setLoading(false);
     }
