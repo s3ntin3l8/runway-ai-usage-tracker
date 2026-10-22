@@ -501,7 +501,7 @@ def test_a_v10_failure_in_a_mixed_store_is_not_labelled_app_bound(tmp_path, monk
     """
     path = _chromium_store(
         tmp_path / "Cookies",
-        [("kimi", b"v10" + b"\x01" * 32), ("session", b"v20" + b"\x01" * 32)],
+        [("kimi-auth", b"v10" + b"\x01" * 32), ("session", b"v20" + b"\x01" * 32)],
     )
     monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
     monkeypatch.setattr(sidecar, "decrypt_chromium_cookie", lambda *a, **k: None)
@@ -509,7 +509,9 @@ def test_a_v10_failure_in_a_mixed_store_is_not_labelled_app_bound(tmp_path, monk
     # The app-bound cookie fails first and makes the store app-bound.
     sidecar.BrowserCookieExtractor.get_cookie("example.com", "session", "ollama", "session_cookie")
     # A different provider's v10 cookie then fails for another reason.
-    sidecar.BrowserCookieExtractor.get_cookie("example.com", "kimi", "kimi", "session_cookie")
+    sidecar.BrowserCookieExtractor.get_cookie(
+        "example.com", "kimi-auth", "kimi_coding", "session_cookie"
+    )
 
     entries = sidecar.blocked_source_entries()
     assert [entry["provider_id"] for entry in entries] == ["ollama"]
