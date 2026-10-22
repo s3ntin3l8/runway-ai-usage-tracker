@@ -339,16 +339,25 @@ function Step2({
   const [detectedBillingType, setDetectedBillingType] = useState<BillingType | undefined>();
   const [detectError, setDetectError] = useState<string | null>(null);
   const detectBilling = useMutation({
-    mutationFn: () =>
-      previewAccount({
+    mutationFn: async () => {
+      // Remember the credential the proof was asked about: a proof describes
+      // the credential it was asked about, and that credential may change
+      // while the request is in flight.
+      const asked = { apiKey: apiKey.trim(), cookie: cookie.trim() };
+      const data = await previewAccount({
         provider_id: provider.provider_id,
         organization_id:
           provider.provider_id === 'anthropic_console' ? organizationId : undefined,
-        api_key: apiKey.trim() || undefined,
-        session_cookie: cookie.trim() || undefined,
+        api_key: asked.apiKey || undefined,
+        session_cookie: asked.cookie || undefined,
         detect_billing: true,
-      }),
-    onSuccess: (data) => {
+      });
+      return { data, asked };
+    },
+    onSuccess: ({ data, asked }) => {
+      if (asked.apiKey !== apiKey.trim() || asked.cookie !== cookie.trim()) return;
+      // An inconclusive proof is not a decision: the server proved nothing,
+      // so nobody chose a model and the server's own proof decides.
       setDetectedBillingType(data.suggested_billing_type ?? undefined);
       setDetectError(null);
     },
@@ -357,6 +366,13 @@ function Step2({
       setDetectError(errorMessage(err, 'Could not detect the billing model'));
     },
   });
+  // A proof belongs to one credential. When the credential changes, the
+  // proof is stale — clear it, so the wizard never saves one account's model
+  // onto another.
+  useEffect(() => {
+    setDetectedBillingType(undefined);
+    setDetectError(null);
+  }, [apiKey, cookie]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inflightRef = useRef<AbortController | null>(null);
   // Mirror `existingAccountIds` into a ref so the debounce effect can read
@@ -541,6 +557,12 @@ function Step2({
             </Button>
             {detectedBillingType ? (
               <HelperText>Detected: {BILLING_TYPE_SHORT_LABELS[detectedBillingType]}</HelperText>
+            ) : null}
+            {detectBilling.isSuccess && !detectedBillingType ? (
+              <HelperText>
+                Could not be determined — Claude did not prove a model. Choose one in the next
+                step.
+              </HelperText>
             ) : null}
           </div>
           {detectError ? <HelperText>{detectError}</HelperText> : null}

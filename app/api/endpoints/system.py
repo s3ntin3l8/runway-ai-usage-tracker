@@ -2295,12 +2295,17 @@ async def _validate_console_connection(
         raise HTTPException(status_code=502, detail="Invalid Console billing response") from exc
 
 
-async def _detect_claude_billing_type(provider: str, cookie: str) -> BillingType:
+async def _detect_claude_billing_type(provider: str, cookie: str) -> BillingType | None:
     """How the Claude account behind a credential bills, proven like the collectors prove it.
 
     The same verification the automatic path uses reads the account's quota
-    windows; the detector reads the shape of the card they produce. "unknown"
-    means the credential proved no billing model — the operator then decides.
+    windows; the detector reads the shape of the card they produce.
+
+    ``None`` means the proof was inconclusive — several organizations are
+    accessible, or Claude answered only partly. That is the absence of a
+    proof, not a proof of "unknown": the operator (or the server's own
+    later proof) decides, and an inconclusive answer is never stored as a
+    decision.
     """
     from app.services.claude_verification import verify_claude_cookie
 
@@ -2309,7 +2314,9 @@ async def _detect_claude_billing_type(provider: str, cookie: str) -> BillingType
             result = await verify_claude_cookie(client, provider, cookie)
     except ConsoleAPIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    return result.billing_type or "unknown"
+    if result.selection_required or not result.complete:
+        return None
+    return result.billing_type
 
 
 @router.post("/provider-config/preview-account")
@@ -2396,7 +2403,7 @@ async def preview_account_identity(
                 status_code=422,
                 detail="Enter a Claude web session to detect the billing model",
             )
-        billing_type = await _detect_claude_billing_type("anthropic", body.session_cookie)
+        billing_type = await _detect_claude_billing_type(body.provider_id, body.session_cookie)
 
     email_pattern = r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$"
     email_candidate: str | None = None

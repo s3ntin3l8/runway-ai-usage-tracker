@@ -707,6 +707,66 @@ describe('AddProviderWizard — the billing model', () => {
     );
   });
 
+  it('forgets a proof when the credential changes', async () => {
+    // A proof describes one credential. A stale one would save the previous
+    // account's model onto the next.
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      ...previewWithoutModel,
+      suggested_billing_type: 'subscription',
+    });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.previewAccount).mock.calls.some(
+          (call) => (call[0] as { detect_billing?: boolean }).detect_billing === true,
+        ),
+      ).toBe(true),
+    );
+    expect(screen.getByText(/Detected: Subscription/)).toBeInTheDocument();
+
+    const session = screen.getByLabelText('Web session');
+    await userEvent.clear(session);
+    await userEvent.type(session, 'another-session');
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Detected: Subscription/)).not.toBeInTheDocument(),
+    );
+  });
+
+  it('sends no model when the proof was inconclusive', async () => {
+    // The server proved nothing (several organizations, or a partial
+    // failure). That is not a decision — nobody chose a model.
+    vi.mocked(api.previewAccount).mockResolvedValue({
+      ...previewWithoutModel,
+      suggested_billing_type: null,
+    });
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });
+    renderClaudeWizard();
+    await enterSession();
+
+    await userEvent.click(screen.getByRole('button', { name: /detect billing model/i }));
+    await waitFor(() =>
+      expect(
+        vi.mocked(api.previewAccount).mock.calls.some(
+          (call) => (call[0] as { detect_billing?: boolean }).detect_billing === true,
+        ),
+      ).toBe(true),
+    );
+    expect(screen.getByText(/Could not be determined/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    expect(await screen.findByLabelText('Billing model')).toHaveValue('unknown');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
+    expect(vi.mocked(api.putProviderConfig).mock.calls[0][2]).not.toHaveProperty(
+      'billing_type',
+    );
+  });
+
   it('sends no model when nobody chose one', async () => {
     vi.mocked(api.previewAccount).mockResolvedValue(previewWithoutModel);
     vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'saved' });

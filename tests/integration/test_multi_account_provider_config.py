@@ -2433,7 +2433,9 @@ def test_every_account_carries_the_provider_it_belongs_to(client: TestClient, se
 CLAUDE_ORG_ID = "22222222-2222-4222-8222-222222222222"
 
 
-def _mock_claude_api(monkeypatch, calls: list[str]) -> None:
+def _mock_claude_api(
+    monkeypatch, calls: list[str], organization_ids: tuple[str, ...] = (CLAUDE_ORG_ID,)
+) -> None:
     """Serve the claude.ai endpoints the verification reads."""
     import httpx
 
@@ -2444,7 +2446,10 @@ def _mock_claude_api(monkeypatch, calls: list[str]) -> None:
         if request.url.path == "/api/account":
             return httpx.Response(200, json={"email_address": "person@example.com"})
         if request.url.path == "/api/organizations":
-            return httpx.Response(200, json=[{"uuid": CLAUDE_ORG_ID, "name": "Acme"}])
+            return httpx.Response(
+                200,
+                json=[{"uuid": oid, "name": f"Org {oid[:8]}"} for oid in organization_ids],
+            )
         return httpx.Response(200, json={"five_hour": {"utilization": 10}})
 
     monkeypatch.setattr(
@@ -2511,3 +2516,28 @@ def test_billing_detection_is_refused_for_a_provider_that_has_no_claude_account(
     )
     assert preview.status_code == 422
     assert calls == []
+
+
+def test_an_inconclusive_detection_is_not_a_decision(client, monkeypatch):
+    """The absence of a proof is not a proof of "unknown".
+
+    Several organizations are accessible and none was chosen: the model is
+    unknown, but storing that would pin the account to it — a decision
+    nobody made.
+    """
+    calls: list[str] = []
+    _mock_claude_api(
+        monkeypatch,
+        calls,
+        organization_ids=(CLAUDE_ORG_ID, "33333333-3333-4333-8333-333333333333"),
+    )
+    preview = client.post(
+        "/api/v1/system/provider-config/preview-account",
+        json={
+            "provider_id": "anthropic",
+            "session_cookie": "sample-session",
+            "detect_billing": True,
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["suggested_billing_type"] is None

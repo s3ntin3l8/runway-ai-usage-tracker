@@ -101,12 +101,14 @@ export function ProviderDetailDialog({
   const masterEnabled = configAccounts.length > 0 && configAccounts.every((a) => a.enabled);
 
   // The provider an account is addressed to: its own, not the family's
-  // representative. Falls back to the dialog's provider when the family list
-  // does not know the account (a single-provider dialog).
+  // representative. An account that names a provider the dialog does not
+  // know is left unaddressed rather than filed under the family's
+  // representative — a wrong address is the very thing this fix is about.
   const providerOf = (account: ProviderAccount): ProviderConfig | null => {
     const id = account.provider_id;
     if (!id || !provider) return provider;
-    return (connections ?? []).find((c) => c.provider_id === id) ?? provider;
+    if (id === provider.provider_id) return provider;
+    return (connections ?? []).find((c) => c.provider_id === id) ?? null;
   };
   const setMasterEnabled = useMutation({
     mutationFn: async (next: boolean) => {
@@ -265,7 +267,7 @@ export function ProviderDetailDialog({
                   const isMenuOpen = menuFor === account.account_id;
                   return (
                     <li
-                      key={account.account_id}
+                      key={`${account.provider_id ?? provider.provider_id}/${account.account_id}`}
                       className="flex items-center gap-3 rounded-sm border border-edge bg-surface-1 px-3 py-2.5"
                     >
                       <AccountInitial account={account} />
