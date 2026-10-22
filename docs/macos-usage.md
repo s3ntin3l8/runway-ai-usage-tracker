@@ -59,13 +59,14 @@ watermark and `SIDECAR_BOOTSTRAP_DAYS`. Each cycle scans at most 500 assistant
 records per current range and normally 4 MiB of transcript data. One complete
 record up to 16 MiB may exceed the normal byte budget to ensure progress; larger
 records remain pending with a warning. Every scan re-checks the committed prefix
-against a fingerprint of its first 4 KiB and last 64 KiB, so the check stays
-bounded per transcript instead of re-reading the whole history; a tracked
-transcript costs at most another 68 KiB of reads per cycle. A timestamp never
-proves a transcript is unchanged: a rewrite in place inside one filesystem
-timestamp tick keeps the file's mtime, so the fingerprint — not the clock —
-decides whether the reader resumes at the committed offset or re-reads the file.
-Processing starts with the oldest modified
+against a fingerprint of it — the whole committed region while it fits in 68 KiB,
+otherwise its first 4 KiB and last 64 KiB — so the check stays bounded per
+transcript instead of re-reading the whole history; a tracked transcript costs at
+most another 68 KiB of reads per cycle. A timestamp never proves a transcript is
+unchanged: a rewrite in place inside one filesystem timestamp tick keeps the
+file's mtime, so the fingerprint — not the clock — decides whether the reader
+resumes at the committed offset or re-reads the file. Processing starts with the
+oldest modified
 files. Separate per-file offsets track only complete lines, detect replacement or
 truncation or in-place rewrites, and advance after accepted ingestion or a synchronized offline queue
 write. A crash before checkpointing replays through server event deduplication.

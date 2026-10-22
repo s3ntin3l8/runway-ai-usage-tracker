@@ -305,7 +305,7 @@ def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path, clock):
     assert [e["event_id"] for e in collect(base, state).events] == ["new"]
 
 
-@pytest.mark.parametrize("size", [8 * 1024, 32 * 1024])
+@pytest.mark.parametrize("size", [8 * 1024, 32 * 1024, 68 * 1024, 68 * 1024 + 1])
 def test_same_inode_rewrite_at_the_end_of_a_sub_window_transcript_is_not_skipped(tmp_path, size):
     base = tmp_path / "desktop"
     path = session(base)
