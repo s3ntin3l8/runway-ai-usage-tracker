@@ -78,8 +78,9 @@ const NATIVE_COOKIE_CLIENTS = ['Chrome', 'Safari', 'Claude Desktop'];
 export function describeCredentialOrigin(origin: string): CredentialOriginDescription {
   if (origin.startsWith('cookie:')) {
     // Same rule as the server: a native Anthropic cookie is named by its client
-    // ("Session cookie"), and its private profile never becomes a detail.
-    const segments = origin.split('#')[0].split('/').filter(Boolean);
+    // ("Session cookie"), and its private profile never becomes a detail. The
+    // segments are split exactly as the server splits them (empty ones count).
+    const segments = origin.split('#')[0].split('/');
     const provider = segments[0]?.replace(/^cookie:/, '');
     const native =
       segments.length >= 4 &&
