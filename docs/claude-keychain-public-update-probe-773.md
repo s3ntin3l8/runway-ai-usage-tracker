@@ -70,3 +70,26 @@ errors, and an invalid-scope startup control exits before any Keychain call.
 The corrected full native matrix has not been executed. These changes improve
 the investigation boundary; they do not solve cross-application policy
 preservation. The production guard from #751 remains unchanged.
+
+## Latest isolation failure and containment (2026-10-22)
+
+A bounded metadata-only control reached SecItemUpdate and timed out. It did
+not complete the matrix. Temporary test Keychains were removed, but before/after
+metadata reported changes to the default/search-list lock state. The default
+Keychain and search-list paths were unchanged. No real Claude credential
+operations or OAuth exchanges occurred. These observations do not establish
+what caused the lock-state change or the recurring GitHub credential prompts.
+They also do not establish that every public update strategy is unsupported.
+
+The probe is now quarantined: it refuses execution before subprocesses or native
+metadata unless explicitly enabled in a GitHub-hosted macOS job. The manual
+Synthetic Keychain investigation workflow uses a fresh hosted runner, synthetic
+credentials only, no repository/provider secrets, a process-group deadline and
+a job deadline. Do not run it on a personal Mac or a self-hosted runner.
+Incomplete, blocked or isolation-failed reports exit nonzero. No candidate may
+be promoted to production without a complete policy-preservation result.
+
+Production retains the unsupported-partition-policy guard. Safe refusal is not
+renewal acceptance. Remaining native write-path work is tracked in #773; signing
+and update continuity in #767; provider authorization in #781; real-item
+acceptance in #750 and #526.

@@ -10,6 +10,18 @@ from tests import native_claude_keychain_acceptance as acceptance
 from tests import native_keychain_public_update_probe as probe
 
 
+@pytest.fixture(autouse=True)
+def hosted_environment(monkeypatch):
+    for name, value in {
+        "CI": "true",
+        "GITHUB_ACTIONS": "true",
+        "RUNNER_ENVIRONMENT": "github-hosted",
+        "RUNNER_OS": "macOS",
+        "RUNWAY_NATIVE_SYNTHETIC": "1",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+
 def test_cleanup_deletes_only_with_interaction_disabled(monkeypatch, tmp_path):
     state = {"disabled": False, "deletions": 0}
 
@@ -85,6 +97,7 @@ def test_probe_retains_primary_error_when_cleanup_fails(monkeypatch, tmp_path, i
             stderr=b"stage:before_update\narbitrary diagnostic must not escape\n",
         )
 
+    monkeypatch.setattr(probe, "preflight", lambda: None)
     monkeypatch.setattr(probe, "Fixture", BrokenCleanup)
     monkeypatch.setattr(probe, "validate_scope", lambda _root, paths: paths)
     monkeypatch.setattr(probe, "capture", lambda *_args, **_kwargs: None)
@@ -101,3 +114,98 @@ def test_probe_retains_primary_error_when_cleanup_fails(monkeypatch, tmp_path, i
     assert result["failure"] == "timed_out"
     assert result["stages"] == ["before_update"]
     assert "arbitrary diagnostic" not in str(result)
+
+
+def test_active_security_requester_blocks_before_metadata_or_fixture(monkeypatch):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, stdout=b"/usr/bin/security\n", stderr=b""
+        ),
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("must stop before Keychain metadata or fixture creation")
+
+    monkeypatch.setattr(probe, "environment_snapshot", forbidden)
+    monkeypatch.setattr(probe, "Fixture", forbidden)
+
+    report = probe.run()
+
+    assert report["blocked_reason"] == "security_requester_active"
+    assert report["cases"] == []
+    assert report["matrix_complete"] is False
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_locked_or_unavailable_metadata_blocks_fixture_creation(monkeypatch, unavailable):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, stdout=b"/usr/bin/other\n", stderr=b""
+        ),
+    )
+
+    def snapshot():
+        if unavailable:
+            raise RuntimeError("arbitrary metadata diagnostic")
+        return {"default": {"unlocked": False}}
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("must not create a fixture")
+
+    monkeypatch.setattr(probe, "environment_snapshot", snapshot)
+    monkeypatch.setattr(probe, "Fixture", forbidden)
+
+    result = probe.run_case(None, "metadata-control")
+
+    assert result["preflight_blocked"] is True
+    assert result["failure"] == ("metadata_unavailable" if unavailable else "login_keychain_locked")
+    assert "arbitrary metadata diagnostic" not in str(result)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {},
+        {"CI": "true"},
+        {
+            "CI": "true",
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_ENVIRONMENT": "self-hosted",
+            "RUNNER_OS": "macOS",
+        },
+    ],
+)
+def test_probe_quarantined_outside_explicit_ephemeral_ci(monkeypatch, changes):
+    for name in (
+        "CI",
+        "GITHUB_ACTIONS",
+        "RUNNER_ENVIRONMENT",
+        "RUNNER_OS",
+        "RUNWAY_NATIVE_SYNTHETIC",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in changes.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(
+        probe.subprocess, "run", lambda *a, **k: pytest.fail("no subprocess outside CI")
+    )
+    monkeypatch.setattr(
+        probe, "environment_snapshot", lambda: pytest.fail("no native metadata outside CI")
+    )
+    assert probe.run()["blocked_reason"] == "ephemeral_macos_ci_required"
+
+
+@pytest.mark.parametrize(
+    "report, expected",
+    [
+        ({"matrix_complete": False}, 1),
+        ({"matrix_complete": True, "cases": [{"isolation_failed": True}]}, 1),
+        ({"matrix_complete": True, "cases": [{}]}, 0),
+    ],
+)
+def test_incomplete_or_unsafe_report_fails_process(report, expected):
+    assert probe.report_exit_code(report) == expected

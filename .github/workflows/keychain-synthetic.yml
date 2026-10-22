@@ -1,0 +1,47 @@
+name: Synthetic Keychain investigation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-update:
+    runs-on: macos-15
+    timeout-minutes: 5
+    env:
+      RUNWAY_NATIVE_SYNTHETIC: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Public API matrix with process-group deadline
+        timeout-minutes: 2
+        shell: python
+        run: |
+          import os
+          import signal
+          import subprocess
+          import sys
+          child = subprocess.Popen(
+              [sys.executable, "tests/native_keychain_public_update_probe.py",
+               "--isolated-synthetic-only", "--report", "keychain-report.json"],
+              start_new_session=True,
+          )
+          try:
+              code = child.wait(timeout=90)
+          except subprocess.TimeoutExpired:
+              code = 1
+          finally:
+              try:
+                  os.killpg(child.pid, signal.SIGKILL)
+              except ProcessLookupError:
+                  pass
+              child.wait()
+          sys.exit(code)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: synthetic-keychain-report
+          path: keychain-report.json
+          if-no-files-found: error
+          retention-days: 30

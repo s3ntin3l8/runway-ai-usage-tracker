@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -55,7 +56,46 @@ def snapshot_checks(before: dict, after: dict) -> dict[str, bool]:
     }
 
 
+def preflight() -> str | None:
+    """Stop before fixture creation if the host cannot support a quiet probe."""
+    if not all(
+        os.environ.get(name) == value
+        for name, value in {
+            "CI": "true",
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_ENVIRONMENT": "github-hosted",
+            "RUNNER_OS": "macOS",
+            "RUNWAY_NATIVE_SYNTHETIC": "1",
+        }.items()
+    ):
+        return "ephemeral_macos_ci_required"
+    try:
+        processes = subprocess.run(
+            ["/bin/ps", "-axo", "comm="],
+            capture_output=True,
+            check=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "requester_check_unavailable"
+    if any(
+        Path(line.strip()).name == "security"
+        for line in processes.stdout.decode(errors="replace").splitlines()
+    ):
+        return "security_requester_active"
+    try:
+        snapshot = environment_snapshot()
+        if snapshot["default"]["unlocked"] is not True:
+            return "login_keychain_locked"
+    except (OSError, RuntimeError, KeyError, TypeError, ValueError, subprocess.SubprocessError):
+        return "metadata_unavailable"
+    return None
+
+
 def run_case(writer: Path, mode: str) -> dict:
+    reason = preflight()
+    if reason is not None:
+        return {"case": mode, "failure": reason, "preflight_blocked": True}
     fixture = Fixture(writer)
     row = {"case": mode}
     interrupted = None
@@ -124,6 +164,10 @@ def run(selected: tuple[str, ...] = MODES) -> dict:
         "claude_oauth_exchanges": 0,
         "cases": [],
     }
+    reason = preflight()
+    if reason is not None:
+        report.update(blocked_reason=reason, matrix_complete=False, candidate_found=False)
+        return report
     with tempfile.TemporaryDirectory(prefix="runway-public-update-build-") as build:
         writer = Path(build) / "synthetic-writer"
         subprocess.run(
@@ -172,6 +216,14 @@ def run(selected: tuple[str, ...] = MODES) -> dict:
     return report
 
 
+def report_exit_code(report: dict) -> int:
+    """An incomplete experiment is a failed gate, never evidence of safety."""
+    return int(
+        report.get("matrix_complete") is not True
+        or any(row.get("isolation_failed") or "failure" in row for row in report.get("cases", []))
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--isolated-synthetic-only", action="store_true", required=True)
@@ -183,3 +235,4 @@ if __name__ == "__main__":
     result = run((args.case,) if args.case else MODES)
     args.report.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result))
+    sys.exit(report_exit_code(result))
