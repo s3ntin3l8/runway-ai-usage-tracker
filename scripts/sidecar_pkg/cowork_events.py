@@ -33,13 +33,15 @@ _TAIL_BYTES = 64 * 1024
 
 
 def _fingerprint(path: Path, end: int) -> str:
-    """Digest the head and the tail of a committed region, never all of it.
+    """Digest a committed region: all of it while it fits the window, else head and tail.
 
     The committed region is re-checked on every scan, so hashing it whole
     would re-read the whole transcript history each cycle and leave the
-    per-cycle byte budget. The head and the tail carry the rewrite: Claude
-    Code rewrites a transcript in place, and the bytes that change sit at
-    the end of the file.
+    per-cycle byte budget. A region up to the window size is hashed in full;
+    a larger one contributes only its head and its tail, which is where a
+    rewrite lands: Claude Code rewrites a transcript in place, and the bytes
+    that change sit at the end of the file. The middle of a larger region is
+    not covered; that gap is tracked in #802.
     """
     head = min(end, _HEAD_BYTES)
     tail_start = max(head, end - _TAIL_BYTES)
@@ -50,7 +52,7 @@ def _fingerprint(path: Path, end: int) -> str:
         block = f.read(head)
         if block:
             digest.update(block)
-        if tail_start > head:
+        if end > head:
             f.seek(tail_start)
             remaining = end - tail_start
             while remaining > 0:
@@ -230,7 +232,7 @@ def collect_cowork(
                     "offset": end,
                     "device": stat.st_dev,
                     "inode": stat.st_ino,
-                    "mtime_ns": stat.st_mtime_ns,
+                    "mtime_ns": stat.st_mtime_ns,  # diagnostic only; never decides a skip
                     "fingerprint": _fingerprint(path, end),
                     "account": account,
                 },

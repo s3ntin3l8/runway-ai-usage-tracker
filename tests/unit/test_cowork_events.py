@@ -305,6 +305,27 @@ def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path, clock):
     assert [e["event_id"] for e in collect(base, state).events] == ["new"]
 
 
+@pytest.mark.parametrize("size", [8 * 1024, 32 * 1024])
+def test_same_inode_rewrite_at_the_end_of_a_sub_window_transcript_is_not_skipped(tmp_path, size):
+    base = tmp_path / "desktop"
+    path = session(base)
+    old = json.dumps(record("old")) + "\n"
+    overhead = len(json.dumps({"type": "user", "padding": ""})) + 1
+    body = json.dumps({"type": "user", "padding": "x" * (size - len(old) - overhead)}) + "\n"
+    assert len(body) + len(old) == size  # the committed region is exactly `size` bytes
+    path.write_text(body + old)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    recorded = path.stat().st_mtime_ns
+    path.write_text(body + json.dumps(record("new")) + "\n")
+    try:
+        os.utime(path, ns=(path.stat().st_atime_ns, recorded))
+    except OSError:
+        pytest.skip("mtime not settable on this filesystem")
+    assert [e["event_id"] for e in collect(base, state).events] == ["new"]
+
+
 def test_same_inode_rewrite_at_the_end_of_a_large_transcript_is_not_skipped(tmp_path):
     base = tmp_path / "desktop"
     path = session(base)
@@ -341,6 +362,14 @@ def test_fingerprint_covers_the_head_and_the_tail_of_the_committed_region(tmp_pa
     # head nor the tail of the committed region is not detected. Tracked in
     # the follow-up issue linked from the pull request.
     assert _fingerprint(path, path.stat().st_size) == window
+    # A region that fits the window is covered in full.
+    small = b"s" * (32 * 1024)
+    path.write_bytes(small)
+    digest = _fingerprint(path, path.stat().st_size)
+    changed = bytearray(small)
+    changed[16 * 1024 : 16 * 1024 + 4] = b"0123"
+    path.write_bytes(bytes(changed))
+    assert _fingerprint(path, path.stat().st_size) != digest
 
 
 def test_queue_sync_failure_does_not_own_checkpoint(tmp_path, monkeypatch):
