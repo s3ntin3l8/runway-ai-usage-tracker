@@ -20,8 +20,14 @@ from __future__ import annotations
 # keeps working), verified 2026-10-07 — scripts/sidecar_pkg/anthropic_renewer.py renews and
 # writes back a machine-owned Claude Code login. ChatGPT (Codex) rotates as well, with a reuse
 # window like xAI's (verified 2026-10-08); scripts/sidecar_pkg/codex_renewer.py renews and writes
-# back a machine-owned Codex login.
-ROTATING_REFRESH_PROVIDERS = frozenset({"anthropic", "chatgpt", "xai"})
+# back a machine-owned Codex login. MiniMax Code rotates too: its OAuth bundle
+# (client ``mcode-public``) lives in ``~/.minimax/auth/<env>/<region>/`` and the
+# desktop app renews it in place, bumping the stored token's ``generation``.
+# Runway never refreshes it — the app owns that file, and a server-side refresh
+# would rotate the refresh token out from under it and sign the user out of the
+# app. The app refreshes on its own whenever it runs, so the sidecar's
+# read-only discovery keeps working without Runway touching the secret.
+ROTATING_REFRESH_PROVIDERS = frozenset({"anthropic", "chatgpt", "minimax", "xai"})
 
 # Providers whose sidecar can renew a machine-owned login itself (``--keep-alive``):
 # agy via ``agy models``; xAI, Claude Code and Codex by refreshing and writing the token back to

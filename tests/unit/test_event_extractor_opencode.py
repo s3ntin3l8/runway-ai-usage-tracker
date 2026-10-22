@@ -74,6 +74,7 @@ def test_extracts_messages():
         )
         assert len(evts) == 2  # 2 assistant messages, 1 user message (ignored)
         assert all(e.provider_id == "opencode" for e in evts)
+        assert all(e.source_app == "opencode" for e in evts)
     finally:
         db_path.unlink(missing_ok=True)
 
