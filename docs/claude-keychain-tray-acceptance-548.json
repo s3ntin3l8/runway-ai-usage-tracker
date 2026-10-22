@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-21",
+  "code_base": "b0639e65",
+  "tray_changes": "sidecar_app daemon activation/config reload/shutdown; built from working tree",
+  "build": "dist/548/Runway Sidecar.app; ad-hoc signature verified",
+  "authorization": "User requested all necessary verification on existing main account; confirmed Always Allow on Runway Sidecar",
+  "not_due": {
+    "mode": "packaged-tray-not-due",
+    "new_exchanges": 0,
+    "new_target_writes": 0,
+    "background_read": true,
+    "not_due": true,
+    "tray_alive": true,
+    "fleet_claude_active": true,
+    "packaged_renewer_not_due": true,
+    "other_renewers_disabled": true,
+    "no_credential_upload": true,
+    "credential_unchanged": true,
+    "recovery_absent": true,
+    "access_policy_preserved": true,
+    "integrity_changed": false,
+    "changed_policy_authorizations": [],
+    "outcome": "passed"
+  },
+  "preliminary_expiry_preparation": {
+    "outcome": "stopped before exchange",
+    "access_policy_comparison": false,
+    "original_expiry_restored": true,
+    "changed_entry": "not captured; remains unexplained",
+    "oauth_exchanges": 0
+  },
+  "packaged_renewal": {
+    "mode": "packaged-tray-renew-once",
+    "exchange_limit": 1,
+    "background_read": true,
+    "not_due": true,
+    "expiry_preparation_policy": {
+      "access_policy_preserved": true,
+      "integrity_changed": false,
+      "changed_policy_authorizations": []
+    },
+    "expiry_preparation_access_policy_preserved": true,
+    "expiry_prepared_without_token_change": true,
+    "tray_alive": true,
+    "fleet_claude_active": true,
+    "verified_renewed_log_count": 1,
+    "packaged_renewer_not_due": false,
+    "other_renewers_disabled": true,
+    "no_credential_upload": true,
+    "credential_unchanged": false,
+    "recovery_absent": true,
+    "access_policy_preserved": true,
+    "integrity_changed": false,
+    "changed_policy_authorizations": [],
+    "access_changed": true,
+    "refresh_changed": true,
+    "expiry_advanced": true,
+    "same_exact_target": true,
+    "unrelated_json_preserved": true,
+    "upstream_identity_preserved": true,
+    "usage_http_200": true,
+    "usage_shape_valid": true,
+    "exchange_count_evidence": "one immediate renewer cycle; process stopped before the 60-second second tick; one exact target and no file targets",
+    "outcome": "passed"
+  },
+  "cli_initial": {
+    "mode": "read-only-cli-after-packaged-renewal",
+    "exchanges": 0,
+    "writes": 0,
+    "recovery_absent": true,
+    "cli_exit_zero": false,
+    "cli_logged_in": false,
+    "cli_matches_verified_account": false,
+    "credentials_unchanged": true,
+    "fresh_helper_reads_same_credentials": true,
+    "outcome": "incomplete"
+  },
+  "limits": [
+    "Exchange count is bounded by one eligible target, no file targets and stopping before a second renewer tick; no OAuth network interception was used.",
+    "The earlier expiry-only comparison differed. Later preparation and actual refresh comparisons passed; this does not identify the earlier differing entry.",
+    "This is an ad-hoc test build; stable signing and persistence across app updates remain #767.",
+    "Native configured/suffixed-service and physical fault recovery remain #750.",
+    "Windows xAI live write-back prerequisite for general tray activation remains unexecuted.",
+    "Keychain update is not atomic against independent Claude Code refresh; response-journaling cannot eliminate the provider rotation crash interval."
+  ],
+  "security_foreground_read": {
+    "mode": "foreground-security-read",
+    "exchanges": 0,
+    "writes": 0,
+    "read_succeeded": true,
+    "json_credential_shape": true,
+    "outcome": "passed"
+  },
+  "cli_after_security_authorization": {
+    "mode": "read-only-cli-after-packaged-renewal",
+    "exchanges": 0,
+    "writes": 0,
+    "recovery_absent": true,
+    "cli_exit_zero": true,
+    "cli_logged_in": true,
+    "cli_matches_verified_account": true,
+    "credentials_unchanged": true,
+    "fresh_helper_reads_same_credentials": true,
+    "outcome": "passed"
+  },
+  "follow_up_issues": [
+    773,
+    750,
+    767,
+    548
+  ]
+}

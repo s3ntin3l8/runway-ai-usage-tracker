@@ -587,3 +587,58 @@ The sidecar probes known credential/identity files, `projects/` and `sessions/`.
 The server never expands or opens these paths. Tray collection uses the same
 settings; tray keep-alive remains unsupported (#548), and custom macOS keychain
 renewal remains tracked separately (#526).
+
+### macOS Claude Code Keychain renewal (#526)
+
+Claude Code Keychain discovery remains read-only by default. To allow this
+machine to renew those logins, add **`"claude_keychain_renewal": true`** to its
+local sidecar `config.json` and enable Claude keep-alive using the existing
+keep-alive controls. Only the literal JSON boolean `true` grants permission;
+a fleet default or dashboard override cannot grant it. Removing the setting or
+setting it to `false` prevents further exchanges and writes. A daemon observes
+its current local configuration; the CLI daemon requires a restart for a
+file edit, while desktop configuration reload replaces the current config.
+The tray app currently does not arm keep-alive, so this permission alone does
+not start renewal there.
+
+The sidecar checks the default and configured/suffixed Claude Code services,
+scoped to the same local account as discovery. It updates the exact existing
+Keychain item, preserving its account, service, access controls, and unrelated
+JSON fields. Native IO runs in a private helper with a 30-second deadline per
+operation. macOS may ask for Keychain permission. A denial or timeout suppresses
+further Claude Code discovery and renewal access until sidecar restart; it is
+never retried automatically during that process. No refresh token goes to the
+Runway server. Claude Desktop OAuth is a separate source and is not renewed.
+
+Before exchanging a single-use refresh token, Runway creates and verifies an
+intent record under the Keychain service **Runway Claude Code renewal**, keyed
+by the exact target's persistent reference. A successful response is saved there
+before write-back. After read-back verifies the update, the recovery record is
+removed. A restart retries a pending **save**, never a second exchange. Failed
+journal writes retain the replacement in memory for a save retry while the
+process lives. If a request times out, or the process crashes after the provider
+rotates the token but before the response is durably saved, the intent remains
+ambiguous: automatic reuse is blocked until Claude Code renews or the user logs
+in again. Pending records remain in Keychain when permission is disabled; they
+are processed when permission and Claude keep-alive are enabled again. Deleted
+targets are never recreated. Recovery data for a deleted or no-longer-configured
+target is retained and is not exported to the server.
+
+Runway serializes its own file and Keychain renewers across threads and processes
+with a per-user lock. It re-reads before exchange and write-back and preserves a
+login changed by Claude Code. Keychain has no atomic compare-and-swap against
+Claude Code's refresh token, so a narrow race with an independently refreshing
+Claude Code process remains. A locked/inaccessible Keychain, unsupported JSON,
+missing expiry, or ambiguous item match fails closed with a sanitized diagnostic.
+
+Native acceptance must use a dedicated macOS test user, an isolated Keychain,
+and a disposable Claude Code login, with explicit approval before credential
+access or rotation. Record OS/architecture, build revision, service selection
+(default/suffixed, without identifiers), consent, and sanitized operation outcomes.
+Verify actual refresh and expiry advancement, preserved ACLs and JSON, acceptance
+by Claude Code, denial/timeout suppression, restart recovery, and the packaged
+sidecar. Synthetic tests and a framework serialization check alone do not prove
+native credential compatibility. Keep #526 open until this acceptance passes.
+
+The remaining native renewal acceptance is tracked in
+[#750](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/750).

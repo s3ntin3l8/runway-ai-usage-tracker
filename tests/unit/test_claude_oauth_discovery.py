@@ -3,11 +3,13 @@
 import base64
 import hashlib
 import json
-import subprocess
 
 import pytest
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+from scripts.sidecar_pkg import macos_keychain_store as keychain
+from scripts.sidecar_pkg.macos_keychain_store import KeychainError
 
 ACCOUNT = "11111111-1111-4111-8111-111111111111"
 SLOT = f"acct:{ACCOUNT}|client:org:api.anthropic.com:user:profile user:inference"
@@ -29,11 +31,11 @@ def desktop(tmp_path, monkeypatch):
     monkeypatch.setattr(macos_cookies, "_KEY_CACHE", {})
     calls = []
 
-    def lookup(cmd, **kwargs):
-        calls.append((cmd, kwargs))
-        return subprocess.CompletedProcess(cmd, 0, "synthetic-key\n", "")
+    def lookup(service, account=None, **kwargs):
+        calls.append((service, account))
+        return b"synthetic-key\n"
 
-    monkeypatch.setattr(subprocess, "run", lookup)
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     path = tmp_path / "config.json"
     return path, calls
 
@@ -60,7 +62,7 @@ def test_desktop_deduplicates_v2_and_never_forwards_refresh(desktop):
     assert origin.startswith("keychain:Claude Desktop/oauth/")
     assert "never-forward" not in repr(result)
     assert len(calls) == 1
-    assert calls[0][1]["timeout"] == 30
+    assert calls[0] == ("Claude Safe Storage", None)
 
 
 def test_desktop_rereads_rotation_without_repeating_keychain(desktop):
@@ -212,32 +214,28 @@ def test_code_denial_is_not_retried_and_errors_are_sanitized(monkeypatch, caplog
     from scripts import sidecar  # noqa: F401 - initialize before subprocess isolation
     from scripts.sidecar_pkg import claude_code_keychain as helper
 
-    monkeypatch.setattr(helper, "_DENIED", set())
     calls = []
 
-    def deny(cmd, **kwargs):
-        calls.append(cmd)
-        raise subprocess.TimeoutExpired(cmd, 30, output="secret-output")
+    def deny(service, account=None, **kwargs):
+        calls.append((service, account))
+        raise KeychainError("timed_out")
 
-    monkeypatch.setattr(subprocess, "run", deny)
+    monkeypatch.setattr(keychain, "read_secret", deny)
     for _ in range(2):
         assert helper.read_candidates([], {"claudeAiOauth.accessToken": "oauth_token"}) == []
     assert len(calls) == 1
-    assert "-a" in calls[0]
+    assert calls[0][1] == helper.account_name()
     assert "secret-output" not in caplog.text
 
 
 def test_code_reads_rotated_values_and_expiry_without_exporting_refresh(monkeypatch):
     from scripts.sidecar_pkg import claude_code_keychain as helper
 
-    monkeypatch.setattr(helper, "_DENIED", set())
     monkeypatch.delenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", raising=False)
     values = iter(["first", "second"])
 
-    def lookup(cmd, **kwargs):
-        return subprocess.CompletedProcess(
-            cmd,
-            0,
+    def lookup(service, account=None, **kwargs):
+        return (
             json.dumps(
                 {
                     "claudeAiOauth": {
@@ -246,11 +244,10 @@ def test_code_reads_rotated_values_and_expiry_without_exporting_refresh(monkeypa
                         "expiresAt": 4102444800000,
                     }
                 }
-            ),
-            "",
-        )
+            )
+        ).encode()
 
-    monkeypatch.setattr(subprocess, "run", lookup)
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     mapping = {
         "claudeAiOauth.accessToken": "oauth_token",
         "claudeAiOauth.refreshToken": "refresh_token",
@@ -267,15 +264,14 @@ def test_code_denial_suppresses_all_service_prompts_until_restart(monkeypatch, t
     from scripts import sidecar  # noqa: F401
     from scripts.sidecar_pkg import claude_code_keychain as helper
 
-    monkeypatch.setattr(helper, "_DENIED", set())
     monkeypatch.delenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", raising=False)
     calls = []
 
-    def denied(cmd, **kwargs):
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 36, "", "private-error")
+    def denied(service, account=None, **kwargs):
+        calls.append((service, account))
+        raise KeychainError("unavailable")
 
-    monkeypatch.setattr(subprocess, "run", denied)
+    monkeypatch.setattr(keychain, "read_secret", denied)
     for _ in range(2):
         assert helper.read_candidates([tmp_path / "a", tmp_path / "b"], {}) == []
     assert len(calls) == 1
@@ -285,26 +281,21 @@ def test_code_multiple_directories_keep_account_tokens_separate(monkeypatch, tmp
     from scripts import sidecar  # noqa: F401
     from scripts.sidecar_pkg import claude_code_keychain as helper
 
-    monkeypatch.setattr(helper, "_DENIED", set())
     monkeypatch.delenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", raising=False)
     roots = [tmp_path / "personal", tmp_path / "work"]
     services = helper.service_candidates(roots)
 
-    def lookup(cmd, **kwargs):
-        service = cmd[cmd.index("-s") + 1]
+    def lookup(service, account=None, **kwargs):
         if service == services[0]:
-            return subprocess.CompletedProcess(cmd, 44, "", "")
+            return None
         account = "personal@example.com" if service == services[1] else "work@example.com"
-        return subprocess.CompletedProcess(
-            cmd,
-            0,
+        return (
             json.dumps(
                 {"claudeAiOauth": {"accessToken": account}, "oauthAccount": {"email": account}}
-            ),
-            "",
-        )
+            )
+        ).encode()
 
-    monkeypatch.setattr(subprocess, "run", lookup)
+    monkeypatch.setattr(keychain, "read_secret", lookup)
     result = helper.read_candidates(
         roots, {"claudeAiOauth.accessToken": "oauth_token", "oauthAccount.email": "account_id"}
     )
@@ -336,23 +327,19 @@ def test_code_decoder_is_standalone_and_handles_declared_identity_alternatives(m
 
     from scripts.sidecar_pkg import claude_code_keychain as helper
 
-    monkeypatch.setattr(helper, "_DENIED", set())
     monkeypatch.delenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", raising=False)
     monkeypatch.setitem(sys.modules, "scripts.sidecar", None)
     monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda cmd, **kwargs: subprocess.CompletedProcess(
-            cmd,
-            0,
+        keychain,
+        "read_secret",
+        lambda service, account=None, **kwargs: (
             json.dumps(
                 {
                     "claudeAiOauth": {"accessToken": "access"},
                     "oauthAccount": {"email": "person@example.com"},
                 }
-            ),
-            "",
-        ),
+            )
+        ).encode(),
     )
     result = helper.read_candidates(
         [],

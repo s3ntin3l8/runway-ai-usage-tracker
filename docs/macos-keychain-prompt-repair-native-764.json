@@ -1,0 +1,260 @@
+{
+  "date": "2026-10-21",
+  "authorization": "User explicitly approved isolated synthetic Keychain acceptance; no real Claude login access or OAuth exchange authorized.",
+  "environment": {
+    "macos": "26.6.2",
+    "build": "25G83",
+    "architecture": "arm64"
+  },
+  "native_transport_revision": "abaf5f17",
+  "packaged_artifact": "dist/764/Runway Sidecar.app",
+  "packaged_signature": "ad_hoc_verified",
+  "request_deadline_seconds": 5,
+  "security_agent_process_monitor_interval_seconds": 0.05,
+  "attempts": [
+    {
+      "scope": "isolated_synthetic_only",
+      "real_credential_reads": 0,
+      "oauth_exchanges": 0,
+      "real_credential_writes": 0,
+      "roles": {},
+      "cleanup": {
+        "search_list_restored": true,
+        "default_restored": true,
+        "temporary_keychain_deleted": true
+      },
+      "outcome": "failed",
+      "security_agent_baseline_count": 0,
+      "error_type": "KeychainError",
+      "sanitized_reason": "denied",
+      "unexpected_security_agent_process": false,
+      "attempt": 1
+    },
+    {
+      "scope": "isolated_synthetic_only",
+      "real_credential_reads": 0,
+      "oauth_exchanges": 0,
+      "real_credential_writes": 0,
+      "roles": {},
+      "cleanup": {
+        "search_list_restored": true,
+        "default_restored": true,
+        "temporary_keychain_deleted": true
+      },
+      "outcome": "failed",
+      "security_agent_baseline_count": 0,
+      "operations": [
+        {
+          "group": "source:authorized",
+          "operation": "copy",
+          "outcome": "denied"
+        }
+      ],
+      "error_type": "KeychainError",
+      "sanitized_reason": "denied",
+      "unexpected_security_agent_process": false,
+      "attempt": 2
+    },
+    {
+      "scope": "isolated_synthetic_only",
+      "real_credential_reads": 0,
+      "oauth_exchanges": 0,
+      "real_credential_writes": 0,
+      "roles": {},
+      "cleanup": {
+        "search_list_restored": true,
+        "default_restored": true,
+        "temporary_keychain_deleted": true
+      },
+      "outcome": "failed",
+      "security_agent_baseline_count": 0,
+      "fixture_keychain_status": 7,
+      "fixture_parent_native_status": -25293,
+      "error_type": "KeychainError",
+      "sanitized_reason": "denied",
+      "unexpected_security_agent_process": false,
+      "attempt": 3
+    },
+    {
+      "scope": "isolated_synthetic_only",
+      "real_credential_reads": 0,
+      "oauth_exchanges": 0,
+      "real_credential_writes": 0,
+      "roles": {
+        "source": {
+          "read_write_readback": true,
+          "one_helper_reused": true,
+          "restart_read": true,
+          "locked_read_denied": true,
+          "locked_write_denied": true,
+          "acl_read_denied": true,
+          "denial_suppressed": true,
+          "unaffected_group_operational": true,
+          "deleted_item_missing": true
+        },
+        "packaged": {
+          "read_write_readback": true,
+          "one_helper_reused": true,
+          "restart_read": true,
+          "locked_read_denied": true,
+          "locked_write_denied": true,
+          "acl_read_denied": true,
+          "denial_suppressed": true,
+          "unaffected_group_operational": true,
+          "deleted_item_missing": true
+        }
+      },
+      "cleanup": {
+        "search_list_restored": true,
+        "default_restored": true,
+        "temporary_keychain_deleted": true
+      },
+      "outcome": "passed",
+      "security_agent_baseline_count": 0,
+      "fixture_keychain_status": 7,
+      "fixture_parent_native_status": 0,
+      "fixture_parent_read": true,
+      "operations": [
+        {
+          "group": "source:authorized",
+          "operation": "copy",
+          "outcome": "success"
+        },
+        {
+          "group": "source:authorized",
+          "operation": "update",
+          "outcome": "success"
+        },
+        {
+          "group": "source:authorized",
+          "operation": "copy",
+          "outcome": "success"
+        },
+        {
+          "group": "source:authorized",
+          "operation": "copy",
+          "outcome": "success"
+        },
+        {
+          "group": "source:locked-read",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "source:locked-read",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "source:locked-write",
+          "operation": "update",
+          "outcome": "denied"
+        },
+        {
+          "group": "source:locked-write",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "source:acl",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "source:acl",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "source:authorized",
+          "operation": "copy",
+          "outcome": "success"
+        },
+        {
+          "group": "source:authorized",
+          "operation": "delete",
+          "outcome": "success"
+        },
+        {
+          "group": "source:authorized",
+          "operation": "copy",
+          "outcome": "missing"
+        },
+        {
+          "group": "packaged:authorized",
+          "operation": "copy",
+          "outcome": "success"
+        },
+        {
+          "group": "packaged:authorized",
+          "operation": "update",
+          "outcome": "success"
+        },
+        {
+          "group": "packaged:authorized",
+          "operation": "copy",
+          "outcome": "success"
+        },
+        {
+          "group": "packaged:authorized",
+          "operation": "copy",
+          "outcome": "success"
+        },
+        {
+          "group": "packaged:locked-read",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "packaged:locked-read",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "packaged:locked-write",
+          "operation": "update",
+          "outcome": "denied"
+        },
+        {
+          "group": "packaged:locked-write",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "packaged:acl",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "packaged:acl",
+          "operation": "copy",
+          "outcome": "denied"
+        },
+        {
+          "group": "packaged:authorized",
+          "operation": "copy",
+          "outcome": "success"
+        },
+        {
+          "group": "packaged:authorized",
+          "operation": "delete",
+          "outcome": "success"
+        },
+        {
+          "group": "packaged:authorized",
+          "operation": "copy",
+          "outcome": "missing"
+        }
+      ],
+      "unexpected_security_agent_process": false,
+      "attempt": 4
+    }
+  ],
+  "fixture_correction": "Use SecTrustedApplicationCreateFromPath(NULL, ...) for current-process trust rather than the Python executable symlink; no product or real-item ACL change.",
+  "acceptance": "synthetic_source_and_packaged_passed",
+  "limitations": [
+    "SecurityAgent process monitoring is a UI-activity proxy, not a screenshot or exact dialog counter.",
+    "Real Claude credential read, actual token exchange, expiry advancement, and full packaged-daemon cycle remain unexecuted for this repair.",
+    "No background app installation or startup; main-account native acceptance remains separately authorized."
+  ]
+}
