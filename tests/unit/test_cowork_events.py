@@ -1,6 +1,7 @@
 """Exact Cowork usage from synthetic, content-free Desktop sessions."""
 
 import json
+import os
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -282,7 +283,8 @@ def test_partial_batch_ack_cannot_skip_remaining_events(tmp_path):
     assert collect(base, state).events == []
 
 
-def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path):
+@pytest.mark.parametrize("clock", ["same-tick", "advanced"])
+def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path, clock):
     base = tmp_path / "desktop"
     path = session(base)
     header = json.dumps({"type": "user", "padding": "x" * 300}) + "\n"
@@ -290,7 +292,16 @@ def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path):
     state = tmp_path / "state.json"
     batch = collect(base, state)
     batch.mark_owned(batch.events)
+    recorded = path.stat().st_mtime_ns
     path.write_text(header + json.dumps(record("new")) + "\n")
+    # "same-tick" puts the rewrite inside the recorded filesystem timestamp
+    # tick, where the mtime cannot tell it from an untouched file; "advanced"
+    # moves the mtime on. Either way the rewrite must be noticed by content.
+    target = recorded if clock == "same-tick" else recorded + 1_000_000_000
+    try:
+        os.utime(path, ns=(path.stat().st_atime_ns, target))
+    except OSError:
+        pytest.skip("mtime not settable on this filesystem")
     assert [e["event_id"] for e in collect(base, state).events] == ["new"]
 
 

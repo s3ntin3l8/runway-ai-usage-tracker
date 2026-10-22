@@ -147,15 +147,17 @@ def collect_cowork(
             if not isinstance(old, dict):
                 old = {}
             start = old.get("offset", 0)
+            # The committed prefix is proven unchanged by its content
+            # fingerprint, never by its timestamp: a transcript rewritten in
+            # place inside one filesystem timestamp tick keeps its mtime_ns,
+            # and a timestamp shortcut would skip that rewrite silently.
             valid = (
                 isinstance(start, int)
                 and 0 <= start <= stat.st_size
                 and old.get("device") == stat.st_dev
                 and old.get("inode") == stat.st_ino
-                and (
-                    old.get("mtime_ns") == stat.st_mtime_ns
-                    or old.get("prefix") == _prefix(path, start)
-                )
+                and start > 0
+                and old.get("prefix") == _prefix(path, start)
             )
             if not valid:
                 start = 0
