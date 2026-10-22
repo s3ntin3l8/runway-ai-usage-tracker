@@ -56,6 +56,9 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("grok", "auth.json"), "Grok CLI"),
     (("kimi", "config.json"), "Kimi CLI"),
     (("k2", "tokens.json"), "Kimi K2"),
+    # The MiniMax Code desktop app stores its OAuth bundle under the OAuth
+    # client id, so the directory names the client, not the app.
+    (("mcode-public", "auth.json"), "MiniMax Code"),
     # Last resort, for a login under a user-chosen dir (``CLAUDE_CONFIG_DIR=/data/work``).
     # Only filenames no other tool uses; ``auth.json`` is shared (Codex/OpenCode/Grok).
     (("credentials.json",), "Claude Code"),
@@ -72,6 +75,7 @@ _LOGIN_HINTS = {
     "Gemini CLI": "run `gemini`, then `/auth`",
     "Grok CLI": "sign in again in the Grok CLI",
     "Antigravity CLI": "sign in again in the Antigravity CLI",
+    "MiniMax Code": "sign in again in the MiniMax Code app",
 }
 
 

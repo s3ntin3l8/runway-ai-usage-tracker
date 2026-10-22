@@ -164,15 +164,16 @@ def query_window_aggregation(
     reset_at: datetime,
 ) -> dict:
     """Aggregate usage_events for [reset_at - WINDOW_DURATION[window_type], reset_at)
-    into token_usage + by_model + by_sidecar dicts."""
+    into token_usage + by_model + by_sidecar + by_source_app dicts."""
     duration = WINDOW_DURATION[window_type]
     window_start = reset_at - duration
 
-    # One pass: per (model_id, sidecar_id) sums
+    # One pass: per (model_id, sidecar_id, source_app) sums
     rows = session.exec(
         select(  # type: ignore[call-overload]
             UsageEvent.model_id,
             UsageEvent.sidecar_id,
+            UsageEvent.source_app,
             func.count(UsageEvent.id),  # type: ignore[arg-type]
             func.sum(UsageEvent.tokens_input),
             func.sum(UsageEvent.tokens_output),
@@ -190,10 +191,10 @@ def query_window_aggregation(
             UsageEvent.ts >= window_start,
             UsageEvent.ts < reset_at,
         )
-        .group_by(UsageEvent.model_id, UsageEvent.sidecar_id)
+        .group_by(UsageEvent.model_id, UsageEvent.sidecar_id, UsageEvent.source_app)
     ).all()
 
-    # Roll up: total + by_model + by_sidecar
+    # Roll up: total + by_model + by_sidecar + by_source_app
     total: dict[str, Any] = {
         "input": 0,
         "output": 0,
@@ -205,8 +206,21 @@ def query_window_aggregation(
     }
     by_model: dict[str, dict] = {}
     by_sidecar: dict[str, dict] = {}
+    by_source_app: dict[str, dict] = {}
 
-    for mid, sid, msgs, ti, to, tcr, tcc, tr, cost, ccr, ccc in rows:
+    def _empty_split() -> dict:
+        return {
+            "tokens_input": 0,
+            "tokens_output": 0,
+            "tokens_cache_read": 0,
+            "tokens_cache_create": 0,
+            "tokens_reasoning": 0,
+            "msgs": 0,
+            "cost_usd": 0.0,
+            "cost_cache": 0.0,
+        }
+
+    for mid, sid, app, msgs, ti, to, tcr, tcc, tr, cost, ccr, ccc in rows:
         ti = ti or 0
         to = to or 0
         tcr = tcr or 0
@@ -222,19 +236,7 @@ def query_window_aggregation(
         total["msgs"] += msgs
         total["cost"] += cost
         if mid:
-            m = by_model.setdefault(
-                mid,
-                {
-                    "tokens_input": 0,
-                    "tokens_output": 0,
-                    "tokens_cache_read": 0,
-                    "tokens_cache_create": 0,
-                    "tokens_reasoning": 0,
-                    "msgs": 0,
-                    "cost_usd": 0.0,
-                    "cost_cache": 0.0,
-                },
-            )
+            m = by_model.setdefault(mid, _empty_split())
             m["tokens_input"] += ti
             m["tokens_output"] += to
             m["tokens_cache_read"] += tcr
@@ -244,19 +246,7 @@ def query_window_aggregation(
             m["cost_usd"] += cost
             m["cost_cache"] += cost_cache
         if sid:
-            s = by_sidecar.setdefault(
-                sid,
-                {
-                    "tokens_input": 0,
-                    "tokens_output": 0,
-                    "tokens_cache_read": 0,
-                    "tokens_cache_create": 0,
-                    "tokens_reasoning": 0,
-                    "msgs": 0,
-                    "cost_usd": 0.0,
-                    "cost_cache": 0.0,
-                },
-            )
+            s = by_sidecar.setdefault(sid, _empty_split())
             s["tokens_input"] += ti
             s["tokens_output"] += to
             s["tokens_cache_read"] += tcr
@@ -265,6 +255,16 @@ def query_window_aggregation(
             s["msgs"] += msgs
             s["cost_usd"] += cost
             s["cost_cache"] += cost_cache
+        if app:
+            a = by_source_app.setdefault(app, _empty_split())
+            a["tokens_input"] += ti
+            a["tokens_output"] += to
+            a["tokens_cache_read"] += tcr
+            a["tokens_cache_create"] += tcc
+            a["tokens_reasoning"] += tr
+            a["msgs"] += msgs
+            a["cost_usd"] += cost
+            a["cost_cache"] += cost_cache
 
     token_usage = {
         "input": total["input"],
@@ -288,4 +288,5 @@ def query_window_aggregation(
         "cost_usd": total["cost"],
         "by_model": by_model,
         "by_sidecar": by_sidecar,
+        "by_source_app": by_source_app,
     }

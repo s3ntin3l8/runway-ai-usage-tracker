@@ -14,6 +14,7 @@ import {
   fetchProjects,
   fetchSessions,
   fetchSessionsPaginated,
+  fetchSourceApps,
   fetchWindowHistory,
 } from '@/api/endpoints';
 import type { Metric } from '@/features/history/queries';
@@ -337,6 +338,37 @@ export const useProviderHistoryChart = (
         account_id: accountId,
         days,
         metric,
+        sidecar_id: sidecarId,
+        ...(range ? { since: range.since, until: range.until } : {}),
+      }),
+    refetchInterval: 120_000,
+  });
+};
+
+// Which client apps produced this provider's usage. Several apps share one
+// provider (MiniMax Code, OpenCode and a plain API script can all spend the
+// same MiniMax plan), so the provider id alone can't say which app spent the
+// quota. Scoped to the selected month/range when one is chosen.
+export const useProviderSourceApps = (
+  providerId: string,
+  accountId: string,
+  range?: DateRange,
+) => {
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: [
+      'usage',
+      'source-apps',
+      providerId,
+      accountId,
+      range?.since ?? null,
+      range?.until ?? null,
+      sidecarId ?? null,
+    ],
+    queryFn: () =>
+      fetchSourceApps({
+        provider_id: providerId,
+        account_id: accountId,
         sidecar_id: sidecarId,
         ...(range ? { since: range.since, until: range.until } : {}),
       }),
