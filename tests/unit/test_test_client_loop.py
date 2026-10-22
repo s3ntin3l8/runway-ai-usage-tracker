@@ -76,6 +76,43 @@ def test_a_bare_client_would_use_one_event_loop_per_request():
         client.close()
 
 
+def test_many_clients_share_one_event_loop():
+    """One event loop for every client in the worker.
+
+    An event loop is a socket pair, and the Windows ephemeral-port range is
+    about 16k sockets. A loop per client filled it -- a few thousand per
+    suite run, and they accumulate across runs -- and the run after that
+    could not open a socket at all. One loop for the whole worker is one
+    socket pair for the whole run.
+    """
+    app = _ping_app()
+    clients = [TestClient(app) for _ in range(20)]
+    try:
+        assert len({id(client.portal) for client in clients}) == 1
+    finally:
+        for client in clients:
+            client.shutdown()
+
+
+def test_many_clients_need_at_most_one_socket_pair():
+    """The same property, measured in socket pairs.
+
+    One socket pair for twenty clients -- or none, if the worker's loop was
+    already up, which is the normal case by the time this test runs.
+    """
+    app = _ping_app()
+
+    def make_clients() -> None:
+        for _ in range(20):
+            client = TestClient(app)
+            try:
+                assert client.get("/ping").status_code == 200
+            finally:
+                client.shutdown()
+
+    assert _count_socketpairs(make_clients) <= 1
+
+
 def test_the_managed_client_does_not_start_the_app_lifespan():
     # A bare TestClient never ran the app's startup handlers, and tests rely
     # on that: running them would bootstrap state the tests set up themselves.
