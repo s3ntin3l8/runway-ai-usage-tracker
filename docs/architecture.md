@@ -365,9 +365,13 @@ Workflows live in `.github/workflows/`.
 
     What does the job instead is `required_status_checks.strict = false`: a
     pull request no longer has to be up to date with `main` to merge, so it
-    does not need a rebase, and a rebase is what used to re-trigger all five
-    pull-request workflows. Measured: `fix/cookie-store-classification`, ten
-    commits behind `main`, reports `CLEAN` and merges without a rebase.
+    does not need a rebase — and a rebase is what used to re-trigger the
+    pull-request workflows. Seven workflows here listen for `pull_request`
+    (`ci-cd`, `codeql`, `dependency-review`, `hermes`, `image-security`,
+    `image-security-arm64`, `security-validation`), and six of them re-run on
+    a rebase; `hermes.yml` opts out with `types: [opened, ready_for_review]`.
+    Measured: `fix/cookie-store-classification`, several commits behind
+    `main`, reports `CLEAN` and merges without a rebase.
 
     The safety that the up-to-date rule was standing in for is covered
     elsewhere: the release pull request carries its own required checks, and

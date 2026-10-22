@@ -22,6 +22,8 @@ import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.fixtures.isolation import worker_paths
+
 
 def _pytest_user() -> str:
     """The name pytest files its per-run temp directories under."""
@@ -197,10 +199,7 @@ os.environ["PYSTRAY_BACKEND"] = "dummy"
 _worker = os.environ.get("PYTEST_XDIST_WORKER", "").strip()
 _isolation_root = os.environ.get("TEST_ISOLATION_ROOT", "").strip()
 if _isolation_root:
-    _root = Path(_isolation_root)
-    _suffix = f"-{_worker}" if _worker else ""
-    _home = _root / f"home{_suffix}"
-    _config = _root / f"config{_suffix}"
+    _home, _config = worker_paths(Path(_isolation_root), _worker)
     _home.mkdir(parents=True, exist_ok=True)
     _config.mkdir(parents=True, exist_ok=True)
     os.environ["HOME"] = str(_home)

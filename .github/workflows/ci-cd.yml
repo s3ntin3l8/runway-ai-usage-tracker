@@ -75,8 +75,9 @@ jobs:
     secrets: inherit
 
   windows:
-    # Native Windows coverage of the static checks. The suite itself runs in
-    # the sharded windows-native-pytest matrix below.
+    # Native Windows coverage of the static checks. The Windows *suite* runs
+    # in windows-native-suite.yml, on main pushes and nightly; the modules
+    # whose subject is the Windows platform run in `windows/specific` below.
     #
     # Advisory: it is not a required status check, so it does not decide
     # whether a pull request merges.
