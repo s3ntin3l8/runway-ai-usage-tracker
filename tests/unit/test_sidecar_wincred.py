@@ -57,6 +57,18 @@ def _an_hour_ago() -> datetime:
     return datetime.now(UTC) - timedelta(hours=1)
 
 
+def _corrupt_access_token(blob: dict) -> bytes:
+    """The bundle *blob* with one unreadable byte inside the access token.
+
+    The result is still valid JSON, so ``json.loads`` accepts it - only the
+    replacement-character guard can tell that the token came out garbled.
+    """
+    raw = json.dumps(blob).encode("utf-8")
+    corrupt = raw.replace(b"ya29.fake-access-token", b"ya29.f\xffake-access-token")
+    assert corrupt != raw, "the bad byte must land inside the access token"
+    return corrupt
+
+
 class TestDecodeCredential:
     """A credential blob is raw bytes; the encoding is the writer's choice."""
 
@@ -110,6 +122,13 @@ class TestCorruptBlobDoesNotAbortACycle:
         with patch.object(wincred, "read_credential_bytes", return_value=b"\xff\xfe" + b"a"):
             assert wincred.read_credential_text(_TARGET) is None
 
+    def test_the_flat_reader_rejects_a_bundle_with_one_bad_byte(self):
+        """A bundle that is valid JSON but holds one unreadable byte holds no
+        usable secret: the token came out garbled."""
+        corrupt = _corrupt_access_token(_blob(_in_an_hour()))
+        with patch.object(wincred, "read_credential_bytes", return_value=corrupt):
+            assert wincred.read_credential_text(_TARGET) is None
+
     def test_the_flat_credential_lookup_does_not_raise(self):
         with (
             patch.object(sidecar.platform, "system", return_value="Windows"),
@@ -140,6 +159,13 @@ class TestReadJsonCredential:
     def test_a_corrupt_blob_reads_as_absent(self):
         """A blob that does not decode cleanly holds no usable credential."""
         with patch.object(wincred, "read_credential_bytes", return_value=b"\xff\xfe" + b"a"):
+            assert wincred.read_json_credential(_TARGET) is None
+
+    def test_a_bundle_with_one_bad_byte_reads_as_absent(self):
+        """``json.loads`` accepts it, so only the replacement-character guard
+        stops the garbled token from being handed on as if it were usable."""
+        corrupt = _corrupt_access_token(_blob(_in_an_hour()))
+        with patch.object(wincred, "read_credential_bytes", return_value=corrupt):
             assert wincred.read_json_credential(_TARGET) is None
 
     def test_non_json_blob_returns_none(self):
@@ -241,6 +267,24 @@ class TestWindowsCredentialJsonRule:
 
     def test_a_missing_credential_yields_no_card(self):
         cards, _blocked = self._collect(None)
+        assert [c for c in cards if c.get("remaining") == "Token"] == []
+
+    def test_a_bundle_with_one_bad_byte_yields_no_card(self):
+        """A garbled token must never be pushed.
+
+        The bundle is valid JSON and its expiry is intact, so the expired-token
+        suppression in ``collect_provider`` does not fire - without the
+        replacement-character guard the sidecar would ship a token no other host
+        can use, over a good cached entry.
+        """
+        corrupt = _corrupt_access_token(_blob(_in_an_hour()))
+        with (
+            patch.object(sidecar.platform, "system", return_value="Windows"),
+            patch("scripts.sidecar_pkg.wincred.read_credential_bytes", return_value=corrupt),
+        ):
+            cards, _blocked = sidecar.GenericCollector.collect_provider(
+                "antigravity", self._config()
+            )
         assert [c for c in cards if c.get("remaining") == "Token"] == []
 
     def test_the_origin_names_the_credential_store_entry(self):
