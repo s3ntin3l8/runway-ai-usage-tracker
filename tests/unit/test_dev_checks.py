@@ -117,9 +117,17 @@ def test_the_requirements_set_picks_the_file_to_install(monkeypatch, requirement
     assert commands[-1][-2:] == ["-r", expected]
 
 
-def test_the_requirements_set_is_rejected_for_tasks_that_do_not_install(monkeypatch):
-    """`--set` is meaningless for a task that installs nothing."""
-    monkeypatch.setattr(sys, "argv", ["dev_checks.py", "lint", "--set", "test"])
+@pytest.mark.parametrize("task", ["install", "lint"])
+def test_the_requirements_set_is_rejected_for_tasks_that_do_not_install(monkeypatch, task):
+    """`--set` is meaningless for a task that installs nothing.
+
+    ``install`` is the one that separates the old code from the new: it used
+    to accept ``--set`` and then die in ``install-hooks``, which needs
+    ``pre-commit`` -- a package only the lint set carries. ``lint`` was
+    always rejected, so it passes either way; it is here so that the rule
+    is pinned for both.
+    """
+    monkeypatch.setattr(sys, "argv", ["dev_checks.py", task, "--set", "test"])
     with pytest.raises(SystemExit):
         dc.main()
 

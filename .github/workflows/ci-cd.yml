@@ -43,6 +43,7 @@ jobs:
         requirements-dev.txt
         requirements-test.txt
         requirements-lint.txt
+        requirements-shared.txt
     # Job-level concurrency, so a new push to this pull request cancels the
     # previous run of *this* job without touching the rest of the workflow.
     # It has to live here rather than in the shared workflow: inside a called
@@ -99,6 +100,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
+            requirements-shared.txt
             requirements-lint.txt
       - name: Install canonical Python dependencies
         # The static gate's set, not the union: this job runs ruff, mypy and
@@ -132,6 +134,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
+            requirements-shared.txt
             requirements-test.txt
       - name: Install canonical Python dependencies
         # The suite's set, not the union: the lint tooling is about thirty

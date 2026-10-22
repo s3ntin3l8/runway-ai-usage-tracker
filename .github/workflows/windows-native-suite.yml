@@ -73,6 +73,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
+            requirements-shared.txt
             requirements-test.txt
       - name: Install canonical Python dependencies
         # The suite's set, not the union: the lint tooling is about thirty
@@ -111,6 +112,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
+            requirements-shared.txt
             requirements-test.txt
       - name: Install canonical Python dependencies
         # The suite's set, not the union: the lint tooling is about thirty
