@@ -112,7 +112,8 @@ make lint && make test && make web-test
   Release Please parses the **PR title**, not the individual commits, to cut
   versions/changelogs — an unprefixed title silently drops from the release.
 - **CI must pass**: `test-python / lint`, `test-python / type-and-test`,
-  `test-frontend / lint-and-test`, and CodeQL, with coverage floors of 85%
+  `test-frontend / lint-and-test`, `dependency-review / dependency-review`,
+  and CodeQL, with coverage floors of 85%
   (Python) and 85% (frontend).
 - **Schema changes are forward-safe** (no Alembic): new columns go into
   `app/core/db.py`'s idempotent `ALTER TABLE` list so existing databases

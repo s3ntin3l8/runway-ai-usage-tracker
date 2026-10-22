@@ -12,7 +12,14 @@ from scripts import dev_checks as dc
 
 @pytest.fixture(autouse=True)
 def owned_checkout(tmp_path, monkeypatch):
-    """Mocked commands use an owned checkout, never the caller's real .venv."""
+    """Mocked commands use an owned checkout, never the caller's real .venv.
+
+    The interpreter switch is cleared too, so these tests do not depend on
+    the environment they happen to run in: a CI job sets it to use the
+    runner's Python, and a test that inherited it would assert against the
+    runner's interpreter instead of the repository's ``.venv``.
+    """
+    monkeypatch.delenv("RUNWAY_SYSTEM_PYTHON", raising=False)
     monkeypatch.setattr(dc, "ROOT", tmp_path)
     interpreter = dc.venv_python()
     interpreter.parent.mkdir(parents=True)

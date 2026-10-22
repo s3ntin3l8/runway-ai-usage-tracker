@@ -354,9 +354,10 @@ Workflows live in `.github/workflows/`.
   - Every job above except the two `test-*` ones and `image-changed` is
     advisory: none of them is a required status check.
   - Required checks on `main`: `test-python / lint`,
-    `test-python / type-and-test`, `test-frontend / lint-and-test`, and
-    CodeQL. They are **not** required to be up to date with `main` — see
-    *The merge queue is not available here* below.
+    `test-python / type-and-test`, `test-frontend / lint-and-test`,
+    `dependency-review / dependency-review`, and CodeQL. They are **not**
+    required to be up to date with `main` — see *The merge queue is not
+    available here* below.
 - **The merge queue is not available here.** The merge queue is documented as
     available on public repositories owned by *organizations* (and GitHub
     Enterprise Cloud), not on personal accounts, and this repository is owned
@@ -374,10 +375,15 @@ Workflows live in `.github/workflows/`.
     `main`, reports `CLEAN` and merges without a rebase.
 
     The safety that the up-to-date rule was standing in for is covered
-    elsewhere: the release pull request carries its own required checks, and
-    release-please regenerates it on every `main` push, so a broken `main`
-    makes that pull request red and it cannot be merged — no release is cut
-    from a broken `main`. The `:edge` image is gated the same way:
+    elsewhere, in two layers. The required checks run again on the push to
+    `main`, so a merge that breaks the integration is caught on `main` — the
+    difference from the up-to-date rule is *when* (after the merge, not
+    before) and *who* (whoever picks up a red `main`, not the author whose
+    pull request was bounced back). And the release pull request is
+    regenerated on every `main` push, so it always builds current `main`: a
+    broken `main` makes its checks red, and the maintainer's approval —
+    which the release pull request deliberately requires — is the gate. No
+    release is cut from a broken `main`. The `:edge` image is gated the same way:
     `build-docker` needs `test-python`, `test-frontend` and
     `dependency-audit` to pass on `main`.
 
