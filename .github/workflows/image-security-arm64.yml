@@ -25,6 +25,10 @@ on:
       - 'webapp/**'
       - 'scripts/audit_release_image.py'
       - 'scripts/image_policy.py'
+      # The exception document does not change the image, but it decides which
+      # findings the scan accepts, so a renewal has to be re-scanned like any
+      # other change to the policy.
+      - 'docs/security/image-exceptions.json'
       - '.github/workflows/image-security-arm64.yml'
   workflow_dispatch:
 permissions:
