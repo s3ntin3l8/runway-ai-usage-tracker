@@ -1,6 +1,5 @@
 {
   "validation_date": "2026-10-22",
-  "source_commit": "d3726328b7f9743cadbb107a38dd373e0acd6adf",
   "scope": "synthetic-renewal-with-production-native-worker",
   "real_credential_reads": 0,
   "real_credential_writes": 0,
@@ -2094,5 +2093,6 @@
     "unique_target": true,
     "policy_update_supported": false
   },
-  "important_boundary": "The matrices use synthetic provider responses and disposable Keychains. They do not prove latest-build real-account renewal or full packaged-tray renewal. The real-item preflight refused the current policy before any credential-data read or exchange."
+  "important_boundary": "The matrices use synthetic provider responses and disposable Keychains. They do not prove latest-build real-account renewal or full packaged-tray renewal. The real-item preflight refused the current policy before any credential-data read or exchange.",
+  "source_commit_url": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d3726328b7f9743cadbb107a38dd373e0acd6adf"
 }
