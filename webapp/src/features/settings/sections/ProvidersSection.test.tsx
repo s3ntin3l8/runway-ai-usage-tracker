@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { toast } from 'sonner';
 import type { DragEndEvent } from '@dnd-kit/core';
 import type { ProviderConfig } from '@/api/types';
+import { foreignError } from '@/test/foreignError';
 import { renderWithProviders } from '@/test/utils';
 import { ProvidersSection, reorderItems } from './ProvidersSection';
 import * as api from '@/api/endpoints';
@@ -291,7 +292,7 @@ describe('ProvidersSection', () => {
       })],
     });
     vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
-    vi.mocked(api.putProviderConfig).mockRejectedValue(new Error('Server refused the restore'));
+    vi.mocked(api.putProviderConfig).mockRejectedValue(foreignError('Server refused the restore'));
     renderV2(<ProvidersSection />);
 
     expect(await screen.findByText('Archived accounts (1)')).toBeInTheDocument();
@@ -366,7 +367,7 @@ describe('ProvidersSection', () => {
   });
 
   it.each([
-    [new Error('Server rejected deletion'), 'Server rejected deletion'],
+    [foreignError('Server rejected deletion'), 'Server rejected deletion'],
     ['unexpected failure', 'Could not delete account'],
   ])('shows a useful error when permanent deletion fails', async (error, message) => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({

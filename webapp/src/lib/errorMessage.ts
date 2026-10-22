@@ -8,15 +8,14 @@
  * the test realm and true in the browser. A check that answers differently in
  * the two places means the tests exercise a branch the browser never takes.
  *
- * Reading the `message` property answers the same in every realm. It also
- * covers a rejected promise carrying a plain object with a `message`, which
- * the `instanceof` check silently discarded.
+ * Reading the `message` property answers the same in every realm, so that is
+ * what this does. It also covers a rejected promise carrying a plain object
+ * with a `message`, which the `instanceof` check silently discarded.
  *
  * The fallback lives here rather than at each call site, so a call site is a
  * single statement with no branch of its own to cover.
  */
 export function errorMessage(value: unknown, fallback: string): string {
-  if (value instanceof Error) return value.message;
   if (typeof value === 'object' && value !== null) {
     const message = (value as { message?: unknown }).message;
     if (typeof message === 'string') return message;

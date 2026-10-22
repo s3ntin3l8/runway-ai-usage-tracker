@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import * as api from '@/api/endpoints';
+import { foreignError } from '@/test/foreignError';
 import { renderWithProviders } from '@/test/utils';
 import { PendingUsageEventsCard } from './PendingUsageEventsCard';
 
@@ -338,7 +339,7 @@ describe('PendingUsageEventsCard', () => {
     // limit 500, and that is the call that fails.
     vi.mocked(api.fetchPendingUsageSessions).mockImplementation(
       async ({ offset = 0, limit = 100 } = {}) => {
-        if (limit === 500) throw new Error('Could not reach the sidecar');
+        if (limit === 500) throw foreignError('Could not reach the sidecar');
         return {
           items: [
             {

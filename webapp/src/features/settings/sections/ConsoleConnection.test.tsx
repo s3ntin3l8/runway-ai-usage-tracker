@@ -6,6 +6,7 @@ import type { ProviderConfig } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { groupProviderFamilies } from '@/lib/providerFamilies';
 import { AddProviderWizard } from './AddProviderWizard';
+import { foreignError } from '@/test/foreignError';
 import { ConsoleOrganizationPicker } from './ConsoleOrganizationPicker';
 import { ProvidersSection } from './ProvidersSection';
 
@@ -66,7 +67,7 @@ it('requires an explicit choice when multiple organizations are accessible', asy
 });
 
 it('shows discovery errors and empty organization lists', async () => {
-  vi.mocked(api.discoverConsoleOrganizations).mockRejectedValueOnce(new Error('Session expired')).mockResolvedValueOnce({ organizations: [] });
+  vi.mocked(api.discoverConsoleOrganizations).mockRejectedValueOnce(foreignError('Session expired')).mockResolvedValueOnce({ organizations: [] });
   renderWithProviders(<ConsoleOrganizationPicker cookie="sample-session" value="" onSelect={vi.fn()} />);
   await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
   await screen.findByText('Session expired');
@@ -84,6 +85,21 @@ it('discards stale discovery results when the cookie changes', async () => {
   await act(async () => resolve({ organizations: [{ id: orgId, name: 'Stale organization' }] }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Load Console organizations' })).toBeEnabled());
   expect(onSelect).toHaveBeenCalledExactlyOnceWith('');
+});
+
+it('does not report an error for a request it aborted', async () => {
+  let reject: (reason: unknown) => void = () => {};
+  vi.mocked(api.discoverConsoleOrganizations)
+    .mockImplementationOnce(() => new Promise((_done, fail) => { reject = fail; }));
+  const onSelect = vi.fn();
+  const view = renderWithProviders(<ConsoleOrganizationPicker cookie="old-session" value="" onSelect={onSelect} />);
+  await userEvent.click(screen.getByRole('button', { name: 'Load Console organizations' }));
+  // A new cookie aborts the request that is in flight.
+  view.rerender(<ConsoleOrganizationPicker cookie="new-session" value="" onSelect={onSelect} />);
+  await act(async () => { reject(foreignError('Session expired')); });
+  // The aborted request failed anyway; its error must not be shown, because
+  // the component has already moved on to the new cookie.
+  expect(screen.queryByText('Session expired')).not.toBeInTheDocument();
 });
 
 it('shows one Claude settings entry and switches to independent Console account settings', async () => {

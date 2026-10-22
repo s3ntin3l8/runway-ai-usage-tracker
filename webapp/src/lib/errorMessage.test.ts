@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { errorMessage } from './errorMessage';
+import { foreignError } from '@/test/foreignError';
 
 describe('errorMessage', () => {
   it('returns the message of an Error', () => {
@@ -20,11 +21,11 @@ describe('errorMessage', () => {
   });
 
   it('answers the same for an error from another realm', () => {
-    // `instanceof Error` is false for an error created in another realm,
-    // which is what a vm test pool sees for a host-created error. Reading
-    // the `message` property is not.
-    const other = new (class extends Error {})('boom');
-    Object.setPrototypeOf(other, Error.prototype);
+    // The premise, asserted: `instanceof Error` is false for an error
+    // created in another realm, which is what a vm test pool sees for a
+    // host-created error. Reading the `message` property is not affected.
+    const other = foreignError('boom');
+    expect(other instanceof Error).toBe(false);
     expect(errorMessage(other, 'fallback')).toBe('boom');
   });
 });

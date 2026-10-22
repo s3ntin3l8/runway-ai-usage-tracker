@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/api/client';
 import * as api from '@/api/endpoints';
 import type { ProviderAccount, ProviderConfig } from '@/api/types';
+import { foreignError } from '@/test/foreignError';
 import { renderWithProviders } from '@/test/utils';
 import { AddProviderWizard } from './AddProviderWizard';
 
@@ -138,7 +139,7 @@ describe('AddProviderWizard', () => {
   });
 
   it('shows the error when the preview fails', async () => {
-    vi.mocked(api.previewAccount).mockRejectedValue(new Error('Could not reach the provider'));
+    vi.mocked(api.previewAccount).mockRejectedValue(foreignError('Could not reach the provider'));
 
     renderWizard();
     await userEvent.click(await screen.findByText('Anthropic'));
