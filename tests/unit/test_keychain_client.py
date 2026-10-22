@@ -119,18 +119,54 @@ def test_permission_rechecked_after_waiting_for_request_lock(client_factory):
 def test_shutdown_interrupts_active_io(client_factory):
     import time
 
-    client = client_factory("hang", timeout=5)
+    # The child's "hang" mode sleeps 20s before it answers, so a client
+    # timeout below that is what makes an uninterrupted call fail with
+    # "timed_out" instead of succeeding. The difference between that and
+    # "cancelled" is what the assertion below turns on.
+    timeout = 10
+    client = client_factory("hang", timeout=timeout)
+    # The wait for the worker has to outlast the client's own deadline, so a
+    # call that dies on that deadline is reported as a call that ended rather
+    # than as a worker that never came up.
+    worker_wait = timeout + 5
+
     with ThreadPoolExecutor(1) as pool:
         future = pool.submit(client.call, "copy", {}, {}, group="code")
-        deadline = time.monotonic() + 1
-        while client._process is None and time.monotonic() < deadline:
-            threading.Event().wait(0.005)
+
+        # A shutdown can only interrupt a request that is still in flight, so
+        # wait for the worker to come up first - but not past the call itself:
+        # if the call has already ended, there is no in-flight request left to
+        # interrupt.
+        deadline = time.monotonic() + worker_wait
+        while client._process is None:
+            if future.done():
+                pytest.fail(
+                    f"the call ended before the shutdown could interrupt it: {future.exception()!r}"
+                )
+            if time.monotonic() >= deadline:
+                pytest.fail("the keychain worker never started")
+            time.sleep(0.005)
         process = client._process
-        start = time.monotonic()
+
         client.close()
-        with pytest.raises(store.KeychainError):
-            future.result(2)
-        assert time.monotonic() - start < 2
+
+        # Every path a shutdown can take ends in "cancelled": close() sets
+        # _closed and bumps _generation, so KeychainClient._cancelled() holds
+        # in both the OSError handler and the KeychainError handler. Asserting
+        # that reason is what tells "the shutdown interrupted the call" apart
+        # from "the call timed out on its own" -- and the latter is a
+        # KeychainError too, so raising any KeychainError would not.
+        try:
+            future.result(timeout)
+        except TimeoutError:
+            pytest.fail(f"the shutdown did not interrupt the call within {timeout}s")
+        except store.KeychainError as exc:
+            assert exc.reason == "cancelled", (
+                f"the call ended with reason {exc.reason!r}; the shutdown has to "
+                "interrupt the request, not time it out"
+            )
+        else:
+            pytest.fail("the call succeeded; the shutdown did not interrupt it")
         assert process.poll() is not None
 
 
