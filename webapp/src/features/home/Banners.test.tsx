@@ -646,6 +646,47 @@ describe('Banners unreadable credential sources', () => {
     expect(screen.queryByText(/cookie store unavailable/i)).not.toBeInTheDocument();
   });
 
+  it('names the raw machine and origin when the server gives nothing else', () => {
+    renderWithProviders(
+      <Banners
+        credentials={withSources([
+          blockedSource({
+            sidecar_id: 'host-b',
+            source_store: null,
+            detail: null,
+            remedy: null,
+          }),
+        ])}
+        anomalies={[]}
+      />,
+    );
+    expect(screen.getByText(/cookie store unavailable on host-b/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/cookie:ollama\/Chrome\/Default\/Network\/Cookies is readable/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/held open by another process/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/OLLAMA_SESSION_TOKEN/i)).not.toBeInTheDocument();
+  });
+
+  it('summarises several unreadable stores', () => {
+    renderWithProviders(
+      <Banners
+        credentials={withSources([
+          blockedSource(),
+          blockedSource({ provider_id: 'openai', sidecar_id: 'host-b' }),
+        ])}
+        anomalies={[]}
+      />,
+    );
+    expect(
+      screen.getByText(/2 cookie stores are unreadable — quota for ollama, openai/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /review sources/i })).toHaveAttribute(
+      'href',
+      '/settings/credentials?view=unavailable',
+    );
+  });
+
   it('does not render when there is no unreadable source', () => {
     renderWithProviders(<Banners credentials={withSources([])} anomalies={[]} />);
     expect(screen.queryByText(/cookie store unavailable/i)).not.toBeInTheDocument();

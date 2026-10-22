@@ -542,7 +542,15 @@ as one entry per provider that wanted a cookie from it:
 (the file could not be read for another reason). The entry carries no cookie
 value, no account id and no filesystem path. The server shows it on the Home
 banner, in Settings → Credentials → Unavailable, and on the provider page, and
-drops it the first cycle the store becomes readable again.
+drops it once the sidecar stops reporting it and reports the provider as
+collected — the same lifecycle every other pending row has, so a provider whose
+collection keeps failing for an unrelated reason leaves the row in place.
+
+`source_detail` and `source_remedy` are free text the server shows as sent. The
+bundled sidecar only ever sends the fixed sentences above, but the server does
+not enforce that: a manifest is trusted on this point the same way it is trusted
+for the origins it reports, so the strings are bounded in length and escaped on
+display rather than filtered.
 
 ## Troubleshooting
 

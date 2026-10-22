@@ -4802,3 +4802,60 @@ def test_an_older_sidecar_is_unaffected(client, session, inventory_session):
     inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
     assert inventory.json()["blocked_sources"] == []
     assert inventory.json()["unmapped_count"] == 1
+
+
+def test_an_unusable_source_without_details_is_recorded_bare(client, session):
+    """A sidecar that cannot name the store still gets the origin recorded.
+
+    The store, the detail and the remedy are all optional: a report that says
+    only "this origin is unreadable" is still true and still worth showing.
+    """
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [
+            {
+                "provider_id": "ollama",
+                "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+                "reason": "source_locked",
+            }
+        ],
+    }
+    result = _post_manifest(client, body)
+    assert result.status_code == 200, result.text
+
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert len(pending) == 1
+    row = pending[0]
+    assert row.reason == "source_locked"
+    assert row.source_store is None
+    assert row.source_detail is None
+    assert row.source_remedy is None
+
+
+def test_a_malformed_source_entry_is_dropped(client, session):
+    """A source report without a provider or an origin is not a row.
+
+    There is nothing to key the report on, so it is skipped rather than filed
+    against an empty provider.
+    """
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [
+            {
+                "provider_id": "",
+                "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+                "reason": "source_locked",
+            },
+            {"provider_id": "ollama", "credential_origin": "", "reason": "source_locked"},
+        ],
+    }
+    result = _post_manifest(client, body)
+    assert result.status_code == 200, result.text
+
+    assert PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host") == []

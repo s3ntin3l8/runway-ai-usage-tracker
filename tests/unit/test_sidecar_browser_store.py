@@ -465,6 +465,31 @@ def test_an_app_bound_store_is_reported_to_the_server(tmp_path, monkeypatch):
     )
 
 
+def test_a_mixed_store_is_reported_when_the_provider_cookie_is_the_app_bound_one(
+    tmp_path, monkeypatch
+):
+    """Chrome 127+ keeps pre-upgrade cookies as v10 and writes v20 only for the
+    ones set afterwards, so the row the probe samples can be the decryptable
+    one while the provider's own cookie is app-bound."""
+    path = _chromium_store(
+        tmp_path / "Cookies",
+        [("old", b"v10" + b"\x01" * 32), ("session", b"v20" + b"\x01" * 32)],
+    )
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])
+    monkeypatch.setattr(sidecar, "decrypt_chromium_cookie", lambda *a, **k: None)
+
+    # The probe samples the first row, which is still decryptable.
+    assert browser_store.probe_store(_target(path)).state is StoreState.READABLE
+
+    sidecar.BrowserCookieExtractor.get_cookie("example.com", "session", "ollama", "session_cookie")
+
+    entries = sidecar.blocked_source_entries()
+    assert [entry["reason"] for entry in entries] == ["source_unsupported"]
+    assert entries[0]["source_detail"] == (
+        "values are app-bound encrypted (v20) and need a browser-side read"
+    )
+
+
 def test_a_readable_store_is_not_reported_to_the_server(tmp_path, monkeypatch):
     path = _chromium_store(tmp_path / "Cookies", [("session", b"v10" + b"\x01" * 32)])
     monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [_target(path)])

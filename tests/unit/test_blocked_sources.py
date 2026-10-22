@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import CredentialSource, PendingCredentialTag
-from app.services.blocked_collection import TOKEN_WITHHELD
+from app.services.blocked_collection import TOKEN_WITHHELD, collecting_providers
 from app.services.blocked_sources import (
     SOURCE_REASONS,
     is_source_blocked,
@@ -98,7 +98,8 @@ def test_a_blocked_source_says_whether_the_provider_collects_anyway():
         session.commit()
         assert source_blocks(session, [row], now=NOW)[0].collecting is True
 
-        # A long-ago success does not count.
+        # A long-ago success does not count on its own; the recent one above
+        # is what keeps the provider collecting.
         session.add(_source(last_success_at=NOW - timedelta(hours=7), source_id="src:b"))
         session.commit()
         assert source_blocks(session, [row], now=NOW)[0].collecting is True
@@ -136,3 +137,12 @@ def test_nothing_blocked_is_an_empty_list():
     with _session() as session:
         assert source_blocks(session, [], now=NOW) == []
         assert source_block_rows(session) == []
+
+
+def test_no_providers_means_nothing_is_collecting():
+    """The shared freshness rule has nothing to judge when no provider is asked about."""
+    with _session() as session:
+        session.add(_source(last_success_at=NOW))
+        session.commit()
+
+        assert collecting_providers(session, set(), now=NOW) == set()

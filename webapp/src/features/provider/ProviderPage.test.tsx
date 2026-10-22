@@ -75,6 +75,30 @@ describe('ProviderPage', () => {
     expect(screen.queryByText(/no data for this provider/i)).not.toBeInTheDocument();
   });
 
+  it('names the origin and no remedy when the server gives nothing else', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue({
+      ...fleetResponse([]),
+      blocked_sources: [
+        {
+          sidecar_id: 'host-a',
+          provider_id: 'anthropic',
+          credential_origin: 'cookie:anthropic/Chrome/Default/Network/Cookies',
+          source_store: null,
+          reason: 'source_locked',
+          detail: null,
+          remedy: null,
+          collecting: false,
+        },
+      ],
+    });
+    renderPage();
+    expect(
+      await screen.findByText(
+        /cookie:anthropic\/Chrome\/Default\/Network\/Cookies could not be read\./i,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('keeps the plain empty state when the blocked source belongs to another provider', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue({
       ...fleetResponse([]),

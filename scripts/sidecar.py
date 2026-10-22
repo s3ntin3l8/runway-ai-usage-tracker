@@ -3018,11 +3018,19 @@ class BrowserCookieExtractor:
                             # decrypted. An app-bound store is readable as a
                             # file, so the probe does not skip it and this is
                             # the only place the block becomes visible.
-                            if (
-                                provider
-                                and probe.state is browser_store.StoreState.UNSUPPORTED_FORMAT
-                            ):
-                                _record_cookie_store_block(probe, provider, mapping_value or "")
+                            if provider:
+                                if browser_store.is_app_bound(row[0]):
+                                    # The probe samples one row, and Chrome
+                                    # 127+ keeps the cookies written before
+                                    # the upgrade as v10 while writing v20
+                                    # only for the ones set afterwards. The
+                                    # sample can therefore call a store
+                                    # readable whose provider cookie is
+                                    # app-bound; the value that failed to
+                                    # decrypt is the better evidence.
+                                    probe = browser_store.mark_app_bound(probe)
+                                if probe.state is browser_store.StoreState.UNSUPPORTED_FORMAT:
+                                    _record_cookie_store_block(probe, provider, mapping_value or "")
                     else:  # Firefox
                         cursor.execute(
                             "SELECT value FROM moz_cookies "
@@ -5856,12 +5864,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     # nobody is signed into. The entries carry the store, the reason and the
     # remedy - never a cookie value, an account id or a filesystem path.
     blocked_source_entries_this_cycle = blocked_source_entries()
-    if blocked_source_entries_this_cycle:
-        logging.info(
-            f"  manifest: posting {len(blocked_source_entries_this_cycle)} blocked "
-            f"cookie store(s) to /fleet/credentials/manifest"
-        )
-        blocked_origins_this_cycle.extend(blocked_source_entries_this_cycle)
+    blocked_origins_this_cycle.extend(blocked_source_entries_this_cycle)
 
     # Send provider completion explicitly. The server prunes only origins
     # for providers listed here, so a raised scrape/extractor cannot turn

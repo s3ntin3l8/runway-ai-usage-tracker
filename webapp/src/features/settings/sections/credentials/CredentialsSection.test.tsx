@@ -112,4 +112,23 @@ describe('CredentialsSection', () => {
     renderWithProviders(<CredentialsSection />, { route: '/settings/credentials?view=unavailable' });
     expect(await screen.findByText('Every credential source can be read')).toBeInTheDocument();
   });
+
+  it('shows an unknown reason as the server sent it', async () => {
+    vi.mocked(api.fetchCredentialInventory).mockResolvedValue(
+      inventory({
+        blocked_sources: [
+          {
+            sidecar_id: 'host-a',
+            provider_id: 'ollama',
+            credential_origin: 'cookie:ollama/Chrome/Default/Network/Cookies',
+            reason: 'source_something_new',
+            collecting: false,
+          },
+        ],
+      }),
+    );
+    renderWithProviders(<CredentialsSection />, { route: '/settings/credentials?view=unavailable' });
+
+    expect(await screen.findByText('source_something_new')).toBeInTheDocument();
+  });
 });

@@ -35,7 +35,7 @@ import sys
 import tempfile
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -121,6 +121,38 @@ class StoreProbe:
     def identity(self) -> str:
         """Name the store for a log line, e.g. ``Chrome/Default/Network/Cookies``."""
         return "/".join(part for part in (self.browser, self.profile, self.store) if part)
+
+
+def is_app_bound(value: object) -> bool:
+    """Whether a stored value is app-bound encrypted (Chrome 127+ v20).
+
+    A store can hold both kinds: Chrome 127+ keeps the cookies written
+    before the upgrade as v10 and writes v20 only for the ones set
+    afterwards. The value in front of the caller is therefore better
+    evidence than a sample of the table.
+    """
+    return isinstance(value, (bytes, bytearray)) and bytes(value).startswith(_APP_BOUND_PREFIX)
+
+
+def mark_app_bound(probe: StoreProbe) -> StoreProbe:
+    """Reclassify a probed store as app-bound once a value proves it.
+
+    The probe samples one row, so a store whose first row is a pre-upgrade
+    v10 value is called readable even when the provider's own cookie is
+    app-bound. The reclassified probe replaces the cached one, so the store
+    is reported as unusable from then on.
+    """
+    upgraded = replace(
+        probe,
+        state=StoreState.UNSUPPORTED_FORMAT,
+        detail=STATE_DETAILS[StoreState.UNSUPPORTED_FORMAT],
+    )
+    with _cache_lock:
+        for key, cached in _probe_cache.items():
+            if cached.identity() == probe.identity():
+                _probe_cache[key] = upgraded
+                break
+    return upgraded
 
 
 _probe_cache: dict[tuple[str, str], StoreProbe] = {}
@@ -309,9 +341,8 @@ def _value_format(connection: sqlite3.Connection, kind: str) -> StoreState:
     except sqlite3.Error:
         # An unfamiliar schema is not evidence of an unsupported format.
         return StoreState.READABLE
-    if row and isinstance(row[0], (bytes, bytearray)):
-        if bytes(row[0]).startswith(_APP_BOUND_PREFIX):
-            return StoreState.UNSUPPORTED_FORMAT
+    if row and is_app_bound(row[0]):
+        return StoreState.UNSUPPORTED_FORMAT
     return StoreState.READABLE
 
 
