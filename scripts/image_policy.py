@@ -3,6 +3,7 @@
 import json
 import re
 from collections import Counter
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,38 @@ BLOCKING_SEVERITIES = frozenset({"Critical", "High"})
 # advertised release never reaches it while upstream keeps publishing daily.
 MAX_DB_AGE = timedelta(hours=30)
 MAX_EXCEPTION_AGE = timedelta(days=30)
+# How close an exception may come to its expiry before the repository notices.
+# The shipped document expires on a single horizon, so the tripwire has to fire
+# before that horizon rather than when the image build fails. A week is enough
+# to re-review the applicability rationale, open a pull request and merge it
+# during working hours -- instead of discovering the lapse when an image build
+# turns red on a Sunday evening.
+EXPIRY_WARNING_WINDOW = timedelta(days=7)
+
+
+@dataclass(frozen=True)
+class ExceptionSet:
+    """The exception document split by whether its review window is still open.
+
+    ``active`` holds the entries that still waive a finding. ``expired`` holds
+    the entries whose window closed: they waive nothing, so the findings they
+    would have covered are reported as blocked. Keeping the two apart is what
+    stops one lapsed entry from discarding the whole document.
+    """
+
+    active: dict[tuple[str, ...], dict[str, Any]] = field(default_factory=dict)
+    expired: dict[tuple[str, ...], dict[str, Any]] = field(default_factory=dict)
+
+
+def _describe(entry: dict[str, Any]) -> str:
+    """Name an exception entry so an error points at the entry that caused it."""
+    parts = [
+        entry.get("id", "?"),
+        entry.get("package", "?"),
+        entry.get("version", "?"),
+        entry.get("architecture", "?"),
+    ]
+    return " ".join(str(part) for part in parts)
 
 
 def timestamp(value: str) -> datetime:
@@ -60,13 +93,40 @@ def exception_key(entry: dict[str, Any]) -> tuple[str, ...]:
     return tuple(entry[k] for k in ("id", "namespace", "package", "version", "architecture"))
 
 
-def load_exceptions(path: Path, now: datetime) -> dict[tuple[str, ...], dict[str, Any]]:
+def renewal_due(loaded: ExceptionSet, now: datetime) -> list[dict[str, Any]]:
+    """Entries whose review window has closed or is about to close.
+
+    A lapsed entry applies to nothing and a closing one is about to stop
+    applying, so both mean the document needs a renewal. The unit test and the
+    scheduled check share this, so both agree on what "due" means.
+    """
+    due = list(loaded.expired.values())
+    due.extend(
+        entry
+        for entry in loaded.active.values()
+        if timestamp(entry["expires_at"]) - now < EXPIRY_WARNING_WINDOW
+    )
+    return due
+
+
+def load_exceptions(path: Path, now: datetime) -> ExceptionSet:
+    """Load the exception document, splitting it into live and lapsed entries.
+
+    A malformed entry still fails the whole document: a broken document is a
+    different failure class from a lapsed one, and silently downgrading it would
+    hide the mistake. A lapsed entry, on the other hand, simply stops applying
+    -- the finding it covered becomes unexcepted and blocks, and the rest of the
+    document keeps working.
+    """
     data = json.loads(path.read_text())
     if data.get("schema_version") != 1 or not isinstance(data.get("exceptions"), list):
         raise ValueError("Invalid image exception document")
-    result = {}
+    active: dict[tuple[str, ...], dict[str, Any]] = {}
+    expired: dict[tuple[str, ...], dict[str, Any]] = {}
+    seen: set[tuple[str, ...]] = set()
     for entry in data["exceptions"]:
-        for field in (
+        name = _describe(entry)
+        for field_name in (
             "id",
             "namespace",
             "package",
@@ -79,32 +139,43 @@ def load_exceptions(path: Path, now: datetime) -> dict[tuple[str, ...], dict[str
             "reviewed_at",
             "expires_at",
         ):
-            if not isinstance(entry.get(field), str) or not entry[field].strip():
-                raise ValueError(f"Exception requires {field}")
+            if not isinstance(entry.get(field_name), str) or not entry[field_name].strip():
+                raise ValueError(f"Exception {name} requires {field_name}")
         if entry["architecture"] not in {"amd64", "arm64"}:
-            raise ValueError("Exception requires an exact supported architecture")
+            raise ValueError(f"Exception {name} requires an exact supported architecture")
         if not entry["evidence"].startswith("https://") or not entry["issue"].startswith(
             "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/"
         ):
-            raise ValueError("Exception requires HTTPS evidence and a Runway issue")
-        reviewed, expires = timestamp(entry["reviewed_at"]), timestamp(entry["expires_at"])
-        if (
-            reviewed > now
-            or expires <= now
-            or not timedelta(0) < expires - reviewed <= MAX_EXCEPTION_AGE
-        ):
-            raise ValueError("Exception is expired or exceeds its 30-day review window")
+            raise ValueError(f"Exception {name} requires HTTPS evidence and a Runway issue")
+        try:
+            reviewed, expires = timestamp(entry["reviewed_at"]), timestamp(entry["expires_at"])
+        except ValueError as exc:
+            raise ValueError(f"Exception {name} has an invalid timestamp: {exc}") from exc
+        if reviewed > now:
+            raise ValueError(
+                f"Exception {name} was reviewed at {entry['reviewed_at']}, in the future"
+            )
+        window = expires - reviewed
+        if not timedelta(0) < window <= MAX_EXCEPTION_AGE:
+            raise ValueError(
+                f"Exception {name} has a {window.days}-day review window, "
+                f"which must be positive and at most {MAX_EXCEPTION_AGE.days} days"
+            )
         key = exception_key(entry)
-        if key in result:
-            raise ValueError("Duplicate image exception")
-        result[key] = entry
-    return result
+        if key in seen:
+            raise ValueError(f"Duplicate image exception for {name}")
+        seen.add(key)
+        if expires <= now:
+            expired[key] = entry
+        else:
+            active[key] = entry
+    return ExceptionSet(active=active, expired=expired)
 
 
 def evaluate(
     report: dict[str, Any],
     architecture: str,
-    exceptions: dict[tuple[str, ...], dict[str, Any]],
+    exceptions: ExceptionSet,
 ) -> dict[str, Any]:
     if architecture not in {"amd64", "arm64"} or not isinstance(report.get("matches"), list):
         raise ValueError("Missing architecture or vulnerability matches")
@@ -128,11 +199,15 @@ def evaluate(
         if artifact.get("type") == "python":
             python.append(finding)
         if severity in BLOCKING_SEVERITIES:
-            exception = exceptions.get(exception_key(finding))
+            key = exception_key(finding)
+            exception = exceptions.active.get(key)
             if exception:
                 accepted.append({**finding, "exception": exception})
             else:
-                blocked.append(finding)
+                lapsed = exceptions.expired.get(key)
+                blocked.append(
+                    {**finding, "expired_exception": _expired_note(lapsed)} if lapsed else finding
+                )
     return {
         "architecture": architecture,
         "counts": dict(counts),
@@ -140,4 +215,17 @@ def evaluate(
         "exceptions": accepted,
         "python_findings": python,
         "passed": not blocked,
+    }
+
+
+def _expired_note(entry: dict[str, Any]) -> dict[str, Any]:
+    """Explain why a finding is blocked: its exception lapsed rather than never existed."""
+    return {
+        "id": entry["id"],
+        "package": entry["package"],
+        "version": entry["version"],
+        "architecture": entry["architecture"],
+        "expires_at": entry["expires_at"],
+        "reason": entry["reason"],
+        "issue": entry["issue"],
     }

@@ -73,9 +73,13 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
-            requirements-dev.txt
+            requirements-shared.txt
+            requirements-test.txt
       - name: Install canonical Python dependencies
-        run: python scripts/dev_checks.py install-python
+        # The suite's set, not the union: the lint tooling is about thirty
+        # packages the test suite never touches, and unpacking them onto the
+        # Windows filesystem is a third of this job's install step.
+        run: python scripts/dev_checks.py install-python --set test
       # Four workers inside the shard as well: the runner has four cores,
       # and `--dist loadfile` keeps each test module in one worker.
       - name: Run the shard
@@ -108,9 +112,13 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
-            requirements-dev.txt
+            requirements-shared.txt
+            requirements-test.txt
       - name: Install canonical Python dependencies
-        run: python scripts/dev_checks.py install-python
+        # The suite's set, not the union: the lint tooling is about thirty
+        # packages the test suite never touches, and unpacking them onto the
+        # Windows filesystem is a third of this job's install step.
+        run: python scripts/dev_checks.py install-python --set test
       - name: Record the per-module durations
         run: python scripts/dev_checks.py record-shard-weights --jobs 4
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

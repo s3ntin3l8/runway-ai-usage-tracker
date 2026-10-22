@@ -32,6 +32,12 @@ export class ApiError extends Error {
     // is gone. Distinct from a genuine backend outage: retrying won't help,
     // and the UI should offer to sign in again, not report "unreachable".
     public readonly authRedirect: boolean = false,
+    // The parsed `detail` of the error body, when the server sent a
+    // structured one — FastAPI's `{"detail": {...}}`. The message above is
+    // the human rendering of that body; this is the payload itself, so a
+    // caller that needs a field out of it (the billing model a 409 proved,
+    // say) reads it here instead of re-parsing a string.
+    public readonly detail?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -98,17 +104,64 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;
+    let parsedDetail: unknown;
     try {
       const data = (await resp.json()) as { detail?: unknown };
-      if (data && data.detail) detail = String(data.detail);
+      if (data && data.detail) {
+        parsedDetail = data.detail;
+        detail = summarizeDetail(data.detail);
+      }
     } catch {
       // non-JSON error body — keep the status message
     }
-    throw new ApiError(resp.status, detail);
+    throw new ApiError(resp.status, detail, false, parsedDetail);
   }
 
   if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
+}
+
+// How long a rendered error body may get before it is cut short.
+const MAX_ERROR_MESSAGE = 300;
+
+/**
+ * A short, safe rendering of an error body.
+ *
+ * The message reaches every toast in the app (`toast.error(err.message)`),
+ * so it must not carry more than the operator needs — and never the value
+ * they submitted. A structured body can hold both: FastAPI's validation
+ * errors repeat the offending input under `input`. So the message
+ * *summarises* the body instead of dumping it, while the body itself
+ * stays available on `err.detail` for a caller that wants the fields.
+ *
+ * A string body is already the server's own message and passes through.
+ */
+function summarizeDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  // FastAPI validation errors: an array of {loc, msg, type, input}. The
+  // `input` is the submitted value — name the field and the problem, not
+  // the value.
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .slice(0, 5)
+      .map((item) => {
+        if (typeof item !== 'object' || item === null) return null;
+        const { loc, msg } = item as { loc?: unknown; msg?: unknown };
+        const where = Array.isArray(loc) ? loc.join('.') : '';
+        const what = typeof msg === 'string' ? msg : 'invalid value';
+        return where ? `${where}: ${what}` : what;
+      })
+      .filter((part): part is string => part !== null);
+    if (parts.length === 0) return 'Validation failed';
+    return parts.join('; ');
+  }
+  // A structured error that says what went wrong says it in `message`.
+  if (typeof detail === 'object' && detail !== null) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+  }
+  const text = JSON.stringify(detail);
+  return text.length > MAX_ERROR_MESSAGE ? `${text.slice(0, MAX_ERROR_MESSAGE)}…` : text;
 }
 
 type QueryValue = string | number | boolean | null | undefined;

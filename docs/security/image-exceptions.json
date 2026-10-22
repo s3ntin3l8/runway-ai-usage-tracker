@@ -1853,12 +1853,12 @@
       "package": "bsdutils",
       "version": "1:2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -1866,12 +1866,12 @@
       "package": "bsdutils",
       "version": "1:2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -1879,12 +1879,12 @@
       "package": "libblkid1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -1892,12 +1892,12 @@
       "package": "libblkid1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -1905,12 +1905,12 @@
       "package": "libmount1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -1918,12 +1918,12 @@
       "package": "libmount1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -1931,12 +1931,12 @@
       "package": "libsmartcols1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -1944,12 +1944,12 @@
       "package": "libsmartcols1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -1957,12 +1957,12 @@
       "package": "libuuid1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -1970,12 +1970,12 @@
       "package": "libuuid1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -1983,12 +1983,12 @@
       "package": "mount",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -1996,12 +1996,12 @@
       "package": "mount",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2009,12 +2009,12 @@
       "package": "util-linux",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2022,12 +2022,12 @@
       "package": "util-linux",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2035,12 +2035,12 @@
       "package": "util-linux-extra",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2048,12 +2048,12 @@
       "package": "util-linux-extra",
       "version": "2.38.1-5+deb12u3",
       "architecture": "amd64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2061,12 +2061,12 @@
       "package": "bsdutils",
       "version": "1:2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2074,12 +2074,12 @@
       "package": "bsdutils",
       "version": "1:2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2087,12 +2087,12 @@
       "package": "libblkid1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2100,12 +2100,12 @@
       "package": "libblkid1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2113,12 +2113,12 @@
       "package": "libmount1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2126,12 +2126,12 @@
       "package": "libmount1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2139,12 +2139,12 @@
       "package": "libsmartcols1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2152,12 +2152,12 @@
       "package": "libsmartcols1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2165,12 +2165,12 @@
       "package": "libuuid1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2178,12 +2178,12 @@
       "package": "libuuid1",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2191,12 +2191,12 @@
       "package": "mount",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2204,12 +2204,12 @@
       "package": "mount",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2217,12 +2217,12 @@
       "package": "util-linux",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2230,12 +2230,12 @@
       "package": "util-linux",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53613",
@@ -2243,12 +2243,12 @@
       "package": "util-linux-extra",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched.",
+      "reason": "Requires a privileged mount path and a user/users fstab entry with an attacker-writable target ancestor. Runway runs as UID 1000, removes inherited setuid/setgid permissions, and invokes no mount/libmount operations. Privileged containers, added capabilities, host Docker sockets and custom user-mount fstab entries invalidate this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53613",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     },
     {
       "id": "CVE-2026-53615",
@@ -2256,12 +2256,12 @@
       "package": "util-linux-extra",
       "version": "2.38.1-5+deb12u3",
       "architecture": "arm64",
-      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched.",
+      "reason": "Requires probing attacker-crafted DOS extended partitions through libblkid. Runway accepts usage/configuration data, invokes no blkid/libblkid partition probing, and has no disk-image or block-device input path. Adding device access, disk probing or a downstream partition consumer invalidates this assessment. The installed library is not claimed patched. Re-reviewed 2026-10-22: Debian Bookworm still ships 2.38.1-5+deb12u3 with no fixed point release upstream (the fix ships in trixie 2.41.5-0+deb13u1 and later), the server still invokes no blkid or libblkid partition probing and still has no disk-image or block-device input path and no downstream partition consumer.",
       "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-53615",
       "owner": "s3ntin3l8",
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640",
-      "reviewed_at": "2026-10-15T17:14:08Z",
-      "expires_at": "2026-10-22T17:14:08Z"
+      "reviewed_at": "2026-10-22T19:53:12Z",
+      "expires_at": "2026-11-08T12:00:00Z"
     }
   ]
 }
