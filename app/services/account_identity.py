@@ -20,6 +20,22 @@ def normalize_sidecar_id(raw: str) -> str:
     return h.split(".", 1)[0].lower()
 
 
+#: The name an account wears when nobody named it.
+PLACEHOLDER_LABEL = "default"
+
+
+def is_placeholder_label(label: str | None) -> bool:
+    """Whether a label is the placeholder rather than a name somebody chose.
+
+    Every writer of an account's name has to agree on what "nobody named this"
+    looks like, or an account flips between the placeholder and a real name
+    from one poll to the next.
+    """
+    if not label:
+        return True
+    return label.strip().lower() == PLACEHOLDER_LABEL
+
+
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
 _EMAIL_RE = EMAIL_RE

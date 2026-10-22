@@ -33,6 +33,9 @@ class AnthropicCollector(
     """
 
     PROVIDER_ID = "anthropic"
+    # A claude.ai account is keyed by its member's email, so the account's
+    # label is a name a human chose: it must never file a card elsewhere.
+    ACCOUNT_LABEL_IS_DISPLAY_NAME = True
     COMPLETE_SNAPSHOT = True
     DEFAULT_WINDOW_TYPE = "weekly"  # Free tier; Pro/paid windows are tagged per-card
 
