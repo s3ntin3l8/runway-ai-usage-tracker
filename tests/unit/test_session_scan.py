@@ -9,47 +9,78 @@ holds the mock.
 The walk is the expensive part, so it is narrowed to the modules that can
 capture it. This file pins that narrowing: a top-level package the
 repository owns and the scan does not know about would be skipped silently.
+
+The guard and the scan share one predicate -- ``is_repository_module`` -- so
+they cannot drift apart again. A predicate that matched the submodules but
+not the package roots would leave ``sys.modules["app"]`` unrepaired, and a
+guard derived from the prefix list rather than from the predicate would not
+have noticed that.
 """
 
 from __future__ import annotations
 
-import os
+import shutil
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from tests.conftest import _REPOSITORY_MODULES
+import pytest
+
+from tests.conftest import _REPOSITORY_MODULES, is_repository_module
 
 ROOT = Path(__file__).resolve().parents[2]
-SKIP = {".git", ".venv", "node_modules", ".wt", "dist", "build", "__pycache__"}
 
 
-def repository_package_names() -> set[str]:
-    """The top-level directory names that hold Python modules of this repository."""
-    names: set[str] = set()
-    for entry in sorted(ROOT.iterdir()):
-        if not entry.is_dir() or entry.name in SKIP or entry.name.startswith("."):
-            continue
-        for _dirpath, dirnames, filenames in os.walk(entry):
-            dirnames[:] = [d for d in dirnames if d not in SKIP and not d.startswith(".")]
-            if any(name.endswith(".py") for name in filenames):
-                names.add(entry.name)
-                break
+def repository_package_names(isolated_git) -> set[str]:
+    """The top-level package names the repository owns.
+
+    Enumerated from the *tracked* files, not from the filesystem: a
+    gitignored directory that happens to hold a ``.py`` file -- ``coverage/``
+    and ``htmlcov/`` from ``make test-cov``, ``data/`` from a local run, a
+    leftover ``venv/`` -- is not a package of this repository, and the
+    filesystem cannot tell the difference.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git is required to enumerate the tracked sources")
+    listed = isolated_git("ls-files", "--", "*.py", cwd=ROOT)
+    if listed.returncode != 0 or not listed.stdout.split():
+        pytest.skip("not a git checkout - there is nothing to assert")
+    names = set()
+    for path in listed.stdout.split():
+        head, sep, _ = path.partition("/")
+        if sep:
+            names.add(head)
     return names
 
 
-def test_the_scan_covers_every_package_the_repository_owns() -> None:
-    """A new top-level package has to be added to the scan's prefixes.
+def test_the_scan_covers_every_package_the_repository_owns(isolated_git) -> None:
+    """A new top-level package has to be added to the scan's roots.
 
     Only a module that reads ``sqlmodel.Session`` at runtime can capture the
     mock, and the only ones that do are the ones this repository owns -- so
-    the scan skips everything else. A package outside the prefixes would be
+    the scan skips everything else. A package outside the roots would be
     skipped without anyone noticing.
+
+    The expectation is derived from the scan's own predicate, not from the
+    root list: the two have to be the same thing. A predicate that stopped
+    matching the package roots fails here, instead of quietly skipping them.
     """
-    owned = repository_package_names()
+    owned = repository_package_names(isolated_git)
     assert owned, "the repository owns no top-level package?"
-    covered = {prefix.rstrip(".") for prefix in _REPOSITORY_MODULES}
+    covered = {root for root in _REPOSITORY_MODULES if is_repository_module(root)}
     assert owned <= covered, sorted(owned - covered)
+
+
+def test_the_scan_matches_the_package_roots_and_not_only_their_modules() -> None:
+    """The package itself is matched, not only the modules inside it.
+
+    ``sys.modules["app"]`` is the package: a module that reads
+    ``sqlmodel.Session`` in ``app/__init__.py`` captures the mock *there*,
+    and a scan that only matched ``app.something`` would leave it behind.
+    """
+    assert is_repository_module("app")
+    assert is_repository_module("app.models")
+    assert not is_repository_module("application")
 
 
 def test_the_scan_covers_the_module_the_fixture_patches() -> None:
@@ -59,7 +90,7 @@ def test_the_scan_covers_the_module_the_fixture_patches() -> None:
     the scan does not have to -- but it is in the list so that a capture
     *inside* ``sqlmodel`` would still be repaired.
     """
-    assert "sqlmodel" in {prefix.rstrip(".") for prefix in _REPOSITORY_MODULES}
+    assert is_repository_module("sqlmodel")
 
 
 def test_no_module_holds_a_mocked_session() -> None:
@@ -69,6 +100,11 @@ def test_no_module_holds_a_mocked_session() -> None:
     ``monkeypatch`` restores it afterwards. Any *other* module holding a
     mocked ``Session`` is a leak: the scan in ``tests/conftest.py`` repairs
     the ones this repository owns, and this test is what catches the rest.
+
+    It is a point-in-time sample, not an end-to-end guard: it sees the
+    modules that are loaded when it runs. A leak injected by a test that
+    sorts after this file is not caught here -- the scan in the fixture is
+    what repairs it, and this test is the belt to that braces.
     """
     leaked = [
         name

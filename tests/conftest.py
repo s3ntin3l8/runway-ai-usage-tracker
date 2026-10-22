@@ -337,16 +337,35 @@ def clear_response_cache():
 # 1.2ms a test: 5.3 seconds of CPU and 1.9 seconds of wall clock for a run
 # of the suite, which is 5% of it. The scan is what keeps a captured mock
 # from outliving the test that captured it.
+#
+# These are package *roots*. A module belongs to one of them when its name
+# is the root itself or starts with it and a dot: ``app`` and ``app.models``
+# are both the ``app`` package, and ``application`` is not.
 _REPOSITORY_MODULES = (
-    "app.",
-    "installer.",
-    "scratch.",
-    "scripts.",
-    "sidecar_app.",
+    "app",
+    "installer",
+    "scratch",
+    "scripts",
+    "sidecar_app",
     "sqlmodel",
-    "tests.",
-    "webapp.",
+    "tests",
+    "webapp",
 )
+# The roots' submodules, for the one ``startswith`` that covers them. Both
+# tests are C-level, so the scan over ~1900 modules stays as cheap as it
+# was when the prefixes carried their trailing dot.
+_REPOSITORY_MODULE_PREFIXES = tuple(f"{root}." for root in _REPOSITORY_MODULES)
+
+
+def is_repository_module(name: str) -> bool:
+    """Whether ``name`` is a module this repository owns.
+
+    The scan and the guard that pins it share this function, so they cannot
+    drift apart. A prefix that matched the submodules but not the package
+    root would skip ``sys.modules["app"]`` -- and a capture of the mocked
+    ``Session`` in ``app/__init__.py`` would survive the teardown.
+    """
+    return name in _REPOSITORY_MODULES or name.startswith(_REPOSITORY_MODULE_PREFIXES)
 
 
 @pytest.fixture(autouse=True)
@@ -366,7 +385,7 @@ def mock_db_session(monkeypatch):
     monkeypatch.setattr("sqlmodel.Session", mock_session)
     yield mock_db
     for name, module in tuple(sys.modules.items()):
-        if module is None or not name.startswith(_REPOSITORY_MODULES):
+        if module is None or not is_repository_module(name):
             continue
         if vars(module).get("Session") is mock_session:
             module.Session = Session
