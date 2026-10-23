@@ -160,8 +160,8 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
     if value.startswith("keychain:"):
         service = value.split(":", 1)[1].split("#", 1)[0]
         if service.startswith("Claude Desktop/oauth/"):
-            # The app already says "Claude Desktop"; a detail would only repeat it.
-            return OriginDisplay("keychain", "Desktop OAuth", app="Claude Desktop")
+            # The label names the app, so the composition never repeats it.
+            return OriginDisplay("keychain", "Claude Desktop OAuth", app="Claude Desktop")
         app = _KEYCHAIN_ENTRY_APPS.get(service) or (
             "Claude Code" if service.startswith("Claude Code") else None
         )

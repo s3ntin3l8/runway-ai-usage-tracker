@@ -107,8 +107,8 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
   if (origin.startsWith('keychain:')) {
     const service = origin.slice('keychain:'.length).split('#')[0];
     if (service.startsWith('Claude Desktop/oauth/')) {
-      // The app already says "Claude Desktop"; a detail would only repeat it.
-      return { kind: 'keychain', label: 'Desktop OAuth' };
+      // The label names the app, so the composition never repeats it.
+      return { kind: 'keychain', label: 'Claude Desktop OAuth' };
     }
     // The app name already identifies the entry ("Claude Code - Keychain
     // entry"); only an unnamed owner needs the service spelled out.
@@ -158,4 +158,17 @@ export function credentialOriginKind(origin: string): CredentialOriginKind {
  */
 export function hasNamedOriginApp(app: string | null | undefined): app is string {
   return Boolean(app && app !== 'Browser');
+}
+
+/**
+ * "Codex CLI · auth.json" — the owning app, then what the credential is.
+ *
+ * A generic "Browser" says nothing and is left out. An app the label already
+ * starts with adds nothing either ("Claude Desktop OAuth"), so it is left out
+ * rather than repeated.
+ */
+export function originTitleWithApp(app: string | null | undefined, label: string): string {
+  if (!hasNamedOriginApp(app)) return label;
+  if (label.toLowerCase().startsWith(app.toLowerCase())) return label;
+  return `${app} · ${label}`;
 }

@@ -94,6 +94,14 @@ describe('native cookie source titles', () => {
     expect(originSummary(source({ origin_type: 'cookie', origin_app: 'Browser', label: 'Browser cookie' })))
       .toBe('Browser cookie on Workstation');
   });
+
+  it('does not repeat an app the label already names', () => {
+    expect(
+      originSummary(
+        source({ origin_type: 'keychain', origin_app: 'Claude Desktop', label: 'Claude Desktop OAuth' }),
+      ),
+    ).toBe('Claude Desktop OAuth on Workstation');
+  });
 });
 
 it('keeps named cookie clients when server label copy changes', () => {
