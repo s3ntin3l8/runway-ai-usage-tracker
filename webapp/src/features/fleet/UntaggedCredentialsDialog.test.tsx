@@ -835,4 +835,26 @@ describe('the source of a pending credential', () => {
       within(dialog).getByText('cookie:anthropic/Chrome/Work/Cookies'),
     ).toBeInTheDocument();
   });
+
+  it('does not repeat an app the label already names', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          ...entry,
+          credential_origin: 'keychain:Claude Desktop/oauth/slot',
+          origin_label: 'Claude Desktop OAuth',
+          origin_app: 'Claude Desktop',
+        },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Claude Desktop OAuth')).toBeInTheDocument();
+    expect(
+      within(dialog).queryByText('Claude Desktop · Claude Desktop OAuth'),
+    ).not.toBeInTheDocument();
+  });
 });

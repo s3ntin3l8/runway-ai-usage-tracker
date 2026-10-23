@@ -99,11 +99,20 @@ def test_cookie_origin_never_reads_the_store_folder_as_a_profile():
 def test_file_and_env_origins_carry_no_extra_detail():
     assert describe_origin_full("path:/home/alice/.codex/auth.json").detail is None
     assert describe_origin_full("env:OPENROUTER_API_KEY").detail is None
-    # The app already names the owner; a detail would only repeat it.
+    # The label and the app name the owner; a detail would only repeat it.
     assert describe_origin_full("keychain:Claude Desktop/oauth/x").detail is None
     assert describe_origin_full("keychain:Claude Code-credentials").detail is None
     # An unnamed owner needs the service spelled out.
     assert describe_origin_full("keychain:Gemini CLI").detail == "Gemini CLI"
+
+
+def test_the_desktop_oauth_entry_names_its_app_once():
+    """The label carries the app's name, so the app is never repeated."""
+    display = describe_origin_full("keychain:Claude Desktop/oauth/x")
+    assert display.label == "Claude Desktop OAuth"
+    # The app still names the tool to sign in again with.
+    assert display.app == "Claude Desktop"
+    assert login_hint(display.app) == "sign in again in Claude Desktop"
 
 
 def test_a_file_origin_reports_its_path_with_the_home_collapsed():

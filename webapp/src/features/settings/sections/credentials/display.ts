@@ -11,7 +11,7 @@ import type {
   CredentialUnusedReason,
 } from '@/api/types';
 import { maskAccountId } from '@/lib/accountDisplay';
-import { hasNamedOriginApp } from '@/lib/credentialOrigin';
+import { originTitleWithApp } from '@/lib/credentialOrigin';
 import { timeAgo } from '@/lib/format';
 
 export const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
@@ -69,10 +69,7 @@ export const MAPPING_HINT: Record<CredentialMapping, string> = {
 
 /** "Codex CLI · auth.json", "Browser cookie", "GITHUB_TOKEN" — what a credential is. */
 export function originTitle(s: CredentialSourceView): string {
-  if (hasNamedOriginApp(s.origin_app)) {
-    return `${s.origin_app} · ${s.label}`;
-  }
-  return s.label;
+  return originTitleWithApp(s.origin_app, s.label);
 }
 
 /** "Chrome · Profile 1" — where a cookie came from, when the machine could name it. */

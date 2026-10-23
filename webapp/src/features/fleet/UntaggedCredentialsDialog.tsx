@@ -50,7 +50,7 @@ import { ClaudeSourceOrganizationPicker } from './ClaudeSourceOrganizationPicker
 import { maskAccountId } from '@/lib/accountDisplay';
 import {
   describeCredentialOrigin,
-  hasNamedOriginApp,
+  originTitleWithApp,
   type CredentialOriginKind,
 } from '@/lib/credentialOrigin';
 import {
@@ -608,8 +608,6 @@ export function sourceDescription(entry: UntaggedCredential): {
 export function sourceLabel(entry: UntaggedCredential): string {
   const { label, detail } = sourceDescription(entry);
   if (!label) return displayOrigin(entry.credential_origin);
-  // The owning client names the credential the way the rules view and the
-  // credential inventory name it; a generic "Browser" says nothing.
-  const owner = hasNamedOriginApp(entry.origin_app) ? `${entry.origin_app} · ` : '';
-  return detail ? `${owner}${label} · ${detail}` : `${owner}${label}`;
+  const title = originTitleWithApp(entry.origin_app, label);
+  return detail ? `${title} · ${detail}` : title;
 }

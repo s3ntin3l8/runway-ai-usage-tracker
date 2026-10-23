@@ -4,6 +4,7 @@ import {
   cookieOriginDetail,
   credentialOriginKind,
   describeCredentialOrigin,
+  originTitleWithApp,
 } from './credentialOrigin';
 
 describe('describeCredentialOrigin', () => {
@@ -120,5 +121,25 @@ describe('the shared origin fixture', () => {
         detail: described.detail ?? null,
       }).toEqual({ kind, label, detail });
     }
+  });
+});
+
+describe('originTitleWithApp', () => {
+  it('names the app, unless it adds nothing', () => {
+    expect(originTitleWithApp('Codex CLI', 'auth.json')).toBe('Codex CLI · auth.json');
+    // A generic browser says nothing.
+    expect(originTitleWithApp('Browser', 'Browser cookie')).toBe('Browser cookie');
+    // An app the label already names is not repeated.
+    expect(originTitleWithApp('Claude Desktop', 'Claude Desktop OAuth')).toBe(
+      'Claude Desktop OAuth',
+    );
+    // A label that is the app's name is not repeated either.
+    expect(originTitleWithApp('Chrome', 'Chrome')).toBe('Chrome');
+    // Only as a word: "Chromebook cookie" does not name "Chrome".
+    expect(originTitleWithApp('Chrome', 'Chromebook cookie')).toBe(
+      'Chrome · Chromebook cookie',
+    );
+    // No app at all.
+    expect(originTitleWithApp(undefined, 'Keychain entry')).toBe('Keychain entry');
   });
 });
