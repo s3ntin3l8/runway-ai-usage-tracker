@@ -8,6 +8,7 @@ price them from what the account itself published.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
@@ -46,14 +47,23 @@ def _account(
     return row
 
 
-def _card(session: Session, provider_id: str, account_id: str, card: dict) -> LatestUsage:
+def _card(
+    session: Session,
+    provider_id: str,
+    account_id: str,
+    card: dict,
+    *,
+    window_type: str = "weekly",
+    updated_at: datetime | None = None,
+) -> LatestUsage:
     row = LatestUsage(
         provider_id=provider_id,
         account_id=account_id,
-        window_type="weekly",
+        window_type=window_type,
         variant="default",
         model_id="",
         card_json=json.dumps(card),
+        updated_at=updated_at or datetime.now(UTC),
     )
     session.add(row)
     session.commit()
@@ -258,5 +268,112 @@ def test_the_repair_never_reads_a_credential():
         assert plan.priced[0].model == "subscription"
         # Nothing about the credential is needed to reach that answer.
         assert row.billing_type == "unknown"
+    finally:
+        session.close()
+
+
+def test_a_card_the_collector_marked_stale_prices_nothing():
+    """A card from a credential that stopped working is not evidence."""
+    session = _session()
+    try:
+        _account(session, account_id="broken@example.com")
+        _card(
+            session,
+            "anthropic",
+            "broken@example.com",
+            {
+                **_quota_card(),
+                "stale": True,
+                "collection_failing": True,
+                "detail": "Collection failing: 401 invalid token",
+            },
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert plan.total == 1
+        assert plan.priced == []
+        assert len(plan.skipped) == 1
+
+        result = apply_claude_billing_type(session)
+        assert result.priced == 0
+        row = session.exec(select(ProviderConfig)).one()
+        assert row.billing_type == "unknown"
+        assert row.billing_type_source is None
+    finally:
+        session.close()
+
+
+def test_a_card_that_was_never_refreshed_prices_nothing():
+    """A card from an account the collector has not reached since is not evidence."""
+    session = _session()
+    try:
+        _account(session, account_id="ancient@example.com")
+        _card(
+            session,
+            "anthropic",
+            "ancient@example.com",
+            _quota_card(),
+            updated_at=datetime.now(UTC) - timedelta(days=800),
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert plan.priced == []
+        assert len(plan.skipped) == 1
+    finally:
+        session.close()
+
+
+def test_an_older_plan_card_does_not_outrank_a_current_spend_card():
+    """The most recent publication describes the account now."""
+    session = _session()
+    try:
+        _account(session, account_id="switched@example.com")
+        _card(
+            session,
+            "anthropic",
+            "switched@example.com",
+            _quota_card(),
+            window_type="weekly",
+            updated_at=datetime.now(UTC) - timedelta(days=2),
+        )
+        _card(
+            session,
+            "anthropic",
+            "switched@example.com",
+            _spend_card(),
+            window_type="monthly",
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert [candidate.model for candidate in plan.priced] == ["pay_as_you_go"]
+    finally:
+        session.close()
+
+
+def test_cards_from_one_publication_are_read_together():
+    """One publication of both shapes reads the way the detector reads it."""
+    session = _session()
+    try:
+        _account(session, account_id="both@example.com")
+        now = datetime.now(UTC)
+        _card(
+            session,
+            "anthropic",
+            "both@example.com",
+            _quota_card(),
+            window_type="weekly",
+            updated_at=now,
+        )
+        _card(
+            session,
+            "anthropic",
+            "both@example.com",
+            _spend_card(),
+            window_type="monthly",
+            updated_at=now - timedelta(seconds=5),
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert [candidate.model for candidate in plan.priced] == ["subscription"]
     finally:
         session.close()

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, col, select
@@ -30,6 +31,20 @@ from app.services.billing_type import UNKNOWN, detect_billing_type
 
 #: The providers whose accounts the detector can price.
 CLAUDE_PROVIDERS = ("anthropic", "anthropic_console")
+
+#: How old a published card may be and still count as evidence. A card that
+#: has not been refreshed in this long describes an account the collector has
+#: not reached since — the account may have changed since, so the card proves
+#: nothing about how it bills *now*. The sibling ``orphan_gauge_series``
+#: check gates on the same window for the same class of risk.
+EVIDENCE_MAX_AGE_DAYS = 30
+
+#: How far apart two cards of the same publication may be written. One
+#: publication writes an account's cards in one go, so anything further apart
+#: than this is a different, later publication. Cards from the account's most
+#: recent publication are the ones that describe it now; a card from an older
+#: publication describes a state the account may have left.
+EVIDENCE_PUBLICATION_MINUTES = 10
 
 
 @dataclass
@@ -61,22 +76,53 @@ class ClaudeBillingTypeResult:
 
 
 def _published_cards(session: Session, provider_id: str, account_id: str) -> list[dict[str, Any]]:
-    """The cards the account published, as the detector reads them."""
+    """The cards the account published, as the detector reads them.
+
+    A card is evidence only while it still describes the account, so three
+    filters apply:
+
+    - a card the collector marked ``stale`` / ``collection_failing`` describes
+      a credential that stopped working, so it says nothing about how the
+      account bills (``app/api/endpoints/usage.py`` drops those cards too);
+    - a card that has not been refreshed within ``EVIDENCE_MAX_AGE_DAYS``
+      describes an account the collector has not reached since, so it may
+      describe a state the account has since left;
+    - a card outside the account's most recent publication describes an older
+      publication, so when the account has changed since, only the newest
+      publication describes it now.
+
+    Newest first.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=EVIDENCE_MAX_AGE_DAYS)
     rows = session.exec(
-        select(LatestUsage.card_json).where(
+        select(LatestUsage.card_json, LatestUsage.updated_at).where(
             LatestUsage.provider_id == provider_id,
             LatestUsage.account_id == account_id,
         )
     ).all()
-    cards: list[dict[str, Any]] = []
-    for card_json in rows:
+    dated: list[tuple[datetime, dict[str, Any]]] = []
+    for card_json, updated_at in rows:
+        if updated_at is None:
+            continue
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        if updated_at < cutoff:
+            continue
         try:
             card = json.loads(card_json)
         except (TypeError, ValueError):
             continue
-        if isinstance(card, dict):
-            cards.append(card)
-    return cards
+        if not isinstance(card, dict):
+            continue
+        if card.get("stale") is True or card.get("collection_failing") is True:
+            continue
+        dated.append((updated_at, card))
+    if not dated:
+        return []
+    dated.sort(key=lambda item: item[0], reverse=True)
+    newest = dated[0][0]
+    publication_floor = newest - timedelta(minutes=EVIDENCE_PUBLICATION_MINUTES)
+    return [card for updated_at, card in dated if updated_at >= publication_floor]
 
 
 def _account_model(session: Session, provider_id: str, account_id: str) -> str | None:

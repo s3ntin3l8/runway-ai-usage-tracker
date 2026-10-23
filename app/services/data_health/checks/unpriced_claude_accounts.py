@@ -29,6 +29,12 @@ from app.services.maintenance.claude_billing_type import (
     plan_claude_billing_type,
 )
 
+#: Suffix of the group that reports the accounts no published card can price.
+#: Those are reported, never guessed at, and the fixer does not touch them —
+#: so they sit in a group of their own rather than inflating the count of
+#: the group the fixer can act on.
+UNPRICEABLE_SUFFIX = "::unpriceable"
+
 
 class UnpricedClaudeAccountsCheck(Check):
     id = "unpriced_claude_accounts"
@@ -52,33 +58,58 @@ class UnpricedClaudeAccountsCheck(Check):
             plan = plan_claude_billing_type(session, provider_id=provider_id)
             if not plan.total:
                 continue
-            groups.append(
-                FindingGroup(
-                    key=provider_id,
-                    label=f"{provider_id}: {len(plan.priced)} of {plan.total} to price",
-                    count=plan.total,
-                    fixable=bool(plan.priced),
-                    not_fixable_reason=(
-                        None
-                        if plan.priced
-                        else "no published card decides a billing model for these accounts"
-                    ),
-                    samples=[
-                        Finding(
-                            label=candidate.account_id,
-                            detail={
-                                "account_id": candidate.account_id,
-                                "billing_type": candidate.model,
-                            },
-                        )
-                        for candidate in plan.priced[:5]
-                    ],
-                    detail={
-                        "priced": len(plan.priced),
-                        "skipped": len(plan.skipped),
-                    },
+            if plan.priced:
+                groups.append(
+                    FindingGroup(
+                        key=provider_id,
+                        label=f"{provider_id}: {len(plan.priced)} account(s) to price",
+                        count=len(plan.priced),
+                        fixable=True,
+                        samples=[
+                            Finding(
+                                label=candidate.account_id,
+                                detail={
+                                    "account_id": candidate.account_id,
+                                    "billing_type": candidate.model,
+                                },
+                            )
+                            for candidate in plan.priced[:5]
+                        ],
+                        detail={
+                            "priced": len(plan.priced),
+                            "skipped": len(plan.skipped),
+                        },
+                    )
                 )
-            )
+            if plan.skipped:
+                groups.append(
+                    FindingGroup(
+                        key=f"{provider_id}{UNPRICEABLE_SUFFIX}",
+                        label=(
+                            f"{provider_id}: {len(plan.skipped)} account(s) no published card prices"
+                        ),
+                        count=len(plan.skipped),
+                        fixable=False,
+                        not_fixable_reason=(
+                            "no published card decides a billing model for these accounts; "
+                            "set the billing model by hand"
+                        ),
+                        samples=[
+                            Finding(
+                                label=candidate.account_id,
+                                detail={
+                                    "account_id": candidate.account_id,
+                                    "billing_type": candidate.model,
+                                },
+                            )
+                            for candidate in plan.skipped[:5]
+                        ],
+                        detail={
+                            "priced": len(plan.priced),
+                            "skipped": len(plan.skipped),
+                        },
+                    )
+                )
         return CheckReport(
             check_id=self.id,
             severity=self.severity,
@@ -87,6 +118,8 @@ class UnpricedClaudeAccountsCheck(Check):
         )
 
     def plan(self, session: Session, group_key: str, params: dict[str, Any]) -> FixPlan:
+        if group_key.endswith(UNPRICEABLE_SUFFIX):
+            raise ValueError("accounts no published card prices cannot be priced automatically")
         plan = plan_claude_billing_type(session, provider_id=group_key)
         return FixPlan(
             check_id=self.id,
@@ -112,6 +145,8 @@ class UnpricedClaudeAccountsCheck(Check):
     def apply(
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[Any]]:
+        if group_key.endswith(UNPRICEABLE_SUFFIX):
+            raise ValueError("accounts no published card prices cannot be priced automatically")
         result = apply_claude_billing_type(session, provider_id=group_key)
         return (
             FixResult(

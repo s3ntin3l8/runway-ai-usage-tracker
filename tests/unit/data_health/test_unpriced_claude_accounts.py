@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from sqlmodel import select
 
 from app.models.db import ProviderConfig
@@ -71,6 +72,39 @@ def test_detect_reports_an_account_it_cannot_price_as_not_fixable(session):
     assert group.fixable is False
     assert group.not_fixable_reason
     assert group.detail["skipped"] == 1
+
+
+def test_detect_counts_only_the_accounts_the_fixer_can_price(session):
+    """The fixable count says what the fixer does, not what the check found."""
+    make_config(session, provider_id="anthropic", account_id="old@example.com")
+    make_latest_usage(
+        session,
+        provider_id="anthropic",
+        account_id="old@example.com",
+        card_json=_quota_card(),
+    )
+    make_config(session, provider_id="anthropic", account_id="silent@example.com")
+
+    report = _check().detect(session)
+
+    assert report.total_count == 2
+    assert report.fixable_count == 1
+    fixable = next(group for group in report.groups if group.key == "anthropic")
+    assert fixable.count == 1
+    assert fixable.fixable is True
+    unpriceable = next(group for group in report.groups if group.key.endswith("::unpriceable"))
+    assert unpriceable.count == 1
+    assert unpriceable.fixable is False
+
+
+def test_the_fixer_refuses_the_accounts_no_card_can_price(session):
+    """The group the fixer cannot act on is not offered to it."""
+    make_config(session, provider_id="anthropic", account_id="silent@example.com")
+
+    with pytest.raises(ValueError):
+        _check().plan(session, "anthropic::unpriceable", {})
+    with pytest.raises(ValueError):
+        _check().apply(session, "anthropic::unpriceable", {})
 
 
 def test_detect_groups_by_provider(session):
