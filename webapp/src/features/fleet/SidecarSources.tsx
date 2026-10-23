@@ -1,18 +1,25 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { commandSidecarSource, fetchSidecarSources } from "@/api/endpoints";
-import type { FleetSourceAction } from "@/api/types";
-import { Button } from "@/components/ui/Button";
-import { timeAgo } from "@/lib/format";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { commandSidecarSource, fetchSidecarSources } from '@/api/endpoints';
+import type { FleetSourceAction } from '@/api/types';
+import { Button } from '@/components/ui/Button';
+import { timeAgo } from '@/lib/format';
 
-export function SidecarSources({ sidecarId }: { sidecarId: string }) {
+export function SidecarSources({
+  sidecarId,
+  osPlatform,
+}: {
+  sidecarId: string;
+  osPlatform?: string | null;
+}) {
   const queryClient = useQueryClient();
+  const compatible = osPlatform?.startsWith('Darwin') === true;
   const enrolled = /^device-[a-f0-9]{32}$/.test(sidecarId);
-  const queryKey = ["fleet", "sources", sidecarId];
+  const queryKey = ['fleet', 'sources', sidecarId];
   const query = useQuery({
     queryKey,
     queryFn: () => fetchSidecarSources(sidecarId),
-    enabled: enrolled,
+    enabled: enrolled && compatible,
     refetchInterval: 30_000,
   });
   const command = useMutation({
@@ -25,10 +32,20 @@ export function SidecarSources({ sidecarId }: { sidecarId: string }) {
     }) => commandSidecarSource(sidecarId, sourceId, action),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
-      toast.success("Source command recorded");
+      toast.success('Source command recorded');
     },
     onError: (error) => toast.error(error.message),
   });
+  if (!compatible)
+    return (
+      <section aria-label="Keychain sources">
+        <h3 className="text-sm font-medium">Keychain sources</h3>
+        <p className="text-xs text-fg-muted">
+          Keychain scrapers are available on macOS. Waiting for a compatible
+          device report.
+        </p>
+      </section>
+    );
   if (!enrolled)
     return (
       <section aria-label="Keychain sources">
@@ -84,7 +101,7 @@ export function SidecarSources({ sidecarId }: { sidecarId: string }) {
                   onClick={() =>
                     command.mutate({
                       sourceId: source.source_id,
-                      action: "dismiss",
+                      action: 'dismiss',
                     })
                   }
                 >
@@ -93,44 +110,44 @@ export function SidecarSources({ sidecarId }: { sidecarId: string }) {
               </div>
             ) : null}
             <p className="text-xs text-fg-muted">
-              Local permission: {source.read ? "On" : "Off"} · {source.state}
-              {source.remote_paused ? " · Paused by server" : ""}
-              {source.revoked ? " · Contribution revoked" : ""}
+              Local permission: {source.read ? 'On' : 'Off'} · {source.state}
+              {source.remote_paused ? ' · Paused by server' : ''}
+              {source.revoked ? ' · Contribution revoked' : ''}
             </p>
             <p className="text-xs text-fg-muted">
-              Last Keychain read:{" "}
+              Last Keychain read:{' '}
               {source.last_read_at
                 ? timeAgo(new Date(source.last_read_at * 1000).toISOString())
-                : "Not reported"}
+                : 'Not reported'}
             </p>
             <p className="text-xs text-fg-muted">
-              Server collection: {source.collection_health.replaceAll("_", " ")}
+              Server collection: {source.collection_health.replaceAll('_', ' ')}
               {source.last_collection_at
-                ? " · Last success " + timeAgo(source.last_collection_at)
-                : ""}
+                ? ' · Last success ' + timeAgo(source.last_collection_at)
+                : ''}
             </p>
             <p className="text-xs text-fg-muted">
-              {source.report_stale ? "Stale device report" : "Device reported"}{" "}
+              {source.report_stale ? 'Stale device report' : 'Device reported'}{' '}
               · {timeAgo(source.report_at)}. Offline reporting does not expire
               eligible credentials.
             </p>
             <p className="text-xs text-fg-muted">
-              Renewal:{" "}
+              Renewal:{' '}
               {!source.renewal_capable
-                ? "Read-only scraper"
+                ? 'Read-only scraper'
                 : source.renewal_supported
                   ? source.renewal_requested
-                    ? "Enabled locally"
-                    : "Off locally"
-                  : "Limited: supported write path not verified"}
+                    ? 'Enabled locally'
+                    : 'Off locally'
+                  : 'Limited: supported write path not verified'}
               . Read access does not prove update continuity.
             </p>
             {pending.length ? (
               <p role="status" className="text-xs text-fg-muted">
-                Awaiting local acknowledgment:{" "}
+                Awaiting local acknowledgment:{' '}
                 {pending
-                  .map((entry) => entry.action.replaceAll("_", " "))
-                  .join(", ")}
+                  .map((entry) => entry.action.replaceAll('_', ' '))
+                  .join(', ')}
               </p>
             ) : null}
             <div className="mt-2 flex flex-wrap gap-2">
@@ -139,28 +156,28 @@ export function SidecarSources({ sidecarId }: { sidecarId: string }) {
                 variant="secondary"
                 aria-label={
                   (source.remote_paused
-                    ? "Resume server pause for "
-                    : "Pause ") + source.label
+                    ? 'Resume server pause for '
+                    : 'Pause ') + source.label
                 }
                 disabled={command.isPending || !source.read || source.revoked}
                 onClick={() =>
                   command.mutate({
                     sourceId: source.source_id,
-                    action: source.remote_paused ? "resume" : "pause",
+                    action: source.remote_paused ? 'resume' : 'pause',
                   })
                 }
               >
-                {source.remote_paused ? "Resume server pause" : "Pause source"}
+                {source.remote_paused ? 'Resume server pause' : 'Pause source'}
               </Button>
               <Button
                 size="sm"
                 variant="secondary"
-                aria-label={"Revoke " + source.label + " contribution"}
+                aria-label={'Revoke ' + source.label + ' contribution'}
                 disabled={command.isPending || source.revoked}
                 onClick={() =>
                   command.mutate({
                     sourceId: source.source_id,
-                    action: "revoke",
+                    action: 'revoke',
                   })
                 }
               >
@@ -169,12 +186,12 @@ export function SidecarSources({ sidecarId }: { sidecarId: string }) {
               <Button
                 size="sm"
                 variant="secondary"
-                aria-label={"Request local setup for " + source.label}
+                aria-label={'Request local setup for ' + source.label}
                 disabled={command.isPending}
                 onClick={() =>
                   command.mutate({
                     sourceId: source.source_id,
-                    action: "request_setup",
+                    action: 'request_setup',
                   })
                 }
               >
@@ -191,17 +208,25 @@ export function SidecarSources({ sidecarId }: { sidecarId: string }) {
 export function SidecarSourceNotice({
   sidecarId,
   onOpen,
+  osPlatform,
 }: {
   sidecarId: string;
+  osPlatform?: string | null;
   onOpen: () => void;
 }) {
   const query = useQuery({
-    queryKey: ["fleet", "sources", sidecarId],
+    queryKey: ['fleet', 'sources', sidecarId],
     queryFn: () => fetchSidecarSources(sidecarId),
-    enabled: /^device-[a-f0-9]{32}$/.test(sidecarId),
+    enabled:
+      osPlatform?.startsWith('Darwin') === true &&
+      /^device-[a-f0-9]{32}$/.test(sidecarId),
     refetchInterval: 60_000,
   });
-  if (!query.data?.sources.some((source) => source.announcement)) return null;
+  if (
+    osPlatform?.startsWith('Darwin') !== true ||
+    !query.data?.sources.some((source) => source.announcement)
+  )
+    return null;
   return (
     <aside
       className="mt-3 rounded-md border border-edge bg-surface-2 p-3"

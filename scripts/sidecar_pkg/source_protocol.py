@@ -109,7 +109,12 @@ class SourceClient:
 
         sources = []
         policy = SourcePolicy(config)
-        for row in report(config)["sources"]:
+        status = report(config)
+        for row in status["sources"]:
+            if not row["compatible"] and (
+                row["read"] or row["id"] not in config.get("keychain_withdrawals", {})
+            ):
+                continue
             source_id = row["id"]
             entry = SourcePolicy._entry(config, source_id)
             generation = entry.get("generation", 0)

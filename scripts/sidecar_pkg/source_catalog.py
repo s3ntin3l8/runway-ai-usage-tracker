@@ -18,6 +18,7 @@ class SourceDescriptor:
     services: tuple[str, ...]
     revision: str
     renewal: bool = False
+    platforms: tuple[str, ...] = ("darwin",)
 
 
 def catalog() -> dict[str, SourceDescriptor]:
@@ -79,7 +80,10 @@ def catalog() -> dict[str, SourceDescriptor]:
                 continue
             source_id = f"{provider}.{suffix}"
             revision = hashlib.sha256(
-                json.dumps([services, matches], sort_keys=True).encode()
+                json.dumps(
+                    [services, matches, {"renewal": renewal, "platforms": ["darwin"]}],
+                    sort_keys=True,
+                ).encode()
             ).hexdigest()
             result[source_id] = SourceDescriptor(
                 source_id, provider, label, services, revision, renewal

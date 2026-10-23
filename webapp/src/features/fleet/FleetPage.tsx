@@ -491,7 +491,7 @@ function SidecarCard({
             </Link>
           </div>
 
-          <SidecarSourceNotice sidecarId={sidecar.sidecar_id} onOpen={onSettings} />
+          <SidecarSourceNotice sidecarId={sidecar.sidecar_id} osPlatform={sidecar.os_platform} onOpen={onSettings} />
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={onSettings}>
               <Settings className="size-3.5" aria-hidden />

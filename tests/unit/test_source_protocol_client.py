@@ -144,3 +144,16 @@ def test_current_controls_protect_fresh_process_after_another_process_acknowledg
     assert source_consent.POLICY.ticket("anthropic.claude-code") is None
     restarted = source_protocol.SourceClient(local, tmp_path / "fresh.json")
     assert source_consent.POLICY.ticket("anthropic.claude-code") is None
+
+
+def test_non_macos_reports_no_new_scrapers_but_can_withdraw_old_consent(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    local = config()
+    client = source_protocol.SourceClient(local, tmp_path / "state.json")
+    assert client.payload(local)["sources"] == []
+    off = SourcePolicy.change(local, "anthropic.claude-code", read=False)
+    off["keychain_withdrawals"] = {"anthropic.claude-code": 2}
+    sources = client.payload(off)["sources"]
+    assert len(sources) == 1 and sources[0]["read"] is False and sources[0]["new"] is False

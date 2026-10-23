@@ -29,9 +29,11 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
     pending = config.get("keychain_withdrawals", {})
     pending = pending if isinstance(pending, dict) else {}
     return {
+        "compatible": any(sys.platform in source.platforms for source in catalog().values()),
         "sources": [
             {
                 "id": source.id,
+                "compatible": sys.platform in source.platforms,
                 "label": source.label,
                 "revision": source.revision,
                 "read": policy.ticket(source.id) is not None,
@@ -50,7 +52,8 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 and config.get("claude_keychain_renewal") is True,
                 "renewal_supported": False,
                 "dependency": "Keychain: " + ", ".join(source.services),
-                "new": dismissed.get(source.id) != source.revision
+                "new": sys.platform in source.platforms
+                and dismissed.get(source.id) != source.revision
                 and policy.ticket(source.id) is None,
             }
             for source in catalog().values()

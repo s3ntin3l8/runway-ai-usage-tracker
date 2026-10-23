@@ -72,7 +72,7 @@ export function SidecarSettingsDialog({
             }}
           />
           <LoginDirectoriesSection key={`${sidecar.sidecar_id}-dirs`} sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
-          <SidecarSources sidecarId={sidecar.sidecar_id} />
+          <SidecarSources sidecarId={sidecar.sidecar_id} osPlatform={sidecar.os_platform} />
           <KeepAliveSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
           <UpdatesSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
           <LoggingSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
