@@ -191,12 +191,25 @@ scanner database, and they are not comparable across builds. The *Published
 beta.8 replacement* section above records 279 matches per architecture from the
 beta.8 audit, whose database was built `2026-10-11T06:30:42Z`. The published
 leg dispatched on `main` after #852 merged — run 39989382509 — audited the
-published `edge` image and `3.0.0-beta.11` against the database built
-`2026-10-23T06:30:15Z` and reported 283 matches per architecture with 3
-Critical and 79 High, every one of them covered by a reviewed exception. The
-trixie candidate in this section was audited against that same
-`2026-10-23T06:30:15Z` database and reports 166, with no Critical finding at
-all.
+published `edge` image and the newest versioned release, `3.0.0-beta.12`,
+against the database built `2026-10-23T06:30:15Z` and reported 283 matches per
+architecture with 3 Critical and 79 High, every one of them covered by a
+reviewed exception. The trixie candidate in this section was audited against
+that same `2026-10-23T06:30:15Z` database and reports 166, with no Critical
+finding at all.
+
+### The published baseline this replaces
+
+`3.0.0-beta.12` is the published image the trixie base replaces. Release Please
+run 39973988700 built, audited, signed and promoted it; the retained
+`release-image-audit` artifact reports the same figures as the published leg
+above, against the same database, for the same index:
+
+| Reference | Digest |
+| --- | --- |
+| Published index | `sha256:8c80658517230894fa688884635cea163cb93003fc2bfd2bb2fd5b860332ffbc` |
+| linux/amd64 | `sha256:a278ab0602695233fc2655037f930a1c44e31b5abd5a2e8b0522c379a94c5f62` |
+| linux/arm64 | `sha256:925992dd6ed17da65020f06edcd7f5ce24986e97e0fba0eef3134f68d961a9d9` |
 
 ### Advisories Debian lists as fixed in trixie
 
