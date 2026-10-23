@@ -20,7 +20,14 @@ concurrency:
 jobs:
   browser-and-proxy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The job's own work takes a minute or two; the Playwright system
+    # dependencies come from the runner's apt mirror, and a slow mirror spent
+    # 19.5 minutes on 74 fetches (the slowest one took 201 seconds). At a
+    # 20-minute budget the job was cancelled while the install was still
+    # running, so the browser tests never ran and the failure looked like a
+    # code problem. 40 minutes covers that install with room to spare and
+    # still fails a genuinely stuck runner.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -39,14 +46,26 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('webapp/package-lock.json') }}
           restore-keys: |
             playwright-${{ runner.os }}-
-      - name: Install security test dependencies
+      - name: Tune apt for a slow mirror
+        # The Playwright system dependencies are the only part of this job
+        # that talks to a third-party mirror. Retrying a failed fetch and
+        # bounding a hung one keeps one slow package from taking the job
+        # down with it.
+        run: |
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries
+          echo 'Acquire::http::Timeout "120";' | sudo tee /etc/apt/apt.conf.d/80-timeout
+      - name: Install Python test dependencies
         run: |
           python -m venv .venv
           # The suite's set, not the union: this job runs tests, not the
           # lint gate.
           .venv/bin/pip install -r requirements-test.txt
-          npm --prefix webapp ci
-          cd webapp && npx playwright install --with-deps
+      - name: Install webapp dependencies
+        run: npm --prefix webapp ci
+      - name: Install Playwright browsers and system dependencies
+        # Its own step, so a job that runs out of time says which install was
+        # slow instead of cancelling the whole job.
+        run: cd webapp && npx playwright install --with-deps
       - name: Check immutable CI references
         run: python scripts/check_workflow_pins.py
       - name: Browser boundaries
