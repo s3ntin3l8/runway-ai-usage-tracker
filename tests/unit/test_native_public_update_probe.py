@@ -521,3 +521,100 @@ def test_missing_snapshot_checks_are_unsafe(monkeypatch, tmp_path, synthetic_cas
     assert row["stages"] == ["start"]
     assert row["writer_exit_code"] == 66
     assert row["isolation_failed"] is True
+
+
+def test_read_only_control_records_ordered_isolation_without_candidate(
+    monkeypatch, tmp_path, synthetic_case
+):
+    monkeypatch.setattr(probe, "compare", lambda *args: {"access_policy_preserved": True})
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=b'{"control_completed":true}',
+            stderr=b"stage:owner_verified\nstage:control_complete\n",
+        ),
+    )
+    row = probe.run_case(tmp_path / "writer", "read-only-control")
+    assert "failure" not in row
+    assert row["control_only"] is True
+    assert row["update_attempted"] is False
+    assert row["candidate_preserves_shared_access"] is False
+    assert row["original_reader"] == "original"
+    assert [entry["stage"] for entry in row["isolation_checkpoints"]] == [
+        "fixture_created",
+        "fixture_seeded",
+        "fixture_read",
+        "before_writer",
+        "after_writer",
+        "after_readback",
+        "after_cleanup",
+    ]
+    assert all(all(entry["checks"].values()) for entry in row["isolation_checkpoints"])
+
+
+@pytest.mark.parametrize("changed_at", [1, 2, 3, 4, 5, 6])
+def test_control_stops_at_first_isolation_change(monkeypatch, tmp_path, synthetic_case, changed_at):
+    snapshots, writers = [], []
+
+    def snapshot():
+        snapshots.append(True)
+        return {
+            "default": {"path": "synthetic", "unlocked": len(snapshots) < changed_at},
+            "search_list": [],
+        }
+
+    def writer(*args, **kwargs):
+        writers.append(True)
+        return subprocess.CompletedProcess(
+            [], 0, stdout=b'{"control_completed":true}', stderr=b"stage:control_complete\n"
+        )
+
+    monkeypatch.setattr(probe, "environment_snapshot", snapshot)
+    monkeypatch.setattr(probe, "compare", lambda *args: {"access_policy_preserved": True})
+    monkeypatch.setattr(probe.subprocess, "run", writer)
+    row = probe.run_case(tmp_path / "writer", "read-only-control")
+    assert row["failure"] == "isolation_changed"
+    assert row["isolation_failed"] is True
+    assert row["candidate_preserves_shared_access"] is False
+    assert len(writers) == (0 if changed_at <= 4 else 1)
+    first_bad = next(
+        entry for entry in row["isolation_checkpoints"] if not all(entry["checks"].values())
+    )
+    assert (
+        first_bad["stage"]
+        == [
+            "fixture_created",
+            "fixture_seeded",
+            "fixture_read",
+            "before_writer",
+            "after_writer",
+            "after_readback",
+        ][changed_at - 1]
+    )
+
+
+def test_control_checkpoints_are_durable_before_native_child(monkeypatch, tmp_path, synthetic_case):
+    path = tmp_path / "report.json"
+
+    def execute(command, **kwargs):
+        if Path(command[0]).name == "synthetic-writer":
+            saved = json.loads(path.read_text())
+            assert saved["selected_cases"] == ["read-only-control"]
+            progress = saved["active_case_progress"]
+            assert progress["isolation_checkpoints"][-1]["stage"] == "before_writer"
+            assert progress["update_attempted"] is False
+            assert progress["candidate_preserves_shared_access"] is False
+            raise KeyboardInterrupt("private-interruption-detail")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    assert probe.main(SimpleNamespace(case="read-only-control", report=path)) == 130
+    saved = json.loads(path.read_text())
+    assert saved["failure"] == "interrupted"
+    assert saved["candidate_found"] is False
+    assert saved["active_case_progress"]["isolation_checkpoints"][-1]["stage"] == "before_writer"
+    assert "private-interruption-detail" not in path.read_text()
+    assert "synthetic-reference" not in path.read_text()

@@ -185,3 +185,36 @@ def test_child_preflight_block_is_not_reported_as_supervisor_failure(monkeypatch
     assert result["blocked_reason"] == "security_cli_active"
     assert result["child_exit_code"] == 1
     assert "supervisor_failure" not in result
+
+
+@pytest.mark.parametrize(
+    "case", ["read-only-control", "metadata-control", "all", "unknown-private-target"]
+)
+def test_supervisor_case_selection_is_explicit_and_allowlisted(monkeypatch, tmp_path, case):
+    from tests import native_keychain_ci as runner
+
+    path = tmp_path / "report.json"
+    commands = []
+
+    def wait(timeout):
+        if timeout == 90:
+            runner.save_report(
+                path, {"matrix_complete": True, "candidate_found": False, "cases": [{}]}
+            )
+        return 0
+
+    def start(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(pid=12345, wait=wait)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", start)
+    monkeypatch.setattr(runner.os, "killpg", lambda *args: None)
+    result = runner.supervise(path, case=case)
+    if case == "unknown-private-target":
+        assert result == 1
+        assert commands == []
+        assert json.loads(path.read_text())["failure"] == "invalid_case"
+        assert case not in path.read_text()
+    else:
+        assert result == 0
+        assert commands[0][5:] == ([] if case == "all" else ["--case", case])

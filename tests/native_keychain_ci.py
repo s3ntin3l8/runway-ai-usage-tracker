@@ -13,10 +13,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tests.native_keychain_public_update_probe import hosted_ci, report_exit_code, save_report
+from tests.native_keychain_public_update_probe import (
+    CASES,
+    hosted_ci,
+    report_exit_code,
+    save_report,
+)
 
 
-def supervise(path: Path) -> int:
+def supervise(path: Path, *, case: str | None = None) -> int:
     report = {
         "scope": "private-synthetic-keychains-public-api-only",
         "real_claude_credential_operations": 0,
@@ -25,6 +30,11 @@ def supervise(path: Path) -> int:
         "matrix_complete": False,
         "candidate_found": False,
     }
+    case = None if case == "all" else case
+    if case is not None and case not in CASES:
+        report["failure"] = "invalid_case"
+        save_report(path, report)
+        return 1
     if not hosted_ci():
         report["blocked_reason"] = "ephemeral_macos_ci_required"
         save_report(path, report)
@@ -33,14 +43,17 @@ def supervise(path: Path) -> int:
     child, failure = None, None
     child_exit_code, cleanup_failed = None, False
     try:
+        command = [
+            sys.executable,
+            str(ROOT / "tests/native_keychain_public_update_probe.py"),
+            "--isolated-synthetic-only",
+            "--report",
+            str(path),
+        ]
+        if case is not None:
+            command.extend(["--case", case])
         child = subprocess.Popen(
-            [
-                sys.executable,
-                str(ROOT / "tests/native_keychain_public_update_probe.py"),
-                "--isolated-synthetic-only",
-                "--report",
-                str(path),
-            ],
+            command,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -91,4 +104,6 @@ def supervise(path: Path) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
-    sys.exit(supervise(parser.parse_args().report))
+    parser.add_argument("--case", choices=(*CASES, "all"))
+    args = parser.parse_args()
+    sys.exit(supervise(args.report, case=args.case))

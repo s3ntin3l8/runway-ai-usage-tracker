@@ -31,7 +31,8 @@ int main(int argc, char **argv) {
     int combined = !strcmp(argv[2], "combined-access");
     int legacy = !strcmp(argv[2], "legacy-data");
     int metadata = !strcmp(argv[2], "metadata-control");
-    if (!combined && !legacy && !metadata && strcmp(argv[2], "data-only")) return 64;
+    int control = !strcmp(argv[2], "read-only-control");
+    if (!control && !combined && !legacy && !metadata && strcmp(argv[2], "data-only")) return 64;
     if (SecKeychainSetUserInteractionAllowed(false)) return 65;
     fputs("stage:interaction_disabled\n", stderr);
     SecKeychainRef keychain = NULL, owner = NULL;
@@ -63,6 +64,12 @@ int main(int argc, char **argv) {
     status = SecKeychainItemCopyKeychain(item, &owner);
     if (status || !owner || !CFEqual(owner, keychain)) goto cleanup;
     fputs("stage:owner_verified\n", stderr);
+    if (control) {
+        fputs("stage:control_complete\n", stderr);
+        puts("{\"control_completed\":true}");
+        result = 0;
+        goto cleanup;
+    }
     if (combined && SecKeychainItemCopyAccess(item, &saved)) goto cleanup;
     const unsigned char fake[] = "synthetic-public-update-replacement";
     replacement = CFDataCreate(NULL, fake, sizeof(fake) - 1);
