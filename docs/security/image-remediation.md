@@ -180,20 +180,22 @@ in their ABI, and moved the compiler that provides libc's runtime support:
 | Bookworm | Trixie | In the trixie image? |
 | --- | --- | --- |
 | `libgnutls30` | `libgnutls30t64` | no |
-| `libssl3` | `libssl3t64` | no |
-| `gcc-12-base` | `gcc-14-base` | yes |
+| `libssl3` | `libssl3t64` | yes — `3.5.7-1~deb13u3` |
+| `gcc-12-base` | `gcc-14-base` | yes — `14.2.0-19` |
 
 The exception key is the scanner's package name, so a renamed package needs a
-renamed entry. `gcc-14-base` is the one that survives in the image: Bookworm's
-`libgcc-s1` came from gcc-12 and depended on `gcc-12-base (= 12.2.0-14+deb12u1)`,
-and trixie's comes from gcc-14 and depends on
-`gcc-14-base (= 14.2.0-19)`. The CVE-2026-102010 and CVE-2026-95619 entries
+renamed entry. `gcc-14-base` is the one that changes an existing entry:
+Bookworm's `libgcc-s1` came from gcc-12 and depended on
+`gcc-12-base (= 12.2.0-14+deb12u1)`, and trixie's comes from gcc-14 and depends
+on `gcc-14-base (= 14.2.0-19)`. The CVE-2026-102010 and CVE-2026-95619 entries
 therefore carry `gcc-14-base` where the Bookworm document carried
 `gcc-12-base`.
 
-The other two renames left the image entirely — Debian 13's slim runtime
-carries neither the GnuTLS nor the OpenSSL libraries — so no entry carries
-those names, and their advisories are gone with them (see the table below).
+`libssl3t64` is in the image too, but it needs no entry: trixie ships it at
+`3.5.7-1~deb13u3`, and that is the version that fixes CVE-2026-84782, so the
+advisory no longer applies (see the fixed-advisory table below). Only GnuTLS
+left the image entirely — Debian 13's slim runtime does not carry
+`libgnutls30t64` — so the five GnuTLS advisories went with it.
 
 ### The candidate scan
 
