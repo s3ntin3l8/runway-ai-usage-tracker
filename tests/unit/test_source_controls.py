@@ -130,7 +130,7 @@ def test_write_lock_reserves_writer_on_configured_engine(tmp_path):
     SQLModel.metadata.create_all(engine)
     try:
         with Session(engine) as first, Session(engine) as second:
-            source_controls._write_lock(first)
+            source_controls.reserve_source_writes(first)
             with pytest.raises(OperationalError, match="locked"):
                 second.execute(
                     text("UPDATE sidecar_source_revision SET revision = revision WHERE id = 1")
@@ -591,4 +591,56 @@ def test_stale_wal_reader_cannot_restore_a_concurrently_revoked_bundle(tmp_path,
             stale.rollback()
             assert source_controls.snapshot(stale)[1] == []
     finally:
+        engine.dispose()
+
+
+def test_enrolled_sidecar_delete_reserves_before_registry_read(tmp_path, monkeypatch):
+    from sqlalchemy import event, text
+    from sqlalchemy.exc import OperationalError
+
+    from app.core.db import configure_sqlite_engine
+    from app.models.db import SidecarDevice, SidecarRegistry
+    from app.services.fleet_registry import FleetRegistryService
+
+    engine = create_engine(
+        "sqlite:///" + str(tmp_path / "delete.db"), connect_args={"timeout": 0.05}
+    )
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+    encryption = EncryptionService(Fernet.generate_key().decode())
+    monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
+    monkeypatch.setattr(source_controls, "encryption_service", encryption)
+    with Session(engine) as setup:
+        device, _ = seed(setup)
+        device_id = device.device_id
+        registry_id = sidecar_devices.registry_id(device_id)
+        setup.add(SidecarRegistry(sidecar_id=registry_id))
+        setup.commit()
+    blocked = []
+
+    def interleave(conn, cursor, sql, params, context, many):
+        if blocked or "from sidecar_registry" not in sql.lower():
+            return
+        with Session(engine) as competing:
+            try:
+                competing.execute(
+                    text("UPDATE sidecar_source_revision SET revision = revision + 1 WHERE id = 1")
+                )
+                competing.commit()
+                blocked.append(False)
+            except OperationalError:
+                competing.rollback()
+                blocked.append(True)
+
+    event.listen(engine, "after_cursor_execute", interleave)
+    try:
+        with Session(engine) as deleting:
+            assert FleetRegistryService().delete_sidecar(registry_id, deleting)
+        assert blocked == [True]
+        with Session(engine) as verify:
+            assert verify.get(SidecarDevice, device_id).revoked
+            assert verify.get(SidecarRegistry, registry_id) is None
+            assert source_controls.snapshot(verify)[1] == []
+    finally:
+        event.remove(engine, "after_cursor_execute", interleave)
         engine.dispose()

@@ -28,7 +28,7 @@ _ENABLED = False
 SnapshotCache = dict[str, tuple[str, dict[str, Any]]]
 
 
-def _write_lock(session: Session) -> None:
+def reserve_source_writes(session: Session) -> None:
     """Reserve SQLite's writer before reading consent, even after deferred BEGIN.
 
     A no-op UPDATE acquires the same writer reservation as BEGIN IMMEDIATE
@@ -68,7 +68,7 @@ def _withdraw(session: Session, device_id: str, source_id: str) -> None:
 def apply_report(
     session: Session, device_id: str, definition: dict[str, Any]
 ) -> SidecarSourceState:
-    _write_lock(session)
+    reserve_source_writes(session)
     report = ScraperReport.model_validate(definition)
     descriptor = catalog().get(report.source_id)
     if descriptor is None or descriptor.provider != report.provider_id:
@@ -145,7 +145,7 @@ def save_contribution(
     metadata: dict[str, Any],
 ) -> SidecarSourceContribution:
     global _ENABLED
-    _write_lock(session)
+    reserve_source_writes(session)
     if not encryption_service.is_enabled:
         raise ValueError("Server encryption required")
     if definition is not None and not isinstance(definition, dict):
@@ -226,7 +226,7 @@ def save_contribution(
 def queue_command(
     session: Session, device_id: str, source_id: str, action: str
 ) -> SidecarSourceCommand:
-    _write_lock(session)
+    reserve_source_writes(session)
     row = state(session, device_id, source_id)
     if row is None or action not in {"pause", "resume", "revoke", "request_setup", "dismiss"}:
         raise ValueError("Unknown scraper or action")
@@ -272,7 +272,7 @@ def pending_commands(session: Session, device_id: str) -> list[dict[str, Any]]:
 
 
 def acknowledge(session: Session, device_id: str, command_id: int, status: str) -> None:
-    _write_lock(session)
+    reserve_source_writes(session)
     command = session.get(SidecarSourceCommand, command_id)
     if command is None and status in {"applied", "denied", "superseded"}:
         # A repeated ack may outlive retention. Missing commands have no effect.
@@ -317,7 +317,7 @@ def prune_commands(session: Session, device_id: str) -> None:
     Older acknowledged commands are useful for diagnostics for 30 days. Keeping
     the highest ID also prevents SQLite from reusing a command ID after cleanup.
     """
-    _write_lock(session)
+    reserve_source_writes(session)
     latest = (
         select(func.max(SidecarSourceCommand.id))
         .where(SidecarSourceCommand.device_id == device_id)
@@ -428,7 +428,7 @@ def contribution_proof(
     """Validate source binding before any credential metadata mutation."""
     if not isinstance(provider_id, str) or not isinstance(origin, str) or len(origin) > 4096:
         raise ValueError("Source contribution not authorized")
-    _write_lock(session)
+    reserve_source_writes(session)
     expected = source_for_origin(provider_id, origin)
     if expected is None:
         if proof is not None:
@@ -483,7 +483,7 @@ def promote_cached_source(
     from app.core.db import engine
 
     with Session(engine) as session:
-        _write_lock(session)
+        reserve_source_writes(session)
         row = session.exec(
             select(SidecarSourceContribution).where(
                 SidecarSourceContribution.provider_id == provider_id,
@@ -523,7 +523,7 @@ def replace_cached_source(
     from app.core.db import engine
 
     with Session(engine) as session:
-        _write_lock(session)
+        reserve_source_writes(session)
         row = session.exec(
             select(SidecarSourceContribution).where(
                 SidecarSourceContribution.provider_id == provider_id,
@@ -558,7 +558,7 @@ def replace_cached_source(
 
 def revoke_device(session: Session, device_id: str) -> None:
     """Removing an enrolled device also ends its authorization and contributions."""
-    _write_lock(session)
+    reserve_source_writes(session)
     device = session.get(SidecarDevice, device_id)
     if device is None:
         return

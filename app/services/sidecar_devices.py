@@ -56,6 +56,10 @@ def request_authentication_key(session: Session | None, device_id: str) -> str |
     Keeping that read in the handler's transaction would pin a WAL snapshot
     from before the receipt, preventing the subsequent source write from
     acquiring its reservation. Never commit or roll back handler-owned work.
+
+    Production uses independent pooled connections. Single-connection test
+    binds (e.g. StaticPool) share the physical transaction: fixtures must commit
+    setup before authentication, because closing this session rolls it back.
     """
     if session is None:
         return None

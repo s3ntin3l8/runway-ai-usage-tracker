@@ -251,13 +251,16 @@ class FleetRegistryService:
 
     def delete_sidecar(self, sidecar_id: str, session: Session) -> bool:
         """Remove sidecar from registry. Returns True if deleted, False if not found."""
+        from app.services import sidecar_devices, source_controls
+
+        if sidecar_devices.reserved_registry_id(sidecar_id):
+            source_controls.reserve_source_writes(session)
         row = session.get(SidecarRegistry, sidecar_id)
         if not row:
             return False
         # Machine-scoped credential tags and pending origins (#319) belong
         # to this sidecar only — drop them so they don't linger as
         # unresolvable rows (or re-apply if the hostname is ever reused).
-        from app.services import sidecar_devices, source_controls
         from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
 
         if sidecar_devices.reserved_registry_id(sidecar_id):
