@@ -5325,6 +5325,10 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     POLICY.configure(config)
     reset_cookie_store_tracking()
 
+    # The first-run import window, shared with the MiniMax Code probe so the
+    # two cannot disagree about how much history a first run covers.
+    from scripts.sidecar_pkg.bootstrap import bootstrap_window_days
+
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
         from scripts.sidecar_pkg.event_watermark import EventWatermark
@@ -5424,7 +5428,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
         enabled_providers = providers
 
     registry_providers = __REGISTRY__.get("providers", {})
-    bootstrap_days = int(os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
+    bootstrap_days = bootstrap_window_days()
 
     now = time.monotonic()
     if credential_scan_only:

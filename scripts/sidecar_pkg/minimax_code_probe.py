@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import sqlite3
 import sys
@@ -56,23 +55,8 @@ REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
 
 
 # How far back the probe looks when the host has no cursor yet — the same
-# window the sidecar imports on its first run.
-def _bootstrap_days() -> int:
-    """The window the sidecar's first run imports.
-
-    The sidecar reads ``SIDECAR_BOOTSTRAP_DAYS``; the probe must use the
-    same one, or it would report a window the sidecar never took.
-    """
-    raw = os.getenv("SIDECAR_BOOTSTRAP_DAYS")
-    if raw is None:
-        return _DEFAULT_BOOTSTRAP_DAYS
-    try:
-        return int(raw)
-    except ValueError:
-        return _DEFAULT_BOOTSTRAP_DAYS
-
-
-_DEFAULT_BOOTSTRAP_DAYS = 90
+# window the sidecar imports on its first run, read from one place.
+from scripts.sidecar_pkg.bootstrap import bootstrap_window_days  # noqa: E402
 
 # The extractor's per-cycle row cap, quoted in the report so a reader can
 # tell "the ledger holds N requests" from "this cycle reads at most N".
@@ -223,21 +207,32 @@ def _attach_parent_console() -> bool:
         kernel32 = ctypes.windll.kernel32
         if not kernel32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
             return False
+        # CONOUT$ is bytes decoded with the console's active code page, so
+        # the report's em dash and middle dot would land as mojibake on a
+        # cp850 console. UTF-8 is what the report is written in.
+        kernel32.SetConsoleOutputCP(65001)
         sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
         sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
         return True
     except Exception:
+        # A console that cannot be attached to is not a reason to fail the
+        # report: the caller falls back to writing it to a file.
         return False
 
 
-def _write_report_file(text: str) -> Path:
-    """Write the report next to the sidecar's config, for a build with no console."""
+def _write_report_file(text: str) -> Path | None:
+    """Write the report next to the sidecar's config, for a build with no console.
+
+    Returns the path it wrote, or None when the write failed — a caller
+    must not promise a report that does not exist.
+    """
     path = _cursor_path().parent / "minimax_code_probe.txt"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     except OSError:
-        pass
+        # A read-only or missing config dir leaves nothing to point at.
+        return None
     return path
 
 
@@ -250,18 +245,26 @@ def _notify_windows(message: str) -> None:
 
         ctypes.windll.user32.MessageBoxW(None, message, "Runway Sidecar", 0x40)
     except Exception:
+        # No message box available: the report file is the fallback.
         pass
 
 
 def _emit(text: str) -> None:
     """Print the report — or put it where a windowed build's user can find it."""
+    if sys.stdout is None:
+        _attach_parent_console()
     if sys.stdout is not None:
-        print(text)
-        return
-    if _attach_parent_console():
+        # The report carries an em dash and a middle dot; a console that is
+        # not UTF-8 would raise UnicodeEncodeError on them.
+        from app.core.console import force_utf8_console
+
+        force_utf8_console()
         print(text)
         return
     path = _write_report_file(text)
+    if path is None:
+        _notify_windows("The MiniMax Code probe could not write its report file.")
+        return
     _notify_windows(f"The MiniMax Code probe wrote its report to:\n{path}")
 
 
@@ -335,7 +338,7 @@ def probe_minimax_code() -> dict[str, Any]:
     events = parse_minimax_code_events(
         db_path,
         account_id="probe",
-        since=datetime.now(UTC) - timedelta(days=_bootstrap_days()),
+        since=datetime.now(UTC) - timedelta(days=bootstrap_window_days()),
         state_file=_cursor_path(),
     )
     models: dict[str, int] = {}

@@ -159,25 +159,37 @@ def test_the_cursor_path_follows_the_config_dir(tmp_path, monkeypatch):
 
 def test_the_probe_uses_the_sidecar_bootstrap_window(monkeypatch):
     """The dry run looks back as far as the sidecar's first run does."""
+    from scripts.sidecar_pkg.bootstrap import DEFAULT_BOOTSTRAP_DAYS
+
     monkeypatch.delenv("SIDECAR_BOOTSTRAP_DAYS", raising=False)
-    assert probe._bootstrap_days() == 90
+    assert probe.bootstrap_window_days() == DEFAULT_BOOTSTRAP_DAYS
 
 
 def test_the_probe_follows_the_bootstrap_days_override(monkeypatch):
     """The sidecar reads SIDECAR_BOOTSTRAP_DAYS; the probe must agree."""
     monkeypatch.setenv("SIDECAR_BOOTSTRAP_DAYS", "7")
-    assert probe._bootstrap_days() == 7
+    assert probe.bootstrap_window_days() == 7
     monkeypatch.setenv("SIDECAR_BOOTSTRAP_DAYS", "not-a-number")
-    assert probe._bootstrap_days() == 90
+    assert probe.bootstrap_window_days() == 90
 
 
-def test_the_probe_uses_the_same_bootstrap_window_as_the_sidecar(monkeypatch):
-    """The sidecar's own reading of the env var is the probe's reading."""
+def test_the_sidecar_and_the_probe_share_the_bootstrap_window(monkeypatch):
+    """Neither may parse the env var on its own.
+
+    The probe used to re-state the sidecar's expression, which meant a
+    change to the sidecar's default would have left the probe reading a
+    different window. Both now call one helper, and this pins the sidecar
+    to it.
+    """
     import scripts.sidecar as sidecar_module
+    from scripts.sidecar_pkg.bootstrap import bootstrap_window_days
 
     monkeypatch.setenv("SIDECAR_BOOTSTRAP_DAYS", "3")
-    sidecar_days = int(sidecar_module.os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
-    assert probe._bootstrap_days() == sidecar_days
+    assert probe.bootstrap_window_days() == bootstrap_window_days() == 3
+
+    source = Path(sidecar_module.__file__).read_text(encoding="utf-8")
+    assert "bootstrap_window_days()" in source
+    assert "SIDECAR_BOOTSTRAP_DAYS" not in source
 
 
 def test_the_probe_finds_the_store_in_the_windows_app_data_root(tmp_path, monkeypatch):
@@ -202,3 +214,14 @@ def test_a_windowed_build_without_a_console_writes_the_report_to_a_file(host, mo
     written = host / "config" / "sidecar" / "minimax_code_probe.txt"
     assert written.exists()
     assert "RESULT: PASS" in written.read_text(encoding="utf-8")
+
+
+def test_a_report_that_cannot_be_written_says_so(host, monkeypatch):
+    """A failed write must not promise a report file that does not exist."""
+    messages: list[str] = []
+    monkeypatch.setattr(probe.sys, "stdout", None)
+    monkeypatch.setattr(probe, "_attach_parent_console", lambda: False)
+    monkeypatch.setattr(probe, "_notify_windows", messages.append)
+    monkeypatch.setattr(probe, "_write_report_file", lambda text: None)
+    probe._emit("RESULT: PASS")
+    assert messages and "could not write" in messages[0]
