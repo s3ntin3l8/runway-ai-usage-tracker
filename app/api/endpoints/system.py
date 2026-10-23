@@ -2624,7 +2624,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     """Upsert the ``(provider_id, account_id)`` row and propagate credentials
     to the in-memory token cache under the same ``account_id``.
 
-    Shared core of the two PUT endpoints. Callers are responsible for any
+    Shared core of the provider-config PUT. Callers are responsible for any
     row-count / account_id guards before invoking this helper.
 
     ``detected_billing_type`` is a model something *proved* (the account's own
