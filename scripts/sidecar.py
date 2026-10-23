@@ -3625,7 +3625,19 @@ def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = 
                     state_file=cursor_file,
                 )
             )
-        return events
+        # Defense-in-depth against overlapping discovery paths: a data dir that
+        # was *copied* rather than symlinked holds the same rows under two
+        # paths, and the same request would otherwise be pushed twice.
+        seen: set[str] = set()
+        deduped = []
+        for ev in events:
+            eid = getattr(ev, "event_id", None)
+            if eid and eid in seen:
+                continue
+            if eid:
+                seen.add(eid)
+            deduped.append(ev)
+        return deduped
 
     return _extract
 

@@ -625,6 +625,24 @@ def test_a_store_with_a_cursor_ignores_the_window(monkeypatch, tmp_path, _clean_
     assert db_path.exists()
 
 
+def test_the_same_event_from_two_stores_is_pushed_once(monkeypatch, tmp_path, _clean_data_env):
+    """A data dir that was *copied* holds the same rows under two paths."""
+    sidecar = _sidecar()
+    usage = _backlog_usage(days_ago=10)
+    first = make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax")
+    second = make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax-copy")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    extractor = sidecar._make_account_extractor_minimax_code(parse_minimax_code_events)
+    events = extractor("default", _MockWatermark(), 90)
+
+    # Both stores hold the same row, so it is one request: the same event id
+    # twice would be pushed twice, and the server would drop the second.
+    assert len(events) == 1, "the copied row was reported twice"
+    assert len({event.event_id for event in events}) == len(events)
+    assert first != second
+
+
 def test_minimax_events_are_dispatched_under_the_minimax_provider(monkeypatch, tmp_path):
     sidecar = _sidecar()
     db_path = make_minimax_code_store(tmp_path)
