@@ -570,19 +570,6 @@ export function displayOrigin(origin: string): string {
 }
 
 /**
- * The Claude browser cookie, named the way this dialog has always named it.
- *
- * A Claude cookie origin carries the browser and the profile it came from, and
- * that pair is what the operator recognises; the naming below is for the
- * sources that used to read like another credential file.
- */
-function claudeSourceLabel(entry: UntaggedCredential): string {
-  if (!isClaudeBrowserSource(entry)) return entry.credential_origin;
-  const [, browser, profile] = entry.credential_origin.split('#', 1)[0].split('/');
-  return browser ? [browser, profile].filter(Boolean).join(' · ') : 'Claude browser login';
-}
-
-/**
  * The source in words: "Browser cookie", "Keychain entry".
  *
  * A file or env origin ("path:/home/u/.codex/auth.json") already says what it
@@ -618,7 +605,6 @@ export function sourceDescription(entry: UntaggedCredential): {
 
 /** The source as one line: "Browser cookie · Chrome · Profile 1". */
 export function sourceLabel(entry: UntaggedCredential): string {
-  if (isClaudeBrowserSource(entry)) return claudeSourceLabel(entry);
   const { label, detail } = sourceDescription(entry);
   if (!label) return displayOrigin(entry.credential_origin);
   return detail ? `${label} · ${detail}` : label;

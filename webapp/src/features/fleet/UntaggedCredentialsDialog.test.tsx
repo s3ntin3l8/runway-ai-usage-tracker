@@ -748,9 +748,12 @@ it('uses source organization verification for Claude browser entries without exp
   vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
   vi.mocked(api.fetchClaudeSourceOrganizations).mockResolvedValue({ organizations: [], complete: false, selection_required: true });
   renderWithProviders(<UntaggedCredentialsDialog open onClose={vi.fn()} />);
-  // The source is named the way a Claude browser cookie always was: the browser
-  // and the profile it came from.
-  expect(await screen.findByText('Chrome · Work')).toBeInTheDocument();
+  // The source is named like every other credential: the cookie is named, and
+  // the browser and profile stay on the raw origin line below it.
+  expect(await screen.findByText('Session cookie')).toBeInTheDocument();
+  expect(screen.queryByText('Chrome · Work')).not.toBeInTheDocument();
+  // The origin is still there for the operator, without its fingerprint.
+  expect(await screen.findByText('cookie:anthropic/Chrome/Work/Cookies')).toBeInTheDocument();
   // The fingerprint is never displayed.
   expect(screen.queryByText(/secretfingerprint/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Tag' })).not.toBeInTheDocument();
@@ -788,5 +791,33 @@ describe('the source of a pending credential', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('provider:anthropic')).toBeInTheDocument();
+  });
+
+  it('names an Anthropic cookie the way the server describes it', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          ...entry,
+          credential_origin: 'cookie:anthropic/Chrome/Work/Cookies',
+          // A source id makes this a Claude browser source, which is what the
+          // old wording keyed on.
+          source_id: 'source-a',
+          origin_label: 'Session cookie',
+          origin_detail: null,
+        },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Session cookie')).toBeInTheDocument();
+    // The private profile never reaches a label.
+    expect(within(dialog).queryByText('Chrome · Work')).not.toBeInTheDocument();
+    // The raw origin keeps it, for the operator.
+    expect(
+      within(dialog).getByText('cookie:anthropic/Chrome/Work/Cookies'),
+    ).toBeInTheDocument();
   });
 });
