@@ -5,6 +5,7 @@ import {
   credentialOriginKind,
   describeCredentialOrigin,
   originTitleWithApp,
+  originTitleWithDetail,
 } from './credentialOrigin';
 
 describe('describeCredentialOrigin', () => {
@@ -141,5 +142,15 @@ describe('originTitleWithApp', () => {
     );
     // No app at all.
     expect(originTitleWithApp(undefined, 'Keychain entry')).toBe('Keychain entry');
+  });
+});
+
+describe('originTitleWithDetail', () => {
+  it('joins the detail in parentheses', () => {
+    expect(originTitleWithDetail('Browser cookie', 'Chrome · Profile 1')).toBe(
+      'Browser cookie (Chrome · Profile 1)',
+    );
+    // No detail, nothing to add.
+    expect(originTitleWithDetail('Browser cookie', null)).toBe('Browser cookie');
   });
 });

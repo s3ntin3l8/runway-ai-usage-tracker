@@ -95,6 +95,19 @@ describe('native cookie source titles', () => {
       .toBe('Browser cookie on Workstation');
   });
 
+  it('puts the detail in parentheses', () => {
+    expect(
+      originSummary(
+        source({
+          origin_type: 'cookie',
+          origin_app: 'Browser',
+          label: 'Browser cookie',
+          origin_detail: 'Chrome · Profile 1',
+        }),
+      ),
+    ).toBe('Browser cookie (Chrome · Profile 1) on Workstation');
+  });
+
   it('does not repeat an app the label already names', () => {
     expect(
       originSummary(

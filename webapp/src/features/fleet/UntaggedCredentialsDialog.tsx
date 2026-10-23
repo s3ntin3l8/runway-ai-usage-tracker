@@ -51,6 +51,7 @@ import { maskAccountId } from '@/lib/accountDisplay';
 import {
   describeCredentialOrigin,
   originTitleWithApp,
+  originTitleWithDetail,
   type CredentialOriginKind,
 } from '@/lib/credentialOrigin';
 import {
@@ -604,10 +605,9 @@ export function sourceDescription(entry: UntaggedCredential): {
   return { label, detail: detail ?? undefined, kind };
 }
 
-/** The source as one line: "Chrome · Session cookie", "Browser cookie · Chrome · Profile 1". */
+/** The source as one line: "Chrome · Session cookie", "Browser cookie (Chrome · Profile 1)". */
 export function sourceLabel(entry: UntaggedCredential): string {
   const { label, detail } = sourceDescription(entry);
   if (!label) return displayOrigin(entry.credential_origin);
-  const title = originTitleWithApp(entry.origin_app, label);
-  return detail ? `${title} · ${detail}` : title;
+  return originTitleWithDetail(originTitleWithApp(entry.origin_app, label), detail);
 }
