@@ -44,7 +44,7 @@ from app.services.account_identity import (
     account_usage_provider_ids,
     canonical_account_id,
 )
-from app.services.billing_type import BillingType, detect_billing_type
+from app.services.billing_type import UNKNOWN, BillingType, detect_billing_type
 from app.services.collector_manager import manager
 from app.services.collectors.anthropic_console import (
     ConsoleAPIError,
@@ -1950,6 +1950,11 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
             rewritten_from = original_account_id
             account_id = canonical_account_id(body.account_label)
 
+    # A model something proved, as opposed to one a person picked. The source
+    # column tells the two apart, so the repair that prices the accounts
+    # predating detection never mistakes a proof for a choice.
+    detected_billing_type: BillingType | None = None
+
     if provider_id == "anthropic_console":
         try:
             account_id = str(UUID(account_id))
@@ -1977,10 +1982,17 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
         if not existing_console and body.billing_type is None and console_billing_type is not None:
             # The balance this account publishes is prepaid credit, so the
             # account spends — proven by the detector, not assumed per
-            # provider.
-            body.billing_type = console_billing_type
+            # provider. It is a proof, not a choice, and the source column
+            # says which it is.
+            detected_billing_type = console_billing_type
 
-    await _apply_provider_config_update(session, provider_id, account_id, body)
+    await _apply_provider_config_update(
+        session,
+        provider_id,
+        account_id,
+        body,
+        detected_billing_type=detected_billing_type,
+    )
     response_data: dict[str, str] = {
         "status": "saved",
         "provider_id": provider_id,
@@ -2295,25 +2307,44 @@ async def _validate_console_connection(
         raise HTTPException(status_code=502, detail="Invalid Console billing response") from exc
 
 
-async def _detect_claude_billing_type(provider: str, cookie: str) -> BillingType | None:
+async def _detect_claude_billing_type(
+    provider: str, cookie: str, token: str | None = None
+) -> BillingType | None:
     """How the Claude account behind a credential bills, proven like the collectors prove it.
 
     The same verification the automatic path uses reads the account's quota
     windows; the detector reads the shape of the card they produce.
 
     ``None`` means the proof was inconclusive — several organizations are
-    accessible, or Claude answered only partly. That is the absence of a
+    accessible but disagree, or Claude answered only partly. That is the absence of a
     proof, not a proof of "unknown": the operator (or the server's own
     later proof) decides, and an inconclusive answer is never stored as a
     decision.
+
+    An OAuth token has no Claude organization to read, so it is priced from
+    the usage its own strategy publishes.
     """
     from app.services.claude_verification import verify_claude_cookie
+
+    if not cookie and token:
+        # An OAuth token has no Claude organization to read: it is priced from
+        # the usage its own strategy publishes.
+        from app.services.claude_oauth_usage import billing_model_from_oauth_usage
+
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            return await billing_model_from_oauth_usage(client, token)
 
     try:
         async with httpx.AsyncClient(follow_redirects=False) as client:
             result = await verify_claude_cookie(client, provider, cookie)
     except ConsoleAPIError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if result.billing_type and result.billing_type != UNKNOWN:
+        # A model was proved. Several organizations can be reachable without
+        # making the model ambiguous (every accessible organization describes
+        # the same way of billing), and which organization the account is bound
+        # to is the operator's choice, not the model's.
+        return result.billing_type
     if result.selection_required or not result.complete:
         return None
     return result.billing_type
@@ -2375,18 +2406,6 @@ async def preview_account_identity(
             raise HTTPException(status_code=409, detail=result)
         return result
 
-    credential_hint = body.api_key or body.session_cookie
-    if not credential_hint:
-        # No credential typed yet — return the canonical "default" so the
-        # wizard can render the preview block without a 400.
-        return {
-            "suggested_account_id": "default",
-            "suggested_label": None,
-            "label_source": "default",
-            "suggested_billing_type": None,
-            "already_exists": _row_exists(session, body.provider_id, "default"),
-        }
-
     # The operator asks for the billing model explicitly ("Detect billing
     # model"): the credential is proven against the Claude API, and the
     # account's own quota windows decide how it bills. The debounced preview
@@ -2398,12 +2417,26 @@ async def preview_account_identity(
                 status_code=422,
                 detail="Billing detection is available for Claude accounts only",
             )
-        if not body.session_cookie:
+        if not body.session_cookie and not body.api_key:
             raise HTTPException(
                 status_code=422,
-                detail="Enter a Claude web session to detect the billing model",
+                detail="Enter a Claude web session or an OAuth token to detect the billing model",
             )
-        billing_type = await _detect_claude_billing_type(body.provider_id, body.session_cookie)
+        billing_type = await _detect_claude_billing_type(
+            body.provider_id, body.session_cookie or "", body.api_key
+        )
+
+    credential_hint = body.api_key or body.session_cookie
+    if not credential_hint:
+        # No credential typed yet — return the canonical "default" so the
+        # wizard can render the preview block without a 400.
+        return {
+            "suggested_account_id": "default",
+            "suggested_label": None,
+            "label_source": "default",
+            "suggested_billing_type": None,
+            "already_exists": _row_exists(session, body.provider_id, "default"),
+        }
 
     email_pattern = r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$"
     email_candidate: str | None = None
@@ -2585,12 +2618,19 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     provider_id: str,
     account_id: str,
     body: _ProviderConfigUpdate,
+    *,
+    detected_billing_type: BillingType | None = None,
 ) -> None:
     """Upsert the ``(provider_id, account_id)`` row and propagate credentials
     to the in-memory token cache under the same ``account_id``.
 
-    Shared core of the two PUT endpoints. Callers are responsible for any
+    Shared core of the provider-config PUT. Callers are responsible for any
     row-count / account_id guards before invoking this helper.
+
+    ``detected_billing_type`` is a model something *proved* (the account's own
+    published cards), not one a person picked. It is recorded as a detection, so
+    the repair that prices the accounts predating detection never mistakes it
+    for a choice.
     """
     # Only a credential write/clear earns a fresh auth verdict; a label / enabled /
     # archive-only save must not dismiss a live "provider rejected it" flag (during
@@ -2655,6 +2695,15 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         row.opencode_workspace_id = body.opencode_workspace_id.strip() or None
     if body.billing_type is not None:
         row.billing_type = body.billing_type
+        # A person wrote this value, including a deliberate "unknown": it is
+        # theirs, and a later proof never overwrites it.
+        row.billing_type_source = "operator"
+    elif detected_billing_type is not None:
+        # Something proved this, nobody chose it: the account's own cards
+        # decided. The source column says so, so the repair that prices the
+        # accounts predating detection never mistakes it for a choice.
+        row.billing_type = detected_billing_type
+        row.billing_type_source = "detected"
     if body.clear_api_key is True:
         # Explicit-clear flag wins over any same-field write in the body
         # (the UI sends one or the other, not both). Wipe the stored encrypted
