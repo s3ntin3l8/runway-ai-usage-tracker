@@ -29,11 +29,12 @@ SnapshotCache = dict[str, tuple[str, dict[str, Any]]]
 
 
 def reserve_source_writes(session: Session) -> None:
-    """Reserve SQLite's writer before reading consent, even after deferred BEGIN.
+    """Reserve SQLite's writer as the transaction's first statement, before reads.
 
+    Repeated calls are safe once the transaction holds the writer reservation.
     A no-op UPDATE acquires the same writer reservation as BEGIN IMMEDIATE
-    without nesting or restarting the caller's transaction. A stale WAL read
-    snapshot cannot upgrade: SQLite rejects it, so it must never be reused.
+    after deferred BEGIN, without nesting or restarting the caller's transaction.
+    A prior WAL read snapshot may not upgrade: callers must reserve at entry.
     """
     session.execute(text("UPDATE sidecar_source_revision SET revision = revision WHERE id = 1"))
 

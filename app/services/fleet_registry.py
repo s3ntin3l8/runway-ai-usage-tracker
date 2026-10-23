@@ -254,6 +254,8 @@ class FleetRegistryService:
         from app.services import sidecar_devices, source_controls
 
         if sidecar_devices.reserved_registry_id(sidecar_id):
+            # Reserve before the existence read to avoid a stale WAL upgrade.
+            # A 404 holds this reservation until the request session closes.
             source_controls.reserve_source_writes(session)
         row = session.get(SidecarRegistry, sidecar_id)
         if not row:
