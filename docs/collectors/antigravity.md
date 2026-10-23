@@ -102,17 +102,19 @@ behind (a 1.2 User-Agent serves the Gemini pool but not the Argon one, which is 
 free account is covered too — its line is only logged at debug level. The check keys on the
 tier being known at all, so a paid tier id Google adds later is covered as well.
 
-**Credentials:** `~/.gemini/antigravity-cli/antigravity-oauth-token`
+**Credentials:** `~/.gemini/antigravity-cli/antigravity-oauth-token` — on Windows, the Windows Credential Manager instead (see below).
 ```json
 {"auth_method": "consumer", "token": {"access_token": "…", "refresh_token": "…", "expiry": "ISO8601"}}
 ```
 The **access token lives one hour** and only agy can renew it: the file carries no OAuth `client_id`, so neither the server nor the sidecar can refresh it (`_execute_refresh` is a no-op; a 401 just re-reads the cache in case another host pushed a live token — it never logs a refresh, see `REFRESHABLE = False`). The server never reads the file: the sidecar reads it on every push and ships the token via the credential registry rule, and a sidecar whose local token has **lapsed does not push it at all**, so one machine's dead session cannot poison the shared cache entry another machine keeps fresh.
 
+**On Windows the CLI keeps no token file at all**: agy stores the same JSON bundle in the Windows Credential Manager under the target `gemini:antigravity` and renews it there in place. The sidecar reads that entry directly (advapi32 `CredReadW` — no PowerShell, no extra module) via the `windows_credential_json` rule, and maps the same three fields, so both platforms ship an identical credential shape. The server never touches a credential store: only the sidecar does, and it ships the token like any other source. The Windows entry also carries an `id_token`, which is deliberately **not** mapped — the POSIX file has none, and mapping it on one platform only would file the same Google account under two different cache keys.
+
 ### Token lifetime & keep-alive
 
 Because the token renews only when agy itself runs, a host without regular agy sessions lapses hourly — four lapses in one day in the 2026-10-02 incident. Keep it fresh with any of:
 
-1. **Sidecar keep-alive (opt-in):** `runway-sidecar-cli --keep-alive` (or `"keep_alive": true` in `config.json`). The sidecar checks the token file every minute and, once the access token has lapsed, runs `agy models` — a metadata call that renews the token in place: **verified 2026-10-02** that it rewrites only the access token and `expiry` (the refresh_token is never rotated), makes no model call, and works even while the access token is already expired. A failed attempt backs off to one retry every five minutes; the thread logs and never takes the sidecar down.
+1. **Sidecar keep-alive (opt-in):** `runway-sidecar-cli --keep-alive` (or `"keep_alive": true` in `config.json`). The sidecar checks the local token every minute and, once the access token has lapsed, runs `agy models` — a metadata call that renews the token in place: **verified 2026-10-02** that it rewrites only the access token and `expiry` (the refresh_token is never rotated), makes no model call, and works even while the access token is already expired. A failed attempt backs off to one retry every five minutes; the thread logs and never takes the sidecar down. The thread reads the token from wherever this OS keeps it — the file on POSIX, the Credential Manager entry on Windows — and `agy models` renews it there, so the loop is the same on every platform.
 2. **systemd timer (hosts without the sidecar):** run `agy models` on a short interval. agy only rewrites the file once the token has actually lapsed, so a frequent timer stays cheap and bounds the dead-token window to one tick:
 
    ```ini
@@ -215,7 +217,7 @@ Antigravity events use `provider_id="antigravity"` pricing rows (independent of 
 
 ## Setup
 
-Run the sidecar on the host where `agy` is logged in (same host as the server or a remote one): it discovers `~/.gemini/antigravity-cli/antigravity-oauth-token` automatically and ships the OAuth token to the server, which reads it only from its token cache. Run `agy` at least once to create the token file. A server with no sidecar has no Antigravity credential (`make dev` alone does not see it; use `make dev-all`).
+Run the sidecar on the host where `agy` is logged in (same host as the server or a remote one): it discovers the local token automatically — `~/.gemini/antigravity-cli/antigravity-oauth-token` on POSIX, the `gemini:antigravity` Credential Manager entry on Windows — and ships the OAuth token to the server, which reads it only from its token cache. Run `agy` at least once to create the token. A server with no sidecar has no Antigravity credential (`make dev` alone does not see it; use `make dev-all`).
 
 On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` / `"keep_alive": true`) or install the systemd timer — see [Token lifetime & keep-alive](#token-lifetime--keep-alive). Without one of these, the token renews only when agy next runs.
 

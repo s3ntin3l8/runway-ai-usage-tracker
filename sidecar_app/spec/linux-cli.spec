@@ -104,6 +104,9 @@ a = Analysis(
         "scripts.sidecar_pkg.oauth_renewal",
         "scripts.sidecar_pkg.asset_names",
         "scripts.sidecar_pkg.canonical_providers",
+        # Native Windows Credential Manager reader (advapi32). Imported lazily,
+        # so PyInstaller's static scan won't catch it.
+        "scripts.sidecar_pkg.wincred",
         "certifi",
         # Lazy imports inside the Linux browser-cookie decryption branch.
         "secretstorage",

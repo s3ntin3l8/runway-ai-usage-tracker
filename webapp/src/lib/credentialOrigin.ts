@@ -74,6 +74,18 @@ export function cookieOriginDetail(origin: string): string | undefined {
 /** The clients whose native acceptance covers their cookies (#672, #683). */
 const NATIVE_COOKIE_CLIENTS = ['Chrome', 'Safari', 'Claude Desktop'];
 
+/**
+ * Credential-store entries whose owning tool is known.
+ *
+ * The key is the entry's tail - the Keychain service and, where the store
+ * needs one, the account: "gemini:antigravity" is the Antigravity CLI's
+ * login, in the macOS login Keychain and in the Windows Credential Manager
+ * alike.
+ */
+const KEYCHAIN_ENTRY_OWNERS: Record<string, string | undefined> = {
+  'gemini:antigravity': 'Antigravity CLI',
+};
+
 /** Describe a raw credential origin for display. Never exposes a secret. */
 export function describeCredentialOrigin(origin: string): CredentialOriginDescription {
   if (origin.startsWith('cookie:')) {
@@ -100,7 +112,9 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
     }
     // The app name already identifies the entry ("Claude Code - Keychain
     // entry"); only an unnamed owner needs the service spelled out.
-    const app = service.startsWith('Claude Code') ? 'Claude Code' : undefined;
+    const app =
+      KEYCHAIN_ENTRY_OWNERS[service] ??
+      (service.startsWith('Claude Code') ? 'Claude Code' : undefined);
     return {
       kind: 'keychain',
       label: 'Keychain entry',

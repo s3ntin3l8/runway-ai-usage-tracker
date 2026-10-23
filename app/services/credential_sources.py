@@ -65,6 +65,14 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("credentials.json",), "Claude Code"),
 )
 
+# Owning tool by the OS credential entry it keeps its login in. The key is the
+# origin's tail - the Keychain service and, where the store needs one, the
+# account: "gemini:antigravity" for the Antigravity CLI, which keeps the same
+# credential in the macOS login Keychain and in the Windows Credential Manager.
+_KEYCHAIN_ENTRY_APPS: dict[str, str] = {
+    "gemini:antigravity": "Antigravity CLI",
+}
+
 _LOGIN_HINTS = {
     "Claude Desktop": "sign in again in Claude Desktop",
     "Codex CLI": "run `codex login`",
@@ -154,7 +162,9 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
         if service.startswith("Claude Desktop/oauth/"):
             # The app already says "Claude Desktop"; a detail would only repeat it.
             return OriginDisplay("keychain", "Desktop OAuth", app="Claude Desktop")
-        app = "Claude Code" if service.startswith("Claude Code") else None
+        app = _KEYCHAIN_ENTRY_APPS.get(service) or (
+            "Claude Code" if service.startswith("Claude Code") else None
+        )
         # The app name already identifies the entry ("Claude Code - Keychain
         # entry"); only an unnamed owner needs the service spelled out.
         return OriginDisplay(
