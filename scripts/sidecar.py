@@ -6459,6 +6459,7 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
 
 def main():
     from app.core.console import force_utf8_console
+    from scripts.sidecar_pkg.minimax_code_probe import probe_command
     from scripts.sidecar_pkg.signatures import verification_command
 
     # Before anything writes to the console: a redirected stdout/stderr uses
@@ -6467,6 +6468,9 @@ def main():
     force_utf8_console()
 
     verification_command(sys.argv[1:])
+    # A read-only report of what the sidecar can read from the MiniMax Code
+    # runtime store on this host.
+    probe_command(sys.argv[1:])
     # Before anything can spawn a subprocess: the self-update hand-off variable must not leak
     # into children, and the abandoned runtime dir is dead weight.
     from scripts.sidecar_pkg.runtime_cleanup import release_retired_runtime

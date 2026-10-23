@@ -91,6 +91,24 @@ Set the following required fields:
 
 Restart the app after editing the config for changes to take effect.
 
+### Check what this host reports
+
+`--probe-minimax-code` is a read-only diagnostic that prints what the sidecar can read from the
+MiniMax Code runtime store on this machine — the store's path and size, whether its schema is
+still what the extractor understands, how many requests it holds, the model they resolve to and
+where the cursor stands. It runs the real extractor and never commits the cursor, so it cannot
+change what the sidecar reports afterwards:
+
+```bash
+runway-sidecar-cli --probe-minimax-code                              # Linux
+Runway Sidecar.app/Contents/MacOS/RunwaySidecar --probe-minimax-code  # macOS
+RunwaySidecar.exe --probe-minimax-code                               # Windows
+```
+
+It exits 0 when the store was found and understood, and 1 when there is nothing to read or the
+schema has drifted. See [`docs/collectors/minimax.md`](collectors/minimax.md#checking-a-host) for
+the full report.
+
 ### Unsigned app warning
 
 The sidecar is not signed with a paid Apple Developer ID or Windows code-signing certificate, so each OS asks once before the first launch.

@@ -8,10 +8,12 @@ import threading
 import traceback
 import webbrowser
 
+from scripts.sidecar_pkg.minimax_code_probe import probe_command
 from scripts.sidecar_pkg.signatures import verification_command
 
 # Run before desktop imports/initialization so this diagnostic works headlessly.
 verification_command(sys.argv[1:])
+probe_command(sys.argv[1:])
 if sys.argv[1:2] == ["--authorize-keychain-source"]:
     from scripts.sidecar_pkg.source_setup import authorization_command
 
