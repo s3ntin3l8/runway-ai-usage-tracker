@@ -9,7 +9,7 @@ fixture setup, reads and a second process without calling an item-update API.
 
 Use only the manually dispatched Synthetic Keychain investigation workflow on a
 fresh GitHub-hosted macOS runner. Its default case is now `read-only-control`.
-Other cases, including the original public update matrix (`all`), require explicit
+Other cases, including the original public update matrix (`update-matrix`), require explicit
 selection. Personal machines and self-hosted runners remain quarantined. No real
 credential access, OAuth exchange, permission prompt, database-password retention,
 private Apple API, or production write-guard change is part of this experiment.
@@ -113,3 +113,21 @@ write guard. No supported shared-item renewal route has been proved. #773 and
 #781 retain that work; #767 retains signed-release identity and update continuity.
 Real-account/package acceptance under #750/#526 remains deferred until that route
 and an isolated acceptance environment are ready.
+
+## Review hardening
+
+All selected cases now retain durable isolation checkpoints, including update
+modes. A changed or unavailable comparison stops subsequent fixture operations;
+this safety rule applies to controls and updates alike. The matrix selector is
+named `update-matrix` to distinguish the four original update cases from the
+three separately selected controls.
+
+New reports distinguish `control_denied`, `control_read_failed` and
+`control_data_mismatch`. Update reports retain `read_status` and report
+`writer_read_denied` or `writer_read_failed` without subsequent credential
+readback. `replacement_verified=null` in those cases means verification was
+unavailable, not that the original data was preserved. Such a result can never
+qualify as a renewal candidate. Historical committed reports remain unmodified;
+their original `native_probe_incomplete` diagnostic predates this classification.
+These changes were validated with nonnative tests; the recorded hosted controls
+were not rerun after denial.

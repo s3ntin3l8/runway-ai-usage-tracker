@@ -28,6 +28,7 @@ ORIGINAL = b"synthetic-public-update-original"
 MODES = ("metadata-control", "data-only", "legacy-data", "combined-access")
 CONTROL_CASES = ("read-only-control", "reference-control", "writer-read-control")
 CASES = (*CONTROL_CASES, *MODES)
+DENIED_STATUSES = {-25293, -25308, -25315, -128}
 STAGES = {
     "start",
     "interaction_disabled",
@@ -110,29 +111,35 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
     reason = preflight()
     if reason is not None:
         return {"case": mode, "failure": reason, "preflight_blocked": True}
-    row = {"case": mode}
+    row = {"case": mode, "candidate_preserves_shared_access": False}
     control = mode in CONTROL_CASES
     if control:
         row.update(
             control_only=True, update_attempted=False, candidate_preserves_shared_access=False
         )
-        if checkpoint is not None:
-            checkpoint(row)
+    if checkpoint is not None:
+        checkpoint(row)
     fixture = Fixture(writer)
     interrupted = None
 
     def observe(stage: str) -> None:
-        if not control:
-            return
         try:
             checks = snapshot_checks(fixture.before, environment_snapshot())
-        except (OSError, RuntimeError, KeyError, TypeError, ValueError, subprocess.SubprocessError):
+        except (
+            OSError,
+            RuntimeError,
+            AttributeError,
+            KeyError,
+            TypeError,
+            ValueError,
+            subprocess.SubprocessError,
+        ):
             row["metadata_failure"] = "metadata_unavailable"
             row.setdefault("failure", "metadata_unavailable")
             row["isolation_failed"] = True
             if checkpoint is not None:
                 checkpoint(row)
-            raise RuntimeError("control metadata unavailable") from None
+            raise RuntimeError("probe metadata unavailable") from None
         row.setdefault("isolation_checkpoints", []).append({"stage": stage, "checks": checks})
         safe = set(checks) == SNAPSHOT_CHECKS.keys() and all(
             value is True for value in checks.values()
@@ -143,7 +150,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
         if checkpoint is not None:
             checkpoint(row)
         if not safe:
-            raise RuntimeError("control isolation changed")
+            raise RuntimeError("probe isolation changed")
 
     try:
         with fixture:
@@ -194,8 +201,24 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                     row["failure"] = "invalid_writer_result"
                     raise ValueError("invalid writer result") from None
                 row.update({name: values[name] for name, _kind in fields})
-                if control:
-                    assert row["control_completed"] is True
+                if control and row["control_completed"] is not True:
+                    status = row.get("control_status")
+                    row["failure"] = (
+                        "control_denied"
+                        if status in DENIED_STATUSES
+                        else "control_read_failed"
+                        if status
+                        else "control_data_mismatch"
+                    )
+                    raise RuntimeError("control did not verify data")
+                if not control and row["read_status"] != 0:
+                    row["replacement_verified"] = None
+                    row["failure"] = (
+                        "writer_read_denied"
+                        if row["read_status"] in DENIED_STATUSES
+                        else "writer_read_failed"
+                    )
+                    raise RuntimeError("writer read failed")
                 row.update(
                     compare(before, capture(SERVICE, ACCOUNT, keychain=fixture.keychains[0]))
                 )
@@ -214,6 +237,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                 row["candidate_preserves_shared_access"] = (
                     mode in {"data-only", "legacy-data", "combined-access"}
                     and row["update_status"] == 0
+                    and row["read_status"] == 0
                     and row["replacement_verified"]
                     and row["access_policy_preserved"]
                     and row["original_reader"] == "replacement"
@@ -234,7 +258,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
             row["metadata_failure"] = "metadata_unavailable"
             row.setdefault("failure", "metadata_unavailable")
     checks = row.get("metadata_checks", {})
-    if control and checks:
+    if checks:
         row.setdefault("isolation_checkpoints", []).append(
             {"stage": "after_cleanup", "checks": checks}
         )
@@ -247,7 +271,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
         or any(value is not True for value in checks.values())
     ):
         row["isolation_failed"] = True
-    if control and checkpoint is not None:
+    if checkpoint is not None:
         checkpoint(row)
     return row
 
@@ -332,17 +356,14 @@ def run(selected: tuple[str, ...] = MODES, *, report_path: Path | None = None) -
                 report["active_case"] = mode
                 if report_path is not None:
                     save_report(report_path, report)
-                if mode in CONTROL_CASES:
 
-                    def progress(value: dict) -> None:
-                        report["active_case_progress"] = value
-                        if report_path is not None:
-                            save_report(report_path, report)
+                def progress(value: dict) -> None:
+                    report["active_case_progress"] = value
+                    if report_path is not None:
+                        save_report(report_path, report)
 
-                    row = run_case(writer, mode, checkpoint=progress)
-                    report.pop("active_case_progress", None)
-                else:
-                    row = run_case(writer, mode)
+                row = run_case(writer, mode, checkpoint=progress)
+                report.pop("active_case_progress", None)
                 report["cases"].append(row)
                 if "failure" in row or row.get("isolation_failed"):
                     report["stopped_after_failure"] = True

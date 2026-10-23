@@ -30,7 +30,7 @@ def supervise(path: Path, *, case: str | None = None) -> int:
         "matrix_complete": False,
         "candidate_found": False,
     }
-    case = None if case == "all" else case
+    case = None if case == "update-matrix" else case
     if case is not None and case not in CASES:
         report["failure"] = "invalid_case"
         save_report(path, report)
@@ -104,6 +104,6 @@ def supervise(path: Path, *, case: str | None = None) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--case", choices=(*CASES, "all"))
+    parser.add_argument("--case", choices=(*CASES, "update-matrix"))
     args = parser.parse_args()
     sys.exit(supervise(args.report, case=args.case))

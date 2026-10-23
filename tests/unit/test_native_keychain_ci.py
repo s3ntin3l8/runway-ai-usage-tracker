@@ -194,6 +194,7 @@ def test_child_preflight_block_is_not_reported_as_supervisor_failure(monkeypatch
         "reference-control",
         "writer-read-control",
         "metadata-control",
+        "update-matrix",
         "all",
         "unknown-private-target",
     ],
@@ -218,11 +219,11 @@ def test_supervisor_case_selection_is_explicit_and_allowlisted(monkeypatch, tmp_
     monkeypatch.setattr(runner.subprocess, "Popen", start)
     monkeypatch.setattr(runner.os, "killpg", lambda *args: None)
     result = runner.supervise(path, case=case)
-    if case == "unknown-private-target":
+    if case in {"unknown-private-target", "all"}:
         assert result == 1
         assert commands == []
         assert json.loads(path.read_text())["failure"] == "invalid_case"
         assert case not in path.read_text()
     else:
         assert result == 0
-        assert commands[0][5:] == ([] if case == "all" else ["--case", case])
+        assert commands[0][5:] == ([] if case == "update-matrix" else ["--case", case])
