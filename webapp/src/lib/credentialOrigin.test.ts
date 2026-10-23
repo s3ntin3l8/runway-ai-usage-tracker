@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import origins from './credentialOrigins.fixture.json';
 import {
   cookieOriginDetail,
   credentialOriginKind,
   describeCredentialOrigin,
+  originTitleWithApp,
 } from './credentialOrigin';
 
 describe('describeCredentialOrigin', () => {
@@ -102,5 +104,42 @@ describe('credentialOriginKind', () => {
   it('tells a cookie from a file', () => {
     expect(credentialOriginKind('cookie:opencode/session')).toBe('cookie');
     expect(credentialOriginKind('path:/home/u/a.json')).toBe('file');
+  });
+});
+
+describe('the shared origin fixture', () => {
+  it('describes every origin the way the server does', () => {
+    // The server parses origins with its own twin of this parser
+    // (app/services/credential_sources.py). One list of origins pins both
+    // sides, so a change to one shows up as a failing test here instead of as
+    // a review comment.
+    for (const { origin, kind, label, detail } of origins) {
+      const described = describeCredentialOrigin(origin);
+      expect({
+        kind: described.kind,
+        label: described.label,
+        detail: described.detail ?? null,
+      }).toEqual({ kind, label, detail });
+    }
+  });
+});
+
+describe('originTitleWithApp', () => {
+  it('names the app, unless it adds nothing', () => {
+    expect(originTitleWithApp('Codex CLI', 'auth.json')).toBe('Codex CLI · auth.json');
+    // A generic browser says nothing.
+    expect(originTitleWithApp('Browser', 'Browser cookie')).toBe('Browser cookie');
+    // An app the label already names is not repeated.
+    expect(originTitleWithApp('Claude Desktop', 'Claude Desktop OAuth')).toBe(
+      'Claude Desktop OAuth',
+    );
+    // A label that is the app's name is not repeated either.
+    expect(originTitleWithApp('Chrome', 'Chrome')).toBe('Chrome');
+    // Only as a word: "Chromebook cookie" does not name "Chrome".
+    expect(originTitleWithApp('Chrome', 'Chromebook cookie')).toBe(
+      'Chrome · Chromebook cookie',
+    );
+    // No app at all.
+    expect(originTitleWithApp(undefined, 'Keychain entry')).toBe('Keychain entry');
   });
 });

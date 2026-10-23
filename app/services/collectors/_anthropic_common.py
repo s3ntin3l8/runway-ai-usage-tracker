@@ -1,6 +1,7 @@
 """Shared constants and helpers used across all Anthropic collector mixins."""
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -36,6 +37,43 @@ def classify_anthropic_window_type(key: str) -> str:
 def anthropic_model_id_for(key: str) -> str | None:
     """Return the model_id to stamp on a snapshot for per-model weekly windows."""
     return ANTHROPIC_MODEL_ID_MAP.get(key)
+
+
+def anthropic_published_number(value: Any, what: str) -> float:
+    """The number a published field carries, or a ValueError when it carries none.
+
+    A boolean is not a number the account published: ``float(True)`` is 1.0, so
+    reading one would invent a percentage, a limit or a balance out of a
+    payload that published no number at all. A corrupt quota is an error, not a
+    missing one, so this refuses rather than invents -- the same way a
+    non-numeric string already refused.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"{what} is not a number")
+    return float(value)
+
+
+def anthropic_published_percent(window: Mapping[str, Any], *keys: str) -> float | None:
+    """The percentage a published window carries, or None when it carries none.
+
+    A window is evidence only when the account published a number for it, so
+    a window that carries none of `keys` is not a published window: the card
+    the collector draws for it is a placeholder rather than evidence. The
+    legacy window shape carries `utilization` (the OAuth payload) or
+    `percentUsed` (the Web API); a `limits[]` entry carries `percent`.
+
+    A window that carries a *malformed* number returns that number as it is
+    (a non-finite float, or the ValueError a non-numeric one raises), so the
+    verification layer can still reject the payload: a corrupt quota is an
+    error, not a missing one. A boolean is malformed in the same way, and
+    refuses rather than becoming the 1 % it would read as.
+    """
+    for key in keys:
+        raw = window.get(key)
+        if raw is None:
+            continue
+        return anthropic_published_number(raw, key)
+    return None
 
 
 # Maps the `group` field on the newer `limits[]` OAuth response entries
@@ -119,8 +157,9 @@ def build_anthropic_limit_cards(
         if not isinstance(entry, dict):
             continue
 
-        raw_percent = entry.get("percent")
-        pct_used = float(raw_percent) if raw_percent is not None else 0.0
+        raw_percent = anthropic_published_percent(entry, "percent")
+        placeholder = raw_percent is None
+        pct_used = 0.0 if raw_percent is None else raw_percent
         remaining_pct = 100.0 - pct_used
 
         reset_raw = entry.get("resets_at")
@@ -134,29 +173,32 @@ def build_anthropic_limit_cards(
         w_type = classify_anthropic_group(entry.get("group"))
         model_id = anthropic_scope_model_id(entry.get("scope"))
 
-        results.append(
-            {
-                "service_name": "Claude",
-                "icon": "🟠",
-                "remaining": f"{remaining_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": HealthCalculator.from_percentage(pct_used),
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used{tier_label} [{source_label}]{identity_suffix}",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "is_unlimited": False,
-                "unit_type": "percent",
-                "window_type": w_type,
-                "model_id": model_id,
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": data_source,
-                "input_source": input_source,
-                "tier": tier,
-                "account_label": account_label,
-                "usage_url": usage_url,
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
-        )
+        card: dict[str, Any] = {
+            "service_name": "Claude",
+            "icon": "🟠",
+            "remaining": f"{remaining_pct:.1f}%",
+            "unit": "capacity",
+            "reset": human_delta(reset_at),
+            "health": HealthCalculator.from_percentage(pct_used),
+            "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+            "detail": f"{pct_used:.1f}% used{tier_label} [{source_label}]{identity_suffix}",
+            "used_value": pct_used,
+            "limit_value": 100.0,
+            "is_unlimited": False,
+            "unit_type": "percent",
+            "window_type": w_type,
+            "model_id": model_id,
+            "reset_at": reset_at.isoformat() if reset_at else None,
+            "data_source": data_source,
+            "input_source": input_source,
+            "tier": tier,
+            "account_label": account_label,
+            "usage_url": usage_url,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        if placeholder:
+            # The entry names a window but carries no number: the card the
+            # collector draws for it is a placeholder, not evidence.
+            card["billing_evidence"] = "placeholder"
+        results.append(card)
     return results

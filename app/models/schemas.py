@@ -42,6 +42,8 @@ class LimitCard(BaseModel):
     error_type: str | None = None
     # Tier classification (None = no badge shown)
     tier: str | None = None  # "Free", "Pro", "Premium", "Team", "Enterprise"
+    # What kind of evidence this card is (None = it can decide the billing model)
+    billing_evidence: str | None = None  # "placeholder" | "prepaid_credit"
     # URL to provider's usage/settings page
     usage_url: str | None = None
     # ISO 8601 timestamp when data was last collected/updated

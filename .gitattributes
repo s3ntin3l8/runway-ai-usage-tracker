@@ -1,2 +1,5 @@
 # Signed payload bytes must be identical on every platform.
 tests/fixtures/sigstore/SHA256SUMS.txt -text
+
+# A shell script with CRLF line endings does not run.
+*.sh text eol=lf

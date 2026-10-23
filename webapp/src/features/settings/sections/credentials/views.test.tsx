@@ -436,6 +436,23 @@ describe('RulesView', () => {
     expect(await screen.findByText('Browser cookie (Chrome · Profile 1)')).toBeInTheDocument();
   });
 
+  it('does not repeat an app the label already names', async () => {
+    vi.mocked(api.fetchCredentialTags).mockResolvedValue({
+      items: [
+        {
+          ...rule,
+          credential_origin: 'keychain:Claude Desktop/oauth/slot',
+          origin_label: 'Claude Desktop OAuth',
+          origin_app: 'Claude Desktop',
+        },
+      ],
+    });
+    renderWithProviders(<RulesView />);
+
+    expect(await screen.findByText('Claude Desktop OAuth')).toBeInTheDocument();
+    expect(screen.queryByText('Claude Desktop · Claude Desktop OAuth')).not.toBeInTheDocument();
+  });
+
   it('groups by machine and filters by scope and search', async () => {
     vi.mocked(api.fetchCredentialTags).mockResolvedValue({
       items: [codex, { ...rule, sidecar_id: null }],

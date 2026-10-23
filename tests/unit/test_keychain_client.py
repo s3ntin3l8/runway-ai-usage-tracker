@@ -65,17 +65,24 @@ def test_concurrent_frames_are_not_interleaved(client_factory):
 
 
 @pytest.mark.parametrize(
-    "mode,reason",
+    "mode,reason,timeout",
     [
-        ("hang", "timed_out"),
-        ("eof", "unavailable"),
-        ("oversize", "unavailable"),
-        ("malformed", "unavailable"),
-        ("deny", "denied"),
+        # The child sleeps 20 s before it answers, so the client's own deadline
+        # has to expire first - and that does not depend on the child booting.
+        ("hang", "timed_out", 0.15),
+        # These children answer as soon as they are up. The client's budget
+        # covers the spawn *and* the cold interpreter start, so it has to be
+        # wide enough for that on a loaded machine; otherwise the call ends on
+        # its own deadline ("timed_out") instead of reporting the child's
+        # failure.
+        ("eof", "unavailable", 5),
+        ("oversize", "unavailable", 5),
+        ("malformed", "unavailable", 5),
+        ("deny", "denied", 5),
     ],
 )
-def test_failed_worker_is_retired_and_group_latched(client_factory, mode, reason):
-    client = client_factory(mode, timeout=0.15)
+def test_failed_worker_is_retired_and_group_latched(client_factory, mode, reason, timeout):
+    client = client_factory(mode, timeout=timeout)
     with pytest.raises(store.KeychainError, match="^" + reason + "$"):
         client.call("copy", {}, {}, group="code")
     assert client.access_blocked("code")
@@ -171,12 +178,16 @@ def test_shutdown_interrupts_active_io(client_factory):
 
 
 def test_waiting_timeout_does_not_kill_another_request(client_factory):
+    # The client's deadline is 0.2 s, so the wait for its outcome has to
+    # outlast that: on a loaded machine the thread that raises the timeout can
+    # be scheduled late, and a bare TimeoutError here would hide the reason
+    # the call actually ended with.
     client = client_factory("hang", timeout=0.2)
     with ThreadPoolExecutor(1) as pool:
         with client._request_lock:
             future = pool.submit(client.call, "copy", {}, {}, group="other")
             with pytest.raises(store.KeychainError, match="timed_out"):
-                future.result(1)
+                future.result(5)
         assert client._process is None
         assert not client.access_blocked("other")
 
@@ -278,15 +289,27 @@ def test_lifecycle_restart_preserves_denial_groups(client_factory):
 def test_cancelled_request_does_not_latch_permission_denial(client_factory):
     import time
 
-    client = client_factory("hang", timeout=5)
+    timeout = 5
+    client = client_factory("hang", timeout=timeout)
+    # The wait for the worker has to outlast the client's own deadline, so a
+    # call that dies on that deadline is reported as a call that ended rather
+    # than as a worker that never came up.
+    worker_wait = timeout + 5
+
     with ThreadPoolExecutor(1) as pool:
         future = pool.submit(client.call, "copy", {}, {}, group="code")
-        deadline = time.monotonic() + 1
-        while client._process is None and time.monotonic() < deadline:
+        deadline = time.monotonic() + worker_wait
+        while client._process is None:
+            if future.done():
+                pytest.fail(
+                    f"the call ended before the shutdown could interrupt it: {future.exception()!r}"
+                )
+            if time.monotonic() >= deadline:
+                pytest.fail("the keychain worker never started")
             threading.Event().wait(0.005)
         client.close()
         with pytest.raises(store.KeychainError, match="cancelled"):
-            future.result(2)
+            future.result(worker_wait)
     assert not client.access_blocked("code")
 
 

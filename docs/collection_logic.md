@@ -76,6 +76,7 @@ The "Runs in" column shows where the strategy executes. The server-side collecto
 | Antigravity | local (LSP probe — legacy enrichment) | enrichment | sidecar |
 | **MiniMax** | api (coding plan) | quota | server |
 | MiniMax | api (open platform — MiniMax Code app login) | quota | server |
+| MiniMax | local (SQLite runtime ledger — MiniMax Code) | enrichment | sidecar |
 
 The two MiniMax strategies need different credentials: the platform API secret
 (`sk-…`) and the MiniMax Code app's OAuth token (`mmoat_…`). Each host accepts

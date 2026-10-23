@@ -74,6 +74,18 @@ export function cookieOriginDetail(origin: string): string | undefined {
 /** The clients whose native acceptance covers their cookies (#672, #683). */
 const NATIVE_COOKIE_CLIENTS = ['Chrome', 'Safari', 'Claude Desktop'];
 
+/**
+ * Credential-store entries whose owning tool is known.
+ *
+ * The key is the entry's tail - the Keychain service and, where the store
+ * needs one, the account: "gemini:antigravity" is the Antigravity CLI's
+ * login, in the macOS login Keychain and in the Windows Credential Manager
+ * alike.
+ */
+const KEYCHAIN_ENTRY_OWNERS: Record<string, string | undefined> = {
+  'gemini:antigravity': 'Antigravity CLI',
+};
+
 /** Describe a raw credential origin for display. Never exposes a secret. */
 export function describeCredentialOrigin(origin: string): CredentialOriginDescription {
   if (origin.startsWith('cookie:')) {
@@ -95,12 +107,14 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
   if (origin.startsWith('keychain:')) {
     const service = origin.slice('keychain:'.length).split('#')[0];
     if (service.startsWith('Claude Desktop/oauth/')) {
-      // The app already says "Claude Desktop"; a detail would only repeat it.
-      return { kind: 'keychain', label: 'Desktop OAuth' };
+      // The label names the app, so the composition never repeats it.
+      return { kind: 'keychain', label: 'Claude Desktop OAuth' };
     }
     // The app name already identifies the entry ("Claude Code - Keychain
     // entry"); only an unnamed owner needs the service spelled out.
-    const app = service.startsWith('Claude Code') ? 'Claude Code' : undefined;
+    const app =
+      KEYCHAIN_ENTRY_OWNERS[service] ??
+      (service.startsWith('Claude Code') ? 'Claude Code' : undefined);
     return {
       kind: 'keychain',
       label: 'Keychain entry',
@@ -118,7 +132,11 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
     const path = raw
       .replace(/^\/{2,}(localhost)?(?=\/)/, '')
       .replace(/^\/(?=[A-Za-z]:)/, '');
-    const name = path.split('/').filter(Boolean).pop() ?? 'Credential file';
+    // The server reads the file name from the path's segments, and a segment
+    // separator is a backslash on Windows: "C:\Users\u\.codex\auth.json" is
+    // "auth.json", not the whole path.
+    const name =
+      path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? 'Credential file';
     return { kind: 'file', label: name, path };
   }
   return { kind: 'sidecar', label: 'Sidecar credential' };
@@ -130,4 +148,32 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
  */
 export function credentialOriginKind(origin: string): CredentialOriginKind {
   return describeCredentialOrigin(origin).kind;
+}
+
+/**
+ * Include a named owning client; generic browser attribution adds no information.
+ *
+ * "Browser" is what the server calls a cookie whose browser it could not name,
+ * so it says nothing; "Chrome", "Codex CLI" or "Claude Desktop" do.
+ */
+export function hasNamedOriginApp(app: string | null | undefined): app is string {
+  return Boolean(app && app !== 'Browser');
+}
+
+/**
+ * "Codex CLI · auth.json" — the owning app, then what the credential is.
+ *
+ * A generic "Browser" says nothing and is left out. An app the label already
+ * names adds nothing either ("Claude Desktop OAuth"), so it is left out
+ * rather than repeated.
+ */
+export function originTitleWithApp(app: string | null | undefined, label: string): string {
+  if (!hasNamedOriginApp(app)) return label;
+  // The label names the app when it is the app's name or continues with it as
+  // a word: "Claude Desktop OAuth" names "Claude Desktop", while
+  // "Chromebook cookie" does not name "Chrome".
+  const named = label.toLowerCase();
+  const owner = app.toLowerCase();
+  if (named === owner || named.startsWith(`${owner} `)) return label;
+  return `${app} · ${label}`;
 }

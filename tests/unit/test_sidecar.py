@@ -621,9 +621,16 @@ class TestAntigravityTokenExpiry:
 
     @staticmethod
     def _config(tok_path: Path) -> dict:
-        """The real production antigravity rule config (not a hand-rolled
-        subset), so this exercises the actual `token.expiry` mapping."""
+        """The real production antigravity *file* rule (not a hand-rolled
+        subset), so this exercises the actual `token.expiry` mapping.
+
+        Scoped to the file rule on purpose: the provider also carries the
+        Windows Credential Manager rule, and reading the host's live
+        credential store would make this test depend on whether the machine
+        running it has agy logged in.
+        """
         config = json.loads(json.dumps(sidecar.__REGISTRY__["providers"]["antigravity"]))
+        config["rules"] = [r for r in config["rules"] if r["type"] == "file"]
         config["rules"][0]["paths"] = [str(tok_path)]
         return config
 
@@ -1115,18 +1122,29 @@ class TestWindowsCredCache:
             f"Found {len(matches)} assignment(s) of _windows_cred_cache = None: {matches}"
         )
 
-    def test_credential_manager_lookup_hides_powershell_window(self, monkeypatch):
+    def test_credential_manager_lookup_spawns_no_process(self, monkeypatch):
+        """The lookup must not shell out.
+
+        It used to run PowerShell's ``Get-StoredCredential``, which needs the
+        CredentialManager PowerShell module — absent from a stock Windows
+        install, so the lookup silently found nothing and the packaged
+        windowed sidecar flashed a console. The native reader (advapi32) is
+        both dependency-free and process-free, so no console can appear.
+        """
         monkeypatch.setattr(sidecar.platform, "system", lambda: "Windows")
         target = "runway-test-no-console"
         sidecar._windows_cred_cache.pop(target, None)
-        result = MagicMock(returncode=0, stdout="secret\n")
 
-        with patch.object(sidecar.subprocess, "run", return_value=result) as run:
+        with (
+            patch.object(sidecar.subprocess, "run") as run,
+            patch(
+                "scripts.sidecar_pkg.wincred.read_credential_text",
+                return_value="secret",
+            ),
+        ):
             assert sidecar.get_windows_credential(target) == "secret"
 
-        assert run.call_args.kwargs["creationflags"] == getattr(
-            sidecar.subprocess, "CREATE_NO_WINDOW", 0
-        )
+        run.assert_not_called()
         sidecar._windows_cred_cache.pop(target, None)
 
 
@@ -1789,6 +1807,21 @@ class TestSingleInstanceLock:
         monkeypatch.setattr(sidecar, "_pid_is_alive", lambda pid: True)
         assert sidecar.write_pid_file() is False
         assert pid_file.read_text(encoding="utf-8").strip() == str(other)
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows PIDs are multiples of 4")
+    def test_a_stale_pid_is_reclaimed_without_a_patched_probe(self, tmp_path, monkeypatch):
+        """The real liveness probe has to see a dead PID as dead.
+
+        A Windows PID is always a multiple of 4, so this one can never exist.
+        """
+        monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
+        pid_file = tmp_path / "sidecar.pid"
+        pid_file.write_text("999999")
+        try:
+            assert sidecar.write_pid_file() is True  # stale lock reclaimed
+            assert pid_file.read_text(encoding="utf-8").strip() == str(os.getpid())
+        finally:
+            sidecar.remove_pid_file()
 
     def test_stale_pid_is_reclaimed(self, tmp_path, monkeypatch):
         """A pid file left by a dead process must not block a new instance."""

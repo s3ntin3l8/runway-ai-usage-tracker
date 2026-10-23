@@ -134,6 +134,33 @@ def allowed(session: Session, device_id: str, source_id: str, generation: int) -
     )
 
 
+# Existing Windows Credential Manager rules are outside the macOS consent boundary.
+# Keep the provider binding exact; an arbitrary keychain origin stays rejected.
+_WINDOWS_CREDENTIAL_ORIGINS = {
+    ("github", "keychain:github.com"),
+    ("antigravity", "keychain:gemini:antigravity"),
+}
+
+
+def _device_platform(session: Session, device_id: str) -> str | None:
+    platforms = session.info.setdefault("source_device_platforms", {})
+    if device_id not in platforms:
+        device = session.get(SidecarDevice, device_id)
+        platforms[device_id] = device.platform if device else None
+    return platforms[device_id]
+
+
+def _source_for_device(session: Session, device_id: str, provider: str, origin: str) -> str | None:
+    expected = source_for_origin(provider, origin)
+    if (
+        expected == "unknown"
+        and (provider, origin.split("#", 1)[0]) in _WINDOWS_CREDENTIAL_ORIGINS
+        and _device_platform(session, device_id) == "Windows"
+    ):
+        return None
+    return expected
+
+
 def save_contribution(
     session: Session,
     device_id: str,
@@ -157,7 +184,7 @@ def save_contribution(
     generation = proof.get("generation", 0)
     if type(generation) is not int:
         raise ValueError("Source contribution not authorized")
-    expected_scraper = source_for_origin(provider_id, origin)
+    expected_scraper = _source_for_device(session, device_id, provider_id, origin)
     source = state(session, device_id, scraper_id) if isinstance(scraper_id, str) else None
     if (
         device is None
@@ -430,7 +457,7 @@ def contribution_proof(
     if not isinstance(provider_id, str) or not isinstance(origin, str) or len(origin) > 4096:
         raise ValueError("Source contribution not authorized")
     reserve_source_writes(session)
-    expected = source_for_origin(provider_id, origin)
+    expected = _source_for_device(session, device_id, provider_id, origin)
     if expected is None:
         if proof is not None:
             raise ValueError("Source contribution not authorized")
@@ -439,30 +466,30 @@ def contribution_proof(
     if descriptor is None or descriptor.provider != provider_id:
         raise ValueError("Source contribution not authorized")
     row = state(session, device_id, expected)
-    if proof is None and origin.startswith("cookie:"):
-        platforms = session.info.setdefault("source_device_platforms", {})
-        if device_id not in platforms:
-            device = session.get(SidecarDevice, device_id)
-            platforms[device_id] = device.platform if device else None
-        if platforms[device_id] in {"Linux", "Windows"}:
-            if row is None:
-                # No Keychain permission is granted here. Ordinary browser
-                # collection keeps its existing behavior, with a server-owned
-                # generation and the same revocation/paused-source bookkeeping.
-                row = apply_report(
-                    session,
-                    device_id,
-                    {
-                        "source_id": expected,
-                        "provider_id": provider_id,
-                        "label": descriptor.label,
-                        "revision": descriptor.revision,
-                        "generation": 0,
-                        "read": True,
-                        "state": "Limited",
-                    },
-                )
-            proof = {"source_id": expected, "revision": row.revision, "generation": row.generation}
+    platform = _device_platform(session, device_id)
+    ordinary_source = (platform in {"Linux", "Windows"} and origin.startswith("cookie:")) or (
+        platform == "Windows"
+        and (provider_id, origin.split("#", 1)[0]) in _WINDOWS_CREDENTIAL_ORIGINS
+    )
+    if proof is None and ordinary_source:
+        if row is None:
+            # No Keychain permission is granted here. Ordinary credential
+            # collection keeps its existing behavior, with a server-owned
+            # generation and the same revocation/paused-source bookkeeping.
+            row = apply_report(
+                session,
+                device_id,
+                {
+                    "source_id": expected,
+                    "provider_id": provider_id,
+                    "label": descriptor.label,
+                    "revision": descriptor.revision,
+                    "generation": 0,
+                    "read": True,
+                    "state": "Limited",
+                },
+            )
+        proof = {"source_id": expected, "revision": row.revision, "generation": row.generation}
     if not isinstance(proof, dict) or set(proof) != {"source_id", "revision", "generation"}:
         raise ValueError("Source contribution not authorized")
     if (

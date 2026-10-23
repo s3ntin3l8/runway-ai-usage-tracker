@@ -1,5 +1,13 @@
 # Pre-commit hooks configuration
-# Install with: make install-hooks (or pre-commit install && pre-commit install --hook-type pre-push)
+# Install with: make install-hooks
+#
+# `make install-hooks` installs this repository's own hook script
+# (scripts/hooks/git-hook.sh), which resolves its interpreter when it runs.
+# Plain `pre-commit install` writes a script with the interpreter baked in, so
+# it is not the supported path here: the hooks are shared by every worktree,
+# and a pinned interpreter stops working when the worktree it points at is
+# removed.
+#
 # Run manually: pre-commit run --all-files
 
 repos:

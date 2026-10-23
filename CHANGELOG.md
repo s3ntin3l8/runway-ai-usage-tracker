@@ -5,6 +5,101 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.12](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.11...v3.0.0-beta.12) (2026-10-23)
+
+
+### Features
+
+* **fleet:** carry the credential's client into the fleet dialog ([e36e84b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e36e84b99906ec37e72185e0ed38161f1e4aa1d3))
+* **sidecar:** read MiniMax Code's runtime ledger for usage events ([#840](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/840)) ([df143d9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/df143d90a0ad1a56cf9daf241a1e92365a9a5e28))
+* **sidecar:** read the Antigravity token from the Windows Credential Manager ([#732](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/732)) ([8c4ac8c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8c4ac8c3c2927dd5d8f75ddd1ee9b41652039681))
+
+
+### Bug Fixes
+
+* **ci:** report the dead worker and stop the master cleanly ([0de4e8e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0de4e8edc8ac7e393a9332d185d5a737fb402efd)), closes [#832](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/832)
+
+## [3.0.0-beta.11](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.10...v3.0.0-beta.11) (2026-10-23)
+
+
+### Features
+
+* add a source_app dimension for usage events ([af51b7b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/af51b7bc95915b5b4d6e47caa9d2a19bee09fed0))
+* **antigravity:** derive the API User-Agent from the sidecar-reported agy version ([b32fa5f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b32fa5fd7bd4645fdc36b9c86e15c951538fd944)), closes [#687](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/687)
+* **claude:** track Console API credit balances ([#667](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/667)) ([264c25c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/264c25ce6e336e47e5e5dec226cebf2975db9264))
+* **credentials:** name the credential source so a cookie never reads like a file ([5c822eb](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/5c822ebc1bf5eb5b449d863da37914f9b5d2215f))
+* demo seeder and reproducible screenshot pipeline ([#647](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/647)) ([dd6bb8b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/dd6bb8b7513d09de2c5deb2ab5d2bae5b7b10555))
+* **minimax:** read the MiniMax Code app login for the coding-plan quota ([c9412a4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c9412a451d95f8a9b1bbac786b00efd376e6fca4))
+* **sidecar:** add guarded macOS Claude Keychain renewal ([#751](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/751)) ([d99dfcf](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d99dfcf37594c0e3d6c744013bf060c887ade811))
+* **sidecar:** collect exact Cowork token history on macOS ([#664](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/664)) ([683dfda](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/683dfda17e830aeb4e2ae844237a0a167898d491))
+* **sidecar:** discover macOS Claude subscription and Console sessions ([#674](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/674)) ([02ddff1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/02ddff13e917aec338d0d1d712a530224619cdc5))
+* **sidecar:** discover native Claude Desktop and Code OAuth sources ([#680](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/680)) ([cb0002d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cb0002d1e278e5f561976beec70a311cd371d416))
+* surface the server build SHA in Settings -&gt; About ([#695](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/695)) ([2600c4e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2600c4e8b5b6ad0afcfe72d4af88c66b297d62a0))
+* **webapp:** lint the frontend ([3d7d5b8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3d7d5b8ff8feb0064d63f2a04d9467f289ea12ea))
+
+
+### Bug Fixes
+
+* **antigravity:** report the Gemini and Argon quota pools ([#688](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/688)) ([defec20](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/defec20502fcbb1e725cd93352a564419b3b2cd9))
+* **ci:** address the post-merge review findings ([#772](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/772)) ([3329634](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/33296344f9566d52446e002cc6d430f24378a53f))
+* **ci:** audit the vulnerability database release upstream currently advertises ([17c6cbb](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/17c6cbb9e858ae6242015302e47e9e265ce4a734))
+* **ci:** give Windows native gate time to finish ([#661](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/661)) ([eebc338](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/eebc338e100a82f9a4bf2fe9312d98913679bcd4))
+* **ci:** install a git hook that resolves its interpreter at run time ([c097005](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c0970053a7727792673bb22a1b88fad56343e29d))
+* **ci:** rebuild the sidecar when its bundled app/ code changes ([#719](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/719)) ([bf4b588](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/bf4b588b72b47385d5846187e9e112ba7cda7120)), closes [#686](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/686)
+* **ci:** recover transient sidecar release failures ([#684](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/684)) ([dc1cd4d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/dc1cd4d4a82d754bf76baa5f355bf9ed9319f9f9))
+* **ci:** retry the release signing step and document the audit publish gate ([#752](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/752)) ([d4bf732](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d4bf732c9b7d508c202c1d02e1e04de295704517))
+* **ci:** split the native Windows pytest suite into parallel shards ([#738](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/738)) ([a218244](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a218244983e351d1d2a813fb47219f9cb57936d8))
+* **ci:** the Windows suite fails loudly instead of hanging the run ([fd00a9b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fd00a9b50f9802ab407f7b62f93ee55f4dea8321)), closes [#794](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/794)
+* **claude:** a balance-only OAuth response proves nothing ([#824](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/824)) ([dc32264](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/dc3226471e3cbb10404c86d9bd16ce9e438ef8d9))
+* **claude:** a boolean is not a percentage the account published ([c33cc9f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c33cc9f4f921e0212a3de3ecc4f758e74a171a63))
+* **claude:** name auto-discovered accounts and detect their billing model ([19db03c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/19db03c97112a456c08e0229517b9bb880c11cc4))
+* **claude:** preserve organization selection during refresh ([#670](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/670)) ([3ccaafa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3ccaafa96caab810f8931f659c46f6fa83a78c8e))
+* **claude:** price an OAuth-token account and a multi-organization one ([#815](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/815)) ([21b3087](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/21b308790fa4d09efeda3ac074f7f7c67633c427))
+* **claude:** price the accounts that predate detection ([#819](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/819)) ([c7ba9bf](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c7ba9bf0f00de1cae0ea97afd9a6a4fa6f4a583d))
+* **cli:** stop non-ASCII output from crashing the Windows console ([#697](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/697)) ([e4f9ea1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e4f9ea10b429283c741c0879739bfd283d390a5c))
+* **data-health:** move OpenRouter-served OpenCode events onto openrouter ([#645](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/645)) ([ea6f760](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ea6f760fc02f33893eed05f5dc7009463a8d6f4b))
+* **data-health:** wrap long values in fix dialog; move rotated xAI rules instead of deleting ([#644](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/644)) ([53dbf44](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/53dbf443a11c3bba26c85f1a806bee77018fb64f))
+* **demo:** rebuild the SPA when webapp/dist is stale ([#677](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/677)) ([cdac223](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cdac223f9d039a1a1d20c0cc02ebb5dcd057fdb3))
+* **demo:** wait out skeleton shimmer before landing captures ([#714](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/714)) ([1e9d852](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1e9d8523b5a4a1170ee6fbf707c1c1b611405d37))
+* **dev:** isolate the contributor checks from the local checkout ([d7fb9a4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d7fb9a4ecef0961a135a00367f7c69380fe0cb8b))
+* **dev:** removing a worktree must not delete what it links to ([#841](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/841)) ([c61b296](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c61b296d18fd2addd085c211c339fdf4d3074967))
+* **fleet:** keep the untagged-credential warning on one line ([#694](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/694)) ([c8a1e91](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c8a1e91a42d890bf7b1605782dde84c860cb455b))
+* **gitignore:** ignore these directories even when they are symlinks ([#737](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/737)) ([df4d457](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/df4d4579ae49d8027e18834331a34eec6df035ab))
+* **lint:** honour .gitignore when type-checking ([#727](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/727)) ([c70cf1b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c70cf1b3d41b6115bd725a663626b89aa4593769))
+* **macos:** configure bundled CA trust before frozen networking ([#646](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/646)) ([dca10f4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/dca10f40ca92f93adf29bc14efdc8aac159e1512))
+* **ollama:** read the Ollama Cloud quota from /api/balance ([4b59585](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4b595856fe382b65459c985233ff037e969d476f))
+* **pricing:** canonicalise the Gemini 4 Argon model id ([af6ce09](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/af6ce093cf85a1cbb6523ac1bce53ae139e04154)), closes [#686](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/686)
+* **pricing:** seed MiniMax M3.1 Flash rates and keep free-tier ids at $0 ([#703](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/703)) ([2d1acd4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2d1acd4e7e9e7829a773d8c189ff6fc4d02b0c72))
+* **pricing:** seed opencode DeepSeek and Gemini 4 Argon; normalize Hermes Gemini ids ([#643](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/643)) ([86cbffc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/86cbffcfe83e62059ffa60cb567e2b0a1b57525c))
+* **providers:** handle deactivated fleet cards, ollama api totals, and data health unpriced exclusions ([#682](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/682)) ([9f29749](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9f29749042bbf0537ae3e6ae74913c839a8ed632))
+* **security:** renew util-linux exceptions and scope expiry to the finding ([255e47e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/255e47e43298daa603a0649e3349b920dba7a4e7)), closes [#799](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/799)
+* **settings:** show and price every Claude account ([c2c9992](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c2c9992fda2736036f4e7710f9191461127a5749))
+* **sidecar:** a stale PID lock must not block a Windows start ([#831](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/831)) ([64de554](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/64de554c3377d6bf72ea308b19d87804b17cda60))
+* **sidecar:** classify unreadable browser cookie stores once per cycle ([#733](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/733)) ([957be71](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/957be71d44f1f1162bbc49323e8f17d9d6f3bd83))
+* **sidecar:** detect in-place Cowork transcript rewrites by content, not timestamp ([#800](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/800)) ([db0717b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/db0717b1f4f017ed5eca7ae3d1ded0831ed68cb3)), closes [#798](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/798)
+* **sidecar:** harden Safari discovery and complete macOS Claude acceptance ([#715](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/715)) ([61a3eb2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/61a3eb2fe01f423b7ed58064cdcd8f533fc0ccf5))
+* **sidecar:** make tray update check poll selected channel ([#650](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/650)) ([6bcc143](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6bcc143fcca5c481d419f4b2f6e8512cf0a356ad))
+* **sidecar:** preserve upload stats and discover Claude Desktop credentials ([#659](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/659)) ([24b1721](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/24b17217f45bbbd03088aad308650fcfbe26bfd8))
+* **sidecar:** renew opencode v2 xAI login in opencode.db; heal split lineage ([#637](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/637)) ([66bd9a5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/66bd9a52efd941884d98101c7e455f3c242453b2))
+* **sidecar:** serialize tray refreshes and throttle manual checks ([#653](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/653)) ([e5e9743](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e5e97436a388c77a800d63cf2cfca5c5a678e4c1))
+* **test:** give the keychain worker room to boot before its deadline ([80416fe](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/80416fe303f6cbb4a03e3579ee83f864ee318e85))
+* **test:** give the test clients one event loop instead of one per request ([#758](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/758)) ([a8dd44f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a8dd44fccc436bef4041f3fac5ad490ec16c9391))
+* **test:** honour an explicit PYTEST_DEBUG_TEMPROOT ([#748](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/748)) ([a8da9e9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a8da9e9591bcd5fb4b3126a9abfdc442a343ec00))
+* **test:** keep a bare pytest working when the temp root is hostile ([#710](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/710)) ([99c5d42](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/99c5d420e92d83d9ba91f997d49ad22131b9c5f3))
+* **test:** skip the demo SPA symlink tests when Windows denies symlinks ([#698](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/698)) ([e957e43](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e957e430ddf0d05af3df6593a7c27392d3532088))
+* **test:** stop the keychain shutdown test from racing the worker's spawn ([#812](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/812)) ([496cf28](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/496cf28c4cc86ec194dd027aec957c5511bb3203)), closes [#811](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/811)
+* **webapp:** drop the tsconfig baseUrl option TypeScript 7 removed ([#742](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/742)) ([eb8c229](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/eb8c229f36b3e6a72ccf45b39bf9ef0683836f93))
+* **webapp:** name an Anthropic cookie in the fleet dialog like every other source ([33cf9ff](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/33cf9ffe33139814111d4414cd01e0ab5760a849))
+* **webapp:** state the Node floor the dependency tree actually supports ([#813](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/813)) ([0d09ce1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0d09ce14eafb9519550542cbb5b1e2bb08bc3740)), closes [#763](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/763)
+* **web:** keep the trajectory chart's limit label inside the plot ([#676](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/676)) ([a0e660b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a0e660b2a022541eba8a765bdcb5b2cc0a03c51c))
+
+
+### Performance Improvements
+
+* **tests:** make the test suite 5x faster ([#768](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/768)) ([8640ddc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8640ddcb56c67ed5e1ddf3c7050ef7d44a1c6001))
+* **tests:** narrow the mocked-Session scan to the modules that can capture it ([adc3c35](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/adc3c353fd2b5d42818794632d30a39d80dd1364))
+* **webapp:** run vitest in vmThreads and make the reload interceptable ([#777](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/777)) ([0a95bba](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0a95bbadfdfc2f50997b16c3090bc5ca886c17f3))
+
 ## [3.0.0-beta.10](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.9...v3.0.0-beta.10) (2026-10-14)
 
 

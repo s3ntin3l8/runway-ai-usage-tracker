@@ -321,3 +321,52 @@ def test_nonmac_cookie_lifecycle_keeps_mapping_and_rejects_replay_after_revoke(s
     cookie["metadata"]["keychain_consent"] = {"source_id": "unknown"}
     response = post(client, local, "/api/v1/fleet/ingest", "ingest", payload)
     assert response.json()["credentials_rejected"] == 1
+
+
+@pytest.mark.parametrize("platform", ["Windows", "Darwin", "Linux", None])
+@pytest.mark.parametrize(
+    "provider,origin",
+    [
+        ("github", "keychain:github.com"),
+        ("antigravity", "keychain:gemini:antigravity"),
+    ],
+)
+def test_known_windows_credentials_keep_existing_collection_without_mac_consent(
+    setup, platform, provider, origin
+):
+    from app.models.db import SidecarDevice
+
+    client, session, local = setup
+    device = session.get(SidecarDevice, local["device_id"])
+    device.platform = platform
+    session.add(device)
+    session.commit()
+    response = post(
+        client,
+        local,
+        "/api/v1/fleet/ingest",
+        "ingest",
+        {
+            "provider": "synthetic",
+            "metrics": [
+                {
+                    "provider_id": provider,
+                    "service_name": "Synthetic",
+                    "remaining": "Token",
+                    "unit": "oauth",
+                    "metadata": {
+                        "credential_origin": origin,
+                        "oauth_token": "synthetic-access",
+                    },
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["credentials_rejected"] == (0 if platform == "Windows" else 1)
+    rows = session.exec(select(SidecarSourceContribution)).all()
+    assert len(rows) == (1 if platform == "Windows" else 0)
+    if rows:
+        assert rows[0].origin == origin
+        assert rows[0].provider_id == provider
+        assert rows[0].payload_encrypted

@@ -203,8 +203,12 @@ organization keeps that name no matter which member signed in last.
 
 The billing model follows the cards the account publishes: a plan publishes
 percentage quotas and bills as a subscription, a Console account publishes a
-prepaid balance and bills as pay-as-you-go. Both are detected when the account
-is first recorded. A name or billing type set in Settings afterwards is never
+prepaid balance and bills as pay-as-you-go. A claude.ai account's own prepaid
+balance proves neither — a Claude plan can carry prepaid credit, so a balance
+on its own says nothing about how that account bills — and neither does a quota
+window the collector invented to fill a gap. A model is detected when the
+account is first recorded, and a billing type nobody set is filled in on a
+later poll. A name or billing type set in Settings afterwards is never
 overwritten by a later poll.
 
 An account added **by hand** is priced the same way, from the same cards. The

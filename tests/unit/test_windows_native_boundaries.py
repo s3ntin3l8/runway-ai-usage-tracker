@@ -14,7 +14,7 @@ import urllib.request
 import pytest
 
 from scripts import sidecar
-from scripts.sidecar_pkg import self_update
+from scripts.sidecar_pkg import runtime_cleanup, self_update
 from sidecar_app.settings_server import SettingsServer
 
 # The native Windows gate runs the modules marked ``windows``; see
@@ -302,3 +302,44 @@ def test_native_helper_liveness_requires_observed_process_exit():
         child.terminate()
         child.wait(timeout=10)
     assert not self_update._windows_helper_is_alive(child.pid)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows process liveness")
+def test_a_terminated_process_with_an_open_handle_is_not_alive():
+    """A process that exited while a handle stayed open keeps its PID openable.
+
+    ``OpenProcess`` alone therefore reports such a process as running, which is
+    what left the sidecar's single-instance lock holding a dead PID after a
+    self-update: every later launch read the lock, believed another sidecar was
+    live and exited. The probe has to ask the process object instead.
+    """
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"])
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.BOOL,
+        ctypes.wintypes.DWORD,
+    ]
+    kernel.OpenProcess.restype = ctypes.wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+    handle = kernel.OpenProcess(0x00100000, False, child.pid)  # SYNCHRONIZE
+    assert handle, "could not open the child process"
+    try:
+        child.wait(timeout=30)
+        time.sleep(0.2)
+        # The premise: the dead child's PID is still openable, so OpenProcess
+        # alone cannot tell it from a running process.
+        probe = kernel.OpenProcess(0x00100000, False, child.pid)
+        assert probe, "the dead PID is expected to stay openable"
+        kernel.CloseHandle(probe)
+        # The probe must still report it as dead.
+        assert runtime_cleanup.windows_pid_is_alive(child.pid) is False
+    finally:
+        kernel.CloseHandle(handle)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PID range")
+def test_a_malformed_pid_is_not_alive():
+    """A corrupt lock file must be reclaimed, never crash the startup."""
+    for bad in (-5, 0, 2**32, 10**20):
+        assert runtime_cleanup.windows_pid_is_alive(bad) is False

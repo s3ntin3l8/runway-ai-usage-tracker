@@ -216,6 +216,52 @@ class TestCardMerge:
         assert parsed["collection_failing"] is False
         assert parsed["pct_used"] == 42.0
 
+    def test_fresh_quota_clears_sticky_billing_evidence(self):
+        # A card the collector marked as a placeholder carries
+        # billing_evidence="placeholder". When the account later publishes its
+        # own window the new card carries no billing_evidence key at all, so
+        # without the recovery pop the mark would stick forever and keep the
+        # account unpriceable long after it started publishing.
+        existing = json.dumps(
+            {
+                "used_value": 0.0,
+                "limit_value": 100.0,
+                "unit_type": "percent",
+                "billing_evidence": "placeholder",
+            }
+        )
+        incoming = {"used_value": 41.0, "limit_value": 100.0, "unit_type": "percent"}
+        parsed = json.loads(merge_card_json(existing, incoming))
+        assert "billing_evidence" not in parsed
+        assert parsed["used_value"] == 41.0
+
+    def test_an_incoming_mark_survives_the_recovery_clear(self):
+        # The pop must not strip a mark the incoming card brings with it.
+        existing = json.dumps({"used_value": 0.0, "limit_value": 100.0})
+        incoming = {
+            "used_value": 0.0,
+            "limit_value": 100.0,
+            "billing_evidence": "prepaid_credit",
+        }
+        parsed = json.loads(merge_card_json(existing, incoming))
+        assert parsed["billing_evidence"] == "prepaid_credit"
+
+    def test_an_error_card_does_not_clear_the_billing_evidence(self):
+        # An error card carries no fresh quota, so it must not clear what the
+        # account's last good poll said.
+        existing = json.dumps(
+            {
+                "used_value": 0.0,
+                "limit_value": 100.0,
+                "billing_evidence": "placeholder",
+                "error_type": "auth_failed",
+                "data_source": "error",
+            }
+        )
+        incoming = {"error_type": "auth_failed", "data_source": "error", "remaining": "ERR"}
+        parsed = json.loads(merge_card_json(existing, incoming))
+        assert parsed["billing_evidence"] == "placeholder"
+
     def test_token_only_enrichment_preserves_error_type(self):
         # Negative case: a local token-breakdown push without quota fields must
         # NOT mask a genuinely-still-erroring quota row. Only fresh quota signal

@@ -38,6 +38,10 @@ from app.services.credential_sources import (
     touch_source,
 )
 
+# One list of origins pins the server's parser and the frontend's twin of it.
+ROOT = Path(__file__).resolve().parents[2]
+ORIGIN_FIXTURE = ROOT / "webapp" / "src" / "lib" / "credentialOrigins.fixture.json"
+
 
 def test_describe_origin_returns_safe_type_and_label():
     assert describe_origin("env:OPENROUTER_API_KEY") == ("env", "OPENROUTER_API_KEY")
@@ -95,11 +99,41 @@ def test_cookie_origin_never_reads_the_store_folder_as_a_profile():
 def test_file_and_env_origins_carry_no_extra_detail():
     assert describe_origin_full("path:/home/alice/.codex/auth.json").detail is None
     assert describe_origin_full("env:OPENROUTER_API_KEY").detail is None
-    # The app already names the owner; a detail would only repeat it.
+    # The label and the app name the owner; a detail would only repeat it.
     assert describe_origin_full("keychain:Claude Desktop/oauth/x").detail is None
     assert describe_origin_full("keychain:Claude Code-credentials").detail is None
     # An unnamed owner needs the service spelled out.
     assert describe_origin_full("keychain:Gemini CLI").detail == "Gemini CLI"
+
+
+def test_the_desktop_oauth_entry_names_its_app_once():
+    """The label carries the app's name, so the app is never repeated."""
+    display = describe_origin_full("keychain:Claude Desktop/oauth/x")
+    assert display.label == "Claude Desktop OAuth"
+    # The app still names the tool to sign in again with.
+    assert display.app == "Claude Desktop"
+    assert login_hint(display.app) == "sign in again in Claude Desktop"
+
+
+def test_a_file_origin_reports_its_path_with_the_home_collapsed():
+    """The server's own path rule: the home directory collapses to ``~``."""
+    assert describe_origin_full("path:/home/u/.codex/auth.json").path == "~/.codex/auth.json"
+
+
+def test_every_origin_in_the_shared_fixture_describes_the_same_way():
+    """The frontend parses origins with its own twin of this parser
+    (``webapp/src/lib/credentialOrigin.ts``). One list of origins pins both
+    sides, so a change to one shows up as a failing test on the other instead
+    of as a review comment."""
+    cases = json.loads(ORIGIN_FIXTURE.read_text(encoding="utf-8"))
+    assert cases
+    for case in cases:
+        described = describe_origin_full(case["origin"])
+        assert (described.kind, described.label, described.detail) == (
+            case["kind"],
+            case["label"],
+            case["detail"],
+        ), case["origin"]
 
 
 def test_sidecar_source_id_is_host_scoped_and_stable():
@@ -816,6 +850,15 @@ def test_describe_origin_full_non_file_origins():
     assert describe_origin_full("cookie:chatgpt/session").app == "Browser"
     assert describe_origin_full("keychain:Claude Code-credentials").app == "Claude Code"
     assert describe_origin_full("keychain:Claude Code-credentials").path is None
+
+
+def test_describe_origin_full_names_the_windows_credential_store_owner():
+    """The Windows Credential Manager entry that holds the agy token names the
+    CLI that put it there, so the operator is told what to re-login to."""
+    display = describe_origin_full("keychain:gemini:antigravity")
+    assert display.app == "Antigravity CLI"
+    assert display.kind == "keychain"
+    assert login_hint(display.app) == "sign in again in the Antigravity CLI"
 
 
 def test_login_hint_known_and_unknown():

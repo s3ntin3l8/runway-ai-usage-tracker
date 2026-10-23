@@ -1789,6 +1789,10 @@ async def list_pending_credential_tags(
                 "credential_origin": row.credential_origin,
                 # What the credential is, in words: "Browser cookie", "auth.json", ...
                 "origin_label": described.label,
+                # The tool that owns it: "Chrome" for a native Claude cookie,
+                # "Codex CLI" for a file, ... The tags listing and the credential
+                # inventory already send it.
+                "origin_app": described.app,
                 "origin_detail": described.detail,
                 "claimed_account_id": row.claimed_account_id,
                 **(

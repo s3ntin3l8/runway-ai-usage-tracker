@@ -80,16 +80,35 @@ table for the platform it ran on. The Windows table is what the native Windows
 shards are planned with; measure it on Windows, not on Linux.
 
 Git hooks live in the repository's shared `.git/hooks`, so every worktree of
-this repository writes into the same two hook files. Install them once from the
-main checkout with `make install-hooks`: a hook installed from a worktree keeps
-pointing at that worktree's interpreter and stops working once the worktree is
-removed. A worktree that commits also needs its own `.venv`, because the mypy
-and pytest hooks resolve the interpreter from the checkout being committed.
-`make install` provides one; linking the main checkout's `.venv` into the
-worktree is enough, because the runner takes the repository root from its own
+this repository writes into the same two hook files. Install them once with
+`make install-hooks`: the hook this repository installs resolves its
+interpreter when it runs, so it keeps working no matter which worktree
+installed it and which worktrees have since been removed. A worktree that
+commits still needs its own `.venv`, because the mypy and pytest hooks
+resolve the interpreter from the checkout being committed. `make install`
+provides one; linking the main checkout's `.venv` into the worktree is
+enough, because the runner takes the repository root from its own
 path and runs the tests with that root as the working directory, so the
 checkout's own sources are the ones under test. The pre-push hook runs the
 full suite in four workers, so allow it a minute or so.
+
+The hook script is tracked in the repository (`scripts/hooks/git-hook.sh`) and
+**copied** into `.git/hooks`, so the installed copy goes stale when the
+tracked one changes: re-run `make install-hooks` after editing it.
+
+**Remove a worktree with `python scripts/dev_checks.py remove-worktree <path>`,
+not with `git worktree remove`.** On Windows a worktree that links the main
+checkout's `.venv` into itself holds a directory junction, and
+`git worktree remove` follows it: it deletes the *target's* contents, so the
+main checkout loses its virtualenv and every other worktree that shared it
+loses it too. (On POSIX git unlinks the symlink and leaves the target alone,
+so this is a Windows hazard — the helper is the safe way to remove a
+worktree everywhere.) The helper drops the links first — only the links —
+and then hands the worktree to git. It needs no virtualenv of its own, so it
+still works when the environment is what is broken. It also checks the target
+before it unlinks anything: a path that is not a worktree of this repository,
+the main checkout itself, or a worktree with uncommitted work is refused with
+its links left in place.
 
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
 note that `make dev` alone no longer sees your local CLI logins (Gemini, Claude,

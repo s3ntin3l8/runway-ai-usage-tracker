@@ -644,3 +644,40 @@ def test_enrolled_sidecar_delete_reserves_before_registry_read(tmp_path, monkeyp
     finally:
         event.remove(engine, "after_cursor_execute", interleave)
         engine.dispose()
+
+
+def test_known_windows_origin_retains_lifecycle_when_catalogued(session, monkeypatch):
+    from scripts.sidecar_pkg.source_catalog import catalog
+
+    descriptor = catalog()["github.gh-cli"]
+    origin = "keychain:github.com"
+    # A catalog upgrade may give an existing Windows origin a source descriptor.
+    # Its eligibility must then retain the source's revoke/pause bookkeeping.
+    classify = source_controls.source_for_origin
+    monkeypatch.setattr(
+        source_controls,
+        "source_for_origin",
+        lambda provider, value: (
+            descriptor.id if (provider, value) == ("github", origin) else classify(provider, value)
+        ),
+    )
+    device, _ = sidecar_devices.enroll(session, "synthetic", platform="Windows")
+    session.commit()
+    proof = source_controls.contribution_proof(session, device.device_id, "github", origin, None)
+    assert proof["source_id"] == descriptor.id
+    contribution = source_controls.save_contribution(
+        session,
+        device.device_id,
+        proof,
+        provider_id="github",
+        origin=origin,
+        account_id="synthetic@example.test",
+        tokens={"api_key": "synthetic-access"},
+        metadata={},
+    )
+    assert contribution.scraper_id == descriptor.id
+    source_controls.queue_command(session, device.device_id, descriptor.id, "revoke")
+    session.commit()
+    assert session.get(SidecarSourceContribution, contribution.id).payload_encrypted is None
+    with pytest.raises(ValueError, match="not authorized"):
+        source_controls.contribution_proof(session, device.device_id, "github", origin, None)

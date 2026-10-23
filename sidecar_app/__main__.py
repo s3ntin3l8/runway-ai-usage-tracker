@@ -66,7 +66,7 @@ def _apply_login_dirs(config: dict) -> None:
 def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoint, splits poorly
     from app.core.console import force_utf8_console
     from scripts.sidecar_pkg.runtime_cleanup import release_retired_runtime
-    from scripts.sidecar_pkg.self_update import reclaim_stale_state
+    from scripts.sidecar_pkg.self_update import reclaim_stale_state, register_pre_exec_hook
 
     # Before setup_logging(): a redirected stdout/stderr uses the locale code
     # page on Windows, which cannot encode the glyphs and emoji some log lines
@@ -94,6 +94,11 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         logging.warning("Another Runway sidecar is already running; this instance will exit.")
         return
     atexit.register(_sidecar.remove_pid_file)
+    # A Windows self-update ends in os._exit, which skips atexit, so the lock has
+    # to be released through the pre-exec hook as well — otherwise the relaunched
+    # sidecar reads the outgoing (dead) PID from the lock file, reports "already
+    # running" and exits.
+    register_pre_exec_hook(_sidecar.remove_pid_file, on_failure=_sidecar.write_pid_file)
     reclaim_stale_state()
 
     # 1. Find config path

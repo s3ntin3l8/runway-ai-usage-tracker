@@ -810,6 +810,42 @@ class TestWindowsSwapScript:
         pending = install.with_name(install.name + ".previous.pending.version")
         assert pending.read_text().strip() == "2.0.0"
 
+    def test_the_pid_lock_is_released_before_the_process_exits(self, tmp_path, monkeypatch):
+        """A Windows update ends in os._exit, which skips atexit.
+
+        The single-instance lock therefore has to be released explicitly, or the
+        relaunched sidecar reads the outgoing (dead) PID from it, reports
+        "another sidecar is already running" and exits.
+        """
+        from scripts import sidecar
+
+        pid_file = tmp_path / "sidecar.pid"
+        monkeypatch.setattr(sidecar, "get_pid_file_path", lambda: pid_file)
+        assert sidecar.write_pid_file() is True
+        assert pid_file.exists()
+
+        monkeypatch.setattr(self_update, "_PRE_EXEC_HOOKS", [])
+        monkeypatch.setattr(self_update.subprocess, "Popen", lambda *a, **kw: None)
+        self_update.register_pre_exec_hook(sidecar.remove_pid_file)
+
+        class _ExitError(Exception):
+            """Stands in for the process exit the real path performs."""
+
+        def fake_exit(code):
+            raise _ExitError(code)
+
+        monkeypatch.setattr(self_update.os, "_exit", fake_exit)
+        try:
+            with pytest.raises(_ExitError):
+                self_update._apply_windows(
+                    tmp_path / "RunwaySidecar.exe",
+                    tmp_path / "RunwaySidecar.new.exe",
+                    restart=True,
+                )
+            assert not pid_file.exists()
+        finally:
+            sidecar.remove_pid_file()
+
     def test_failed_helper_spawn_preserves_rollback_backup(self, tmp_path, monkeypatch):
         install = tmp_path / "RunwaySidecar.exe"
         install.write_bytes(b"current")
