@@ -82,7 +82,7 @@
     }
   },
   "allowScripts": {
-    "sharp@0.33.5": true
+    "fsevents": true
   },
   "overrides": {
     "sharp": "$sharp"

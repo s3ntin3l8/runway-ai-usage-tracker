@@ -97,6 +97,19 @@ def _bare_package_name(path: str) -> str:
     return path.rsplit("node_modules/", 1)[-1]
 
 
+def _split_policy_key(key: str) -> tuple[str, str]:
+    """The package name and the optional version an allowScripts key names.
+
+    A scoped name starts with "@", so the separator is the *second* one: in
+    "@img/sharp-linux-x64" the first "@" opens the scope and the version, if
+    any, follows a later "@".
+    """
+    separator = key.find("@", 1) if key.startswith("@") else key.find("@")
+    if separator == -1:
+        return key, ""
+    return key[:separator], key[separator + 1 :]
+
+
 def _lowest_supported_node(dev_engines_range: str) -> str:
     """The oldest Node the devEngines range accepts, as "22.22.2".
 
@@ -165,6 +178,102 @@ class TestWebappLockfileLibcMetadata:
                 continue
             assert meta.get("os"), f"{name} declares libc without an os"
             assert meta.get("cpu"), f"{name} declares libc without a cpu"
+
+
+class TestWebappInstallScriptPolicy:
+    """The allowScripts policy has to describe the tree npm actually installs.
+
+    npm's ``allowScripts`` map is a policy, not a comment. A key that matches
+    nothing is a permission that grants nothing, and it reads exactly like one
+    that does: this repository carried ``sharp@0.33.5`` while the tree installs
+    sharp 0.35.5, which ships no install script at all. The key asserted a
+    review that never happened, and the next sharp major would have moved it
+    further from the truth without anything saying so.
+
+    npm's policy is advisory by default - an uncovered install script runs
+    with a notice. ``webapp/.npmrc`` makes it a hard failure instead, so a
+    dependency that grows an install script breaks the install loudly. These
+    tests keep the map, the lockfile and that setting in step.
+    """
+
+    def test_every_allow_scripts_key_resolves_in_the_lockfile(self):
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+        present = {_bare_package_name(path): meta.get("version") for path, meta in packages.items()}
+        policy = _read_json(WEBAPP_PACKAGE_JSON).get("allowScripts", {})
+
+        stale = []
+        for key in policy:
+            name, version = _split_policy_key(key)
+            if name not in present:
+                stale.append(f"{key} (no such package in the lockfile)")
+            elif version and present[name] != version:
+                stale.append(f"{key} (the lockfile has {present[name]})")
+        assert not stale, (
+            "webapp/package.json's allowScripts names packages the lockfile does not "
+            "carry, so the policy grants nothing for them:\n"
+            + "\n".join(f"  - {entry}" for entry in stale)
+            + "\nA key that matches nothing is a false permission: it reads like an "
+            "approved install script and approves none."
+        )
+
+    def test_every_install_script_in_the_tree_is_covered(self):
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+        policy = _read_json(WEBAPP_PACKAGE_JSON).get("allowScripts", {})
+        approved = {_split_policy_key(key)[0] for key, allowed in policy.items() if allowed}
+
+        uncovered = []
+        for path, meta in packages.items():
+            if not meta.get("hasInstallScript"):
+                continue
+            name = _bare_package_name(path)
+            if name in approved:
+                continue
+            if meta.get("optional") and (meta.get("os") or meta.get("cpu")):
+                # npm skips an optional package this platform cannot use, so its
+                # install script never runs here.
+                continue
+            uncovered.append(f"{name}@{meta.get('version')}")
+        assert not uncovered, (
+            "these packages carry an install script that webapp/package.json's "
+            "allowScripts does not cover:\n"
+            + "\n".join(f"  - {entry}" for entry in uncovered)
+            + "\nWith strict-allow-scripts in webapp/.npmrc, npm refuses to install "
+            "until each one is approved or denied."
+        )
+
+    def test_the_policy_is_not_empty(self):
+        policy = _read_json(WEBAPP_PACKAGE_JSON).get("allowScripts", {})
+
+        assert policy, (
+            "webapp/package.json declares no allowScripts policy, so npm has no "
+            "install script approved and strict-allow-scripts rejects the install."
+        )
+
+    def test_sharp_is_installed_once_at_the_pinned_version(self):
+        """The overrides entry pins one copy of sharp; the tree must hold it."""
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+        manifest = _read_json(WEBAPP_PACKAGE_JSON)
+        pinned = manifest["devDependencies"]["sharp"]
+
+        found = sorted(
+            f"{_bare_package_name(path)}@{meta.get('version')}"
+            for path, meta in packages.items()
+            if _bare_package_name(path) == "sharp"
+        )
+        assert found == [f"sharp@{pinned}"], (
+            f"webapp/package-lock.json installs {found}, but webapp/package.json "
+            f"pins sharp {pinned} and overrides every transitive copy to it. A "
+            "second copy is a second version to review."
+        )
+
+    def test_the_install_script_policy_is_enforced_rather_than_advisory(self):
+        npmrc = (ROOT / "webapp" / ".npmrc").read_text(encoding="utf-8")
+
+        assert "strict-allow-scripts=true" in npmrc, (
+            "webapp/.npmrc no longer sets strict-allow-scripts=true, so npm is back "
+            "to running an uncovered install script with a notice instead of "
+            "failing the install."
+        )
 
 
 class TestFrontendToolchainPin:

@@ -1,21 +1,26 @@
 # Stage 1: Build the SPA
 # The digest pins the multi-arch image index, not a per-architecture manifest,
-# so one pin covers every architecture the build runs on. Node 24 ships npm
-# 11.19, which webapp/package.json's devEngines requires; Node 22 ships npm
+# so one pin covers every architecture the build runs on. The base is Debian 13
+# (trixie), the release the server image moved to in #805: Bookworm's util-linux
+# has no fixed point release for the advisories that affect it. Node 24 ships
+# npm 11.19, which webapp/package.json's devEngines requires; Node 22 ships npm
 # 10, and npm 10 strips the libc metadata the lockfile needs.
-FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS frontend-builder
+FROM node:24-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS frontend-builder
 WORKDIR /app
-COPY webapp/package*.json ./webapp/
+# The .npmrc comes along because it carries the install-script policy: without
+# it this install would run npm's advisory default, and a dependency that grows
+# an install script would run it instead of failing the build.
+COPY webapp/package*.json webapp/.npmrc ./webapp/
 RUN npm --prefix webapp ci
 COPY webapp/ ./webapp/
 RUN npm --prefix webapp run build
 
 # Stage 2: Build Python dependencies
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS python-builder
+FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS python-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc=4:12.2.0-3 \
-    libsqlite3-dev=3.40.1-2+deb12u2 \
+    gcc=4:14.2.0-1 \
+    libsqlite3-dev=3.46.1-7+deb13u2 \
     && rm -rf /var/lib/apt/lists/*
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -25,7 +30,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip uninstall -y pip setuptools wheel
 
 # Stage 3: Final Image
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 # Create non-root user with home directory
 RUN groupadd -r runway && useradd -r -g runway -u 1000 -m runway
 

@@ -43,9 +43,9 @@ Before closure, attach the original and replacement audit artifacts, record both
 
 Evidence collected during implementation includes source searches for FTS/MATCH/arbitrary SQL, native scanf/wide I/O, GSSAPI, GnuTLS, DTLS and subprocess usage, and a non-root candidate import/runtime-library inventory. The standard server smoke check must start with isolated data and exercise `/api/v1/system/health`. Full tests remain required to verify application behavior after the base refresh.
 
-Builder inputs retain exact direct package pins: `gcc=4:12.2.0-3` and
-`libsqlite3-dev=3.40.1-2+deb12u2`, verified against Bookworm's resolver on
-2026-10-10. These packages stay in the dependency builder stage; pip, setuptools
+Builder inputs retain exact direct package pins: `gcc=4:14.2.0-1` and
+`libsqlite3-dev=3.46.1-7+deb13u2`, verified against Debian 13's resolver on
+2026-10-23. These packages stay in the dependency builder stage; pip, setuptools
 and wheel are removed there before copying the venv. The final stage separately
 removes the base interpreter's packaging tools. Runtime distro packages remain
 eligible for security upgrades; every resulting candidate is scanned by immutable
@@ -160,3 +160,160 @@ days of expiry, and the daily `Image Security` run carries the same check, so
 the next renewal is a scheduled task rather than a build outage even when no
 pull request is open. The exception document is in both image-security path
 filters, so a renewal is scanned like any other change to the policy.
+
+## Debian 13 (trixie) base, 2026-10-23
+
+[Issue #805](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/805) moves the server image off Debian Bookworm. Bookworm ships `util-linux 2.38.1-5+deb12u3` and has no fixed point release for the advisories that affect it, so `apt-get upgrade -y` cannot move the runtime off the vulnerable version and the exception would have been renewed indefinitely on a 30-day cycle. Debian 13 (trixie) ships the fixed `2.41.5-0+deb13u1`.
+
+| Reference | Digest |
+| --- | --- |
+| `python:3.12-slim-trixie` (builder and runtime) | `sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704` |
+| `node:24-trixie-slim` (frontend builder) | `sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea` |
+
+Both digests were re-resolved against the registry when this change was authored, and both carry the same toolchain as the Bookworm bases they replace: Python 3.12.15 and Node 24.22.1 (npm 11.19, which `webapp/package.json`'s `devEngines` requires and which preserves the lockfile's `libc` metadata). The Python version stays 3.12: the repository's floor is `>=3.12`, CI runs 3.12 and ruff targets `py312`.
+
+### What Debian 13 renamed, and why one exception key changed name
+
+Debian 13's 64-bit `time_t` transition renamed the packages that carry a `time_t`
+in their ABI, and moved the compiler that provides libc's runtime support:
+
+| Bookworm | Trixie | In the trixie image? |
+| --- | --- | --- |
+| `libgnutls30` | `libgnutls30t64` | no |
+| `libssl3` | `libssl3t64` | yes — `3.5.7-1~deb13u3` |
+| `gcc-12-base` | `gcc-14-base` | yes — `14.2.0-19` |
+
+The exception key is the scanner's package name, so a renamed package needs a
+renamed entry. `gcc-14-base` is the one that changes an existing entry:
+Bookworm's `libgcc-s1` came from gcc-12 and depended on
+`gcc-12-base (= 12.2.0-14+deb12u1)`, and trixie's comes from gcc-14 and depends
+on `gcc-14-base (= 14.2.0-19)`. The CVE-2026-102010 and CVE-2026-95619 entries
+therefore carry `gcc-14-base` where the Bookworm document carried
+`gcc-12-base`.
+
+`libssl3t64` is in the image too, but it needs no entry: trixie ships it at
+`3.5.7-1~deb13u3`, and that is the version that fixes CVE-2026-84782, so the
+advisory no longer applies (see the fixed-advisory table below). Among the
+renamed packages only GnuTLS left the image entirely — Debian 13's slim runtime
+does not carry `libgnutls30t64` — so the five GnuTLS advisories went with it.
+
+### The candidate scan
+
+The per-architecture candidate scans are the record. The amd64 and arm64 candidates were built from this change and scanned with the same digest-pinned Syft and Grype the release path uses:
+
+| Field | Value |
+| --- | --- |
+| Syft | `anchore/syft@sha256:3eb5379ba7b409c3f4069b686110527af0c47df993fa5c10d13e7cf34f49b1aa` |
+| Grype | `anchore/grype@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe` |
+| Database | built `2026-10-23T06:30:15Z`, status `active` |
+| Database checksum | `sha256:6e78c0f757fe96976b37b138e54e83fd75f2ad1f6c5feae2ecb008cefa8fcc0f` |
+| Matches per architecture | 166 |
+| Severity per architecture | 55 High, 10 Low, 54 Medium, 47 Negligible |
+| Critical/High | none Critical; 55 High, each covered by an exact reviewed exception |
+
+Each figure in this document belongs to a specific build against a specific
+scanner database, and they are not comparable across builds. The *Published
+beta.8 replacement* section above records 279 matches per architecture from the
+beta.8 audit, whose database was built `2026-10-11T06:30:42Z`. The published
+leg dispatched on `main` after #852 merged — run 39989382509 — audited the
+published `edge` image and the newest versioned release, `3.0.0-beta.12`,
+against the database built `2026-10-23T06:30:15Z` and reported 283 matches per
+architecture with 3 Critical and 79 High, every one of them covered by a
+reviewed exception. The trixie candidate in this section was audited against
+that same `2026-10-23T06:30:15Z` database and reports 166, with no Critical
+finding at all.
+
+### The published baseline this replaces
+
+`3.0.0-beta.12` is the published image the trixie base replaces. Release Please
+run 39973988700 built, audited, signed and promoted it; the retained
+`release-image-audit` artifact reports the same figures as the published leg
+above, against the same database, for the same index:
+
+| Reference | Digest |
+| --- | --- |
+| Published index | `sha256:8c80658517230894fa688884635cea163cb93003fc2bfd2bb2fd5b860332ffbc` |
+| linux/amd64 manifest, as published and audited | `sha256:d7dca295e16ae42dd50d23b80c82b5cb9bc3cb6f46c1ad6055624f3819efb43d` |
+| linux/arm64 manifest, as published and audited | `sha256:a0708e1998c4bc4017f4533081b2d0bfbcbe2043cbbc0a51eed3c21fc36e370a` |
+
+The index is what the published tag resolves to; the platform rows are the
+manifests that index points at, and the ones the audit scanned. They are not the
+digests the `digests-*` artifacts record
+(`sha256:a278ab0602695233fc2655037f930a1c44e31b5abd5a2e8b0522c379a94c5f62`
+for amd64, `sha256:925992dd6ed17da65020f06edcd7f5ce24986e97e0fba0eef3134f68d961a9d9`).
+
+The `digests-*` artifacts carry `steps.build.outputs.digest` from the
+per-architecture build, and buildx pushes each platform as its own index — the
+image manifest plus its provenance attestation — so that digest is the
+per-platform index's. `docker buildx imagetools create` then assembles the
+multi-architecture index from those per-platform indexes, and the published
+index references the inner image manifests, which are the digests in the rows
+above. A manifest's digest is the hash of its own bytes; being referenced by an
+index does not change it.
+
+### Advisories Debian lists as fixed in trixie
+
+These nine advisories no longer apply to the runtime. Their exceptions are removed rather than renewed: an exception for a fixed advisory is not a decision, it is a false record.
+
+| Advisory | Bookworm version it replaced | The trixie image carries |
+| --- | --- | --- |
+| [CVE-2025-7458](https://security-tracker.debian.org/tracker/CVE-2025-7458) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
+| [CVE-2026-11822](https://security-tracker.debian.org/tracker/CVE-2026-11822) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
+| [CVE-2026-11824](https://security-tracker.debian.org/tracker/CVE-2026-11824) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
+| [CVE-2026-41992](https://security-tracker.debian.org/tracker/CVE-2026-41992) | `gzip` `1.12-1` | `1.13-1+deb13u1` |
+| [CVE-2026-53613](https://security-tracker.debian.org/tracker/CVE-2026-53613) | `util-linux` `2.38.1-5+deb12u3` | `2.41.5-0+deb13u1` |
+| [CVE-2026-53615](https://security-tracker.debian.org/tracker/CVE-2026-53615) | `util-linux` `2.38.1-5+deb12u3` | `2.41.5-0+deb13u1` |
+| [CVE-2026-5450](https://security-tracker.debian.org/tracker/CVE-2026-5450) | `libc6` `2.36-9+deb12u14` | `2.41-12+deb13u4` |
+| [CVE-2026-5928](https://security-tracker.debian.org/tracker/CVE-2026-5928) | `libc6` `2.36-9+deb12u14` | `2.41-12+deb13u4` |
+| [CVE-2026-84782](https://security-tracker.debian.org/tracker/CVE-2026-84782) | `openssl` `3.0.22-1~deb12u1` | `3.5.7-1~deb13u3` |
+
+The last column is the version the trixie image installs, taken from the
+candidate's package inventory, so every row can be checked against the scan.
+It is not always Debian's first fixing version: Debian's tracker lists
+`3.42.0-1` as the release that fixed CVE-2025-7458, and the image carries the
+later `3.46.1-7+deb13u2`, which contains that fix.
+
+CVE-2025-13151 is fixed in trixie as well, but it is listed with the packages
+that left the image below rather than here: `libtasn1-6` is not installed in
+this image at all, so the absence is the operative fact.
+
+### Advisories whose packages left the image
+
+Debian 13's slim runtime does not carry these packages at all, so the advisories cannot fire against it. Their exceptions are removed for the same reason as the fixed ones: an exception for something the image does not contain is not a decision.
+
+| Advisory | Package that left the image | Source package |
+| --- | --- | --- |
+| [CVE-2025-13151](https://security-tracker.debian.org/tracker/CVE-2025-13151) | `libtasn1-6` | `libtasn1-6` |
+| [CVE-2026-107778](https://security-tracker.debian.org/tracker/CVE-2026-107778) | `libgssapi-krb5-2, libk5crypto3, libkrb5-3, libkrb5support0` | `krb5` |
+| [CVE-2026-67693](https://security-tracker.debian.org/tracker/CVE-2026-67693) | `libgnutls30t64` | `gnutls28` |
+| [CVE-2026-88647](https://security-tracker.debian.org/tracker/CVE-2026-88647) | `libgnutls30t64` | `gnutls28` |
+| [CVE-2026-95184](https://security-tracker.debian.org/tracker/CVE-2026-95184) | `libgnutls30t64` | `gnutls28` |
+| [CVE-2026-95209](https://security-tracker.debian.org/tracker/CVE-2026-95209) | `libgnutls30t64` | `gnutls28` |
+| [CVE-2026-95210](https://security-tracker.debian.org/tracker/CVE-2026-95210) | `libgnutls30t64` | `gnutls28` |
+
+### Advisories that remain, with the trixie runtime versions
+
+| Advisory | Trixie runtime package and version | Runtime applicability decision |
+| --- | --- | --- |
+| [CVE-2025-69720](https://security-tracker.debian.org/tracker/CVE-2025-69720) | `libncursesw6` `6.5+20250216-2`, `libtinfo6` `6.5+20250216-2`, `ncurses-base` `6.5+20250216-2`, `ncurses-bin` `6.5+20250216-2` | Affected component is the infocmp CLI parser, not terminal rendering generally. Runway is a Python HTTP server and does not invoke infocmp on local or remote inputs. |
+| [CVE-2026-102010](https://security-tracker.debian.org/tracker/CVE-2026-102010) | `gcc-14-base` `14.2.0-19`, `libgcc-s1` `14.2.0-19`, `libstdc++6` `14.2.0-19` | Affected component is libstdc++ binary-heap priority_queue erase_if. Runway has no C++ priority-queue input path and the inherited C++ runtime is not loaded by the server import smoke test. |
+| [CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499) | `libc-bin` `2.41-12+deb13u4`, `libc6` `2.41-12+deb13u4` | Advisory affects glibc 2.38 through 2.44 strfmon width-padding paths; this image carries glibc 2.41, inside the affected range, and Runway does not call strfmon or accept native monetary formats. |
+| [CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435) | `libc-bin` `2.41-12+deb13u4`, `libc6` `2.41-12+deb13u4` | Requires deprecated DNS record printing APIs ns_printrrf/ns_printrr/fp_nquery. Runway resolves hosts through socket APIs and does not print attacker-controlled DNS records through these functions. |
+| [CVE-2026-54369](https://security-tracker.debian.org/tracker/CVE-2026-54369) | `libacl1` `2.3.2-2+b1` | Requires a privileged caller using libacl pathname functions on attacker-controlled paths. Runway runs as UID 1000 and invokes no libacl/setfacl/getfacl/chacl operations; inherited setuid/setgid permissions are removed. |
+| [CVE-2026-54370](https://security-tracker.debian.org/tracker/CVE-2026-54370) | `libacl1` `2.3.2-2+b1` | Requires privileged setfacl/chacl/libacl operations racing attacker-controlled paths. Runway runs as UID 1000, invokes none of these tools/APIs, and inherited setuid/setgid permissions are removed. |
+| [CVE-2026-76642](https://security-tracker.debian.org/tracker/CVE-2026-76642) | `bsdutils` `1:2.41.5-0+deb13u1`, `libblkid1` `2.41.5-0+deb13u1`, `liblastlog2-2` `2.41.5-0+deb13u1`, `libmount1` `2.41.5-0+deb13u1`, `libsmartcols1` `2.41.5-0+deb13u1`, `libuuid1` `2.41.5-0+deb13u1`, `login` `1:4.16.0-2+really2.41.5-0+deb13u1`, `mount` `2.41.5-0+deb13u1`, `util-linux` `2.41.5-0+deb13u1` | Requires privileged mount/nsenter operations on attacker-controlled filesystem or namespace state. Runway runs as UID 1000, has no mount/nsenter input path or CAP_SYS_ADMIN requirement, and removes inherited setuid/setgid permissions. Privileged containers and host Docker socket mounts are outside this exception. Re-reviewed 2026-10-23 for the Debian 13 (trixie) base: util-linux ships 2.41.5-0+deb13u1, the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry. Re-reviewed 2026-10-23 for the Debian 13 (trixie) base: util-linux ships 2.41.5-0+deb13u1, and Debian 13 folded the separate login source package and the lastlog library into util-linux, so the family in this image is bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, login, mount and util-linux. The server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry. |
+| [CVE-2026-78408](https://security-tracker.debian.org/tracker/CVE-2026-78408) | `bsdutils` `1:2.41.5-0+deb13u1`, `libblkid1` `2.41.5-0+deb13u1`, `liblastlog2-2` `2.41.5-0+deb13u1`, `libmount1` `2.41.5-0+deb13u1`, `libsmartcols1` `2.41.5-0+deb13u1`, `libuuid1` `2.41.5-0+deb13u1`, `login` `1:4.16.0-2+really2.41.5-0+deb13u1`, `mount` `2.41.5-0+deb13u1`, `util-linux` `2.41.5-0+deb13u1` | Requires privileged mount/nsenter operations on attacker-controlled filesystem or namespace state. Runway runs as UID 1000, has no mount/nsenter input path or CAP_SYS_ADMIN requirement, and removes inherited setuid/setgid permissions. Privileged containers and host Docker socket mounts are outside this exception. Re-reviewed 2026-10-23 for the Debian 13 (trixie) base: util-linux ships 2.41.5-0+deb13u1, the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry. Re-reviewed 2026-10-23 for the Debian 13 (trixie) base: util-linux ships 2.41.5-0+deb13u1, and Debian 13 folded the separate login source package and the lastlog library into util-linux, so the family in this image is bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, login, mount and util-linux. The server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry. |
+| [CVE-2026-78409](https://security-tracker.debian.org/tracker/CVE-2026-78409) | `bsdutils` `1:2.41.5-0+deb13u1`, `libblkid1` `2.41.5-0+deb13u1`, `liblastlog2-2` `2.41.5-0+deb13u1`, `libmount1` `2.41.5-0+deb13u1`, `libsmartcols1` `2.41.5-0+deb13u1`, `libuuid1` `2.41.5-0+deb13u1`, `login` `1:4.16.0-2+really2.41.5-0+deb13u1`, `mount` `2.41.5-0+deb13u1`, `util-linux` `2.41.5-0+deb13u1` | Requires privileged mount/nsenter operations on attacker-controlled filesystem or namespace state. Runway runs as UID 1000, has no mount/nsenter input path or CAP_SYS_ADMIN requirement, and removes inherited setuid/setgid permissions. Privileged containers and host Docker socket mounts are outside this exception. Re-reviewed 2026-10-23 for the Debian 13 (trixie) base: util-linux ships 2.41.5-0+deb13u1, the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry. Re-reviewed 2026-10-23 for the Debian 13 (trixie) base: util-linux ships 2.41.5-0+deb13u1, and Debian 13 folded the separate login source package and the lastlog library into util-linux, so the family in this image is bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, login, mount and util-linux. The server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry. |
+| [CVE-2026-78410](https://security-tracker.debian.org/tracker/CVE-2026-78410) | `bsdutils` `1:2.41.5-0+deb13u1`, `libblkid1` `2.41.5-0+deb13u1`, `liblastlog2-2` `2.41.5-0+deb13u1`, `libmount1` `2.41.5-0+deb13u1`, `libsmartcols1` `2.41.5-0+deb13u1`, `libuuid1` `2.41.5-0+deb13u1`, `login` `1:4.16.0-2+really2.41.5-0+deb13u1`, `mount` `2.41.5-0+deb13u1`, `util-linux` `2.41.5-0+deb13u1` | Requires privileged mount/nsenter operations on attacker-controlled filesystem or namespace state. Runway runs as UID 1000, has no mount/nsenter input path or CAP_SYS_ADMIN requirement, and removes inherited setuid/setgid permissions. Privileged containers and host Docker socket mounts are outside this exception. Re-reviewed 2026-10-23 for the Debian 13 (trixie) base: util-linux ships 2.41.5-0+deb13u1, the server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry. Re-reviewed 2026-10-23 for the Debian 13 (trixie) base: util-linux ships 2.41.5-0+deb13u1, and Debian 13 folded the separate login source package and the lastlog library into util-linux, so the family in this image is bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, login, mount and util-linux. The server still invokes no mount or libmount operation and still runs as UID 1000 with setuid/setgid permissions stripped, and the runtime still has no privileged container, added capability, host Docker socket or custom user-mount fstab entry. |
+| [CVE-2026-82560](https://security-tracker.debian.org/tracker/CVE-2026-82560) | `perl-base` `5.40.1-6+deb13u1` | Requires Perl Pod::Text formatting untrusted POD. The Runway server does not execute Perl or render POD documents; this inherited distro tooling is outside the server input path. |
+| [CVE-2026-85091](https://security-tracker.debian.org/tracker/CVE-2026-85091) | `zlib1g` `1:1.3.dfsg+really1.3.1-1+b1` | Requires native gzwrite/gzprintf after nonblocking write stalls. Runway uses Python zlib compression/decompression and does not call native gz-file formatted output APIs. |
+| [CVE-2026-9538](https://security-tracker.debian.org/tracker/CVE-2026-9538) | `perl-base` `5.40.1-6+deb13u1` | Requires Perl Archive::Tar parsing untrusted tar headers. Runway does not execute Perl or use Perl archive modules; its sidecar update extraction is outside the server image. |
+| [CVE-2026-95619](https://security-tracker.debian.org/tracker/CVE-2026-95619) | `gcc-14-base` `14.2.0-19`, `libgcc-s1` `14.2.0-19`, `libstdc++6` `14.2.0-19` | Affected path is libstdc++ aligned operator new with large inputs. Runway is Python/Rust/C and has no C++ aligned-allocation interface processing user input; the inherited C++ runtime is not loaded by the server import smoke test. |
+
+The Debian tracker data behind this table was read on 2026-10-23, the day the change was authored. Every entry in the shipped exception document was then re-checked against the candidate scan: the document holds exactly the Critical/High findings the scanner reports for each architecture - no finding without an entry, and no entry without a finding. The candidate scan that confirms the corrected document green is the one this change's own pull request runs.
+
+Two things about the util-linux family changed shape in Debian 13, and the candidate scan is what showed them: Debian 13 folded the separate `login` source package and the `lastlog` library into util-linux, so `login` and `liblastlog2-2` are now part of the family and carry the same advisories; and `util-linux-extra` is no longer a package, its utilities having moved into `util-linux`. A family carried over from the Bookworm document would have been wrong in both directions.
+
+The runtime invariants the rationales rest on are unchanged by this change - the same Dockerfile lines create UID 1000, strip inherited setuid/setgid permissions from `/usr` and switch to the non-root `runway` user. The isolated local candidate check the earlier sections describe was not repeated in the environment that authored this change, which has no container runtime; the per-architecture `image-audit` artifacts are the record, and they retain the raw SBOM, the package inventory and the unfiltered Grype report for both architectures.
+
+The published replacement digests are recorded when the trixie image is released, in the same shape as the *Published beta.8 replacement* section above. Until then this section describes the base change, the candidate scans and the applicability decisions, not released bytes: keep #805 open until the published image has been audited, signed and promoted.
