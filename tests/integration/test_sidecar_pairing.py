@@ -180,3 +180,40 @@ class TestCodeFormat:
         for c in codes:
             assert len(c) == 11 and c[5] == "-"
             assert not set(c.replace("-", "")) & set("ILOU")
+
+
+def test_device_enrollment_is_encrypted_and_code_remains_single_use(client, session, monkeypatch):
+    from cryptography.fernet import Fernet
+
+    from app.core.encryption import EncryptionService
+    from app.models.db import SidecarDevice
+    from app.services import sidecar_devices
+
+    monkeypatch.setattr(
+        sidecar_devices, "encryption_service", EncryptionService(Fernet.generate_key().decode())
+    )
+    code = _mint(client)["code"]
+    response = client.post(
+        "/api/v1/fleet/pair", json={"code": code, "hostname": "synthetic", "device_protocol": 1}
+    )
+    assert response.status_code == 200
+    credentials = response.json()
+    device = session.get(SidecarDevice, credentials["device_id"])
+    assert device.secret_encrypted != credentials["device_key"]
+    assert (
+        sidecar_devices.authentication_key(session, device.device_id) == credentials["device_key"]
+    )
+    assert credentials["device_api_url"] == credentials["api_url"]
+    assert credentials["source_protocol"] == 1
+    assert credentials["device_key"] not in str(session.exec(select(AuditLog)).all())
+    assert (
+        client.post("/api/v1/fleet/pair", json={"code": code, "device_protocol": 1}).status_code
+        == 400
+    )
+
+
+def test_new_client_without_server_encryption_gets_legacy_compatible_pairing(client):
+    code = _mint(client)["code"]
+    response = client.post("/api/v1/fleet/pair", json={"code": code, "device_protocol": 1})
+    assert response.status_code == 200
+    assert set(response.json()) == {"api_url", "api_key"}

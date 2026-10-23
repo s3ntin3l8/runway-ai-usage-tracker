@@ -257,8 +257,11 @@ class FleetRegistryService:
         # Machine-scoped credential tags and pending origins (#319) belong
         # to this sidecar only — drop them so they don't linger as
         # unresolvable rows (or re-apply if the hostname is ever reused).
+        from app.services import sidecar_devices, source_controls
         from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
 
+        if sidecar_devices.reserved_registry_id(sidecar_id):
+            source_controls.revoke_device(session, sidecar_id.removeprefix("device-"))
         CredentialTagRepo.delete_for_sidecar(session, sidecar_id=sidecar_id)
         PendingCredentialTagRepo.delete_for_sidecar(session, sidecar_id=sidecar_id)
         # Its discovered credentials go too: a durable ``credential_sources`` row

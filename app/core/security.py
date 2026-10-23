@@ -23,6 +23,10 @@ import math
 import re
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlmodel import Session
 
 from fastapi import Cookie, Header, HTTPException, Request
 
@@ -239,6 +243,9 @@ async def validate_ingest_auth(
     request: Request,
     x_signature: str | None = Header(default=None, alias="X-Signature"),
     x_timestamp: str | None = Header(default=None, alias="X-Timestamp"),
+    *,
+    session: Session | None = None,
+    purpose: str = "ingest",
 ) -> bytes:
     """Shared HMAC pre-flight for ingest-side endpoints (``/fleet/ingest``,
     ``/fleet/credentials/manifest``).
@@ -331,27 +338,31 @@ async def validate_ingest_auth(
         chunks.extend(chunk)
     body_bytes = bytes(chunks)
 
-    expected_sig = hmac.new(
-        _settings.INGEST_API_KEY.encode(),
-        f"{x_timestamp}".encode() + body_bytes,
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(x_signature, expected_sig):
-        # ``scrub_log`` strips CR/LF from ``x_signature`` so a malicious
-        # client can't inject extra log lines ("FAKE root login") via a
-        # crafted ``X-Signature`` header. The other log lines in this
-        # function either use computed floats (skew, body length) or
-        # static strings — none reach user input.
-        logger.warning(
-            f"HMAC mismatch. Received: {scrub_log(x_signature[:8])}... (len: {len(x_signature)})"
+    key = _settings.INGEST_API_KEY
+    message = f"{x_timestamp}".encode() + body_bytes
+    device_id = request.headers.get("X-Runway-Device-Id")
+    if device_id is not None:
+        from app.services import sidecar_devices
+
+        device_key = (
+            sidecar_devices.authentication_key(session, device_id) if session is not None else None
         )
+        if device_key is None:
+            raise HTTPException(status_code=401, detail="Invalid sidecar device credentials")
+        key = device_key
+        message = sidecar_devices.message(device_id, x_timestamp, purpose, body_bytes)
+    expected_sig = hmac.new(key.encode(), message, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(x_signature, expected_sig):
+        logger.warning("Sidecar HMAC mismatch")
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
-    claim_signature(_settings.INGEST_API_KEY, x_signature)
+    claim_signature(key, x_signature)
+    if device_id is not None:
+        request.state.sidecar_device_id = device_id
     return body_bytes
 
 
-def verify_config_signature(request: Request) -> bool:
+def verify_config_signature(request: Request, *, session: Session | None = None) -> bool:
     """Optional HMAC check for ``GET /api/v1/fleet/config``.
 
     Returns ``False`` when the request is unsigned (or no ingest key is
@@ -381,16 +392,29 @@ def verify_config_signature(request: Request) -> bool:
         raise HTTPException(status_code=401, detail="Invalid X-Timestamp format")
     if skew < -60 or skew > 300:
         raise HTTPException(status_code=400, detail="X-Timestamp outside the allowed window")
-    expected = hmac.new(
-        _settings.INGEST_API_KEY.encode(),
-        f"{x_timestamp}GET:{request.url.query}".encode(),
-        hashlib.sha256,
-    ).hexdigest()
+    key = _settings.INGEST_API_KEY
+    message = f"{x_timestamp}GET:{request.url.query}".encode()
+    device_id = request.headers.get("X-Runway-Device-Id")
+    if device_id is not None:
+        from app.services import sidecar_devices
+
+        device_key = (
+            sidecar_devices.authentication_key(session, device_id) if session is not None else None
+        )
+        if device_key is None:
+            raise HTTPException(status_code=401, detail="Invalid sidecar device credentials")
+        key = device_key
+        message = sidecar_devices.message(
+            device_id, x_timestamp, "config", request.url.query.encode()
+        )
+    expected = hmac.new(key.encode(), message, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(x_signature, expected):
         source = request.client.host if request.client else "unknown"
         logger.warning("fleet/config: HMAC mismatch from %s", scrub_log(source))
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
-    claim_signature(_settings.INGEST_API_KEY, x_signature)
+    claim_signature(key, x_signature)
+    if device_id is not None:
+        request.state.sidecar_device_id = device_id
     return True
 
 

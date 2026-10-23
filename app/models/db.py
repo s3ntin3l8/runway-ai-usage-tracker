@@ -16,6 +16,72 @@ class SidecarRequestReceipt(SQLModel, table=True):  # type: ignore[call-arg]
     expires_at: float = Field(index=True)
 
 
+class SidecarDevice(SQLModel, table=True):  # type: ignore[call-arg]
+    """Paired device identity; the hostname is never an authorization boundary."""
+
+    __tablename__ = "sidecar_devices"
+    device_id: str = Field(primary_key=True)
+    hostname: str | None = None
+    secret_encrypted: str
+    revoked: bool = False
+    created_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SidecarSourceState(SQLModel, table=True):  # type: ignore[call-arg]
+    __tablename__ = "sidecar_source_states"
+    __table_args__ = (UniqueConstraint("device_id", "source_id", name="uq_device_scraper"),)
+    id: int | None = Field(default=None, primary_key=True)
+    device_id: str = Field(index=True)
+    source_id: str
+    provider_id: str
+    label: str
+    revision: str
+    generation: int = 0
+    revoked_through: int = -1
+    local_read: bool = False
+    remote_paused: bool = False
+    report_json: str = "{}"
+    dismissed_revision: str | None = None
+    last_report_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SidecarSourceContribution(SQLModel, table=True):  # type: ignore[call-arg]
+    """Encrypted self-contained credential bundle, never a heartbeat lease."""
+
+    __tablename__ = "sidecar_source_contributions"
+    __table_args__ = (
+        UniqueConstraint(
+            "device_id", "provider_id", "credential_source_id", name="uq_device_credential"
+        ),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    device_id: str = Field(index=True)
+    scraper_id: str | None = None
+    provider_id: str
+    credential_source_id: str
+    origin: str
+    account_id: str
+    generation: int = 0
+    payload_encrypted: str | None = None
+
+
+class SidecarSourceCommand(SQLModel, table=True):  # type: ignore[call-arg]
+    __tablename__ = "sidecar_source_commands"
+    id: int | None = Field(default=None, primary_key=True)
+    device_id: str = Field(index=True)
+    source_id: str
+    generation: int
+    action: str
+    acknowledged: str | None = None
+    issued_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SidecarSourceRevision(SQLModel, table=True):  # type: ignore[call-arg]
+    __tablename__ = "sidecar_source_revision"
+    id: int = Field(default=1, primary_key=True)
+    revision: int = 0
+
+
 class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     """Persistent registry of known sidecars that have sent data."""
 

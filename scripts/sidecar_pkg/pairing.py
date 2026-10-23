@@ -100,7 +100,7 @@ def redeem(
     from scripts.sidecar_pkg.tls import build_context_from_config
 
     url = f"{target.server}/api/v1/fleet/pair"
-    body = json.dumps({"code": target.code, "hostname": hostname}).encode()
+    body = json.dumps({"code": target.code, "hostname": hostname, "device_protocol": 1}).encode()
     req = request.Request(  # noqa: S310 — scheme validated by normalize_server
         url,
         data=body,
@@ -130,10 +130,28 @@ def redeem(
     api_key = str(data.get("api_key") or "").strip()
     if not api_url or not api_key:
         raise PairingError("The server sent an incomplete response")
-    return {"api_url": normalize_server(api_url), "api_key": api_key}
+    result = {"api_url": normalize_server(api_url), "api_key": api_key}
+    if data.get("source_protocol") == 1:
+        import re
+
+        device_id, device_key = data.get("device_id"), data.get("device_key")
+        if (
+            not isinstance(device_id, str)
+            or re.fullmatch(r"[a-f0-9]{32}", device_id) is None
+            or not isinstance(device_key, str)
+            or not device_key
+            or data.get("device_api_url") != result["api_url"]
+        ):
+            raise PairingError("The server sent invalid device credentials")
+        result.update(
+            {"device_id": device_id, "device_key": device_key, "device_api_url": result["api_url"]}
+        )
+    return result
 
 
-def write_config(config_path: pathlib.Path, api_url: str, api_key: str) -> None:
+def write_config(
+    config_path: pathlib.Path, api_url: str, api_key: str, *, device: dict[str, str] | None = None
+) -> None:
     """Merge the paired credentials into *config_path* atomically (mode 0600)."""
     config_path = pathlib.Path(config_path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -143,6 +161,9 @@ def write_config(config_path: pathlib.Path, api_url: str, api_key: str) -> None:
             current = {}
     except (OSError, ValueError):
         current = {}
+    for field in ("device_id", "device_key", "device_api_url"):
+        current.pop(field, None)
+    current.update(device or {})
     current["api_url"] = api_url
     current["api_key"] = api_key
     fd, tmp = tempfile.mkstemp(prefix=".config-", dir=str(config_path.parent))

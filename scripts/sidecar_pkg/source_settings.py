@@ -10,8 +10,19 @@ from scripts.sidecar_pkg.source_consent import SourcePolicy
 
 
 def report(config: dict[str, Any]) -> dict[str, Any]:
+    from scripts.sidecar_pkg import source_protocol
+    from scripts.sidecar_pkg.source_consent import POLICY
     from scripts.sidecar_pkg.source_setup import SETUP
 
+    client = source_protocol.CLIENT
+    client = (
+        client
+        if client is not None
+        and client.scope == (config.get("device_id"), config.get("device_api_url"))
+        else None
+    )
+    remote = client.state.get("commands", {}) if client else {}
+    withdrawals = client.state.get("withdrawals", {}) if client else {}
     policy = SourcePolicy(config)
     dismissed = config.get("keychain_announcements", {})
     dismissed = dismissed if isinstance(dismissed, dict) else {}
@@ -29,8 +40,12 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 )
                 if policy.ticket(source.id)
                 else "Withdrawal pending"
-                if source.id in pending
+                if source.id in pending and pending[source.id] > withdrawals.get(source.id, -1)
                 else "Off",
+                "last_read_at": POLICY.last_read(source.id),
+                "remote_paused": remote.get(source.id, {}).get("paused") is True,
+                "revoked": _is_revoked(config, remote, source.id),
+                "setup_requested": remote.get(source.id, {}).get("setup_requested") is True,
                 "renewal_requested": source.renewal
                 and config.get("claude_keychain_renewal") is True,
                 "renewal_supported": False,
@@ -40,7 +55,7 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
             }
             for source in catalog().values()
         ],
-        "forwarding_supported": False,
+        "forwarding_supported": bool(client and client.accepted),
         "setup_available": sys.platform == "darwin" and getattr(sys, "frozen", False),
     }
 
@@ -80,3 +95,9 @@ def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
         updated["keychain_announcements"] = dismissed
         return updated
     raise ValueError("Invalid source action")
+
+
+def _is_revoked(config: dict[str, Any], remote: dict[str, Any], source_id: str) -> bool:
+    generation = SourcePolicy._entry(config, source_id).get("generation", 0)
+    revoked = remote.get(source_id, {}).get("revoked_through", -1)
+    return type(generation) is int and type(revoked) is int and generation <= revoked

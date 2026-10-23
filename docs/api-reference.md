@@ -436,3 +436,59 @@ Keychain credential cards and matching manifest observations are withheld from
 server forwarding. Existing server credentials are not silently revoked by a
 local checkbox. See #780 and docs/sidecar-source-authorization.md for the full
 consent, withdrawal, remote-control and acceptance contract.
+
+
+### Fleet Keychain source lifecycle (protocol 1)
+
+Updated sidecars request device_protocol=1 when redeeming a pairing code.
+When DB_ENCRYPTION_KEY is configured, the single-use response additionally
+contains device_id, device_key, device_api_url, and source_protocol=1.
+The random device key is encrypted in server storage and saved in the sidecar's
+owner-only config. Hostnames are labels. Without server encryption, pairing
+retains its legacy response; Keychain forwarding remains Limited until enrollment.
+Re-pairing creates a new device; it does not claim a hostname's previous sources.
+
+Device requests send X-Runway-Device-Id, X-Timestamp, and X-Signature.
+HMAC-SHA256 signs DEVICEv1|device_id|timestamp|purpose| followed by raw body
+bytes (raw query bytes for GET config). Purposes are ingest, manifest,
+config, and source-sync. This binds the operation without relying on a
+reverse proxy preserving the public path. Existing timestamp limits, body caps,
+and durable replay protection apply. A shared ingest key cannot authenticate a
+device header or claim a reserved device-<32 lowercase hex> registry identity.
+
+- POST /api/v1/fleet/source-sync: device-authenticated status and ordered
+  command acknowledgment. The body contains protocol=1, sources, and acknowledgments
+  ({id, status: applied|denied|superseded}). Source reports contain source_id,
+  provider_id, label, revision, generation, literal boolean read, state, new,
+  renewal_requested, renewal_supported, and optional last_read_at / last_renewed_at
+  Unix timestamps. Labels are canonical; unknown scrapers are not accepted.
+  The response lists accepted scraper IDs, withdrawals ({source_id, generation}),
+  and pending commands ({id, source_id, generation, action}).
+- GET /api/v1/fleet/sidecars/{sidecar_id}/sources: admin-authenticated, inert status.
+  Returns protocol=1, sources (FleetSourceStatus), and pending commands.
+  Source status extends the report with remote_paused, revoked, report_at,
+  report_stale, announcement, renewal_capable, collection_health
+  (withdrawn|paused|healthy|action_required|untried), and last_collection_at
+  (ISO UTC or null). Stale reports never expire eligible server credentials.
+- POST /api/v1/fleet/sidecars/{sidecar_id}/sources/{source_id}/commands:
+  admin-authenticated {action}, one of pause, resume, revoke, request_setup,
+  or dismiss. Returns {id, status: pending}. Pause/revoke immediately withdraw
+  that source's server credentials. Resume requires current local read consent
+  and a matching non-revoked generation; it only clears a server pause after
+  acknowledgment. Setup requests create a local notice only. Dismissal is scoped
+  to the current catalog capability revision.
+
+Native credential cards and manifest entries carry keychain_consent with
+source_id, revision, and generation. The server checks device, provider, origin,
+revision, and live generation before accepting a contribution. Withdrawal persists
+a tombstone and removes only matching encrypted credential payloads; late ingest
+cannot recreate them. Re-enabling requires a newer local generation.
+Credential bundles remain separate across devices and origins, including identical
+tokens. Enrolled contributions survive server restart and offline Macs without a
+heartbeat lease. Provider expiry/rejection remains authoritative. Historical usage
+and manual/file contributions are retained. An already admitted provider request
+cannot be recalled; subsequent source selection observes committed withdrawal.
+
+Older servers never receive newly opted-in Keychain credentials: forwarding requires
+successful device-authenticated protocol negotiation. Legacy clients retain their
+shared-key behavior and cannot control enrolled-device sources.

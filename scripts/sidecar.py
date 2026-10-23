@@ -16,8 +16,6 @@ import argparse
 import atexit
 import ctypes
 import datetime
-import hashlib
-import hmac
 import json
 import logging
 import math
@@ -1934,17 +1932,17 @@ def http_post_signed(
 ) -> tuple[bool, Any, int]:
     """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
     from scripts.sidecar_pkg.source_consent import filter_egress
+    from scripts.sidecar_pkg.source_protocol import device_credentials
 
-    data = filter_egress(data)
+    data = filter_egress(data, config=config if device_credentials(config, url) else None)
     timestamp = server_http.signing_timestamp()
     body = json.dumps(data, separators=(",", ":")).encode("utf-8")
 
-    signature = hmac.new(api_key.encode(), timestamp.encode() + body, hashlib.sha256).hexdigest()
+    from scripts.sidecar_pkg.source_protocol import signed_headers
 
     headers = {
         "Content-Type": "application/json",
-        "X-Signature": signature,
-        "X-Timestamp": timestamp,
+        **signed_headers(config, url, api_key, timestamp, "ingest", body),
     }
 
     req = request.Request(url, data=body, headers=headers, method="POST")
@@ -5049,7 +5047,8 @@ def _post_credential_manifest(
             "entries": entries,
             "observations": observations,
             "completed_providers": completed_providers,
-        }
+        },
+        config=config,
     )
     entries = filtered["entries"]
     observations = filtered["observations"]
@@ -5067,20 +5066,16 @@ def _post_credential_manifest(
         }
     ).encode("utf-8")
     ts = server_http.signing_timestamp()
-    sig = hmac.new(
-        api_key.encode("utf-8"),
-        ts.encode() + body,
-        hashlib.sha256,
-    ).hexdigest()
     url = f"{api_url.rstrip('/')}/api/v1/fleet/credentials/manifest"
+    from scripts.sidecar_pkg.source_protocol import signed_headers
+
     req = urllib.request.Request(
         url,
         data=body,
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-Timestamp": ts,
-            "X-Signature": sig,
+            **signed_headers(config, url, api_key, ts, "manifest", body),
         },
     )
     from scripts.sidecar_pkg.tls import build_context_from_config  # late import keeps
@@ -5648,6 +5643,9 @@ class DaemonRunner:
         from scripts.sidecar_pkg.source_consent import POLICY
 
         POLICY.configure(config)
+        from scripts.sidecar_pkg import source_protocol
+
+        source_protocol.prepare(config, get_sidecar_dir() / "source-control.json")
         global _CLAUDE_KEYCHAIN_PERMISSION
         _CLAUDE_KEYCHAIN_PERMISSION = self._keychain_renewal_allowed
         # Heartbeat: how often the sidecar pings the server for instructions.
@@ -5757,6 +5755,9 @@ class DaemonRunner:
     def _run_once_impl(self, providers: list[str] | None = None) -> bool:
         """Inner implementation of run_once (called only when no cycle is running)."""
         cycle_config = dict(self._config)
+        from scripts.sidecar_pkg import source_protocol
+
+        source_protocol.sync(cycle_config, get_sidecar_dir() / "source-control.json")
         api_url = cycle_config["api_url"]
         api_key = cycle_config["api_key"]
 
@@ -6239,7 +6240,12 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
         print(f"Pairing failed: {exc}")
         return 1
     ensure_dirs()
-    pairing.write_config(path, creds["api_url"], creds["api_key"])
+    pairing.write_config(
+        path,
+        creds["api_url"],
+        creds["api_key"],
+        device={key: value for key, value in creds.items() if key.startswith("device_")},
+    )
     print(f"Paired. Wrote api_url={creds['api_url']} and the ingest key to {path}")
     print("Restart the sidecar (or its service) to start reporting.")
     return 0

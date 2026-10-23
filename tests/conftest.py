@@ -289,8 +289,11 @@ def setup_test_settings(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-async def clear_token_cache():
+async def clear_token_cache(monkeypatch):
     """Clear the global token cache before each test to ensure isolation."""
+    from app.services import source_controls
+
+    monkeypatch.setattr(source_controls, "_ENABLED", False)
     await token_cache.reset()
 
 
@@ -656,6 +659,9 @@ def forbid_native_keychain_access(monkeypatch):
     from scripts.sidecar_pkg import keychain_authorization, keychain_client, source_consent
 
     monkeypatch.setattr(source_consent, "POLICY", source_consent.SourcePolicy({}))
+    from scripts.sidecar_pkg import source_protocol
+
+    monkeypatch.setattr(source_protocol, "CLIENT", None)
     from scripts.sidecar_pkg.macos_keychain_store import KeychainError, _WorkerAPI
 
     monkeypatch.setattr(keychain_client, "_CLIENT", None)

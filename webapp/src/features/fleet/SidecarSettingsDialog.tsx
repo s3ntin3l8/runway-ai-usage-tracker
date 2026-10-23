@@ -2,6 +2,7 @@
 // The Fleet card stays a summary; everything you can change lives here.
 
 import { useState } from 'react';
+import { SidecarSources } from './SidecarSources';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -71,6 +72,7 @@ export function SidecarSettingsDialog({
             }}
           />
           <LoginDirectoriesSection key={`${sidecar.sidecar_id}-dirs`} sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
+          <SidecarSources sidecarId={sidecar.sidecar_id} />
           <KeepAliveSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
           <UpdatesSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
           <LoggingSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />

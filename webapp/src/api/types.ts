@@ -1362,3 +1362,41 @@ export interface DataHealthJob {
   started_at: string;
   finished_at?: string | null;
 }
+
+
+/** Per-scraper consent and collection are independent of device liveness. */
+export interface FleetSourceStatus {
+  source_id: string;
+  provider_id: string;
+  label: string;
+  revision: string;
+  generation: number;
+  read: boolean;
+  state: 'Off' | 'Setup required' | 'Connecting' | 'Ready' | 'Limited' | 'Action required' | 'Withdrawal pending';
+  renewal_requested: boolean;
+  renewal_supported: boolean;
+  renewal_capable: boolean;
+  last_read_at?: number | null;
+  last_renewed_at?: number | null;
+  new: boolean;
+  remote_paused: boolean;
+  revoked: boolean;
+  report_at: string;
+  report_stale: boolean;
+  announcement: boolean;
+  collection_health: 'withdrawn' | 'paused' | 'healthy' | 'action_required' | 'untried';
+  last_collection_at: string | null;
+}
+
+export type FleetSourceAction = 'pause' | 'resume' | 'revoke' | 'request_setup' | 'dismiss';
+export interface FleetSourceCommand {
+  id: number;
+  source_id: string;
+  generation: number;
+  action: FleetSourceAction;
+}
+export interface FleetSourceResponse {
+  protocol: 1;
+  sources: FleetSourceStatus[];
+  commands: FleetSourceCommand[];
+}
