@@ -168,3 +168,21 @@ def test_claude_refresh_cannot_leave_when_provider_is_only_on_the_card():
     assert "refresh_token" not in forwarded
     assert forwarded["oauth_read_only"] == "1"
     assert card["metadata"]["refresh_token"] == "synthetic-local-refresh"
+
+
+def test_shared_native_denial_is_reported_without_withdrawing_local_intent(monkeypatch):
+    from scripts.sidecar_pkg import keychain_client, source_settings
+
+    local = config()
+    for source_id in ("anthropic.chrome", "chatgpt.chrome"):
+        local = SourcePolicy.change(local, source_id, read=True)
+    client = keychain_client.KeychainClient(command=["synthetic-never-started"])
+    client.block_access("storage:Chrome Safe Storage", "denied")
+    monkeypatch.setattr(keychain_client, "_CLIENT", client)
+    rows = {row["id"]: row for row in source_settings.report(local)["sources"]}
+    for source_id in ("anthropic.chrome", "chatgpt.chrome"):
+        assert rows[source_id]["read"] is True
+        assert rows[source_id]["state"] == "Action required"
+    assert rows["kimi_coding.chrome"]["read"] is False
+    assert rows["kimi_coding.chrome"]["state"] == "Off"
+    assert client._process is None

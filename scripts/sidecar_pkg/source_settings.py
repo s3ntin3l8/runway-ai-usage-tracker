@@ -37,9 +37,7 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 "label": source.label,
                 "revision": source.revision,
                 "read": policy.ticket(source.id) is not None,
-                "state": (
-                    SETUP.state(source.id) if SETUP.state(source.id) != "Off" else "Setup required"
-                )
+                "state": _authorization_state(source.id, source.services, SETUP.state(source.id))
                 if policy.ticket(source.id)
                 else "Withdrawal pending"
                 if source.id in pending and pending[source.id] > withdrawals.get(source.id, -1)
@@ -104,3 +102,21 @@ def _is_revoked(config: dict[str, Any], remote: dict[str, Any], source_id: str) 
     generation = SourcePolicy._entry(config, source_id).get("generation", 0)
     revoked = remote.get(source_id, {}).get("revoked_through", -1)
     return type(generation) is int and type(revoked) is int and generation <= revoked
+
+
+def _authorization_state(source_id: str, services: tuple[str, ...], setup_state: str) -> str:
+    from scripts.sidecar_pkg.keychain_client import access_groups_blocked
+
+    if setup_state == "Connecting":
+        return setup_state
+    groups = [
+        "claude-code"
+        if source_id == "anthropic.claude-code"
+        else "github-cli"
+        if source_id == "github.gh-cli"
+        else "storage:" + service
+        for service in services
+    ]
+    if access_groups_blocked(groups):
+        return "Action required"
+    return setup_state if setup_state != "Off" else "Setup required"
