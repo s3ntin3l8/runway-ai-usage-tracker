@@ -181,16 +181,123 @@ python scripts/cleanup_minimax_monthly_cards.py --apply
 # 5. Restart the server.
 ```
 
+## MiniMax Code traffic
+
+MiniMax Code — the runtime behind this agent (the `mavis` agent of the MiniMax Code CLI and
+desktop app) — keeps its **own usage ledger** on disk. The sidecar reads it directly, so the
+MiniMax Code sessions you run locally show up as usage on the MiniMax cards instead of only
+showing up as a quota gauge.
+
+The extractor lives in `scripts/sidecar_pkg/event_extractors/minimax_code.py` and pushes one
+event per **API request** under `provider_id="minimax"` with `source_app="minimax_code"`.
+
+### Where the ledger lives
+
+```
+~/.minimax/v2/sqlite/runtime-state.sqlite   (+ -wal, -shm)
+```
+
+The runtime resolves its data dir from `join(homeDir ?? homedir(), ".minimax")` — the bundle has
+no macOS or Windows branch for it — so the **same path works on Linux, macOS and Windows**
+(`%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` on Windows). The sidecar also probes the
+desktop app's app-data roots (`~/Library/Application Support/…`, `%APPDATA%\…`) as insurance;
+those are not covered by a live verification, but a miss costs nothing.
+
+The store is opened **read-only** (`?mode=ro`) — the runtime owns the file, the sidecar never writes
+to it, checkpoints it or vacuums it. (SQLite itself may create the WAL sidecar files `-wal`/`-shm`
+next to it when a reader opens a WAL store — that is what any WAL reader does, and it changes
+nothing in the database.) A missing store (MiniMax Code never ran here), a locked one or a schema
+the runtime has drifted away from all degrade to *skipped source*: no events, no error card.
+
+### What the store holds
+
+| Table | Meaning |
+|---|---|
+| `local_runtime_token_usage` | One row per **API request** — a turn issues dozens of them. `id` is an AUTOINCREMENT key, `ts` is the request time in ms, `model` is always NULL. |
+| `local_runtime_message_rows` | One row per stored message. `data_json` carries `usage`, `tool_calls`, `finish_reason`, `canonical_message_id` and `context_usage_telemetry.model`. |
+| `local_runtime_sessions` | One row per session. `workspace_dir` is the working directory, `extra_data_json` carries `effectiveModel` and `effectiveModelThinking.effort`. |
+
+The token columns are Anthropic-style **per-request** values, not deltas:
+`raw.totalTokens == input + output + cacheRead + cacheWrite` holds for every row, and
+`cache_read` grows within a turn and resets when the context is rebuilt. The events therefore
+carry the row's own values as-is — never a sum across a turn and never a delta.
+
+`cost_usd` is pushed as `None`: the runtime writes `0.0` because the M Plan is a subscription, so
+the server prices the event from the `MiniMax-M3.1-Flash` row in the table above.
+
+### Why the cursor is an id and not a timestamp
+
+`ts` is **not** globally monotonic — sessions interleave, so the ledger has hundreds of backward
+steps. A `ts > since` cursor silently drops rows: simulating this extractor's cadence over a real
+store, a timestamp cursor lost **14.3 %** of the rows at a 5-row cadence and 1.4 % even at 100
+rows per cycle, while the `id` cursor lost none.
+
+The extractor therefore keeps its own id-based cursor in
+`~/.config/runway/sidecar/minimax_code_watermark.json` (`%APPDATA%\runway\sidecar\…` on Windows —
+it sits next to the rest of the sidecar's state), keyed by the database path (`id` is only
+comparable within one file).
+
+The cursor advances **only after the server confirms the ingest**: the advance is parked while the
+events are on their way and committed — or dropped — once the push is done. A failed push (or a
+cycle that dies mid-flight) therefore re-sends the same rows instead of skipping them; the
+server's `(provider_id, event_id)` uniqueness makes that re-send a no-op.
+
+A rebuilt store (the id axis restarts) resets the cursor and re-emits. The rebuilt store holds the
+requests made after the rebuild — usage that has not been reported yet — and a request that
+reappears with the same timestamp keeps its event id, so the server deduplicates it rather than
+counting it twice.
+
+### Model resolution
+
+`local_runtime_token_usage.model` is always NULL, so the model comes from the first source that
+names one:
+
+1. the matched message row's `context_usage_telemetry.model`,
+2. the session's `messages.jsonl`,
+3. the session's `extra_data_json.effectiveModel` (`minimax/MiniMax-M3.1-Flash` — the provider
+   prefix is stripped so the id matches the pricing seed key),
+4. the session's `llm-call.json`.
+
+The message row is joined on the usage tuple
+`(session_id, turn_id, input_tokens, output_tokens, cache_read)`, which matches the ledger's
+per-request values against the message's own `usage` block. The history JSONL is **not** used for
+usage — it is pruned, so it loses rows — only as a model fallback.
+
+### Internal plan-review turns
+
+Roughly 60 % of the ledger's rows belong to the runtime's internal plan-review sub-agent
+(`turn_id` starting with `mavis-internal:plan-review:`). They are real API calls against your
+plan quota, so they are included and tagged `subagent_type="Plan"` — the Sessions view already
+splits subagent turns out of the main-thread message count and renders them separately.
+
+### Attribution
+
+The MiniMax Code auth bundle carries no email (its record is keyed by an opaque provider id), so
+the sidecar has no local identity to derive. The events therefore ship under the `"default"`
+sentinel, where they wait in the **Untagged Credentials** dialog — the same path OpenCode-driven
+MiniMax traffic takes.
+
+Once the operator has exactly one enabled, labeled MiniMax account, the server ships its
+`provider:minimax` auto-hint and the sidecar stamps the events with that account: they land on the
+same card as the quota gauge instead of a standalone `"default"` one. A multi-account setup has no
+auto-hint (the server refuses to guess) — the operator tags the origin explicitly there.
+
 ## Configuration
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `MINIMAX_API_KEY` | Yes | MiniMax API key |
 | `MINIMAX_HOST` | Optional | Bare-domain host override. Default `minimax.io` (international); set to `minimaxi.com` for the China platform. |
+| `MINIMAX_CODE_HOME` | Optional | Data-dir override for the MiniMax Code runtime store. Default `~/.minimax`. |
 
 ## Sidecar Support
 
 Sidecar uses the same API key. No aggregation needed. See [sidecar documentation](../sidecar.md).
+
+The sidecar additionally reads the **MiniMax Code runtime ledger** on the host and pushes those
+requests as usage events under this provider — see
+[MiniMax Code traffic](#minimax-code-traffic) above. That path needs no API key at all: the
+ledger is a local file the runtime writes.
 
 ## Troubleshooting
 
@@ -211,6 +318,9 @@ Sidecar uses the same API key. No aggregation needed. See [sidecar documentation
 | `app/services/collectors/minimax.py` | Main collector |
 | `app/services/pricing_seed.py` | Notional API pricing for Coding-Plan usage |
 | `scripts/sidecar_pkg/event_extractors/opencode.py` | Folds OpenCode-driven MiniMax traffic into this provider |
+| `scripts/sidecar_pkg/event_extractors/minimax_code.py` | Reads the MiniMax Code runtime ledger and pushes its requests as events |
+| `tests/unit/test_event_extractor_minimax_code.py` | Extractor coverage (join, model fallbacks, id cursor, drift) |
+| `tests/integration/test_minimax_code_events_ingest.py` | End-to-end: runtime ledger → fleet ingest → priced MiniMax events |
 
 ## References
 
@@ -218,4 +328,4 @@ Sidecar uses the same API key. No aggregation needed. See [sidecar documentation
 - **MiniMax (China):** https://www.minimaxi.com
 - **API Documentation:** https://api.minimax.io/document/main (or https://api.minimaxi.com/document/main for the China platform)
 
-*Last updated: 2026-09-02*
+*Last updated: 2026-10-23*

@@ -202,8 +202,8 @@ python3 scripts/sidecar.py --daemon
 - **Retry Logic:** Exponential backoff for failed pushes
 - **PID File:** Prevents multiple daemon instances
 - **13 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi, Kimi K2, Antigravity (quota via server-side API collector; sidecar ships the OAuth token and token/cost enrichment only)
-- **Event Batching:** Per-message events (Claude, Codex, Gemini, OpenCode) shipped in 1000-event batches
-- **Persistent Watermark:** `~/.config/runway-sidecar/event-watermark.json` tracks last-pushed timestamp per (provider, account)
+- **Event Batching:** Per-message events (Claude, Codex, Gemini, OpenCode, MiniMax Code) shipped in 1000-event batches
+- **Persistent Watermark:** `~/.config/runway-sidecar/event-watermark.json` tracks last-pushed timestamp per (provider, account). The MiniMax Code extractor keeps an id-based cursor of its own in `minimax_code_watermark.json` next to the sidecar's state, because the runtime's request timestamps are not globally monotonic — see [`docs/collectors/minimax.md`](collectors/minimax.md#minimax-code-traffic)
 - **HMAC-SHA256 Signing:** Secure payload verification
 
 ## Configuration
