@@ -244,9 +244,7 @@ above, against the same database, for the same index:
 
 The index is what the published tag resolves to; the platform rows are the
 manifests that index points at, and the ones the audit scanned. They are not the
-digests the `digests-*` artifacts record
-(`sha256:a278ab0602695233fc2655037f930a1c44e31b5abd5a2e8b0522c379a94c5f62`
-for amd64, `sha256:925992dd6ed17da65020f06edcd7f5ce24986e97e0fba0eef3134f68d961a9d9`).
+digests the `digests-*` artifacts record.
 
 The `digests-*` artifacts carry `steps.build.outputs.digest` from the
 per-architecture build, and buildx pushes each platform as its own index — the
@@ -256,6 +254,10 @@ multi-architecture index from those per-platform indexes, and the published
 index references the inner image manifests, which are the digests in the rows
 above. A manifest's digest is the hash of its own bytes; being referenced by an
 index does not change it.
+
+Those per-platform build outputs are not quoted here, and not recorded in the
+scan fixture: they change with every build, so they are not a record of what
+was published. The index and the two platform manifests are.
 
 ### The published Debian 13 image
 
@@ -287,17 +289,18 @@ Scanned at `2026-10-23T21:01:55Z` against the database built
 and `anchore/grype@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe`.
 
 The `digests-*` artifacts for this build record the per-platform build output
-instead: `sha256:6bd9689ced668773dc02448a748bbb4089cd48b637eec3d86fdffa831876353e`
-for amd64 and `sha256:aa7856587ceac253d6e745eef1743d151eb842f44b1b46e68cfe5fb6ea8d45f4`
-for arm64. The two digest families and why they differ are explained under *The
-published baseline this replaces* above.
+instead — the per-platform index buildx pushed, before the multi-architecture
+index references the inner image manifests. Those change with every build, so
+they are not quoted here and not recorded in the scan fixture; the two digest
+families and why they differ are explained under *The published baseline this
+replaces* above.
 
 This is the versioned release rather than the rolling `edge` tag on purpose.
 `edge` is rebuilt from `main` on every push, so its digest moves with every
 unrelated change and cannot be the record the exception document is anchored
-to; a versioned tag is immutable. The findings are the same either way -- the
+to; a versioned tag is immutable. The findings are the same either way — the
 `edge` build of the same base reports the same 166 matches, the same 55 High
-and the same absence of Critical findings -- so the document describes both.
+and the same absence of Critical findings — so the document describes both.
 
 ### Advisories Debian lists as fixed in trixie
 
