@@ -172,6 +172,29 @@ filters, so a renewal is scanned like any other change to the policy.
 
 Both digests were re-resolved against the registry when this change was authored, and both carry the same toolchain as the Bookworm bases they replace: Python 3.12.15 and Node 24.22.1 (npm 11.19, which `webapp/package.json`'s `devEngines` requires and which preserves the lockfile's `libc` metadata). The Python version stays 3.12: the repository's floor is `>=3.12`, CI runs 3.12 and ruff targets `py312`.
 
+### What Debian 13 renamed, and why one exception key changed name
+
+Debian 13's 64-bit `time_t` transition renamed the packages that carry a `time_t`
+in their ABI, and moved the compiler that provides libc's runtime support:
+
+| Bookworm | Trixie | In the trixie image? |
+| --- | --- | --- |
+| `libgnutls30` | `libgnutls30t64` | no |
+| `libssl3` | `libssl3t64` | no |
+| `gcc-12-base` | `gcc-14-base` | yes |
+
+The exception key is the scanner's package name, so a renamed package needs a
+renamed entry. `gcc-14-base` is the one that survives in the image: Bookworm's
+`libgcc-s1` came from gcc-12 and depended on `gcc-12-base (= 12.2.0-14+deb12u1)`,
+and trixie's comes from gcc-14 and depends on
+`gcc-14-base (= 14.2.0-19)`. The CVE-2026-102010 and CVE-2026-95619 entries
+therefore carry `gcc-14-base` where the Bookworm document carried
+`gcc-12-base`.
+
+The other two renames left the image entirely — Debian 13's slim runtime
+carries neither the GnuTLS nor the OpenSSL libraries — so no entry carries
+those names, and their advisories are gone with them (see the table below).
+
 ### The candidate scan
 
 The per-architecture candidate scans are the record. The amd64 and arm64 candidates were built from this change and scanned with the same digest-pinned Syft and Grype the release path uses:
