@@ -248,6 +248,8 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
         # carries the report's own keys, and only those keys pass. A dict that
         # happens to carry the same reason - a metric's metadata, an
         # observation, an entry with something else attached - is still gated.
+        # The key set is the whole guarantee, and it fails closed: a new key on
+        # a report stops it from being one.
         source_block = (
             source_report
             and str(value.get("reason", "")) in SOURCE_BLOCK_REASONS
@@ -256,9 +258,6 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
         keychain = not source_block and (
             "keychain_consent" in value or (sys.platform == "darwin" and bool(source_id))
         )
-        if source_block:
-            # A source report proves consent for nothing, so it never carries one.
-            result.pop("keychain_consent", None)
         if keychain:
             if (
                 not authenticated
