@@ -11,6 +11,10 @@ every other worktree that shared it through a junction loses it too.
 This helper removes the links first, and only the links, and then hands the
 worktree to git. It never forces the removal: git still refuses a worktree
 with uncommitted work, and the helper reports that instead of overriding it.
+
+Nothing is unlinked until the target has been checked: the path has to be a
+worktree of this repository, it has to be a linked worktree rather than the
+main checkout, and it has to be clean. A refusal leaves every link in place.
 """
 
 from __future__ import annotations
@@ -124,9 +128,66 @@ def restore_working_tree(cwd: Path | None = None) -> bool:
     return True
 
 
+def _comparable(path: Path) -> str:
+    """A comparable form of *path*: absolute, normalised, case-folded on Windows."""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def worktree_paths(cwd: Path | None = None) -> list[Path]:
+    """The working trees git knows about for this repository, main checkout first."""
+    output = _git_output(["worktree", "list", "--porcelain"], cwd)
+    paths: list[Path] = []
+    for line in output.splitlines():
+        if line.startswith("worktree "):
+            paths.append(Path(line[len("worktree ") :]))
+    return paths
+
+
+def validate_target(root: Path, *, cwd: Path | None = None) -> str | None:
+    """Why *root* must not be removed, or ``None`` when removing it is safe.
+
+    The checks run before anything is unlinked, so a refusal leaves the links
+    in place: the helper must never be the thing that breaks a checkout it was
+    not asked about.
+    """
+    if not root.exists():
+        return f"{root} does not exist"
+    known = worktree_paths(cwd)
+    if not known:
+        return f"{cwd or Path.cwd()} is not a git repository"
+    if _comparable(root) == _comparable(known[0]):
+        return f"{root} is the main working tree"
+    if _comparable(root) not in {_comparable(path) for path in known[1:]}:
+        return f"{root} is not a worktree of this repository"
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        env=_git_env(),
+    )
+    if status.returncode != 0:
+        return f"git status failed in {root}: {status.stderr.strip() or status.returncode}"
+    if status.stdout.strip():
+        return f"{root} has uncommitted changes"
+    return None
+
+
 def remove_worktree(path: Path, *, cwd: Path | None = None) -> int:
     """Remove the worktree at *path*, dropping the links it holds first."""
-    root = path if path.is_absolute() else Path.cwd() / path
+    base = cwd or Path.cwd()
+    root = path if path.is_absolute() else base / path
+    # A checkout that lost its working tree cannot be checked at all, so it is
+    # repaired before the target is validated.
+    restore_working_tree(cwd)
+    reason = validate_target(root, cwd=cwd)
+    if reason is not None:
+        print(f"refusing to remove {root}: {reason}", file=sys.stderr)
+        print(
+            "nothing was unlinked; commit or discard the work, then run this again.",
+            file=sys.stderr,
+        )
+        return 1
     removed = unlink_links(root)
     for link in removed:
         print(f"unlinked {link}")

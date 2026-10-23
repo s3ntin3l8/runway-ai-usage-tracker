@@ -18,7 +18,7 @@ install-hooks: ## Install pre-commit hooks for commit and push stages
 	python3 scripts/dev_checks.py install-hooks
 
 remove-worktree: ## Remove a worktree without deleting the directories it links to (use: make remove-worktree PATH=.wt/<slug>)
-	$(PYTHON) scripts/dev_checks.py remove-worktree $(PATH)
+	python3 scripts/dev_checks.py remove-worktree $(PATH)
 
 install: ## Set up venv, install Python and Node dependencies
 	python3 scripts/dev_checks.py install

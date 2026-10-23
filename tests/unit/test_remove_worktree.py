@@ -19,6 +19,12 @@ import pytest
 
 from scripts import remove_worktree as rw
 
+#: The hazard this module covers is a Windows one: only a junction makes
+#: ``git worktree remove`` follow the link into the main checkout's virtualenv.
+#: The native Windows gate runs these before a merge; on POSIX git unlinks the
+#: symlink and leaves the target alone, so nothing here can fail there.
+pytestmark = pytest.mark.windows
+
 
 def _git(isolated_git, *args: str, cwd: Path) -> str:
     """Run git without the environment the hooks export."""
@@ -53,9 +59,16 @@ def _make_link(target: Path, link: Path) -> None:
 
 
 def _repo(isolated_git, root: Path) -> Path:
-    """A repository with one commit."""
+    """A repository with one commit.
+
+    The ignore rules are the repository's own: ``.venv`` and ``node_modules``
+    are written without a trailing slash, because a link to a directory is a
+    *file* to git. Without them a linked virtualenv would count as untracked
+    work and every worktree would look dirty.
+    """
     root.mkdir()
     _git(isolated_git, "init", "-q", cwd=root)
+    (root / ".gitignore").write_text(".venv\nnode_modules\n")
     (root / "README.md").write_text("repo")
     _git(isolated_git, "add", ".", cwd=root)
     _git(
@@ -146,6 +159,85 @@ def test_a_dirty_worktree_is_reported_rather_than_forced(isolated_git, tmp_path)
     # The worktree is still there -- git refused it -- and nothing was forced.
     assert tree.exists()
     assert (tree / "uncommitted.txt").exists()
+
+
+def test_a_dirty_worktree_keeps_its_links(isolated_git, tmp_path):
+    """A refusal happens before anything is unlinked.
+
+    The helper exists to protect the main checkout's virtualenv, so it must
+    not unlink a link it is not going to remove -- the dirty worktree keeps
+    the link it had.
+    """
+    repo = _repo(isolated_git, tmp_path / "repo")
+    tree = tmp_path / "tree"
+    _git(isolated_git, "worktree", "add", "-q", str(tree), cwd=repo)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "keep.txt").write_text("keep")
+    _make_link(shared, tree / ".venv")
+    (tree / "uncommitted.txt").write_text("work in progress")
+
+    assert rw.remove_worktree(tree, cwd=repo) != 0
+
+    assert (tree / ".venv").exists(), "the link was unlinked although nothing was removed"
+    assert (shared / "keep.txt").read_text() == "keep"
+
+
+def test_the_main_checkout_is_refused(isolated_git, tmp_path):
+    """The main working tree is never a removal target.
+
+    `PATH=.` -- the repository root -- is the shape of that mistake: the
+    helper used to unlink the main checkout's links and only then discover
+    that it was looking at the main working tree.
+    """
+    repo = _repo(isolated_git, tmp_path / "repo")
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "keep.txt").write_text("keep")
+    _make_link(shared, repo / ".venv")
+
+    assert rw.remove_worktree(repo, cwd=repo) != 0
+
+    assert (repo / ".venv").exists(), "the main checkout's link was unlinked"
+    assert (shared / "keep.txt").read_text() == "keep"
+
+
+def test_a_path_outside_the_repository_is_refused(isolated_git, tmp_path):
+    repo = _repo(isolated_git, tmp_path / "repo")
+    tree = tmp_path / "tree"
+    _git(isolated_git, "worktree", "add", "-q", str(tree), cwd=repo)
+    stranger = tmp_path / "stranger"
+    stranger.mkdir()
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "keep.txt").write_text("keep")
+    _make_link(shared, stranger / ".venv")
+
+    assert rw.remove_worktree(stranger, cwd=repo) != 0
+
+    assert (stranger / ".venv").exists(), "an unrelated directory lost its link"
+    assert (shared / "keep.txt").read_text() == "keep"
+    assert tree.exists()
+
+
+def test_a_relative_path_resolves_against_the_repository_root(isolated_git, tmp_path):
+    """The path is resolved against the repository, not the shell's directory.
+
+    Every git call in the helper runs in the repository root, so a relative
+    path has to mean the same thing: `wt` is `<repo>/wt`, whatever directory
+    the caller happened to be in.
+    """
+    repo = _repo(isolated_git, tmp_path / "repo")
+    _git(isolated_git, "worktree", "add", "-q", "wt", cwd=repo)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "keep.txt").write_text("keep")
+    _make_link(shared, repo / "wt" / ".venv")
+
+    assert rw.remove_worktree(Path("wt"), cwd=repo) == 0
+
+    assert not (repo / "wt").exists()
+    assert (shared / "keep.txt").read_text() == "keep"
 
 
 def test_the_helper_is_reachable_without_a_venv(tmp_path):
