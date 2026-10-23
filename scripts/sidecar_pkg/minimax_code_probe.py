@@ -191,33 +191,51 @@ def _ledger_counts(db_path: Path) -> dict[str, int]:
     return counts
 
 
-def _attach_parent_console() -> bool:
+def _attach_parent_console() -> int | None:
     """Attach to the console the user launched from.
 
     PyInstaller's ``console=False`` build has ``sys.stdout is None``, so a
     command that prints raises ``AttributeError`` instead of printing.
     Re-attaching to the parent console is the standard fix; it fails
     harmlessly when there is no console to attach to.
+
+    Returns the console's previous output code page so the caller can put
+    it back: the code page is process-wide, and leaving the user's cmd
+    window on UTF-8 changes what every later command prints.
     """
     if sys.platform != "win32" or sys.stdout is not None:
-        return False
+        return None
     try:
         import ctypes
 
         kernel32 = ctypes.windll.kernel32
         if not kernel32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
-            return False
+            return None
+        previous_code_page = int(kernel32.GetConsoleOutputCP())
         # CONOUT$ is bytes decoded with the console's active code page, so
         # the report's em dash and middle dot would land as mojibake on a
         # cp850 console. UTF-8 is what the report is written in.
         kernel32.SetConsoleOutputCP(65001)
         sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
         sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
-        return True
+        return previous_code_page
     except Exception:
         # A console that cannot be attached to is not a reason to fail the
         # report: the caller falls back to writing it to a file.
-        return False
+        return None
+
+
+def _restore_console_code_page(previous: int | None) -> None:
+    """Put the console's output code page back the way the user had it."""
+    if previous is None:
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.SetConsoleOutputCP(previous)
+    except Exception:
+        # Nothing to restore to; the console keeps whatever it had.
+        pass
 
 
 def _write_report_file(text: str) -> Path | None:
@@ -251,15 +269,21 @@ def _notify_windows(message: str) -> None:
 
 def _emit(text: str) -> None:
     """Print the report — or put it where a windowed build's user can find it."""
+    previous_code_page: int | None = None
     if sys.stdout is None:
-        _attach_parent_console()
+        previous_code_page = _attach_parent_console()
     if sys.stdout is not None:
         # The report carries an em dash and a middle dot; a console that is
         # not UTF-8 would raise UnicodeEncodeError on them.
         from app.core.console import force_utf8_console
 
         force_utf8_console()
-        print(text)
+        try:
+            print(text)
+        finally:
+            # The code page is process-wide: the user's console must not
+            # stay on UTF-8 for whatever runs next.
+            _restore_console_code_page(previous_code_page)
         return
     path = _write_report_file(text)
     if path is None:

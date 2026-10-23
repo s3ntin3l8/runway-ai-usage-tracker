@@ -179,17 +179,38 @@ def test_the_sidecar_and_the_probe_share_the_bootstrap_window(monkeypatch):
     The probe used to re-state the sidecar's expression, which meant a
     change to the sidecar's default would have left the probe reading a
     different window. Both now call one helper, and this pins the sidecar
-    to it.
+    to it — on the parsed tree, so a comment that merely names the variable
+    cannot trip it.
     """
+    import ast
+
     import scripts.sidecar as sidecar_module
     from scripts.sidecar_pkg.bootstrap import bootstrap_window_days
 
     monkeypatch.setenv("SIDECAR_BOOTSTRAP_DAYS", "3")
     assert probe.bootstrap_window_days() == bootstrap_window_days() == 3
 
-    source = Path(sidecar_module.__file__).read_text(encoding="utf-8")
-    assert "bootstrap_window_days()" in source
-    assert "SIDECAR_BOOTSTRAP_DAYS" not in source
+    tree = ast.parse(Path(sidecar_module.__file__).read_text(encoding="utf-8"))
+    collector = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "run_collection"
+    )
+    called = {
+        node.func.id
+        for node in ast.walk(collector)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "bootstrap_window_days" in called
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "getenv"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "SIDECAR_BOOTSTRAP_DAYS"
+        for node in ast.walk(collector)
+    )
 
 
 def test_the_probe_finds_the_store_in_the_windows_app_data_root(tmp_path, monkeypatch):
@@ -208,7 +229,7 @@ def test_a_windowed_build_without_a_console_writes_the_report_to_a_file(host, mo
     """A console=False build has sys.stdout is None; the probe must not crash."""
     report = probe.format_report(probe.probe_minimax_code())
     monkeypatch.setattr(probe.sys, "stdout", None)
-    monkeypatch.setattr(probe, "_attach_parent_console", lambda: False)
+    monkeypatch.setattr(probe, "_attach_parent_console", lambda: None)
     monkeypatch.setattr(probe, "_notify_windows", lambda message: None)
     probe._emit(report)
     written = host / "config" / "sidecar" / "minimax_code_probe.txt"
@@ -220,8 +241,27 @@ def test_a_report_that_cannot_be_written_says_so(host, monkeypatch):
     """A failed write must not promise a report file that does not exist."""
     messages: list[str] = []
     monkeypatch.setattr(probe.sys, "stdout", None)
-    monkeypatch.setattr(probe, "_attach_parent_console", lambda: False)
+    monkeypatch.setattr(probe, "_attach_parent_console", lambda: None)
     monkeypatch.setattr(probe, "_notify_windows", messages.append)
     monkeypatch.setattr(probe, "_write_report_file", lambda text: None)
     probe._emit("RESULT: PASS")
     assert messages and "could not write" in messages[0]
+
+
+def test_the_console_code_page_is_restored_after_printing(monkeypatch):
+    """The output code page is process-wide: the probe must put it back."""
+    import io
+
+    buffer = io.StringIO()
+    restored: list[int | None] = []
+
+    def fake_attach() -> int:
+        probe.sys.stdout = buffer
+        return 437
+
+    monkeypatch.setattr(probe.sys, "stdout", None)
+    monkeypatch.setattr(probe, "_attach_parent_console", fake_attach)
+    monkeypatch.setattr(probe, "_restore_console_code_page", restored.append)
+    probe._emit("RESULT: PASS")
+    assert restored == [437]
+    assert "RESULT: PASS" in buffer.getvalue()

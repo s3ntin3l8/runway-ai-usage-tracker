@@ -246,6 +246,7 @@ drifted. `--json` prints the same report as JSON.
 On a windowed build (the macOS app and the Windows `.exe` have no console of their own) the probe
 attaches to the console it was launched from; with no console to attach to it writes the report to
 `minimax_code_probe.txt` next to the sidecar's config and says so in a message box.
+
 **Platform status.** The store path is identical on every platform (the runtime resolves it from
 `homedir()`), and the probe answers the question on whichever host you run it on:
 
