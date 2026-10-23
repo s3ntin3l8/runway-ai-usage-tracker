@@ -199,9 +199,27 @@ event per **API request** under `provider_id="minimax"` with `source_app="minima
 
 The runtime resolves its data dir from `join(homeDir ?? homedir(), ".minimax")` — the bundle has
 no macOS or Windows branch for it — so the **same path works on Linux, macOS and Windows**
-(`%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` on Windows). The sidecar also probes the
-desktop app's app-data roots (`~/Library/Application Support/…`, `%APPDATA%\…`) as insurance;
-those are not covered by a live verification, but a miss costs nothing.
+(`%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` on Windows).
+
+That is only the **default**. The runtime also scopes the dir per profile
+(`~/.minimax-<profile>` — the profile comes from the desktop app, the CLI's `--profile` flag or
+the supervisor, and the runtime derives one from the current branch when it runs inside its own
+repository), honours environment overrides, and used to live in `~/.mavis` before it migrated.
+The sidecar therefore reads **every** store it finds, not just the first:
+
+| Where | What |
+|---|---|
+| `MINIMAX_DATA_DIR`, `MAVIS_DATA_DIR` | The runtime's public data-dir overrides. |
+| `__MAVIS_RUNTIME_DATA_DIR`, `__MAVIS_PARENT_DATA_DIR` | The internal ones the daemon supervisor injects into the processes it spawns. |
+| `~/.minimax-<profile>` | A profile-scoped install, next to the default one. |
+| `~/.mavis`, `~/.mavis-<profile>` | The legacy basename, for a host that never migrated. |
+| `~/Library/Application Support/MiniMax Agent` | The macOS desktop app's Electron profile — probed as insurance, but it holds the Chromium profile and never the ledger. |
+| `%APPDATA%\MiniMax Code` | The same, on Windows. |
+
+Each store carries its own cursor — the cursor file is keyed by database path — so several stores
+advance on their own id axes without interfering. A host that never migrated keeps `~/.mavis` as a
+**symlink** to `~/.minimax`; the two are deduplicated by resolved path, so the same requests are
+never reported twice.
 
 The store is opened **read-only** (`?mode=ro`) — the runtime owns the file, the sidecar never writes
 to it, checkpoints it or vacuums it. (SQLite itself may create the WAL sidecar files `-wal`/`-shm`
@@ -224,7 +242,8 @@ RunwaySidecar.exe --probe-minimax-code         # Windows
 MiniMax Code runtime store — read-only probe
 
   platform            : Linux
-  probed roots        : /home/x/.minimax, /home/x/Library/Application Support/MiniMax Code, …
+  probed roots        : /home/x/.minimax, /home/x/Library/Application Support/MiniMax Agent, …
+  stores found        : 1
   store               : /home/x/.minimax/v2/sqlite/runtime-state.sqlite (129.0 MiB)
   store modified      : 2026-10-23T16:47:13.208315+00:00
   schema              : OK
@@ -238,10 +257,14 @@ MiniMax Code runtime store — read-only probe
   RESULT: PASS — the sidecar on this host reports MiniMax Code usage as provider 'minimax' / app 'minimax_code'.
 ```
 
-The probe opens the store read-only, runs the real extractor and prints its verdict; it **never
-commits the cursor**, so running it cannot make the sidecar skip rows. It exits 0 when the store was
-found and understood, and 1 when there is nothing to read (no store) or the store's schema has
-drifted. `--json` prints the same report as JSON.
+The probe opens every store read-only, runs the real extractor and prints its verdict; it
+**never commits the cursor**, so running it cannot make the sidecar skip rows. It exits 0 when a
+store was found and understood, and 1 when there is nothing to read (no store) or the schema has
+drifted. `--json` prints the same report as JSON, with one entry per store under `stores`.
+
+A host can hold more than one store — a profile-scoped install keeps a second ledger next to the
+default one. The report names each of them, and the counts are the whole host's, because the
+sidecar reads them all.
 
 On a windowed build (the macOS app and the Windows `.exe` have no console of their own) the probe
 attaches to the console it was launched from; with no console to attach to it writes the report to
@@ -253,8 +276,8 @@ attaches to the console it was launched from; with no console to attach to it wr
 | Platform | Store path | Verified |
 |---|---|---|
 | Linux | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Yes — full extraction verified against a live store |
-| macOS | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Path confirmed from the runtime bundle; run the probe on a macOS host to confirm the store |
-| Windows | `%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` | Same |
+| macOS | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Yes — the probe passes against a live store; 99.97 % of the ledger rows join, the model resolves for every row |
+| Windows | `%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` | Path confirmed from the runtime bundle and from the install that opened this issue; run the probe on a Windows host to confirm the extraction |
 
 A platform that has not been confirmed reports **nothing** rather than wrong numbers: a missing
 store yields no events and a drifted schema yields no events.
@@ -285,7 +308,8 @@ rows per cycle, while the `id` cursor lost none.
 The extractor therefore keeps its own id-based cursor in
 `~/.config/runway/sidecar/minimax_code_watermark.json` (`%APPDATA%\runway\sidecar\…` on Windows —
 it sits next to the rest of the sidecar's state), keyed by the database path (`id` is only
-comparable within one file).
+comparable within one file). That keying is what lets several stores coexist: each advances on
+its own id axis, and a host that moves its data dir keeps its cursor with it.
 
 The cursor advances **only after the server confirms the ingest**: the advance is parked while the
 events are on their way and committed — or dropped — once the push is done. A failed push (or a
@@ -345,7 +369,7 @@ auto-hint (the server refuses to guess) — the operator tags the origin explici
 |----------|----------|-------------|
 | `MINIMAX_API_KEY` | Yes | MiniMax API key |
 | `MINIMAX_HOST` | Optional | Bare-domain host override. Default `minimax.io` (international); set to `minimaxi.com` for the China platform. |
-| `MINIMAX_CODE_HOME` | Optional | Data-dir override for the MiniMax Code runtime store. Default `~/.minimax`. |
+| `MINIMAX_CODE_HOME` | Optional | Data-dir override for the MiniMax Code runtime store. Default `~/.minimax`. The runtime's own overrides (`MINIMAX_DATA_DIR` and friends) are honoured too — see [Where the ledger lives](#where-the-ledger-lives). |
 
 ## Sidecar Support
 

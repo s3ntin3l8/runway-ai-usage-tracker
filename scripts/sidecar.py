@@ -3587,6 +3587,11 @@ def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = 
     timestamp watermark silently drops rows. The cursor is committed only
     after the server confirms the ingest — see
     ``minimax_code.commit_pending_state``.
+
+    More than one store can exist on a host — a profile-scoped install keeps
+    its ledger in ``~/.minimax-<profile>`` next to the default one — so every
+    store is read. The cursor is keyed by database path, which is what makes
+    that safe: each store advances on its own axis.
     """
 
     def _extract(
@@ -3596,8 +3601,8 @@ def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = 
         *,
         canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
     ) -> list:
-        db_path = _discover_minimax_code_db_path()
-        if db_path is None:
+        db_paths = _discover_minimax_code_db_paths()
+        if not db_paths:
             return []
         since = watermark.last_pushed("minimax", account_id) or (
             datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
@@ -3605,12 +3610,17 @@ def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = 
         cursor_file = state_file
         if cursor_file is None:
             cursor_file = get_sidecar_dir() / "minimax_code_watermark.json"
-        return parser(
-            db_path,
-            account_id=account_id,
-            since=since,
-            state_file=cursor_file,
-        )
+        events: list = []
+        for db_path in db_paths:
+            events.extend(
+                parser(
+                    db_path,
+                    account_id=account_id,
+                    since=since,
+                    state_file=cursor_file,
+                )
+            )
+        return events
 
     return _extract
 
@@ -5087,15 +5097,18 @@ def _reset_minimax_cursor_state() -> None:
         pass
 
 
-def _discover_minimax_code_db_path() -> Path | None:
-    """Return the MiniMax Code runtime store path, or None when absent.
+def _discover_minimax_code_db_paths() -> list[Path]:
+    """Return every MiniMax Code runtime store path, or an empty list.
 
-    The runtime anchors its store on ``homedir()``, so the same path works
-    on Linux, macOS and Windows.
+    The runtime anchors its store on ``homedir()``, so the default path works
+    on Linux, macOS and Windows. A host can hold more than one store: a
+    profile-scoped install keeps its ledger in ``~/.minimax-<profile>`` next
+    to the default one, and the runtime's environment can point at another.
+    All of them are read.
     """
-    from scripts.sidecar_pkg.event_extractors.minimax_code import discover_runtime_store
+    from scripts.sidecar_pkg.event_extractors.minimax_code import discover_runtime_stores
 
-    return discover_runtime_store()
+    return discover_runtime_stores()
 
 
 def _minimax_code_account_identity() -> str:

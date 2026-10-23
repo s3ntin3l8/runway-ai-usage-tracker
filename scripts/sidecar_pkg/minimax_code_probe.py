@@ -97,11 +97,15 @@ def probe_command(argv: list[str]) -> bool:
     raise SystemExit(0 if report["ok"] else 1)
 
 
-def _store_path() -> Path | None:
-    """Return the runtime store path, or None when the runtime never ran."""
-    from scripts.sidecar_pkg.event_extractors.minimax_code import discover_runtime_store
+def _store_paths() -> list[Path]:
+    """Return every MiniMax Code runtime store on this host.
 
-    return discover_runtime_store()
+    More than one can exist: a profile-scoped install keeps its ledger in
+    ``~/.minimax-<profile>`` next to the default one.
+    """
+    from scripts.sidecar_pkg.event_extractors.minimax_code import discover_runtime_stores
+
+    return discover_runtime_stores()
 
 
 def _probed_roots() -> list[str]:
@@ -308,14 +312,79 @@ def _emit(text: str) -> None:
     _notify_windows(f"The MiniMax Code probe wrote its report to:\n{path}")
 
 
-def probe_minimax_code() -> dict[str, Any]:
-    """Collect the report the probe prints. Read-only; nothing is written."""
+def _store_detail(db_path: Path) -> dict[str, Any]:
+    """Report one store: its schema, its ledger counts and what it yields."""
     from scripts.sidecar_pkg.event_extractors.minimax_code import parse_minimax_code_events
 
+    detail: dict[str, Any] = {
+        "path": str(db_path),
+        "size_bytes": None,
+        "modified": None,
+        "schema_ok": False,
+        "tables": {},
+        "missing_tables": [],
+        "missing_columns": {},
+        "requests": 0,
+        "turns": 0,
+        "sessions": 0,
+        "models": {},
+        "plan_review_requests": 0,
+        "pending_requests": 0,
+        "error": None,
+    }
+    try:
+        stat = db_path.stat()
+        detail["size_bytes"] = stat.st_size
+        detail["modified"] = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+    except OSError:
+        # A stat failure (the file vanished between the discovery and the
+        # read) only costs the size and the timestamp in the report.
+        pass
+
+    schema = _introspect(db_path)
+    detail["tables"] = schema["tables"]
+    detail["missing_tables"] = schema["missing_tables"]
+    detail["missing_columns"] = schema["missing_columns"]
+    detail["error"] = schema["error"]
+    detail["schema_ok"] = not (
+        schema["error"] or schema["missing_tables"] or schema["missing_columns"]
+    )
+    if not detail["schema_ok"]:
+        return detail
+
+    counts = _ledger_counts(db_path)
+    detail["requests"] = counts["requests"]
+    detail["turns"] = counts["turns"]
+    detail["sessions"] = counts["sessions"]
+
+    # The real extractor, on the real cursor — but its parked advance is
+    # never committed, so the cursor file on disk stays exactly as it was.
+    events = parse_minimax_code_events(
+        db_path,
+        account_id="probe",
+        since=datetime.now(UTC) - timedelta(days=bootstrap_window_days()),
+        state_file=_cursor_path(),
+    )
+    models: dict[str, int] = {}
+    plan_review = 0
+    for event in events:
+        label = event.model_id or "(unresolved)"
+        models[label] = models.get(label, 0) + 1
+        if event.subagent_type == "Plan":
+            plan_review += 1
+    detail["models"] = models
+    detail["plan_review_requests"] = plan_review
+    detail["pending_requests"] = len(events)
+    return detail
+
+
+def probe_minimax_code() -> dict[str, Any]:
+    """Collect the report the probe prints. Read-only; nothing is written."""
     report: dict[str, Any] = {
         "platform": platform.system(),
         "ok": False,
         "roots": _probed_roots(),
+        "stores": [],
         "store": None,
         "store_size_bytes": None,
         "store_modified": None,
@@ -334,67 +403,52 @@ def probe_minimax_code() -> dict[str, Any]:
         "problem": None,
     }
 
-    db_path = _store_path()
-    if db_path is None:
+    db_paths = _store_paths()
+    if not db_paths:
         report["problem"] = (
             "no MiniMax Code runtime store found — MiniMax Code has not run on this host "
             "(or it keeps its data somewhere else); the sidecar has nothing to report"
         )
         return report
 
-    report["store"] = str(db_path)
-    try:
-        stat = db_path.stat()
-        report["store_size_bytes"] = stat.st_size
-        report["store_modified"] = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
-    except OSError:
-        # A stat failure (the file vanished between the discovery and the
-        # read) only costs the size and the timestamp in the report.
-        pass
+    details = [_store_detail(db_path) for db_path in db_paths]
+    report["stores"] = details
 
-    schema = _introspect(db_path)
-    report["tables"] = schema["tables"]
-    report["missing_tables"] = schema["missing_tables"]
-    report["missing_columns"] = schema["missing_columns"]
-    report["schema_ok"] = not (
-        schema["error"] or schema["missing_tables"] or schema["missing_columns"]
-    )
-    if schema["error"]:
-        report["problem"] = schema["error"]
+    # The primary store is the first one the extractor understands. A store
+    # whose schema drifted is still reported, but it does not stand in for a
+    # readable one.
+    primary = next((d for d in details if d["schema_ok"]), details[0])
+    report["store"] = primary["path"]
+    report["store_size_bytes"] = primary["size_bytes"]
+    report["store_modified"] = primary["modified"]
+    report["schema_ok"] = primary["schema_ok"]
+    report["tables"] = primary["tables"]
+    report["missing_tables"] = primary["missing_tables"]
+    report["missing_columns"] = primary["missing_columns"]
+
+    # The counts are the whole host's: the sidecar reports every store, so
+    # the probe has to answer for all of them.
+    for detail in details:
+        report["requests"] += detail["requests"]
+        report["turns"] += detail["turns"]
+        report["sessions"] += detail["sessions"]
+        report["plan_review_requests"] += detail["plan_review_requests"]
+        report["pending_requests"] += detail["pending_requests"]
+        for model, count in detail["models"].items():
+            report["models"][model] = report["models"].get(model, 0) + count
+
+    cursor = _cursor_path()
+    report["cursor"] = str(cursor)
+    report["cursor_last_id"] = _cursor_last_id(cursor)
+
+    if primary["error"]:
+        report["problem"] = primary["error"]
         return report
     if not report["schema_ok"]:
         report["problem"] = (
             "the runtime store's schema has drifted away from what the extractor needs"
         )
         return report
-
-    counts = _ledger_counts(db_path)
-    report["requests"] = counts["requests"]
-    report["turns"] = counts["turns"]
-    report["sessions"] = counts["sessions"]
-
-    # The real extractor, on the real cursor — but its parked advance is
-    # never committed, so the cursor file on disk stays exactly as it was.
-    events = parse_minimax_code_events(
-        db_path,
-        account_id="probe",
-        since=datetime.now(UTC) - timedelta(days=bootstrap_window_days()),
-        state_file=_cursor_path(),
-    )
-    models: dict[str, int] = {}
-    plan_review = 0
-    for event in events:
-        label = event.model_id or "(unresolved)"
-        models[label] = models.get(label, 0) + 1
-        if event.subagent_type == "Plan":
-            plan_review += 1
-    report["models"] = models
-    report["plan_review_requests"] = plan_review
-    report["pending_requests"] = len(events)
-
-    cursor = _cursor_path()
-    report["cursor"] = str(cursor)
-    report["cursor_last_id"] = _cursor_last_id(cursor)
 
     report["ok"] = True
     report["problem"] = None
@@ -426,6 +480,8 @@ def format_report(report: dict[str, Any]) -> str:
     lines = ["MiniMax Code runtime store — read-only probe", ""]
     lines.append(f"  platform            : {report['platform']}")
     lines.append(f"  probed roots        : {', '.join(report['roots'])}")
+    stores = report.get("stores") or []
+    lines.append(f"  stores found        : {len(stores)}")
     if not report["store"]:
         lines.append("  store               : (not found)")
     else:
@@ -454,6 +510,16 @@ def format_report(report: dict[str, Any]) -> str:
             f"  this cycle would push: {report['pending_requests']} request(s)"
             f" (a cycle reads at most {_MAX_ROWS_PER_CYCLE} rows)"
         )
+    other = [detail for detail in stores if detail["path"] != report["store"]]
+    if other:
+        lines.append("")
+        lines.append("  other stores:")
+        for detail in other:
+            state = "OK" if detail["schema_ok"] else "INCOMPATIBLE"
+            lines.append(
+                f"    {detail['path']} — {state}"
+                f" · {detail['requests']} requests · {detail['sessions']} sessions"
+            )
     lines.append("")
     if report["ok"]:
         lines.append(
