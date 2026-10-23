@@ -80,13 +80,14 @@ table for the platform it ran on. The Windows table is what the native Windows
 shards are planned with; measure it on Windows, not on Linux.
 
 Git hooks live in the repository's shared `.git/hooks`, so every worktree of
-this repository writes into the same two hook files. Install them once from the
-main checkout with `make install-hooks`: a hook installed from a worktree keeps
-pointing at that worktree's interpreter and stops working once the worktree is
-removed. A worktree that commits also needs its own `.venv`, because the mypy
-and pytest hooks resolve the interpreter from the checkout being committed.
-`make install` provides one; linking the main checkout's `.venv` into the
-worktree is enough, because the runner takes the repository root from its own
+this repository writes into the same two hook files. Install them once with
+`make install-hooks`: the hook this repository installs resolves its
+interpreter when it runs, so it keeps working no matter which worktree
+installed it and which worktrees have since been removed. A worktree that
+commits still needs its own `.venv`, because the mypy and pytest hooks
+resolve the interpreter from the checkout being committed. `make install`
+provides one; linking the main checkout's `.venv` into the worktree is
+enough, because the runner takes the repository root from its own
 path and runs the tests with that root as the working directory, so the
 checkout's own sources are the ones under test. The pre-push hook runs the
 full suite in four workers, so allow it a minute or so.

@@ -41,6 +41,58 @@ def venv_python() -> Path:
     return ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+#: The repository root, captured before anything can repoint ROOT. The git
+#: helpers below have to run in the real checkout even when a caller has
+#: pointed ROOT somewhere else.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+#: The hook script this repository installs. It resolves its interpreter at run
+#: time, so a hook installed from a worktree keeps working when that worktree
+#: is removed -- see ``scripts/hooks/git-hook.sh``.
+HOOK_SCRIPT = REPO_ROOT / "scripts" / "hooks" / "git-hook.sh"
+HOOK_TYPES = ("pre-commit", "pre-push")
+
+
+def git_hooks_dir() -> Path:
+    """The repository's shared hooks directory.
+
+    Every worktree writes to the same two hook files: ``git rev-parse
+    --git-path hooks`` resolves to the *common* git directory, not to the
+    worktree's own.
+    """
+    completed = subprocess.run(
+        ["git", "rev-parse", "--git-path", "hooks"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    hooks = Path(completed.stdout.strip())
+    return hooks if hooks.is_absolute() else REPO_ROOT / hooks
+
+
+def install_git_hooks() -> None:
+    """Install this repository's hook script into the shared hooks directory.
+
+    ``pre-commit install`` writes a script that pins the interpreter that ran
+    it, so installing from a worktree breaks every commit in every worktree
+    once that worktree is removed. This script resolves its interpreter when
+    it runs instead, so where it was installed from does not matter.
+    """
+    hooks = git_hooks_dir()
+    hooks.mkdir(parents=True, exist_ok=True)
+    source = HOOK_SCRIPT.read_text(encoding="utf-8")
+    for hook_type in HOOK_TYPES:
+        target = hooks / hook_type
+        target.write_text(source, encoding="utf-8", newline="\n")
+        target.chmod(0o755)
+    print(f"installed {HOOK_SCRIPT.name} as {', '.join(HOOK_TYPES)} in {hooks}")
+    print("  the hook resolves its interpreter when it runs, so it survives the")
+    print("  worktree it was installed from being removed.")
+    print("  a worktree still needs its own .venv for the mypy and pytest hooks:")
+    print("    python scripts/dev_checks.py install-python")
+
+
 def npm_command() -> list[str]:
     npm = shutil.which("npm")
     if npm is None:
@@ -149,7 +201,7 @@ def check(
 ) -> None:
     interpreter = venv_python()
     if (
-        task not in {"install", "install-python", "web-test", "web-lint"}
+        task not in {"install", "install-python", "install-hooks", "web-test", "web-lint"}
         and not interpreter.is_file()
     ):
         raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
@@ -164,8 +216,7 @@ def check(
         execute([*npm_command(), "--prefix", "webapp", "ci"])
         check("install-hooks", [])
     elif task == "install-hooks":
-        execute([python, "-m", "pre_commit", "install"])
-        execute([python, "-m", "pre_commit", "install", "--hook-type", "pre-push"])
+        install_git_hooks()
     elif task == "lint":
         execute([python, "-m", "ruff", "check", "."])
         execute([python, "-m", "ruff", "format", "--check", "."])
