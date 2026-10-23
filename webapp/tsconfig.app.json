@@ -9,6 +9,7 @@
     "types": ["vite/client", "vitest/globals", "vite-plugin-pwa/client"],
 
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
