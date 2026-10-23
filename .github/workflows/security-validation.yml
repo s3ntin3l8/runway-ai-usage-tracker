@@ -21,12 +21,12 @@ jobs:
   browser-and-proxy:
     runs-on: ubuntu-latest
     # The job's own work takes a minute or two; the Playwright system
-    # dependencies come from the runner's apt mirror, and a slow mirror served
-    # them at one package per 10-40 seconds. At a 20-minute budget the job was
-    # cancelled while the install was still running (package 54 of 60), so the
-    # browser tests never ran and the failure looked like a code problem.
-    # 40 minutes covers that install with room to spare and still fails a
-    # genuinely stuck runner.
+    # dependencies come from the runner's apt mirror, and a slow mirror spent
+    # 19.5 minutes on 74 fetches (the slowest one took 201 seconds). At a
+    # 20-minute budget the job was cancelled while the install was still
+    # running, so the browser tests never ran and the failure looked like a
+    # code problem. 40 minutes covers that install with room to spare and
+    # still fails a genuinely stuck runner.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
