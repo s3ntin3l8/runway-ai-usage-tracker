@@ -91,6 +91,21 @@ The source/vendor advisory is authoritative for the affected component. Scanner
 severity and fix status are retained even when Debian calls an issue minor or
 postpones a security update. Neither label alone is enough to grant an exception.
 
+### The document against the scan
+
+The document's shape is checked by the unit suite, but shape says nothing about
+whether the document still matches the image. Two things go wrong that shape
+cannot see: an entry that matches no finding waives nothing while reading
+exactly like a reviewed decision, and a finding with no entry blocks the
+promotion. Both are invisible until an audit runs.
+
+The document is therefore also checked against the scan it was written against,
+replayed through this policy's own engine rather than compared by hand. That
+scan is stored in `tests/fixtures/image-exceptions/`, and it is regenerated with
+`python -m scripts.record_image_scan` in the same pull request that re-reviews
+the document, never on its own: a fixture that drifts from the scan it records
+would check the document against a fiction.
+
 ## Trusted database caches
 
 `--database` is an operator-only path to a previously prepared, trusted local
