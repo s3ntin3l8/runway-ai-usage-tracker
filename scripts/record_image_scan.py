@@ -7,8 +7,18 @@ up in the document's own shape, so the suite checks the document against a
 stored scan instead -- see ``tests/unit/test_image_exceptions_scan.py``.
 
 This script turns an ``image-audit`` directory into that stored scan. The
-candidate and published audit jobs retain one, and it holds the unfiltered
-Grype reports and the evidence for both architectures.
+workflows retain one in three shapes, and the difference decides where the two
+architectures are:
+
+- ``immutable-image-audit`` and ``release-image-audit`` audit an image index
+  in one go, so their directory holds ``amd64.vulnerabilities.json``,
+  ``arm64.vulnerabilities.json`` and one ``evidence.json`` side by side. This
+  is the shape to record from: both architectures of one published image.
+- ``published-image-security`` holds one directory per target (``edge``,
+  ``release``), each with both architectures and its own ``evidence.json``.
+  Pass the target with ``--target``.
+- ``image-security-amd64`` and ``image-security-arm64`` are the candidate jobs,
+  and each holds one architecture. Pass it with ``--architecture``.
 
 Regenerate the fixture in the same pull request that re-reviews the document,
 never on its own: a fixture that drifts from the scan it records would check
@@ -48,31 +58,54 @@ def _reduced(match: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def record(audit_dir: Path) -> dict[str, Any]:
+def _require(mapping: dict[str, Any], key: str, where: str) -> Any:
+    """Read a key that has to be there, loudly.
+
+    A missing key would otherwise become a null in the fixture, and a fixture
+    with a null in it is a fixture that has quietly stopped recording
+    anything.
+    """
+    if key not in mapping:
+        raise ValueError(f"{where} has no {key!r}")
+    return mapping[key]
+
+
+def record(audit_dir: Path, target: str | None = None) -> dict[str, Any]:
     """Build the fixture from an ``image-audit`` directory."""
-    evidence = json.loads((audit_dir / "evidence.json").read_text())
-    listing = evidence.get("database_listing", {})
+    source = audit_dir / target if target else audit_dir
+    if not source.is_dir():
+        raise ValueError(f"No audit directory at {source}")
+
+    evidence = json.loads((source / "evidence.json").read_text())
+    listing = _require(evidence, "database_listing", f"{source}/evidence.json")
     fixture: dict[str, Any] = {
         "schema_version": 1,
-        "image": evidence.get("image"),
-        "scanned_at": evidence.get("scanned_at"),
+        "image": _require(evidence, "image", f"{source}/evidence.json"),
+        "scanned_at": _require(evidence, "scanned_at", f"{source}/evidence.json"),
         "database": {
-            "built": listing.get("built"),
-            "checksum": listing.get("checksum"),
+            "built": _require(listing, "built", f"{source}/evidence.json"),
+            "checksum": _require(listing, "checksum", f"{source}/evidence.json"),
         },
         "architectures": {},
     }
+    platforms = _require(evidence, "platforms", f"{source}/evidence.json")
     for architecture in ARCHITECTURES:
-        report = json.loads((audit_dir / f"{architecture}.vulnerabilities.json").read_text())
+        report_path = source / f"{architecture}.vulnerabilities.json"
+        if not report_path.is_file():
+            raise ValueError(
+                f"{source} has no {architecture}.vulnerabilities.json; it holds "
+                f"{sorted(path.name for path in source.glob('*.vulnerabilities.json'))}"
+            )
+        report = json.loads(report_path.read_text())
         blocking = [
             _reduced(match)
             for match in report["matches"]
             if match["vulnerability"]["severity"] in BLOCKING_SEVERITIES
         ]
-        platform = evidence.get("platforms", {}).get(architecture, {})
+        platform = _require(platforms, architecture, f"{source}/evidence.json")
         fixture["architectures"][architecture] = {
-            "image": platform.get("image"),
-            "counts": platform.get("counts", {}),
+            "image": _require(platform, "image", f"{source}/evidence.json platforms"),
+            "counts": _require(platform, "counts", f"{source}/evidence.json platforms"),
             "matches": blocking,
         }
     return fixture
@@ -81,6 +114,7 @@ def record(audit_dir: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     audit_dir, output = Path("image-audit"), Path("tests/fixtures/image-exceptions/scan.json")
+    target = None
     index = 0
     while index < len(argv):
         option = argv[index]
@@ -90,13 +124,17 @@ def main(argv: list[str] | None = None) -> int:
         elif option == "--output" and index + 1 < len(argv):
             output = Path(argv[index + 1])
             index += 2
+        elif option == "--target" and index + 1 < len(argv):
+            target = argv[index + 1]
+            index += 2
         else:
             print(__doc__)
             return 2
-    if not audit_dir.is_dir():
-        print(f"No audit directory at {audit_dir}")
+    try:
+        fixture = record(audit_dir, target)
+    except (OSError, ValueError) as exc:
+        print(f"Cannot record the scan: {exc}")
         return 1
-    fixture = record(audit_dir)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(fixture, indent=2, sort_keys=True) + "\n")
     for architecture, recorded in fixture["architectures"].items():
