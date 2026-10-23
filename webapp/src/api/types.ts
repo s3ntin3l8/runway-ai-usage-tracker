@@ -48,6 +48,7 @@ export interface LimitCard {
   input_source?: string;
   error_type?: string | null;
   tier?: string | null;
+  billing_evidence?: string | null;
   usage_url?: string | null;
   updated_at?: string | null;
   // Poll timing — set by /usage/fleet on the critical_gauge card only.

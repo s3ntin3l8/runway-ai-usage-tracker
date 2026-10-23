@@ -208,6 +208,7 @@ interface LimitCard {
   stale?: boolean;        // Cache served past STALE_CEILING — real but old data (since #293)
   collection_failing?: boolean;  // Collection is failing; set alongside `stale`, drives frontend cardStale()
   tier?: string;          // "Free" | "Pro" | "Enterprise"
+  billing_evidence?: string | null;  // "placeholder" | "prepaid_credit" - evidence that decides no billing model
   usage_url?: string;     // Link to provider usage page
   updated_at?: string;    // ISO 8601 timestamp
   metadata?: Record<string, unknown>;  // Free-form, provider-specific extras
@@ -388,15 +389,24 @@ with `org: `, lives in the card's detail, where the tagger reads it back.
 The billing model is read off the shape of the cards the account publishes: a
 card reporting a percentage of a limit describes a subscription, a card
 reporting a currency balance describes pay-as-you-go, and a quota card wins
-when an account publishes both. It is written to `ProviderConfig.billing_type`
-when the account row is created. An existing row keeps the type the operator
-chose — change it in Settings, and no later poll undoes that.
+when an account publishes both. A card may also name the kind of evidence it
+is: `"placeholder"` for a window the collector invented, `"prepaid_credit"`
+for a claude.ai account's prepaid balance. Such a card decides nothing, so an
+account that published only a balance proves no model at all.
+
+The billing model is written to `ProviderConfig.billing_type` when the
+account row is created, and a `billing_type` nobody set is filled in on a
+later poll. A model the operator chose is never overwritten — change it in
+Settings, and no later poll undoes that. `ProviderConfig.billing_type_source`
+says who wrote it: `"operator"` for the operator's own choice, `"detected"`
+for a proof the server reached, and empty when nobody has decided yet.
 
 An account added **by hand** is priced the same way: the preview returns the
 model it proved as `suggested_billing_type` (a Console connection is priced
 while the organization is picked; a subscription is priced on request with
-`detect_billing: true`), and the wizard offers it as a suggestion. The
-operator's own choice wins; a model nobody chose is left to the server's proof.
+`detect_billing: true`, which takes either a Claude web session or an OAuth
+token), and the wizard offers it as a suggestion. The operator's own choice
+wins; a model nobody chose is left to the server's proof.
 
 ### Native Claude OAuth token metadata
 
