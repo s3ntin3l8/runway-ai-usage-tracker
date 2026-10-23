@@ -47,6 +47,8 @@ def _add_event(
     cost_output: float = 0.0,
     cost_cache_read: float = 0.0,
     cost_cache_create: float = 0.0,
+    subagent_type: str | None = None,
+    turn_id: str | None = None,
 ) -> None:
     ev = UsageEvent(
         provider_id="anthropic",
@@ -67,6 +69,8 @@ def _add_event(
         cost_cache_create=cost_cache_create,
         sidecar_id="local",
         kind="message",
+        subagent_type=subagent_type,
+        turn_id=turn_id,
     )
     session.add(ev)
     session.commit()
@@ -397,3 +401,75 @@ class TestByModelSessionIdRequired:
 
         results = _sessions(db_session)
         assert results == []
+
+
+class TestSubagentTurns:
+    """The Agents card counts turns, not the events behind them."""
+
+    def test_turns_are_counted_distinctly_when_the_provider_names_a_turn(self, db_session):
+        # A provider that emits one event per request (MiniMax Code): six
+        # requests, one turn.
+        for index in range(6):
+            _add_event(
+                db_session,
+                event_id=f"t{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                subagent_type="Explore",
+                turn_id="turn_1",
+            )
+        row = _sessions(db_session)[0]
+        explore = {e["subagent_type"]: e for e in row["subagents"]}["Explore"]
+        assert explore["turns"] == 1
+        assert explore["requests"] == 6
+
+    def test_several_turns_are_counted_separately(self, db_session):
+        for index in range(4):
+            _add_event(
+                db_session,
+                event_id=f"t{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                subagent_type="Explore",
+                turn_id=f"turn_{index % 2}",
+            )
+        row = _sessions(db_session)[0]
+        explore = {e["subagent_type"]: e for e in row["subagents"]}["Explore"]
+        assert explore["turns"] == 2
+        assert explore["requests"] == 4
+
+    def test_a_provider_without_a_turn_id_keeps_the_event_count(self, db_session):
+        # Claude Code emits one event per message, so the turn count is the
+        # event count and nothing changes.
+        for index in range(3):
+            _add_event(
+                db_session,
+                event_id=f"c{index}",
+                session_id="s2",
+                model_id="m",
+                ts=_NOW,
+                subagent_type="Explore",
+            )
+        row = _sessions(db_session)[0]
+        explore = {e["subagent_type"]: e for e in row["subagents"]}["Explore"]
+        assert explore["turns"] == 3
+        assert explore["requests"] == 3
+
+    def test_the_requests_do_not_change_the_token_totals(self, db_session):
+        for index in range(6):
+            _add_event(
+                db_session,
+                event_id=f"t{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                tokens_input=100,
+                tokens_output=10,
+                subagent_type="Explore",
+                turn_id="turn_1",
+            )
+        row = _sessions(db_session)[0]
+        explore = {e["subagent_type"]: e for e in row["subagents"]}["Explore"]
+        assert explore["tokens_total"] == 6 * 110

@@ -236,6 +236,10 @@ export interface SessionModelSplit extends CumulativeModelBucket {
 export interface SubagentSplit {
   subagent_type: string; // "Explore" | "Plan" | …
   turns?: number;
+  // The API requests behind those turns. Equal to `turns` for a provider
+  // that emits one event per message, larger for one that emits an event
+  // per request (MiniMax Code).
+  requests?: number;
   tokens_total?: number;
   tokens_input?: number;
   tokens_output?: number;

@@ -228,6 +228,11 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("audit_log", "actor_type", "VARCHAR"),
     ("audit_log", "actor_meta_json", "VARCHAR"),
     ("usage_events", "subagent_type", "VARCHAR"),
+    # The provider's own turn identifier (MiniMax Code). Lets the Sessions
+    # view count turns instead of requests for a provider that emits one
+    # event per request; NULL for the providers that emit one event per
+    # message.
+    ("usage_events", "turn_id", "VARCHAR"),
     ("usage_events", "attribution_source", "VARCHAR NOT NULL DEFAULT 'unknown'"),
     # Working-directory / project context + tool names (universal project linking).
     ("usage_events", "cwd", "VARCHAR"),

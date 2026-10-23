@@ -116,11 +116,17 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
         """
     )
 
+    # The subagent split counts *turns*, not events. A provider that emits one
+    # event per request (MiniMax Code) carries its own turn id, so the turns
+    # are counted distinctly; a provider that emits one event per message
+    # (Claude Code) carries none, and the fallback keeps the old event count —
+    # `event_id` is unique per provider, so the two agree there.
     subagent_sql = text(
         f"""
         SELECT
             subagent_type,
-            COUNT(*)                                            AS turns,
+            COUNT(DISTINCT COALESCE(turn_id, event_id))          AS turns,
+            COUNT(*)                                            AS requests,
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create
                 + tokens_reasoning)                             AS tokens_total,
@@ -232,6 +238,10 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
                 {
                     "subagent_type": sa.subagent_type,
                     "turns": int(sa.turns or 0),
+                    # The event count behind those turns. Equal to `turns` for
+                    # a provider that emits one event per message, larger for
+                    # one that emits an event per request.
+                    "requests": int(sa.requests or 0),
                     "tokens_total": int(sa.tokens_total or 0),
                     "tokens_input": int(sa.tokens_input or 0),
                     "tokens_output": int(sa.tokens_output or 0),

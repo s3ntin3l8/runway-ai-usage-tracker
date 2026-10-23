@@ -526,6 +526,10 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     subagent_type: str | None = Field(
         default=None, index=True
     )  # "Explore" | "Plan" | None for main thread
+    # The provider's own turn identifier, when it has one (MiniMax Code).
+    # A provider that emits one event per request uses it to count turns
+    # instead of requests; NULL means "one event per message".
+    turn_id: str | None = None
     tokens_input: int = Field(default=0)  # non-cached prompt tokens
     tokens_output: int = Field(default=0)  # completion tokens
     tokens_cache_read: int = Field(default=0)  # free reads

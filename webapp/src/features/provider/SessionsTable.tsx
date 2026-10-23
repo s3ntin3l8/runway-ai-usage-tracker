@@ -171,6 +171,12 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
                 cost={bucketCost(a, excludeCache)}
                 metrics={[
                   { label: 'Turns', value: (a.turns ?? 0).toLocaleString() },
+                  // A provider that emits an event per request (MiniMax Code)
+                  // counts more requests than turns; the split is only worth
+                  // showing when the two differ.
+                  ...(a.requests != null && a.requests !== (a.turns ?? 0)
+                    ? [{ label: 'Requests', value: a.requests.toLocaleString() }]
+                    : []),
                   { label: 'Tools', value: (a.tool_calls ?? 0).toLocaleString() },
                   { label: 'Tokens', value: formatTokens(a.tokens_total ?? 0) },
                 ]}

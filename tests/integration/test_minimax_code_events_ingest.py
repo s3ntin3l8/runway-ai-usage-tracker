@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ from app.core.db import get_session
 from app.main import app
 from app.models.db import UsageEvent
 from app.services.pricing_seed import seed_pricing_table
+from app.services.queries.sessions import query_sessions
 from scripts.sidecar_pkg.event_extractors.minimax_code import parse_minimax_code_events
 from scripts.sidecar_pkg.transport import signing_timestamp
 from tests.fixtures.minimax_code_fixture import DEFAULT_USAGE, make_minimax_code_store
@@ -70,8 +72,8 @@ def _push(events: list[dict]) -> dict:
     return response.json()
 
 
-def _extracted(tmp_path) -> list[dict]:
-    db_path = make_minimax_code_store(tmp_path)
+def _extracted(tmp_path, store: Path | None = None) -> list[dict]:
+    db_path = store if store is not None else make_minimax_code_store(tmp_path)
     events = parse_minimax_code_events(
         db_path,
         account_id="minimax-user@example.com",
@@ -89,6 +91,56 @@ def _extracted(tmp_path) -> list[dict]:
         payload["account_source"] = "tag"
         payloads.append(payload)
     return payloads
+
+
+def _background_store(tmp_path) -> Path:
+    """A runtime store with a background task spawned by the main session."""
+    return make_minimax_code_store(
+        tmp_path,
+        sessions=[
+            {
+                "session_id": "mvs_main",
+                "workspace_dir": "/home/user/project",
+                "extra_data_json": {"effectiveModel": "minimax/MiniMax-M3.1-Flash"},
+            },
+            {
+                "session_id": "mvs_bg",
+                "agent_name": "explore",
+                "workspace_dir": "/home/user/project",
+                "extra_data_json": {"effectiveModel": "minimax/MiniMax-M3.1-Flash"},
+                "parent_session_id": "mvs_main",
+                "session_kind": "task",
+                "purpose": "local-background-task:bg_1234",
+            },
+        ],
+        usage=[
+            {
+                "id": 10,
+                "session_id": "mvs_bg",
+                "agent_name": "explore",
+                "turn_id": "turn_task_bg_bg_1234",
+                "ts": DEFAULT_USAGE[0]["ts"] + 30000,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "reasoning_tokens": 0,
+                "cache_read_tokens": 500,
+                "cache_write_tokens": 0,
+            },
+            {
+                "id": 11,
+                "session_id": "mvs_bg",
+                "agent_name": "explore",
+                "turn_id": "turn_task_bg_bg_1234",
+                "ts": DEFAULT_USAGE[0]["ts"] + 31000,
+                "input_tokens": 120,
+                "output_tokens": 25,
+                "reasoning_tokens": 0,
+                "cache_read_tokens": 600,
+                "cache_write_tokens": 0,
+            },
+        ],
+        parent_links=True,
+    )
 
 
 def test_minimax_code_events_land_under_the_minimax_provider(session, tmp_path):
@@ -136,3 +188,43 @@ def test_replaying_the_same_minimax_code_events_is_a_no_op(session, tmp_path):
     assert data["events_inserted"] == 0
     assert data["events_duplicate"] == len(events)
     assert len(session.exec(select(UsageEvent)).all()) == before
+
+
+def test_a_background_task_is_filed_under_the_session_that_spawned_it(session, tmp_path):
+    """The background task is the parent's subagent work, not a conversation."""
+    events = _extracted(tmp_path, store=_background_store(tmp_path))
+    data = _push(events)
+    assert data["events_inserted"] == len(events)
+
+    rows = list(session.exec(select(UsageEvent)).all())
+    bg = [row for row in rows if row.turn_id == "turn_task_bg_bg_1234"]
+    assert len(bg) == 2
+    for row in bg:
+        assert row.session_id == "mvs_main"
+        assert row.subagent_type == "Explore"
+        provenance = json.loads(row.raw_json)
+        assert provenance["source_session_id"] == "mvs_bg"
+        assert provenance["parent_session_id"] == "mvs_main"
+
+    # The background task is not a session of its own any more.
+    assert not [row for row in rows if row.session_id == "mvs_bg"]
+
+
+def test_the_parent_session_shows_the_background_work_as_its_explore_agent(session, tmp_path):
+    events = _extracted(tmp_path, store=_background_store(tmp_path))
+    _push(events)
+
+    sessions = query_sessions(
+        session,
+        provider_id="minimax",
+        account_id="minimax-user@example.com",
+        since=datetime.fromtimestamp(DEFAULT_USAGE[0]["ts"] / 1000, tz=UTC) - timedelta(days=1),
+    )
+    assert [row["session_id"] for row in sessions] == ["mvs_main"]
+    agents = {a["subagent_type"]: a for a in sessions[0]["subagents"]}
+    assert set(agents) == {"Explore"}
+    # One background task, two API requests: the card counts the turn and
+    # reports the requests behind it.
+    assert agents["Explore"]["turns"] == 1
+    assert agents["Explore"]["requests"] == 2
+    assert agents["Explore"]["tokens_total"] == (100 + 20 + 500) + (120 + 25 + 600)
