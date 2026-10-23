@@ -193,6 +193,46 @@ def test_keychain_egress_is_withheld_until_withdrawal_protocol(monkeypatch):
     assert filter_egress({"metrics": [keychain, file]})["metrics"] == [file]
 
 
+@pytest.mark.parametrize("reason", ["source_locked", "source_unsupported", "source_unreadable"])
+def test_a_blocked_source_report_survives_the_macOS_keychain_gate(monkeypatch, reason):
+    """A store the machine could not read is a report, not keychain material.
+
+    On macOS every browser-cookie origin counts as a native-browser source, so
+    the consent gate would drop this report - and the provider would look like
+    nobody is signed into it. The report names the store and the fix, nothing
+    that was read out of the Keychain.
+    """
+    from scripts.sidecar_pkg import source_consent as consent
+
+    monkeypatch.setattr(consent.sys, "platform", "darwin")
+    from scripts.sidecar_pkg.source_consent import filter_egress
+
+    blocked = {
+        "provider_id": "ollama",
+        "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+        "reason": reason,
+        "source_store": "Chrome/Default/Network/Cookies",
+        "source_detail": "held open by another process",
+        "source_remedy": "set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers)",
+    }
+    assert filter_egress({"entries": [blocked]})["entries"] == [blocked]
+
+
+def test_a_withheld_token_stays_gated_by_the_macOS_keychain_rule(monkeypatch):
+    """Only a source report is exempt; a withheld cookie origin is still gated."""
+    from scripts.sidecar_pkg import source_consent as consent
+
+    monkeypatch.setattr(consent.sys, "platform", "darwin")
+    from scripts.sidecar_pkg.source_consent import filter_egress
+
+    withheld = {
+        "provider_id": "anthropic",
+        "credential_origin": "cookie:anthropic/Chrome/Profile 1/Cookies",
+        "reason": "token_withheld",
+    }
+    assert filter_egress({"entries": [withheld]})["entries"] == []
+
+
 def test_withheld_native_scan_is_not_authoritative_logout(monkeypatch):
     from scripts.sidecar_pkg import source_consent as consent
 

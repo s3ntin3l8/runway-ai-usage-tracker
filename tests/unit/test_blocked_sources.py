@@ -53,8 +53,10 @@ def _source(provider="ollama", last_success_at=None, enabled=True, source_id="sr
 
 def test_sidecar_and_server_agree_on_the_reasons():
     from scripts.sidecar import SOURCE_BLOCK_REASONS
+    from scripts.sidecar_pkg.browser_store import SOURCE_BLOCK_REASONS as STORE_REASONS
 
-    assert SOURCE_REASONS == SOURCE_BLOCK_REASONS
+    assert SOURCE_REASONS == STORE_REASONS
+    assert SOURCE_BLOCK_REASONS == STORE_REASONS
 
 
 def test_only_a_source_reason_marks_a_row_as_blocked():

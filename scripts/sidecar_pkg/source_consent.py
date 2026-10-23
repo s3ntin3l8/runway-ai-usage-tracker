@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Any
 
+from scripts.sidecar_pkg.browser_store import SOURCE_BLOCK_REASONS
 from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule
 
 
@@ -234,7 +235,21 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
         )
         source_id = source_for_origin(provider, origin)
         proof = value.get("keychain_consent")
-        keychain = "keychain_consent" in value or (sys.platform == "darwin" and bool(source_id))
+        # A report about a credential source the machine could not read is not
+        # keychain-bound: it names the store, gives a reason from a fixed
+        # vocabulary and states the remedy - no keychain-derived material, no
+        # account id, no secret. The consent rules gate what is read out of the
+        # Keychain, so they do not apply to it. Without this exemption the report
+        # is dropped on macOS - where every browser-cookie origin counts as a
+        # native-browser source - and the provider looks like nobody is signed
+        # into it.
+        source_block = str(value.get("reason", "")) in SOURCE_BLOCK_REASONS
+        keychain = not source_block and (
+            "keychain_consent" in value or (sys.platform == "darwin" and bool(source_id))
+        )
+        if source_block:
+            # A source report proves consent for nothing, so it never carries one.
+            result.pop("keychain_consent", None)
         if keychain:
             if (
                 not authenticated

@@ -91,6 +91,12 @@ STATE_REASONS: dict[StoreState, str] = {
     StoreState.NOT_SQLITE: "source_unreadable",
 }
 
+# The same vocabulary as a set, for the places that ask "is this report about a
+# store the sidecar could not read?". The egress filter needs it: a report
+# about an unusable store carries no keychain-derived material, so it is not
+# gated by the Keychain consent rules the way a cookie origin is.
+SOURCE_BLOCK_REASONS = frozenset(STATE_REASONS.values())
+
 
 @dataclass(frozen=True)
 class StoreProbe:

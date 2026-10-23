@@ -2463,7 +2463,7 @@ _cookie_store_blocked: dict[str, _BlockedCookieStore] = {}
 
 # The reasons the server understands for an unusable store. Mirrored by
 # ``app/services/blocked_sources.py``; a parity test keeps the two equal.
-SOURCE_BLOCK_REASONS = frozenset(browser_store.STATE_REASONS.values())
+SOURCE_BLOCK_REASONS = browser_store.SOURCE_BLOCK_REASONS
 
 
 def reset_cookie_store_tracking() -> None:
