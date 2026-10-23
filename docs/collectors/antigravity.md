@@ -297,6 +297,7 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Conversation DB parser |
 | `scripts/sidecar_pkg/agy_version.py` | Installed agy CLI's version (reported with the token) |
 | `scripts/sidecar_pkg/keyring_value.py` | Unwraps the go-keyring envelope the macOS Keychain entry stores |
+| `scripts/sidecar_pkg/agy_keychain.py` | The macOS Keychain entry: catalogued rule, CLI version, and what the keep-alive reads |
 | `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
 | `scripts/sidecar_pkg/keep_alive.py` | Optional `--keep-alive` thread (`agy models` renewal) |
 | `scripts/reclassify_antigravity_models.py` | One-shot repair for pre-version-preservation rows |
