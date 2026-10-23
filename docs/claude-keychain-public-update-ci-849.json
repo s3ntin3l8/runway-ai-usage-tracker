@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-23",
+  "environment": "GitHub-hosted macos-15, arm64, Python 3.12.10",
+  "workflow_run": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40002432184",
+  "artifact": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40002432184/artifacts/12521674197",
+  "workflow_conclusion": "failure",
+  "cause_established": false,
+  "result": {
+    "scope": "private-synthetic-keychains-public-api-only",
+    "real_claude_credential_operations": 0,
+    "claude_oauth_exchanges": 0,
+    "cases": [
+      {
+        "case": "metadata-control",
+        "failure": "timed_out",
+        "stages": [
+          "start",
+          "interaction_disabled",
+          "private_keychain_opened",
+          "before_item_metadata",
+          "owner_verified",
+          "before_update"
+        ],
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": false,
+        "metadata_checks": {
+          "default_same": true,
+          "default_lock_same": false,
+          "search_list_same": true,
+          "search_locks_same": false
+        },
+        "isolation_failed": true
+      }
+    ],
+    "matrix_complete": false,
+    "candidate_found": false,
+    "phase": "case",
+    "active_case": "metadata-control",
+    "stopped_after_failure": true,
+    "supervisor_failure": "probe_failed"
+  },
+  "source_commit_url": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/edadc282801486910dca2b002fafb474c2265f87"
+}

@@ -49,8 +49,8 @@ comparison did not retain the detailed before/after state needed to explain
 when the lock changed. No code in the probe locks the login Keychain. Do not
 infer from this that the experiment caused or did not cause the state change.
 
-Native testing is stopped until this incident is explained and the environment
-is suitable. No real Claude token was read, refreshed, or written by this probe.
+Personal-machine native testing remains stopped. Further synthetic execution is
+restricted to disposable hosted CI. No real Claude token was read, refreshed, or written by this probe.
 No real Keychain password or owner-authorization change was requested.
 
 ## Harness corrections
@@ -67,7 +67,7 @@ result. Both regressions, cancellation through failed cleanup, and the existing 
 tests pass without loading native frameworks. The C program compiles with warnings treated as
 errors, and an invalid-scope startup control exits before any Keychain call.
 
-The corrected full native matrix has not been executed. These changes improve
+No complete corrected native matrix result is available. These changes improve
 the investigation boundary; they do not solve cross-application policy
 preservation. The production guard from #751 remains unchanged.
 
@@ -101,12 +101,30 @@ compilation/signing/signature-verification failures, interruption, process-group
 deadlines, and Python/C synthetic lookup consistency. Reports contain fixed
 phases, numeric statuses, and booleans; exception text, subprocess output, and
 user paths are excluded. Atomic progress snapshots survive an outer deadline;
-the supervisor marks the result incomplete and nonzero after killing and reaping
-the probe process group. An incomplete matrix never reports a candidate.
+the supervisor marks the result incomplete and nonzero after killing the probe
+process group and reaping its child. An incomplete matrix never reports a candidate.
 
 The `security_cli_active` preflight checks only the `security` executable. It
 does not detect permission dialogs, block the `securityd` daemon, or establish
 what caused the historical isolation failure. The native fixed-target guard and
-production unsupported-policy guard are unchanged. A fresh hosted CI execution
-and its sanitized artifact will be linked here separately from native renewal,
-real-account, signing, and update-continuity acceptance.
+production unsupported-policy guard are unchanged.
+
+## Hosted CI attempt on 2026-10-23
+
+The explicitly dispatched [hosted macOS run](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40002432184)
+used commit `edadc282801486910dca2b002fafb474c2265f87`. Compilation and signature
+verification completed. The metadata control reached `before_update`, timed out,
+and stopped the matrix. The report preserves those stages despite cleanup's
+failed metadata assertion. Temporary Keychains were deleted. Default/search-list
+paths were unchanged; their lock-state comparisons changed. The job exited 1 and
+successfully uploaded its [sanitized artifact](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40002432184/artifacts/12521674197).
+The report is also retained in [checked-in evidence](claude-keychain-public-update-ci-849.json)
+because hosted artifacts expire.
+
+This is a failed isolation result (`matrix_complete=false`, `candidate_found=false`),
+with zero real Claude credential operations or OAuth exchanges. It reproduces the
+failure boundary on a disposable runner but does not establish the cause of the
+lock-state change, the historical prompt loop, or the native timeout. No further
+native attempt was made. #773 retains investigation of that boundary; #750/#767/#781
+and #526 retain renewal, signing/update continuity, provider authorization, and
+real-account acceptance. No candidate or production write path is promoted.
