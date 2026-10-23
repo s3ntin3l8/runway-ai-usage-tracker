@@ -156,6 +156,7 @@ def test_authorization_child_writes_the_refusal_when_there_is_no_console(monkeyp
     assert messages and "source_authorization.txt" in messages[0]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="native scope uses POSIX ownership")
 def test_authorization_child_reports_a_denied_keychain_read(monkeypatch, tmp_path, capsys):
     """A denied read is reported with its own reason, not as an opaque failure."""
     from scripts.sidecar_pkg import keychain_authorization, macos_keychain_store, source_setup
