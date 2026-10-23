@@ -100,7 +100,9 @@ def findings(root: Path, pins: dict[str, str]) -> list[str]:
         if recorded != reference.revision:
             problems.append(
                 f"{reference.path}:{reference.line}: {reference.action} is pinned to "
-                f"{reference.revision}, but the recorded revision is {recorded}"
+                f"{reference.revision}, but {PINS_LABEL} records {recorded}. "
+                f"Update the record to {reference.revision} once the new revision "
+                "is reviewed."
             )
     for action in sorted(set(pins) - used):
         problems.append(f"{action} is recorded in {PINS_LABEL}, but no workflow uses it")

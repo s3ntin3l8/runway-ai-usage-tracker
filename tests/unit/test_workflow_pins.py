@@ -7,7 +7,8 @@ import pytest
 
 from scripts.check_workflow_pins import (
     PINS_FILE,
-    REPO_ROOT,
+    PINS_LABEL,
+    REVISION,
     WORKFLOWS,
     findings,
     load_pins,
@@ -28,7 +29,18 @@ class TestShippedWorkflowsArePinned:
 
     def test_every_external_reference_is_pinned_to_a_commit_sha(self):
         for reference in references(WORKFLOWS):
-            assert len(reference.revision) == 40, f"{reference.path}:{reference.line}"
+            assert REVISION.fullmatch(reference.revision), (
+                f"{reference.path}:{reference.line} pins {reference.action} to "
+                f"{reference.revision!r}, which is not a commit SHA"
+            )
+
+
+class TestTheRecord:
+    def test_every_recorded_revision_is_a_commit_sha(self):
+        for action, revision in load_pins().items():
+            assert REVISION.fullmatch(revision), (
+                f"{PINS_LABEL} records {revision!r} for {action}, which is not a commit SHA"
+            )
 
     def test_the_record_covers_every_action_the_workflows_use(self):
         recorded = set(load_pins())
@@ -130,7 +142,3 @@ class TestLoadPins:
         wrong.write_text("[]")
         with pytest.raises(ValueError, match="must map an action"):
             load_pins(wrong)
-
-
-def test_the_record_lives_next_to_the_checker():
-    assert PINS_FILE == REPO_ROOT / "scripts" / "action_pins.json"
