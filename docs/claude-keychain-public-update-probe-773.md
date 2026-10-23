@@ -64,7 +64,7 @@ Cleanup now disables interaction. The probe retains the original timeout, filter
 fixed stage markers, stops after an incomplete/isolation-failed case, and reports
 failure rather than interpreting an incomplete matrix as a negative candidate
 result. Both regressions, cancellation through failed cleanup, and the existing isolation
-tests pass without loading native frameworks (14 tests). The C program compiles with warnings treated as
+tests pass without loading native frameworks. The C program compiles with warnings treated as
 errors, and an invalid-scope startup control exits before any Keychain call.
 
 The corrected full native matrix has not been executed. These changes improve
@@ -93,3 +93,20 @@ Production retains the unsupported-partition-policy guard. Safe refusal is not
 renewal acceptance. Remaining native write-path work is tracked in #773; signing
 and update continuity in #767; provider authorization in #781; real-item
 acceptance in #750 and #526.
+
+## Diagnostic follow-up (#849)
+
+Nonnative tests now cover writer exits 64/65/66, allowlisted stage retention,
+compilation/signing/signature-verification failures, interruption, process-group
+deadlines, and Python/C synthetic lookup consistency. Reports contain fixed
+phases, numeric statuses, and booleans; exception text, subprocess output, and
+user paths are excluded. Atomic progress snapshots survive an outer deadline;
+the supervisor marks the result incomplete and nonzero after killing and reaping
+the probe process group. An incomplete matrix never reports a candidate.
+
+The `security_cli_active` preflight checks only the `security` executable. It
+does not detect permission dialogs, block the `securityd` daemon, or establish
+what caused the historical isolation failure. The native fixed-target guard and
+production unsupported-policy guard are unchanged. A fresh hosted CI execution
+and its sanitized artifact will be linked here separately from native renewal,
+real-account, signing, and update-continuity acceptance.

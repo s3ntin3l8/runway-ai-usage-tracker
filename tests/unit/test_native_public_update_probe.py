@@ -1,7 +1,10 @@
 """No native frameworks: regressions for failed #773 probe cleanup/reporting."""
 
+import json
+import re
 import subprocess
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -116,7 +119,7 @@ def test_probe_retains_primary_error_when_cleanup_fails(monkeypatch, tmp_path, i
     assert "arbitrary diagnostic" not in str(result)
 
 
-def test_active_security_requester_blocks_before_metadata_or_fixture(monkeypatch):
+def test_active_security_cli_blocks_before_metadata_or_fixture(monkeypatch):
     monkeypatch.setattr(
         probe.subprocess,
         "run",
@@ -133,7 +136,7 @@ def test_active_security_requester_blocks_before_metadata_or_fixture(monkeypatch
 
     report = probe.run()
 
-    assert report["blocked_reason"] == "security_requester_active"
+    assert report["blocked_reason"] == "security_cli_active"
     assert report["cases"] == []
     assert report["matrix_complete"] is False
 
@@ -209,3 +212,196 @@ def test_probe_quarantined_outside_explicit_ephemeral_ci(monkeypatch, changes):
 )
 def test_incomplete_or_unsafe_report_fails_process(report, expected):
     assert probe.report_exit_code(report) == expected
+
+
+@pytest.fixture
+def synthetic_case(monkeypatch, tmp_path):
+    snapshot = {"default": {"path": "synthetic", "unlocked": True}, "search_list": []}
+
+    class SyntheticFixture:
+        def __init__(self, _writer):
+            self.before = snapshot
+            self.cleanup = {}
+            self.directory = SimpleNamespace(name=str(tmp_path))
+            self.keychains = [1]
+            self.api = SimpleNamespace(call=lambda *args: {"data": probe.ORIGINAL})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.cleanup = {
+                "temporary_keychains_deleted": True,
+                "user_keychain_metadata_unchanged": True,
+            }
+
+        def add(self, **_kwargs):
+            return b"synthetic-reference"
+
+        def paths(self):
+            return [tmp_path / "fixture-0.keychain-db"]
+
+    monkeypatch.setattr(probe, "preflight", lambda: None)
+    monkeypatch.setattr(probe, "Fixture", SyntheticFixture)
+    monkeypatch.setattr(probe, "validate_scope", lambda _root, paths: paths)
+    monkeypatch.setattr(probe, "capture", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(probe, "environment_snapshot", lambda: snapshot)
+
+
+@pytest.mark.parametrize("exit_code", [64, 65, 66])
+def test_writer_failure_retains_only_allowlisted_stages(
+    monkeypatch, tmp_path, synthetic_case, exit_code
+):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [],
+            exit_code,
+            stdout=b"private-output",
+            stderr=b"stage:start\nstage:private-detail\nprivate-stderr\nstage:before_item_metadata\n",
+        ),
+    )
+    result = probe.run_case(tmp_path / "writer", "metadata-control")
+    assert result["stages"] == ["start", "before_item_metadata"]
+    assert result["writer_exit_code"] == exit_code
+    assert "failure" in result
+    assert "private-" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("phase,index", [("compile", 0), ("sign", 1), ("verify_signature", 2)])
+@pytest.mark.parametrize(
+    "failure", [OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired]
+)
+def test_build_failures_save_sanitized_nonzero_report(monkeypatch, tmp_path, phase, index, failure):
+    monkeypatch.setattr(probe, "preflight", lambda: None)
+    calls = []
+
+    def execute(command, **_kwargs):
+        calls.append(command)
+        if len(calls) - 1 == index:
+            if failure is OSError:
+                raise OSError("private-build-detail")
+            if failure is subprocess.CalledProcessError:
+                raise failure(1, command, output=b"private-build-detail", stderr=b"private-error")
+            raise failure(command, 1, stderr=b"private-build-detail")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    path = tmp_path / "report.json"
+    code = probe.main(SimpleNamespace(case=None, report=path))
+    report = json.loads(path.read_text())
+    assert code != 0
+    assert report["failure"] == phase + "_failed"
+    assert report["matrix_complete"] is False
+    assert report["candidate_found"] is False
+    assert report["cases"] == []
+    assert "private-build-detail" not in path.read_text()
+    assert "private-error" not in path.read_text()
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("phase", ["build", "case"])
+def test_interruptions_save_report_and_exit_nonzero(monkeypatch, tmp_path, interruption, phase):
+    monkeypatch.setattr(probe, "preflight", lambda: None)
+
+    def interrupt(*_args, **_kwargs):
+        raise interruption("private-interruption-detail")
+
+    monkeypatch.setattr(
+        probe.subprocess, "run", interrupt if phase == "build" else lambda *a, **k: None
+    )
+    monkeypatch.setattr(probe, "run_case", interrupt)
+    path = tmp_path / "report.json"
+    assert probe.main(SimpleNamespace(case=None, report=path)) != 0
+    report = json.loads(path.read_text())
+    assert report["failure"] == "interrupted"
+    assert report["matrix_complete"] is False
+    assert report["candidate_found"] is False
+    assert "private-interruption-detail" not in path.read_text()
+
+
+def test_security_daemon_does_not_block_cli_preflight(monkeypatch):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=b"/usr/sbin/securityd\n/usr/libexec/securityd_service\n",
+        ),
+    )
+    monkeypatch.setattr(probe, "environment_snapshot", lambda: {"default": {"unlocked": True}})
+    assert probe.preflight() is None
+
+
+def test_native_synthetic_lookup_matches_python_fixture_identity():
+    source = (Path(probe.ROOT) / "tests/native/keychain_public_update_probe.c").read_text()
+    assert re.findall(r'kSecAttrService, CFSTR\("([^"\n]+)"\)', source) == [probe.SERVICE]
+    assert re.findall(r'kSecAttrAccount, CFSTR\("([^"\n]+)"\)', source) == [probe.ACCOUNT]
+
+
+def test_successful_writer_cannot_export_unexpected_diagnostics(
+    monkeypatch, tmp_path, synthetic_case
+):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=b'{"update_status":0,"read_status":0,"replacement_verified":false,"unexpected":"private-detail"}',
+            stderr=b"stage:after_update\nprivate-detail\n",
+        ),
+    )
+    monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
+    result = probe.run_case(tmp_path / "writer", "metadata-control")
+    assert "failure" not in result
+    assert result["stages"] == ["after_update"]
+    assert "private-detail" not in json.dumps(result)
+    assert "unexpected" not in result
+
+
+def test_post_cleanup_metadata_change_is_failed_isolation(monkeypatch, tmp_path, synthetic_case):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=b'{"update_status":0,"read_status":0,"replacement_verified":false}',
+            stderr=b"",
+        ),
+    )
+    monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
+    monkeypatch.setattr(
+        probe,
+        "environment_snapshot",
+        lambda: {
+            "default": {"path": "synthetic", "unlocked": False},
+            "search_list": [],
+        },
+    )
+    result = probe.run_case(tmp_path / "writer", "metadata-control")
+    assert result["metadata_checks"]["default_lock_same"] is False
+    assert result["isolation_failed"] is True
+    assert probe.report_exit_code({"matrix_complete": True, "cases": [result]}) == 1
+
+
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_only_complete_safe_matrix_can_report_candidate(monkeypatch, tmp_path, incomplete):
+    monkeypatch.setattr(probe, "preflight", lambda: None)
+    monkeypatch.setattr(probe.subprocess, "run", lambda *a, **k: None)
+
+    def case(_writer, mode):
+        if incomplete and mode == "data-only":
+            raise OSError("private-run-detail")
+        return {"case": mode, "candidate_preserves_shared_access": True}
+
+    monkeypatch.setattr(probe, "run_case", case)
+    path = tmp_path / "report.json"
+    result = probe.run(("metadata-control", "data-only"), report_path=path)
+    assert probe.report_exit_code(result) == int(incomplete)
+    assert result["candidate_found"] is (not incomplete)
+    assert result["matrix_complete"] is (not incomplete)
+    assert "private-run-detail" not in path.read_text()

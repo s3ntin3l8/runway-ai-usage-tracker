@@ -56,9 +56,9 @@ def snapshot_checks(before: dict, after: dict) -> dict[str, bool]:
     }
 
 
-def preflight() -> str | None:
-    """Stop before fixture creation if the host cannot support a quiet probe."""
-    if not all(
+def hosted_ci() -> bool:
+    """Pure environment gate, checked before subprocesses or native metadata."""
+    return all(
         os.environ.get(name) == value
         for name, value in {
             "CI": "true",
@@ -67,7 +67,12 @@ def preflight() -> str | None:
             "RUNNER_OS": "macOS",
             "RUNWAY_NATIVE_SYNTHETIC": "1",
         }.items()
-    ):
+    )
+
+
+def preflight() -> str | None:
+    """Stop before fixture creation if the host cannot support a quiet probe."""
+    if not hosted_ci():
         return "ephemeral_macos_ci_required"
     try:
         processes = subprocess.run(
@@ -82,7 +87,7 @@ def preflight() -> str | None:
         Path(line.strip()).name == "security"
         for line in processes.stdout.decode(errors="replace").splitlines()
     ):
-        return "security_requester_active"
+        return "security_cli_active"
     try:
         snapshot = environment_snapshot()
         if snapshot["default"]["unlocked"] is not True:
@@ -118,9 +123,17 @@ def run_case(writer: Path, mode: str) -> dict:
                     row["failure"] = "timed_out"
                     row["stages"] = stages(exc.stderr)
                     raise
-                assert child.returncode == 0, "synthetic public writer failed"
-                row.update(json.loads(child.stdout))
                 row["stages"] = stages(child.stderr)
+                row["writer_exit_code"] = child.returncode
+                assert child.returncode == 0, "synthetic public writer failed"
+                values = json.loads(child.stdout)
+                for name, kind in (
+                    ("update_status", int),
+                    ("read_status", int),
+                    ("replacement_verified", bool),
+                ):
+                    assert type(values[name]) is kind, "invalid writer result"
+                    row[name] = values[name]
                 row.update(
                     compare(before, capture(SERVICE, ACCOUNT, keychain=fixture.keychains[0]))
                 )
@@ -152,67 +165,116 @@ def run_case(writer: Path, mode: str) -> dict:
     row.update(fixture.cleanup)
     if hasattr(fixture, "before"):
         row["metadata_checks"] = snapshot_checks(fixture.before, environment_snapshot())
-    if not all(fixture.cleanup.values()):
+    if not all(
+        fixture.cleanup.get(name) is True
+        for name in ("temporary_keychains_deleted", "user_keychain_metadata_unchanged")
+    ) or not all(row.get("metadata_checks", {}).values()):
         row["isolation_failed"] = True
     return row
 
 
-def run(selected: tuple[str, ...] = MODES) -> dict:
+def save_report(path: Path, report: dict) -> None:
+    """Keep the last complete sanitized snapshot if the outer deadline kills us."""
+    fd, name = tempfile.mkstemp(dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w") as output:
+            output.write(json.dumps(report, indent=2) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def run(selected: tuple[str, ...] = MODES, *, report_path: Path | None = None) -> dict:
     report = {
         "scope": "private-synthetic-keychains-public-api-only",
         "real_claude_credential_operations": 0,
         "claude_oauth_exchanges": 0,
         "cases": [],
+        "matrix_complete": False,
+        "candidate_found": False,
     }
-    reason = preflight()
-    if reason is not None:
-        report.update(blocked_reason=reason, matrix_complete=False, candidate_found=False)
-        return report
-    with tempfile.TemporaryDirectory(prefix="runway-public-update-build-") as build:
-        writer = Path(build) / "synthetic-writer"
-        subprocess.run(
-            [
-                "/usr/bin/clang",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                "-Wno-deprecated-declarations",
-                str(ROOT / "tests/native/keychain_public_update_probe.c"),
-                "-framework",
-                "Security",
-                "-framework",
-                "CoreFoundation",
-                "-o",
-                str(writer),
-            ],
-            check=True,
-            capture_output=True,
-            timeout=30,
+    phase = "preflight"
+
+    def checkpoint(value: str) -> None:
+        nonlocal phase
+        phase = value
+        report["phase"] = value
+        if report_path is not None:
+            save_report(report_path, report)
+
+    try:
+        checkpoint("preflight")
+        reason = preflight()
+        if reason is not None:
+            report["blocked_reason"] = reason
+            return report
+        with tempfile.TemporaryDirectory(prefix="runway-public-update-build-") as build:
+            writer = Path(build) / "synthetic-writer"
+            checkpoint("compile")
+            subprocess.run(
+                [
+                    "/usr/bin/clang",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-Wno-deprecated-declarations",
+                    str(ROOT / "tests/native/keychain_public_update_probe.c"),
+                    "-framework",
+                    "Security",
+                    "-framework",
+                    "CoreFoundation",
+                    "-o",
+                    str(writer),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            checkpoint("sign")
+            subprocess.run(
+                ["/usr/bin/codesign", "--force", "--sign", "-", str(writer)],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+            checkpoint("verify_signature")
+            subprocess.run(
+                ["/usr/bin/codesign", "--verify", "--strict", str(writer)],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+            for mode in selected:
+                checkpoint("case")
+                report["active_case"] = mode
+                if report_path is not None:
+                    save_report(report_path, report)
+                row = run_case(writer, mode)
+                report["cases"].append(row)
+                if "failure" in row or row.get("isolation_failed"):
+                    report["stopped_after_failure"] = True
+                    break
+        report["matrix_complete"] = (
+            bool(selected)
+            and len(report["cases"]) == len(selected)
+            and not report.get("stopped_after_failure", False)
         )
-        subprocess.run(
-            ["/usr/bin/codesign", "--force", "--sign", "-", str(writer)],
-            check=True,
-            capture_output=True,
-            timeout=10,
+        report["candidate_found"] = report["matrix_complete"] and any(
+            row.get("candidate_preserves_shared_access", False) for row in report["cases"]
         )
-        subprocess.run(
-            ["/usr/bin/codesign", "--verify", "--strict", str(writer)],
-            check=True,
-            capture_output=True,
-            timeout=10,
-        )
-        for mode in selected:
-            row = run_case(writer, mode)
-            report["cases"].append(row)
-            if "failure" in row or row.get("isolation_failed"):
-                report["stopped_after_failure"] = True
-                break
-    report["candidate_found"] = any(
-        row.get("candidate_preserves_shared_access", False) for row in report["cases"]
-    )
-    report["matrix_complete"] = len(report["cases"]) == len(selected) and not report.get(
-        "stopped_after_failure", False
-    )
+    except (KeyboardInterrupt, SystemExit):
+        report["failure"] = "interrupted"
+        raise
+    except Exception:
+        # This experiment's diagnostic boundary deliberately excludes exception
+        # text, command arguments, native stdout/stderr and user paths.
+        report["failure"] = phase + "_failed"
+    finally:
+        if report_path is not None:
+            save_report(report_path, report)
     return report
 
 
@@ -220,8 +282,20 @@ def report_exit_code(report: dict) -> int:
     """An incomplete experiment is a failed gate, never evidence of safety."""
     return int(
         report.get("matrix_complete") is not True
+        or "failure" in report
         or any(row.get("isolation_failed") or "failure" in row for row in report.get("cases", []))
     )
+
+
+def main(args) -> int:
+    try:
+        result = run((args.case,) if args.case else MODES, report_path=args.report)
+    except KeyboardInterrupt:
+        return 130
+    except SystemExit:
+        return 1
+    print(json.dumps(result))
+    return report_exit_code(result)
 
 
 if __name__ == "__main__":
@@ -232,7 +306,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("requires native macOS")
-    result = run((args.case,) if args.case else MODES)
-    args.report.write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps(result))
-    sys.exit(report_exit_code(result))
+    sys.exit(main(args))
