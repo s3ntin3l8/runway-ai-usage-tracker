@@ -799,6 +799,9 @@ describe('the source of a pending credential', () => {
         {
           ...entry,
           credential_origin: 'cookie:anthropic/Chrome/Work/Cookies',
+          // A source id makes this a Claude browser source, which is what the
+          // old wording keyed on.
+          source_id: 'source-a',
           origin_label: 'Session cookie',
           origin_detail: null,
         },
