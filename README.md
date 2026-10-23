@@ -238,6 +238,11 @@ Runway provides a flexible, multi-layered security model:
 
 ## License
 
-AGPL-3.0 License - see [LICENSE](LICENSE) file.
+Copyright (C) 2026 Björn Hansen
 
-*Last updated: 2026-06-14*
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version (SPDX: `AGPL-3.0-or-later`). See [LICENSE](LICENSE).
+
+*Last updated: 2026-10-23*
