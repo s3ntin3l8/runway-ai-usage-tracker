@@ -256,3 +256,22 @@ it('labels fresh source reports without implying device connectivity', async () 
     screen.getByRole('button', { name: 'Revoke Claude Code contribution' }),
   ).not.toHaveAccessibleDescription(/re-pairing/);
 });
+
+it('explains reporting once for multiple sources and points to Fleet connectivity', async () => {
+  vi.mocked(api.fetchSidecarSources).mockResolvedValue({
+    protocol: 1,
+    sources: [
+      { ...source, source_id: 'github.windows-credential', label: 'GitHub' },
+      { ...source, source_id: 'antigravity.windows-credential', label: 'Antigravity' },
+    ],
+    commands: [],
+  });
+  renderWithProviders(
+    <SidecarSources osPlatform="Windows/11" sidecarId={sidecarId} />,
+  );
+  expect(await screen.findByText('Antigravity')).toBeInTheDocument();
+  expect(
+    screen.getAllByText(/Source reporting updates when credentials are submitted/),
+  ).toHaveLength(1);
+  expect(screen.getByText(/Last seen.*Fleet card/)).toBeInTheDocument();
+});

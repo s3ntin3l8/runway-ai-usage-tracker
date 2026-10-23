@@ -417,24 +417,19 @@ async def test_windows_idle_heartbeat_keeps_source_freshness_separate_from_colle
     device.platform = "Windows"
     session.add(device)
     session.commit()
-    response = post(
-        client,
-        local,
-        "/api/v1/fleet/ingest",
-        "ingest",
-        {
-            "provider": "synthetic",
-            "metrics": [
-                {
-                    "provider_id": provider,
-                    "service_name": "Synthetic",
-                    "remaining": "Token",
-                    "unit": "oauth",
-                    "metadata": {"credential_origin": origin, "oauth_token": "synthetic-access"},
-                }
-            ],
-        },
-    )
+    credential_payload = {
+        "provider": "synthetic",
+        "metrics": [
+            {
+                "provider_id": provider,
+                "service_name": "Synthetic",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {"credential_origin": origin, "oauth_token": "synthetic-access"},
+            }
+        ],
+    }
+    response = post(client, local, "/api/v1/fleet/ingest", "ingest", credential_payload)
     assert response.status_code == 200 and response.json()["credentials_rejected"] == 0
     contribution = session.exec(select(SidecarSourceContribution)).one()
     source_id = provider + ".windows-credential"
@@ -488,3 +483,13 @@ async def test_windows_idle_heartbeat_keeps_source_freshness_separate_from_colle
     assert status["last_collection_at"] == success.isoformat()
     assert source_controls.allowed(session, local["device_id"], source_id, 0)
     assert len(await TokenCache().get_pending_sources(provider)) == 1
+
+    response = post(client, local, "/api/v1/fleet/ingest", "ingest", credential_payload)
+    assert response.status_code == 200 and response.json()["credentials_rejected"] == 0
+    refreshed = client.get(f"/api/v1/fleet/sidecars/{registry_id}/sources")
+    assert refreshed.status_code == 200
+    updated = refreshed.json()["sources"][0]
+    assert datetime.fromisoformat(updated["report_at"]) > old_report
+    assert updated["report_stale"] is False
+    assert updated["collection_health"] == "healthy"
+    assert updated["last_collection_at"] == success.isoformat()

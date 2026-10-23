@@ -78,6 +78,13 @@ export function SidecarSources({
           </>
         )}
       </p>
+      {!macOS ? (
+        <p className="text-xs text-fg-muted">
+          Source reporting updates when credentials are submitted. For device
+          connectivity, check “Last seen” on the Fleet card. Server collection
+          health is shown per source.
+        </p>
+      ) : null}
       {query.isPending ? <p role="status">Loading sources…</p> : null}
       {query.isError ? (
         <p role="alert">
@@ -143,13 +150,6 @@ export function SidecarSources({
               · {timeAgo(source.report_at)}. Offline reporting does not expire
               eligible credentials.
             </p>
-            {!macOS ? (
-              <p className="text-xs text-fg-muted">
-                Source reporting updates when credentials are submitted. Device
-                connectivity is shown separately from source reporting and server
-                collection health.
-              </p>
-            ) : null}
             <p className="text-xs text-fg-muted">
               Renewal:{' '}
               {!source.renewal_capable
