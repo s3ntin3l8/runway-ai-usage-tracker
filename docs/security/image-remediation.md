@@ -231,8 +231,17 @@ above, against the same database, for the same index:
 | Reference | Digest |
 | --- | --- |
 | Published index | `sha256:8c80658517230894fa688884635cea163cb93003fc2bfd2bb2fd5b860332ffbc` |
-| linux/amd64 | `sha256:a278ab0602695233fc2655037f930a1c44e31b5abd5a2e8b0522c379a94c5f62` |
-| linux/arm64 | `sha256:925992dd6ed17da65020f06edcd7f5ce24986e97e0fba0eef3134f68d961a9d9` |
+| linux/amd64 manifest, as published and audited | `sha256:d7dca295e16ae42dd50d23b80c82b5cb9bc3cb6f46c1ad6055624f3819efb43d` |
+| linux/arm64 manifest, as published and audited | `sha256:a0708e1998c4bc4017f4533081b2d0bfbcbe2043cbbc0a51eed3c21fc36e370a` |
+
+These are the digests the published tag resolves to and the ones the audit
+scanned. They are not the digests the `digests-*` artifacts record
+(`sha256:a278ab0602695233fc2655037f930a1c44e31b5abd5a2e8b0522c379a94c5f62`
+for amd64, `sha256:925992dd6ed17da65020f06edcd7f5ce24986e97e0fba0eef3134f68d961a9d9`
+for arm64): those are buildx's per-platform build output, recorded before the
+multi-architecture index is assembled and pushed, and a manifest's digest
+changes when it is carried into an index. The rows above are the published
+bytes.
 
 ### Advisories Debian lists as fixed in trixie
 
