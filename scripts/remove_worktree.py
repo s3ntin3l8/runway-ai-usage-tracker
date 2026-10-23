@@ -156,7 +156,7 @@ def validate_target(root: Path, *, cwd: Path | None = None) -> str | None:
     if not known:
         return f"{cwd or Path.cwd()} is not a git repository"
     if _comparable(root) == _comparable(known[0]):
-        return f"{root} is the main working tree"
+        return f"{root} is the main working tree -- pass the path of a linked worktree"
     if _comparable(root) not in {_comparable(path) for path in known[1:]}:
         return f"{root} is not a worktree of this repository"
     status = subprocess.run(
@@ -169,7 +169,7 @@ def validate_target(root: Path, *, cwd: Path | None = None) -> str | None:
     if status.returncode != 0:
         return f"git status failed in {root}: {status.stderr.strip() or status.returncode}"
     if status.stdout.strip():
-        return f"{root} has uncommitted changes"
+        return f"{root} has uncommitted changes -- commit or discard them first"
     return None
 
 
@@ -183,10 +183,7 @@ def remove_worktree(path: Path, *, cwd: Path | None = None) -> int:
     reason = validate_target(root, cwd=cwd)
     if reason is not None:
         print(f"refusing to remove {root}: {reason}", file=sys.stderr)
-        print(
-            "nothing was unlinked; commit or discard the work, then run this again.",
-            file=sys.stderr,
-        )
+        print("nothing was unlinked", file=sys.stderr)
         return 1
     removed = unlink_links(root)
     for link in removed:
