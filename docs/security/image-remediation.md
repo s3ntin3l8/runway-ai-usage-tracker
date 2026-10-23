@@ -249,10 +249,10 @@ bytes.
 
 These ten advisories no longer apply to the runtime. Their exceptions are removed rather than renewed: an exception for a fixed advisory is not a decision, it is a false record.
 
-| Advisory | Bookworm version it replaced | Fixed in trixie at |
+| Advisory | Bookworm version it replaced | The trixie image carries |
 | --- | --- | --- |
-| [CVE-2025-13151](https://security-tracker.debian.org/tracker/CVE-2025-13151) | `libtasn1-6` `4.19.0-2+deb12u1` | `4.20.0-2+deb13u1` |
-| [CVE-2025-7458](https://security-tracker.debian.org/tracker/CVE-2025-7458) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.42.0-1` |
+| [CVE-2025-13151](https://security-tracker.debian.org/tracker/CVE-2025-13151) | `libtasn1-6` `4.19.0-2+deb12u1` | not installed |
+| [CVE-2025-7458](https://security-tracker.debian.org/tracker/CVE-2025-7458) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
 | [CVE-2026-11822](https://security-tracker.debian.org/tracker/CVE-2026-11822) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
 | [CVE-2026-11824](https://security-tracker.debian.org/tracker/CVE-2026-11824) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
 | [CVE-2026-41992](https://security-tracker.debian.org/tracker/CVE-2026-41992) | `gzip` `1.12-1` | `1.13-1+deb13u1` |
@@ -261,6 +261,14 @@ These ten advisories no longer apply to the runtime. Their exceptions are remove
 | [CVE-2026-5450](https://security-tracker.debian.org/tracker/CVE-2026-5450) | `libc6` `2.36-9+deb12u14` | `2.41-12+deb13u4` |
 | [CVE-2026-5928](https://security-tracker.debian.org/tracker/CVE-2026-5928) | `libc6` `2.36-9+deb12u14` | `2.41-12+deb13u4` |
 | [CVE-2026-84782](https://security-tracker.debian.org/tracker/CVE-2026-84782) | `openssl` `3.0.22-1~deb12u1` | `3.5.7-1~deb13u3` |
+
+The last column is the version the trixie image installs, taken from the
+candidate's package inventory, so every row can be checked against the scan.
+It is not always Debian's first fixing version: Debian's tracker lists
+`3.42.0-1` as the release that fixed CVE-2025-7458, and the image carries the
+later `3.46.1-7+deb13u2`, which contains that fix. `libtasn1-6` is not
+installed at all — Debian 13's slim runtime does not pull in the GnuTLS
+libraries it came with.
 
 ### Advisories whose packages left the image
 
