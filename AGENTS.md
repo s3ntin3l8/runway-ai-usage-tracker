@@ -134,6 +134,12 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   new revision, copies it into the record and regenerates the baseline. That
   is the intended cost: an action bump is a supply-chain decision, not a
   mechanical one.
+  **Verify a SHA before you record it**, especially the first time an action
+  appears: `gh api repos/<owner>/<repo>/commits/<sha>` answers 422 for a
+  well-formed SHA that does not exist, and the SHA the upstream repository
+  reports is the one to pin. The record vouches for the revisions it already
+  carries, so a *new* action's typo lands in the workflow and the record
+  together and passes the check — the upstream lookup is what catches it.
 
 ## Core invariants
 

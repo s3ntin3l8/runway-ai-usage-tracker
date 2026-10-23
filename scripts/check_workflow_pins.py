@@ -93,8 +93,10 @@ def findings(root: Path, pins: dict[str, str]) -> list[str]:
             continue
         if recorded is None:
             problems.append(
-                f"{reference.path}:{reference.line}: {reference.action} "
-                f"is not recorded in {PINS_LABEL}"
+                f"{reference.path}:{reference.line}: {reference.action} is not "
+                f"recorded in {PINS_LABEL}. Verify the revision before recording "
+                "it: `gh api repos/<owner>/<repo>/commits/<sha>` answers 422 for a "
+                "well-formed SHA that does not exist."
             )
             continue
         if recorded != reference.revision:
