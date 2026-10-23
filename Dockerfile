@@ -20,9 +20,8 @@ FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a
 WORKDIR /app
 # The builder's compiler is deliberately unpinned, and it is here as insurance
 # rather than as a current need: every requirement resolves to a wheel on both
-# shipped platforms today, so nothing compiles and the stage installs no
-# library. What it does install is a compiler, for the dependency that ships an
-# sdist instead of a wheel. The sqlite3 headers it used to install alongside it
+# shipped platforms today, so nothing compiles. What it does install is a
+# compiler, for the dependency that ships an sdist instead of a wheel. The sqlite3 headers it used to install alongside it
 # were dead weight: nothing in requirements.txt compiles against libsqlite3,
 # because the stdlib's _sqlite3 is already compiled into the base image's
 # CPython and aiosqlite is pure Python.
