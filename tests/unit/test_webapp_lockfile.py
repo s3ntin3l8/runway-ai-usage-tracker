@@ -97,6 +97,28 @@ def _bare_package_name(path: str) -> str:
     return path.rsplit("node_modules/", 1)[-1]
 
 
+def _lowest_supported_node(dev_engines_range: str) -> str:
+    """The oldest Node the devEngines range accepts, as "22.22.2".
+
+    The range this repository uses is a list of caret or ">=" arms
+    ("^22.22.2 || ^24.15.0 || >=26.0.0"), and the floor is the lowest version
+    any of them admits. Every arm has to be one this understands: an arm that
+    is skipped instead of rejected would leave the helper confidently
+    reporting a floor the range does not actually have.
+    """
+    versions = []
+    for arm in dev_engines_range.split("||"):
+        arm = arm.strip()
+        for prefix in ("^", ">="):
+            if arm.startswith(prefix):
+                versions.append(arm[len(prefix) :].strip())
+                break
+        else:
+            raise AssertionError(f"unsupported arm {arm!r} in {dev_engines_range!r}")
+    assert versions, f"no versioned arm in {dev_engines_range!r}"
+    return min(versions, key=lambda v: tuple(int(part) for part in v.split(".")))
+
+
 class TestWebappLockfileLibcMetadata:
     def test_the_lockfile_keeps_the_libc_metadata(self):
         """A regeneration that drops the field would make npm install both builds.
@@ -154,7 +176,7 @@ class TestFrontendToolchainPin:
         dev_engines = manifest["devEngines"]
         assert dev_engines["runtime"] == {
             "name": "node",
-            "version": ">=22.22.0",
+            "version": "^22.22.2 || ^24.15.0 || >=26.0.0",
             "onFail": "error",
         }
         assert dev_engines["packageManager"] == {
@@ -182,24 +204,28 @@ class TestFrontendToolchainPin:
         "document",
         ["README.md", "CONTRIBUTING.md", "AGENTS.md"],
     )
-    def test_the_documents_do_not_still_demand_node_22_12(self, document: str):
+    @pytest.mark.parametrize("stale_floor", ["22.12+", "22.22+"])
+    def test_the_documents_do_not_still_demand_a_stale_floor(self, document: str, stale_floor: str):
         """A stale floor is the half of the drift that silently misleads readers."""
         text = (ROOT / document).read_text(encoding="utf-8")
 
-        assert "22.12+" not in text, (
-            f"{document} still documents Node 22.12+, but react-router 8.3.0 "
-            "requires 22.22.0 and the lockfile pins it."
+        assert stale_floor not in text, (
+            f"{document} still documents Node {stale_floor}, but the lockfile pins a "
+            "higher floor and webapp/package.json refuses to install below it."
         )
 
     @pytest.mark.parametrize(
         "document",
         ["README.md", "CONTRIBUTING.md", "AGENTS.md"],
     )
-    def test_the_documents_demand_node_22_22(self, document: str):
+    def test_the_documents_demand_the_pinned_node_floor(self, document: str):
         """The documented floor has to be the floor the manifest enforces."""
         text = (ROOT / document).read_text(encoding="utf-8")
+        floor = _lowest_supported_node(
+            _read_json(WEBAPP_PACKAGE_JSON)["devEngines"]["runtime"]["version"]
+        )
 
-        assert "22.22+" in text, (
-            f"{document} does not document the Node 22.22+ floor that "
+        assert f"{floor}+" in text, (
+            f"{document} does not document the Node {floor}+ floor that "
             "webapp/package.json enforces through devEngines.runtime."
         )

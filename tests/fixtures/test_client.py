@@ -13,17 +13,60 @@ for every request it makes, which is what ``with TestClient(app) as c:``
 does. Doing it here means every call site gets it without a context
 manager, and the app's lifespan runs once per client rather than once per
 request.
+
+**One loop per worker, not one per client.** A loop is a socketpair, and a
+socketpair is two sockets in TIME_WAIT for 120 seconds, so a loop per client
+is a few thousand socketpairs per suite run — and they accumulate across
+runs, which is how the range filled in the first place. The worker's
+clients share one loop instead: one socketpair per worker, for the whole
+run.
+
+Nothing is left behind on that loop. Measured over the unit suite, the
+loop runs a constant two tasks — the loop's own and the call's — so a test
+does not leak work into the next one, and closing the loop per client was
+cancelling tasks that were not there. That is a measurement of the suite as
+it is today, not a guarantee the fixture enforces, so closing the loop is
+bounded: a task that outlives its test must not wedge the worker at
+teardown.
 """
 
 from __future__ import annotations
 
+import threading
+import warnings
 from typing import Any
 
 import anyio
 from fastapi import testclient as _fastapi_testclient
 
+#: How long a portal may take to close before the close is abandoned.
+#: Closing a loop with live tasks waits for them, and a task that never
+#: finishes would wedge the worker at teardown -- the failure this change
+#: exists to remove.
+CLOSE_TIMEOUT = 10.0
+
+#: The worker's event loop, and the portal that owns it. Created on the
+#: first client and closed when the worker finishes.
+_PORTAL_STACK: Any | None = None
+_PORTAL: Any | None = None
+
 #: Every client a test created, so the conftest fixture can close them.
 _OPEN_CLIENTS: list[TestClient] = []
+
+
+def _shared_portal(backend: Any) -> Any:
+    """The worker's one event loop, created on first use.
+
+    The backend is the first client's: the loop is the worker's, so the
+    first one to ask for it decides which backend it runs on, and a later
+    client with a different backend gets that one rather than its own. The
+    repository's tests all use asyncio.
+    """
+    global _PORTAL_STACK, _PORTAL
+    if _PORTAL is None:
+        _PORTAL_STACK = anyio.from_thread.start_blocking_portal(**backend)
+        _PORTAL = _PORTAL_STACK.__enter__()
+    return _PORTAL
 
 
 class TestClient(_fastapi_testclient.TestClient):
@@ -31,7 +74,7 @@ class TestClient(_fastapi_testclient.TestClient):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # Start one portal and hand it to the transport. The transport's
+        # The worker's portal, shared by every client. The transport's
         # `_portal_factory` reuses `self.portal` when it is set, so every
         # request runs on this one event loop instead of starting a new one.
         #
@@ -39,29 +82,99 @@ class TestClient(_fastapi_testclient.TestClient):
         # TestClient never runs it either, and starting it would run the
         # app's startup handlers (and their side effects) where the tests
         # expect them not to run.
-        self._portal_stack = anyio.from_thread.start_blocking_portal(**self.async_backend)
-        self.portal = self._portal_stack.__enter__()
+        self.portal = _shared_portal(self.async_backend)
         _OPEN_CLIENTS.append(self)
 
     def __enter__(self) -> TestClient:
         # Already started in __init__ — entering twice would start a second
-        # portal and leave the first one running.
+        # portal and leave the first one running. It also keeps the `with`
+        # form from running the app's lifespan, which the bare
+        # TestClient's own `__enter__` would.
         return self
 
+    def __exit__(self, *args: Any) -> None:
+        # Starlette's `__exit__` closes the exit stack its own `__enter__`
+        # built -- and there is none, because the portal was started in
+        # `__init__` and the lifespan was never run. Closing the httpx
+        # client is all that is left to do.
+        self.close()
+
     def shutdown(self) -> None:
-        """Close the client and its event loop."""
-        portal_stack = getattr(self, "_portal_stack", None)
-        if portal_stack is not None:
-            self._portal_stack = None
-            self.portal = None
-            portal_stack.__exit__(None, None, None)
+        """Detach the client from the shared event loop.
+
+        The loop itself belongs to the worker, not to the client: closing
+        it per client is what filled the ephemeral-port range in the first
+        place. It is closed once, when the worker finishes.
+        """
+        self.portal = None
 
 
 def close_open_clients() -> None:
-    """Close every client a test created."""
+    """Release every client a test created.
+
+    The clients are detached from the shared loop. The loop is not closed
+    here — it belongs to the worker — and nothing needs cancelling: the
+    shared loop runs a constant two tasks, the loop's own and the call's,
+    so a test leaves nothing behind for the next one.
+    """
     while _OPEN_CLIENTS:
         client = _OPEN_CLIENTS.pop()
         try:
             client.shutdown()
         except Exception:  # pragma: no cover - teardown must not fail a test
             pass
+
+
+def close_portal(stack: Any, portal: Any = None, timeout: float = CLOSE_TIMEOUT) -> bool:
+    """Close a portal, bounded. Returns whether it closed in time.
+
+    Closing a loop with live tasks waits for them, and a task that never
+    finishes would wedge the worker at teardown — the same failure the
+    shared loop exists to prevent. So the remaining tasks are cancelled
+    first, in anyio's own way, and the close gets a bound on top of that:
+    it reports instead of waiting.
+    """
+    closed = threading.Event()
+
+    def close() -> None:
+        try:
+            if portal is not None:
+                # `stop(cancel_remaining=True)` cancels the portal's task
+                # group, so a task that outlived its test is cancelled
+                # rather than waited for.
+                portal.call(portal.stop, True)
+        except Exception:  # pragma: no cover - teardown must not fail a test
+            pass
+        try:
+            stack.__exit__(None, None, None)
+        except Exception:  # pragma: no cover - teardown must not fail a test
+            pass
+        finally:
+            closed.set()
+
+    thread = threading.Thread(target=close, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    return closed.is_set()
+
+
+def close_shared_portal() -> None:
+    """Close the worker's event loop. Called once, when the worker ends."""
+    global _PORTAL_STACK, _PORTAL
+    stack, portal = _PORTAL_STACK, _PORTAL
+    _PORTAL_STACK, _PORTAL = None, None
+    if stack is None:
+        return
+    if not close_portal(stack, portal):
+        # A warning, not a print: pytest captures stdout, so a print here is
+        # swallowed on a passing run and the worker that ran out of time says
+        # nothing. A warning survives the capture and lands in the summary,
+        # which is the only place this diagnostic can still be read.
+        warnings.warn(
+            "the shared test-client event loop did not close in "
+            f"{CLOSE_TIMEOUT}s -- a test left a task running on it that "
+            "would not be cancelled. The worker will exit anyway; the task "
+            "is abandoned.",
+            RuntimeWarning,
+            stacklevel=2,
+        )

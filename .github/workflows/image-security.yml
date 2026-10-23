@@ -22,6 +22,10 @@ on:
       - 'webapp/**'
       - 'scripts/audit_release_image.py'
       - 'scripts/image_policy.py'
+      # The exception document does not change the image, but it decides which
+      # findings the scan accepts, so a renewal has to be re-scanned like any
+      # other change to the policy.
+      - 'docs/security/image-exceptions.json'
       - '.github/workflows/image-security.yml'
   schedule:
     - cron: '23 6 * * *'
@@ -38,6 +42,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  exception-window:
+    # The exception document has one expiry horizon, and nothing else in the
+    # pipeline fails when that horizon arrives: the image builds keep passing
+    # with the entries they already match, so a lapse stays invisible until
+    # the horizon itself. This daily check is what makes the renewal a
+    # scheduled task rather than something the pipeline discovers.
+    if: github.event_name != 'pull_request'
+    name: Exception review window
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299e34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Check the exception review window
+        run: python -m scripts.check_image_exceptions
   candidate:
     if: github.event_name == 'pull_request'
     name: candidate (ubuntu-24.04, amd64)

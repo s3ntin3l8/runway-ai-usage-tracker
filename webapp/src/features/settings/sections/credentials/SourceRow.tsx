@@ -26,6 +26,8 @@ import {
   STATUS_LABEL,
   STATUS_VARIANT,
   UNUSED_HINT,
+  originDetail,
+  originKindHint,
   originTitle,
   relativeExpiry,
   tokenSummary,
@@ -132,6 +134,11 @@ export function SourceRow({
         : null;
 
   const title = originTitle(source);
+  // A cookie is a browser session, not a file like auth.json — the badge and the
+  // hint say so, so the row can't be mistaken for one of the file credentials.
+  const isCookie = source.origin_type === 'cookie';
+  const kindHint = originKindHint(source);
+  const detail = originDetail(source);
   // Several rows share a file name ("OpenCode · auth.json" serves many providers), so a
   // button's name carries the machine and provider to stay unique.
   const who = context ?? providerName;
@@ -141,10 +148,11 @@ export function SourceRow({
   const offlinePeers = new Set(source.shared_with_stale);
   const livePeers = (source.shared_with ?? []).filter((name) => !offlinePeers.has(name));
   const sharedLogin = source.rollable && !source.machine_stale && livePeers.length > 0;
-  const detail = [
+  const detailLines = [
     source.origin_path,
+    detail,
     source.token_types.length > 0 ? source.token_types.join(', ') : null,
-  ].filter(Boolean);
+  ].filter((d): d is string => Boolean(d));
 
   return (
     <li
@@ -156,6 +164,11 @@ export function SourceRow({
             {STATUS_LABEL[source.status] ?? source.status}
           </Badge>
         </Tooltip>
+        {isCookie ? (
+          <Tooltip content={kindHint ?? ''}>
+            <Badge variant="outline">Cookie</Badge>
+          </Tooltip>
+        ) : null}
         {source.unused_reason ? (
           <Tooltip content={UNUSED_HINT[source.unused_reason]}>
             <Badge variant="warning">Not used</Badge>
@@ -173,11 +186,12 @@ export function SourceRow({
           content={
             <div className="space-y-0.5">
               <p className="font-medium">{title}</p>
-              {detail.map((d) => (
+              {detailLines.map((d) => (
                 <p key={d} className="break-all font-mono text-[11px] text-fg-muted">
                   {d}
                 </p>
               ))}
+              {kindHint ? <p>{kindHint}</p> : null}
               <p>
                 {MAPPING_LABEL[source.mapping]}
                 {source.mapping_scope === 'all_machines' ? ' (all machines)' : ''}
@@ -192,7 +206,12 @@ export function SourceRow({
           </p>
         </Tooltip>
         <p className="truncate text-[11px] text-fg-subtle">
-          {[context, tokenSummary(source.token_types), MAPPING_LABEL[source.mapping]]
+          {[
+            context,
+            detail,
+            isCookie ? 'Session cookie' : tokenSummary(source.token_types),
+            MAPPING_LABEL[source.mapping],
+          ]
             .filter(Boolean)
             .join(' · ')}
           {source.mapping_scope === 'all_machines' ? ' (all machines)' : ''}

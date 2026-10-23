@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
 import httpx
 
-from app.services.billing_type import BillingType, detect_billing_type
+from app.services.billing_type import (
+    UNKNOWN,
+    BillingType,
+    card_billing_type,
+    detect_billing_type,
+)
 from app.services.collectors.anthropic_console import (
     CONSOLE_URL,
     ConsoleAPIError,
@@ -166,6 +172,22 @@ def organization_uuid(value: Any) -> str:
         raise ConsoleAPIError("Invalid Claude organization identity", "parse_error", 422) from exc
 
 
+def agreed_billing_type(cards: Iterable[Mapping[str, Any]]) -> BillingType | None:
+    """The model every card agrees on, or ``None`` when they do not.
+
+    Several organizations can be reachable under one credential while none of
+    them is the account's: which organization it is bound to is the operator's
+    to pick. How it *bills* need not wait for that choice — when every
+    accessible organization describes the same way of billing, that is the
+    account's model. A disagreement, or a card that decides nothing, proves
+    nothing.
+    """
+    models = {card_billing_type(card) for card in cards}
+    if UNKNOWN in models or len(models) != 1:
+        return None
+    return models.pop()
+
+
 async def verify_claude_cookie(
     client: httpx.AsyncClient, provider: str, cookie: str, selected: str | None = None
 ) -> ClaudeVerification:
@@ -249,6 +271,16 @@ async def verify_claude_cookie(
         label = claude_account_label(provider, result.org_data, result.account)
         result.account_label = label or None
         result.billing_type = detect_billing_type([evidence[choice]])
+    elif len(usable) > 1 and result.complete:
+        # Several organizations are reachable and none of them is the account's:
+        # the binding is still the operator's to pick, but the model need not
+        # wait for that choice. Every accessible organization describing the
+        # same way of billing is what proves it.
+        #
+        # Only a complete read proves it: an organization that answered with
+        # something unusable may well describe a different way of billing, so
+        # the organizations that did answer decide nothing on their own.
+        result.billing_type = agreed_billing_type(evidence.values())
     return result
 
 

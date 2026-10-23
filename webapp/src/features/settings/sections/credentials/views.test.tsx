@@ -418,6 +418,24 @@ describe('RulesView', () => {
     expect(screen.getByRole('heading', { name: /ChatGPT Codex/ })).toBeInTheDocument();
   });
 
+  it('names a cookie rule as a browser cookie, and says which browser holds it', async () => {
+    vi.mocked(api.fetchCredentialTags).mockResolvedValue({
+      items: [
+        {
+          ...rule,
+          credential_origin: 'cookie:opencode/Chrome/Profile 1/Cookies',
+          origin_label: 'Browser cookie',
+          origin_app: 'Browser',
+          origin_detail: 'Chrome · Profile 1',
+        },
+      ],
+    });
+    renderWithProviders(<RulesView />);
+
+    // The origin string alone reads like a path; the rule says what it is.
+    expect(await screen.findByText('Browser cookie (Chrome · Profile 1)')).toBeInTheDocument();
+  });
+
   it('groups by machine and filters by scope and search', async () => {
     vi.mocked(api.fetchCredentialTags).mockResolvedValue({
       items: [codex, { ...rule, sidecar_id: null }],

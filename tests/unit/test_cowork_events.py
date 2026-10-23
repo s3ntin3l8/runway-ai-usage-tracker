@@ -1,6 +1,7 @@
 """Exact Cowork usage from synthetic, content-free Desktop sessions."""
 
 import json
+import os
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -282,7 +283,8 @@ def test_partial_batch_ack_cannot_skip_remaining_events(tmp_path):
     assert collect(base, state).events == []
 
 
-def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path):
+@pytest.mark.parametrize("clock", ["same-tick", "advanced"])
+def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path, clock):
     base = tmp_path / "desktop"
     path = session(base)
     header = json.dumps({"type": "user", "padding": "x" * 300}) + "\n"
@@ -290,8 +292,84 @@ def test_same_inode_rewrite_after_shared_header_is_not_skipped(tmp_path):
     state = tmp_path / "state.json"
     batch = collect(base, state)
     batch.mark_owned(batch.events)
+    recorded = path.stat().st_mtime_ns
     path.write_text(header + json.dumps(record("new")) + "\n")
+    # "same-tick" puts the rewrite inside the recorded filesystem timestamp
+    # tick, where the mtime cannot tell it from an untouched file; "advanced"
+    # moves the mtime on. Either way the rewrite must be noticed by content.
+    target = recorded if clock == "same-tick" else recorded + 1_000_000_000
+    try:
+        os.utime(path, ns=(path.stat().st_atime_ns, target))
+    except OSError:
+        pytest.skip("mtime not settable on this filesystem")
     assert [e["event_id"] for e in collect(base, state).events] == ["new"]
+
+
+@pytest.mark.parametrize("size", [8 * 1024, 32 * 1024, 68 * 1024, 68 * 1024 + 1])
+def test_same_inode_rewrite_at_the_end_of_a_sub_window_transcript_is_not_skipped(tmp_path, size):
+    base = tmp_path / "desktop"
+    path = session(base)
+    old = json.dumps(record("old")) + "\n"
+    overhead = len(json.dumps({"type": "user", "padding": ""})) + 1
+    body = json.dumps({"type": "user", "padding": "x" * (size - len(old) - overhead)}) + "\n"
+    assert len(body) + len(old) == size  # the committed region is exactly `size` bytes
+    path.write_text(body + old)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    recorded = path.stat().st_mtime_ns
+    path.write_text(body + json.dumps(record("new")) + "\n")
+    try:
+        os.utime(path, ns=(path.stat().st_atime_ns, recorded))
+    except OSError:
+        pytest.skip("mtime not settable on this filesystem")
+    assert [e["event_id"] for e in collect(base, state).events] == ["new"]
+
+
+def test_same_inode_rewrite_at_the_end_of_a_large_transcript_is_not_skipped(tmp_path):
+    base = tmp_path / "desktop"
+    path = session(base)
+    body = json.dumps({"type": "user", "padding": "x" * 4000}) + "\n"
+    body = body * 100  # past the fingerprint window, so the tail carries the rewrite
+    path.write_text(body + json.dumps(record("old")) + "\n")
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    recorded = path.stat().st_mtime_ns
+    path.write_text(body + json.dumps(record("new")) + "\n")
+    try:
+        os.utime(path, ns=(path.stat().st_atime_ns, recorded))
+    except OSError:
+        pytest.skip("mtime not settable on this filesystem")
+    assert [e["event_id"] for e in collect(base, state).events] == ["new"]
+
+
+def test_fingerprint_covers_the_head_and_the_tail_of_the_committed_region(tmp_path):
+    from scripts.sidecar_pkg.cowork_events import _fingerprint
+
+    path = tmp_path / "transcript.jsonl"
+    body = b"a" * (256 * 1024)
+    path.write_bytes(body + b"tail-one")
+    window = _fingerprint(path, path.stat().st_size)
+    path.write_bytes(body + b"tail-two")
+    assert _fingerprint(path, path.stat().st_size) != window  # the tail carries a rewrite
+    path.write_bytes(b"b" + body[1:] + b"tail-one")
+    assert _fingerprint(path, path.stat().st_size) != window  # the head carries one too
+    middle = bytearray(body)
+    middle[100000:100010] = b"0123456789"
+    path.write_bytes(bytes(middle) + b"tail-one")
+    # The window is bounded on purpose, so a rewrite that touches neither the
+    # head nor the tail of the committed region is not detected. Tracked in
+    # the follow-up issue linked from the pull request.
+    assert _fingerprint(path, path.stat().st_size) == window
+    # A region that fits the window is covered in full.
+    small = b"s" * (32 * 1024)
+    path.write_bytes(small)
+    digest = _fingerprint(path, path.stat().st_size)
+    changed = bytearray(small)
+    changed[16 * 1024 : 16 * 1024 + 4] = b"0123"
+    path.write_bytes(bytes(changed))
+    assert _fingerprint(path, path.stat().st_size) != digest
 
 
 def test_queue_sync_failure_does_not_own_checkpoint(tmp_path, monkeypatch):

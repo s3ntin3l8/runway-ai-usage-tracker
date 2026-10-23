@@ -33,7 +33,7 @@ jobs:
         # The browser binaries are a ~150 MB download that `playwright install`
         # repeated on every run. The version follows the playwright release in
         # package-lock.json, so the lockfile's hash is the right cache key.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('webapp/package-lock.json') }}
@@ -42,7 +42,9 @@ jobs:
       - name: Install security test dependencies
         run: |
           python -m venv .venv
-          .venv/bin/pip install -r requirements-dev.txt
+          # The suite's set, not the union: this job runs tests, not the
+          # lint gate.
+          .venv/bin/pip install -r requirements-test.txt
           npm --prefix webapp ci
           cd webapp && npx playwright install --with-deps
       - name: Check immutable CI references
@@ -69,7 +71,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install native recovery test dependencies
-        run: python -m pip install -r requirements-dev.txt
+        # The suite's set, not the union: this job runs tests, not the lint
+        # gate.
+        run: python -m pip install -r requirements-test.txt
       - name: Native Windows swap, rollback and recovery regressions
         run: python -m pytest tests/unit/test_self_update.py tests/unit/test_windows_native_boundaries.py --junitxml=native-windows-recovery.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
