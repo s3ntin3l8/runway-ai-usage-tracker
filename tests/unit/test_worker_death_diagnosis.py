@@ -123,10 +123,8 @@ class _StubNode:
         self.gateway = SimpleNamespace(id=name)
         self.workeroutput = workeroutput
         self.dsession = _RecordingSession()
-        self.plugin_lookups: list[str] = []
 
         def get_plugin(plugin: str) -> object:
-            self.plugin_lookups.append(plugin)
             return self.dsession if plugin == "dsession" else None
 
         self.config = SimpleNamespace(pluginmanager=SimpleNamespace(get_plugin=get_plugin))
@@ -215,10 +213,12 @@ def test_the_master_is_left_to_recover():
     ``--dist loadfile -n 2``, the baseline is ``1 failed, 9 passed`` and the
     rest of the suite runs; aborting loses the rest of it.
 
-    The guard is on *any* interference with the master, not on one attribute:
-    the session records every write, and the plugin lookup is recorded too, so
-    a hook that stopped the master by raising, or through some other
-    attribute, would still fail this test.
+    The guard is on *any* change to the master's state, not on one attribute:
+    the session records every write, so a hook that stopped the master by
+    writing ``shouldstop`` -- or any other attribute -- fails this test. A
+    read-only lookup of the session is not interference, and is not
+    forbidden: a hook that stopped the master only when it genuinely could
+    not continue would need exactly that lookup.
     """
     from tests import conftest
 
@@ -226,7 +226,6 @@ def test_the_master_is_left_to_recover():
     conftest.pytest_testnodedown(node, "Not properly terminated")
 
     assert node.dsession.writes == []
-    assert node.plugin_lookups == []
 
 
 def test_the_report_names_the_worker():

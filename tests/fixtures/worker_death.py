@@ -1,10 +1,12 @@
-"""Recognise the crash that follows a killed xdist worker.
+"""Report a worker that died, and the crash that can follow it.
 
-When a worker dies, the master cannot reschedule the nodes that worker was
-carrying: the collection it would have registered is missing, so xdist's
+xdist replaces a crashed worker by default, so a single death does not end the
+run: the crashed node's remaining work is rescheduled and the crashing test is
+reported as a normal failure. When the master *cannot* replace the worker it
+needs -- the collection that worker would have registered is missing -- the
 scheduler raises ``KeyError`` from its own internals and the master dies with
-an ``INTERNALERROR``. pytest exits 3, and the only thing in the log is an xdist
-traceback that names neither the worker nor the cause.
+an ``INTERNALERROR`` (pytest exit 3), leaving an xdist traceback that names
+neither the worker nor the cause.
 
 This module turns that into a sentence a reader can act on. The judgement
 lives in :func:`worker_death_diagnosis` and :func:`worker_death_report`; the
