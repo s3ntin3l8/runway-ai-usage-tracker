@@ -123,3 +123,65 @@ def test_supervisor_refuses_personal_machine_before_starting_child(monkeypatch, 
     path = tmp_path / "report.json"
     assert runner.supervise(path) == 1
     assert json.loads(path.read_text())["blocked_reason"] == "ephemeral_macos_ci_required"
+
+
+@pytest.mark.parametrize("primary", ["timeout", "interrupted"])
+@pytest.mark.parametrize("cleanup", ["kill", "reap"])
+def test_cleanup_failure_retains_primary_cause(monkeypatch, tmp_path, primary, cleanup):
+    from tests import native_keychain_ci as runner
+
+    def wait(timeout):
+        if timeout == 90:
+            if primary == "timeout":
+                raise subprocess.TimeoutExpired(["private-detail"], timeout)
+            raise KeyboardInterrupt("private-detail")
+        if cleanup == "reap":
+            raise subprocess.TimeoutExpired(["private-detail"], timeout)
+        return 0
+
+    def kill(*args):
+        if cleanup == "kill":
+            raise OSError("private-detail")
+
+    monkeypatch.setattr(
+        runner.subprocess, "Popen", lambda *a, **k: SimpleNamespace(pid=12345, wait=wait)
+    )
+    monkeypatch.setattr(runner.os, "killpg", kill)
+    path = tmp_path / "report.json"
+    assert runner.supervise(path) == 1
+    result = json.loads(path.read_text())
+    assert result["supervisor_failure"] == (
+        "process_group_timed_out" if primary == "timeout" else "interrupted"
+    )
+    assert result["supervisor_cleanup_failed"] is True
+    assert "private-detail" not in path.read_text()
+
+
+def test_child_preflight_block_is_not_reported_as_supervisor_failure(monkeypatch, tmp_path):
+    from tests import native_keychain_ci as runner
+
+    path = tmp_path / "report.json"
+
+    def wait(timeout):
+        if timeout == 90:
+            runner.save_report(
+                path,
+                {
+                    "blocked_reason": "security_cli_active",
+                    "matrix_complete": False,
+                    "candidate_found": False,
+                    "cases": [],
+                },
+            )
+            return 1
+        return 0
+
+    monkeypatch.setattr(
+        runner.subprocess, "Popen", lambda *a, **k: SimpleNamespace(pid=12345, wait=wait)
+    )
+    monkeypatch.setattr(runner.os, "killpg", lambda *a: None)
+    assert runner.supervise(path) == 1
+    result = json.loads(path.read_text())
+    assert result["blocked_reason"] == "security_cli_active"
+    assert result["child_exit_code"] == 1
+    assert "supervisor_failure" not in result

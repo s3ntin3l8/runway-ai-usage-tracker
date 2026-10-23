@@ -405,3 +405,93 @@ def test_only_complete_safe_matrix_can_report_candidate(monkeypatch, tmp_path, i
     assert result["candidate_found"] is (not incomplete)
     assert result["matrix_complete"] is (not incomplete)
     assert "private-run-detail" not in path.read_text()
+
+
+@pytest.fixture
+def saved_case(monkeypatch, tmp_path, synthetic_case):
+    def run(stdout=b"{}", *, timeout=False):
+        def execute(command, **_kwargs):
+            if Path(command[0]).name == "synthetic-writer":
+                if timeout:
+                    raise subprocess.TimeoutExpired(command, 5, stderr=b"stage:before_update\n")
+                return subprocess.CompletedProcess(
+                    command, 0, stdout=stdout, stderr=b"stage:after_update\nprivate-detail\n"
+                )
+            return subprocess.CompletedProcess(command, 0)
+
+        monkeypatch.setattr(probe.subprocess, "run", execute)
+        path = tmp_path / "saved.json"
+        probe.run(("metadata-control",), report_path=path)
+        result = json.loads(path.read_text())
+        assert len(result["cases"]) == 1
+        assert probe.report_exit_code(result) == 1
+        assert result["candidate_found"] is False
+        assert "private-detail" not in path.read_text()
+        return result["cases"][0]
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        b"null",
+        b'"private-detail"',
+        b"[]",
+        b"{}",
+        b'{"update_status":0}',
+        b'{"update_status":0,"read_status":0,"replacement_verified":1}',
+        b"invalid-json",
+    ],
+)
+def test_malformed_writer_result_retains_saved_case_and_stages(saved_case, stdout):
+    row = saved_case(stdout)
+    assert row["failure"] == "invalid_writer_result"
+    assert row["stages"] == ["after_update"]
+    assert row["writer_exit_code"] == 0
+
+
+@pytest.mark.parametrize("snapshot_error", [OSError, RuntimeError, subprocess.TimeoutExpired])
+def test_failed_post_cleanup_snapshot_retains_primary_timeout(
+    monkeypatch, saved_case, snapshot_error
+):
+    def unavailable():
+        if snapshot_error is subprocess.TimeoutExpired:
+            raise snapshot_error(["private-detail"], 5)
+        raise snapshot_error("private-detail")
+
+    monkeypatch.setattr(probe, "environment_snapshot", unavailable)
+    row = saved_case(timeout=True)
+    assert row["failure"] == "timed_out"
+    assert row["stages"] == ["before_update"]
+    assert row["metadata_failure"] == "metadata_unavailable"
+    assert row["isolation_failed"] is True
+
+
+@pytest.mark.parametrize("missing", ["before", "checks"])
+def test_missing_snapshot_checks_are_unsafe(monkeypatch, tmp_path, synthetic_case, missing):
+    if missing == "before":
+        original = probe.Fixture
+
+        class MissingBefore(original):
+            def __init__(self, *args):
+                super().__init__(*args)
+                del self.before
+
+        monkeypatch.setattr(probe, "Fixture", MissingBefore)
+    else:
+        monkeypatch.setattr(probe, "snapshot_checks", lambda *args: {})
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            66,
+            stdout=b"",
+            stderr=b"stage:start\n",
+        ),
+    )
+    row = probe.run_case(tmp_path / "writer", "metadata-control")
+    assert row["stages"] == ["start"]
+    assert row["writer_exit_code"] == 66
+    assert row["isolation_failed"] is True

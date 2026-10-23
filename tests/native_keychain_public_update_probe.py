@@ -126,14 +126,21 @@ def run_case(writer: Path, mode: str) -> dict:
                 row["stages"] = stages(child.stderr)
                 row["writer_exit_code"] = child.returncode
                 assert child.returncode == 0, "synthetic public writer failed"
-                values = json.loads(child.stdout)
-                for name, kind in (
+                fields = (
                     ("update_status", int),
                     ("read_status", int),
                     ("replacement_verified", bool),
-                ):
-                    assert type(values[name]) is kind, "invalid writer result"
-                    row[name] = values[name]
+                )
+                try:
+                    values = json.loads(child.stdout)
+                    if not isinstance(values, dict) or any(
+                        type(values.get(name)) is not kind for name, kind in fields
+                    ):
+                        raise ValueError("invalid writer result")
+                except (TypeError, ValueError):
+                    row["failure"] = "invalid_writer_result"
+                    raise ValueError("invalid writer result") from None
+                row.update({name: values[name] for name, _kind in fields})
                 row.update(
                     compare(before, capture(SERVICE, ACCOUNT, keychain=fixture.keychains[0]))
                 )
@@ -164,11 +171,18 @@ def run_case(writer: Path, mode: str) -> dict:
         row.setdefault("failure", "native_probe_incomplete")
     row.update(fixture.cleanup)
     if hasattr(fixture, "before"):
-        row["metadata_checks"] = snapshot_checks(fixture.before, environment_snapshot())
+        try:
+            row["metadata_checks"] = snapshot_checks(fixture.before, environment_snapshot())
+        except (OSError, RuntimeError, KeyError, TypeError, ValueError, subprocess.SubprocessError):
+            row["metadata_failure"] = "metadata_unavailable"
+            row.setdefault("failure", "metadata_unavailable")
     if not all(
         fixture.cleanup.get(name) is True
         for name in ("temporary_keychains_deleted", "user_keychain_metadata_unchanged")
-    ) or not all(row.get("metadata_checks", {}).values()):
+    ) or not all(
+        row.get("metadata_checks", {}).get(name) is True
+        for name in ("default_same", "default_lock_same", "search_list_same", "search_locks_same")
+    ):
         row["isolation_failed"] = True
     return row
 

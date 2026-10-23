@@ -31,6 +31,7 @@ def supervise(path: Path) -> int:
         return 1
     save_report(path, report)
     child, failure = None, None
+    child_exit_code, cleanup_failed = None, False
     try:
         child = subprocess.Popen(
             [
@@ -44,8 +45,7 @@ def supervise(path: Path) -> int:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        if child.wait(timeout=90) != 0:
-            failure = "probe_failed"
+        child_exit_code = child.wait(timeout=90)
     except subprocess.TimeoutExpired:
         failure = "process_group_timed_out"
     except (KeyboardInterrupt, SystemExit):
@@ -57,13 +57,16 @@ def supervise(path: Path) -> int:
             try:
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
+                # The group has already exited; there are no remaining members to kill.
                 pass
             except OSError:
-                failure = "process_group_cleanup_failed"
+                cleanup_failed = True
+                failure = failure or "process_group_cleanup_failed"
             try:
                 child.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                failure = "process_group_cleanup_failed"
+                cleanup_failed = True
+                failure = failure or "process_group_cleanup_failed"
     try:
         report = json.loads(path.read_text())
         if not isinstance(report, dict):
@@ -71,10 +74,18 @@ def supervise(path: Path) -> int:
     except (OSError, ValueError):
         report = {"cases": []}
         failure = failure or "report_unavailable"
+    if child_exit_code is not None:
+        # A child gate failure is distinct from a supervisor failure. Keep its
+        # blocked_reason/case diagnostics and record the actual process result.
+        report["child_exit_code"] = child_exit_code
+        if child_exit_code != 0:
+            report.update(matrix_complete=False, candidate_found=False)
+    if cleanup_failed:
+        report["supervisor_cleanup_failed"] = True
     if failure:
         report.update(supervisor_failure=failure, matrix_complete=False, candidate_found=False)
     save_report(path, report)
-    return int(bool(failure) or report_exit_code(report))
+    return int(bool(failure) or bool(child_exit_code) or report_exit_code(report))
 
 
 if __name__ == "__main__":
