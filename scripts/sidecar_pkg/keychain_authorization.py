@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.sidecar_pkg.claude_code_keychain import account_name, service_candidates
-from scripts.sidecar_pkg.keychain_protocol import KeychainError
+from scripts.sidecar_pkg.keychain_protocol import KeychainError, keychain_reason
 from scripts.sidecar_pkg.macos_keychain_store import _NativeAPI
 
 AUTHORIZATION_TIMEOUT = 60
@@ -82,14 +82,7 @@ def authorization_command(argv: list[str]) -> bool:
         services = service_candidates([Path(directory).expanduser()] if directory else [])
         authorize_once(_NativeAPI(), services, account_name())
     except KeychainError as exc:
-        reason = (
-            exc.reason
-            if exc.reason
-            in {"missing", "ambiguous", "denied", "unavailable", "identity changed", "timed_out"}
-            else "unavailable"
-        )
-        status = f" (OSStatus {exc.native_status})" if type(exc.native_status) is int else ""
-        print(f"Claude Code Keychain: {reason}{status}", file=sys.stderr)
+        print(f"Claude Code Keychain: {keychain_reason(exc)}", file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:
         print("Claude Code Keychain: authorization unavailable", file=sys.stderr)

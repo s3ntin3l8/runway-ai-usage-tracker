@@ -10,8 +10,10 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from scripts.sidecar_pkg import source_consent as consent
+from scripts.sidecar_pkg.keychain_protocol import KeychainError, keychain_reason
 from scripts.sidecar_pkg.source_catalog import catalog
 
 
@@ -21,6 +23,110 @@ class _LocalRefusedError(Exception):
     The reason is a fixed phrase rather than the underlying error, so nothing
     about the local configuration can reach the output.
     """
+
+
+def _attach_parent_console() -> int | None:
+    """Attach to the console the user launched from, if there is one.
+
+    A windowed (console=False) build has no stdout and no stderr, so a
+    printed diagnostic is invisible exactly where it is needed. Attaching to
+    the parent console is the standard fix; it fails harmlessly when there is
+    no console to attach to.
+
+    Returns the console's previous output code page so the caller can put it
+    back: the code page is process-wide, and leaving the user's console on
+    UTF-8 changes what every later command prints.
+    """
+    if sys.platform != "win32" or sys.stderr is not None:
+        return None
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        if not kernel32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
+            return None
+        previous_code_page = int(kernel32.GetConsoleOutputCP())
+        kernel32.SetConsoleOutputCP(65001)
+        try:
+            sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+        except Exception:
+            _restore_console_code_page(previous_code_page)
+            raise
+        return previous_code_page
+    except Exception:
+        # A console that cannot be attached to is not a reason to fail the
+        # refusal: the caller falls back to writing it to a file.
+        return None
+
+
+def _restore_console_code_page(previous: int | None) -> None:
+    """Put the console's output code page back the way the user had it."""
+    if previous is None:
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.SetConsoleOutputCP(previous)
+    except Exception:
+        # Nothing to restore to; the console keeps whatever it had.
+        pass
+
+
+def _write_refusal_file(source: str, reason: str) -> Path | None:
+    """Write the refusal next to the sidecar's config, for a build with no console.
+
+    Returns the path it wrote, or None when the write failed - a caller must
+    not point at a report that does not exist.
+    """
+    try:
+        from sidecar_app.config import get_config_path
+
+        path = get_config_path().parent / "source_authorization.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{source}: {reason}\n", encoding="utf-8")
+    except (OSError, Exception):
+        return None
+    return path
+
+
+def _notify_windows(message: str) -> None:
+    """Show a message box; the only way a windowed build can talk to its user."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, "Runway Sidecar", 0x40)
+    except Exception:
+        # No message box available: the report file is the fallback.
+        pass
+
+
+def _refuse(source: str, reason: str) -> None:
+    """Say why the authorization was refused, wherever the user can look.
+
+    A windowed build has no stdout and no stderr, so a printed message is
+    invisible exactly where it is needed. The message goes to the console when
+    there is one and to a report file otherwise, the way the MiniMax Code
+    probe reports.
+    """
+    previous_code_page = _attach_parent_console()
+    if sys.stderr is not None:
+        try:
+            print(f"{source}: {reason}", file=sys.stderr)
+        finally:
+            try:
+                sys.stderr.flush()
+            except Exception:
+                # A stream that cannot be flushed has nothing left to decode.
+                pass
+            _restore_console_code_page(previous_code_page)
+        return
+    path = _write_refusal_file(source, reason)
+    if path is None:
+        _notify_windows(f"{source}: {reason}")
+        return
+    _notify_windows(f"{source}: {reason}\n\nThe reason was written to:\n{path}")
 
 
 def resources(source_id: str) -> tuple[list[str], str | None]:
@@ -194,8 +300,11 @@ def authorization_command(argv: list[str]) -> None:
     parser.add_argument("--authorize-keychain-source", choices=tuple(catalog()), required=True)
     args = parser.parse_args(argv)
     source = args.authorize_keychain_source
-    if not getattr(sys, "frozen", False) or sys.platform != "darwin":
-        print(f"{source}: authorization requires macOS", file=sys.stderr)
+    if sys.platform != "darwin":
+        _refuse(source, "authorization requires macOS")
+        raise SystemExit(1)
+    if not getattr(sys, "frozen", False):
+        _refuse(source, "authorization requires the packaged build")
         raise SystemExit(1)
     timer = threading.Timer(60, lambda: os._exit(1))
     timer.daemon = True
@@ -223,13 +332,18 @@ def authorization_command(argv: list[str]) -> None:
         configure_login_dirs(config)
         services, account = resources(args.authorize_keychain_source)
         authorize_once(_NativeAPI(), services, account)
+    except KeychainError as exc:
+        # The reason is whitelisted, never the underlying error, so nothing
+        # about the keychain can reach the output.
+        _refuse(source, keychain_reason(exc))
+        raise SystemExit(1) from None
     except _LocalRefusedError as exc:
         # The reason is a fixed phrase, never the underlying error, so nothing
         # about the local configuration can reach the output.
-        print(f"{source}: {exc}", file=sys.stderr)
+        _refuse(source, str(exc))
         raise SystemExit(1) from None
     except Exception:
-        print(f"{source}: authorization unavailable", file=sys.stderr)
+        _refuse(source, "authorization unavailable")
         raise SystemExit(1) from None
     finally:
         timer.cancel()
