@@ -231,9 +231,13 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
             continue
 
         usage: Any = data.get(key)
+        placeholder = False
         if usage is None:
             if key in core_keys:
+                # The account published no such window: the collector
+                # guarantees one, so the card it gets is a placeholder.
                 usage = {"utilization": 0.0, "resets_at": None}
+                placeholder = True
             else:
                 continue
 
@@ -259,6 +263,10 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
                         "unit_type": "currency",
                         "window_type": "rolling",
                         "model_id": None,
+                        # A claude.ai balance says how much credit is left, not
+                        # how the account bills: a Claude plan can carry
+                        # prepaid credit, so this card decides no model.
+                        "billing_evidence": "prepaid_credit",
                         "data_source": data_source,
                         "input_source": input_source,
                         "tier": tier,
@@ -337,31 +345,34 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         w_type = classify_anthropic_window_type(key)
         service_name = "Claude"
 
-        results.append(
-            {
-                "service_name": service_name,
-                "icon": "🟠",
-                "remaining": f"{remaining_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": HealthCalculator.from_percentage(pct_used),
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "is_unlimited": False,
-                "unit_type": "percent",
-                "window_type": w_type,
-                "model_id": anthropic_model_id_for(key),
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": data_source,
-                "input_source": input_source,
-                "tier": tier,
-                "account_label": name_str,
-                "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
-        )
+        card: dict[str, Any] = {
+            "service_name": service_name,
+            "icon": "🟠",
+            "remaining": f"{remaining_pct:.1f}%",
+            "unit": "capacity",
+            "reset": human_delta(reset_at),
+            "health": HealthCalculator.from_percentage(pct_used),
+            "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+            "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
+            "used_value": pct_used,
+            "limit_value": 100.0,
+            "is_unlimited": False,
+            "unit_type": "percent",
+            "window_type": w_type,
+            "model_id": anthropic_model_id_for(key),
+            "reset_at": reset_at.isoformat() if reset_at else None,
+            "data_source": data_source,
+            "input_source": input_source,
+            "tier": tier,
+            "account_label": name_str,
+            "usage_url": "https://claude.ai/settings/usage",
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        if placeholder:
+            # The account never published this window, so the card is the
+            # collector's placeholder, not the account's evidence.
+            card["billing_evidence"] = "placeholder"
+        results.append(card)
 
     return (
         results

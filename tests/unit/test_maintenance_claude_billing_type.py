@@ -162,6 +162,38 @@ def test_cards_that_say_nothing_are_skipped_not_guessed():
         session.close()
 
 
+def test_a_card_that_names_its_evidence_prices_nothing():
+    """A claude.ai balance does not say how the account bills."""
+    session = _session()
+    try:
+        _account(session, account_id="balanced@example.com")
+        _card(
+            session,
+            "anthropic",
+            "balanced@example.com",
+            {
+                "unit_type": "currency",
+                "currency": "USD",
+                "used_value": 0.0,
+                "limit_value": 42.0,
+                "billing_evidence": "prepaid_credit",
+            },
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert plan.total == 1
+        assert plan.priced == []
+        assert [c.account_id for c in plan.skipped] == ["balanced@example.com"]
+
+        result = apply_claude_billing_type(session)
+        assert result.priced == 0
+        row = session.exec(select(ProviderConfig)).one()
+        assert row.billing_type == "unknown"
+        assert row.billing_type_source is None
+    finally:
+        session.close()
+
+
 def test_the_repair_writes_the_model_and_says_who_wrote_it():
     """A detected model is recorded as detected, so it is never touched again."""
     session = _session()

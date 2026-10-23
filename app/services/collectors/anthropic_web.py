@@ -392,6 +392,11 @@ class AnthropicWebMixin:
                             "limit_value": bal,
                             "unit_type": "currency",
                             "window_type": "rolling",
+                            # A claude.ai balance says how much credit is left,
+                            # not how the account bills: a Claude plan can
+                            # carry prepaid credit, so this card decides no
+                            # model.
+                            "billing_evidence": "prepaid_credit",
                             "data_source": self.DATA_SOURCE_WEB,
                             "input_source": getattr(self, "_current_input_source", "unknown"),
                             "tier": tier,
