@@ -164,6 +164,22 @@ KEYCHAIN_RULES: dict[str, Any] = {
             },
         ],
     },
+    "antigravity": {
+        "name": "Antigravity",
+        "rules": [
+            {
+                "type": "keychain",
+                "service_name": "gemini",
+                "account": "antigravity",
+                "format": "keyring_json",
+                "mapping": {
+                    "token.access_token": "oauth_token",
+                    "token.refresh_token": "refresh_token",
+                    "token.expiry": "_raw_expiry",
+                },
+            },
+        ],
+    },
     "ollama": {
         "name": "Ollama Cloud",
         "rules": [

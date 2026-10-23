@@ -19,6 +19,7 @@ class SourceDescriptor:
     revision: str
     renewal: bool = False
     platforms: tuple[str, ...] = ("darwin",)
+    account: str | None = None
 
 
 def catalog() -> dict[str, SourceDescriptor]:
@@ -54,6 +55,15 @@ def catalog() -> dict[str, SourceDescriptor]:
                 [r for r in rules if r["type"] == "claude_desktop_oauth"],
                 False,
             ),
+            (
+                "agy-cli",
+                "Antigravity CLI",
+                ("gemini",),
+                [r for r in rules if r["type"] == "keychain" and r.get("service_name") == "gemini"]
+                if provider == "antigravity"
+                else [],
+                False,
+            ),
             *[
                 (
                     browser.lower(),
@@ -78,15 +88,27 @@ def catalog() -> dict[str, SourceDescriptor]:
         ]:
             if not matches:
                 continue
+            # The account picks the entry inside a service, so it comes from the
+            # rule that reads it: the descriptor and the rule can never drift
+            # apart, and the revision covers both.
+            account = next(
+                (
+                    rule.get("account")
+                    for rule in matches
+                    if isinstance(rule, dict) and isinstance(rule.get("account"), str)
+                ),
+                None,
+            )
             source_id = f"{provider}.{suffix}"
+            platforms: tuple[str, ...] = ("darwin",)
             revision = hashlib.sha256(
                 json.dumps(
-                    [services, matches, {"renewal": renewal, "platforms": ["darwin"]}],
+                    [services, matches, {"renewal": renewal, "platforms": list(platforms)}],
                     sort_keys=True,
                 ).encode()
             ).hexdigest()
             result[source_id] = SourceDescriptor(
-                source_id, provider, label, services, revision, renewal
+                source_id, provider, label, services, revision, renewal, platforms, account
             )
     return result
 
@@ -152,6 +174,8 @@ def source_for_origin(provider: str, origin: str) -> str | None:
         return "github.gh-cli"
     if base.startswith("keychain:Claude Desktop/oauth/"):
         return "anthropic.desktop-oauth"
+    if base == "keychain:gemini:antigravity":
+        return "antigravity.agy-cli"
     for browser, suffix in [
         ("Chrome", "chrome"),
         ("Chromium", "chromium"),

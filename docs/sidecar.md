@@ -375,7 +375,31 @@ launchctl start com.runway.sidecar
 | **MiniMax** | API key | `MINIMAX_API_KEY` |
 | **Ollama** | Session cookie | `OLLAMA_SESSION_TOKEN` or browser cookie |
 | **Kimi K2** | API key | `KIMI_K2_API_KEY` |
-| **Antigravity** | OAuth token (server-side API collector) | sidecar scrapes `~/.gemini/antigravity-cli/antigravity-oauth-token` (or the `gemini:antigravity` Windows Credential Manager entry, where agy keeps no token file) and ships it to the server; server queries the Code Assist cloud API for quota. Sidecar emits only token/cost enrichment (never quota). |
+| **Antigravity** | OAuth token (server-side API collector) | sidecar scrapes `~/.gemini/antigravity-cli/antigravity-oauth-token` — or, where agy keeps no token file, the `gemini:antigravity` Windows Credential Manager entry and the macOS `gemini`/`antigravity` login Keychain entry — and ships it to the server; server queries the Code Assist cloud API for quota. Sidecar emits only token/cost enrichment (never quota). |
+| **Antigravity** | OAuth token (server-side API collector) | sidecar scrapes `~/.gemini/antigravity-cli/antigravity-oauth-token` — or, on macOS with agy 1.4.3+, the login Keychain entry `gemini`/`antigravity` — and ships it to the server; server queries the Code Assist cloud API for quota. Sidecar emits only token/cost enrichment (never quota). |
+
+### The Antigravity CLI credential on macOS
+
+From agy 1.4.3 the CLI keeps its OAuth token in the macOS **login Keychain** (service `gemini`,
+account `antigravity`) and writes no token file, so the sidecar reads that entry through the
+Keychain worker instead of a file. The stored value is wrapped in go-keyring's envelope
+(`go-keyring-base64:` + base64), which `scripts/sidecar_pkg/keyring_value.py` unwraps; the fields
+it maps are the ones the token file maps, so both platforms push the same credential shape.
+
+The entry's access list trusts only the application that wrote it, so the read needs the local
+consent the Sources UI provides:
+
+1. **Sources → Antigravity CLI → Use Keychain** — the source starts off; nothing is read until it
+   is granted.
+2. **Authorize** — raises the macOS "Runway wants to access 'gemini' in your keychain" prompt once.
+   Allowing it adds the sidecar to the entry's access list, after which the background read is
+   silent; withdrawing the grant in Keychain Access stops it again. (The mechanism matches the
+   worker the Claude Code credential uses, but it has not been run against this entry yet — see
+   [#826](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/826).)
+
+The service holds a second entry — the Antigravity ACP server's own token — so the read names the
+account exactly and never touches it. The keep-alive reads the expiry from the same entry, so it
+stays quiet until the source is granted.
 
 ## Deployment Modes
 

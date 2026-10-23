@@ -114,6 +114,9 @@ a = Analysis(
         # Native Windows Credential Manager reader (advapi32). Imported lazily,
         # so PyInstaller's static scan won't catch it.
         "scripts.sidecar_pkg.wincred",
+        # go-keyring envelope decoder for the macOS Keychain entry the agy CLI
+        # writes. Imported lazily, so PyInstaller's static scan won't catch it.
+        "scripts.sidecar_pkg.keyring_value",
         "certifi",
         # Lazy imports inside the Linux browser-cookie decryption branch.
         "secretstorage",

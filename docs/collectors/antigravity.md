@@ -102,13 +102,48 @@ behind (a 1.2 User-Agent serves the Gemini pool but not the Argon one, which is 
 free account is covered too — its line is only logged at debug level. The check keys on the
 tier being known at all, so a paid tier id Google adds later is covered as well.
 
-**Credentials:** `~/.gemini/antigravity-cli/antigravity-oauth-token` — on Windows, the Windows Credential Manager instead (see below).
+**Credentials:** `~/.gemini/antigravity-cli/antigravity-oauth-token` — where agy keeps no token file, the Windows Credential Manager or the macOS login Keychain instead (see below).
 ```json
 {"auth_method": "consumer", "token": {"access_token": "…", "refresh_token": "…", "expiry": "ISO8601"}}
 ```
 The **access token lives one hour** and only agy can renew it: the file carries no OAuth `client_id`, so neither the server nor the sidecar can refresh it (`_execute_refresh` is a no-op; a 401 just re-reads the cache in case another host pushed a live token — it never logs a refresh, see `REFRESHABLE = False`). The server never reads the file: the sidecar reads it on every push and ships the token via the credential registry rule, and a sidecar whose local token has **lapsed does not push it at all**, so one machine's dead session cannot poison the shared cache entry another machine keeps fresh.
 
-**On Windows the CLI keeps no token file at all**: agy stores the same JSON bundle in the Windows Credential Manager under the target `gemini:antigravity` and renews it there in place. The sidecar reads that entry directly (advapi32 `CredReadW` — no PowerShell, no extra module) via the `windows_credential_json` rule, and maps the same three fields, so both platforms ship an identical credential shape. The server never touches a credential store: only the sidecar does, and it ships the token like any other source. The Windows entry also carries an `id_token`, which is deliberately **not** mapped — the POSIX file has none, and mapping it on one platform only would file the same Google account under two different cache keys.
+The server never touches a credential store: only the sidecar does, and it ships the
+token like any other source.
+
+### Where the credential lives
+
+The CLI moved its login out of the file, so the sidecar has to look in the OS credential store the
+CLI now uses. The rule is chosen by platform; both carry the same bundle and push the same fields.
+
+| Platform | Where the credential is | How the sidecar reads it |
+|---|---|---|
+| Linux, macOS (agy < 1.4.3) | `~/.gemini/antigravity-cli/antigravity-oauth-token` | the file rule |
+| macOS (agy ≥ 1.4.3) | the login **Keychain**, service `gemini`, account `antigravity` | the Keychain worker, behind a local consent |
+| Windows | the **Credential Manager**, target `gemini:antigravity` | a native `advapi32` read (#732) |
+
+On macOS the stored value is wrapped in go-keyring's envelope — `go-keyring-base64:` followed by
+base64 — because the CLI writes it through that library; `scripts/sidecar_pkg/keyring_value.py`
+unwraps it (both the base64 and the hex envelope) and the rule maps the same three fields the
+file rule maps.
+
+The macOS entry's access list trusts only the application that wrote it, so the sidecar cannot
+read it on its own: the read goes through the Keychain worker, and the user authorizes it once in
+the local Sources UI (**Authorize** raises the macOS "Runway wants to access 'gemini' in your
+keychain" prompt; after allowing it, the background read is silent and the grant can be withdrawn
+in Keychain Access). Until then the source is off and nothing is read — see
+[docs/sidecar-source-authorization.md](../sidecar-source-authorization.md).
+
+The origin is `keychain:gemini:antigravity` on every platform that keeps the credential in an OS
+store, so the same Google account is filed under one cache key whichever store it came from. The
+bundle the macOS entry carries also has an `id_token` that the file does not; it is deliberately
+**not** mapped, because the server derives the account label from an `id_token` when one is
+present and a platform-specific mapping would file one account under two keys.
+
+> **The macOS credential follows the negotiated model.** Like every other Keychain-backed
+> credential it leaves the host only when the user has granted the source locally, authorized
+> the entry, and the device's negotiated scope includes it — see
+> [docs/sidecar-source-authorization.md](../sidecar-source-authorization.md).
 
 ### Token lifetime & keep-alive
 
@@ -219,7 +254,12 @@ Antigravity events use `provider_id="antigravity"` pricing rows (independent of 
 
 Run the sidecar on the host where `agy` is logged in (same host as the server or a remote one): it discovers the local token automatically — `~/.gemini/antigravity-cli/antigravity-oauth-token` on POSIX, the `gemini:antigravity` Credential Manager entry on Windows — and ships the OAuth token to the server, which reads it only from its token cache. Run `agy` at least once to create the token. A server with no sidecar has no Antigravity credential (`make dev` alone does not see it; use `make dev-all`).
 
-On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` / `"keep_alive": true`) or install the systemd timer — see [Token lifetime & keep-alive](#token-lifetime--keep-alive). Without one of these, the token renews only when agy next runs.
+On macOS with agy 1.4.3 or newer there is no token file: the CLI keeps the credential in the login
+Keychain, so the sidecar needs the local consent for the **Antigravity CLI** source before it will
+read it — enable the source in the local Sources UI and click **Authorize** once, then allow the
+macOS prompt. Until both steps are done the credential is not read at all.
+
+On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` / `"keep_alive": true`) or install the systemd timer — see [Token lifetime & keep-alive](#token-lifetime--keep-alive). Without one of these, the token renews only when agy next runs. On macOS the keep-alive reads the expiry from the Keychain entry, so it stays quiet until the source is consented; a CLI older than 1.4.3 still keeps its credential in the token file, and that layout needs no consent.
 
 ## Troubleshooting
 
@@ -256,6 +296,7 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 | `app/services/collectors/antigravity_oauth.py` | OAuth token cache-read mixin |
 | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Conversation DB parser |
 | `scripts/sidecar_pkg/agy_version.py` | Installed agy CLI's version (reported with the token) |
+| `scripts/sidecar_pkg/keyring_value.py` | Unwraps the go-keyring envelope the macOS Keychain entry stores |
 | `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
 | `scripts/sidecar_pkg/keep_alive.py` | Optional `--keep-alive` thread (`agy models` renewal) |
 | `scripts/reclassify_antigravity_models.py` | One-shot repair for pre-version-preservation rows |

@@ -21,7 +21,8 @@ def resources(source_id: str) -> tuple[list[str], str | None]:
         from scripts.sidecar_pkg.claude_code_keychain import account_name, service_candidates
 
         return service_candidates(local_keychain_login_dirs()), account_name()
-    return list(catalog()[source_id].services), None
+    descriptor = catalog()[source_id]
+    return list(descriptor.services), descriptor.account
 
 
 def launch_authorization(source_id: str) -> bool:

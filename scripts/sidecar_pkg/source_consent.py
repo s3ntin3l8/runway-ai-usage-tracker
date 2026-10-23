@@ -161,6 +161,8 @@ def service_ticket(service: str) -> ConsentTicket | None:
     provider, rule = scoped
     if service == "gh:github.com" and provider == "github" and rule.get("type") == "exec":
         return POLICY.ticket("github.gh-cli")
+    if service == "gemini" and provider == "antigravity" and rule.get("type") == "keychain":
+        return POLICY.ticket("antigravity.agy-cli")
     suffix = {
         "Chrome Safe Storage": "chrome",
         "Chromium Safe Storage": "chromium",
