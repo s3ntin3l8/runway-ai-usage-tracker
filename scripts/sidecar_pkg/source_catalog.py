@@ -110,7 +110,9 @@ def trusted_rule(provider: str, rule: dict[str, Any]) -> bool:
 
 def source_for_origin(provider: str, origin: str) -> str | None:
     base = origin.split("#", 1)[0]
-    if base.startswith("keychain:Claude Code-credentials"):
+    if base == "keychain:Claude Code-credentials" or base.startswith(
+        "keychain:Claude Code-credentials-"
+    ):
         return "anthropic.claude-code"
     if base == "keychain:GitHub CLI":
         return "github.gh-cli"
@@ -125,4 +127,10 @@ def source_for_origin(provider: str, origin: str) -> str | None:
         if base.startswith(f"cookie:{provider}/{browser}/"):
             source_id = f"{provider}.{suffix}"
             return source_id if source_id in catalog() else "unknown"
-    return "unknown" if base.startswith("keychain:") else None
+    parts = base.removeprefix("cookie:").split("/")
+    native_browser = (
+        base.startswith("cookie:")
+        and len(parts) >= 3
+        and parts[1] in {"Chrome", "Chromium", "Edge", "Claude Desktop"}
+    )
+    return "unknown" if base.startswith("keychain:") or native_browser else None

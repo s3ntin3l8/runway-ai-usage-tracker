@@ -341,3 +341,23 @@ def test_stale_delivery_does_not_replace_a_fresher_bundle(session):
     assert (
         source_controls.snapshot(session)[1][0]["tokens"]["cli_access_token"] == "synthetic-fresh"
     )
+
+
+def test_browser_origin_cannot_hide_native_dependency_by_changing_provider(session):
+    device, _ = seed(session)
+    with pytest.raises(ValueError, match="not authorized"):
+        source_controls.contribution_proof(
+            session, device.device_id, "github", "cookie:anthropic/Chrome/Default/session", None
+        )
+    assert (
+        source_controls.source_for_origin("anthropic", "cookie:anthropic/Safari/Default/session")
+        is None
+    )
+    assert (
+        source_controls.source_for_origin("anthropic", "keychain:Claude Code-credentials-unrelated")
+        == "anthropic.claude-code"
+    )
+    assert (
+        source_controls.source_for_origin("anthropic", "keychain:Claude Code-credentialsEVIL")
+        == "unknown"
+    )
