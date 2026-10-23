@@ -532,3 +532,87 @@ def test_a_parked_advance_from_a_dead_cycle_does_not_survive(tmp_path):
     minimax_code._PENDING_ADVANCES["/state.json"] = {"/db": 99}
     sidecar._reset_minimax_cursor_state()
     assert minimax_code._PENDING_ADVANCES == {}
+
+
+def test_the_default_cursor_path_matches_the_sidecar_config_dir(monkeypatch, tmp_path):
+    """The extractor's fallback path must not drift from the sidecar's.
+
+    The extractor cannot import ``sidecar.get_sidecar_dir()`` (the frozen
+    app bundles ``scripts/sidecar.py`` as data and runs it as a script),
+    so the two are pinned together here instead.
+    """
+    sidecar = _sidecar()
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path))
+    assert minimax_code._default_state_path() == sidecar.get_sidecar_dir() / (
+        "minimax_code_watermark.json"
+    )
+    monkeypatch.delenv("RUNWAY_CONFIG_DIR")
+    assert minimax_code._default_state_path() == sidecar.get_sidecar_dir() / (
+        "minimax_code_watermark.json"
+    )
+
+
+def test_a_rebuilt_store_lowers_the_cursor(tmp_path):
+    """A store whose id axis restarted must not keep the old cursor.
+
+    The old cursor points past the end of the new table, so keeping it
+    would re-emit the whole store on every cycle and never reach the
+    rows past the per-cycle cap.
+    """
+    db_path = _store(tmp_path)
+    state_file = tmp_path / "minimax_code_watermark.json"
+    state_file.write_text(json.dumps({"databases": {str(db_path.resolve()): {"last_id": 50005}}}))
+    discard_pending_state()
+    events = _parse(db_path, tmp_path)
+    assert events
+    assert commit_pending_state() is True
+    state = json.loads(state_file.read_text())
+    assert state["databases"][str(db_path.resolve())]["last_id"] == max(
+        row["id"] for row in DEFAULT_USAGE
+    )
+
+
+def test_same_millisecond_requests_keep_their_tokens_across_the_paging_cap(tmp_path, monkeypatch):
+    """A same-millisecond pair split by the row cap must not collapse.
+
+    Both rows carry the same turn and timestamp, so only their usage
+    tells them apart — and the id has to say so even when the two land in
+    different batches.
+    """
+    monkeypatch.setattr(minimax_code, "_MAX_ROWS_PER_CYCLE", 1)
+    usage = [
+        {
+            "id": 1,
+            "session_id": "mvs_main",
+            "turn_id": "turn_main",
+            "ts": 1792699951617,
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        },
+        {
+            "id": 2,
+            "session_id": "mvs_main",
+            "turn_id": "turn_main",
+            "ts": 1792699951617,
+            "input_tokens": 200,
+            "output_tokens": 20,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        },
+    ]
+    db_path = _store(tmp_path, usage=usage, messages=[])
+
+    ids: list[str] = []
+    tokens: list[int] = []
+    for _ in range(3):
+        events = _parse(db_path, tmp_path)
+        ids.extend(event.event_id for event in events)
+        tokens.extend(event.tokens_input for event in events)
+        commit_pending_state()
+
+    assert len(set(ids)) == 2
+    assert sorted(tokens) == [100, 200]

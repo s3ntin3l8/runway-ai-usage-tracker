@@ -52,17 +52,27 @@ push re-sends the same rows instead of skipping them.
 Why the event id does not depend on the join
 ---------------------------------------------
 
-``event_id`` is derived from the ledger row alone
-(``mcode:<session>:<turn>:<ts>``). The runtime's own
-``canonical_message_id`` would be prettier, but a request's message row can
-land in the store *after* the request itself: the newest rows are unmatched
-for a few seconds. An id that depends on the join would then change between
-two attempts at the same row and the server would count the request twice.
-The ledger-derived id is stable for a given request — across re-runs, across
-a failed push and across a re-read of the same row — which is what the
-server's ``(provider_id, event_id)`` uniqueness needs for idempotent
-re-emission. Two requests of the same turn that share a millisecond are
-separated by the ledger's own (never-changing) row id.
+``event_id`` is derived from the ledger row alone:
+``mcode:<session>:<turn>:<ts>:<input>:<output>:<cache_read>``. The
+runtime's own ``canonical_message_id`` would be prettier, but a request's
+message row can land in the store *after* the request itself: the newest
+rows are unmatched for a few seconds. An id that depends on the join
+would then change between two attempts at the same row and the server
+would count the request twice.
+
+Every part of the id is content-derived, which buys two properties:
+
+- **Stable across cycles.** Two requests of one turn that share a
+  millisecond are told apart by their token counts, so a pair split by
+  the per-cycle row cap still gets two distinct ids. A tiebreak that
+  depended on the batch (e.g. "append the row id when the base id was
+  already seen") would collapse the second one onto the first across a
+  page boundary, and the server would silently drop its tokens.
+- **Stable across a rebuilt store.** The runtime recreates its ledger
+  when it migrates or resets; a request that comes back with the same
+  timestamp and the same usage keeps its id, so the server deduplicates
+  the replay instead of counting it twice. (The ledger's own row id
+  would *not* survive that: it restarts with the table.)
 """
 
 from __future__ import annotations
@@ -198,6 +208,14 @@ def _default_state_path() -> Path:
     Mirrors the sidecar's config dir (``~/.config/runway/sidecar`` on
     Linux/macOS, ``%APPDATA%\\runway\\sidecar`` on Windows) so the cursor
     lands next to the rest of the sidecar's state.
+
+    This mirrors ``sidecar.get_sidecar_dir()`` instead of importing it:
+    the frozen app bundles ``scripts/sidecar.py`` as *data* and runs it as
+    a script, so importing it as a module here would give the frozen
+    binary a second copy of the sidecar's module state. The sidecar
+    passes its own ``get_sidecar_dir() / "minimax_code_watermark.json"``
+    in; this is the fallback for a direct call, and a test pins the two
+    together.
     """
     config_dir = os.getenv("RUNWAY_CONFIG_DIR")
     if config_dir:
@@ -269,9 +287,11 @@ def commit_pending_state() -> bool:
         if not isinstance(databases, dict):
             databases = {}
         for db_key, last_id in advances.items():
-            current = int((databases.get(db_key) or {}).get("last_id", 0) or 0)
-            if last_id > current:
-                databases[db_key] = {"last_id": last_id}
+            # Overwrite, never raise: a rebuilt store restarts the id axis,
+            # so the new cursor can be *lower* than the old one. Keeping
+            # the maximum would leave the cursor past the end of the new
+            # table and re-emit the whole store on every cycle.
+            databases[db_key] = {"last_id": last_id}
         state["databases"] = databases
         if _save_state(Path(state_key), state):
             _PENDING_ADVANCES.pop(state_key, None)
@@ -731,11 +751,15 @@ def parse_minimax_code_events(
             model_id = _resolve_model(session_id, data, session, db_path, model_cache)
             tool_names = _tool_names(data)
 
-            event_id = f"mcode:{session_id}:{turn_id}:{ts_ms}"
+            event_id = (
+                f"mcode:{session_id}:{turn_id}:{ts_ms}"
+                f":{row['input_tokens'] or 0}:{row['output_tokens'] or 0}"
+                f":{row['cache_read_tokens'] or 0}"
+            )
             if event_id in seen_event_ids:
-                # Two requests of the same turn share a millisecond. Keep
-                # both: the ledger's own row id is a stable tiebreaker (an
-                # AUTOINCREMENT id never changes for a given row).
+                # Two rows of the same turn share a millisecond *and* their
+                # token counts. The ledger's own row id is the last
+                # tiebreaker — it never changes for a given row.
                 event_id = f"{event_id}:{row_id}"
                 if event_id in seen_event_ids:
                     logger.warning(

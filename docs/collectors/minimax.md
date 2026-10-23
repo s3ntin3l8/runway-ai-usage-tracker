@@ -244,8 +244,15 @@ server's `(provider_id, event_id)` uniqueness makes that re-send a no-op.
 
 A rebuilt store (the id axis restarts) resets the cursor and re-emits. The rebuilt store holds the
 requests made after the rebuild — usage that has not been reported yet — and a request that
-reappears with the same timestamp keeps its event id, so the server deduplicates it rather than
-counting it twice.
+reappears with the same timestamp and the same usage keeps its event id, so the server deduplicates
+it rather than counting it twice.
+
+The event id is derived from the ledger row alone:
+`mcode:<session>:<turn>:<ts>:<input>:<output>:<cache_read>`. It must not depend on the join with
+the message rows — a request's message row can land in the store *after* the request itself, so a
+join-dependent id would change between two attempts at the same row and the server would count the
+request twice. Every part of it is content-derived, which also keeps two requests of one turn that
+share a millisecond apart (their token counts tell them apart) no matter which batch they land in.
 
 ### Model resolution
 
