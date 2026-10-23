@@ -104,6 +104,15 @@ user paths are excluded. Atomic progress snapshots survive an outer deadline;
 the supervisor marks the result incomplete and nonzero after killing the probe
 process group and reaping its child. An incomplete matrix never reports a candidate.
 
+`child_exit_code` records the probe's process result separately from supervisor
+errors, preserving a child's `blocked_reason` or case diagnostics.
+`supervisor_cleanup_failed` records a secondary kill/reap failure without
+replacing the primary timeout or interruption. Per-case `metadata_failure`
+records the sanitized `metadata_unavailable` reason when the post-cleanup snapshot
+cannot be checked; the saved case and its stages remain available and isolation
+fails. The snapshot comparisons and their required names share one definition;
+missing, unexpected, or unsuccessful comparisons fail isolation.
+
 The `security_cli_active` preflight checks only the `security` executable. It
 does not detect permission dialogs, block the `securityd` daemon, or establish
 what caused the historical isolation failure. The native fixed-target guard and

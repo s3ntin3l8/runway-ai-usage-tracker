@@ -468,6 +468,32 @@ def test_failed_post_cleanup_snapshot_retains_primary_timeout(
     assert row["isolation_failed"] is True
 
 
+def test_extra_failed_snapshot_comparison_is_not_ignored(monkeypatch, tmp_path, synthetic_case):
+    monkeypatch.setattr(
+        probe,
+        "snapshot_checks",
+        lambda *args: {
+            "default_same": True,
+            "default_lock_same": True,
+            "search_list_same": True,
+            "search_locks_same": True,
+            "future_check": False,
+        },
+    )
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            66,
+            stdout=b"",
+            stderr=b"stage:start\n",
+        ),
+    )
+    row = probe.run_case(tmp_path / "writer", "metadata-control")
+    assert row["isolation_failed"] is True
+
+
 @pytest.mark.parametrize("missing", ["before", "checks"])
 def test_missing_snapshot_checks_are_unsafe(monkeypatch, tmp_path, synthetic_case, missing):
     if missing == "before":

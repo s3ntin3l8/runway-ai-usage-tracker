@@ -34,6 +34,12 @@ STAGES = {
     "before_update",
     "after_update",
 }
+SNAPSHOT_CHECKS = {
+    "default_same": lambda snapshot: snapshot["default"]["path"],
+    "default_lock_same": lambda snapshot: snapshot["default"]["unlocked"],
+    "search_list_same": lambda snapshot: [row["path"] for row in snapshot["search_list"]],
+    "search_locks_same": lambda snapshot: snapshot["search_list"],
+}
 
 
 def stages(raw: bytes | None) -> list[str]:
@@ -47,13 +53,7 @@ def stages(raw: bytes | None) -> list[str]:
 
 def snapshot_checks(before: dict, after: dict) -> dict[str, bool]:
     """Report metadata differences without exposing user paths."""
-    return {
-        "default_same": before["default"]["path"] == after["default"]["path"],
-        "default_lock_same": before["default"]["unlocked"] == after["default"]["unlocked"],
-        "search_list_same": [row["path"] for row in before["search_list"]]
-        == [row["path"] for row in after["search_list"]],
-        "search_locks_same": before["search_list"] == after["search_list"],
-    }
+    return {name: select(before) == select(after) for name, select in SNAPSHOT_CHECKS.items()}
 
 
 def hosted_ci() -> bool:
@@ -176,12 +176,14 @@ def run_case(writer: Path, mode: str) -> dict:
         except (OSError, RuntimeError, KeyError, TypeError, ValueError, subprocess.SubprocessError):
             row["metadata_failure"] = "metadata_unavailable"
             row.setdefault("failure", "metadata_unavailable")
-    if not all(
-        fixture.cleanup.get(name) is True
-        for name in ("temporary_keychains_deleted", "user_keychain_metadata_unchanged")
-    ) or not all(
-        row.get("metadata_checks", {}).get(name) is True
-        for name in ("default_same", "default_lock_same", "search_list_same", "search_locks_same")
+    checks = row.get("metadata_checks", {})
+    if (
+        not all(
+            fixture.cleanup.get(name) is True
+            for name in ("temporary_keychains_deleted", "user_keychain_metadata_unchanged")
+        )
+        or set(checks) != SNAPSHOT_CHECKS.keys()
+        or any(value is not True for value in checks.values())
     ):
         row["isolation_failed"] = True
     return row
