@@ -190,11 +190,13 @@ Each figure in this document belongs to a specific build against a specific
 scanner database, and they are not comparable across builds. The *Published
 beta.8 replacement* section above records 279 matches per architecture from the
 beta.8 audit, whose database was built `2026-10-11T06:30:42Z`. The published
-beta.11 image - the Bookworm image - was audited at database build
+leg dispatched on `main` after #852 merged — run 39989382509 — audited the
+published `edge` image and `3.0.0-beta.11` against the database built
 `2026-10-23T06:30:15Z` and reported 283 matches per architecture with 3
-Critical and 79 High. The trixie candidate in this section was audited against
-that same `2026-10-23T06:30:15Z` database and reports 166, with no Critical
-finding at all.
+Critical and 79 High, every one of them covered by a reviewed exception. The
+trixie candidate in this section was audited against that same
+`2026-10-23T06:30:15Z` database and reports 166, with no Critical finding at
+all.
 
 ### Advisories Debian lists as fixed in trixie
 
