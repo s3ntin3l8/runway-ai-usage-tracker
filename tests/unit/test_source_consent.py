@@ -215,7 +215,64 @@ def test_a_blocked_source_report_survives_the_macOS_keychain_gate(monkeypatch, r
         "source_detail": "held open by another process",
         "source_remedy": "set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers)",
     }
-    assert filter_egress({"entries": [blocked]})["entries"] == [blocked]
+    filtered = filter_egress({"entries": [blocked], "completed_providers": ["ollama"]})
+    assert filtered["entries"] == [blocked]
+    # The provider is still withheld from completed_providers on macOS: a native
+    # scan never proves a logout, so its rows must not be pruned as if it had
+    # completed. The row this report creates is retired by the server on the
+    # report's own signal - the sidecar repeating it every cycle - not by the
+    # provider's completion.
+    assert filtered["completed_providers"] == []
+
+
+def test_a_source_report_with_anything_attached_is_still_gated(monkeypatch):
+    """The exemption is the report's shape, not the reason it carries.
+
+    Only the six documented keys pass. An entry with something else attached -
+    a token, an account id - is not a report about an unreadable store, so it
+    stays behind the consent gate.
+    """
+    from scripts.sidecar_pkg import source_consent as consent
+
+    monkeypatch.setattr(consent.sys, "platform", "darwin")
+    from scripts.sidecar_pkg.source_consent import filter_egress
+
+    report = {
+        "provider_id": "ollama",
+        "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+        "reason": "source_locked",
+        "source_store": "Chrome/Default/Network/Cookies",
+        "source_detail": "held open by another process",
+        "source_remedy": "set OLLAMA_SESSION_TOKEN",
+    }
+    assert filter_egress({"entries": [{**report, "oauth_token": "synthetic"}]})["entries"] == []
+    assert (
+        filter_egress({"entries": [{**report, "account_id": "alice@example.com"}]})["entries"] == []
+    )
+
+
+def test_a_reason_on_another_kind_of_payload_is_still_gated(monkeypatch):
+    """Only a manifest entry can be a source report.
+
+    A card's metadata or an observation that happens to carry the same reason
+    is not a report about an unreadable store, so it stays behind the gate.
+    """
+    from scripts.sidecar_pkg import source_consent as consent
+
+    monkeypatch.setattr(consent.sys, "platform", "darwin")
+    from scripts.sidecar_pkg.source_consent import filter_egress
+
+    report = {
+        "provider_id": "ollama",
+        "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+        "reason": "source_locked",
+        "source_store": "Chrome/Default/Network/Cookies",
+        "source_detail": "held open by another process",
+        "source_remedy": "set OLLAMA_SESSION_TOKEN",
+    }
+    assert filter_egress({"observations": [report]})["observations"] == []
+    card = {"metadata": report}
+    assert filter_egress({"metrics": [card]})["metrics"] == []
 
 
 def test_a_withheld_token_stays_gated_by_the_macOS_keychain_rule(monkeypatch):

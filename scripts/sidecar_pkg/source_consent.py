@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Any
 
-from scripts.sidecar_pkg.browser_store import SOURCE_BLOCK_REASONS
+from scripts.sidecar_pkg.browser_store import SOURCE_BLOCK_REASONS, SOURCE_REPORT_KEYS
 from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule
 
 
@@ -225,7 +225,7 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
         device_credentials(config, destination.rstrip("/") + "/api/v1/fleet/ingest") is not None
     )
 
-    def sanitize(value: Any, provider_override: Any = None) -> Any:
+    def sanitize(value: Any, provider_override: Any = None, *, source_report: bool = False) -> Any:
         if not isinstance(value, dict):
             return value
         result = dict(value)
@@ -243,7 +243,16 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
         # is dropped on macOS - where every browser-cookie origin counts as a
         # native-browser source - and the provider looks like nobody is signed
         # into it.
-        source_block = str(value.get("reason", "")) in SOURCE_BLOCK_REASONS
+        #
+        # The shape is the proof, not the reason alone: only a manifest entry
+        # carries the report's own keys, and only those keys pass. A dict that
+        # happens to carry the same reason - a metric's metadata, an
+        # observation, an entry with something else attached - is still gated.
+        source_block = (
+            source_report
+            and str(value.get("reason", "")) in SOURCE_BLOCK_REASONS
+            and set(value) <= SOURCE_REPORT_KEYS
+        )
         keychain = not source_block and (
             "keychain_consent" in value or (sys.platform == "darwin" and bool(source_id))
         )
@@ -282,7 +291,12 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
         result["metrics"] = cards
     for field in ("entries", "observations"):
         if isinstance(data.get(field), list):
-            result[field] = [clean for item in data[field] if (clean := sanitize(item)) is not None]
+            # Only a manifest entry can be a source report.
+            result[field] = [
+                clean
+                for item in data[field]
+                if (clean := sanitize(item, source_report=field == "entries")) is not None
+            ]
     if (
         sys.platform == "darwin"
         and "entries" in data

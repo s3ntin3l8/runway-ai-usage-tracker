@@ -551,6 +551,9 @@ def test_the_report_carries_no_credential_material(tmp_path, monkeypatch):
     sidecar.BrowserCookieExtractor.get_cookie("ollama.com", "session", "ollama", "session_cookie")
 
     entry = sidecar.blocked_source_entries()[0]
+    # The egress filter passes a report through on this shape alone, so the
+    # report and the filter cannot drift apart.
+    assert set(entry) == browser_store.SOURCE_REPORT_KEYS
     assert set(entry) == {
         "provider_id",
         "credential_origin",

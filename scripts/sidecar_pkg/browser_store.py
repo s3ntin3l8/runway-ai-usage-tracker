@@ -97,6 +97,22 @@ STATE_REASONS: dict[StoreState, str] = {
 # gated by the Keychain consent rules the way a cookie origin is.
 SOURCE_BLOCK_REASONS = frozenset(STATE_REASONS.values())
 
+# The keys a source report carries, and nothing else: the provider, the origin
+# it names, the store, the reason and the remedy. No secret, no account id, no
+# path. The egress filter passes a report through on this shape alone, so
+# "carries no keychain-derived material" is a property of the report rather
+# than a promise about whoever built it.
+SOURCE_REPORT_KEYS = frozenset(
+    {
+        "provider_id",
+        "credential_origin",
+        "reason",
+        "source_store",
+        "source_detail",
+        "source_remedy",
+    }
+)
+
 
 @dataclass(frozen=True)
 class StoreProbe:
