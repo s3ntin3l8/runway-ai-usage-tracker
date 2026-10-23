@@ -5325,6 +5325,10 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     POLICY.configure(config)
     reset_cookie_store_tracking()
 
+    # The first-run import window, shared with the MiniMax Code probe so the
+    # two cannot disagree about how much history a first run covers.
+    from scripts.sidecar_pkg.bootstrap import bootstrap_window_days
+
     # Lazy import — avoids requiring app/ in environments that only use metrics path.
     try:
         from scripts.sidecar_pkg.event_watermark import EventWatermark
@@ -5424,7 +5428,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
         enabled_providers = providers
 
     registry_providers = __REGISTRY__.get("providers", {})
-    bootstrap_days = int(os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
+    bootstrap_days = bootstrap_window_days()
 
     now = time.monotonic()
     if credential_scan_only:
@@ -6459,6 +6463,7 @@ def _cli_pair(values: list[str], config_path: str | None) -> int:
 
 def main():
     from app.core.console import force_utf8_console
+    from scripts.sidecar_pkg.minimax_code_probe import probe_command
     from scripts.sidecar_pkg.signatures import verification_command
 
     # Before anything writes to the console: a redirected stdout/stderr uses
@@ -6467,6 +6472,9 @@ def main():
     force_utf8_console()
 
     verification_command(sys.argv[1:])
+    # A read-only report of what the sidecar can read from the MiniMax Code
+    # runtime store on this host.
+    probe_command(sys.argv[1:])
     # Before anything can spawn a subprocess: the self-update hand-off variable must not leak
     # into children, and the abandoned runtime dir is dead weight.
     from scripts.sidecar_pkg.runtime_cleanup import release_retired_runtime

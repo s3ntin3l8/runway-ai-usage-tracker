@@ -254,14 +254,16 @@ def make_minimax_code_store(
     sessions: list[dict[str, Any]] | None = None,
     usage: list[dict[str, Any]] | None = None,
     messages: list[dict[str, Any]] | None = None,
+    data_dir: str = ".minimax",
 ) -> Path:
     """Create a MiniMax Code runtime store and return its path.
 
-    The store lands at ``<root>/.minimax/v2/sqlite/runtime-state.sqlite``
+    The store lands at ``<root>/<data_dir>/v2/sqlite/runtime-state.sqlite``
     so the extractor resolves the session history the same way it does on a
-    real install.
+    real install. ``data_dir`` defaults to the runtime's own ``.minimax``;
+    the desktop app's app-data roots are covered by the probe's tests.
     """
-    db_dir = root / ".minimax" / "v2" / "sqlite"
+    db_dir = root / data_dir / "v2" / "sqlite"
     db_dir.mkdir(parents=True, exist_ok=True)
     db_path = db_dir / "runtime-state.sqlite"
 

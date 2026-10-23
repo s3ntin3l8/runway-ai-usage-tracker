@@ -209,6 +209,56 @@ next to it when a reader opens a WAL store — that is what any WAL reader does,
 nothing in the database.) A missing store (MiniMax Code never ran here), a locked one or a schema
 the runtime has drifted away from all degrade to *skipped source*: no events, no error card.
 
+### Checking a host
+
+Every sidecar build carries a read-only probe that reports what the host's MiniMax Code runtime
+store looks like and what the extractor would make of it:
+
+```bash
+runway-sidecar-cli --probe-minimax-code        # Linux (CLI and tray)
+Runway Sidecar.app/Contents/MacOS/RunwaySidecar --probe-minimax-code   # macOS
+RunwaySidecar.exe --probe-minimax-code         # Windows
+```
+
+```
+MiniMax Code runtime store — read-only probe
+
+  platform            : Linux
+  probed roots        : /home/x/.minimax, /home/x/Library/Application Support/MiniMax Code, …
+  store               : /home/x/.minimax/v2/sqlite/runtime-state.sqlite (129.0 MiB)
+  store modified      : 2026-10-23T16:47:13.208315+00:00
+  schema              : OK
+  ledger              : 5934 requests · 96 turns · 10 sessions
+  plan-review rows    : 2005
+  model MiniMax-M3.1-Flash         : 5000
+  cursor              : /home/x/.config/runway/sidecar/minimax_code_watermark.json
+  cursor last id      : (none)
+  this cycle would push: 5000 request(s) (a cycle reads at most 5000 rows)
+
+  RESULT: PASS — the sidecar on this host reports MiniMax Code usage as provider 'minimax' / app 'minimax_code'.
+```
+
+The probe opens the store read-only, runs the real extractor and prints its verdict; it **never
+commits the cursor**, so running it cannot make the sidecar skip rows. It exits 0 when the store was
+found and understood, and 1 when there is nothing to read (no store) or the store's schema has
+drifted. `--json` prints the same report as JSON.
+
+On a windowed build (the macOS app and the Windows `.exe` have no console of their own) the probe
+attaches to the console it was launched from; with no console to attach to it writes the report to
+`minimax_code_probe.txt` next to the sidecar's config and says so in a message box.
+
+**Platform status.** The store path is identical on every platform (the runtime resolves it from
+`homedir()`), and the probe answers the question on whichever host you run it on:
+
+| Platform | Store path | Verified |
+|---|---|---|
+| Linux | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Yes — full extraction verified against a live store |
+| macOS | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Path confirmed from the runtime bundle; run the probe on a macOS host to confirm the store |
+| Windows | `%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` | Same |
+
+A platform that has not been confirmed reports **nothing** rather than wrong numbers: a missing
+store yields no events and a drifted schema yields no events.
+
 ### What the store holds
 
 | Table | Meaning |
@@ -326,7 +376,9 @@ ledger is a local file the runtime writes.
 | `app/services/pricing_seed.py` | Notional API pricing for Coding-Plan usage |
 | `scripts/sidecar_pkg/event_extractors/opencode.py` | Folds OpenCode-driven MiniMax traffic into this provider |
 | `scripts/sidecar_pkg/event_extractors/minimax_code.py` | Reads the MiniMax Code runtime ledger and pushes its requests as events |
+| `scripts/sidecar_pkg/minimax_code_probe.py` | The read-only `--probe-minimax-code` host check |
 | `tests/unit/test_event_extractor_minimax_code.py` | Extractor coverage (join, model fallbacks, id cursor, drift) |
+| `tests/unit/test_minimax_code_probe.py` | Probe coverage (store found/missing, schema drift, cursor left alone) |
 | `tests/integration/test_minimax_code_events_ingest.py` | End-to-end: runtime ledger → fleet ingest → priced MiniMax events |
 
 ## References
