@@ -265,3 +265,47 @@ def test_the_console_code_page_is_restored_after_printing(monkeypatch):
     probe._emit("RESULT: PASS")
     assert restored == [437]
     assert "RESULT: PASS" in buffer.getvalue()
+
+
+def test_a_console_that_cannot_be_opened_restores_the_code_page(monkeypatch):
+    """A failure after the code page switched must not leak it.
+
+    The attach helper returns None on failure, so `_emit` has nothing to
+    restore — the helper itself has to put the console back before it
+    gives up.
+    """
+    import sys
+    import types
+
+    calls: list[int | None] = []
+
+    class _Kernel32:
+        @staticmethod
+        def AttachConsole(_pid: int) -> int:
+            return 1
+
+        @staticmethod
+        def GetConsoleOutputCP() -> int:
+            return 437
+
+        @staticmethod
+        def SetConsoleOutputCP(_cp: int) -> int:
+            return 1
+
+    fake_ctypes = types.ModuleType("ctypes")
+    fake_ctypes.windll = types.SimpleNamespace(kernel32=_Kernel32())
+    monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
+    monkeypatch.setattr(probe, "_restore_console_code_page", calls.append)
+    monkeypatch.setattr(probe.sys, "platform", "win32")
+    monkeypatch.setattr(probe.sys, "stdout", None)
+
+    real_open = open
+
+    def fake_open(name, *args, **kwargs):
+        if name == "CONOUT$":
+            raise OSError("no console")
+        return real_open(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert probe._attach_parent_console() is None
+    assert calls == [437]

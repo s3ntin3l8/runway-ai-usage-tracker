@@ -205,6 +205,7 @@ def _attach_parent_console() -> int | None:
     """
     if sys.platform != "win32" or sys.stdout is not None:
         return None
+    previous_code_page: int | None = None
     try:
         import ctypes
 
@@ -216,8 +217,15 @@ def _attach_parent_console() -> int | None:
         # the report's em dash and middle dot would land as mojibake on a
         # cp850 console. UTF-8 is what the report is written in.
         kernel32.SetConsoleOutputCP(65001)
-        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
-        sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+        try:
+            sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+            sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+        except Exception:
+            # The code page is already switched: put it back before giving
+            # up, or the user's console stays on UTF-8 for everything that
+            # follows.
+            _restore_console_code_page(previous_code_page)
+            raise
         return previous_code_page
     except Exception:
         # A console that cannot be attached to is not a reason to fail the
@@ -281,6 +289,12 @@ def _emit(text: str) -> None:
         try:
             print(text)
         finally:
+            # Flush before restoring: a buffered tail must not be decoded
+            # with the old code page.
+            try:
+                sys.stdout.flush()
+            except Exception:
+                pass
             # The code page is process-wide: the user's console must not
             # stay on UTF-8 for whatever runs next.
             _restore_console_code_page(previous_code_page)
