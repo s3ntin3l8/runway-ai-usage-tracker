@@ -492,3 +492,8 @@ cannot be recalled; subsequent source selection observes committed withdrawal.
 Older servers never receive newly opted-in Keychain credentials: forwarding requires
 successful device-authenticated protocol negotiation. Legacy clients retain their
 shared-key behavior and cannot control enrolled-device sources.
+
+Pausing removes a contribution from selection but retains its encrypted bundle.
+An acknowledged, locally permitted resume can reuse that known bundle without
+a new credential read. Revocation and local opt-out erase the matching bundle
+and retain the consent-generation tombstone.

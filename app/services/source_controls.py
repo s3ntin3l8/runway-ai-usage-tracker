@@ -6,11 +6,12 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlmodel import Session, col, select
 
 from app.core.encryption import DecryptionError, encryption_service
 from app.models.db import (
+    CredentialSource,
     SidecarDevice,
     SidecarSourceCommand,
     SidecarSourceContribution,
@@ -232,7 +233,7 @@ def queue_command(
     )
     if action == "pause":
         row.remote_paused = True
-        _withdraw(session, device_id, source_id)
+        bump(session)
     elif action == "revoke":
         row.revoked_through = max(row.revoked_through, row.generation)
         _withdraw(session, device_id, source_id)
@@ -510,3 +511,42 @@ def current_controls(session: Session, device_id: str) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+@event.listens_for(Session, "before_flush")
+def _remember_removed_origins(session: Session, _context: Any, _instances: Any) -> None:
+    if not _ENABLED:
+        return
+    removed = session.info.setdefault("runway_removed_origins", set())
+    removed.update(
+        (row.provider_id, row.source_id)
+        for row in session.deleted
+        if isinstance(row, CredentialSource)
+    )
+
+
+@event.listens_for(Session, "after_flush_postexec")
+def _retire_removed_origins(session: Session, _context: Any) -> None:
+    changed = False
+    for provider_id, source_id in session.info.pop("runway_removed_origins", set()):
+        # Reassigning a verified source may delete a duplicate account row.
+        # It still belongs to the surviving row and must keep its bundle.
+        surviving = session.exec(
+            select(CredentialSource.id).where(
+                CredentialSource.provider_id == provider_id, CredentialSource.source_id == source_id
+            )
+        ).first()
+        if surviving is not None:
+            continue
+        for row in session.exec(
+            select(SidecarSourceContribution).where(
+                SidecarSourceContribution.provider_id == provider_id,
+                SidecarSourceContribution.credential_source_id == source_id,
+            )
+        ).all():
+            if row.payload_encrypted is not None:
+                row.payload_encrypted = None
+                session.add(row)
+                changed = True
+    if changed:
+        bump(session)

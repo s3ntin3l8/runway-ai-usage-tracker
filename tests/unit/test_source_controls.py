@@ -361,3 +361,100 @@ def test_browser_origin_cannot_hide_native_dependency_by_changing_provider(sessi
         source_controls.source_for_origin("anthropic", "keychain:Claude Code-credentialsEVIL")
         == "unknown"
     )
+
+
+def test_pause_hides_but_preserves_the_known_bundle_until_authorized_resume(session):
+    device, contribution = seed(session)
+    paused = source_controls.queue_command(
+        session, device.device_id, "anthropic.claude-code", "pause"
+    )
+    source_controls.acknowledge(session, device.device_id, paused.id, "applied")
+    session.commit()
+    assert source_controls.snapshot(session)[1] == []
+    assert session.get(SidecarSourceContribution, contribution.id).payload_encrypted is not None
+    resumed = source_controls.queue_command(
+        session, device.device_id, "anthropic.claude-code", "resume"
+    )
+    session.commit()
+    assert source_controls.snapshot(session)[1] == []
+    source_controls.acknowledge(session, device.device_id, resumed.id, "applied")
+    session.commit()
+    assert source_controls.snapshot(session)[1][0]["tokens"]["oauth_token"] == "synthetic-access"
+
+
+def test_retiring_an_origin_erases_its_durable_bundle_without_touching_other_sources(session):
+    from app.models.db import CredentialSource
+
+    device, contribution = seed(session)
+    other, _ = seed(session)
+    metadata = CredentialSource(
+        provider_id="anthropic",
+        account_id=contribution.account_id,
+        source_id=contribution.credential_source_id,
+        source_type="keychain",
+        source_label="Claude Code",
+        sidecar_id=sidecar_devices.registry_id(device.device_id),
+    )
+    session.add(metadata)
+    session.commit()
+    before = source_controls.revision(session)
+    session.delete(metadata)
+    session.commit()
+    assert session.get(SidecarSourceContribution, contribution.id).payload_encrypted is None
+    assert source_controls.revision(session) > before
+    assert [row["metadata"]["device_id"] for row in source_controls.snapshot(session)[1]] == [
+        other.device_id
+    ]
+
+
+def test_account_row_reassignment_keeps_the_surviving_origin_bundle(session):
+    from app.models.db import CredentialSource
+
+    device, contribution = seed(session)
+    common = {
+        "provider_id": "anthropic",
+        "source_id": contribution.credential_source_id,
+        "source_type": "keychain",
+        "source_label": "Claude Code",
+    }
+    old = CredentialSource(account_id=contribution.account_id, **common)
+    surviving = CredentialSource(account_id="reassigned@example.test", **common)
+    session.add(old)
+    session.add(surviving)
+    session.commit()
+    session.delete(old)
+    session.commit()
+    assert session.get(SidecarSourceContribution, contribution.id).payload_encrypted is not None
+
+
+@pytest.mark.asyncio
+async def test_retiring_durable_copy_preserves_identical_manual_oauth(session, monkeypatch):
+    from app.services.token_cache import TokenCache
+
+    device, contribution = seed(session)
+    monkeypatch.setattr(
+        source_controls,
+        "read_snapshot",
+        lambda previous: (
+            source_controls.snapshot(session)
+            if source_controls.revision(session) != previous
+            else None
+        ),
+    )
+    cache = TokenCache()
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "synthetic-access"},
+        account_id=contribution.account_id,
+        source="config",
+    )
+    assert len(await cache.get_source_candidates("anthropic", contribution.account_id)) == 1
+    await cache.remove_source(
+        "anthropic",
+        contribution.account_id,
+        contribution.credential_source_id,
+        retire_matching_oauth=True,
+    )
+    assert await cache.get("anthropic", contribution.account_id) == {
+        "oauth_token": "synthetic-access"
+    }

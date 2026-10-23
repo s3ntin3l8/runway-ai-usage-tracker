@@ -797,7 +797,9 @@ class TokenCache:
                 return False
             source_tokens = sources[source_id][0]
             others = [entry[0] for sid, entry in sources.items() if sid != source_id]
-            if retire_matching_oauth:
+            # Durable bundles never enter the legacy aggregate. An identical
+            # token there belongs to a separate manual/file contribution.
+            if retire_matching_oauth and sources[source_id][1].get("durable_source") is not True:
                 aggregate = self._cache.get(provider, {}).get(account_id)
                 if aggregate:
                     tokens, metadata, timestamp = aggregate
