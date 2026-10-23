@@ -208,6 +208,20 @@ def parallel_args(jobs: int) -> list[str]:
     return ["-n", str(jobs), "--dist", "loadfile"]
 
 
+#: The tasks that run without a virtualenv. ``install`` and ``install-python``
+#: create one, the frontend tasks use Node, ``install-hooks`` only copies a
+#: script, and ``remove-worktree`` has to work when the environment is exactly
+#: what is broken.
+TASKS_WITHOUT_VENV = {
+    "install",
+    "install-python",
+    "install-hooks",
+    "web-test",
+    "web-lint",
+    "remove-worktree",
+}
+
+
 def check(
     task: str,
     extra: list[str],
@@ -216,12 +230,9 @@ def check(
     shards: int = DEFAULT_SHARDS,
     jobs: int = 0,
     requirements_set: str = "all",
-) -> None:
+) -> int:
     interpreter = venv_python()
-    if (
-        task not in {"install", "install-python", "install-hooks", "web-test", "web-lint"}
-        and not interpreter.is_file()
-    ):
+    if task not in TASKS_WITHOUT_VENV and not interpreter.is_file():
         raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
     python = str(interpreter)
     if task == "install-python":
@@ -235,6 +246,16 @@ def check(
         check("install-hooks", [])
     elif task == "install-hooks":
         install_git_hooks()
+    elif task == "remove-worktree":
+        # A worktree links the main checkout's .venv into itself, and
+        # `git worktree remove` follows that link on Windows -- it deletes the
+        # main checkout's virtualenv. The helper drops the links first, so the
+        # removal only ever deletes the worktree's own files.
+        if not extra:
+            raise RuntimeError("remove-worktree needs the path of the worktree to remove")
+        from scripts.remove_worktree import remove_worktree
+
+        return remove_worktree(Path(extra[0]), cwd=ROOT)
     elif task == "lint":
         execute([python, "-m", "ruff", "check", "."])
         execute([python, "-m", "ruff", "format", "--check", "."])
@@ -348,6 +369,7 @@ def check(
         check("test", [], jobs=jobs)
         check("web-lint", [])
         check("web-test", [])
+    return 0
 
 
 def main() -> int:
@@ -358,6 +380,7 @@ def main() -> int:
             "install",
             "install-python",
             "install-hooks",
+            "remove-worktree",
             "lint",
             "mypy",
             "test",
@@ -392,7 +415,14 @@ def main() -> int:
         "included",
     )
     args, extra = parser.parse_known_args()
-    if extra and args.task not in {"test", "unit", "test-shard", "test-windows", "web-test"}:
+    if extra and args.task not in {
+        "test",
+        "unit",
+        "test-shard",
+        "test-windows",
+        "web-test",
+        "remove-worktree",
+    }:
         parser.error("additional arguments are supported only for test commands")
     if args.requirements_set != "all" and args.task != "install-python":
         parser.error("--set is supported only for the install-python task")
@@ -422,7 +452,7 @@ def main() -> int:
         default = "4" if args.task == "record-shard-weights" else "0"
         jobs = int(os.environ.get("RUNWAY_TEST_JOBS", default))
     try:
-        check(
+        status = check(
             args.task,
             extra,
             shard_id=shard_id,
@@ -434,7 +464,7 @@ def main() -> int:
         return exc.returncode
     except RuntimeError as exc:
         parser.exit(1, f"{exc}\n")
-    return 0
+    return status or 0
 
 
 if __name__ == "__main__":

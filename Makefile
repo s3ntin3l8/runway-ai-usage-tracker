@@ -9,13 +9,16 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights lint format web web-dev web-lint web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks remove-worktree demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights lint format web web-dev web-lint web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 install-hooks: ## Install pre-commit hooks for commit and push stages
 	python3 scripts/dev_checks.py install-hooks
+
+remove-worktree: ## Remove a worktree without deleting the directories it links to (use: make remove-worktree PATH=.wt/<slug>)
+	python3 scripts/dev_checks.py remove-worktree $(PATH)
 
 install: ## Set up venv, install Python and Node dependencies
 	python3 scripts/dev_checks.py install
