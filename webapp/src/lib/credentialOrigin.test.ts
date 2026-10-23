@@ -133,6 +133,8 @@ describe('originTitleWithApp', () => {
     expect(originTitleWithApp('Claude Desktop', 'Claude Desktop OAuth')).toBe(
       'Claude Desktop OAuth',
     );
+    // A label that is the app's name is not repeated either.
+    expect(originTitleWithApp('Chrome', 'Chrome')).toBe('Chrome');
     // Only as a word: "Chromebook cookie" does not name "Chrome".
     expect(originTitleWithApp('Chrome', 'Chromebook cookie')).toBe(
       'Chrome · Chromebook cookie',
