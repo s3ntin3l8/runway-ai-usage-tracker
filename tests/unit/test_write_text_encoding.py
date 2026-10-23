@@ -21,21 +21,23 @@ import pathlib
 
 import pytest
 
+from tests.fixtures.encoding_guard import ImplicitEncodingError
+
 
 def test_the_guard_is_installed():
-    """The session guard must be in place, or the other three tests prove nothing.
+    """The session guard must be in place, or the other tests prove nothing.
 
     Asserted through the wrapper's own marker attribute rather than by
-    behaviour: if the ``conftest.py`` wiring were deleted, the three
-    behavioural tests would still pass, because they would be testing the
-    unguarded ``Path.write_text``.
+    behaviour: if the ``conftest.py`` wiring were deleted, the behavioural
+    tests would still pass, because they would be testing the unguarded
+    ``Path.write_text``.
     """
     assert getattr(pathlib.Path.write_text, "_encoding_guard", False) is True
 
 
 def test_the_guard_refuses_non_ascii_without_an_encoding(tmp_path):
     """The failure it prevents, with the message that names the file."""
-    with pytest.raises(AssertionError, match="non-ASCII"):
+    with pytest.raises(ImplicitEncodingError, match="non-ASCII"):
         (tmp_path / "arrow.txt").write_text("Settings → Credentials")
 
 
@@ -55,3 +57,35 @@ def test_the_guard_allows_ascii_without_an_encoding(tmp_path):
     target = tmp_path / "plain.txt"
     target.write_text("plain ascii")
     assert target.read_text(encoding="utf-8") == "plain ascii"
+
+
+def test_the_guard_allows_a_write_that_cannot_fail(tmp_path):
+    """``errors="replace"`` makes the write succeed, so it is not a failure.
+
+    With the error handler set, cp1252 substitutes the characters it cannot
+    encode instead of raising -- the file is written, just with different
+    characters. Flagging that would be a false positive.
+    """
+    target = tmp_path / "arrow.txt"
+    target.write_text("Settings → Credentials", errors="replace")
+    assert target.exists()
+
+
+def test_a_broad_except_cannot_swallow_the_error(tmp_path):
+    """The signal has to survive the code under test.
+
+    The write happens inside whatever the test exercises, and a broad
+    ``except Exception:`` there would swallow an ordinary error and let the
+    test pass without the file ever being written. That is why the guard's
+    error is not an ``Exception``.
+    """
+
+    def swallows_everything() -> None:
+        try:
+            (tmp_path / "arrow.txt").write_text("Settings → Credentials")
+        except Exception:  # noqa: BLE001 -- the point of the test
+            pass
+
+    assert not issubclass(ImplicitEncodingError, Exception)
+    with pytest.raises(ImplicitEncodingError):
+        swallows_everything()

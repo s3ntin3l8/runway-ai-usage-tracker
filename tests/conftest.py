@@ -12,7 +12,6 @@ import atexit
 import getpass
 import json
 import os
-import pathlib
 import shutil
 import stat
 import subprocess
@@ -280,31 +279,12 @@ def guard_implicit_text_encodings():
 
     The guard is deliberately narrow. ASCII is always safe, so it is left
     alone; writing non-ASCII with an explicit ``encoding="utf-8"`` is the
-    supported way to do it.
+    supported way to do it. See ``tests/fixtures/encoding_guard.py``.
     """
-    original = pathlib.Path.write_text
+    from tests.fixtures.encoding_guard import encoding_guard
 
-    def guarded_write_text(self, data, *args, **kwargs):
-        encoding = kwargs.get("encoding")
-        if encoding is None and args:
-            encoding = args[0]
-        if encoding is None and isinstance(data, str) and not data.isascii():
-            offenders = sorted({char for char in data if ord(char) > 127})
-            raise AssertionError(
-                f"{self}: refusing to write non-ASCII text without an explicit "
-                f'encoding (characters: {offenders!r}). Pass encoding="utf-8" -- '
-                "the implicit encoding is the console's preferred one, which is "
-                "cp1252 on a default Windows install, and the write raises "
-                "UnicodeEncodeError there."
-            )
-        return original(self, data, *args, **kwargs)
-
-    guarded_write_text._encoding_guard = True
-    pathlib.Path.write_text = guarded_write_text
-    try:
+    with encoding_guard():
         yield
-    finally:
-        pathlib.Path.write_text = original
 
 
 @pytest.fixture(autouse=True)
