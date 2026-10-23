@@ -26,7 +26,8 @@ from tests.native_keychain_isolation import validate_scope
 SERVICE = "Runway synthetic public-update probe"
 ORIGINAL = b"synthetic-public-update-original"
 MODES = ("metadata-control", "data-only", "legacy-data", "combined-access")
-CASES = ("read-only-control", *MODES)
+CONTROL_CASES = ("read-only-control", "reference-control")
+CASES = (*CONTROL_CASES, *MODES)
 STAGES = {
     "start",
     "interaction_disabled",
@@ -36,6 +37,8 @@ STAGES = {
     "before_update",
     "after_update",
     "control_complete",
+    "before_reference_lookup",
+    "reference_verified",
 }
 SNAPSHOT_CHECKS = {
     "default_same": lambda snapshot: snapshot["default"]["path"],
@@ -105,7 +108,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
     if reason is not None:
         return {"case": mode, "failure": reason, "preflight_blocked": True}
     row = {"case": mode}
-    control = mode == "read-only-control"
+    control = mode in CONTROL_CASES
     if control:
         row.update(
             control_only=True, update_attempted=False, candidate_preserves_shared_access=False
@@ -324,7 +327,7 @@ def run(selected: tuple[str, ...] = MODES, *, report_path: Path | None = None) -
                 report["active_case"] = mode
                 if report_path is not None:
                     save_report(report_path, report)
-                if mode == "read-only-control":
+                if mode in CONTROL_CASES:
 
                     def progress(value: dict) -> None:
                         report["active_case_progress"] = value

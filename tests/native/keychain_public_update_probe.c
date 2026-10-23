@@ -25,6 +25,14 @@ static int private_fixture(const char *path) {
     return 1;
 }
 
+static void reference_query(CFMutableDictionaryRef query, SecKeychainItemRef item) {
+    CFDictionaryRemoveValue(query, kSecAttrService);
+    CFDictionaryRemoveValue(query, kSecAttrAccount);
+    CFDictionaryRemoveValue(query, kSecMatchLimit);
+    CFDictionaryRemoveValue(query, kSecReturnRef);
+    CFDictionarySetValue(query, kSecValueRef, item);
+}
+
 int main(int argc, char **argv) {
     fputs("stage:start\n", stderr);
     if (argc != 3 || !private_fixture(argv[1])) return 64;
@@ -32,12 +40,13 @@ int main(int argc, char **argv) {
     int legacy = !strcmp(argv[2], "legacy-data");
     int metadata = !strcmp(argv[2], "metadata-control");
     int control = !strcmp(argv[2], "read-only-control");
-    if (!control && !combined && !legacy && !metadata && strcmp(argv[2], "data-only")) return 64;
+    int reference_control = !strcmp(argv[2], "reference-control");
+    if (!reference_control && !control && !combined && !legacy && !metadata && strcmp(argv[2], "data-only")) return 64;
     if (SecKeychainSetUserInteractionAllowed(false)) return 65;
     fputs("stage:interaction_disabled\n", stderr);
-    SecKeychainRef keychain = NULL, owner = NULL;
+    SecKeychainRef keychain = NULL, owner = NULL, resolved_owner = NULL;
     SecAccessRef saved = NULL;
-    CFTypeRef found = NULL, readback = NULL;
+    CFTypeRef found = NULL, readback = NULL, resolution = NULL;
     CFArrayRef scope = NULL;
     CFMutableDictionaryRef query = NULL, update = NULL;
     CFDataRef replacement = NULL;
@@ -70,16 +79,30 @@ int main(int argc, char **argv) {
         result = 0;
         goto cleanup;
     }
+    if (reference_control) {
+        reference_query(query, item);
+        fputs("stage:before_reference_lookup\n", stderr);
+        status = SecItemCopyMatching(query, &resolution);
+        if (status || !resolution) goto cleanup;
+        CFTypeRef resolved = resolution;
+        if (CFGetTypeID(resolved) == CFArrayGetTypeID()) {
+            if (CFArrayGetCount((CFArrayRef)resolved) != 1) goto cleanup;
+            resolved = CFArrayGetValueAtIndex((CFArrayRef)resolved, 0);
+        }
+        if (CFGetTypeID(resolved) != SecKeychainItemGetTypeID() || !CFEqual(resolved, item)) goto cleanup;
+        status = SecKeychainItemCopyKeychain((SecKeychainItemRef)resolved, &resolved_owner);
+        if (status || !resolved_owner || !CFEqual(resolved_owner, keychain)) goto cleanup;
+        fputs("stage:reference_verified\nstage:control_complete\n", stderr);
+        puts("{\"control_completed\":true}");
+        result = 0;
+        goto cleanup;
+    }
     if (combined && SecKeychainItemCopyAccess(item, &saved)) goto cleanup;
     const unsigned char fake[] = "synthetic-public-update-replacement";
     replacement = CFDataCreate(NULL, fake, sizeof(fake) - 1);
     update = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks,
                                       &kCFTypeDictionaryValueCallBacks);
-    CFDictionaryRemoveValue(query, kSecAttrService);
-    CFDictionaryRemoveValue(query, kSecAttrAccount);
-    CFDictionaryRemoveValue(query, kSecMatchLimit);
-    CFDictionaryRemoveValue(query, kSecReturnRef);
-    CFDictionarySetValue(query, kSecValueRef, item);
+    reference_query(query, item);
     if (metadata) CFDictionarySetValue(update, kSecAttrComment, CFSTR("synthetic-control"));
     else CFDictionarySetValue(update, kSecValueData, replacement);
     if (combined) CFDictionarySetValue(update, kSecAttrAccess, saved);
@@ -96,6 +119,8 @@ int main(int argc, char **argv) {
            (int)status, (int)read_status, verified ? "true" : "false");
     result = 0;
 cleanup:
+    if (resolved_owner) CFRelease(resolved_owner);
+    if (resolution) CFRelease(resolution);
     if (readback) CFRelease(readback);
     if (replacement) CFRelease(replacement);
     if (update) CFRelease(update);

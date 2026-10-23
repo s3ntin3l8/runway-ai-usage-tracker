@@ -8,6 +8,7 @@ on:
         default: read-only-control
         options:
           - read-only-control
+          - reference-control
           - metadata-control
           - data-only
           - legacy-data

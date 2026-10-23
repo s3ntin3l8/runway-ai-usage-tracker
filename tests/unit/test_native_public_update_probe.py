@@ -523,8 +523,9 @@ def test_missing_snapshot_checks_are_unsafe(monkeypatch, tmp_path, synthetic_cas
     assert row["isolation_failed"] is True
 
 
+@pytest.mark.parametrize("case", ["read-only-control", "reference-control"])
 def test_read_only_control_records_ordered_isolation_without_candidate(
-    monkeypatch, tmp_path, synthetic_case
+    monkeypatch, tmp_path, synthetic_case, case
 ):
     monkeypatch.setattr(probe, "compare", lambda *args: {"access_policy_preserved": True})
     monkeypatch.setattr(
@@ -537,7 +538,7 @@ def test_read_only_control_records_ordered_isolation_without_candidate(
             stderr=b"stage:owner_verified\nstage:control_complete\n",
         ),
     )
-    row = probe.run_case(tmp_path / "writer", "read-only-control")
+    row = probe.run_case(tmp_path / "writer", case)
     assert "failure" not in row
     assert row["control_only"] is True
     assert row["update_attempted"] is False
@@ -556,7 +557,10 @@ def test_read_only_control_records_ordered_isolation_without_candidate(
 
 
 @pytest.mark.parametrize("changed_at", [1, 2, 3, 4, 5, 6])
-def test_control_stops_at_first_isolation_change(monkeypatch, tmp_path, synthetic_case, changed_at):
+@pytest.mark.parametrize("case", ["read-only-control", "reference-control"])
+def test_control_stops_at_first_isolation_change(
+    monkeypatch, tmp_path, synthetic_case, changed_at, case
+):
     snapshots, writers = [], []
 
     def snapshot():
@@ -575,7 +579,7 @@ def test_control_stops_at_first_isolation_change(monkeypatch, tmp_path, syntheti
     monkeypatch.setattr(probe, "environment_snapshot", snapshot)
     monkeypatch.setattr(probe, "compare", lambda *args: {"access_policy_preserved": True})
     monkeypatch.setattr(probe.subprocess, "run", writer)
-    row = probe.run_case(tmp_path / "writer", "read-only-control")
+    row = probe.run_case(tmp_path / "writer", case)
     assert row["failure"] == "isolation_changed"
     assert row["isolation_failed"] is True
     assert row["candidate_preserves_shared_access"] is False

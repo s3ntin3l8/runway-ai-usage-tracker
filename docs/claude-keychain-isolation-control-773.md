@@ -20,6 +20,14 @@ owning private Keychain and exits before any update. It returns only a completio
 boolean. The original process verifies unchanged fake data and access policy;
 cleanup removes its fixture.
 
+The separately selected `reference-control` also resolves the exact reference
+query used by the update cases, verifies the returned item and its owning private
+Keychain, and exits without an update. Both paths use the same query builder.
+This separates reference resolution from mutation: the pinned public
+[legacy implementation](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_keychain/lib/SecItem.cpp#L5017-L5059)
+resolves the query before updating matches. That source-derived hypothesis is
+distinct from proof about the current OS implementation.
+
 ## Recorded boundaries and failure behavior
 
 Fresh-process metadata comparisons follow fixture creation, fixture seeding,
@@ -48,3 +56,16 @@ unsafe in every environment. A clean control rules out only the operations it
 actually exercised. #773/#750/#526 remain open until the original current-package,
 exact-item, policy-preserving renewal and coexistence criteria pass. Supported
 provider authorization and release identity remain tracked in #781/#767.
+
+## First hosted control result (2026-10-23)
+
+The explicit [no-update control run](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40013777280)
+on source `6007eef8` passed all seven metadata checkpoints. Synthetic data and
+policy were unchanged, and the fixture was deleted. The [artifact](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40013777280/artifacts/12527830784)
+is preserved in [sanitized JSON](claude-keychain-control-ci-773.json).
+
+This control observed no isolation change during setup, ordinary metadata lookup,
+readback or cleanup on that runner. It did not exercise the exact update reference
+query or an update API, and `candidate_found` is false. The prior failed update
+attempt remains unexplained; the historical personal-machine prompt loop remains
+unattributed. These findings authorize no production write path.
