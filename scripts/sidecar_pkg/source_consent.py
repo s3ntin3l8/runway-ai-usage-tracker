@@ -6,6 +6,7 @@ import copy
 import inspect
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -13,7 +14,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Any
 
-from scripts.sidecar_pkg.source_catalog import catalog, trusted_rule
+from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class SourcePolicy:
         self._config: dict[str, Any] = {}
         self._paused: set[str] = set()
         self._epochs: dict[str, int] = {}
+        self._successful_reads: dict[str, float] = {}
         self.configure(config)
 
     def configure(self, config: dict[str, Any]) -> None:
@@ -88,6 +90,15 @@ class SourcePolicy:
                 self._paused.add(source_id)
             else:
                 self._paused.discard(source_id)
+
+    def record_read(self, ticket: ConsentTicket) -> None:
+        with self._lock:
+            if self.current(ticket):
+                self._successful_reads[ticket.source_id] = time.time()
+
+    def last_read(self, source_id: str) -> float | None:
+        with self._lock:
+            return self._successful_reads.get(source_id)
 
     def renewal_allowed(self) -> bool:
         with self._lock:
@@ -182,26 +193,6 @@ def cookie_ticket(service: str, domain: str, name: str) -> ConsentTicket | None:
     return service_ticket(service)
 
 
-def source_for_origin(provider: str, origin: str) -> str | None:
-    base = origin.split("#", 1)[0]
-    if base.startswith("keychain:Claude Code-credentials"):
-        return "anthropic.claude-code"
-    if base == "keychain:GitHub CLI":
-        return "github.gh-cli"
-    if base.startswith("keychain:Claude Desktop/oauth/"):
-        return "anthropic.desktop-oauth"
-    for browser, suffix in [
-        ("Chrome", "chrome"),
-        ("Chromium", "chromium"),
-        ("Edge", "edge"),
-        ("Claude Desktop", "desktop-session"),
-    ]:
-        if base.startswith(f"cookie:{provider}/{browser}/"):
-            source_id = f"{provider}.{suffix}"
-            return source_id if source_id in catalog() else "unknown"
-    return "unknown" if base.startswith("keychain:") else None
-
-
 def stamp(ticket: ConsentTicket) -> dict[str, Any]:
     return {
         "source_id": ticket.source_id,
@@ -221,38 +212,67 @@ def valid_stamp(value: Any) -> bool:
         return False
 
 
-def filter_egress(data: dict[str, Any]) -> dict[str, Any]:
-    """Withhold Keychain contributions until authenticated withdrawal is available."""
+def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Recheck local consent and negotiated withdrawal support immediately at egress."""
+    from scripts.sidecar_pkg.source_protocol import device_credentials, forwarding_allowed
 
-    def keychain_origin(value: Any) -> bool:
-        return isinstance(value, dict) and (
-            "keychain_consent" in value
-            or (
-                sys.platform == "darwin"
-                and bool(
-                    source_for_origin(
-                        str(value.get("provider_id", "")), str(value.get("credential_origin", ""))
-                    )
-                )
-            )
+    config = config or {}
+    destination = str(config.get("api_url", ""))
+    authenticated = (
+        device_credentials(config, destination.rstrip("/") + "/api/v1/fleet/ingest") is not None
+    )
+
+    def sanitize(value: Any, provider_override: Any = None) -> Any:
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+        provider, origin = (
+            str(provider_override or value.get("provider_id", "")),
+            str(value.get("credential_origin", "")),
         )
+        source_id = source_for_origin(provider, origin)
+        proof = value.get("keychain_consent")
+        keychain = "keychain_consent" in value or (sys.platform == "darwin" and bool(source_id))
+        if keychain:
+            if (
+                not authenticated
+                or not isinstance(proof, dict)
+                or not valid_stamp(proof)
+                or proof.get("source_id") != source_id
+                or not forwarding_allowed(str(source_id), destination)
+            ):
+                return None
+            result["keychain_consent"] = {
+                key: proof[key] for key in ("source_id", "revision", "generation")
+            }
+        if provider == "anthropic" and (
+            "refresh_token" in value or value.get("oauth_read_only") == "1"
+        ):
+            result.pop("refresh_token", None)
+            result["oauth_read_only"] = "1"
+        return result
 
     result = dict(data)
     if isinstance(data.get("metrics"), list):
-        result["metrics"] = [
-            card
-            for card in data["metrics"]
-            if not isinstance(card, dict) or not keychain_origin(card.get("metadata"))
-        ]
+        cards = []
+        for card in data["metrics"]:
+            if not isinstance(card, dict) or not isinstance(card.get("metadata"), dict):
+                cards.append(card)
+                continue
+            metadata = sanitize(card["metadata"], card.get("provider_id"))
+            if metadata is not None:
+                cards.append({**card, "metadata": metadata})
+        result["metrics"] = cards
     for field in ("entries", "observations"):
         if isinstance(data.get(field), list):
-            result[field] = [item for item in data[field] if not keychain_origin(item)]
+            result[field] = [clean for item in data[field] if (clean := sanitize(item)) is not None]
     if (
         sys.platform == "darwin"
         and "entries" in data
         and isinstance(data.get("completed_providers"), list)
     ):
-        # Withholding a source or refusing permission is not proof of logout.
+        # An incomplete/withheld native scan never proves logout. Explicit generation
+        # withdrawal owns retirement; files still report their own live contributions.
         protected = {source.provider for source in catalog().values()}
         result["completed_providers"] = [
             provider for provider in data["completed_providers"] if provider not in protected

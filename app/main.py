@@ -94,6 +94,9 @@ def _pending_quota_preview_cleanup_interval_seconds(max_age_seconds: int) -> int
 async def lifespan(app: FastAPI):
     # Startup: Initialize DB
     init_db()
+    from app.services import source_controls
+
+    source_controls.initialize()
 
     # Drop expired pending quota payloads before the first API request. Keep
     # their observation timestamps so Fleet can explain the stale preview.

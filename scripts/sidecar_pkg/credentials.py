@@ -121,10 +121,9 @@ def _fetch_config_payload(
         # Microsecond precision: the server accepts each signature once, so
         # two fetches in the same second must not collide.
         ts = server_http.signing_timestamp()
-        headers = {
-            "X-Timestamp": ts,
-            "X-Signature": config_request_signature(api_key, ts, query),
-        }
+        from scripts.sidecar_pkg.source_protocol import signed_headers
+
+        headers = signed_headers(config, url, api_key, ts, "config", query.encode())
     req = request.Request(url, headers=headers)
     try:
         with server_http.urlopen(

@@ -195,7 +195,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     # Validate HMAC + window + body cap via the shared ingest-auth helper
     # (any change to the scheme is one place). #288+ deduplicates against
     # the same helper used by /fleet/credentials/manifest.
-    body_bytes = await validate_ingest_auth(request, x_signature, x_timestamp)
+    body_bytes = await validate_ingest_auth(request, x_signature, x_timestamp, session=session)
 
     # 4. Parse request
     try:
@@ -212,6 +212,33 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     # registry entry regardless of the sidecar binary version.
     if payload.sidecar_id:
         payload.sidecar_id = normalize_sidecar_id(payload.sidecar_id)
+
+    from app.services import sidecar_devices, source_controls
+
+    payload.sidecar_id = sidecar_devices.authenticated_registry_id(request, payload.sidecar_id)
+    enrolled_device = getattr(request.state, "sidecar_device_id", None)
+    source_proofs: dict[tuple[str, str], dict[str, Any] | None] = {}
+    original_card_count = len(payload.metrics)
+    accepted_cards = []
+    for card in payload.metrics:
+        if enrolled_device is not None:
+            card.sidecar_id = payload.sidecar_id
+            if card.remaining == "Token" and card.unit in ("oauth", "api_key", "cookie"):
+                metadata = card.metadata or {}
+                provider = card.provider_id or metadata.get("provider_id", "")
+                origin = metadata.get("credential_origin", "")
+                try:
+                    source_proofs[(provider, origin)] = source_controls.contribution_proof(
+                        session, enrolled_device, provider, origin, metadata.get("keychain_consent")
+                    )
+                except ValueError:
+                    # A newer or withdrawn source must not discard unrelated usage.
+                    # Do not touch tags, cache entries or source metadata for this card.
+                    continue
+        elif card.sidecar_id:
+            sidecar_devices.authenticated_registry_id(request, card.sidecar_id)
+        accepted_cards.append(card)
+    payload.metrics = accepted_cards
 
     tokens_to_store = []
     local_cards = []
@@ -473,22 +500,54 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             p_id, cache_account_id or "default", source_id, p_tokens
         )
         secret_changed = bool(identity_pending and bundle_changed)
-        actual_acc_id = await token_cache.store(
-            p_id,
-            p_tokens,
-            cache_account_id,
-            a_name,
-            source=payload.sidecar_id,
-            source_id=source_id,
-            source_metadata={
-                "source_type": source_type,
-                "source_label": source_label,
-                "credential_origin": origin,
-                "sidecar_id": payload.sidecar_id,
-                "identity_pending": identity_pending,
-                "identity_hint": a_name if identity_pending else None,
-            },
-        )
+        if enrolled_device is not None:
+            actual_acc_id = cache_account_id or "default"
+            if p_id == "anthropic" and (
+                p_tokens.get("oauth_read_only") == "1"
+                or bool(p_tokens.get("refresh_token"))
+                or (origin or "").startswith(("file:", "keychain:"))
+            ):
+                p_tokens = {key: value for key, value in p_tokens.items() if key != "refresh_token"}
+                p_tokens["oauth_read_only"] = "1"
+            try:
+                source_controls.save_contribution(
+                    session,
+                    enrolled_device,
+                    source_proofs[(p_id, origin or "")],
+                    provider_id=p_id,
+                    origin=origin or "",
+                    account_id=actual_acc_id,
+                    tokens=p_tokens,
+                    metadata={
+                        "source_type": source_type,
+                        "source_label": source_label,
+                        "credential_origin": origin,
+                        "sidecar_id": payload.sidecar_id,
+                        "account_label": a_name,
+                        "identity_pending": identity_pending,
+                        "identity_hint": a_name if identity_pending else None,
+                    },
+                )
+            except ValueError:
+                session.rollback()
+                raise HTTPException(409, "Source contribution not authorized") from None
+        else:
+            actual_acc_id = await token_cache.store(
+                p_id,
+                p_tokens,
+                cache_account_id,
+                a_name,
+                source=payload.sidecar_id,
+                source_id=source_id,
+                source_metadata={
+                    "source_type": source_type,
+                    "source_label": source_label,
+                    "credential_origin": origin,
+                    "sidecar_id": payload.sidecar_id,
+                    "identity_pending": identity_pending,
+                    "identity_hint": a_name if identity_pending else None,
+                },
+            )
         if not isinstance(actual_acc_id, str):
             actual_acc_id = a_id or "default"
         if bundle_changed:
@@ -769,6 +828,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "status": "ok",
         "provider": payload.provider,
         "tokens_received": tokens_received_count,
+        "credentials_rejected": original_card_count - len(payload.metrics),
         "metrics_stored": len(local_cards),
         "events_received": ingest_result.events_received if ingest_result else 0,
         "events_inserted": ingest_result.events_inserted if ingest_result else 0,
@@ -985,13 +1045,14 @@ class CredentialHealthObservation(BaseModel):
     credential_origin: str = Field(min_length=1)
     token_types: list[str] = Field(default_factory=list)
     expires_at: float | None = None
+    keychain_consent: dict[str, Any] | None = None
 
 
 class CredentialManifestRequest(BaseModel):
     """Body shape for POST /fleet/credentials/manifest."""
 
     sidecar_id: str
-    entries: list[dict[str, str]] = []  # [{provider_id, credential_origin}, ...]
+    entries: list[dict[str, Any]] = []  # [{provider_id, credential_origin}, ...]
     # A provider is listed only when its collection completed successfully.
     # Older sidecars omit this field; their partial manifests are upsert-only.
     completed_providers: list[str] | None = None
@@ -1045,6 +1106,47 @@ async def _retire_missing_claude_sources(
         )
 
 
+def _validate_device_manifest(
+    request: Request, payload: CredentialManifestRequest, session: Session
+) -> None:
+    from app.services import sidecar_devices
+
+    payload.sidecar_id = (
+        sidecar_devices.authenticated_registry_id(request, payload.sidecar_id) or ""
+    )
+    enrolled_device = getattr(request.state, "sidecar_device_id", None)
+    if enrolled_device is not None:
+        from app.services import source_controls
+
+        rejected_providers = set()
+
+        def authorized(entry: dict[str, Any]) -> bool:
+            try:
+                source_controls.contribution_proof(
+                    session,
+                    enrolled_device,
+                    entry.get("provider_id", ""),
+                    entry.get("credential_origin", ""),
+                    entry.get("keychain_consent"),
+                )
+                return True
+            except ValueError:
+                rejected_providers.add(entry.get("provider_id", ""))
+                return False
+
+        payload.entries = [entry for entry in payload.entries if authorized(entry)]
+        payload.observations = [
+            entry for entry in payload.observations if authorized(entry.model_dump())
+        ]
+        # A skipped source is not authoritative absence and cannot retire last-good origins.
+        if payload.completed_providers is not None:
+            payload.completed_providers = [
+                provider
+                for provider in payload.completed_providers
+                if provider not in rejected_providers
+            ]
+
+
 @router.post("/credentials/manifest")
 @limiter.limit("60/minute")
 async def post_credential_manifest(
@@ -1066,7 +1168,9 @@ async def post_credential_manifest(
     Rate limit: 60/min — one call per sidecar per heartbeat (10-min default)
     is the steady state, so 60/min is ~6× headroom for retries.
     """
-    body_bytes = await validate_ingest_auth(request, x_signature, x_timestamp)
+    body_bytes = await validate_ingest_auth(
+        request, x_signature, x_timestamp, session=session, purpose="manifest"
+    )
     try:
         payload = CredentialManifestRequest.model_validate_json(body_bytes)
     except Exception as exc:
@@ -1091,6 +1195,8 @@ async def post_credential_manifest(
         sidecar_source_id,
         touch_source,
     )
+
+    _validate_device_manifest(request, payload, session)
 
     # Each manifest is authoritative: the latest observed token names and
     # expiry replace the prior health metadata for that source.
@@ -2653,9 +2759,13 @@ async def get_fleet_config(
     # Decided up front (verification consumes the single-use signature):
     # untrusted callers get a redacted view, so nothing identity-bearing —
     # including credential tokens — is even computed for them.
-    trusted = verify_config_signature(request) or (
+    trusted = verify_config_signature(request, session=session) or (
         is_loopback_bind() and request.headers.get("X-Runway-Dev-Remote") != "1"
     )
+
+    from app.services import sidecar_devices
+
+    sidecar_id = sidecar_devices.authenticated_registry_id(request, sidecar_id)
 
     rows = session.exec(select(ProviderConfig)).all()
 
@@ -2813,11 +2923,17 @@ class PairingCodeResponse(BaseModel):
 class PairRequest(BaseModel):
     code: str
     hostname: str | None = None
+    device_protocol: Literal[1] | None = None
+    platform: Literal["Darwin", "Linux", "Windows"] | None = None
 
 
 class PairResponse(BaseModel):
     api_url: str
     api_key: str
+    device_id: str | None = None
+    device_key: str | None = None
+    device_api_url: str | None = None
+    source_protocol: int | None = None
 
 
 def _ingest_disabled() -> bool:
@@ -2870,7 +2986,7 @@ async def create_pairing_code(
     )
 
 
-@router.post("/pair", response_model=PairResponse)
+@router.post("/pair", response_model=PairResponse, response_model_exclude_none=True)
 @limiter.limit("10/minute")
 async def redeem_pairing_code(
     request: Request,
@@ -2888,8 +3004,20 @@ async def redeem_pairing_code(
         raise HTTPException(status_code=503, detail="Sidecar ingest is disabled on this server")
     hostname = normalize_sidecar_id(body.hostname) if body.hostname else None
     request.state.admin_actor = "pairing-code"
+    from app.services import sidecar_devices
+
+    device_fields: dict[str, Any] = {}
     try:
-        row = pairing.redeem(session, body.code, hostname=hostname)
+        row = pairing.redeem(session, body.code, hostname=hostname, commit=False)
+        if body.device_protocol == 1 and sidecar_devices.encryption_service.is_enabled:
+            device, secret = sidecar_devices.enroll(session, hostname, platform=body.platform)
+            device_fields = {
+                "device_id": device.device_id,
+                "device_key": secret,
+                "device_api_url": row.server_url,
+                "source_protocol": 1,
+            }
+        session.commit()
     except pairing.PairingError:
         audit_log.record(session, request, action="sidecar.pair.rejected", target_id=hostname)
         # One vague answer for unknown / expired / reused codes (no oracle).
@@ -2902,4 +3030,4 @@ async def redeem_pairing_code(
         payload={"server_url": row.server_url},
     )
     logger.info("Sidecar %s paired via one-time code", scrub_log(hostname or "?"))
-    return PairResponse(api_url=row.server_url, api_key=_settings.INGEST_API_KEY)
+    return PairResponse(api_url=row.server_url, api_key=_settings.INGEST_API_KEY, **device_fields)

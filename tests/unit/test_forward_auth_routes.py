@@ -9,7 +9,9 @@ FLEET_PREFIX = "/api/v1/fleet"
 
 
 def _hmac_only_fleet_routes() -> set[str]:
-    source = (ROOT / "app/api/endpoints/fleet.py").read_text()
+    source = "\n".join(
+        path.read_text() for path in sorted((ROOT / "app/api/endpoints").glob("fleet*.py"))
+    )
     module = ast.parse(source)
     routes: set[str] = set()
     auth_helpers = {"validate_ingest_auth", "verify_config_signature"}

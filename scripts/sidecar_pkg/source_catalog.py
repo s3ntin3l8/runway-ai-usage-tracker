@@ -18,6 +18,7 @@ class SourceDescriptor:
     services: tuple[str, ...]
     revision: str
     renewal: bool = False
+    platforms: tuple[str, ...] = ("darwin",)
 
 
 def catalog() -> dict[str, SourceDescriptor]:
@@ -79,7 +80,10 @@ def catalog() -> dict[str, SourceDescriptor]:
                 continue
             source_id = f"{provider}.{suffix}"
             revision = hashlib.sha256(
-                json.dumps([services, matches], sort_keys=True).encode()
+                json.dumps(
+                    [services, matches, {"renewal": renewal, "platforms": ["darwin"]}],
+                    sort_keys=True,
+                ).encode()
             ).hexdigest()
             result[source_id] = SourceDescriptor(
                 source_id, provider, label, services, revision, renewal
@@ -106,3 +110,31 @@ def trusted_rule(provider: str, rule: dict[str, Any]) -> bool:
         if candidate == baseline:
             return True
     return False
+
+
+def source_for_origin(provider: str, origin: str) -> str | None:
+    base = origin.split("#", 1)[0]
+    if base == "keychain:Claude Code-credentials" or base.startswith(
+        "keychain:Claude Code-credentials-"
+    ):
+        return "anthropic.claude-code"
+    if base == "keychain:GitHub CLI":
+        return "github.gh-cli"
+    if base.startswith("keychain:Claude Desktop/oauth/"):
+        return "anthropic.desktop-oauth"
+    for browser, suffix in [
+        ("Chrome", "chrome"),
+        ("Chromium", "chromium"),
+        ("Edge", "edge"),
+        ("Claude Desktop", "desktop-session"),
+    ]:
+        if base.startswith(f"cookie:{provider}/{browser}/"):
+            source_id = f"{provider}.{suffix}"
+            return source_id if source_id in catalog() else "unknown"
+    parts = base.removeprefix("cookie:").split("/")
+    native_browser = (
+        base.startswith("cookie:")
+        and len(parts) >= 3
+        and parts[1] in {"Chrome", "Chromium", "Edge", "Claude Desktop"}
+    )
+    return "unknown" if base.startswith("keychain:") or native_browser else None

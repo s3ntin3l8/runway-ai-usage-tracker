@@ -39,6 +39,7 @@ import { SidecarSettingsDialog, useSidecarKeepAlive } from './SidecarSettingsDia
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 import { buildSidecarNameMap } from './queries';
 import { PendingUsageEventsCard } from './PendingUsageEventsCard';
+import { SidecarSourceNotice } from './SidecarSources';
 
 // Liveness is computed server-side (fleet_registry.to_dict's `stale` field,
 // gated on stale_threshold_minutes) so there's one source of truth — a
@@ -490,6 +491,7 @@ function SidecarCard({
             </Link>
           </div>
 
+          <SidecarSourceNotice sidecarId={sidecar.sidecar_id} osPlatform={sidecar.os_platform} onOpen={onSettings} />
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={onSettings}>
               <Settings className="size-3.5" aria-hidden />

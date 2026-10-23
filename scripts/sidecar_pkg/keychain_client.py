@@ -254,3 +254,9 @@ def reopen_keychain_client() -> None:
 
 
 atexit.register(close_keychain_client)
+
+
+def access_groups_blocked(groups: list[str]) -> bool:
+    """Inspect suppression without creating a client or dispatching credential IO."""
+    client = _CLIENT
+    return client is not None and any(client.access_blocked(group) for group in groups)

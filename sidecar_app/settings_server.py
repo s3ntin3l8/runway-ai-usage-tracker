@@ -267,12 +267,12 @@ $css</style>
     <p class="field-hint">Choose which scrapers may use your Mac’s Keychain. File and environment sources continue normally. Access credentials may be sent to your paired server; refresh tokens remain local.</p>
     <p id="sources-announcement" role="status" hidden>New Keychain scraper — opt in now. Review the sources below.</p>
     <div class="actions" style="margin-top:1rem">
-      <button type="button" class="btn btn-ghost" onclick="sourceAction('enable_all')">Enable all</button>
+      <button type="button" class="btn btn-ghost" id="sources-enable-all" onclick="sourceAction('enable_all')">Enable all</button>
       <button type="button" class="btn btn-ghost" onclick="sourceAction('disable_all')">Disable all</button>
     </div>
     <div id="sources-list"></div>
     <label class="field" style="margin-top:1rem"><span><input type="checkbox" id="keychain-renewal" onchange="sourceAction('renewal', null, this.checked)"> Allow Claude Code Keychain renewal/write-back</span></label>
-    <p class="field-hint">Renewal also requires keep-alive and a verified compatible Keychain policy. Keychain credential sharing is unavailable until your server supports source controls.</p>
+    <p class="field-hint">Renewal also requires keep-alive and a verified compatible Keychain policy. <span id="sources-compatibility">Checking authenticated server source controls.</span></p>
     <p id="sources-error" role="alert"></p>
   </section>
 
@@ -352,6 +352,8 @@ async function refreshSources() {
   const serialized = JSON.stringify(report);
   if (serialized === lastSourceReport) return;
   lastSourceReport = serialized;
+  document.getElementById("sources-enable-all").disabled = !report.compatible;
+  document.getElementById('sources-compatibility').textContent = report.re_pair_required ? 'Action required: device authentication is unavailable. Re-pair this sidecar with your server in Connection settings. Keychain credentials are withheld.' : !report.compatible ? 'Keychain scrapers are available on macOS only.' : report.forwarding_supported ? 'Authenticated source controls are available on your paired server.' : 'Limited: pair with a server that supports authenticated source controls before sharing Keychain credentials.';
   const focusedId = document.activeElement && document.activeElement.id;
   const list = document.getElementById('sources-list');
   list.replaceChildren();
@@ -359,13 +361,13 @@ async function refreshSources() {
   for (const source of report.sources) {
     const row = document.createElement('div'); row.className = 'field'; row.style.marginTop = '1rem';
     const label = document.createElement('label');
-    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.id = 'source-' + source.id; checkbox.checked = source.read;
+    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.id = 'source-' + source.id; checkbox.checked = source.read; checkbox.disabled = !source.compatible;
     checkbox.onchange = () => sourceAction(checkbox.checked ? 'enable' : 'disable', source.id);
     label.append(checkbox, document.createTextNode(' Use Keychain: ' + source.label));
-    const detail = document.createElement('p'); detail.className = 'field-hint'; detail.textContent = (source.state === 'Withdrawal pending' ? 'Off · server withdrawal pending' : source.state) + ' · ' + source.dependency;
+    const detail = document.createElement('p'); detail.className = 'field-hint'; detail.textContent = (source.revoked ? 'Action required · contribution revoked; disable and re-enable locally to reconnect' : source.state === 'Withdrawal pending' ? 'Off · server withdrawal pending' : source.state) + (source.remote_paused ? ' · Paused by server' : '') + (source.setup_requested ? ' · Setup requested: authorize locally' : '') + ' · ' + source.dependency;
     row.append(label, detail);
     if (source.read) {
-      const authorize = document.createElement('button'); authorize.type = 'button'; authorize.className = 'btn btn-ghost'; authorize.textContent = 'Authorize'; authorize.id = 'authorize-' + source.id;
+      const authorize = document.createElement('button'); authorize.type = 'button'; authorize.className = 'btn btn-ghost'; authorize.textContent = 'Authorize'; authorize.id = 'authorize-' + source.id; authorize.setAttribute('aria-label', 'Authorize ' + source.label);
       authorize.disabled = !report.setup_available || report.sources.some(item => item.state === 'Connecting');
       if (!report.setup_available) authorize.title = 'Authorization requires the packaged macOS app';
       authorize.onclick = () => sourceAction('authorize', source.id); row.append(authorize);
@@ -375,7 +377,7 @@ async function refreshSources() {
       dismiss.onclick = () => sourceAction('dismiss', source.id); row.append(dismiss);
     }
     if (source.id === 'anthropic.claude-code') {
-      const renewal = document.getElementById('keychain-renewal'); renewal.checked = source.renewal_requested; renewal.disabled = !source.read;
+      const renewal = document.getElementById('keychain-renewal'); renewal.checked = source.renewal_requested; renewal.disabled = !source.compatible || !source.read;
     }
     list.append(row);
   }
@@ -778,6 +780,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": str(exc)}, 400)
             return
         new_config = dict(self.server.get_config())
+        for field in ("device_id", "device_key", "device_api_url"):
+            new_config.pop(field, None)
         new_config.update(creds)
         try:
             self.server.save_config(new_config)

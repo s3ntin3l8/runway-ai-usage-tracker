@@ -80,9 +80,17 @@ class _WorkerAPI:
                 operation == "copy" or self._allowed() is True
             )
 
-        return get_keychain_client().call(
+        result = get_keychain_client().call(
             operation, query, values, group=self._group, allowed=permitted
         )
+        if (
+            operation == "copy"
+            and isinstance(result, dict)
+            and "data" in result
+            and result.get("service") != RECOVERY_SERVICE
+        ):
+            consent.POLICY.record_read(ticket)
+        return result
 
     def copy(self, query: dict[str, Any]) -> Any:
         return self.call("copy", query, {})

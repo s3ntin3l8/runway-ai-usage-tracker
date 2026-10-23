@@ -91,5 +91,10 @@ docs/
 
 # --- SCRIPTS & TESTS ---
 tests/
-scripts/
+# The server imports only the shared, inert Keychain capability catalog.
+scripts/*
+!scripts/sidecar_pkg/
+scripts/sidecar_pkg/*
+!scripts/sidecar_pkg/source_catalog.py
+!scripts/sidecar_pkg/source_catalog_data.py
 scratch/
