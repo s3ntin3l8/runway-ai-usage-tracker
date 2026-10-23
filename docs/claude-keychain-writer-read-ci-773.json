@@ -1,0 +1,110 @@
+{
+  "date": "2026-10-23",
+  "source_commit_url": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c8e55fd6dd302d49d7ea1248fa1ab0873a6de0f2",
+  "workflow_run": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40015300225",
+  "artifact": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40015300225/artifacts/12528610825",
+  "workflow_conclusion": "failure",
+  "renewal_acceptance": false,
+  "result": {
+    "scope": "private-synthetic-keychains-public-api-only",
+    "real_claude_credential_operations": 0,
+    "claude_oauth_exchanges": 0,
+    "cases": [
+      {
+        "case": "writer-read-control",
+        "control_only": true,
+        "update_attempted": false,
+        "candidate_preserves_shared_access": false,
+        "isolation_checkpoints": [
+          {
+            "stage": "fixture_created",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "fixture_seeded",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "fixture_read",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "before_writer",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_writer",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_cleanup",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          }
+        ],
+        "stages": [
+          "start",
+          "interaction_disabled",
+          "private_keychain_opened",
+          "before_item_metadata",
+          "owner_verified",
+          "before_reference_lookup",
+          "reference_verified",
+          "before_writer_data_read",
+          "after_writer_data_read",
+          "control_complete"
+        ],
+        "writer_exit_code": 0,
+        "control_completed": false,
+        "control_status": -25293,
+        "failure": "native_probe_incomplete",
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true,
+        "metadata_checks": {
+          "default_same": true,
+          "default_lock_same": true,
+          "search_list_same": true,
+          "search_locks_same": true
+        }
+      }
+    ],
+    "matrix_complete": false,
+    "candidate_found": false,
+    "selected_cases": [
+      "writer-read-control"
+    ],
+    "phase": "case",
+    "active_case": "writer-read-control",
+    "stopped_after_failure": true,
+    "child_exit_code": 1
+  }
+}

@@ -1,6 +1,20 @@
 name: Synthetic Keychain investigation
 on:
   workflow_dispatch:
+    inputs:
+      case:
+        description: Synthetic case (control performs no item update)
+        type: choice
+        default: read-only-control
+        options:
+          - read-only-control
+          - reference-control
+          - writer-read-control
+          - metadata-control
+          - data-only
+          - legacy-data
+          - combined-access
+          - update-matrix
 permissions:
   contents: read
 jobs:
@@ -14,9 +28,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
-      - name: Public API matrix with process-group deadline
+      - name: Selected synthetic case with process-group deadline
         timeout-minutes: 2
-        run: python tests/native_keychain_ci.py --report keychain-report.json
+        env:
+          RUNWAY_SYNTHETIC_CASE: ${{ inputs.case }}
+        run: python tests/native_keychain_ci.py --report keychain-report.json --case "$RUNWAY_SYNTHETIC_CASE"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

@@ -339,6 +339,9 @@ def test_native_synthetic_lookup_matches_python_fixture_identity():
     source = (Path(probe.ROOT) / "tests/native/keychain_public_update_probe.c").read_text()
     assert re.findall(r'kSecAttrService, CFSTR\("([^"\n]+)"\)', source) == [probe.SERVICE]
     assert re.findall(r'kSecAttrAccount, CFSTR\("([^"\n]+)"\)', source) == [probe.ACCOUNT]
+    assert re.findall(r'const unsigned char original\[\] = "([^"\n]+)"', source) == [
+        probe.ORIGINAL.decode()
+    ]
 
 
 def test_successful_writer_cannot_export_unexpected_diagnostics(
@@ -393,7 +396,7 @@ def test_only_complete_safe_matrix_can_report_candidate(monkeypatch, tmp_path, i
     monkeypatch.setattr(probe, "preflight", lambda: None)
     monkeypatch.setattr(probe.subprocess, "run", lambda *a, **k: None)
 
-    def case(_writer, mode):
+    def case(_writer, mode, **kwargs):
         if incomplete and mode == "data-only":
             raise OSError("private-run-detail")
         return {"case": mode, "candidate_preserves_shared_access": True}
@@ -455,7 +458,14 @@ def test_malformed_writer_result_retains_saved_case_and_stages(saved_case, stdou
 def test_failed_post_cleanup_snapshot_retains_primary_timeout(
     monkeypatch, saved_case, snapshot_error
 ):
+    snapshot = probe.environment_snapshot()
+    calls = 0
+
     def unavailable():
+        nonlocal calls
+        calls += 1
+        if calls <= 4:
+            return snapshot
         if snapshot_error is subprocess.TimeoutExpired:
             raise snapshot_error(["private-detail"], 5)
         raise snapshot_error("private-detail")
@@ -518,6 +528,210 @@ def test_missing_snapshot_checks_are_unsafe(monkeypatch, tmp_path, synthetic_cas
         ),
     )
     row = probe.run_case(tmp_path / "writer", "metadata-control")
-    assert row["stages"] == ["start"]
-    assert row["writer_exit_code"] == 66
+    assert "stages" not in row
+    assert "writer_exit_code" not in row
+    assert row["failure"] == (
+        "metadata_unavailable" if missing == "before" else "isolation_changed"
+    )
     assert row["isolation_failed"] is True
+
+
+@pytest.mark.parametrize("case", ["read-only-control", "reference-control", "writer-read-control"])
+def test_read_only_control_records_ordered_isolation_without_candidate(
+    monkeypatch, tmp_path, synthetic_case, case
+):
+    monkeypatch.setattr(probe, "compare", lambda *args: {"access_policy_preserved": True})
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=b'{"control_completed":true,"control_status":0}',
+            stderr=b"stage:owner_verified\nstage:control_complete\n",
+        ),
+    )
+    row = probe.run_case(tmp_path / "writer", case)
+    assert "failure" not in row
+    assert row["control_only"] is True
+    assert row["update_attempted"] is False
+    assert row["candidate_preserves_shared_access"] is False
+    assert row["original_reader"] == "original"
+    assert [entry["stage"] for entry in row["isolation_checkpoints"]] == [
+        "fixture_created",
+        "fixture_seeded",
+        "fixture_read",
+        "before_writer",
+        "after_writer",
+        "after_readback",
+        "after_cleanup",
+    ]
+    assert all(all(entry["checks"].values()) for entry in row["isolation_checkpoints"])
+
+
+@pytest.mark.parametrize("changed_at", [1, 2, 3, 4, 5, 6])
+@pytest.mark.parametrize("case", probe.CASES)
+def test_case_stops_at_first_isolation_change(
+    monkeypatch, tmp_path, synthetic_case, changed_at, case
+):
+    snapshots, writers = [], []
+
+    def snapshot():
+        snapshots.append(True)
+        return {
+            "default": {"path": "synthetic", "unlocked": len(snapshots) < changed_at},
+            "search_list": [],
+        }
+
+    def writer(*args, **kwargs):
+        writers.append(True)
+        return subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=b'{"control_completed":true,"control_status":0,"update_status":0,"read_status":0,"replacement_verified":false}',
+            stderr=b"stage:control_complete\n",
+        )
+
+    monkeypatch.setattr(probe, "environment_snapshot", snapshot)
+    monkeypatch.setattr(probe, "compare", lambda *args: {"access_policy_preserved": True})
+    monkeypatch.setattr(probe.subprocess, "run", writer)
+    row = probe.run_case(tmp_path / "writer", case)
+    assert row["failure"] == "isolation_changed"
+    assert row["isolation_failed"] is True
+    assert row["candidate_preserves_shared_access"] is False
+    assert len(writers) == (0 if changed_at <= 4 else 1)
+    first_bad = next(
+        entry for entry in row["isolation_checkpoints"] if not all(entry["checks"].values())
+    )
+    assert (
+        first_bad["stage"]
+        == [
+            "fixture_created",
+            "fixture_seeded",
+            "fixture_read",
+            "before_writer",
+            "after_writer",
+            "after_readback",
+        ][changed_at - 1]
+    )
+
+
+def test_control_checkpoints_are_durable_before_native_child(monkeypatch, tmp_path, synthetic_case):
+    path = tmp_path / "report.json"
+
+    def execute(command, **kwargs):
+        if Path(command[0]).name == "synthetic-writer":
+            saved = json.loads(path.read_text())
+            assert saved["selected_cases"] == ["read-only-control"]
+            progress = saved["active_case_progress"]
+            assert progress["isolation_checkpoints"][-1]["stage"] == "before_writer"
+            assert progress["update_attempted"] is False
+            assert progress["candidate_preserves_shared_access"] is False
+            raise KeyboardInterrupt("private-interruption-detail")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    assert probe.main(SimpleNamespace(case="read-only-control", report=path)) == 130
+    saved = json.loads(path.read_text())
+    assert saved["failure"] == "interrupted"
+    assert saved["candidate_found"] is False
+    assert saved["active_case_progress"]["isolation_checkpoints"][-1]["stage"] == "before_writer"
+    assert "private-interruption-detail" not in path.read_text()
+    assert "synthetic-reference" not in path.read_text()
+
+
+@pytest.mark.parametrize("mode", probe.MODES)
+def test_update_case_persists_checkpoints_before_timeout(
+    monkeypatch, tmp_path, synthetic_case, mode
+):
+    path = tmp_path / "update-report.json"
+
+    def execute(command, **kwargs):
+        if Path(command[0]).name == "synthetic-writer":
+            progress = json.loads(path.read_text())["active_case_progress"]
+            assert progress["isolation_checkpoints"][-1]["stage"] == "before_writer"
+            raise subprocess.TimeoutExpired(command, 5, stderr=b"stage:before_update\n")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    result = probe.run((mode,), report_path=path)
+    row = result["cases"][0]
+    assert row["failure"] == "timed_out"
+    assert row["isolation_checkpoints"][-2]["stage"] == "after_writer"
+    assert row["isolation_checkpoints"][-1]["stage"] == "after_cleanup"
+    assert "active_case_progress" not in result
+
+
+@pytest.mark.parametrize(
+    "status,reason",
+    [(-25293, "control_denied"), (-50, "control_read_failed"), (0, "control_data_mismatch")],
+)
+def test_failed_control_read_is_classified_without_further_reads(
+    monkeypatch, tmp_path, synthetic_case, status, reason
+):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"control_completed": False, "control_status": status}).encode(),
+            stderr=b"",
+        ),
+    )
+    monkeypatch.setattr(
+        probe, "compare", lambda *a: pytest.fail("no policy read after failed control")
+    )
+    row = probe.run_case(tmp_path / "writer", "writer-read-control")
+    assert row["failure"] == reason
+    assert row["control_status"] == status
+    assert row["candidate_preserves_shared_access"] is False
+
+
+@pytest.mark.parametrize("status", [-25293, -50])
+def test_failed_writer_read_cannot_claim_replacement_verified(
+    monkeypatch, tmp_path, synthetic_case, status
+):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps(
+                {"update_status": 0, "read_status": status, "replacement_verified": True}
+            ).encode(),
+            stderr=b"",
+        ),
+    )
+    monkeypatch.setattr(
+        probe, "compare", lambda *a: pytest.fail("no policy read after failed writer read")
+    )
+    row = probe.run_case(tmp_path / "writer", "data-only")
+    assert row["failure"] == ("writer_read_denied" if status == -25293 else "writer_read_failed")
+    assert row["replacement_verified"] is None
+    assert row["candidate_preserves_shared_access"] is False
+
+
+def test_native_controls_exit_before_update_calls():
+    source = (Path(probe.ROOT) / "tests/native/keychain_public_update_probe.c").read_text()
+    first_update = min(
+        source.index(marker)
+        for marker in (
+            'fputs("stage:before_update',
+            "SecItemUpdate(",
+            "SecKeychainItemModifyAttributesAndData(",
+        )
+    )
+    for condition in ("if (control) {", "if (reference_control || data_control) {"):
+        start = source.index(condition)
+        depth = 1
+        end = start + len(condition)
+        while depth:
+            depth += (source[end] == "{") - (source[end] == "}")
+            end += 1
+        block = source[start:end]
+        assert end < first_update
+        assert block.rstrip().endswith("goto cleanup;\n    }")
+        assert "SecItemUpdate(" not in block
+        assert "SecKeychainItemModifyAttributesAndData(" not in block

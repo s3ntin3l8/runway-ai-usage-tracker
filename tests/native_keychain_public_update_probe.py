@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,9 @@ from tests.native_keychain_isolation import validate_scope
 SERVICE = "Runway synthetic public-update probe"
 ORIGINAL = b"synthetic-public-update-original"
 MODES = ("metadata-control", "data-only", "legacy-data", "combined-access")
+CONTROL_CASES = ("read-only-control", "reference-control", "writer-read-control")
+CASES = (*CONTROL_CASES, *MODES)
+DENIED_STATUSES = {-25293, -25308, -25315, -128}
 STAGES = {
     "start",
     "interaction_disabled",
@@ -33,6 +37,12 @@ STAGES = {
     "owner_verified",
     "before_update",
     "after_update",
+    "control_complete",
+    "before_reference_lookup",
+    "reference_verified",
+    "before_writer_data_read",
+    "after_writer_data_read",
+    "writer_data_verified",
 }
 SNAPSHOT_CHECKS = {
     "default_same": lambda snapshot: snapshot["default"]["path"],
@@ -97,22 +107,64 @@ def preflight() -> str | None:
     return None
 
 
-def run_case(writer: Path, mode: str) -> dict:
+def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | None = None) -> dict:
     reason = preflight()
     if reason is not None:
         return {"case": mode, "failure": reason, "preflight_blocked": True}
+    row = {"case": mode, "candidate_preserves_shared_access": False}
+    control = mode in CONTROL_CASES
+    if control:
+        row.update(
+            control_only=True, update_attempted=False, candidate_preserves_shared_access=False
+        )
+    if checkpoint is not None:
+        checkpoint(row)
     fixture = Fixture(writer)
-    row = {"case": mode}
     interrupted = None
+
+    def observe(stage: str) -> None:
+        try:
+            checks = snapshot_checks(fixture.before, environment_snapshot())
+        except (
+            OSError,
+            RuntimeError,
+            AttributeError,
+            KeyError,
+            TypeError,
+            ValueError,
+            subprocess.SubprocessError,
+        ):
+            row["metadata_failure"] = "metadata_unavailable"
+            row.setdefault("failure", "metadata_unavailable")
+            row["isolation_failed"] = True
+            if checkpoint is not None:
+                checkpoint(row)
+            raise RuntimeError("probe metadata unavailable") from None
+        row.setdefault("isolation_checkpoints", []).append({"stage": stage, "checks": checks})
+        safe = set(checks) == SNAPSHOT_CHECKS.keys() and all(
+            value is True for value in checks.values()
+        )
+        if not safe:
+            row.setdefault("failure", "isolation_changed")
+            row["isolation_failed"] = True
+        if checkpoint is not None:
+            checkpoint(row)
+        if not safe:
+            raise RuntimeError("probe isolation changed")
+
     try:
         with fixture:
             try:
+                observe("fixture_created")
                 reference = fixture.add(service=SERVICE, data=ORIGINAL)
+                observe("fixture_seeded")
                 paths = validate_scope(Path(fixture.directory.name), fixture.paths())
                 assert len(paths) == 1
                 query = {"persistent": reference, "keychains": [str(path) for path in paths]}
                 assert fixture.api.call("copy", query, {})["data"] == ORIGINAL
+                observe("fixture_read")
                 before = capture(SERVICE, ACCOUNT, keychain=fixture.keychains[0])
+                observe("before_writer")
                 try:
                     child = subprocess.run(
                         [str(writer), str(paths[0]), mode],
@@ -122,15 +174,23 @@ def run_case(writer: Path, mode: str) -> dict:
                 except subprocess.TimeoutExpired as exc:
                     row["failure"] = "timed_out"
                     row["stages"] = stages(exc.stderr)
+                    observe("after_writer")
                     raise
                 row["stages"] = stages(child.stderr)
                 row["writer_exit_code"] = child.returncode
+                observe("after_writer")
                 assert child.returncode == 0, "synthetic public writer failed"
                 fields = (
-                    ("update_status", int),
-                    ("read_status", int),
-                    ("replacement_verified", bool),
+                    (("control_completed", bool),)
+                    if control
+                    else (
+                        ("update_status", int),
+                        ("read_status", int),
+                        ("replacement_verified", bool),
+                    )
                 )
+                if mode == "writer-read-control":
+                    fields += (("control_status", int),)
                 try:
                     values = json.loads(child.stdout)
                     if not isinstance(values, dict) or any(
@@ -141,6 +201,24 @@ def run_case(writer: Path, mode: str) -> dict:
                     row["failure"] = "invalid_writer_result"
                     raise ValueError("invalid writer result") from None
                 row.update({name: values[name] for name, _kind in fields})
+                if control and row["control_completed"] is not True:
+                    status = row.get("control_status")
+                    row["failure"] = (
+                        "control_denied"
+                        if status in DENIED_STATUSES
+                        else "control_read_failed"
+                        if status
+                        else "control_data_mismatch"
+                    )
+                    raise RuntimeError("control did not verify data")
+                if not control and row["read_status"] != 0:
+                    row["replacement_verified"] = None
+                    row["failure"] = (
+                        "writer_read_denied"
+                        if row["read_status"] in DENIED_STATUSES
+                        else "writer_read_failed"
+                    )
+                    raise RuntimeError("writer read failed")
                 row.update(
                     compare(before, capture(SERVICE, ACCOUNT, keychain=fixture.keychains[0]))
                 )
@@ -150,13 +228,16 @@ def run_case(writer: Path, mode: str) -> dict:
                 except KeychainError as exc:
                     assert exc.reason == "denied"
                     row["original_reader"] = "denied"
-                if mode == "metadata-control":
-                    assert row["update_status"] == 0
+                observe("after_readback")
+                if control or mode == "metadata-control":
+                    if not control:
+                        assert row["update_status"] == 0
                     assert row["access_policy_preserved"]
                     assert row["original_reader"] == "original"
                 row["candidate_preserves_shared_access"] = (
-                    mode != "metadata-control"
+                    mode in {"data-only", "legacy-data", "combined-access"}
                     and row["update_status"] == 0
+                    and row["read_status"] == 0
                     and row["replacement_verified"]
                     and row["access_policy_preserved"]
                     and row["original_reader"] == "replacement"
@@ -177,6 +258,10 @@ def run_case(writer: Path, mode: str) -> dict:
             row["metadata_failure"] = "metadata_unavailable"
             row.setdefault("failure", "metadata_unavailable")
     checks = row.get("metadata_checks", {})
+    if checks:
+        row.setdefault("isolation_checkpoints", []).append(
+            {"stage": "after_cleanup", "checks": checks}
+        )
     if (
         not all(
             fixture.cleanup.get(name) is True
@@ -186,6 +271,8 @@ def run_case(writer: Path, mode: str) -> dict:
         or any(value is not True for value in checks.values())
     ):
         row["isolation_failed"] = True
+    if checkpoint is not None:
+        checkpoint(row)
     return row
 
 
@@ -211,6 +298,7 @@ def run(selected: tuple[str, ...] = MODES, *, report_path: Path | None = None) -
         "cases": [],
         "matrix_complete": False,
         "candidate_found": False,
+        "selected_cases": list(selected),
     }
     phase = "preflight"
 
@@ -268,7 +356,14 @@ def run(selected: tuple[str, ...] = MODES, *, report_path: Path | None = None) -
                 report["active_case"] = mode
                 if report_path is not None:
                     save_report(report_path, report)
-                row = run_case(writer, mode)
+
+                def progress(value: dict) -> None:
+                    report["active_case_progress"] = value
+                    if report_path is not None:
+                        save_report(report_path, report)
+
+                row = run_case(writer, mode, checkpoint=progress)
+                report.pop("active_case_progress", None)
                 report["cases"].append(row)
                 if "failure" in row or row.get("isolation_failed"):
                     report["stopped_after_failure"] = True
@@ -317,7 +412,7 @@ def main(args) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--isolated-synthetic-only", action="store_true", required=True)
-    parser.add_argument("--case", choices=MODES)
+    parser.add_argument("--case", choices=CASES)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     if sys.platform != "darwin":
