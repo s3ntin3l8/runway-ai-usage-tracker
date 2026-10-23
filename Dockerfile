@@ -18,9 +18,27 @@ RUN npm --prefix webapp run build
 # Stage 2: Build Python dependencies
 FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS python-builder
 WORKDIR /app
+# The builder's compiler is deliberately unpinned, and it is here as insurance
+# rather than as a current need: every requirement resolves to a wheel on both
+# shipped platforms today, so nothing compiles. What it does install is a
+# compiler, for the dependency that ships an sdist instead of a wheel.
+#
+# The sqlite3 headers it used to install alongside the compiler were dead
+# weight: nothing in requirements.txt compiles against libsqlite3, because the
+# stdlib's _sqlite3 is already compiled into the base image's CPython and
+# aiosqlite is pure Python.
+#
+# An exact pin would stop resolving the next time Debian removes a superseded
+# point release from the archive, and the image build would fail until the pin
+# was re-pinned. That is a recurring tax on a rule only hadolint's DL3008 asked
+# for, and hadolint is in no gate in this repository, so nothing enforced the
+# pins and nothing checked them.
+#
+# The builder resolves the live archive rather than a frozen snapshot, so what
+# it installs is the archive's newest at that moment. That, not a snapshot
+# moving, is what breaks an exact pin.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc=4:14.2.0-1 \
-    libsqlite3-dev=3.46.1-7+deb13u2 \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"

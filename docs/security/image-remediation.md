@@ -43,10 +43,16 @@ Before closure, attach the original and replacement audit artifacts, record both
 
 Evidence collected during implementation includes source searches for FTS/MATCH/arbitrary SQL, native scanf/wide I/O, GSSAPI, GnuTLS, DTLS and subprocess usage, and a non-root candidate import/runtime-library inventory. The standard server smoke check must start with isolated data and exercise `/api/v1/system/health`. Full tests remain required to verify application behavior after the base refresh.
 
-Builder inputs retain exact direct package pins: `gcc=4:14.2.0-1` and
-`libsqlite3-dev=3.46.1-7+deb13u2`, verified against Debian 13's resolver on
-2026-10-23. These packages stay in the dependency builder stage; pip, setuptools
-and wheel are removed there before copying the venv. The final stage separately
+The dependency builder stage installs its compiler unpinned, as insurance for a
+dependency that ships an sdist rather than a wheel: every requirement resolves
+to a wheel on both shipped platforms today, so the stage compiles nothing. The
+sqlite3 headers it used to install alongside the compiler were dead weight, since
+nothing in `requirements.txt` compiles against libsqlite3. The builder resolves
+the live Debian archive rather than a frozen snapshot, so an exact pin stops
+resolving the next time Debian removes a superseded point release from the
+archive, and the image build fails until the pin is re-pinned. The compiler
+stays in the dependency builder stage; pip, setuptools and wheel are
+removed there before copying the venv. The final stage separately
 removes the base interpreter's packaging tools. Runtime distro packages remain
 eligible for security upgrades; every resulting candidate is scanned by immutable
 digest before promotion. If signing fails, publishing remains failed and operators
