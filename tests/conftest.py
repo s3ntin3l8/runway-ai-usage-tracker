@@ -234,7 +234,6 @@ from tests.fixtures.sqlite import disable_fsync, skip_fsync_requested
 from tests.fixtures.worker_death import (
     worker_death_diagnosis,
     worker_death_report,
-    worker_id,
 )
 from tests.windows_socketpair import install_windows_socketpair
 
@@ -634,30 +633,23 @@ def pytest_configure(config):
 
 
 def pytest_testnodedown(node, error):
-    """Report a worker that died, and stop the master cleanly.
+    """Report a worker that died.
 
     xdist calls this for every worker that goes down: with ``error=None``
     for one that finished normally, and with the error for one that died.
-    A dead worker leaves the master unable to reschedule the nodes it was
-    carrying -- the collection it would have registered is missing -- so
-    xdist's scheduler raises ``KeyError`` and the master dies with an
-    ``INTERNALERROR`` (pytest exit 3).
+    It is the first moment the master knows anything, and the only place the
+    worker's id and the error the master saw are still available.
 
-    Stopping the master here turns that into a readable "Interrupted: a
-    worker was killed" (pytest exit 2) and reports what the master actually
-    knows about the dead worker. The run-loop wrapper below stays as the
-    backstop for a master that dies without this event.
+    The master is deliberately left alone. xdist replaces a crashed worker
+    by default (up to ``--max-worker-restart`` times), so a run that can
+    still finish must be allowed to finish: aborting here would turn a
+    recoverable death into a failed run. The run-loop wrapper below is the
+    backstop for the case where the master cannot recover.
     """
     if error is None:
         return  # a worker that finished normally
 
     print(worker_death_report(node, error), file=sys.stderr)
-
-    dsession = node.config.pluginmanager.get_plugin("dsession")
-    if dsession is not None:
-        dsession.shouldstop = (
-            f"an xdist worker ({worker_id(node)}) was killed -- see the report above"
-        )
 
 
 @pytest.hookimpl(wrapper=True)

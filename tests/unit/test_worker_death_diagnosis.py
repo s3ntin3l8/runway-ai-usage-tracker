@@ -172,28 +172,48 @@ def test_a_worker_that_sent_its_output_is_reported_with_it(capsys):
     conftest.pytest_testnodedown(node, "Not properly terminated")
 
     report = capsys.readouterr().err
-    assert "1" in report
+    assert "  the worker's exit status: 1" in report
     assert "Worker crashed hard" in report
     assert "sent no output" not in report
 
 
-def test_the_master_is_asked_to_stop():
-    """The master stops cleanly instead of dying with xdist's internal error.
+def test_a_worker_that_sent_an_exit_status_but_no_stderr_is_not_a_hard_kill(
+    capsys,
+):
+    """The hard-kill branch is about the output as a whole.
 
-    The run still fails -- it is interrupted rather than crashed -- but the
-    log says why, and pytest exits 2 instead of 3.
+    A worker that sent its exit status but no stderr did send output, so the
+    report must not claim the bytes never reached the master.
+    """
+    from tests import conftest
+
+    node = _StubNode(workeroutput={"exitstatus": 1})
+    conftest.pytest_testnodedown(node, "Not properly terminated")
+
+    report = capsys.readouterr().err
+    assert "  the worker's exit status: 1" in report
+    assert "sent no output" not in report
+
+
+def test_the_master_is_left_to_recover():
+    """The hook must not stop the master.
+
+    xdist replaces a crashed worker by default, so a run that can still
+    finish must be allowed to finish. Stopping the master here would turn a
+    recoverable death into a failed run: with one worker killed and
+    ``--dist loadfile -n 2``, the baseline is ``1 failed, 8 passed`` and the
+    rest of the suite runs; aborting loses the rest of it.
     """
     from tests import conftest
 
     node = _StubNode()
     conftest.pytest_testnodedown(node, "Not properly terminated")
 
-    assert node.dsession.shouldstop
-    assert "gw3" in node.dsession.shouldstop
+    assert node.dsession.shouldstop is False
 
 
 def test_the_report_names_the_worker():
-    """The report and the stop reason agree about which worker died."""
+    """The report says which worker died."""
     node = _StubNode(name="gw7")
     assert worker_id(node) == "gw7"
     assert "gw7" in worker_death_report(node, "boom")

@@ -88,16 +88,17 @@ def worker_death_report(node: Any, error: object) -> str:
     """
     output = getattr(node, "workeroutput", None) or {}
     lines = [
-        f"An xdist worker ({worker_id(node)}) died and the master could not continue.",
+        f"An xdist worker ({worker_id(node)}) died.",
         "",
         f"  what the master saw: {error}",
     ]
-    exitstatus = output.get("exitstatus")
-    if exitstatus is not None:
-        lines.append(f"  the worker's exit status: {exitstatus}")
-    stderr = (output.get("stderr") or "").strip()
-    if stderr:
-        lines += ["", "  the worker's stderr:", stderr]
+    if output:
+        exitstatus = output.get("exitstatus")
+        if exitstatus is not None:
+            lines.append(f"  the worker's exit status: {exitstatus}")
+        stderr = (output.get("stderr") or "").strip()
+        if stderr:
+            lines += ["", "  the worker's stderr:", stderr]
     else:
         lines += [
             "",
@@ -107,9 +108,10 @@ def worker_death_report(node: Any, error: object) -> str:
         ]
     lines += [
         "",
-        "The worker was gone before the master could reschedule the test node it",
-        "was carrying, so the collection that worker would have registered was",
-        "missing.",
+        "The test that was running on that worker is lost. xdist replaces a",
+        "crashed worker by default (up to --max-worker-restart times), so the",
+        "run may still finish; the master only dies with an INTERNALERROR when",
+        "it cannot replace the worker it needs.",
         "",
         DEATH_SUMMARY.rstrip(),
     ]
