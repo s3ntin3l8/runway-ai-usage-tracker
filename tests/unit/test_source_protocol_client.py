@@ -1,5 +1,7 @@
 """Synthetic Fleet commands never invoke native authorization."""
 
+import os
+
 import pytest
 
 from scripts.sidecar_pkg import source_consent, source_protocol
@@ -47,7 +49,12 @@ def test_remote_pause_survives_restart_and_resume_cannot_override_off(tmp_path):
     restored.receive(off, reply(command(2, "resume")))
     assert restored.state["acknowledgments"] == [{"id": 2, "status": "denied"}]
     assert source_consent.POLICY.ticket("anthropic.claude-code") is None
-    assert (tmp_path / "state.json").stat().st_mode & 0o077 == 0
+    if os.name != "nt":
+        # The state file must not be readable by anyone but its owner.
+        # Windows has no POSIX permission bits, and the client does not
+        # require them there either - see scripts/sidecar_pkg/source_protocol.py,
+        # which guards the same check with the same condition.
+        assert (tmp_path / "state.json").stat().st_mode & 0o077 == 0
 
 
 def test_setup_request_is_notification_only_and_commands_are_idempotent(tmp_path):

@@ -1,5 +1,6 @@
 """Setup orchestration tests use injected subprocess/native substitutes only."""
 
+import sys
 from unittest.mock import Mock
 
 import pytest
@@ -99,7 +100,20 @@ def test_fresh_verification_exact_item_and_cleanup(monkeypatch, matches, readabl
     assert client.call.call_count == (2 if matches == 1 else 1)
 
 
-def test_authorization_child_checks_local_permission_before_native(monkeypatch, tmp_path):
+def test_authorization_child_says_authorization_requires_macos(capsys):
+    """The refusal names the reason, so running the entrypoint by hand says why."""
+    from scripts.sidecar_pkg import source_setup
+
+    with pytest.raises(SystemExit) as result:
+        source_setup.authorization_command(["--authorize-keychain-source", "anthropic.chrome"])
+
+    assert result.value.code == 1
+    error = capsys.readouterr().err
+    assert "anthropic.chrome" in error
+    assert "requires macOS" in error
+
+
+def test_authorization_child_checks_local_permission_before_native(monkeypatch, tmp_path, capsys):
     from scripts.sidecar_pkg import macos_keychain_store, source_setup
     from sidecar_app import config
 
@@ -114,8 +128,10 @@ def test_authorization_child_checks_local_permission_before_native(monkeypatch, 
         source_setup.authorization_command(["--authorize-keychain-source", "anthropic.chrome"])
     assert result.value.code == 1
     native.assert_not_called()
+    assert "anthropic.chrome" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="native scope uses POSIX ownership")
 def test_authorization_child_uses_only_catalogued_resource(monkeypatch, tmp_path):
     from scripts.sidecar_pkg import keychain_authorization, macos_keychain_store, source_setup
     from sidecar_app import config

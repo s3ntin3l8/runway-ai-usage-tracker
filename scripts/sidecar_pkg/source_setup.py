@@ -15,6 +15,14 @@ from scripts.sidecar_pkg import source_consent as consent
 from scripts.sidecar_pkg.source_catalog import catalog
 
 
+class _LocalRefusedError(Exception):
+    """The local configuration does not authorize this source.
+
+    The reason is a fixed phrase rather than the underlying error, so nothing
+    about the local configuration can reach the output.
+    """
+
+
 def resources(source_id: str) -> tuple[list[str], str | None]:
     if source_id == "anthropic.claude-code":
         from scripts.sidecar import local_keychain_login_dirs
@@ -185,7 +193,9 @@ def authorization_command(argv: list[str]) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--authorize-keychain-source", choices=tuple(catalog()), required=True)
     args = parser.parse_args(argv)
+    source = args.authorize_keychain_source
     if not getattr(sys, "frozen", False) or sys.platform != "darwin":
+        print(f"{source}: authorization requires macOS", file=sys.stderr)
         raise SystemExit(1)
     timer = threading.Timer(60, lambda: os._exit(1))
     timer.daemon = True
@@ -201,19 +211,25 @@ def authorization_command(argv: list[str]) -> None:
             or config_path.stat().st_uid != os.getuid()
             or config_path.stat().st_mode & 0o077
         ):
-            raise ValueError("Local permissions unavailable")
+            raise _LocalRefusedError("local permissions unavailable")
         config = json.loads(config_path.read_text())
         if (
             not isinstance(config, dict)
             or consent.SourcePolicy(config).ticket(args.authorize_keychain_source) is None
         ):
-            raise ValueError("Local permission disabled")
+            raise _LocalRefusedError("local permission disabled")
         from scripts.sidecar import configure_login_dirs
 
         configure_login_dirs(config)
         services, account = resources(args.authorize_keychain_source)
         authorize_once(_NativeAPI(), services, account)
+    except _LocalRefusedError as exc:
+        # The reason is a fixed phrase, never the underlying error, so nothing
+        # about the local configuration can reach the output.
+        print(f"{source}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     except Exception:
+        print(f"{source}: authorization unavailable", file=sys.stderr)
         raise SystemExit(1) from None
     finally:
         timer.cancel()
