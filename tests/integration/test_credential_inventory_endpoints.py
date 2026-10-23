@@ -464,3 +464,53 @@ def test_migration_dismiss_requires_admin(client, monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "test-admin")  # pragma: allowlist secret
     response = client.post("/api/v1/system/credentials/migration-notice/dismiss")
     assert response.status_code in (401, 403)
+
+
+def test_inventory_stops_warning_when_a_credential_is_parked_on_an_archived_account(
+    client, session
+):
+    """A retired provider's credential can be parked on its archived account.
+
+    The warning and the count follow the same definition as the Untagged
+    list: a parked mapping resolves the origin, so the operator is not nagged
+    about a credential they already dealt with.
+    """
+    from app.models.db import PendingCredentialTag, ProviderConfig
+    from app.services.credential_tags import CredentialTagRepo
+
+    session.add(
+        PendingCredentialTag(
+            sidecar_id="host-a",
+            provider_id="kimi_coding",
+            credential_origin="path:/home/u/.kimi/credentials.json",
+            reason="token_withheld",
+        )
+    )
+    session.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="retired@example.com",
+            enabled=False,
+            archived=True,
+        )
+    )
+    session.commit()
+
+    body = client.get("/api/v1/system/credentials", headers=_headers()).json()
+    assert body["unmapped_count"] == 1
+    assert [b["credential_origin"] for b in body["blocked_collection"]] == [
+        "path:/home/u/.kimi/credentials.json"
+    ]
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="kimi_coding",
+        credential_origin="path:/home/u/.kimi/credentials.json",
+        account_id="retired@example.com",
+        sidecar_id="host-a",
+    )
+    session.commit()
+
+    body = client.get("/api/v1/system/credentials", headers=_headers()).json()
+    assert body["unmapped_count"] == 0
+    assert body["blocked_collection"] == []

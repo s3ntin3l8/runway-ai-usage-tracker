@@ -4300,3 +4300,270 @@ async def test_ingest_keeps_the_reported_agy_version(client: TestClient, session
     assert tokens.get("agy_version") == "1.5.2"
     # The token itself must survive untouched.
     assert tokens.get("oauth_token") == "ya29.live"
+
+
+# ---------------------------------------------------------------------------
+# Parked mappings — a credential bound to an archived account.
+#
+# An archived account can no longer collect (no collector runs for a provider
+# whose accounts are all archived), but the operator still needs to get rid of
+# the "credential unmapped" warning for a credential of a provider they
+# retired. Mapping such a credential onto the archived account *parks* it: the
+# binding resolves the origin — it never becomes pending again and the
+# operator is not nagged — while staying inert (no hint ships, nothing is
+# stamped on the archived account) until the account is restored.
+# ---------------------------------------------------------------------------
+
+
+def _add_archived_provider_config(
+    session: Session, *, provider_id: str, account_id: str
+) -> ProviderConfig:
+    """A retired account: archived, and therefore never enabled."""
+    row = ProviderConfig(
+        provider_id=provider_id,
+        account_id=account_id,
+        enabled=False,
+        archived=True,
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def test_tag_endpoint_parks_a_credential_on_an_archived_account(
+    client: TestClient, session: Session
+):
+    """Tagging an archived account is accepted and reported as parked."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    _add_archived_provider_config(
+        session, provider_id="kimi_coding", account_id="s3ntin318@gmail.com"
+    )
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha-host",
+        provider_id="kimi_coding",
+        credential_origin="path:/home/u/.kimi/credentials.json",
+    )
+    session.commit()
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha-host",
+            "provider_id": "kimi_coding",
+            "credential_origin": "path:/home/u/.kimi/credentials.json",
+            "account_id": "s3ntin318@gmail.com",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["target_archived"] is True
+
+    # The origin is resolved: the pending row is gone, so the operator is not
+    # nagged about a credential they already dealt with.
+    assert PendingCredentialTagRepo.list_all(session) == []
+    listed = client.get("/api/v1/fleet/credentials/tags/pending")
+    assert listed.status_code == 200
+    assert listed.json()["items"] == []
+
+
+def test_tag_endpoint_reports_a_live_target_as_not_parked(client: TestClient, session: Session):
+    """A normal mapping is not parked — the flag tells the two apart."""
+    _add_provider_config(
+        session, provider_id="anthropic", account_id="alice@example.com", api_key="sk-test"
+    )
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha-host",
+            "provider_id": "anthropic",
+            "credential_origin": "path:/.claude/.credentials.json",
+            "account_id": "alice@example.com",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["target_archived"] is False
+
+
+def test_parked_mapping_keeps_the_credential_where_the_machine_reported_it(
+    client: TestClient, session: Session
+):
+    """Parking does not re-file the credential under the retired account.
+
+    The server stops honouring the parked mapping, so a later push would file
+    the source under the machine's own resolution again — moving it now would
+    leave two rows for one source.
+    """
+    from app.services.credential_sources import sidecar_source_id, touch_source
+
+    origin = "path:/home/u/.kimi/credentials.json"
+    source_id = sidecar_source_id("alpha-host", origin)
+    touch_source(
+        session,
+        provider_id="kimi_coding",
+        account_id="default",
+        source_id=source_id,
+        source_type="path",
+        source_label=".kimi/credentials.json",
+        credential_origin=origin,
+        sidecar_id="alpha-host",
+    )
+    _add_archived_provider_config(
+        session, provider_id="kimi_coding", account_id="s3ntin318@gmail.com"
+    )
+    session.commit()
+
+    resp = client.post(
+        "/api/v1/fleet/credentials/tags",
+        json={
+            "sidecar_id": "alpha-host",
+            "provider_id": "kimi_coding",
+            "credential_origin": origin,
+            "account_id": "s3ntin318@gmail.com",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = session.exec(
+        select(CredentialSource).where(CredentialSource.credential_origin == origin)
+    ).all()
+    assert [(row.account_id, row.source_id) for row in rows] == [("default", source_id)]
+
+
+def test_parked_mapping_ships_no_hint_to_the_sidecar(client: TestClient, session: Session):
+    """A parked mapping must never reach the sidecar.
+
+    Shipping it would make the sidecar stamp the retired account with new
+    usage — resurrecting a pair the operator closed. The live mapping in the
+    same response is the control: it does ship.
+    """
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_archived_provider_config(
+        session, provider_id="kimi_coding", account_id="s3ntin318@gmail.com"
+    )
+    _add_provider_config(
+        session, provider_id="anthropic", account_id="alice@example.com", api_key="sk-test"
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="kimi_coding",
+        credential_origin="path:/home/u/.kimi/credentials.json",
+        account_id="s3ntin318@gmail.com",
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="path:/.claude/.credentials.json",
+        account_id="alice@example.com",
+    )
+    session.commit()
+
+    r = client.get("/api/v1/fleet/config")
+    assert r.status_code == 200
+    hints = r.json()["account_tag_hints"]
+    assert hints.get("kimi_coding", {}) == {}
+    # The live mapping is untouched by the parked filter.
+    assert hints["anthropic"] == {"path:/.claude/.credentials.json": "alice@example.com"}
+
+
+def test_restoring_an_archived_account_revives_the_parked_mapping(
+    client: TestClient, session: Session
+):
+    """Parked-ness is derived, not stored: restoring the account ships the
+    hint again — no re-tagging needed."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    row = _add_archived_provider_config(
+        session, provider_id="kimi_coding", account_id="s3ntin318@gmail.com"
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="kimi_coding",
+        credential_origin="path:/home/u/.kimi/credentials.json",
+        account_id="s3ntin318@gmail.com",
+    )
+    session.commit()
+
+    assert (
+        client.get("/api/v1/fleet/config").json()["account_tag_hints"].get("kimi_coding", {}) == {}
+    )
+
+    row.archived = False
+    row.enabled = True
+    session.add(row)
+    session.commit()
+
+    hints = client.get("/api/v1/fleet/config").json()["account_tag_hints"]
+    assert hints["kimi_coding"] == {"path:/home/u/.kimi/credentials.json": "s3ntin318@gmail.com"}
+
+
+def test_ingest_does_not_stamp_a_parked_account(client: TestClient, session: Session):
+    """The ingest path resolves a pushed credential through the tag. A parked
+    tag must not hand the retired account to the incoming card."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_archived_provider_config(
+        session, provider_id="kimi_coding", account_id="s3ntin318@gmail.com"
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="kimi_coding",
+        credential_origin="path:/home/u/.kimi/credentials.json",
+        account_id="s3ntin318@gmail.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    card = _token_card(
+        "kimi_coding",
+        "path:/home/u/.kimi/credentials.json",
+        "sk-parked",
+    )
+    response = _ingest(client, "alpha-host", [card])
+    assert response.status_code == 200, response.text
+
+    rows = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == "kimi_coding",
+            CredentialSource.credential_origin == "path:/home/u/.kimi/credentials.json",
+        )
+    ).all()
+    assert rows, "the ingest must still record the credential it received"
+    assert [row.account_id for row in rows] != ["s3ntin318@gmail.com"]
+
+
+def test_manifest_does_not_reopen_a_parked_origin(client: TestClient, session: Session):
+    """A parked origin stays resolved: the manifest must not file it as
+    pending again, and must not report it as resolved to the sidecar."""
+    from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
+
+    _add_archived_provider_config(
+        session, provider_id="kimi_coding", account_id="s3ntin318@gmail.com"
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="kimi_coding",
+        credential_origin="path:/home/u/.kimi/credentials.json",
+        account_id="s3ntin318@gmail.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["kimi_coding"],
+        "entries": [
+            {
+                "provider_id": "kimi_coding",
+                "credential_origin": "path:/home/u/.kimi/credentials.json",
+            }
+        ],
+    }
+    result = _post_manifest(client, body)
+    assert result.status_code == 200, result.text
+    # Nothing to resolve for the sidecar: a parked mapping is not shipped.
+    assert result.json()["resolved"].get("kimi_coding", {}) == {}
+    # And it does not come back as pending.
+    assert PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host") == []

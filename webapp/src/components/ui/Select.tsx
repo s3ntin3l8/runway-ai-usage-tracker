@@ -4,6 +4,23 @@ import { cn } from '@/lib/cn';
 
 export const Select = SelectPrimitive.Root;
 export const SelectValue = SelectPrimitive.Value;
+export const SelectGroup = SelectPrimitive.Group;
+
+/** A non-selectable heading inside a select — separates option groups. */
+export function SelectLabel({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Label>) {
+  return (
+    <SelectPrimitive.Label
+      className={cn('px-2 py-1 text-[11px] font-medium text-fg-subtle', className)}
+      {...props}
+    >
+      {children}
+    </SelectPrimitive.Label>
+  );
+}
 
 export function SelectTrigger({
   className,

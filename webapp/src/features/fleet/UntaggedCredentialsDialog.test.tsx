@@ -674,6 +674,128 @@ describe('UntaggedCredentialsDialog', () => {
     });
     expect(link.closest('p')?.textContent).toMatch(/all 2 anthropic rows are disabled/i);
   });
+
+  it('offers an archived account as a mapping target and parks the credential', async () => {
+    // A retired provider's credential has nowhere left to go: the account is
+    // archived, so it can no longer collect, but the operator must still be
+    // able to get rid of the "unmapped" warning. Mapping to the archived
+    // account parks the credential — the binding is recorded, nothing is
+    // collected, and restoring the account revives it.
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'anthropic',
+          name: 'Anthropic',
+          accounts: [
+            {
+              account_id: 'alice@example.com',
+              account_label: 'Alice',
+              enabled: true,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+            {
+              account_id: 'retired@example.com',
+              account_label: 'Retired',
+              enabled: false,
+              archived: true,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+          ],
+          account_count: 1,
+          archived_count: 1,
+        },
+      ],
+    });
+    vi.mocked(api.tagCredential).mockResolvedValue({ status: 'ok', target_archived: true });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={() => {}} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    const trigger = within(dialog).getByRole('combobox');
+    await user.click(trigger);
+    // The archived account is offered, in its own group and marked as archived.
+    await screen.findByText(/Archived · parked until restored/i);
+    await user.click(await screen.findByText('Retired · retired@example.com · archived'));
+    await user.click(within(dialog).getByRole('button', { name: /^tag$/i }));
+
+    await waitFor(() =>
+      expect(api.tagCredential).toHaveBeenCalledWith({
+        sidecar_id: 'laptop',
+        provider_id: 'anthropic',
+        credential_origin: 'provider:anthropic',
+        account_id: 'retired@example.com',
+        scope: 'sidecar',
+      }),
+    );
+    // The toast must say the credential was parked — "tagged" would read as
+    // "collecting now".
+    expect(toast.success).toHaveBeenCalledWith(
+      'Credential parked on anthropic · retired@example.com (archived)',
+    );
+  });
+
+  it('explains that a retired account parks the credential instead of blocking it', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'anthropic',
+          name: 'Anthropic',
+          accounts: [
+            {
+              account_id: 'retired@example.com',
+              account_label: 'Retired',
+              enabled: false,
+              archived: true,
+              api_key_set: false,
+              session_cookie_set: false,
+              poll_interval_seconds: null,
+              collection_strategies: null,
+              is_orphaned: false,
+            },
+          ],
+          account_count: 0,
+          archived_count: 1,
+        },
+      ],
+    });
+    renderWithProviders(
+      <UntaggedCredentialsDialog open={true} onClose={() => {}} />,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText(/provider:anthropic/);
+    // The "row is disabled — enable it" advice cannot work for an archived
+    // row (the server keeps it disabled), so the retired account gets its own
+    // explanation and the Tag button is still offered.
+    expect(
+      within(dialog).queryByRole('link', { name: /enable it in provider settings/i }),
+    ).not.toBeInTheDocument();
+    const link = await within(dialog).findByRole('link', {
+      name: /restore it in provider settings/i,
+    });
+    expect(link.closest('p')?.textContent).toMatch(/account is archived/i);
+    expect(link.closest('p')?.textContent).toMatch(/parks the credential/i);
+    expect(within(dialog).getByRole('button', { name: /^tag$/i })).toBeInTheDocument();
+  });
 });
 
 describe('accountPickNotice', () => {
@@ -698,6 +820,22 @@ describe('accountPickNotice', () => {
       linkLabel: 'Enable one in Provider Settings',
     });
     expect(accountPickNotice(7).lead).toBe('All 7');
+  });
+});
+
+describe('archivedAccountNotice', () => {
+  it('explains that mapping to a retired account parks the credential', async () => {
+    const { archivedAccountNotice } = await import('./UntaggedCredentialsDialog');
+    const single = archivedAccountNotice(1);
+    expect(single.lead).toBe('The');
+    expect(single.tail).toMatch(/account is archived/i);
+    expect(single.tail).toMatch(/parks the credential/i);
+    expect(single.linkLabel).toBe('Restore it in Provider Settings');
+
+    const many = archivedAccountNotice(3);
+    expect(many.lead).toBe('All 3');
+    expect(many.tail).toMatch(/accounts are archived/i);
+    expect(many.linkLabel).toBe('Restore one in Provider Settings');
   });
 });
 

@@ -1875,7 +1875,7 @@ class CollectorManager:
 
         from app.core.db import engine
         from app.models.db import CredentialSource
-        from app.services.credential_tags import CredentialTagRepo
+        from app.services.credential_tags import CredentialTagRepo, archived_account_pairs
 
         provider_ids = [provider_id] if provider_id else list(self.collector_registry)
         moves: list[tuple[str, str, str, str, tuple[bool, int] | None, str | None]] = []
@@ -1883,6 +1883,11 @@ class CollectorManager:
         for pid in provider_ids:
             candidates_by_provider[pid] = await token_cache.get_all_source_descriptors(pid)
         with Session(engine) as session:
+            # A durable tag whose target account is archived is *parked*: it
+            # resolves the credential but must never move the cached secret
+            # into the retired account's slot. Resolved lazily — the lookup is
+            # only needed once a tag with a real target shows up.
+            parked_pairs: set[tuple[str, str]] | None = None
             for pid in provider_ids:
                 candidates = candidates_by_provider[pid]
                 for candidate in candidates:
@@ -1909,6 +1914,12 @@ class CollectorManager:
                     ):
                         continue
                     if not target or target == "default":
+                        continue
+                    if parked_pairs is None:
+                        parked_pairs = archived_account_pairs(session, provider_ids)
+                    if (pid, target) in parked_pairs:
+                        # Parked on a retired account — leave the cached
+                        # credential where it is.
                         continue
                     old_account_id = str(candidate.get("account_id") or "default")
                     source = session.exec(

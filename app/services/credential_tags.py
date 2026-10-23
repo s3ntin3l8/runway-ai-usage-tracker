@@ -16,12 +16,13 @@ goes through this surface so the lookup key stays in one place.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, and_, col, or_, select
 
-from app.models.db import CredentialTag, PendingCredentialTag
+from app.models.db import CredentialTag, PendingCredentialTag, ProviderConfig
 
 _QUOTA_PREVIEW_FIELDS = frozenset(
     {
@@ -91,6 +92,36 @@ def pick_effective_tag(
         if tag.sidecar_id and tag.sidecar_id == sidecar_id:
             return tag
     return next((tag for tag in candidates if tag.sidecar_id is None), None)
+
+
+def archived_account_pairs(session: Session, providers: Sequence[str]) -> set[tuple[str, str]]:
+    """``(provider_id, account_id)`` pairs whose ``provider_configs`` row is archived.
+
+    A mapping onto one of these pairs is *parked*: it resolves the credential —
+    the origin stops being pending and the operator is not nagged any more — but
+    it is never acted on. The sidecar receives no hint for it, the server never
+    stamps the archived account with new usage, and a provider whose accounts
+    are all archived runs no collector at all.
+
+    Parked-ness is *derived* from ``ProviderConfig.archived`` rather than stored
+    on the tag, so archiving an account parks the mappings that point at it and
+    restoring it revives them — no backfill, no new column, and both archive
+    paths (the destructive *Remove* and the reversible *Archive*) end up
+    behaving the same way for the credential.
+    """
+    if not providers:
+        return set()
+    rows = session.exec(
+        select(ProviderConfig.provider_id, ProviderConfig.account_id).where(
+            col(ProviderConfig.provider_id).in_(list(providers)),
+            ProviderConfig.archived == True,  # noqa: E712 — SQLModel needs the ==
+        )
+    ).all()
+    return {
+        (pid, aid)
+        for pid, aid in rows
+        if isinstance(pid, str) and isinstance(aid, str) and pid and aid
+    }
 
 
 class CredentialTagRepo:

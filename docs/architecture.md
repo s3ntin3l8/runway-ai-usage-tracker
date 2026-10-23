@@ -223,6 +223,20 @@ another account, is recorded rather than compared. A source that reveals no subj
 watched. **OAuth and keychain** origins need none of this: the sidecar re-claims the account from
 the login itself on every push, so a re-login simply moves the source to the new account.
 
+### Archived accounts and parked mappings
+
+Archiving an account (`provider_configs.archived`) closes it: the row is forced to
+`enabled=False`, the provider runs no collector while every one of its accounts is archived, and
+the account disappears from the dashboard and the fleet view. The machine that found the
+credential keeps reporting it, so the operator has to resolve the origin anyway — and a retired
+account is a legal target. Such a mapping is **parked**: it resolves the origin (the credential
+leaves the pending list, the "needs an account" card and the home banner, and the next manifest
+does not re-open it) but stays inert — no hint ships to the sidecar, no incoming usage is stamped
+on the archived account, and the cached bundle is not moved into the retired account's slot.
+Parking is *derived* from `provider_configs.archived`, never stored on the tag, so restoring the
+account revives the mapping on the next `/fleet/config` with no re-tagging. See
+[Parked mappings](api-reference.md#parked-mappings) for the API contract.
+
 ### Who refreshes an OAuth login
 
 A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT, xAI and

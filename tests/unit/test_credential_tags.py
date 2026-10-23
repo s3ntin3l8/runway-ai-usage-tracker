@@ -1655,3 +1655,46 @@ def test_keep_alive_column_is_added_to_existing_sidecar_registries():
     from app.core.db import _DEFERRED_COLUMNS
 
     assert ("sidecar_registry", "keep_alive", "BOOLEAN") in _DEFERRED_COLUMNS
+
+
+def test_archived_account_pairs_lists_only_archived_rows(session: Session):
+    """The parked set: the (provider, account) pairs whose row is archived.
+
+    Parked-ness is derived from ``ProviderConfig.archived`` — never stored on
+    the tag — so archiving an account parks the mappings that point at it and
+    restoring it revives them with no backfill.
+    """
+    from app.models.db import ProviderConfig
+    from app.services.credential_tags import archived_account_pairs
+
+    session.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="retired@example.com",
+            enabled=False,
+            archived=True,
+        )
+    )
+    session.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="live@example.com",
+            enabled=True,
+            archived=False,
+        )
+    )
+    session.add(
+        ProviderConfig(
+            provider_id="other",
+            account_id="retired@example.com",
+            enabled=False,
+            archived=True,
+        )
+    )
+    session.commit()
+
+    assert archived_account_pairs(session, ["kimi_coding"]) == {
+        ("kimi_coding", "retired@example.com")
+    }
+    # An empty provider list must not turn into a full-table scan.
+    assert archived_account_pairs(session, []) == set()
