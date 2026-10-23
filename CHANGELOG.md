@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.12](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.11...v3.0.0-beta.12) (2026-10-23)
+
+
+### Features
+
+* **fleet:** carry the credential's client into the fleet dialog ([e36e84b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e36e84b99906ec37e72185e0ed38161f1e4aa1d3))
+* **sidecar:** read MiniMax Code's runtime ledger for usage events ([#840](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/840)) ([df143d9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/df143d90a0ad1a56cf9daf241a1e92365a9a5e28))
+* **sidecar:** read the Antigravity token from the Windows Credential Manager ([#732](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/732)) ([8c4ac8c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8c4ac8c3c2927dd5d8f75ddd1ee9b41652039681))
+
+
+### Bug Fixes
+
+* **ci:** report the dead worker and stop the master cleanly ([0de4e8e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0de4e8edc8ac7e393a9332d185d5a737fb402efd)), closes [#832](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/832)
+
 ## [3.0.0-beta.11](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.10...v3.0.0-beta.11) (2026-10-23)
 
 
