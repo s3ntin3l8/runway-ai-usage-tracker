@@ -255,7 +255,7 @@ index references the inner image manifests, which are the digests in the rows
 above. A manifest's digest is the hash of its own bytes; being referenced by an
 index does not change it.
 
-Those per-platform build outputs are not quoted here, and not recorded in the
+Those per-platform build outputs are not quoted here and not recorded in the
 scan fixture: they change with every build, so they are not a record of what
 was published. The index and the two platform manifests are.
 
@@ -288,12 +288,9 @@ Scanned at `2026-10-23T21:01:55Z` against the database built
 `anchore/syft@sha256:3eb5379ba7b409c3f4069b686110527af0c47df993fa5c10d13e7cf34f49b1aa`
 and `anchore/grype@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe`.
 
-The `digests-*` artifacts for this build record the per-platform build output
-instead — the per-platform index buildx pushed, before the multi-architecture
-index references the inner image manifests. Those change with every build, so
-they are not quoted here and not recorded in the scan fixture; the two digest
-families and why they differ are explained under *The published baseline this
-replaces* above.
+The `digests-*` artifacts record the per-platform build output rather than the
+published manifests. The two digest families, and why they differ, are
+explained under *The published baseline this replaces* above.
 
 This is the versioned release rather than the rolling `edge` tag on purpose.
 `edge` is rebuilt from `main` on every push, so its digest moves with every
