@@ -259,15 +259,15 @@ index does not change it.
 
 ### The published Debian 13 image
 
-The Debian 13 base is published. The `edge` image was rebuilt from `main` after
-#855 merged, audited for both architectures, signed and promoted by the release
-path; the retained `release-image-audit` artifact is the record.
+`v3.0.0-beta.13` is the published Debian 13 image. It was built from the
+release tag, audited for both architectures, signed and promoted by the
+release path; the retained `release-image-audit` artifact is the record.
 
 | Reference | Digest |
 | --- | --- |
-| Published index | `sha256:3e2d326c27ba3d6d35b64485988a95f8dc93ba2ac65408b7a8662a1ecd6511d1` |
-| linux/amd64 manifest, as published and audited | `sha256:c21dadd98c5a46a8ab982a4064aecac02cb3f312b961a87ea6f988e3f0325b11` |
-| linux/arm64 manifest, as published and audited | `sha256:0cd9eab750e2214b83b22fc444627e1a55bf58d527694ad516e8d1d8bcde8aa2` |
+| Published index | `sha256:64fe0f2d562ba8d7a5d672f48b9c2d1fdbe0354b7417601bbc12c57df867a518` |
+| linux/amd64 manifest, as published and audited | `sha256:dc93d4d4c8930e586b28f0509d59fb5d440c3adbe11dcce9cd75303fc20cc5c5` |
+| linux/arm64 manifest, as published and audited | `sha256:06fa29acf76312cf32672ddbc6873279bf6289222110fd7b7218ab1362aa7fe2` |
 
 | | amd64 | arm64 |
 | --- | --- | --- |
@@ -281,20 +281,23 @@ path; the retained `release-image-audit` artifact is the record.
 | Low | 10 | 10 |
 | Negligible | 47 | 47 |
 
-Scanned at `2026-10-23T17:42:48Z` against the database built
+Scanned at `2026-10-23T21:01:55Z` against the database built
 `2026-10-23T06:30:15Z`, with the same scanners the candidate scan used:
 `anchore/syft@sha256:3eb5379ba7b409c3f4069b686110527af0c47df993fa5c10d13e7cf34f49b1aa`
 and `anchore/grype@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe`.
 
 The `digests-*` artifacts for this build record the per-platform build output
-instead: `sha256:14a3400d7ef5afe36eef30baffa6f6991c581fb54bec5c0613002cda905b4b66`
-for amd64 and `sha256:77290a91f9f55f753e1ed1fa6c6027d07a0fa0ef167637f21502d56ea7183fdd`
+instead: `sha256:6bd9689ced668773dc02448a748bbb4089cd48b637eec3d86fdffa831876353e`
+for amd64 and `sha256:aa7856587ceac253d6e745eef1743d151eb842f44b1b46e68cfe5fb6ea8d45f4`
 for arm64. The two digest families and why they differ are explained under *The
 published baseline this replaces* above.
 
-The `v3.0.0-beta.13` release will carry the same base. Its image is built from
-the release tag rather than from `main`, so the published versioned digests are
-recorded when that tag is cut.
+This is the versioned release rather than the rolling `edge` tag on purpose.
+`edge` is rebuilt from `main` on every push, so its digest moves with every
+unrelated change and cannot be the record the exception document is anchored
+to; a versioned tag is immutable. The findings are the same either way -- the
+`edge` build of the same base reports the same 166 matches, the same 55 High
+and the same absence of Critical findings -- so the document describes both.
 
 ### Advisories Debian lists as fixed in trixie
 
