@@ -18,11 +18,14 @@ RUN npm --prefix webapp run build
 # Stage 2: Build Python dependencies
 FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS python-builder
 WORKDIR /app
-# The builder's compiler is deliberately unpinned, and it is the only build
-# dependency this stage needs: nothing in requirements.txt compiles against
-# libsqlite3 -- the stdlib's _sqlite3 is already compiled into the base
-# image's CPython and aiosqlite is pure Python -- so the sqlite3 headers were
-# dead weight.
+# The builder's compiler is deliberately unpinned, and it is here as insurance
+# rather than as a current need: every requirement resolves to a wheel on both
+# shipped platforms today, so nothing compiles and the stage installs no
+# library. What it does install is a compiler, for the dependency that ships an
+# sdist instead of a wheel. The sqlite3 headers it used to install alongside it
+# were dead weight: nothing in requirements.txt compiles against libsqlite3,
+# because the stdlib's _sqlite3 is already compiled into the base image's
+# CPython and aiosqlite is pure Python.
 #
 # An exact pin would stop resolving the next time Debian removes a superseded
 # point release from the archive, and the image build would fail until the pin
@@ -31,10 +34,8 @@ WORKDIR /app
 # pins and nothing checked them.
 #
 # The builder resolves the live archive rather than a frozen snapshot, so what
-# it installs is the archive's newest at that moment. The runtime stage
-# resolves the same archive later in the build, so the runtime's libraries are
-# never older than the ones this stage built against. That is build order, not
-# a snapshot.
+# it installs is the archive's newest at that moment. That, not a snapshot
+# moving, is what breaks an exact pin.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
