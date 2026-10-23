@@ -231,7 +231,11 @@ from tests.fixtures.mock_data import (
     OPENCODE_GO_RESPONSE,
 )
 from tests.fixtures.sqlite import disable_fsync, skip_fsync_requested
-from tests.fixtures.worker_death import worker_death_diagnosis
+from tests.fixtures.worker_death import (
+    worker_death_diagnosis,
+    worker_death_report,
+    worker_id,
+)
 from tests.windows_socketpair import install_windows_socketpair
 
 
@@ -627,6 +631,33 @@ def mock_keyring():
 def pytest_configure(config):
     """Configure pytest with asyncio mode."""
     config.addinivalue_line("markers", "asyncio: mark test as asyncio")
+
+
+def pytest_testnodedown(node, error):
+    """Report a worker that died, and stop the master cleanly.
+
+    xdist calls this for every worker that goes down: with ``error=None``
+    for one that finished normally, and with the error for one that died.
+    A dead worker leaves the master unable to reschedule the nodes it was
+    carrying -- the collection it would have registered is missing -- so
+    xdist's scheduler raises ``KeyError`` and the master dies with an
+    ``INTERNALERROR`` (pytest exit 3).
+
+    Stopping the master here turns that into a readable "Interrupted: a
+    worker was killed" (pytest exit 2) and reports what the master actually
+    knows about the dead worker. The run-loop wrapper below stays as the
+    backstop for a master that dies without this event.
+    """
+    if error is None:
+        return  # a worker that finished normally
+
+    print(worker_death_report(node, error), file=sys.stderr)
+
+    dsession = node.config.pluginmanager.get_plugin("dsession")
+    if dsession is not None:
+        dsession.shouldstop = (
+            f"an xdist worker ({worker_id(node)}) was killed -- see the report above"
+        )
 
 
 @pytest.hookimpl(wrapper=True)
