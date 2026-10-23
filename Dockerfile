@@ -18,21 +18,25 @@ RUN npm --prefix webapp run build
 # Stage 2: Build Python dependencies
 FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS python-builder
 WORKDIR /app
-# The builder's two build dependencies are deliberately unpinned. They are not
-# shipped: the final image is a separate FROM, and what it carries is the
-# runtime's own packages. Debian removes a superseded point release from the
-# archive, so an exact pin here stops resolving the next time the base image's
-# apt snapshot moves, and the image build fails until the pin is re-pinned --
-# which is how these pins arrived at all. hadolint's DL3008 is not a gate in
-# this repository, so nothing enforces them and nothing checks them.
+# The builder's compiler is deliberately unpinned, and it is the only build
+# dependency this stage needs: nothing in requirements.txt compiles against
+# libsqlite3 -- the stdlib's _sqlite3 is already compiled into the base
+# image's CPython and aiosqlite is pure Python -- so the sqlite3 headers were
+# dead weight.
 #
-# Unpinned is also the safe direction for the one shared library: the builder
-# gets the base image's snapshot while the runtime runs `apt-get upgrade -y`
-# afterwards, so the runtime's libsqlite3 is never older than the headers the
-# extension was built against.
+# An exact pin would stop resolving the next time Debian removes a superseded
+# point release from the archive, and the image build would fail until the pin
+# was re-pinned. That is a recurring tax on a rule only hadolint's DL3008 asked
+# for, and hadolint is in no gate in this repository, so nothing enforced the
+# pins and nothing checked them.
+#
+# The builder resolves the live archive rather than a frozen snapshot, so what
+# it installs is the archive's newest at that moment. The runtime stage
+# resolves the same archive later in the build, so the runtime's libraries are
+# never older than the ones this stage built against. That is build order, not
+# a snapshot.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
