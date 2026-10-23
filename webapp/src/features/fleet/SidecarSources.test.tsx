@@ -47,7 +47,7 @@ it('shows stale reports separately from healthy collection and requests local se
   );
   expect(await screen.findByText('Claude Code')).toBeInTheDocument();
   expect(screen.getByText(/Server collection: healthy/)).toBeInTheDocument();
-  expect(screen.getByText(/Stale device report/)).toBeInTheDocument();
+  expect(screen.getByText(/Stale source report/)).toBeInTheDocument();
   expect(
     screen.getByText(/supported write path not verified/),
   ).toBeInTheDocument();
@@ -210,6 +210,17 @@ it('shows Windows credential contributions with server controls and no Keychain 
   renderWithProviders(
     <SidecarSources osPlatform="Windows/11" sidecarId={sidecarId} />,
   );
+  const revoke = await screen.findByRole('button', {
+    name: 'Revoke GitHub Credential Manager contribution',
+  });
+  expect(revoke).toHaveAccessibleDescription(
+    'Revoking this contribution requires re-pairing the device to reconnect it.',
+  );
+  expect(screen.getByText(/Stale source report/)).toBeInTheDocument();
+  expect(screen.getByText(/Server collection: healthy/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/Source reporting updates when credentials are submitted/),
+  ).toBeInTheDocument();
   await user.click(
     await screen.findByRole('button', {
       name: 'Revoke GitHub Credential Manager contribution',
@@ -228,4 +239,20 @@ it('shows Windows credential contributions with server controls and no Keychain 
   expect(
     screen.queryByText('New Keychain scraper—opt in now'),
   ).not.toBeInTheDocument();
+});
+
+it('labels fresh source reports without implying device connectivity', async () => {
+  vi.mocked(api.fetchSidecarSources).mockResolvedValue({
+    protocol: 1,
+    sources: [{ ...source, report_stale: false }],
+    commands: [],
+  });
+  renderWithProviders(
+    <SidecarSources osPlatform="Darwin/26" sidecarId={sidecarId} />,
+  );
+  expect(await screen.findByText(/Source reported/)).toBeInTheDocument();
+  expect(screen.queryByText(/Device reported/)).not.toBeInTheDocument();
+  expect(
+    screen.getByRole('button', { name: 'Revoke Claude Code contribution' }),
+  ).not.toHaveAccessibleDescription(/re-pairing/);
 });

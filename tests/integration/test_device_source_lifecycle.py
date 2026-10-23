@@ -1,6 +1,8 @@
 """Full device ingest and withdrawal with synthetic credentials; no native IO."""
 
 import json
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -396,3 +398,93 @@ def test_known_windows_credentials_keep_existing_collection_without_mac_consent(
         assert session.get(SidecarSourceContribution, rows[0].id).payload_encrypted is None
         assert source_controls.snapshot(session)[1] == []
         assert client.post(endpoint, json={"action": "resume"}).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "provider,origin",
+    [("github", "keychain:github.com"), ("antigravity", "keychain:gemini:antigravity")],
+)
+@pytest.mark.asyncio
+async def test_windows_idle_heartbeat_keeps_source_freshness_separate_from_collection(
+    setup, tmp_path, monkeypatch, provider, origin
+):
+    from app.models.db import CredentialSource, SidecarDevice, SidecarRegistry
+    from scripts.sidecar_pkg import source_settings
+    from scripts.sidecar_pkg.source_protocol import SourceClient
+
+    client, session, local = setup
+    device = session.get(SidecarDevice, local["device_id"])
+    device.platform = "Windows"
+    session.add(device)
+    session.commit()
+    response = post(
+        client,
+        local,
+        "/api/v1/fleet/ingest",
+        "ingest",
+        {
+            "provider": "synthetic",
+            "metrics": [
+                {
+                    "provider_id": provider,
+                    "service_name": "Synthetic",
+                    "remaining": "Token",
+                    "unit": "oauth",
+                    "metadata": {"credential_origin": origin, "oauth_token": "synthetic-access"},
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200 and response.json()["credentials_rejected"] == 0
+    contribution = session.exec(select(SidecarSourceContribution)).one()
+    source_id = provider + ".windows-credential"
+    registry_id = sidecar_devices.registry_id(local["device_id"])
+    old_report = datetime.now(UTC) - timedelta(days=1)
+    source = source_controls.state(session, local["device_id"], source_id)
+    source.last_report_at = old_report
+    session.add(source)
+    registry = session.get(SidecarRegistry, registry_id)
+    registry.last_seen = old_report
+    session.add(registry)
+    # Model successful server collection independently of local credential uploads.
+    success = datetime.now(UTC) - timedelta(minutes=1)
+    health = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.source_id == contribution.credential_source_id
+        )
+    ).one()
+    health.health = "healthy"
+    health.last_success_at = success
+    session.add(health)
+    session.commit()
+    monkeypatch.setattr(source_settings, "sys", SimpleNamespace(platform="win32"))
+    source_client = SourceClient(local, tmp_path / "source-state.json")
+    payload = source_client.payload(local)
+    assert payload["sources"] == []  # Windows lifecycle sources have no local consent reports.
+    assert (
+        post(
+            client,
+            local,
+            "/api/v1/fleet/ingest",
+            "ingest",
+            {"provider": "synthetic", "metrics": []},
+        ).status_code
+        == 200
+    )
+    sync = post(client, local, "/api/v1/fleet/source-sync", "source-sync", payload)
+    assert sync.status_code == 200
+    source_client.receive(local, sync.json())
+
+    session.refresh(registry)
+    assert registry.last_seen > old_report
+    listed = client.get(f"/api/v1/fleet/sidecars/{registry_id}/sources")
+    assert listed.status_code == 200
+    status = listed.json()["sources"][0]
+    assert status["source_id"] == source_id
+    assert status["report_at"] == old_report.isoformat()
+    assert status["report_stale"] is True
+    assert status["last_read_at"] is None
+    assert status["collection_health"] == "healthy"
+    assert status["last_collection_at"] == success.isoformat()
+    assert source_controls.allowed(session, local["device_id"], source_id, 0)
+    assert len(await TokenCache().get_pending_sources(provider)) == 1
