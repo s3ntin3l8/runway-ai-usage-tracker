@@ -23,7 +23,7 @@ An xdist worker died and the master could not recover it.
 
 The scheduler tried to reschedule a test node whose worker was gone, so it
 raised KeyError on the collection that worker never registered. pytest exits 3
-with an INTERNALERROR; the traceback above is xdist's, not the suite's.
+with an INTERNALERROR; the traceback below is xdist's, not the suite's.
 
 What usually kills a worker:
   * the OS, under memory pressure -- the worker is killed and its pipe closes

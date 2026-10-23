@@ -11,7 +11,7 @@ reader can act on. These tests cover the wrapper's judgement.
 
 from __future__ import annotations
 
-import inspect
+import pytest
 
 from tests.fixtures.worker_death import (
     _is_xdist_frame,
@@ -57,8 +57,37 @@ def test_a_windows_path_is_recognised():
     assert not _is_xdist_frame(r"C:\venv\Lib\site-packages\pytest\main.py")
 
 
-def test_the_hook_is_wired():
-    """Deleting the conftest wiring must not silently disable the diagnosis."""
+def test_the_hook_names_the_failure_and_reraises(capsys):
+    """Drive the hook with the failure it exists for.
+
+    The ``KeyError`` has to come from inside xdist for the hook to recognise
+    it, so this raises it the way the scheduler does -- with a stub whose
+    worker collection is missing, exactly as it is when a worker dies -- and
+    then throws that exception into the wrapper.
+
+    This is the test that matters: replacing the hook's body with a bare
+    ``return (yield)`` would leave every other test in this file green, and
+    the diagnosis would silently stop happening.
+    """
+    from collections import OrderedDict
+
+    from xdist.scheduler.loadscope import LoadScopeScheduling
+
     from tests import conftest
 
-    assert inspect.isgeneratorfunction(conftest.pytest_runtestloop)
+    class _SchedulerWhoseWorkerDied:
+        def __init__(self) -> None:
+            self.workqueue = OrderedDict([("scope", {})])
+            self.assigned_work: dict = {}
+            self.registered_collections: dict = {}
+
+    with pytest.raises(KeyError) as raised:
+        LoadScopeScheduling._assign_work_unit(_SchedulerWhoseWorkerDied(), "node")
+    dead_worker = raised.value
+
+    generator = conftest.pytest_runtestloop(None)
+    next(generator)  # advance the wrapper to its yield
+    with pytest.raises(KeyError):
+        generator.throw(dead_worker)
+
+    assert "An xdist worker died" in capsys.readouterr().err
