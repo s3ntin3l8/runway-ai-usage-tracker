@@ -231,7 +231,10 @@ from tests.fixtures.mock_data import (
     OPENCODE_GO_RESPONSE,
 )
 from tests.fixtures.sqlite import disable_fsync, skip_fsync_requested
-from tests.fixtures.worker_death import worker_death_diagnosis
+from tests.fixtures.worker_death import (
+    worker_death_diagnosis,
+    worker_death_report,
+)
 from tests.windows_socketpair import install_windows_socketpair
 
 
@@ -627,6 +630,26 @@ def mock_keyring():
 def pytest_configure(config):
     """Configure pytest with asyncio mode."""
     config.addinivalue_line("markers", "asyncio: mark test as asyncio")
+
+
+def pytest_testnodedown(node, error):
+    """Report a worker that died.
+
+    xdist calls this for every worker that goes down: with ``error=None``
+    for one that finished normally, and with the error for one that died.
+    It is the first moment the master knows anything, and the only place the
+    worker's id and the error the master saw are still available.
+
+    The master is deliberately left alone. xdist replaces a crashed worker
+    by default (up to ``--max-worker-restart`` times), so a run that can
+    still finish must be allowed to finish: aborting here would turn a
+    recoverable death into a failed run. The run-loop wrapper below is the
+    backstop for the case where the master cannot recover.
+    """
+    if error is None:
+        return  # a worker that finished normally
+
+    print(worker_death_report(node, error), file=sys.stderr)
 
 
 @pytest.hookimpl(wrapper=True)
