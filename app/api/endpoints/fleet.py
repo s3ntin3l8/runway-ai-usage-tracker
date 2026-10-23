@@ -498,6 +498,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             actual_acc_id = cache_account_id or "default"
             if p_id == "anthropic" and (
                 p_tokens.get("oauth_read_only") == "1"
+                or bool(p_tokens.get("refresh_token"))
                 or (origin or "").startswith(("file:", "keychain:"))
             ):
                 p_tokens = {key: value for key, value in p_tokens.items() if key != "refresh_token"}

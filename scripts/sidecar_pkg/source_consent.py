@@ -222,12 +222,12 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
         device_credentials(config, destination.rstrip("/") + "/api/v1/fleet/ingest") is not None
     )
 
-    def sanitize(value: Any) -> Any:
+    def sanitize(value: Any, provider_override: Any = None) -> Any:
         if not isinstance(value, dict):
             return value
         result = dict(value)
         provider, origin = (
-            str(value.get("provider_id", "")),
+            str(provider_override or value.get("provider_id", "")),
             str(value.get("credential_origin", "")),
         )
         source_id = source_for_origin(provider, origin)
@@ -245,13 +245,8 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
             result["keychain_consent"] = {
                 key: proof[key] for key in ("source_id", "revision", "generation")
             }
-        if (
-            provider == "anthropic"
-            and ("refresh_token" in value or value.get("oauth_read_only") == "1")
-            and (
-                value.get("oauth_read_only") == "1"
-                or origin.startswith(("file:", "path:", "keychain:"))
-            )
+        if provider == "anthropic" and (
+            "refresh_token" in value or value.get("oauth_read_only") == "1"
         ):
             result.pop("refresh_token", None)
             result["oauth_read_only"] = "1"
@@ -264,7 +259,7 @@ def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None)
             if not isinstance(card, dict) or not isinstance(card.get("metadata"), dict):
                 cards.append(card)
                 continue
-            metadata = sanitize(card["metadata"])
+            metadata = sanitize(card["metadata"], card.get("provider_id"))
             if metadata is not None:
                 cards.append({**card, "metadata": metadata})
         result["metrics"] = cards

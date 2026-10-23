@@ -157,3 +157,14 @@ def test_non_macos_reports_no_new_scrapers_but_can_withdraw_old_consent(tmp_path
     off["keychain_withdrawals"] = {"anthropic.claude-code": 2}
     sources = client.payload(off)["sources"]
     assert len(sources) == 1 and sources[0]["read"] is False and sources[0]["new"] is False
+
+
+def test_claude_refresh_cannot_leave_when_provider_is_only_on_the_card():
+    card = {
+        "provider_id": "anthropic",
+        "metadata": {"oauth_token": "synthetic-access", "refresh_token": "synthetic-local-refresh"},
+    }
+    forwarded = source_consent.filter_egress({"metrics": [card]})["metrics"][0]["metadata"]
+    assert "refresh_token" not in forwarded
+    assert forwarded["oauth_read_only"] == "1"
+    assert card["metadata"]["refresh_token"] == "synthetic-local-refresh"
