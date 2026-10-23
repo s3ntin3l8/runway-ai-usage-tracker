@@ -192,3 +192,40 @@ it('does not target Windows or unknown devices with Keychain announcements', () 
     screen.queryByText('New Keychain scraper—opt in now'),
   ).not.toBeInTheDocument();
 });
+
+it('shows Windows credential contributions with server controls and no Keychain setup', async () => {
+  const user = userEvent.setup();
+  vi.mocked(api.fetchSidecarSources).mockResolvedValue({
+    protocol: 1,
+    sources: [
+      {
+        ...source,
+        source_id: 'github.windows-credential',
+        label: 'GitHub Credential Manager',
+        announcement: false,
+      },
+    ],
+    commands: [],
+  });
+  renderWithProviders(
+    <SidecarSources osPlatform="Windows/11" sidecarId={sidecarId} />,
+  );
+  await user.click(
+    await screen.findByRole('button', {
+      name: 'Revoke GitHub Credential Manager contribution',
+    }),
+  );
+  await waitFor(() =>
+    expect(api.commandSidecarSource).toHaveBeenCalledWith(
+      sidecarId,
+      'github.windows-credential',
+      'revoke',
+    ),
+  );
+  expect(
+    screen.queryByRole('button', { name: /Request local setup/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByText('New Keychain scraper—opt in now'),
+  ).not.toBeInTheDocument();
+});

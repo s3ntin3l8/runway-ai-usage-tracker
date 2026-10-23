@@ -91,6 +91,36 @@ def catalog() -> dict[str, SourceDescriptor]:
     return result
 
 
+# Lifecycle metadata for existing Windows collectors; these are deliberately not
+# part of catalog(), the local macOS Keychain permission/authorization catalog.
+_WINDOWS_CREDENTIALS = (
+    ("github", "github.com", "GitHub Credential Manager"),
+    ("antigravity", "gemini:antigravity", "Antigravity Credential Manager"),
+)
+
+
+def windows_source_for_origin(provider: str, origin: str) -> str | None:
+    base = origin.split("#", 1)[0]
+    for expected, target, _label in _WINDOWS_CREDENTIALS:
+        if provider == expected and base == "keychain:" + target:
+            return provider + ".windows-credential"
+    return None
+
+
+def control_catalog() -> dict[str, SourceDescriptor]:
+    """All Fleet lifecycle sources; this never expands local Keychain consent."""
+    result = catalog()
+    for provider, target, label in _WINDOWS_CREDENTIALS:
+        source_id = provider + ".windows-credential"
+        revision = hashlib.sha256(
+            json.dumps(["windows_credential", provider, target]).encode()
+        ).hexdigest()
+        result[source_id] = SourceDescriptor(
+            source_id, provider, label, (target,), revision, platforms=("win32",)
+        )
+    return result
+
+
 def trusted_rule(provider: str, rule: dict[str, Any]) -> bool:
     for allowed in KEYCHAIN_RULES.get(provider, {}).get("rules", []):
         candidate, baseline = dict(rule), dict(allowed)

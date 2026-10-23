@@ -1245,3 +1245,25 @@ async def test_retiring_a_dead_copy_keeps_the_oauth_token_another_source_still_h
     assert [
         c["source_id"] for c in await cache.get_source_candidates("gemini", "a@example.com")
     ] == ["sidecar:live"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_default_keeps_precedence_without_hiding_pending_device(cache, monkeypatch):
+    monkeypatch.setattr(cache, "_reload_durable_unlocked", lambda: None)
+    cache._cache.setdefault("github", {})["default"] = (
+        {"api_key": "synthetic-manual"},
+        {"source": "manual"},
+        time.time(),
+    )
+    cache._source_cache.setdefault("github", {})["default"] = {
+        "synthetic-device-source": (
+            {"api_key": "synthetic-device"},
+            {"durable_source": True, "identity_pending": True},
+            time.time(),
+        )
+    }
+    assert await cache.get("github", "default") == {"api_key": "synthetic-manual"}
+    pending = await cache.get_pending_sources("github")
+    assert len(pending) == 1
+    assert pending[0]["source_id"] == "synthetic-device-source"
+    assert pending[0]["tokens"] == {"api_key": "synthetic-device"}

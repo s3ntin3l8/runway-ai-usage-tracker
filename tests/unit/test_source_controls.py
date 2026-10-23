@@ -646,21 +646,11 @@ def test_enrolled_sidecar_delete_reserves_before_registry_read(tmp_path, monkeyp
         engine.dispose()
 
 
-def test_known_windows_origin_retains_lifecycle_when_catalogued(session, monkeypatch):
-    from scripts.sidecar_pkg.source_catalog import catalog
+def test_known_windows_origin_retains_lifecycle(session):
+    from scripts.sidecar_pkg.source_catalog import control_catalog
 
-    descriptor = catalog()["github.gh-cli"]
+    descriptor = control_catalog()["github.windows-credential"]
     origin = "keychain:github.com"
-    # A catalog upgrade may give an existing Windows origin a source descriptor.
-    # Its eligibility must then retain the source's revoke/pause bookkeeping.
-    classify = source_controls.source_for_origin
-    monkeypatch.setattr(
-        source_controls,
-        "source_for_origin",
-        lambda provider, value: (
-            descriptor.id if (provider, value) == ("github", origin) else classify(provider, value)
-        ),
-    )
     device, _ = sidecar_devices.enroll(session, "synthetic", platform="Windows")
     session.commit()
     proof = source_controls.contribution_proof(session, device.device_id, "github", origin, None)
@@ -676,6 +666,15 @@ def test_known_windows_origin_retains_lifecycle_when_catalogued(session, monkeyp
         metadata={},
     )
     assert contribution.scraper_id == descriptor.id
+    from datetime import UTC, datetime
+
+    row = source_controls.state(session, device.device_id, descriptor.id)
+    old_contact = datetime(2000, 1, 1, tzinfo=UTC)
+    row.last_report_at = old_contact
+    session.add(row)
+    session.commit()
+    source_controls.contribution_proof(session, device.device_id, "github", origin, None)
+    assert row.last_report_at > old_contact
     source_controls.queue_command(session, device.device_id, descriptor.id, "revoke")
     session.commit()
     assert session.get(SidecarSourceContribution, contribution.id).payload_encrypted is None

@@ -13,7 +13,9 @@ export function SidecarSources({
   osPlatform?: string | null;
 }) {
   const queryClient = useQueryClient();
-  const compatible = osPlatform?.startsWith('Darwin') === true;
+  const macOS = osPlatform?.startsWith('Darwin') === true;
+  const compatible = macOS || /^(Windows|Linux)(\/|$)/.test(osPlatform ?? '');
+  const heading = macOS ? 'Keychain sources' : 'Credential sources';
   const enrolled = /^device-[a-f0-9]{32}$/.test(sidecarId);
   const queryKey = ['fleet', 'sources', sidecarId];
   const query = useQuery({
@@ -38,8 +40,8 @@ export function SidecarSources({
   });
   if (!compatible)
     return (
-      <section aria-label="Keychain sources">
-        <h3 className="text-sm font-medium">Keychain sources</h3>
+      <section aria-label={heading}>
+        <h3 className="text-sm font-medium">{heading}</h3>
         <p className="text-xs text-fg-muted">
           Keychain scrapers are available on macOS. Waiting for a compatible
           device report.
@@ -48,8 +50,8 @@ export function SidecarSources({
     );
   if (!enrolled)
     return (
-      <section aria-label="Keychain sources">
-        <h3 className="text-sm font-medium">Keychain sources</h3>
+      <section aria-label={heading}>
+        <h3 className="text-sm font-medium">{heading}</h3>
         <p className="text-xs text-fg-muted">
           Limited: pair this sidecar again to enroll its device identity.
           Existing file and environment sources keep working.
@@ -58,13 +60,23 @@ export function SidecarSources({
     );
   return (
     <section
-      aria-label="Keychain sources"
+      aria-label={heading}
       className="flex flex-col gap-3 border-t border-edge pt-4"
     >
-      <h3 className="text-sm font-medium">Keychain sources</h3>
+      <h3 className="text-sm font-medium">{heading}</h3>
       <p className="text-xs text-fg-muted">
-        Read permission and renewal permission are granted locally on the Mac.
-        Setup requests show a local notice; they never open a Keychain prompt.
+        {macOS ? (
+          <>
+            Read permission and renewal permission are granted locally on the Mac.
+            Setup requests show a local notice; they never open a Keychain prompt.
+          </>
+        ) : (
+          <>
+            These controls govern server collection. Existing credential
+            collection does not require macOS Keychain consent. Re-pair the device
+            to reconnect a revoked contribution.
+          </>
+        )}
       </p>
       {query.isPending ? <p role="status">Loading sources…</p> : null}
       {query.isError ? (
@@ -87,7 +99,7 @@ export function SidecarSources({
             className="rounded-md border border-edge bg-surface-2 p-3"
           >
             <h4 className="text-sm font-medium">{source.label}</h4>
-            {source.announcement ? (
+            {macOS && source.announcement ? (
               <div role="status" className="my-2 text-xs text-fg-muted">
                 <p>New Keychain scraper—opt in now</p>
                 <p>
@@ -115,7 +127,7 @@ export function SidecarSources({
               {source.revoked ? ' · Contribution revoked' : ''}
             </p>
             <p className="text-xs text-fg-muted">
-              Last Keychain read:{' '}
+              {macOS ? 'Last Keychain read:' : 'Last local credential read:'}{' '}
               {source.last_read_at
                 ? timeAgo(new Date(source.last_read_at * 1000).toISOString())
                 : 'Not reported'}
@@ -183,20 +195,22 @@ export function SidecarSources({
               >
                 Revoke contribution
               </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                aria-label={'Request local setup for ' + source.label}
-                disabled={command.isPending}
-                onClick={() =>
-                  command.mutate({
-                    sourceId: source.source_id,
-                    action: 'request_setup',
-                  })
-                }
-              >
-                Request local setup
-              </Button>
+              {macOS ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label={'Request local setup for ' + source.label}
+                  disabled={command.isPending}
+                  onClick={() =>
+                    command.mutate({
+                      sourceId: source.source_id,
+                      action: 'request_setup',
+                    })
+                  }
+                >
+                  Request local setup
+                </Button>
+              ) : null}
             </div>
           </article>
         );

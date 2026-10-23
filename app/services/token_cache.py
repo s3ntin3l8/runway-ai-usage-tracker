@@ -334,6 +334,8 @@ class TokenCache:
         """Select whole bundles without copying device credentials into legacy state."""
         entries = dict(self._cache.get(provider, {}))
         for account_id, sources in self._source_cache.get(provider, {}).items():
+            # Preserve configured/manual aggregate precedence. Pending device
+            # bundles are independently resolved through get_pending_sources().
             if account_id in entries:
                 continue
             candidates = [

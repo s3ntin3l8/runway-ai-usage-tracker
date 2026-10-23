@@ -370,3 +370,29 @@ def test_known_windows_credentials_keep_existing_collection_without_mac_consent(
         assert rows[0].origin == origin
         assert rows[0].provider_id == provider
         assert rows[0].payload_encrypted
+        source_id = provider + ".windows-credential"
+        assert rows[0].scraper_id == source_id
+        path = "/api/v1/fleet/sidecars/" + sidecar_devices.registry_id(local["device_id"])
+        listed = client.get(path + "/sources")
+        assert listed.status_code == 200
+        assert any(row["source_id"] == source_id for row in listed.json()["sources"])
+        endpoint = path + "/sources/" + source_id + "/commands"
+        assert client.post(endpoint, json={"action": "pause"}).status_code == 200
+        assert source_controls.snapshot(session)[1] == []
+        resumed = client.post(endpoint, json={"action": "resume"})
+        assert resumed.status_code == 200
+        assert (
+            post(
+                client,
+                local,
+                "/api/v1/fleet/source-sync",
+                "source-sync",
+                {"acknowledgments": [{"id": resumed.json()["id"], "status": "applied"}]},
+            ).status_code
+            == 200
+        )
+        assert len(source_controls.snapshot(session)[1]) == 1
+        assert client.post(endpoint, json={"action": "revoke"}).status_code == 200
+        assert session.get(SidecarSourceContribution, rows[0].id).payload_encrypted is None
+        assert source_controls.snapshot(session)[1] == []
+        assert client.post(endpoint, json={"action": "resume"}).status_code == 409

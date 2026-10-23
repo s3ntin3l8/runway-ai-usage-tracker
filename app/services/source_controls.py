@@ -22,7 +22,13 @@ from app.models.db import (
 from app.models.source_controls import ScraperReport
 from app.services import sidecar_devices
 from app.services.credential_sources import sidecar_source_id
-from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin
+from scripts.sidecar_pkg.source_catalog import (
+    control_catalog as catalog,
+)
+from scripts.sidecar_pkg.source_catalog import (
+    source_for_origin,
+    windows_source_for_origin,
+)
 
 _ENABLED = False
 SnapshotCache = dict[str, tuple[str, dict[str, Any]]]
@@ -134,14 +140,6 @@ def allowed(session: Session, device_id: str, source_id: str, generation: int) -
     )
 
 
-# Existing Windows Credential Manager rules are outside the macOS consent boundary.
-# Keep the provider binding exact; an arbitrary keychain origin stays rejected.
-_WINDOWS_CREDENTIAL_ORIGINS = {
-    ("github", "keychain:github.com"),
-    ("antigravity", "keychain:gemini:antigravity"),
-}
-
-
 def _device_platform(session: Session, device_id: str) -> str | None:
     platforms = session.info.setdefault("source_device_platforms", {})
     if device_id not in platforms:
@@ -151,14 +149,10 @@ def _device_platform(session: Session, device_id: str) -> str | None:
 
 
 def _source_for_device(session: Session, device_id: str, provider: str, origin: str) -> str | None:
-    expected = source_for_origin(provider, origin)
-    if (
-        expected == "unknown"
-        and (provider, origin.split("#", 1)[0]) in _WINDOWS_CREDENTIAL_ORIGINS
-        and _device_platform(session, device_id) == "Windows"
-    ):
-        return None
-    return expected
+    windows_source = windows_source_for_origin(provider, origin)
+    if windows_source is not None and _device_platform(session, device_id) == "Windows":
+        return windows_source
+    return source_for_origin(provider, origin)
 
 
 def save_contribution(
@@ -258,6 +252,9 @@ def queue_command(
     row = state(session, device_id, source_id)
     if row is None or action not in {"pause", "resume", "revoke", "request_setup", "dismiss"}:
         raise ValueError("Unknown scraper or action")
+    descriptor = catalog().get(source_id)
+    if descriptor and descriptor.platforms == ("win32",) and action in {"request_setup", "dismiss"}:
+        raise ValueError("Source has no Keychain setup or announcement")
     if action == "resume" and (not row.local_read or row.generation <= row.revoked_through):
         raise ValueError("Resume requires local consent")
     command = SidecarSourceCommand(
@@ -468,8 +465,7 @@ def contribution_proof(
     row = state(session, device_id, expected)
     platform = _device_platform(session, device_id)
     ordinary_source = (platform in {"Linux", "Windows"} and origin.startswith("cookie:")) or (
-        platform == "Windows"
-        and (provider_id, origin.split("#", 1)[0]) in _WINDOWS_CREDENTIAL_ORIGINS
+        platform == "Windows" and windows_source_for_origin(provider_id, origin) is not None
     )
     if proof is None and ordinary_source:
         if row is None:
@@ -501,6 +497,10 @@ def contribution_proof(
         or not allowed(session, device_id, expected, proof["generation"])
     ):
         raise ValueError("Source contribution not authorized")
+    if ordinary_source:
+        # These sources have no macOS consent report; successful ingest is contact.
+        row.last_report_at = datetime.now(UTC)
+        session.add(row)
     return proof
 
 

@@ -203,3 +203,16 @@ def test_withheld_native_scan_is_not_authoritative_logout(monkeypatch):
         "completed_providers": ["anthropic", "openrouter"],
     }
     assert consent.filter_egress(payload)["completed_providers"] == ["openrouter"]
+
+
+def test_windows_lifecycle_catalog_never_expands_keychain_opt_ins():
+    from scripts.sidecar_pkg.source_catalog import control_catalog
+
+    windows = {"github.windows-credential", "antigravity.windows-credential"}
+    assert windows <= control_catalog().keys()
+    assert windows.isdisjoint(catalog())
+    enabled = SourcePolicy.enable_all({})
+    assert windows.isdisjoint(enabled["keychain_sources"])
+    for source_id in windows:
+        with pytest.raises(ValueError, match="Unknown scraper"):
+            SourcePolicy.change(enabled, source_id, read=True)

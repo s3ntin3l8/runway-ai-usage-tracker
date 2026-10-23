@@ -233,3 +233,21 @@ def test_nonmac_cookie_resume_does_not_require_or_grant_keychain_consent(tmp_pat
     client.receive(local, reply(revoke))
     client.receive(local, reply({**resume, "id": 4}))
     assert client.state["acknowledgments"] == [{"id": 4, "status": "denied"}]
+
+
+def test_windows_controls_acknowledge_resume_without_granting_mac_consent(tmp_path, monkeypatch):
+    monkeypatch.setattr(source_protocol.sys, "platform", "win32")
+    local = config()
+    local.pop("keychain_sources")
+    source_consent.POLICY.configure(local)
+    client = source_protocol.SourceClient(local, tmp_path / "state.json")
+    windows = {"source_id": "github.windows-credential", "generation": 0}
+    client.receive(local, reply({**command(1, "pause"), **windows}))
+    restored = source_protocol.SourceClient(local, tmp_path / "state.json")
+    restored.receive(local, reply({**command(2, "resume"), **windows}))
+    assert restored.state["acknowledgments"] == [{"id": 2, "status": "applied"}]
+    restored.receive(local, reply({**command(3, "revoke"), **windows}))
+    restored.receive(local, reply({**command(4, "resume"), **windows}))
+    assert restored.state["acknowledgments"] == [{"id": 4, "status": "denied"}]
+    assert all(source_consent.POLICY.ticket(key) is None for key in source_consent.catalog())
+    assert "keychain_sources" not in local

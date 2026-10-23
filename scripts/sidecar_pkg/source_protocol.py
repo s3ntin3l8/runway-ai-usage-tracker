@@ -16,7 +16,7 @@ from typing import Any
 from urllib import error, request
 
 from scripts.sidecar_pkg import source_consent, transport
-from scripts.sidecar_pkg.source_catalog import catalog
+from scripts.sidecar_pkg.source_catalog import catalog, control_catalog
 from scripts.sidecar_pkg.source_consent import SourcePolicy
 
 logger = logging.getLogger(__name__)
@@ -173,7 +173,7 @@ class SourceClient:
                 command.get(k) for k in ("source_id", "id", "generation", "action")
             )
             if (
-                source_id not in catalog()
+                source_id not in control_catalog()
                 or type(number) is not int
                 or number < 1
                 or type(generation) is not int
@@ -191,14 +191,18 @@ class SourceClient:
                 elif action == "revoke":
                     stored["revoked_through"] = max(stored.get("revoked_through", -1), generation)
                 elif action == "resume":
-                    ordinary_cookie = sys.platform in {"linux", "win32"} and source_id.rsplit(
-                        ".", 1
-                    )[-1] in {"chrome", "chromium", "edge"}
+                    ordinary_source = (
+                        sys.platform in {"linux", "win32"}
+                        and source_id.rsplit(".", 1)[-1] in {"chrome", "chromium", "edge"}
+                    ) or (
+                        sys.platform == "win32"
+                        and control_catalog()[source_id].platforms == ("win32",)
+                    )
                     local_generation = (
                         local.generation
                         if local is not None
                         else generation
-                        if ordinary_cookie
+                        if ordinary_source
                         else None
                     )
                     if local_generation != generation or generation <= stored.get(
@@ -210,13 +214,17 @@ class SourceClient:
                 elif action == "request_setup":
                     stored["setup_requested"] = True
                 elif action == "dismiss":
-                    stored["dismissed_revision"] = catalog()[source_id].revision
+                    stored["dismissed_revision"] = control_catalog()[source_id].revision
                 stored.update({"id": number, "status": status})
             acknowledgments.append({"id": number, "status": status})
         for control in response.get("controls", []):
             source_id = control.get("source_id")
             paused, revoked = control.get("paused"), control.get("revoked_through")
-            if source_id not in catalog() or type(paused) is not bool or type(revoked) is not int:
+            if (
+                source_id not in control_catalog()
+                or type(paused) is not bool
+                or type(revoked) is not int
+            ):
                 raise ValueError("Invalid source control")
             stored = self.state.setdefault("commands", {}).setdefault(source_id, {})
             stored["paused"] = paused
@@ -224,7 +232,7 @@ class SourceClient:
         self.state["acknowledgments"] = acknowledgments
         for withdrawal in response.get("withdrawals", []):
             source_id, generation = withdrawal.get("source_id"), withdrawal.get("generation")
-            if source_id in catalog() and type(generation) is int:
+            if source_id in control_catalog() and type(generation) is int:
                 self.state.setdefault("withdrawals", {})[source_id] = max(
                     self.state.get("withdrawals", {}).get(source_id, -1), generation
                 )
@@ -235,7 +243,7 @@ class SourceClient:
         self.accepted = {
             source_id
             for source_id in response["accepted"]
-            if isinstance(source_id, str) and source_id in catalog()
+            if isinstance(source_id, str) and source_id in control_catalog()
         }
 
     def sync(self, config: dict[str, Any]) -> bool:

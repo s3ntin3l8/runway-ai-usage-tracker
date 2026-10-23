@@ -19,7 +19,7 @@ from app.models.db import (
 )
 from app.models.source_controls import FleetSourceResponse, SourceCommandRequest, SourceSyncRequest
 from app.services import audit_log, sidecar_devices, source_controls
-from scripts.sidecar_pkg.source_catalog import catalog
+from scripts.sidecar_pkg.source_catalog import control_catalog as catalog
 
 router = APIRouter()
 
