@@ -588,7 +588,7 @@ def test_a_boolean_money_field_is_refused():
         data_source="api",
         input_source="config",
     )
-    assert not [card for card in cards if card.get("unit_type") == "currency"]
+    assert not [card for card in cards if card.get("unit") == "USD"]
 
     # A limit that is a boolean would decide pay-as-you-go on a number the
     # account never published, so it refuses instead.
@@ -601,12 +601,15 @@ def test_a_boolean_money_field_is_refused():
             input_source="config",
         )
 
-    # The web collector reads the same fields the same way.
+    # The web collector reads the same fields the same way. A balance it
+    # cannot read leaves no balance card behind.
     collector = AnthropicCollector(account_id="default")
     web_cards = collector._parse_web_usage({"current_balance": True})
-    assert not [card for card in web_cards if card.get("unit_type") == "currency"]
+    assert web_cards == []
 
+    # A limit it cannot read is an error, not a missing card.
     web_limit = collector._parse_web_usage({"extra_usage": {"limit": True, "spend": 0}})
+    assert [card.get("error_type") for card in web_limit] == ["parse_error"]
     assert not [card for card in web_limit if card.get("unit_type") == "currency"]
 
 

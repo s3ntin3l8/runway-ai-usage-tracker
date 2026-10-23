@@ -248,6 +248,10 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         # 1. Handle Balance/Currency fields (Prepaid or Specific Balance)
         if key in BALANCE_KEYS:
             try:
+                # A balance the collector cannot read is no balance: the card
+                # is skipped, and a prepaid balance decides nothing either
+                # way. A spend or a limit is different -- it would decide a
+                # billing model -- so a corrupt one is an error.
                 bal = anthropic_published_number(usage, key) if usage is not None else 0.0
                 results.append(
                     {
@@ -429,12 +433,15 @@ async def billing_model_from_oauth_usage(
             data_source=OAUTH_DATA_SOURCE,
             input_source=OAUTH_INPUT_SOURCE,
         )
-    except Exception:
-        # A corrupt quota is an error, not a missing one, and this path never
-        # raises: the operator asked what the account bills, and the honest
-        # answer to "the usage payload is unreadable" is no answer at all.
-        # The traceback is logged, so a fault in the collector is visible here
-        # rather than looking like an account that publishes no quota.
+    except (ValueError, TypeError, AttributeError, KeyError):
+        # A corrupt quota is an error, not a missing one, and this path does
+        # not raise for one: the operator asked what the account bills, and
+        # the honest answer to "the usage payload is unreadable" is no answer
+        # at all. The tuple is the one the native verification path already
+        # uses for a payload it cannot read, and it covers a payload that is
+        # not even a mapping. The traceback is logged, so a fault in the
+        # collector is visible here rather than looking like an account that
+        # publishes no quota.
         logger.warning("OAuth usage could not be understood for the billing model", exc_info=True)
         return None
     return billing_model_from_oauth_cards(cards)

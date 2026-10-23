@@ -405,6 +405,10 @@ class AnthropicWebMixin:
             bal_val = data.get(b_key)
             if bal_val is not None:
                 try:
+                    # A balance the collector cannot read is no balance: the
+                    # card is skipped, and a prepaid balance decides nothing
+                    # either way. A spend or a limit is different -- it would
+                    # decide a billing model -- so a corrupt one is an error.
                     bal = anthropic_published_number(bal_val, b_key)
                     results.append(
                         {
