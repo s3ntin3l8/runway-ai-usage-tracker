@@ -294,6 +294,8 @@ def _emit(text: str) -> None:
             try:
                 sys.stdout.flush()
             except Exception:
+                # A stream that cannot be flushed has nothing left to
+                # decode; the code page still has to go back.
                 pass
             # The code page is process-wide: the user's console must not
             # stay on UTF-8 for whatever runs next.
