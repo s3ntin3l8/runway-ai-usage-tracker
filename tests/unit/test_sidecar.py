@@ -1790,6 +1790,21 @@ class TestSingleInstanceLock:
         assert sidecar.write_pid_file() is False
         assert pid_file.read_text(encoding="utf-8").strip() == str(other)
 
+    @pytest.mark.skipif(os.name != "nt", reason="Windows PIDs are multiples of 4")
+    def test_a_stale_pid_is_reclaimed_without_a_patched_probe(self, tmp_path, monkeypatch):
+        """The real liveness probe has to see a dead PID as dead.
+
+        A Windows PID is always a multiple of 4, so this one can never exist.
+        """
+        monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
+        pid_file = tmp_path / "sidecar.pid"
+        pid_file.write_text("999999")
+        try:
+            assert sidecar.write_pid_file() is True  # stale lock reclaimed
+            assert pid_file.read_text(encoding="utf-8").strip() == str(os.getpid())
+        finally:
+            sidecar.remove_pid_file()
+
     def test_stale_pid_is_reclaimed(self, tmp_path, monkeypatch):
         """A pid file left by a dead process must not block a new instance."""
         monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)

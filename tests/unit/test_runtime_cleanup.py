@@ -207,3 +207,75 @@ class TestStartupCleanup:
         monkeypatch.setattr(rc, "sweep_stale_update_dirs", boom)
         rc.startup_cleanup()
         assert not stale.exists()
+
+
+class TestWindowsPidProbe:
+    """The Windows liveness probe must never call a terminated process alive.
+
+    ``OpenProcess`` succeeds for a process that exited while a handle to it
+    stayed open (the PyInstaller onefile bootloader, the update helper, a console
+    host), so only the process object's signalled state proves termination.
+    Reading it the other way left the single-instance lock holding a dead PID
+    forever, and the sidecar refused to start after every self-update.
+    """
+
+    WAIT_OBJECT_0 = 0
+    WAIT_TIMEOUT = 258
+
+    @staticmethod
+    def _fake_kernel(monkeypatch, *, handle, wait_result=None, error=0):
+        """Replace kernel32 with a fake; ``handle`` None means OpenProcess fails."""
+        import ctypes
+        from types import SimpleNamespace
+
+        closed: list[object] = []
+
+        def open_process(*args):
+            return handle
+
+        def wait(*args):
+            assert wait_result is not None, "WaitForSingleObject ran without a handle"
+            return wait_result
+
+        def close(closed_handle):
+            closed.append(closed_handle)
+            return 1
+
+        kernel = SimpleNamespace(
+            OpenProcess=open_process, WaitForSingleObject=wait, CloseHandle=close
+        )
+        monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: kernel, raising=False)
+        monkeypatch.setattr(ctypes, "get_last_error", lambda: error, raising=False)
+        return closed
+
+    def test_a_terminated_process_is_not_alive(self, monkeypatch):
+        self._fake_kernel(monkeypatch, handle=1, wait_result=self.WAIT_OBJECT_0)
+        assert rc.windows_pid_is_alive(4242) is False
+
+    def test_a_running_process_is_alive(self, monkeypatch):
+        self._fake_kernel(monkeypatch, handle=1, wait_result=self.WAIT_TIMEOUT)
+        assert rc.windows_pid_is_alive(4242) is True
+
+    def test_a_pid_that_never_existed_is_not_alive(self, monkeypatch):
+        # ERROR_INVALID_PARAMETER (87): the PID is not in use at all.
+        self._fake_kernel(monkeypatch, handle=None, error=87)
+        assert rc.windows_pid_is_alive(4242) is False
+
+    def test_an_unknown_status_is_treated_as_alive(self, monkeypatch):
+        # ACCESS_DENIED (5) and friends: the process may belong to another user,
+        # so report it as alive rather than clobbering a live sidecar.
+        for error in (5, 6, 0):
+            self._fake_kernel(monkeypatch, handle=None, error=error)
+            assert rc.windows_pid_is_alive(4242) is True
+
+    def test_the_handle_is_closed(self, monkeypatch):
+        closed = self._fake_kernel(monkeypatch, handle=7, wait_result=self.WAIT_OBJECT_0)
+        rc.windows_pid_is_alive(4242)
+        assert closed == [7]
+
+    def test_pid_is_alive_uses_the_windows_probe_on_windows(self, monkeypatch):
+        seen: list[int] = []
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(rc, "windows_pid_is_alive", lambda pid: seen.append(pid) or True)
+        assert rc.pid_is_alive(4242) is True
+        assert seen == [4242]

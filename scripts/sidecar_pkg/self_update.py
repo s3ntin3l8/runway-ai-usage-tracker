@@ -1003,6 +1003,11 @@ def _apply_windows(
         # The helper relaunches once we exit; leave the loop / process to wind down.
         # Release the lock first — os._exit bypasses the context manager cleanup.
         _release_lock()
+        # os._exit skips atexit handlers, so the single-instance lock has to be
+        # released here too — the same reason the POSIX path runs the pre-exec
+        # hooks. Otherwise the relaunched sidecar reads the outgoing (dead) PID
+        # from the lock file, reports "already running" and exits.
+        _run_pre_exec_hooks()
         close_keychain_client()
         os._exit(0)
     return True
@@ -1264,26 +1269,9 @@ def _windows_helper_is_alive(pid: int) -> bool:
     """Unknown process status must block destructive recovery, like a live helper."""
     if os.name != "nt":
         return runtime_cleanup.pid_is_alive(pid)
-    import ctypes.wintypes
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
-    kernel.OpenProcess.argtypes = [
-        ctypes.wintypes.DWORD,
-        ctypes.wintypes.BOOL,
-        ctypes.wintypes.DWORD,
-    ]
-    kernel.OpenProcess.restype = ctypes.wintypes.HANDLE
-    kernel.WaitForSingleObject.argtypes = [ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD]
-    kernel.WaitForSingleObject.restype = ctypes.wintypes.DWORD
-    kernel.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
-    kernel.CloseHandle.restype = ctypes.wintypes.BOOL
-    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE, not terminate rights
-    if not handle:
-        return ctypes.get_last_error() != 87  # type: ignore[attr-defined]  # Only confirmed absence.
-    try:
-        return kernel.WaitForSingleObject(handle, 0) != 0  # WAIT_OBJECT_0 proves process exit.
-    finally:
-        kernel.CloseHandle(handle)
+    # The shared Windows probe: OpenProcess + WaitForSingleObject, so a process
+    # that exited while a handle to it stayed open is correctly read as dead.
+    return runtime_cleanup.windows_pid_is_alive(pid)
 
 
 def _recover_windows_transaction(install: pathlib.Path, now: float | None) -> bool:
