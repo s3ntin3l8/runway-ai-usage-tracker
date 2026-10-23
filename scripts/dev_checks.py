@@ -41,24 +41,21 @@ def venv_python() -> Path:
     return ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
-#: Git's own variables, which a git hook sets for the commands it runs. The
-#: suite must not inherit them: during a commit, GIT_INDEX_FILE points at the
-#: temporary index git is about to write, so a test that runs git would act on
-#: the repository being committed instead of the throwaway one it created.
-GIT_ENV_VARS = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_PREFIX",
-)
-
-
 def without_git_env() -> dict[str, str]:
-    """The environment without git's repository variables."""
-    return {k: v for k, v in os.environ.items() if k not in GIT_ENV_VARS}
+    """The environment without git's repository variables.
+
+    A git hook sets them for the commands it runs, and the suite must not
+    inherit them: during a commit, GIT_INDEX_FILE points at the temporary
+    index git is about to write, so a test that runs git would act on the
+    repository being committed instead of the throwaway one it created.
+
+    Everything git sets is dropped, by prefix rather than by name: git also
+    propagates arbitrary ``-c`` configuration to a hook as
+    ``GIT_CONFIG_PARAMETERS``, so a list of names would be a list to keep in
+    step with git. ``tests/conftest.py``'s ``isolated_git`` fixture drops them
+    the same way, for the same reason.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 #: The repository root, captured before anything can repoint ROOT. The git
