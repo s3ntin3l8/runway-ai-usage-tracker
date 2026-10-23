@@ -309,12 +309,27 @@ The extractor therefore keeps its own id-based cursor in
 `~/.config/runway/sidecar/minimax_code_watermark.json` (`%APPDATA%\runway\sidecar\…` on Windows —
 it sits next to the rest of the sidecar's state), keyed by the database path (`id` is only
 comparable within one file). That keying is what lets several stores coexist: each advances on
-its own id axis, and a host that moves its data dir keeps its cursor with it.
+its own id axis. The key is the **resolved** path, so the legacy `~/.mavis` → `~/.minimax`
+symlink keeps its cursor, while a data dir that is *moved* or *copied* resolves to a new key and
+starts from scratch.
+
+**The floor for a store that is seen for the first time is the bootstrap window**, never the
+sidecar's shared timestamp watermark. The watermark says "this provider's history up to T was
+pushed" — which is true for the store that was pushed and for nothing else, so it is not a floor
+for a store discovered later. It is not a safe floor for the known store either: `ts` is not
+globally monotonic, so a timestamp boundary drops the interleaved rows that fall outside it (the
+same reason the id cursor exists). The window — the same one the probe uses, so the two cannot
+disagree — is applied once, on the **id** axis, and then forgotten. Losing the cursor file
+therefore re-imports the window rather than the rows since the last push; the rows are identical,
+so the server's `(provider_id, event_id)` uniqueness makes the re-push a no-op.
 
 The cursor advances **only after the server confirms the ingest**: the advance is parked while the
 events are on their way and committed — or dropped — once the push is done. A failed push (or a
 cycle that dies mid-flight) therefore re-sends the same rows instead of skipping them; the
 server's `(provider_id, event_id)` uniqueness makes that re-send a no-op.
+
+A cycle reads at most 5000 rows **per store**, so a host with N stores can emit up to N × 5000
+events in one cycle.
 
 A rebuilt store (the id axis restarts) resets the cursor and re-emits. The rebuilt store holds the
 requests made after the rebuild — usage that has not been reported yet — and a request that
