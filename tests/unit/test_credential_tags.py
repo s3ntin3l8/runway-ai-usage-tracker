@@ -1698,3 +1698,49 @@ def test_archived_account_pairs_lists_only_archived_rows(session: Session):
     }
     # An empty provider list must not turn into a full-table scan.
     assert archived_account_pairs(session, []) == set()
+
+
+def test_parked_mapping_resolves_its_seeded_providers_in_one_query(session: Session, monkeypatch):
+    """The seeded provider set resolves in a single query, not one per provider.
+
+    `/fleet/config` asks about every provider with a tag, so a per-provider
+    lookup would turn one request into a query per provider.
+    """
+    from app.services import credential_tags as credential_tags_module
+
+    calls: list[tuple[str, ...]] = []
+    original = credential_tags_module.archived_account_pairs
+
+    def counting(session: Session, providers):  # noqa: ANN001 — mirrors the wrapped helper
+        calls.append(tuple(providers))
+        return original(session, providers)
+
+    monkeypatch.setattr(credential_tags_module, "archived_account_pairs", counting)
+
+    parked = credential_tags_module.ParkedMapping(session, ["anthropic", "kimi_coding", "gemini"])
+    for provider_id, account_id in (
+        ("anthropic", "a@example.com"),
+        ("kimi_coding", "b@example.com"),
+        ("gemini", "c@example.com"),
+    ):
+        assert parked.is_parked_account(provider_id, account_id) is False
+
+    assert len(calls) == 1
+    assert set(calls[0]) == {"anthropic", "kimi_coding", "gemini"}
+
+
+def test_parked_mapping_asks_no_query_when_nobody_looks(session: Session, monkeypatch):
+    """A reader that never asks pays no query at all."""
+    from app.services import credential_tags as credential_tags_module
+
+    calls: list[tuple[str, ...]] = []
+    original = credential_tags_module.archived_account_pairs
+
+    def counting(session: Session, providers):  # noqa: ANN001 — mirrors the wrapped helper
+        calls.append(tuple(providers))
+        return original(session, providers)
+
+    monkeypatch.setattr(credential_tags_module, "archived_account_pairs", counting)
+
+    credential_tags_module.ParkedMapping(session, ["anthropic"])
+    assert calls == []

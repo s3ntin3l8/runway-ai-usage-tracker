@@ -245,7 +245,17 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     # but must never stamp the archived account with new usage. The predicate is
     # tag-aware — a redirect tag names an account of its *target* provider, so
     # its parked-ness is looked up there.
-    parked = ParkedMapping(session)
+    parked = ParkedMapping(
+        session,
+        [
+            pid
+            for pid in (
+                card.provider_id or (card.metadata.get("provider_id") if card.metadata else None)
+                for card in payload.metrics
+            )
+            if isinstance(pid, str) and pid
+        ],
+    )
 
     tokens_to_store = []
     local_cards = []
@@ -1061,7 +1071,13 @@ def _account_tag_hints_for_providers(
         # account with new usage and resurrect a pair the operator retired.
         # The check is tag-aware — a redirect tag names an account of its
         # *target* provider, so its parked-ness is looked up there.
-        parked = ParkedMapping(session)
+        parked = ParkedMapping(session, providers)
+        # A redirect tag names an account of its *target* provider — seed those
+        # too, so the whole check costs two queries instead of one per
+        # provider.
+        parked.seed(
+            {tag.target_provider_id for tag in tags.values() if tag.target_provider_id is not None}
+        )
         for (pid, origin), tag in tags.items():
             if parked.is_parked(tag):
                 tagged_origins = resolved.get(pid)
@@ -1309,7 +1325,9 @@ async def post_credential_manifest(
 
     # A mapping onto an archived account is *parked*: it resolves the credential
     # but must never file an observation under the archived account.
-    parked = ParkedMapping(session)
+    parked = ParkedMapping(
+        session, [observation.provider_id for observation in payload.observations]
+    )
 
     _refresh_observed_sources(session, payload, parked)
     if payload.observations:

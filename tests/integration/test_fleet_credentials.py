@@ -4584,13 +4584,23 @@ def test_parked_redirect_ships_no_hint_and_does_not_file_the_card(
     _add_archived_provider_config(
         session, provider_id="antigravity", account_id="retired@example.com"
     )
+    # A deployment-wide tag: /fleet/config only ships deployment-wide rows when
+    # no sidecar is live, so a machine-scoped tag would make the hint
+    # assertion below vacuous.
     CredentialTagRepo.set_tag(
         session,
         provider_id="gemini",
         credential_origin="provider:gemini",
         account_id="retired@example.com",
-        sidecar_id="alpha-host",
         target_provider_id="antigravity",
+    )
+    # The control: a live deployment-wide mapping in the same response, so
+    # "no hint for gemini" is evidence rather than an empty map.
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="live@example.com",
     )
     session.commit()
 
@@ -4598,6 +4608,7 @@ def test_parked_redirect_ships_no_hint_and_does_not_file_the_card(
     # the credential belongs to the retired account.
     hints = client.get("/api/v1/fleet/config").json()["account_tag_hints"]
     assert hints.get("gemini", {}) == {}
+    assert hints["anthropic"] == {"provider:anthropic": "live@example.com"}
 
     response = _ingest(
         client,

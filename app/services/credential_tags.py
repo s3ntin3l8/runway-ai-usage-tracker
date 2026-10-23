@@ -16,7 +16,7 @@ goes through this surface so the lookup key stays in one place.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -135,21 +135,56 @@ class ParkedMapping:
     it revives them.
 
     One instance per request or batch: the archived rows are queried once per
-    provider, and every reader asks this object instead of re-deriving the rule
-    for itself.
+    provider — seeded in a single query when the caller knows its providers —
+    and every reader asks this object instead of re-deriving the rule for
+    itself.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, providers: Iterable[str] | None = None) -> None:
         self._session = session
         self._archived: dict[str, set[str]] = {}
+        self._pending: list[str] = []
+        if providers:
+            self.seed(providers)
+
+    def seed(self, providers: Iterable[str]) -> None:
+        """Remember these providers, so the next lookup resolves them together.
+
+        The callers that know their provider set up front name it here: the
+        whole set is then resolved in a single query, instead of one query per
+        provider. The resolution stays lazy — a reader that never asks pays no
+        query at all.
+        """
+        for provider_id in providers:
+            if (
+                isinstance(provider_id, str)
+                and provider_id
+                and provider_id not in self._archived
+                and provider_id not in self._pending
+            ):
+                self._pending.append(provider_id)
+
+    def _resolve_pending(self) -> None:
+        if not self._pending:
+            return
+        pending = self._pending
+        self._pending = []
+        for provider_id, account_id in archived_account_pairs(self._session, pending):
+            self._archived.setdefault(provider_id, set()).add(account_id)
+        for provider_id in pending:
+            self._archived.setdefault(provider_id, set())
 
     def _archived_accounts(self, provider_id: str) -> set[str]:
         cached = self._archived.get(provider_id)
         if cached is None:
-            cached = {
-                account_id for _, account_id in archived_account_pairs(self._session, [provider_id])
-            }
-            self._archived[provider_id] = cached
+            self._resolve_pending()
+            cached = self._archived.get(provider_id)
+            if cached is None:
+                cached = {
+                    account_id
+                    for _, account_id in archived_account_pairs(self._session, [provider_id])
+                }
+                self._archived[provider_id] = cached
         return cached
 
     def is_parked(self, tag: CredentialTag | None) -> bool:

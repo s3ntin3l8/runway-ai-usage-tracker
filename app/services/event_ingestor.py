@@ -83,7 +83,7 @@ class EventIngestor:
         # a card, not a usage event. The predicate is tag-aware: a redirect
         # tag names an account of its *target* provider, so its parked-ness
         # is looked up there.
-        parked = ParkedMapping(self.session)
+        parked = ParkedMapping(self.session, [push.provider_id for push in pushes])
         try:
             for push in pushes:
                 if is_redirect_source_provider(push.provider_id):

@@ -1887,7 +1887,7 @@ class CollectorManager:
             # resolves the credential but must never move the cached secret
             # into the retired account's slot. The predicate is tag-aware — a
             # redirect tag names an account of its *target* provider.
-            parked = ParkedMapping(session)
+            parked = ParkedMapping(session, provider_ids)
             for pid in provider_ids:
                 candidates = candidates_by_provider[pid]
                 for candidate in candidates:
