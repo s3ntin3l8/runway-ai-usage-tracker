@@ -12,6 +12,7 @@ import atexit
 import getpass
 import json
 import os
+import pathlib
 import shutil
 import stat
 import subprocess
@@ -259,6 +260,51 @@ def _fast_sqlite_writes():
         yield
     finally:
         event.remove(Engine, "connect", disable_fsync)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def guard_implicit_text_encodings():
+    """Refuse to write non-ASCII text without an explicit encoding.
+
+    ``Path.write_text`` without an ``encoding`` argument uses the locale's
+    preferred encoding, which on a default Windows install is cp1252. Text
+    with a character outside cp1252 -- an arrow, an em-dash -- then raises
+    ``UnicodeEncodeError``, and the error names neither the encoding nor the
+    file. That is how ``tests/unit/test_gitignore_symlinked_dirs.py`` reported
+    16 errors on a Windows checkout while passing on the Linux runner.
+
+    The check runs at write time rather than in the source, because a static
+    scan cannot tell which of the suite's implicit-encoding writes can
+    produce non-ASCII: 219 of them omit the argument, and most write a value
+    a scanner cannot read. What matters is the text that is actually written.
+
+    The guard is deliberately narrow. ASCII is always safe, so it is left
+    alone; writing non-ASCII with an explicit ``encoding="utf-8"`` is the
+    supported way to do it.
+    """
+    original = pathlib.Path.write_text
+
+    def guarded_write_text(self, data, *args, **kwargs):
+        encoding = kwargs.get("encoding")
+        if encoding is None and args:
+            encoding = args[0]
+        if encoding is None and isinstance(data, str) and not data.isascii():
+            offenders = sorted({char for char in data if ord(char) > 127})
+            raise AssertionError(
+                f"{self}: refusing to write non-ASCII text without an explicit "
+                f'encoding (characters: {offenders!r}). Pass encoding="utf-8" -- '
+                "the implicit encoding is the console's preferred one, which is "
+                "cp1252 on a default Windows install, and the write raises "
+                "UnicodeEncodeError there."
+            )
+        return original(self, data, *args, **kwargs)
+
+    guarded_write_text._encoding_guard = True
+    pathlib.Path.write_text = guarded_write_text
+    try:
+        yield
+    finally:
+        pathlib.Path.write_text = original
 
 
 @pytest.fixture(autouse=True)
