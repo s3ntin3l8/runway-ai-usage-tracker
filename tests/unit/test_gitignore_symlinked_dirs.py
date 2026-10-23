@@ -30,7 +30,9 @@ def checkout(tmp_path: Path, isolated_git) -> Path:
         pytest.skip("git is required to test the ignore rules")
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / ".gitignore").write_text((ROOT / ".gitignore").read_text(encoding="utf-8"))
+    (repo / ".gitignore").write_text(
+        (ROOT / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
+    )
     # No GIT_DIR here: git initialises a *bare* repository when GIT_DIR is set
     # without GIT_WORK_TREE, and check-ignore then refuses to run.
     init = isolated_git("init", "--quiet", cwd=repo)
