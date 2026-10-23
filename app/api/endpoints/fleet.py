@@ -51,8 +51,8 @@ from app.services.accumulator import (
 )
 from app.services.credential_tags import (
     CredentialTagRepo,
+    ParkedMapping,
     PendingCredentialTagRepo,
-    archived_account_pairs,
     live_sidecar_ids,
 )
 from app.services.credential_token import issue_credential_token
@@ -242,23 +242,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     payload.metrics = accepted_cards
 
     # A mapping onto an archived account is *parked*: it resolves the credential
-    # but must never stamp the archived account with new usage. Collect the
-    # archived pairs once for the whole payload — the per-card resolution below
-    # asks about tags, not about accounts.
-    parked_pairs = archived_account_pairs(
-        session,
-        sorted(
-            {
-                pid
-                for pid in (
-                    card.provider_id
-                    or (card.metadata.get("provider_id") if card.metadata else None)
-                    for card in payload.metrics
-                )
-                if isinstance(pid, str) and pid
-            }
-        ),
-    )
+    # but must never stamp the archived account with new usage. The predicate is
+    # tag-aware — a redirect tag names an account of its *target* provider, so
+    # its parked-ness is looked up there.
+    parked = ParkedMapping(session)
 
     tokens_to_store = []
     local_cards = []
@@ -302,7 +289,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     if (
                         verified_tag is not None
                         and verified_tag.set_by != "identity_claim"
-                        and (provider_id, verified_tag.account_id) not in parked_pairs
+                        and not parked.is_parked(verified_tag)
                     ):
                         acc_id = verified_tag.account_id
                         identity_pending = False
@@ -322,7 +309,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                     if (
                         tagged is not None
                         and tagged.set_by != "identity_claim"
-                        and (provider_id, tagged.account_id) not in parked_pairs
+                        and not parked.is_parked(tagged)
                     ):
                         acc_id = tagged.account_id
                         identity_pending = False
@@ -1040,7 +1027,7 @@ def _account_tag_hints_for_providers(
     tags only when zero or 2+ sidecars are live.
 
     ``include_parked=False`` drops the mappings whose target account is
-    archived (see :func:`archived_account_pairs`). A parked mapping
+    archived (see :class:`ParkedMapping`). A parked mapping
     resolves the credential but must never reach a sidecar: shipping it
     would make the sidecar stamp the archived account with new usage
     and resurrect a pair the operator retired. Callers that decide
@@ -1053,9 +1040,12 @@ def _account_tag_hints_for_providers(
         live = live_sidecar_ids(session)
         if len(live) == 1:
             effective_sidecar_id = live[0]
-    resolved = CredentialTagRepo.list_pending_payload(
+    tags = CredentialTagRepo.list_effective_tags(
         session, providers=providers, sidecar_id=effective_sidecar_id
     )
+    resolved: dict[str, dict[str, str]] = {}
+    for (pid, origin), tag in tags.items():
+        resolved.setdefault(pid, {})[origin] = tag.account_id
     # A fingerprint match outranks the auto-hint but never an operator tag:
     # the tag is a deliberate per-origin choice, the fingerprint a derived
     # one. Unlike tags, the fingerprint hint is not scoped to a sidecar —
@@ -1066,14 +1056,19 @@ def _account_tag_hints_for_providers(
         for origin, account_id in by_origin.items():
             bucket.setdefault(origin, account_id)
     if not include_parked:
-        parked = archived_account_pairs(session, providers)
-        if parked:
-            for pid, by_origin in list(resolved.items()):
-                for origin, account_id in list(by_origin.items()):
-                    if (pid, account_id) in parked:
-                        del by_origin[origin]
-                if not by_origin:
-                    del resolved[pid]
+        # A parked mapping resolves the credential but must never reach a
+        # sidecar: shipping it would make the sidecar stamp the archived
+        # account with new usage and resurrect a pair the operator retired.
+        # The check is tag-aware — a redirect tag names an account of its
+        # *target* provider, so its parked-ness is looked up there.
+        parked = ParkedMapping(session)
+        for (pid, origin), tag in tags.items():
+            if parked.is_parked(tag):
+                tagged_origins = resolved.get(pid)
+                if tagged_origins is not None:
+                    tagged_origins.pop(origin, None)
+                    if not tagged_origins:
+                        resolved.pop(pid, None)
     return resolved
 
 
@@ -1200,17 +1195,17 @@ def _validate_device_manifest(
 def _refresh_observed_sources(
     session: Session,
     payload: CredentialManifestRequest,
-    parked_pairs: set[tuple[str, str]],
+    parked: ParkedMapping,
 ) -> None:
     """File each observed credential origin under the account it belongs to.
 
     Each manifest is authoritative: the latest observed token names and
     expiry replace the prior health metadata for that source.
 
-    ``parked_pairs`` holds the ``(provider, account)`` pairs whose account is
-    archived. A mapping onto one of them is *parked* — it resolves the
-    credential, but the observation must not be filed under the retired
-    account, so the source stays where the machine's own resolution put it.
+    ``parked`` answers whether a mapping is parked — one whose target account
+    is archived. A parked mapping resolves the credential, but the observation
+    must not be filed under the retired account, so the source stays where the
+    machine's own resolution put it.
     """
     from app.services.credential_sources import (
         describe_origin,
@@ -1238,7 +1233,7 @@ def _refresh_observed_sources(
             credential_origin=observation_origin,
             sidecar_id=payload.sidecar_id,
         )
-        if tag is not None and (observation_provider, tag.account_id) in parked_pairs:
+        if parked.is_parked(tag):
             # Parked: the operator parked this credential on a retired account.
             # Keep the source where the machine's own resolution filed it.
             tag = None
@@ -1314,11 +1309,9 @@ async def post_credential_manifest(
 
     # A mapping onto an archived account is *parked*: it resolves the credential
     # but must never file an observation under the archived account.
-    parked_pairs = archived_account_pairs(
-        session, sorted({observation.provider_id for observation in payload.observations})
-    )
+    parked = ParkedMapping(session)
 
-    _refresh_observed_sources(session, payload, parked_pairs)
+    _refresh_observed_sources(session, payload, parked)
     if payload.observations:
         session.flush()
 

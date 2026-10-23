@@ -702,7 +702,7 @@ describe('UntaggedCredentialsDialog', () => {
               is_orphaned: false,
             },
             {
-              account_id: 'retired@example.com',
+              account_id: 'a'.repeat(60) + 'bcde',
               account_label: 'Retired',
               enabled: false,
               archived: true,
@@ -730,7 +730,10 @@ describe('UntaggedCredentialsDialog', () => {
     await user.click(trigger);
     // The archived account is offered, in its own group and marked as archived.
     await screen.findByText(/Archived · parked until restored/i);
-    await user.click(await screen.findByText('Retired · retired@example.com · archived'));
+    // A hashed account id is masked, like every other account id in the UI.
+    const hashed = 'a'.repeat(60) + 'bcde';
+    const masked = `${'a'.repeat(8)}…bcde`;
+    await user.click(await screen.findByText(`Retired · ${masked} · archived`));
     await user.click(within(dialog).getByRole('button', { name: /^tag$/i }));
 
     await waitFor(() =>
@@ -738,14 +741,14 @@ describe('UntaggedCredentialsDialog', () => {
         sidecar_id: 'laptop',
         provider_id: 'anthropic',
         credential_origin: 'provider:anthropic',
-        account_id: 'retired@example.com',
+        account_id: hashed,
         scope: 'sidecar',
       }),
     );
     // The toast must say the credential was parked — "tagged" would read as
-    // "collecting now".
+    // "collecting now" — and must not print the raw account id.
     expect(toast.success).toHaveBeenCalledWith(
-      'Credential parked on anthropic · retired@example.com (archived)',
+      `Credential parked on anthropic · ${masked} (archived)`,
     );
   });
 

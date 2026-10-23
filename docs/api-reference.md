@@ -308,13 +308,21 @@ A parked mapping:
   pending by the next sidecar manifest;
 - **is never acted on** — it is not shipped in `GET /fleet/config`'s
   `account_tag_hints` nor in the manifest's `resolved` map, it never stamps
-  the archived account with incoming usage, and it never moves the cached
-  credential into the retired account's slot;
+  the archived account with incoming usage (neither with a card nor with a
+  usage event), and it never moves the cached credential into the retired
+  account's slot. A usage event that only the parked mapping could attribute
+  is held for assignment in `GET /api/v1/fleet/events/pending` instead of
+  being booked on the retired account;
 - **comes back to life on restore** — parking is derived from
   `provider_configs.archived`, never stored on the tag, so restoring the
   account (`PUT /api/v1/system/provider-config/{provider}/{account}` with
   `{"archived": false}`) ships the hint again on the next `/fleet/config` and
   collection resumes without re-tagging.
+
+A *redirect* tag (one with `target_provider_id`) names an account of its
+**target** provider, so whether it is parked is looked up under that target
+provider — a retired target account stops receiving the redirected credential
+as well.
 
 `POST /api/v1/fleet/credentials/tags` reports which kind of mapping it wrote
 as `target_archived`.

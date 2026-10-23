@@ -512,3 +512,88 @@ def test_directory_event_never_inherits_another_roots_provider_tag():
     event = s.exec(select(UsageEvent)).one()
     assert event.account_id == "work@example.com"
     assert event.credential_origin == "path:/home/work/projects"
+
+
+def test_parked_provider_mapping_does_not_stamp_the_archived_account():
+    """A mapping onto an archived account is parked: it resolves the
+    credential, but the event must not be billed to the retired account."""
+    s = _seeded_session()
+    s.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="retired@example.com",
+            enabled=False,
+            archived=True,
+        )
+    )
+    s.add(
+        CredentialTag(
+            provider_id="kimi_coding",
+            credential_origin="provider:kimi_coding",
+            account_id="retired@example.com",
+            sidecar_id="host-a",
+            set_by="operator",
+        )
+    )
+    s.commit()
+
+    EventIngestor(s).ingest(
+        [
+            _make_push(
+                event_id="parked-event",
+                provider_id="kimi_coding",
+                account_id="default",
+                account_source="default",
+            )
+        ],
+        sidecar_id="host-a",
+    )
+
+    # Nothing may be booked on the retired account.
+    assert s.exec(select(UsageEvent)).all() == []
+    # The event is held for assignment instead of being lost.
+    pending = s.exec(select(PendingUsageEvent)).one()
+    assert pending.provider_id == "kimi_coding"
+    assert pending.event_id == "parked-event"
+
+
+def test_parked_redirect_does_not_rehome_events_onto_the_archived_account():
+    """A redirect tag names an account of its *target* provider, so its
+    parked-ness has to be looked up there. A retired target must not receive
+    the redirected events."""
+    s = _seeded_session()
+    s.add(
+        ProviderConfig(
+            provider_id="antigravity",
+            account_id="retired@example.com",
+            enabled=False,
+            archived=True,
+        )
+    )
+    s.add(
+        CredentialTag(
+            provider_id="gemini",
+            credential_origin="provider:gemini",
+            account_id="retired@example.com",
+            target_provider_id="antigravity",
+            sidecar_id="host-a",
+            set_by="operator",
+        )
+    )
+    s.commit()
+
+    EventIngestor(s).ingest(
+        [
+            _make_push(
+                event_id="redirected-event",
+                provider_id="gemini",
+                account_id="default",
+                account_source="default",
+            )
+        ],
+        sidecar_id="host-a",
+    )
+
+    events = s.exec(select(UsageEvent)).all()
+    assert [event.account_id for event in events] != ["retired@example.com"]
+    assert all(event.provider_id != "antigravity" for event in events)

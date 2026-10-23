@@ -4567,3 +4567,47 @@ def test_manifest_does_not_reopen_a_parked_origin(client: TestClient, session: S
     assert result.json()["resolved"].get("kimi_coding", {}) == {}
     # And it does not come back as pending.
     assert PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host") == []
+
+
+def test_parked_redirect_ships_no_hint_and_does_not_file_the_card(
+    client: TestClient, session: Session
+):
+    """A redirect tag names an account of its *target* provider.
+
+    The parked-ness of that account has to be looked up under the target
+    provider — keying the check by the tag's own provider would miss exactly
+    this case, and the retired account would keep receiving the redirected
+    credential.
+    """
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_archived_provider_config(
+        session, provider_id="antigravity", account_id="retired@example.com"
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="gemini",
+        credential_origin="provider:gemini",
+        account_id="retired@example.com",
+        sidecar_id="alpha-host",
+        target_provider_id="antigravity",
+    )
+    session.commit()
+
+    # No hint ships for the source provider: the sidecar must not learn that
+    # the credential belongs to the retired account.
+    hints = client.get("/api/v1/fleet/config").json()["account_tag_hints"]
+    assert hints.get("gemini", {}) == {}
+
+    response = _ingest(
+        client,
+        "alpha-host",
+        [_token_card("gemini", "provider:gemini", "sk-redirected")],
+    )
+    assert response.status_code == 200, response.text
+
+    rows = session.exec(
+        select(CredentialSource).where(CredentialSource.provider_id == "gemini")
+    ).all()
+    assert rows, "the ingest must still record the credential it received"
+    assert [row.account_id for row in rows] != ["retired@example.com"]

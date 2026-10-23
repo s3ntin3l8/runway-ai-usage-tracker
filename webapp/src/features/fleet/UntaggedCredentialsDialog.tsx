@@ -178,7 +178,7 @@ export function UntaggedCredentialsDialog({
       // operator must not read "tagged" as "collecting now".
       toast.success(
         data.target_archived
-          ? `Credential parked on ${body.provider_id} · ${body.account_id} (archived)`
+          ? `Credential parked on ${body.provider_id} · ${maskAccountId(body.account_id)} (archived)`
           : 'Credential tagged',
       );
       // Tagging changes the untagged list, the rules, the sidecars' identities,

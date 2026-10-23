@@ -232,9 +232,12 @@ credential keeps reporting it, so the operator has to resolve the origin anyway 
 account is a legal target. Such a mapping is **parked**: it resolves the origin (the credential
 leaves the pending list, the "needs an account" card and the home banner, and the next manifest
 does not re-open it) but stays inert — no hint ships to the sidecar, no incoming usage is stamped
-on the archived account, and the cached bundle is not moved into the retired account's slot.
-Parking is *derived* from `provider_configs.archived`, never stored on the tag, so restoring the
-account revives the mapping on the next `/fleet/config` with no re-tagging. See
+on the archived account (neither a card nor a usage event), and the cached bundle is not moved into
+the retired account's slot. Parking is *derived* from `provider_configs.archived`, never stored on
+the tag, so restoring the account revives the mapping on the next `/fleet/config` with no
+re-tagging. Whether a mapping is parked is answered in one place (`ParkedMapping` in
+`app/services/credential_tags.py`), because a *redirect* tag names an account of its **target**
+provider and the archived row has to be looked up there. See
 [Parked mappings](api-reference.md#parked-mappings) for the API contract.
 
 ### Who refreshes an OAuth login
