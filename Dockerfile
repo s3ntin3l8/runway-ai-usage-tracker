@@ -18,9 +18,21 @@ RUN npm --prefix webapp run build
 # Stage 2: Build Python dependencies
 FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS python-builder
 WORKDIR /app
+# The builder's two build dependencies are deliberately unpinned. They are not
+# shipped: the final image is a separate FROM, and what it carries is the
+# runtime's own packages. Debian removes a superseded point release from the
+# archive, so an exact pin here stops resolving the next time the base image's
+# apt snapshot moves, and the image build fails until the pin is re-pinned --
+# which is how these pins arrived at all. hadolint's DL3008 is not a gate in
+# this repository, so nothing enforces them and nothing checks them.
+#
+# Unpinned is also the safe direction for the one shared library: the builder
+# gets the base image's snapshot while the runtime runs `apt-get upgrade -y`
+# afterwards, so the runtime's libsqlite3 is never older than the headers the
+# extension was built against.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc=4:14.2.0-1 \
-    libsqlite3-dev=3.46.1-7+deb13u2 \
+    gcc \
+    libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
