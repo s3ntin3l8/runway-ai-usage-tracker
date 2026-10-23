@@ -55,6 +55,9 @@ class TrayDaemon:
     def configure(self, config: dict) -> None:
         """Replace local permissions before reconciling keep-alive policy."""
         with self._lifecycle_lock:
+            from scripts.sidecar_pkg.source_consent import POLICY
+
+            POLICY.configure(config)
             self._config = config
             self._runner._config = config
             if self._started:

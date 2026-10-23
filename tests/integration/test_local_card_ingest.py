@@ -1191,13 +1191,8 @@ def test_hmac_mismatch_log_is_crlf_clean(session, caplog):
         f"HMAC mismatch log contains embedded newline (log-injection): {rendered!r}"
     )
     assert "\r" not in rendered
-    # The first 8 chars of the sanitized signature are echoed — ``"abc\nFAKE_"``
-    # becomes ``"abc FAKE_"`` after scrub_log, which is what we expect to
-    # see. Crucially, no CR/LF survives that the attacker could use to forge
-    # a second log line.
-    assert "abc FAKE" in rendered, (
-        f"sanitized signature prefix should appear (CR/LF collapsed to space): {rendered!r}"
-    )
+    # Authentication diagnostics contain no attacker-controlled signature fragments.
+    assert "abc" not in rendered and "FAKE" not in rendered
 
 
 async def test_ingest_resets_verification_backoff_only_when_the_secret_changes(session):

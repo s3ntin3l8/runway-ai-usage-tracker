@@ -1,9 +1,7 @@
 """Bootstrap entry point for the Runway sidecar desktop app."""
 
 import atexit
-import json
 import logging
-import os
 import socket
 import sys
 import threading
@@ -14,6 +12,11 @@ from scripts.sidecar_pkg.signatures import verification_command
 
 # Run before desktop imports/initialization so this diagnostic works headlessly.
 verification_command(sys.argv[1:])
+if sys.argv[1:2] == ["--authorize-keychain-source"]:
+    from scripts.sidecar_pkg.source_setup import authorization_command
+
+    authorization_command(sys.argv[1:])
+
 if sys.argv[1:2] == ["--authorize-claude-keychain"]:
     from scripts.sidecar_pkg.keychain_authorization import authorization_command
 
@@ -219,14 +222,11 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
         }
 
     def _settings_save_config(new_config: dict) -> None:
-        tmp = config_path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(
-                {k: v for k, v in new_config.items() if not k.startswith("sidecar_")},
-                indent=2,
-            )
+        from sidecar_app.config import save_local_config
+
+        save_local_config(
+            config_path, {k: v for k, v in new_config.items() if not k.startswith("sidecar_")}
         )
-        os.replace(tmp, config_path)
         _on_config_change(new_config)
 
     def _open_dashboard() -> None:

@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from scripts import sidecar
 from scripts.sidecar_pkg import macos_keychain_store as keychain
 from scripts.sidecar_pkg.macos_keychain_store import KeychainError
+from tests.macos_cookie_fixtures import approved_keychain_readers  # noqa: F401
 
 
 @pytest.fixture

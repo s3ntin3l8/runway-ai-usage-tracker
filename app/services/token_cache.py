@@ -131,6 +131,9 @@ class TokenCache:
         self._source_cache: dict[
             str, dict[str, dict[str, tuple[dict[str, str], dict[str, Any], float]]]
         ] = {}
+        self._durable_revision = -1
+        self._durable_source_ids: set[str] = set()
+        self._durable_bundles: dict[str, tuple[str, dict[str, Any]]] = {}
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
 
@@ -216,7 +219,22 @@ class TokenCache:
         # cache below is preserved until all existing callers migrate to the
         # source-aware read path.
         async with self._lock:
+            self._clear_expired_unlocked()
             if source_id:
+                previous = self._source_cache.get(provider, {}).get(account_id, {}).get(source_id)
+                if previous and previous[1].get("durable_source") is True:
+                    from app.services.source_controls import replace_cached_source
+
+                    replacement = {**previous[0], **tokens}
+                    if not self._is_staler(tokens, previous[0]):
+                        replace_cached_source(
+                            provider, source_id, account_id, previous[0], replacement
+                        )
+                    self._durable_revision = -1
+                    self._reload_durable_unlocked()
+                    return account_id
+                if source_id in self._durable_source_ids:
+                    return account_id
                 source_accounts = self._source_cache.setdefault(provider, {}).setdefault(
                     account_id, {}
                 )
@@ -310,6 +328,46 @@ class TokenCache:
             )
             return account_id
 
+    def _account_entries(
+        self, provider: str
+    ) -> dict[str, tuple[dict[str, str], dict[str, Any], float]]:
+        """Select whole bundles without copying device credentials into legacy state."""
+        entries = dict(self._cache.get(provider, {}))
+        for account_id, sources in self._source_cache.get(provider, {}).items():
+            # Preserve configured/manual aggregate precedence. Pending device
+            # bundles are independently resolved through get_pending_sources().
+            if account_id in entries:
+                continue
+            candidates = [
+                entry
+                for entry in sources.values()
+                if entry[1].get("durable_source") is True
+                and entry[1].get("identity_pending") is not True
+            ]
+            if candidates:
+                entries[account_id] = max(candidates, key=lambda entry: entry[2])
+        return entries
+
+    def _reload_durable_unlocked(self) -> None:
+        from app.services.source_controls import read_snapshot
+
+        snapshot = read_snapshot(self._durable_revision, self._durable_bundles)
+        if snapshot is None:
+            return
+        revision, rows = snapshot
+        for accounts in self._source_cache.values():
+            for sources in accounts.values():
+                for source_id, entry in list(sources.items()):
+                    if entry[1].get("durable_source") is True:
+                        del sources[source_id]
+        for row in rows:
+            self._durable_source_ids.add(row["source_id"])
+            sources = self._source_cache.setdefault(row["provider_id"], {}).setdefault(
+                canonical_account_id(row["account_id"]), {}
+            )
+            sources[row["source_id"]] = (dict(row["tokens"]), dict(row["metadata"]), time.time())
+        self._durable_revision = revision
+
     def _mark_token_seen(self, provider: str, account_id: str, key: str) -> None:
         """Record when a particular credential field was last reported."""
         self._token_timestamps.setdefault(provider, {}).setdefault(account_id, {})[key] = (
@@ -392,12 +450,9 @@ class TokenCache:
                         }
                     ]
 
-            if provider not in self._cache:
-                return []
-
             now = time.time()
             results = []
-            for acc_id, (tokens, metadata, timestamp) in self._cache[provider].items():
+            for acc_id, (tokens, metadata, timestamp) in self._account_entries(provider).items():
                 results.append(
                     {
                         "account_id": acc_id,
@@ -429,10 +484,9 @@ class TokenCache:
                     )
                 return selected[0] if selected else None
 
-            if provider not in self._cache or not self._cache[provider]:
+            provider_accounts = self._account_entries(provider)
+            if not provider_accounts:
                 return None
-
-            provider_accounts = self._cache[provider]
 
             if account_id:
                 if account_id not in provider_accounts:
@@ -479,10 +533,9 @@ class TokenCache:
                     )
                 return (selected[0], selected[1]) if selected else None
 
-            if provider not in self._cache or not self._cache[provider]:
+            provider_accounts = self._account_entries(provider)
+            if not provider_accounts:
                 return None
-
-            provider_accounts = self._cache[provider]
 
             if account_id:
                 if account_id not in provider_accounts:
@@ -747,7 +800,9 @@ class TokenCache:
                 return False
             source_tokens = sources[source_id][0]
             others = [entry[0] for sid, entry in sources.items() if sid != source_id]
-            if retire_matching_oauth:
+            # Durable bundles never enter the legacy aggregate. An identical
+            # token there belongs to a separate manual/file contribution.
+            if retire_matching_oauth and sources[source_id][1].get("durable_source") is not True:
                 aggregate = self._cache.get(provider, {}).get(account_id)
                 if aggregate:
                     tokens, metadata, timestamp = aggregate
@@ -825,6 +880,7 @@ class TokenCache:
         from_id = canonical_account_id(from_account_id)
         to_id = canonical_account_id(to_account_id)
         async with self._lock:
+            self._clear_expired_unlocked()
             entry = self._source_cache.get(provider, {}).get(from_id, {}).get(source_id)
             if entry is None or self.credential_generation(entry[0]) != expected_generation:
                 return False
@@ -860,6 +916,14 @@ class TokenCache:
         self, provider: str, from_id: str, to_id: str, source_id: str
     ) -> bool:
         source_accounts = self._source_cache.get(provider, {}).get(from_id, {})
+        current = source_accounts.get(source_id)
+        if current and current[1].get("durable_source") is True:
+            from app.services.source_controls import promote_cached_source
+
+            promoted = promote_cached_source(provider, source_id, from_id, to_id, current[0])
+            self._durable_revision = -1
+            self._reload_durable_unlocked()
+            return promoted
         entry = source_accounts.pop(source_id, None)
         if entry is None:
             return False
@@ -973,13 +1037,14 @@ class TokenCache:
                 sources.pop(source_id, None)
 
     def _clear_expired_unlocked(self) -> None:
-        """Clear all expired accounts across all providers."""
+        """Reload durable contributions and expire only legacy heartbeat entries."""
+        self._reload_durable_unlocked()
         now = time.time()
         for provider in list(self._source_cache):
             for account_id in list(self._source_cache[provider]):
                 sources = self._source_cache[provider][account_id]
                 for source_id, (_tokens, _metadata, timestamp) in list(sources.items()):
-                    if now - timestamp > self._ttl:
+                    if _metadata.get("durable_source") is not True and now - timestamp > self._ttl:
                         del sources[source_id]
                 if not sources:
                     del self._source_cache[provider][account_id]
@@ -1180,6 +1245,9 @@ class TokenCache:
             self._cache.clear()
             self._token_timestamps.clear()
             self._source_cache.clear()
+            self._durable_revision = -1
+            self._durable_source_ids.clear()
+            self._durable_bundles.clear()
 
     async def get_all_active_accounts(self) -> list[tuple[str, str, str | None]]:
         """
@@ -1189,8 +1257,8 @@ class TokenCache:
         async with self._lock:
             self._clear_expired_unlocked()
             results = []
-            for provider, accounts in self._cache.items():
-                for acc_id, (_, metadata, _) in accounts.items():
+            for provider in self._cache.keys() | self._source_cache.keys():
+                for acc_id, (_, metadata, _) in self._account_entries(provider).items():
                     results.append((provider, acc_id, metadata.get("account_label")))
             return results
 

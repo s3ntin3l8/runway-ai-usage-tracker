@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import tempfile
 import threading
 from collections.abc import Callable
 
@@ -74,3 +75,20 @@ def watch_config(
     t = threading.Thread(target=_poll, name="ConfigWatcher", daemon=True)
     t.start()
     return t
+
+
+def save_local_config(path: pathlib.Path, config: dict) -> None:
+    """Replace local settings atomically without ever creating a public secret file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".config-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(config, output, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass

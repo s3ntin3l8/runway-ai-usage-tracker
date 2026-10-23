@@ -19,6 +19,11 @@ _KEY_STATUS: dict[str, ScanStatus] = {}
 
 
 def storage_key(service: str) -> bytes | None:
+    from scripts.sidecar_pkg import source_consent as consent
+
+    ticket = consent.service_ticket(service)
+    if ticket is None:
+        return None
     with _KEY_LOCK:
         if service in _KEY_CACHE:
             return _KEY_CACHE[service]
@@ -43,6 +48,8 @@ def storage_key(service: str) -> bytes | None:
             pass  # Cache unavailable IO without exposing native diagnostic text.
         if key is None:
             logging.warning("Cookie Keychain access unavailable; restart sidecar to retry")
+        if not consent.POLICY.current(ticket):
+            return None
         _KEY_STATUS[service] = "candidates" if key is not None else status
         _KEY_CACHE[service] = key
         return key
@@ -120,6 +127,11 @@ def scan_cookies(
     include_subdomains: bool = True,
     prefixes: tuple[bytes, ...] = (b"v10", b"v11"),
 ) -> StoreScan[str]:
+    from scripts.sidecar_pkg import source_consent as consent
+
+    ticket = consent.cookie_ticket(service, domain, name)
+    if ticket is None:
+        return StoreScan("inaccessible")
     values: list[str] = []
     expired = rejected = 0
     try:
@@ -170,6 +182,8 @@ def scan_cookies(
             ),
             None,
         )
+        if not consent.POLICY.current(ticket):
+            return StoreScan("inaccessible")
         # Partial decoding must not be mistaken for a successful completed scan.
         return StoreScan(
             failure or ("candidates" if values else "empty"), values, expired, rejected, version

@@ -98,7 +98,11 @@ def test_tray_accepts_fleet_claude_activation_but_cannot_grant_keychain_permissi
     thread = Mock()
     controller = keep_alive.KeepAliveController(lambda: thread, lambda: ["anthropic", "xai"])
     monkeypatch.setattr(daemon._sidecar, "_KEEP_ALIVE", controller)
-    runner = daemon._sidecar.DaemonRunner({"keep_alive": False, "claude_keychain_renewal": True})
+    from scripts.sidecar_pkg.source_consent import SourcePolicy
+
+    runner = daemon._sidecar.DaemonRunner(
+        SourcePolicy.enable_all({"keep_alive": False, "claude_keychain_renewal": True})
+    )
     runner.start = Mock()
     runner.stop = Mock()
     monkeypatch.setattr(daemon, "DaemonRunner", Mock(return_value=runner))

@@ -10,6 +10,7 @@ from scripts.sidecar_pkg import keychain_client as client
 from scripts.sidecar_pkg import macos_cookies as cookies
 from scripts.sidecar_pkg import macos_keychain_store as keychain
 from scripts.sidecar_pkg.macos_keychain_store import KeychainError
+from tests.macos_cookie_fixtures import approved_keychain_readers  # noqa: F401
 
 
 @pytest.fixture(autouse=True)

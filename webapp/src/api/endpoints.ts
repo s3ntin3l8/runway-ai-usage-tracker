@@ -20,6 +20,8 @@ import type {
   EventRangeResponse,
   EventsResponse,
   FleetResponse,
+  FleetSourceAction,
+  FleetSourceResponse,
   ForecastResponse,
   GlobalStatsResponse,
   HeatmapResponse,
@@ -629,3 +631,10 @@ export const selectClaudeSourceOrganization = (providerId: string, sourceId: str
   api<{ status: 'ok' }>(`/api/v1/fleet/credentials/${encodeURIComponent(sourceId)}/claude-organizations`, {
     method: 'POST', body: JSON.stringify({ provider_id: providerId, organization_id: organizationId }),
   });
+
+
+export const fetchSidecarSources = (sidecarId: string) =>
+  api<FleetSourceResponse>('/api/v1/fleet/sidecars/' + encodeURIComponent(sidecarId) + '/sources');
+
+export const commandSidecarSource = (sidecarId: string, sourceId: string, action: FleetSourceAction) =>
+  api<{ id: number; status: 'pending' }>('/api/v1/fleet/sidecars/' + encodeURIComponent(sidecarId) + '/sources/' + encodeURIComponent(sourceId) + '/commands', { method: 'POST', body: JSON.stringify({ action }) });

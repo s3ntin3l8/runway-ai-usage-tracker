@@ -251,6 +251,12 @@ class FleetRegistryService:
 
     def delete_sidecar(self, sidecar_id: str, session: Session) -> bool:
         """Remove sidecar from registry. Returns True if deleted, False if not found."""
+        from app.services import sidecar_devices, source_controls
+
+        if sidecar_devices.reserved_registry_id(sidecar_id):
+            # Reserve before the existence read to avoid a stale WAL upgrade.
+            # A 404 holds this reservation until the request session closes.
+            source_controls.reserve_source_writes(session)
         row = session.get(SidecarRegistry, sidecar_id)
         if not row:
             return False
@@ -259,6 +265,8 @@ class FleetRegistryService:
         # unresolvable rows (or re-apply if the hostname is ever reused).
         from app.services.credential_tags import CredentialTagRepo, PendingCredentialTagRepo
 
+        if sidecar_devices.reserved_registry_id(sidecar_id):
+            source_controls.revoke_device(session, sidecar_id.removeprefix("device-"))
         CredentialTagRepo.delete_for_sidecar(session, sidecar_id=sidecar_id)
         PendingCredentialTagRepo.delete_for_sidecar(session, sidecar_id=sidecar_id)
         # Its discovered credentials go too: a durable ``credential_sources`` row

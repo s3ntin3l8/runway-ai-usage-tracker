@@ -419,3 +419,120 @@ Read-only native sources cannot invoke OAuth refresh. Stable machine-bound origi
 identify each Desktop cache slot or CLI Keychain service; changed inferred credentials
 must re-verify their holder and quota. Refresh secrets are not forwarded by either
 new Keychain discovery rule. Ordinary credential-file fallback remains supported.
+
+## Local sidecar Keychain source settings
+
+The loopback sidecar settings UI exposes GET /sources and POST /sources, with the
+existing exact Host and same-origin POST checks. These are local settings routes,
+not server-side authorization endpoints. GET is inert and returns only catalog
+labels, capability revisions, read intent, state, renewal support, dependency and
+new-scraper announcement state. It never returns credentials or opens native UI.
+
+POST accepts action plus source_id for enable, disable, dismiss or authorize;
+enable_all and disable_all operate on currently known sources. The renewal
+action accepts an exact boolean value and requires Claude Code read consent first.
+Authorize is an explicit local, bounded, single-flight packaged-app setup attempt.
+Unknown actions/IDs and malformed requests fail without credential IO.
+
+Local config stores keychain_sources entries with exact-boolean read, catalog
+revision, monotonic generation and approved destination. The separate
+claude_keychain_renewal permission defaults off. keychain_announcements records
+dismissed revisions; keychain_withdrawals records pending source generations.
+Config replacement is atomic and owner-only on macOS. File/env collection is
+unaffected; Windows Credential Manager is outside this macOS permission model.
+
+Until #783's authenticated source lifecycle is implemented, newly opted-in
+Keychain credential cards and matching manifest observations are withheld from
+server forwarding. Existing server credentials are not silently revoked by a
+local checkbox. See #780 and docs/sidecar-source-authorization.md for the full
+consent, withdrawal, remote-control and acceptance contract.
+
+
+### Fleet Keychain source lifecycle (protocol 1)
+
+Updated sidecars request device_protocol=1 and platform=Darwin|Linux|Windows
+when redeeming a pairing code. The platform is bound to the enrolled identity;
+ordinary ingest OS labels cannot change it. Linux/Windows browser cookies do
+not require macOS Keychain consent, but retain their canonical scraper identity
+and server-owned generation so pause/revoke still applies and replay cannot
+restore withdrawn credentials. An explicit proof, when present, is always
+validated. The paired platform is a device assertion, not OS attestation;
+local Keychain permission is enforced by the sidecar, and server lifecycle
+eligibility is enforced independently of platform. Known Windows Credential Manager
+origins (`github` / `keychain:github.com` and `antigravity` /
+`keychain:gemini:antigravity`) retain existing collection on Windows without
+macOS consent. They have stable Fleet lifecycle IDs (`github.windows-credential`
+and `antigravity.windows-credential`), state rows, server-owned generations and
+pause/resume/revoke/replay enforcement. These descriptors are excluded from local
+Keychain opt-ins, authorization and announcements. Windows setup/dismiss commands
+are unavailable; reconnecting a revoked Windows contribution requires re-pairing.
+Unknown native origins are skipped.
+Older enrollments without a platform remain
+conservative; re-pair to declare their platform.
+When DB_ENCRYPTION_KEY is configured, the single-use response additionally
+contains device_id, device_key, device_api_url, and source_protocol=1.
+The random device key is encrypted in server storage and saved in the sidecar's
+owner-only config. Hostnames are labels. Without server encryption, pairing
+retains its legacy response; Keychain forwarding remains Limited until enrollment.
+Re-pairing creates a new device; it does not claim a hostname's previous sources.
+An authenticated source-sync 401 surfaces a local re-pair-required notice. The
+sidecar never downgrades that identity to shared-key authorization to bypass a
+lost or revoked enrollment; Keychain egress remains withheld.
+
+Device requests send X-Runway-Device-Id, X-Timestamp, and X-Signature.
+HMAC-SHA256 signs DEVICEv1|device_id|timestamp|purpose| followed by raw body
+bytes (raw query bytes for GET config). Purposes are ingest, manifest,
+config, and source-sync. This binds the operation without relying on a
+reverse proxy preserving the public path. Existing timestamp limits, body caps,
+and durable replay protection apply. A shared ingest key cannot authenticate a
+device header or claim a reserved device-<32 lowercase hex> registry identity.
+
+- POST /api/v1/fleet/source-sync: device-authenticated status and ordered
+  command acknowledgment. The body contains protocol=1, sources, and acknowledgments
+  ({id, status: applied|denied|superseded}). Source reports contain source_id,
+  provider_id, label, revision, generation, literal boolean read, state, new,
+  renewal_requested, renewal_supported, and optional last_read_at / last_renewed_at
+  Unix timestamps. Labels are canonical; unknown scrapers are not accepted.
+  The response lists accepted scraper IDs, withdrawals ({source_id, generation}),
+  and pending commands ({id, source_id, generation, action}).
+  Up to 256 pending commands are delivered in order per poll. Acknowledged
+  commands are retained for 30 days, always keeping each scraper's latest
+  ordering barrier; repeated acknowledgments after cleanup are harmless.
+  Reports from an older generation update contact time without changing consent.
+- GET /api/v1/fleet/sidecars/{sidecar_id}/sources: admin-authenticated, inert status.
+  Returns protocol=1, sources (FleetSourceStatus), and pending commands.
+  Source status extends the report with remote_paused, revoked, report_at,
+  report_stale, announcement, renewal_capable, collection_health
+  (withdrawn|paused|healthy|action_required|untried), and last_collection_at
+  (ISO UTC or null). Stale reports never expire eligible server credentials.
+- POST /api/v1/fleet/sidecars/{sidecar_id}/sources/{source_id}/commands:
+  admin-authenticated {action}, one of pause, resume, revoke, request_setup,
+  or dismiss. Returns {id, status: pending}. Pause/revoke immediately withdraw
+  that source's server credentials. Resume requires current local read consent
+  and a matching non-revoked generation; it only clears a server pause after
+  acknowledgment. Setup requests create a local notice only. Dismissal is scoped
+  to the current catalog capability revision.
+
+Native credential cards and manifest entries carry keychain_consent with
+source_id, revision, and generation. The server checks device, provider, origin,
+revision, and live generation before accepting a contribution. Withdrawal persists
+a tombstone and removes only matching encrypted credential payloads; late ingest
+cannot recreate them. Re-enabling requires a newer local generation.
+Rejected or unknown source cards/manifest entries are skipped before metadata
+mutation, without discarding the rest of the upload. Ingest returns a sanitized
+credentials_rejected card count (not a token count). Skipped manifest sources cannot retire last-good
+origins through a completed-provider declaration.
+Credential bundles remain separate across devices and origins, including identical
+tokens. Enrolled contributions survive server restart and offline Macs without a
+heartbeat lease. Provider expiry/rejection remains authoritative. Historical usage
+and manual/file contributions are retained. An already admitted provider request
+cannot be recalled; subsequent source selection observes committed withdrawal.
+
+Older servers never receive newly opted-in Keychain credentials: forwarding requires
+successful device-authenticated protocol negotiation. Legacy clients retain their
+shared-key behavior and cannot control enrolled-device sources.
+
+Pausing removes a contribution from selection but retains its encrypted bundle.
+An acknowledged, locally permitted resume can reuse that known bundle without
+a new credential read. Revocation and local opt-out erase the matching bundle
+and retain the consent-generation tombstone.

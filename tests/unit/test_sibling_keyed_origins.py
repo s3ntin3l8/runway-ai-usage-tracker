@@ -479,6 +479,7 @@ class TestNonKeyCandidatesStayPlain:
     ) -> None:
         """Cookie discovery is out of #349's scope: a browser session has an
         identity upstream, and it carries no key field to fingerprint."""
+        monkeypatch.setattr(sc.platform, "system", lambda: "Linux")
         monkeypatch.setattr(
             sc.BrowserCookieExtractor, "get_cookie", staticmethod(lambda *_args, **_kwargs: "sess")
         )

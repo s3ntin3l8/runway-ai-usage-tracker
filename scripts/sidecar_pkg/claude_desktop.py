@@ -57,6 +57,11 @@ def _oauth_cache(value: Any, key: bytes) -> dict[str, Any]:
 
 def read_oauth_candidates(path: Path) -> list[tuple[dict[str, str], str]]:
     """Read only the two observed OAuth cache layouts; never export refresh secrets."""
+    from scripts.sidecar_pkg import source_consent as consent
+
+    ticket = consent.service_ticket("Claude Safe Storage")
+    if ticket is None or ticket.source_id != "anthropic.desktop-oauth":
+        return []
     if os.getenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "1").strip().lower() in {
         "0",
         "false",
@@ -126,7 +131,7 @@ def read_oauth_candidates(path: Path) -> list[tuple[dict[str, str], str]]:
                 ]
             )
             result.append((tokens, origin))
-    return result
+    return result if consent.POLICY.current(ticket) else []
 
 
 def scan_session_cookie(path: Path) -> StoreScan[str]:

@@ -49,3 +49,21 @@ def chromium_store(path, rows=(), version=24):
             "CREATE TABLE cookies (host_key TEXT, name TEXT, encrypted_value BLOB, expires_utc INTEGER)"
         )
         conn.executemany("INSERT INTO cookies VALUES (?, 'sessionKey', ?, ?)", rows)
+
+
+# Decoder/reader regression suites explicitly opt their synthetic sources in.
+# Native framework access is still prohibited by tests/conftest.py.
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def approved_keychain_readers(monkeypatch):
+    from scripts.sidecar_pkg import source_consent as consent
+    from scripts.sidecar_pkg.source_catalog_data import KEYCHAIN_RULES
+
+    monkeypatch.setattr(
+        consent, "POLICY", consent.SourcePolicy(consent.SourcePolicy.enable_all({}))
+    )
+    rule = next(r for r in KEYCHAIN_RULES["anthropic"]["rules"] if r["type"] == "cookie")
+    with consent.rule_scope("anthropic", rule):
+        yield
