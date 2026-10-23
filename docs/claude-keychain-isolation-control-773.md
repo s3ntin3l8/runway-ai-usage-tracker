@@ -84,3 +84,32 @@ owning Keychain. Its [artifact](https://github.com/s3ntin3l8/runway-ai-usage-tra
 is preserved in [reference evidence](claude-keychain-reference-ci-773.json).
 It observed no isolation change while resolving the update query on that runner;
 it did not decrypt data in the second process or call an update API.
+
+## Protected-data control result (2026-10-23)
+
+The explicit [writer-read-control run](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40015300225)
+on source `c8e55fd6` failed closed. Exact-reference lookup and owner verification
+completed, but the second process's protected-data read returned status `-25293`
+and `control_completed=false`. It did not verify the fake value. No update was
+attempted, and no original-reader readback followed the denial. All six observed
+isolation checkpoints, including cleanup, remained unchanged; the private fixture
+was deleted. The [artifact](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40015300225/artifacts/12528610825)
+is preserved in [protected-read evidence](claude-keychain-writer-read-ci-773.json).
+The workflow correctly failed with an incomplete selected matrix and no candidate.
+The denied operation was not retried.
+
+These separate hosted runs show that successful metadata and exact-reference
+lookup do not establish that the second process can read protected data. They
+identify an access boundary that must be understood before another update
+experiment can yield interpretable policy-preservation evidence. They do not
+establish why this read was denied, why the earlier update timed out, or what
+caused the historical personal-machine prompt loop. The observed lock-state
+change was not reproduced by this denied read.
+
+The next investigation must explain the synthetic creator/helper authorization
+boundary using sanitized policy and stable identity evidence in disposable CI.
+It must not fix the fixture by granting broad access or relaxing the production
+write guard. No supported shared-item renewal route has been proved. #773 and
+#781 retain that work; #767 retains signed-release identity and update continuity.
+Real-account/package acceptance under #750/#526 remains deferred until that route
+and an isolated acceptance environment are ready.
