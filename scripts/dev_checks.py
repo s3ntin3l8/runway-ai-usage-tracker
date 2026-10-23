@@ -257,6 +257,7 @@ def check(
 
         return remove_worktree(Path(extra[0]), cwd=ROOT)
     elif task == "lint":
+        execute([python, "scripts/check_workflow_pins.py"])
         execute([python, "-m", "ruff", "check", "."])
         execute([python, "-m", "ruff", "format", "--check", "."])
         check("mypy", [])

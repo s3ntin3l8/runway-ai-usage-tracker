@@ -123,6 +123,23 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   editing a baselined file moves that number: re-run `make secrets-baseline`
   in the same change or the CI gate fails — and the baseline conflicts on the
   next rebase.
+- `scripts/action_pins.json` — the recorded revision of every external CI
+  action. A workflow pin that is well-formed but wrong fails the job at action
+  resolution, before any step in it runs, so the pin is checked against this
+  record rather than only for shape. **Bumping an action means editing the
+  workflow and this record in the same change**, then re-running
+  `make secrets-baseline` (the record holds commit SHAs, which detect-secrets
+  reads as high-entropy strings). Dependabot's `github-actions` group cannot
+  update the record, so its pull request stays red until a human reviews the
+  new revision, copies it into the record and regenerates the baseline. That
+  is the intended cost: an action bump is a supply-chain decision, not a
+  mechanical one.
+  **Verify a SHA before you record it**, especially the first time an action
+  appears: `gh api repos/<owner>/<repo>/commits/<sha>` answers 422 for a
+  well-formed SHA that does not exist, and the SHA the upstream repository
+  reports is the one to pin. The record vouches for the revisions it already
+  carries, so a *new* action's typo lands in the workflow and the record
+  together and passes the check — the upstream lookup is what catches it.
 
 ## Core invariants
 
