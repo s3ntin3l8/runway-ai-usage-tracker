@@ -276,18 +276,18 @@ path; the retained `release-image-audit` artifact is the record.
 | Negligible | 47 | 47 |
 
 Scanned at `2026-10-23T17:42:48Z` against the database built
-`2026-10-23T06:30:15Z`, with Syft `sha256:3eb5379ba7b409c3f4069b686110527af0c47df993fa5c10d13e7cf34f49b1aa`
-and Grype `sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe`.
+`2026-10-23T06:30:15Z`, with the same scanners the candidate scan used:
+`anchore/syft@sha256:3eb5379ba7b409c3f4069b686110527af0c47df993fa5c10d13e7cf34f49b1aa`
+and `anchore/grype@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe`.
 
 The `digests-*` artifacts for this build record the per-platform build output
 instead: `sha256:14a3400d7ef5afe36eef30baffa6f6991c581fb54bec5c0613002cda905b4b66`
 for amd64 and `sha256:77290a91f9f55f753e1ed1fa6c6027d07a0fa0ef167637f21502d56ea7183fdd`
-for arm64. Those are the per-platform indexes buildx pushed — the image manifest
-plus its provenance attestation — and the published multi-architecture index
-references the inner image manifests in the rows above.
+for arm64. The two digest families and why they differ are explained under *The
+published baseline this replaces* above.
 
-The `v3.0.0-beta.13` release carries the same base. Its image is built from the
-release tag rather than from `main`, so the published versioned digests are
+The `v3.0.0-beta.13` release will carry the same base. Its image is built from
+the release tag rather than from `main`, so the published versioned digests are
 recorded when that tag is cut.
 
 ### Advisories Debian lists as fixed in trixie
@@ -355,4 +355,4 @@ Two things about the util-linux family changed shape in Debian 13, and the candi
 
 The runtime invariants the rationales rest on are unchanged by this change - the same Dockerfile lines create UID 1000, strip inherited setuid/setgid permissions from `/usr` and switch to the non-root `runway` user. The isolated local candidate check the earlier sections describe was not repeated in the environment that authored this change, which has no container runtime; the per-architecture `image-audit` artifacts are the record, and they retain the raw SBOM, the package inventory and the unfiltered Grype report for both architectures.
 
-The published replacement digests are recorded when the trixie image is released, in the same shape as the *Published beta.8 replacement* section above. Until then this section describes the base change, the candidate scans and the applicability decisions, not released bytes: keep #805 open until the published image has been audited, signed and promoted.
+The published replacement digests are recorded in *The published Debian 13 image* above, in the same shape as the *Published beta.8 replacement* section above. What is not recorded yet is the versioned release: `v3.0.0-beta.13` will carry the same base, but its image is built from the release tag rather than from `main`, so its digests are recorded when that tag is cut.
