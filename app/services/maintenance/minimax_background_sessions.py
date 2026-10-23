@@ -13,6 +13,17 @@ by provider, account and period, never by session — so only the attribution
 changes. A project's *session count* does drop: a background task was never a
 conversation.
 
+A plain re-push of the same row deduplicates on its event id, so the repair
+stands. A re-push under a *different* account is a retag: the server
+refreshes the stored row from the sidecar's payload, so a sidecar that has
+not been upgraded yet puts the row back on the child. Re-running the repair
+heals it.
+
+A row that is still parked in ``pending_usage_events`` (an identity-less push
+waiting for its account) is outside the repair: the promotion writes the
+payload the sidecar sent, so the repair has to run again after the operator
+assigns the account.
+
 The mapping comes from the MiniMax Code runtime store, which lives on the
 host that ran MiniMax Code. The server never reads it (see ``AGENTS.md``), so
 this module takes the mapping as an argument and the ``scripts/`` wrapper
@@ -40,10 +51,15 @@ _LOOKUP_BATCH = 200
 
 @dataclass
 class BackgroundLink:
-    """One row's attribution: where it belongs and what it is."""
+    """One row's attribution: where it belongs and what it is.
+
+    ``parent_session_id`` is ``None`` when the parent session is not in the
+    runtime store: the row then keeps its own session id and is only tagged,
+    which is what the extractor does with the same row.
+    """
 
     event_id: str
-    parent_session_id: str
+    parent_session_id: str | None
     subagent_type: str
     turn_id: str | None = None
     raw_json: str | None = None
@@ -112,6 +128,9 @@ def plan_background_attribution(
     the table at all is reported as missing — it was never collected, or the
     store was reset since. Neither is invented.
 
+    A link without a parent session is only tagged: the row keeps its own
+    session id, which is what the extractor does with the same row.
+
     The links are annotated in place with the row they resolved to, so the
     apply step does not have to look them up again.
     """
@@ -125,8 +144,11 @@ def plan_background_attribution(
         if row is None:
             plan.missing.append(link.event_id)
             continue
+        filed_under_parent = (
+            link.parent_session_id is None or row.session_id == link.parent_session_id
+        )
         if (
-            row.session_id == link.parent_session_id
+            filed_under_parent
             and row.subagent_type == link.subagent_type
             and (link.turn_id is None or row.turn_id == link.turn_id)
         ):
@@ -135,7 +157,7 @@ def plan_background_attribution(
         link.row_id = row.id
         plan.linked.append(link)
         if len(plan.samples) < sample_size:
-            plan.samples.append(f"{link.event_id} -> {link.parent_session_id}")
+            plan.samples.append(f"{link.event_id} -> {link.parent_session_id or 'its own session'}")
     return plan
 
 
@@ -148,6 +170,9 @@ def apply_background_attribution(
     that marks it as subagent work, the turn it belongs to and the provenance
     that names the session the work really came from. The row's tokens, costs
     and timestamp are never touched, so no total can move.
+
+    A link without a parent session keeps the row's own session id and is
+    only tagged.
     """
     linked = 0
     for link in plan.linked:
@@ -156,7 +181,8 @@ def apply_background_attribution(
         row = session.get(UsageEvent, link.row_id)
         if row is None:
             continue
-        row.session_id = link.parent_session_id
+        if link.parent_session_id is not None:
+            row.session_id = link.parent_session_id
         row.subagent_type = link.subagent_type
         if link.turn_id is not None:
             row.turn_id = link.turn_id

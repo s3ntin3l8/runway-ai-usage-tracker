@@ -186,6 +186,78 @@ def test_a_row_collected_before_the_source_app_column_is_still_repaired(db_sessi
     assert db_session.get(UsageEvent, ev.id).session_id == "mvs_main"
 
 
+def test_a_link_without_a_parent_is_only_tagged(db_session):
+    """A parent that is not in the store is never invented — but the row is
+    still labelled as the background work it is, exactly as the extractor
+    labels it."""
+    _add_event(db_session, event_id="e1")
+    link = _link("e1", turn_id="turn_1", parent_session_id=None)
+    plan = plan_background_attribution(db_session, [link])
+    assert len(plan.linked) == 1
+
+    apply_background_attribution(db_session, plan)
+    row = db_session.exec(
+        UsageEvent.__table__.select().where(UsageEvent.__table__.c.event_id == "e1")
+    ).one()
+    # The row keeps its own session id; only the tag and the turn are written.
+    assert row.session_id == "mvs_bg"
+    assert row.subagent_type == "Explore"
+    assert row.turn_id == "turn_1"
+
+
+def test_a_tagged_link_without_a_parent_is_idempotent(db_session):
+    _add_event(db_session, event_id="e1")
+    link = _link("e1", turn_id="turn_1", parent_session_id=None)
+    apply_background_attribution(db_session, plan_background_attribution(db_session, [link]))
+
+    plan = plan_background_attribution(db_session, [link])
+    assert plan.already_linked == 1
+    assert plan.linked == []
+
+
+def test_the_script_keeps_a_background_task_whose_parent_is_missing(tmp_path):
+    """The repair must not drop it: the rows are still the background work."""
+    from scripts.link_minimax_background_sessions import collect_links
+    from tests.fixtures.minimax_code_fixture import make_minimax_code_store
+
+    db_path = make_minimax_code_store(
+        tmp_path,
+        sessions=[
+            {
+                "session_id": "mvs_bg",
+                "agent_name": "explore",
+                "workspace_dir": "/home/user/project",
+                "extra_data_json": {"effectiveModel": "minimax/MiniMax-M3.1-Flash"},
+                # The parent session row is gone — it was pruned or reset.
+                "parent_session_id": "mvs_main",
+                "session_kind": "task",
+                "purpose": "local-background-task:bg_1234",
+            },
+        ],
+        usage=[
+            {
+                "id": 10,
+                "session_id": "mvs_bg",
+                "agent_name": "explore",
+                "turn_id": "turn_task_bg_bg_1234",
+                "ts": 1792699951617,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "reasoning_tokens": 0,
+                "cache_read_tokens": 500,
+                "cache_write_tokens": 0,
+            }
+        ],
+        parent_links=True,
+    )
+
+    links = collect_links(db_path)
+    assert len(links) == 1
+    assert links[0].parent_session_id is None
+    assert links[0].subagent_type == "Explore"
+    assert links[0].turn_id == "turn_task_bg_bg_1234"
+
+
 def test_the_script_builds_the_links_from_the_runtime_store(tmp_path):
     """The script's mapping must match the ids the sidecar pushes."""
     from scripts.link_minimax_background_sessions import collect_links

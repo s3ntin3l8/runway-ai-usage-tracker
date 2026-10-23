@@ -16,6 +16,11 @@ conversation.
 The event ids are built with the extractor's own helper, so they cannot drift
 from the ids the sidecar pushes.
 
+A row that is still parked in ``pending_usage_events`` (an identity-less push
+waiting for its account) is outside the repair: the promotion writes the
+payload the sidecar sent, so re-run the repair after the operator assigns the
+account. The run is idempotent, so that is enough.
+
 Run against the dev DB or a snapshot — never the live prod DB while the
 server is writing (SQLite is single-writer):
 
@@ -65,14 +70,19 @@ def _ledger_rows(cur: sqlite3.Cursor, session_ids: list[str]) -> list[sqlite3.Ro
 
 
 def collect_links(db_path: Path) -> list[BackgroundLink]:
-    """Return the links the store says the collected rows should carry."""
+    """Return the links the store says the collected rows should carry.
+
+    A background task whose parent session is not in the store is still a
+    background task: its rows keep their own session id and are only tagged,
+    exactly as the extractor treats them. Such a task is **not** dropped —
+    dropping it would leave the rows as untagged main-thread traffic.
+    """
     conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     try:
         cur = conn.cursor()
         links_map = background_session_links(cur)
-        children = [sid for sid, link in links_map.items() if link["parent_session_id"]]
         links: list[BackgroundLink] = []
-        for row in _ledger_rows(cur, children):
+        for row in _ledger_rows(cur, list(links_map)):
             session_id = row["session_id"]
             link = links_map.get(session_id)
             if link is None:
@@ -88,16 +98,17 @@ def collect_links(db_path: Path) -> list[BackgroundLink]:
                 tokens_output,
                 cache_read,
             )
+            parent_id = link["parent_session_id"]
             links.append(
                 BackgroundLink(
                     event_id=event_id,
-                    parent_session_id=str(link["parent_session_id"]),
+                    parent_session_id=parent_id,
                     subagent_type=str(link["label"]),
                     turn_id=row["turn_id"] or None,
                     raw_json=background_provenance(
                         session_id,
                         link["agent_name"],
-                        str(link["parent_session_id"]),
+                        parent_id,
                         link["purpose"],
                     ),
                 )
@@ -148,7 +159,7 @@ def main() -> None:
         plan = plan_background_attribution(session, links)
         print(
             f"{plan.total:,} background-task row(s) in the store: "
-            f"{len(plan.linked):,} to move, {plan.already_linked:,} already filed, "
+            f"{len(plan.linked):,} to update, {plan.already_linked:,} already filed, "
             f"{len(plan.missing):,} not collected.",
             flush=True,
         )
@@ -159,7 +170,7 @@ def main() -> None:
             return
         result = apply_background_attribution(session, plan)
         print(
-            f"\nDone — moved {result.linked:,} row(s), "
+            f"\nDone — updated {result.linked:,} row(s), "
             f"{result.already_linked:,} already filed, {result.missing:,} not collected.",
             flush=True,
         )

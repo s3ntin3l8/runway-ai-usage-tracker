@@ -99,8 +99,11 @@ Two properties make this safe:
 
 - The **event id keeps the child's own session id**. It is derived from the
   ledger row alone, so it does not change when the attribution changes —
-  every row collected before this change keeps its id, and the server
-  deduplicates the re-push instead of counting it twice.
+  every row collected before this change keeps its id, and a plain re-push
+  deduplicates on it instead of counting the row twice. A re-push under a
+  *different* account is a retag: the server refreshes the stored row from
+  the sidecar's payload, so a sidecar that has not been upgraded yet would
+  put the row back on the child. The repair heals it.
 - The parent-link columns are **optional**. A store written by a runtime
   that predates them keeps working (no attribution, no crash); a parent
   that is not in the store is never invented.

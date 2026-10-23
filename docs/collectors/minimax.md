@@ -372,6 +372,19 @@ already holds and **never inserts**: no token count changes and no rollup move �
 keyed by provider, account and period, never by session. A project's *session count* does drop: a
 background task was never a conversation.
 
+Three cases worth knowing about:
+
+- A background task whose **parent session is not in the store** keeps its own session id and is
+  only *tagged* — the same degradation the extractor applies. The repair tags it too; it does not
+  drop it.
+- A row still parked in **Untagged Credentials** (`pending_usage_events`) is outside the repair: the
+  promotion writes the payload the sidecar sent, so run the repair again after the account is
+  assigned. The run is idempotent, so that is enough.
+- A plain re-push of the same row deduplicates on its event id, so the repair stands. A re-push
+  under a **different account** is a retag: the server refreshes the stored row from the sidecar's
+  payload, so a sidecar that has not been upgraded yet puts the row back on the child. Run the
+  repair again to heal it.
+
 Run it against the dev DB or a snapshot — never the live prod DB while the server is writing
 (SQLite is single-writer).
 
