@@ -14,13 +14,14 @@ pre-commit the right arguments.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+
+from scripts.dev_checks import without_git_env
 
 ROOT = Path(__file__).resolve().parents[2]
 HOOK_SCRIPT = ROOT / "scripts" / "hooks" / "git-hook.sh"
@@ -101,41 +102,92 @@ def test_the_installed_hook_calls_pre_commit_with_the_right_arguments(
     if sh is None:
         pytest.skip("sh is not on PATH")
 
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
-
-    # A stub interpreter: it answers the "import pre_commit" probe, and
-    # records every other invocation.
-    venv = repo / ".venv" / "bin"
-    venv.mkdir(parents=True)
-    stub = venv / "python"
-    stub.write_text(
-        '#!/bin/sh\nif [ "$1" = "-c" ]; then exit 0; fi\nprintf "%s\\n" "$*" >> "$STUB_LOG"\n',
-        encoding="utf-8",
-        newline="\n",
+    main = tmp_path / "main"
+    main.mkdir()
+    _git(main, "init", "-q", str(main))
+    (main / "file.txt").write_text("x", encoding="utf-8")
+    _git(main, "-C", str(main), "add", ".")
+    _git(
+        main,
+        "-C",
+        str(main),
+        "-c",
+        "user.email=hook@example.com",
+        "-c",
+        "user.name=hook",
+        "commit",
+        "-qm",
+        "init",
     )
-    stub.chmod(0o755)
+    worktree = tmp_path / "worktree"
+    _git(main, "-C", str(main), "worktree", "add", "-q", str(worktree), "-b", "other")
 
-    hooks = repo / ".git" / "hooks"
+    probe_log = tmp_path / "probe.log"
+    call_log = tmp_path / "call.log"
+    _stub_interpreter(worktree / ".venv" / "bin" / "python", succeeds=False)
+    _stub_interpreter(main / ".venv" / "bin" / "python", succeeds=True)
+
+    hooks = main / ".git" / "hooks"
     hooks.mkdir(parents=True, exist_ok=True)
     installed = hooks / "pre-commit"
     installed.write_text(HOOK_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
     installed.chmod(0o755)
 
-    log = tmp_path / "stub.log"
     completed = subprocess.run(
         [sh, str(installed)],
-        cwd=repo,
-        env={**os.environ, "STUB_LOG": str(log)},
+        cwd=worktree,
+        env={
+            **without_git_env(),
+            "PROBE_LOG": str(probe_log),
+            "CALL_LOG": str(call_log),
+        },
         capture_output=True,
         text=True,
         check=False,
     )
-    recorded = log.read_text(encoding="utf-8") if log.exists() else ""
-    assert recorded, f"the stub was never called: {completed.stderr}"
-    assert "-mpre_commit" in recorded
-    assert "hook-impl" in recorded
-    assert "--hook-type=pre-commit" in recorded
-    assert "--config=" in recorded
-    assert "--hook-dir" in recorded
+    assert probe_log.exists(), "the worktree's own venv was never tried"
+    assert call_log.exists(), f"the main checkout's venv was never used: {completed.stderr}"
+    recorded = call_log.read_text(encoding="utf-8")
+    # git prints forward slashes; pathlib does not.
+    recorded = recorded.replace("\\", "/")
+    lines = recorded.splitlines()
+    assert "-mpre_commit" in lines
+    assert "hook-impl" in lines
+    assert "--hook-type=pre-commit" in lines
+    assert f"--config={worktree.as_posix()}/.pre-commit-config.yaml" in lines
+    # The hook directory is the one the hook itself was installed into.
+    assert "--hook-dir" in lines
+    assert lines[lines.index("--hook-dir") + 1] == hooks.as_posix()
+
+
+def _git(cwd: Path, *args: str) -> None:
+    # The git environment is stripped: a hook inherits git's own variables,
+    # and a git command that picks them up would act on the repository being
+    # committed instead of the throwaway one this test created.
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        env=without_git_env(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _stub_interpreter(path: Path, *, succeeds: bool) -> None:
+    """A fake python that answers the probe, and records what it was asked.
+
+    A stub that fails the probe is one the hook has to pass over.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-c" ]; then\n'
+        '  printf "probe\\n" >> "$PROBE_LOG"\n'
+        f"  exit {0 if succeeds else 1}\n"
+        "fi\n"
+        'printf "%s\\n" "$@" >> "$CALL_LOG"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    path.chmod(0o755)

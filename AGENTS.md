@@ -78,7 +78,9 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   is no longer a trap — the interpreter it uses is the worktree's own `.venv`
   if it has one, and the main checkout's otherwise. A worktree that commits
   still needs its own `.venv`, because the mypy and pytest hooks resolve the
-  interpreter from the checkout being committed.
+  interpreter from the checkout being committed. The hook script itself lives
+  in the repository (`scripts/hooks/git-hook.sh`) and is **copied** into
+  `.git/hooks`, so re-run `make install-hooks` after changing it.
   The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22.2+
   on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, `react-router` pins
   `>=22.22.0`, and the `jsdom` 30 upgrade pins

@@ -92,6 +92,10 @@ path and runs the tests with that root as the working directory, so the
 checkout's own sources are the ones under test. The pre-push hook runs the
 full suite in four workers, so allow it a minute or so.
 
+The hook script is tracked in the repository (`scripts/hooks/git-hook.sh`) and
+**copied** into `.git/hooks`, so the installed copy goes stale when the
+tracked one changes: re-run `make install-hooks` after editing it.
+
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
 note that `make dev` alone no longer sees your local CLI logins (Gemini, Claude,
 Codex, `gh`, opencode, ...): the server reads no credential files, so use

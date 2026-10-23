@@ -62,7 +62,17 @@ if command -v pre-commit >/dev/null 2>&1; then
         -- "$@"
 fi
 
+for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && have_pre_commit "$candidate"; then
+        exec "$candidate" -mpre_commit hook-impl \
+            --config="$root/.pre-commit-config.yaml" \
+            --hook-type="$type" \
+            --hook-dir "$(dirname "$0")" \
+            -- "$@"
+    fi
+done
+
 echo "The git hook cannot find an interpreter with pre-commit." >&2
-echo "  looked for: $root/.venv, $main/.venv, then python3/python on PATH" >&2
+echo "  looked for: $root/.venv, $main/.venv, pre-commit on PATH, then python3/python on PATH" >&2
 echo "  install one with: python scripts/dev_checks.py install" >&2
 exit 1

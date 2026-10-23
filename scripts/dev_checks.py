@@ -41,6 +41,26 @@ def venv_python() -> Path:
     return ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+#: Git's own variables, which a git hook sets for the commands it runs. The
+#: suite must not inherit them: during a commit, GIT_INDEX_FILE points at the
+#: temporary index git is about to write, so a test that runs git would act on
+#: the repository being committed instead of the throwaway one it created.
+GIT_ENV_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_PREFIX",
+)
+
+
+def without_git_env() -> dict[str, str]:
+    """The environment without git's repository variables."""
+    return {k: v for k, v in os.environ.items() if k not in GIT_ENV_VARS}
+
+
 #: The repository root, captured before anything can repoint ROOT. The git
 #: helpers below have to run in the real checkout even when a caller has
 #: pointed ROOT somewhere else.
@@ -63,6 +83,7 @@ def git_hooks_dir() -> Path:
     completed = subprocess.run(
         ["git", "rev-parse", "--git-path", "hooks"],
         cwd=REPO_ROOT,
+        env=without_git_env(),
         capture_output=True,
         text=True,
         check=True,
@@ -120,7 +141,7 @@ def execute(
     isolated_paths: dict[str, str] | None = None,
     stdout: Path | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
-    env = {**os.environ, "PYTHONUTF8": "1"}
+    env = {**without_git_env(), "PYTHONUTF8": "1"}
     if isolated_paths is not None:
         # Isolate filesystem state, not every runtime setting. Tests requiring
         # default API/CORS/auth settings must clear those inherited variables.
