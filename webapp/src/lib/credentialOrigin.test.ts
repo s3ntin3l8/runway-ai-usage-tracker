@@ -133,6 +133,10 @@ describe('originTitleWithApp', () => {
     expect(originTitleWithApp('Claude Desktop', 'Claude Desktop OAuth')).toBe(
       'Claude Desktop OAuth',
     );
+    // Only as a word: "Chromebook cookie" does not name "Chrome".
+    expect(originTitleWithApp('Chrome', 'Chromebook cookie')).toBe(
+      'Chrome · Chromebook cookie',
+    );
     // No app at all.
     expect(originTitleWithApp(undefined, 'Keychain entry')).toBe('Keychain entry');
   });

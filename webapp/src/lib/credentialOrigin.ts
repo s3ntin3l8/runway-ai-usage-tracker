@@ -164,11 +164,16 @@ export function hasNamedOriginApp(app: string | null | undefined): app is string
  * "Codex CLI · auth.json" — the owning app, then what the credential is.
  *
  * A generic "Browser" says nothing and is left out. An app the label already
- * starts with adds nothing either ("Claude Desktop OAuth"), so it is left out
+ * names adds nothing either ("Claude Desktop OAuth"), so it is left out
  * rather than repeated.
  */
 export function originTitleWithApp(app: string | null | undefined, label: string): string {
   if (!hasNamedOriginApp(app)) return label;
-  if (label.toLowerCase().startsWith(app.toLowerCase())) return label;
+  // The label names the app when it is the app's name or continues with it as
+  // a word: "Claude Desktop OAuth" names "Claude Desktop", while
+  // "Chromebook cookie" does not name "Chrome".
+  const named = label.toLowerCase();
+  const owner = app.toLowerCase();
+  if (named === owner || named.startsWith(`${owner} `)) return label;
   return `${app} · ${label}`;
 }
