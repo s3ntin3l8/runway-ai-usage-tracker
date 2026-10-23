@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import traceback
 import uuid
 import warnings
 from pathlib import Path
@@ -230,6 +231,7 @@ from tests.fixtures.mock_data import (
     OPENCODE_GO_RESPONSE,
 )
 from tests.fixtures.sqlite import disable_fsync, skip_fsync_requested
+from tests.fixtures.worker_death import worker_death_diagnosis
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -601,6 +603,33 @@ def mock_keyring():
 def pytest_configure(config):
     """Configure pytest with asyncio mode."""
     config.addinivalue_line("markers", "asyncio: mark test as asyncio")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtestloop(session):
+    """Name the xdist worker-death crash instead of leaving an internal error.
+
+    A worker that dies leaves the master unable to reschedule its nodes, and
+    xdist's own ``KeyError`` then takes the master down with an
+    ``INTERNALERROR`` that names neither the worker nor the cause. The verdict
+    does not change -- the run still fails -- but the log says what happened
+    and what to check.
+
+    This is a strict no-op unless that specific ``KeyError`` escapes the run
+    loop, including on the ordinary path and in the xdist workers, which load
+    this same conftest.
+    """
+    try:
+        result = yield
+    except Exception as exc:
+        diagnosis = worker_death_diagnosis(
+            exc,
+            (frame.filename for frame in traceback.extract_tb(exc.__traceback__)),
+        )
+        if diagnosis:
+            print(diagnosis, file=sys.stderr)
+        raise
+    return result
 
 
 @pytest.fixture(autouse=True)
