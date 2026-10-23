@@ -497,8 +497,13 @@ def _sidecar():
 
 
 class _MockWatermark:
+    """A shared watermark that reports a fixed last-push timestamp."""
+
+    def __init__(self, ts: datetime | None = None):
+        self._ts = ts
+
     def last_pushed(self, provider_id, account_id):
-        return None
+        return self._ts
 
 
 def test_minimax_is_an_event_provider():
@@ -551,6 +556,73 @@ def test_minimax_extractor_reads_every_store_on_the_host(monkeypatch, tmp_path):
     assert {call.kwargs["state_file"] for call in mock_parser.call_args_list} == {
         sidecar.get_sidecar_dir() / "minimax_code_watermark.json"
     }
+
+
+def _backlog_usage(days_ago: int = 10) -> list[dict]:
+    """One ledger row whose timestamp sits ``days_ago`` days in the past."""
+    ts_ms = int((datetime.now(UTC) - timedelta(days=days_ago)).timestamp() * 1000)
+    return [
+        {
+            "id": 1,
+            "session_id": "mvs_backlog",
+            "turn_id": "turn_backlog",
+            "ts": ts_ms,
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+    ]
+
+
+def test_a_newly_discovered_store_bootstraps_from_the_window(
+    monkeypatch, tmp_path, _clean_data_env
+):
+    """A store seen for the first time imports its backlog.
+
+    The shared timestamp watermark says "this provider's history up to T was
+    pushed" — which is about the store that was pushed, not about a store
+    discovered later. Using it as the floor would skip the backlog of the new
+    store for good, because the cursor then advances past those rows.
+    """
+    sidecar = _sidecar()
+    usage = _backlog_usage(days_ago=10)
+    make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax")
+    make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax-work")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    extractor = sidecar._make_account_extractor_minimax_code(parse_minimax_code_events)
+    # The provider was pushed a minute ago; the backlog is ten days old.
+    watermark = _MockWatermark(datetime.now(UTC) - timedelta(minutes=1))
+    events = extractor("default", watermark, 90)
+
+    assert events, "the backlog of a newly discovered store was skipped"
+    assert {event.session_id for event in events} == {"mvs_backlog"}
+
+
+def test_a_store_with_a_cursor_ignores_the_window(monkeypatch, tmp_path, _clean_data_env):
+    """A store the cursor already knows is floored by the cursor alone."""
+    sidecar = _sidecar()
+    usage = _backlog_usage(days_ago=10)
+    db_path = make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    cursor_file = tmp_path / "cursor.json"
+    extractor = sidecar._make_account_extractor_minimax_code(
+        parse_minimax_code_events, state_file=cursor_file
+    )
+    # First cycle: the backlog is imported and the cursor advances to the end.
+    first = extractor("default", _MockWatermark(), 90)
+    assert first
+    commit_pending_state()
+    assert json.loads(cursor_file.read_text())["databases"]
+
+    # Second cycle: nothing new, so nothing is emitted — the cursor, not the
+    # window, decides what is still to read.
+    discard_pending_state()
+    assert extractor("default", _MockWatermark(), 90) == []
+    assert db_path.exists()
 
 
 def test_minimax_events_are_dispatched_under_the_minimax_provider(monkeypatch, tmp_path):

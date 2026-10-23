@@ -3592,11 +3592,18 @@ def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = 
     its ledger in ``~/.minimax-<profile>`` next to the default one — so every
     store is read. The cursor is keyed by database path, which is what makes
     that safe: each store advances on its own axis.
+
+    The floor for a store that is seen for the first time is the **bootstrap
+    window**, never the shared timestamp watermark: the watermark says "this
+    provider's history up to T was pushed", which is only true for the store
+    that was pushed — and the runtime's ``ts`` is not globally monotonic, so a
+    timestamp floor drops rows even for that one store. The per-store id
+    cursor is the only sound floor; the window applies to a store without one.
     """
 
     def _extract(
         account_id: str,
-        watermark: Any,
+        watermark: Any,  # noqa: ARG001 — the id cursor is the floor, not the shared timestamp
         bootstrap_days: int,
         *,
         canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
@@ -3604,9 +3611,7 @@ def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = 
         db_paths = _discover_minimax_code_db_paths()
         if not db_paths:
             return []
-        since = watermark.last_pushed("minimax", account_id) or (
-            datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
-        )
+        since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
         cursor_file = state_file
         if cursor_file is None:
             cursor_file = get_sidecar_dir() / "minimax_code_watermark.json"

@@ -788,6 +788,16 @@ def parse_minimax_code_events(
             last_id = 0
         elif not has_cursor:
             # No cursor at all: the bootstrap window decides where to start.
+            # The window is the *only* floor that is safe here — the shared
+            # timestamp watermark is not about this store, and the runtime's
+            # `ts` is not globally monotonic, so a timestamp floor would drop
+            # the rows that fall outside it.
+            logger.info(
+                "MiniMax Code runtime store %s is being read for the first time; "
+                "importing the rows newer than %s",
+                db_path,
+                since.isoformat(),
+            )
             last_id = _bootstrap_last_id(cur, since) - 1
 
         try:
