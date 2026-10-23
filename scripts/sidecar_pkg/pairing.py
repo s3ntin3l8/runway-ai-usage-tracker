@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import platform
 import tempfile
 from dataclasses import dataclass
 from urllib import error, request
@@ -100,7 +101,16 @@ def redeem(
     from scripts.sidecar_pkg.tls import build_context_from_config
 
     url = f"{target.server}/api/v1/fleet/pair"
-    body = json.dumps({"code": target.code, "hostname": hostname, "device_protocol": 1}).encode()
+    body = json.dumps(
+        {
+            "code": target.code,
+            "hostname": hostname,
+            "device_protocol": 1,
+            "platform": platform.system()
+            if platform.system() in {"Darwin", "Linux", "Windows"}
+            else None,
+        }
+    ).encode()
     req = request.Request(  # noqa: S310 — scheme validated by normalize_server
         url,
         data=body,

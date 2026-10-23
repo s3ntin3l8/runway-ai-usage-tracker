@@ -218,6 +218,8 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     payload.sidecar_id = sidecar_devices.authenticated_registry_id(request, payload.sidecar_id)
     enrolled_device = getattr(request.state, "sidecar_device_id", None)
     source_proofs: dict[tuple[str, str], dict[str, Any] | None] = {}
+    original_card_count = len(payload.metrics)
+    accepted_cards = []
     for card in payload.metrics:
         if enrolled_device is not None:
             card.sidecar_id = payload.sidecar_id
@@ -230,9 +232,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         session, enrolled_device, provider, origin, metadata.get("keychain_consent")
                     )
                 except ValueError:
-                    raise HTTPException(409, "Source contribution not authorized") from None
+                    # A newer or withdrawn source must not discard unrelated usage.
+                    # Do not touch tags, cache entries or source metadata for this card.
+                    continue
         elif card.sidecar_id:
             sidecar_devices.authenticated_registry_id(request, card.sidecar_id)
+        accepted_cards.append(card)
+    payload.metrics = accepted_cards
 
     tokens_to_store = []
     local_cards = []
@@ -822,6 +828,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "status": "ok",
         "provider": payload.provider,
         "tokens_received": tokens_received_count,
+        "credentials_rejected": original_card_count - len(payload.metrics),
         "metrics_stored": len(local_cards),
         "events_received": ingest_result.events_received if ingest_result else 0,
         "events_inserted": ingest_result.events_inserted if ingest_result else 0,
@@ -1111,10 +1118,10 @@ def _validate_device_manifest(
     if enrolled_device is not None:
         from app.services import source_controls
 
-        try:
-            for entry in payload.entries + [
-                observation.model_dump() for observation in payload.observations
-            ]:
+        rejected_providers = set()
+
+        def authorized(entry: dict[str, Any]) -> bool:
+            try:
                 source_controls.contribution_proof(
                     session,
                     enrolled_device,
@@ -1122,8 +1129,22 @@ def _validate_device_manifest(
                     entry.get("credential_origin", ""),
                     entry.get("keychain_consent"),
                 )
-        except ValueError:
-            raise HTTPException(409, "Source contribution not authorized") from None
+                return True
+            except ValueError:
+                rejected_providers.add(entry.get("provider_id", ""))
+                return False
+
+        payload.entries = [entry for entry in payload.entries if authorized(entry)]
+        payload.observations = [
+            entry for entry in payload.observations if authorized(entry.model_dump())
+        ]
+        # A skipped source is not authoritative absence and cannot retire last-good origins.
+        if payload.completed_providers is not None:
+            payload.completed_providers = [
+                provider
+                for provider in payload.completed_providers
+                if provider not in rejected_providers
+            ]
 
 
 @router.post("/credentials/manifest")
@@ -2903,6 +2924,7 @@ class PairRequest(BaseModel):
     code: str
     hostname: str | None = None
     device_protocol: Literal[1] | None = None
+    platform: Literal["Darwin", "Linux", "Windows"] | None = None
 
 
 class PairResponse(BaseModel):
@@ -2988,7 +3010,7 @@ async def redeem_pairing_code(
     try:
         row = pairing.redeem(session, body.code, hostname=hostname, commit=False)
         if body.device_protocol == 1 and sidecar_devices.encryption_service.is_enabled:
-            device, secret = sidecar_devices.enroll(session, hostname)
+            device, secret = sidecar_devices.enroll(session, hostname, platform=body.platform)
             device_fields = {
                 "device_id": device.device_id,
                 "device_key": secret,

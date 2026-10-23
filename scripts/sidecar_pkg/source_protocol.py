@@ -6,16 +6,19 @@ import copy
 import hashlib
 import hmac
 import json
+import logging
 import os
 import pathlib
 import re
 import tempfile
 from typing import Any
-from urllib import request
+from urllib import error, request
 
 from scripts.sidecar_pkg import source_consent, transport
 from scripts.sidecar_pkg.source_catalog import catalog
 from scripts.sidecar_pkg.source_consent import SourcePolicy
+
+logger = logging.getLogger(__name__)
 
 
 def device_credentials(config: dict[str, Any] | None, url: str) -> tuple[str, str] | None:
@@ -65,6 +68,7 @@ class SourceClient:
         self.state: dict[str, Any] = {"commands": {}, "acknowledgments": [], "withdrawals": {}}
         self.accepted: set[str] = set()
         self._faulted = False
+        self.re_pair_required = False
         try:
             info = path.stat()
             if path.is_symlink() or (
@@ -217,6 +221,7 @@ class SourceClient:
                 )
         self.persist()
         self._faulted = False
+        self.re_pair_required = False
         self.apply_runtime(config)
         self.accepted = {
             source_id
@@ -247,6 +252,15 @@ class SourceClient:
                     return False
                 self.receive(config, json.loads(response.read(262145)))
             return True
+        except error.HTTPError as exc:
+            if exc.code == 401:
+                if not self.re_pair_required:
+                    logger.warning(
+                        "Device authentication rejected; re-pair this sidecar with the server"
+                    )
+                self.re_pair_required = True
+            self.accepted.clear()
+            return False
         except (OSError, ValueError, TypeError, AttributeError):
             self.accepted.clear()
             return False

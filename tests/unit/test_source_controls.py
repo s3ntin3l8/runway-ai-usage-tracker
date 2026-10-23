@@ -103,6 +103,47 @@ def test_resume_cannot_grant_local_consent(session):
         source_controls.queue_command(session, device.device_id, "anthropic.claude-code", "resume")
 
 
+def test_old_generation_updates_contact_time_without_restoring_consent(session):
+    from datetime import UTC, datetime
+
+    device, _ = seed(session, generation=3)
+    source_controls.apply_report(session, device.device_id, definition(read=False, generation=4))
+    row = source_controls.state(session, device.device_id, "anthropic.claude-code")
+    row.last_report_at = datetime(2000, 1, 1, tzinfo=UTC)
+    session.add(row)
+    session.commit()
+    row = source_controls.apply_report(session, device.device_id, definition(generation=1))
+    assert row.last_report_at.year > 2000
+    assert row.generation == 4 and not row.local_read
+
+
+def test_write_lock_reserves_writer_on_configured_engine(tmp_path):
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+
+    from app.core.db import configure_sqlite_engine
+
+    engine = create_engine(
+        "sqlite:///" + str(tmp_path / "locking.db"), connect_args={"timeout": 0.05}
+    )
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+    try:
+        with Session(engine) as first, Session(engine) as second:
+            source_controls._write_lock(first)
+            with pytest.raises(OperationalError, match="locked"):
+                second.execute(
+                    text("UPDATE sidecar_source_revision SET revision = revision WHERE id = 1")
+                )
+            second.rollback()
+            first.commit()
+            second.execute(
+                text("UPDATE sidecar_source_revision SET revision = revision WHERE id = 1")
+            )
+    finally:
+        engine.dispose()
+
+
 def test_commands_are_durable_ordered_and_idempotent(session):
     device, _ = seed(session)
     first = source_controls.queue_command(
@@ -163,7 +204,7 @@ async def test_cache_retains_offline_credentials_after_restart_and_observes_revo
     monkeypatch.setattr(
         source_controls,
         "read_snapshot",
-        lambda previous: (
+        lambda previous, *_: (
             source_controls.snapshot(session)
             if source_controls.revision(session) != previous
             else None
@@ -189,7 +230,7 @@ async def test_cache_withdrawal_preserves_identical_other_device_and_manual_fall
     monkeypatch.setattr(
         source_controls,
         "read_snapshot",
-        lambda previous: (
+        lambda previous, *_: (
             source_controls.snapshot(session)
             if source_controls.revision(session) != previous
             else None
@@ -231,7 +272,7 @@ async def test_cache_keeps_durable_bundles_separate_and_hides_pending_identity(
     monkeypatch.setattr(
         source_controls,
         "read_snapshot",
-        lambda previous: (
+        lambda previous, *_: (
             source_controls.snapshot(session)
             if source_controls.revision(session) != previous
             else None
@@ -261,7 +302,7 @@ async def test_identity_promotion_is_durable_and_never_leaks_into_legacy_cache(
     monkeypatch.setattr(
         source_controls,
         "read_snapshot",
-        lambda previous: (
+        lambda previous, *_: (
             source_controls.snapshot(session)
             if source_controls.revision(session) != previous
             else None
@@ -435,7 +476,7 @@ async def test_retiring_durable_copy_preserves_identical_manual_oauth(session, m
     monkeypatch.setattr(
         source_controls,
         "read_snapshot",
-        lambda previous: (
+        lambda previous, *_: (
             source_controls.snapshot(session)
             if source_controls.revision(session) != previous
             else None
@@ -458,3 +499,96 @@ async def test_retiring_durable_copy_preserves_identical_manual_oauth(session, m
     assert await cache.get("anthropic", contribution.account_id) == {
         "oauth_token": "synthetic-access"
     }
+
+
+def test_acknowledged_commands_are_pruned_without_losing_latest_ordering(session):
+    from datetime import UTC, datetime
+
+    from app.models.db import SidecarSourceCommand
+
+    device, _ = seed(session)
+    first = source_controls.queue_command(
+        session, device.device_id, "anthropic.claude-code", "pause"
+    )
+    first_id = first.id
+    first.issued_at = datetime(2000, 1, 1, tzinfo=UTC)
+    source_controls.acknowledge(session, device.device_id, first.id, "applied")
+    second = source_controls.queue_command(
+        session, device.device_id, "anthropic.claude-code", "revoke"
+    )
+    source_controls.acknowledge(session, device.device_id, second.id, "applied")
+    session.commit()
+    source_controls.prune_commands(session, device.device_id)
+    session.commit()
+    assert session.get(SidecarSourceCommand, first_id) is None
+    assert session.get(SidecarSourceCommand, second.id) is not None
+    # A crashed client may repeat an already processed ack after retention.
+    source_controls.acknowledge(session, device.device_id, first_id, "applied")
+    row = source_controls.state(session, device.device_id, "anthropic.claude-code")
+    assert row.remote_paused and row.revoked_through == 1
+    newer = source_controls.queue_command(
+        session, device.device_id, "anthropic.claude-code", "request_setup"
+    )
+    assert newer.id > second.id
+
+
+def test_snapshot_decrypts_only_changed_bundles_and_drops_revoked_cache(session, monkeypatch):
+    device, _ = seed(session)
+    other, _ = seed(session)
+    cache = {}
+    calls = []
+    decrypt = source_controls.encryption_service.decrypt_json
+
+    def count(value):
+        calls.append(value)
+        return decrypt(value)
+
+    monkeypatch.setattr(source_controls.encryption_service, "decrypt_json", count)
+    assert len(source_controls.snapshot(session, cache)[1]) == 2
+    assert len(calls) == 2
+    source_controls.queue_command(session, device.device_id, "anthropic.claude-code", "pause")
+    session.commit()
+    assert len(source_controls.snapshot(session, cache)[1]) == 1
+    assert len(calls) == 2  # The unrelated device's ciphertext did not change.
+    assert len(cache) == 1
+    source_controls.queue_command(session, other.device_id, "anthropic.claude-code", "revoke")
+    session.commit()
+    assert source_controls.snapshot(session, cache)[1] == []
+    assert cache == {}
+
+
+def test_stale_wal_reader_cannot_restore_a_concurrently_revoked_bundle(tmp_path, monkeypatch):
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+
+    from app.core.db import configure_sqlite_engine
+
+    engine = create_engine("sqlite:///" + str(tmp_path / "race.db"), connect_args={"timeout": 0.05})
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+    encryption = EncryptionService(Fernet.generate_key().decode())
+    monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
+    monkeypatch.setattr(source_controls, "encryption_service", encryption)
+    try:
+        with Session(engine) as writer, Session(engine) as stale:
+            device, _ = seed(writer)
+            device_id = device.device_id
+            writer.commit()
+            stale.execute(text("SELECT revision FROM sidecar_source_revision")).all()
+            source_controls.queue_command(writer, device_id, "anthropic.claude-code", "revoke")
+            writer.commit()
+            with pytest.raises(OperationalError, match="locked"):
+                source_controls.save_contribution(
+                    stale,
+                    device_id,
+                    definition(),
+                    provider_id="anthropic",
+                    origin="keychain:Claude Code-credentials",
+                    account_id="synthetic@example.test",
+                    tokens={"oauth_token": "late"},
+                    metadata={},
+                )
+            stale.rollback()
+            assert source_controls.snapshot(stale)[1] == []
+    finally:
+        engine.dispose()

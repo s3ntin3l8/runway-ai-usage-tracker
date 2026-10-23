@@ -133,6 +133,7 @@ class TokenCache:
         ] = {}
         self._durable_revision = -1
         self._durable_source_ids: set[str] = set()
+        self._durable_bundles: dict[str, tuple[str, dict[str, Any]]] = {}
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
 
@@ -348,7 +349,7 @@ class TokenCache:
     def _reload_durable_unlocked(self) -> None:
         from app.services.source_controls import read_snapshot
 
-        snapshot = read_snapshot(self._durable_revision)
+        snapshot = read_snapshot(self._durable_revision, self._durable_bundles)
         if snapshot is None:
             return
         revision, rows = snapshot
@@ -1244,6 +1245,7 @@ class TokenCache:
             self._source_cache.clear()
             self._durable_revision = -1
             self._durable_source_ids.clear()
+            self._durable_bundles.clear()
 
     async def get_all_active_accounts(self) -> list[tuple[str, str, str | None]]:
         """

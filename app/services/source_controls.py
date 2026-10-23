@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import event, text
@@ -24,16 +25,30 @@ from app.services.credential_sources import sidecar_source_id
 from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin
 
 _ENABLED = False
+SnapshotCache = dict[str, tuple[str, dict[str, Any]]]
 
 
 def _write_lock(session: Session) -> None:
-    """Serialize consent decisions before reads, including SQLite legacy transaction mode."""
-    connection = session.connection()
-    native = connection.connection.driver_connection
-    if native is None:
-        raise ValueError("Source transaction unavailable")
-    if connection.dialect.name == "sqlite" and not native.in_transaction:
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
+    """Reserve SQLite's writer before reading consent, even after deferred BEGIN.
+
+    A no-op UPDATE acquires the same writer reservation as BEGIN IMMEDIATE
+    without nesting or restarting the caller's transaction. A stale WAL read
+    snapshot cannot upgrade: SQLite rejects it, so it must never be reused.
+    """
+    session.execute(text("UPDATE sidecar_source_revision SET revision = revision WHERE id = 1"))
+
+
+def _expected_scraper(session: Session, device_id: str, provider: str, origin: str) -> str | None:
+    device = session.get(SidecarDevice, device_id, populate_existing=True)
+    # These cookie stores have no macOS Safe Storage dependency. The platform
+    # is fixed by the one-time pairing, never by an individual upload's label.
+    if (
+        device is not None
+        and device.platform in {"Linux", "Windows"}
+        and origin.startswith("cookie:")
+    ):
+        return None
+    return source_for_origin(provider, origin)
 
 
 def state(session: Session, device_id: str, source_id: str) -> SidecarSourceState | None:
@@ -84,6 +99,8 @@ def apply_report(
         )
         session.add(row)
     elif report.generation < row.generation:
+        row.last_report_at = datetime.now(UTC)
+        session.add(row)
         return row
     previous_tombstone = row.revoked_through
     changed = (row.local_read, row.generation, row.revision) != (
@@ -152,7 +169,7 @@ def save_contribution(
     generation = proof.get("generation", 0)
     if type(generation) is not int:
         raise ValueError("Source contribution not authorized")
-    expected_scraper = source_for_origin(provider_id, origin)
+    expected_scraper = _expected_scraper(session, device_id, provider_id, origin)
     source = state(session, device_id, scraper_id) if isinstance(scraper_id, str) else None
     if (
         device is None
@@ -254,6 +271,7 @@ def pending_commands(session: Session, device_id: str) -> list[dict[str, Any]]:
             col(SidecarSourceCommand.acknowledged).is_(None),
         )
         .order_by(col(SidecarSourceCommand.id))
+        .limit(256)
     ).all()  # noqa: E711
     return [
         {
@@ -269,6 +287,9 @@ def pending_commands(session: Session, device_id: str) -> list[dict[str, Any]]:
 def acknowledge(session: Session, device_id: str, command_id: int, status: str) -> None:
     _write_lock(session)
     command = session.get(SidecarSourceCommand, command_id)
+    if command is None and status in {"applied", "denied", "superseded"}:
+        # A repeated ack may outlive retention. Missing commands have no effect.
+        return
     if (
         command is None
         or command.device_id != device_id
@@ -303,9 +324,32 @@ def acknowledge(session: Session, device_id: str, command_id: int, status: str) 
     session.flush()
 
 
-def snapshot(session: Session) -> tuple[int, list[dict[str, Any]]]:
+def prune_commands(session: Session, device_id: str) -> None:
+    """Retain pending commands and each source's latest ordering barrier.
+
+    Older acknowledged commands are useful for diagnostics for 30 days. Keeping
+    the highest ID also prevents SQLite from reusing a command ID after cleanup.
+    """
+    _write_lock(session)
+    session.execute(
+        text("""
+        DELETE FROM sidecar_source_commands
+        WHERE device_id = :device AND acknowledged IS NOT NULL AND issued_at < :cutoff
+          AND id NOT IN (
+            SELECT MAX(id) FROM sidecar_source_commands WHERE device_id = :device
+            GROUP BY source_id
+          )
+    """),
+        {"device": device_id, "cutoff": datetime.now(UTC) - timedelta(days=30)},
+    )
+
+
+def snapshot(
+    session: Session, cache: SnapshotCache | None = None
+) -> tuple[int, list[dict[str, Any]]]:
     current_revision = revision(session)
     result = []
+    retained: SnapshotCache = {}
     if encryption_service.is_enabled:
         for row in session.exec(
             select(SidecarSourceContribution).where(
@@ -325,7 +369,13 @@ def snapshot(session: Session) -> tuple[int, list[dict[str, Any]]]:
             try:
                 if not row.payload_encrypted or not row.payload_encrypted.startswith("gAAAAA"):
                     continue
-                value = encryption_service.decrypt_json(row.payload_encrypted)
+                cache_key = row.provider_id + ":" + row.credential_source_id
+                previous = cache.get(cache_key) if cache is not None else None
+                value = (
+                    previous[1]
+                    if previous and previous[0] == row.payload_encrypted
+                    else encryption_service.decrypt_json(row.payload_encrypted)
+                )
                 if (
                     not isinstance(value, dict)
                     or not isinstance(value.get("tokens"), dict)
@@ -336,16 +386,20 @@ def snapshot(session: Session) -> tuple[int, list[dict[str, Any]]]:
                     or not isinstance(value.get("metadata"), dict)
                 ):
                     continue
+                retained[cache_key] = (row.payload_encrypted, value)
                 result.append(
                     {
                         "provider_id": row.provider_id,
                         "account_id": row.account_id,
                         "source_id": row.credential_source_id,
-                        **value,
+                        **copy.deepcopy(value),
                     }
                 )
             except (DecryptionError, ValueError, TypeError):
                 continue
+    if cache is not None:
+        cache.clear()
+        cache.update(retained)
     return current_revision, result
 
 
@@ -365,7 +419,9 @@ def revision(session: Session) -> int:
     )
 
 
-def read_snapshot(previous_revision: int) -> tuple[int, list[dict[str, Any]]] | None:
+def read_snapshot(
+    previous_revision: int, cache: SnapshotCache | None = None
+) -> tuple[int, list[dict[str, Any]]] | None:
     """Read committed lifecycle changes; silence never expires an enrolled source."""
     if not _ENABLED:
         return None
@@ -374,7 +430,7 @@ def read_snapshot(previous_revision: int) -> tuple[int, list[dict[str, Any]]] | 
     with Session(engine) as session:
         if revision(session) == previous_revision:
             return None
-        return snapshot(session)
+        return snapshot(session, cache)
 
 
 def contribution_proof(
@@ -384,7 +440,7 @@ def contribution_proof(
     if not isinstance(provider_id, str) or not isinstance(origin, str) or len(origin) > 4096:
         raise ValueError("Source contribution not authorized")
     _write_lock(session)
-    expected = source_for_origin(provider_id, origin)
+    expected = _expected_scraper(session, device_id, provider_id, origin)
     if expected is None:
         if proof is not None:
             raise ValueError("Source contribution not authorized")
@@ -451,6 +507,7 @@ def replace_cached_source(
     from app.core.db import engine
 
     with Session(engine) as session:
+        _write_lock(session)
         row = session.exec(
             select(SidecarSourceContribution).where(
                 SidecarSourceContribution.provider_id == provider_id,

@@ -440,13 +440,20 @@ consent, withdrawal, remote-control and acceptance contract.
 
 ### Fleet Keychain source lifecycle (protocol 1)
 
-Updated sidecars request device_protocol=1 when redeeming a pairing code.
+Updated sidecars request device_protocol=1 and platform=Darwin|Linux|Windows
+when redeeming a pairing code. The platform is bound to the enrolled identity;
+ordinary ingest OS labels cannot change it. Linux/Windows browser cookies do
+not require macOS Keychain consent. Older enrollments without a platform remain
+conservative; re-pair to declare their platform.
 When DB_ENCRYPTION_KEY is configured, the single-use response additionally
 contains device_id, device_key, device_api_url, and source_protocol=1.
 The random device key is encrypted in server storage and saved in the sidecar's
 owner-only config. Hostnames are labels. Without server encryption, pairing
 retains its legacy response; Keychain forwarding remains Limited until enrollment.
 Re-pairing creates a new device; it does not claim a hostname's previous sources.
+An authenticated source-sync 401 surfaces a local re-pair-required notice. The
+sidecar never downgrades that identity to shared-key authorization to bypass a
+lost or revoked enrollment; Keychain egress remains withheld.
 
 Device requests send X-Runway-Device-Id, X-Timestamp, and X-Signature.
 HMAC-SHA256 signs DEVICEv1|device_id|timestamp|purpose| followed by raw body
@@ -464,6 +471,10 @@ device header or claim a reserved device-<32 lowercase hex> registry identity.
   Unix timestamps. Labels are canonical; unknown scrapers are not accepted.
   The response lists accepted scraper IDs, withdrawals ({source_id, generation}),
   and pending commands ({id, source_id, generation, action}).
+  Up to 256 pending commands are delivered in order per poll. Acknowledged
+  commands are retained for 30 days, always keeping each scraper's latest
+  ordering barrier; repeated acknowledgments after cleanup are harmless.
+  Reports from an older generation update contact time without changing consent.
 - GET /api/v1/fleet/sidecars/{sidecar_id}/sources: admin-authenticated, inert status.
   Returns protocol=1, sources (FleetSourceStatus), and pending commands.
   Source status extends the report with remote_paused, revoked, report_at,
@@ -483,6 +494,10 @@ source_id, revision, and generation. The server checks device, provider, origin,
 revision, and live generation before accepting a contribution. Withdrawal persists
 a tombstone and removes only matching encrypted credential payloads; late ingest
 cannot recreate them. Re-enabling requires a newer local generation.
+Rejected or unknown source cards/manifest entries are skipped before metadata
+mutation, without discarding the rest of the upload. Ingest returns a sanitized
+credentials_rejected count. Skipped manifest sources cannot retire last-good
+origins through a completed-provider declaration.
 Credential bundles remain separate across devices and origins, including identical
 tokens. Enrolled contributions survive server restart and offline Macs without a
 heartbeat lease. Provider expiry/rejection remains authoritative. Historical usage

@@ -57,6 +57,14 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
             for source in catalog().values()
         ],
         "forwarding_supported": bool(client and client.accepted),
+        "re_pair_required": bool(
+            (client and client.re_pair_required)
+            or (
+                config.get("device_id")
+                and config.get("device_api_url", "").rstrip("/")
+                != config.get("api_url", "").rstrip("/")
+            )
+        ),
         "setup_available": sys.platform == "darwin" and getattr(sys, "frozen", False),
     }
 

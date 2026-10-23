@@ -57,6 +57,7 @@ async def sync_sources(
                 withdrawals.append({"source_id": row.source_id, "generation": row.generation})
         for ack in body.acknowledgments:
             source_controls.acknowledge(session, device_id, ack.id, ack.status)
+        source_controls.prune_commands(session, device_id)
         session.commit()
     except ValueError:
         session.rollback()
@@ -90,23 +91,27 @@ async def get_sources(sidecar_id: str, session: Session = Depends(get_session)) 
         select(SidecarSourceState).where(SidecarSourceState.device_id == device.device_id)
     ).all()
     now = datetime.now(UTC)
+    contributions = session.exec(
+        select(SidecarSourceContribution).where(
+            SidecarSourceContribution.device_id == device.device_id
+        )
+    ).all()
+    health_by_id = {
+        entry.source_id: entry
+        for entry in session.exec(
+            select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
+        ).all()
+    }
     result = []
     for row in rows:
         descriptor = catalog().get(row.source_id)
         report = json.loads(row.report_json)
-        contributions = session.exec(
-            select(SidecarSourceContribution).where(
-                SidecarSourceContribution.device_id == device.device_id,
-                SidecarSourceContribution.scraper_id == row.source_id,
-            )
-        ).all()
         credential_ids = [
-            entry.credential_source_id for entry in contributions if entry.payload_encrypted
+            entry.credential_source_id
+            for entry in contributions
+            if entry.payload_encrypted and entry.scraper_id == row.source_id
         ]
-        health = session.exec(
-            select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
-        ).all()
-        health = [entry for entry in health if entry.source_id in credential_ids]
+        health = [health_by_id[key] for key in credential_ids if key in health_by_id]
         successes = [entry.last_success_at for entry in health if entry.last_success_at is not None]
         collection_health = (
             "withdrawn"

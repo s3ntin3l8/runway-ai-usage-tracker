@@ -22,6 +22,7 @@ class SidecarDevice(SQLModel, table=True):  # type: ignore[call-arg]
     __tablename__ = "sidecar_devices"
     device_id: str = Field(primary_key=True)
     hostname: str | None = None
+    platform: str | None = None  # Bound at pairing; ingest cannot change consent applicability.
     secret_encrypted: str
     revoked: bool = False
     created_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))

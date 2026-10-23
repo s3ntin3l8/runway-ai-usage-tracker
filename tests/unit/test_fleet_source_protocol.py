@@ -126,3 +126,36 @@ def test_invalid_report_does_not_change_consent_or_echo_payload(protocol, bad):
     assert response.status_code == 422
     assert "synthetic-secret" not in response.text
     assert source_controls.state(session, device_id, "anthropic.claude-code") is None
+
+
+def test_status_loads_credential_health_once_for_multiple_sources(protocol):
+    from sqlalchemy import event
+
+    client, session, device_id, secret = protocol
+    second = catalog()["github.gh-cli"]
+    reports = [
+        report(),
+        {
+            **report(),
+            "source_id": second.id,
+            "provider_id": second.provider,
+            "revision": second.revision,
+        },
+    ]
+    assert sync(client, device_id, secret, {"sources": reports}).status_code == 200
+    statements = []
+
+    def capture(conn, cursor, statement, params, context, many):
+        statements.append(statement.lower())
+
+    event.listen(session.get_bind(), "before_cursor_execute", capture)
+    try:
+        response = client.get(
+            "/fleet/sidecars/" + sidecar_devices.registry_id(device_id) + "/sources"
+        )
+        assert response.status_code == 200
+        assert len(response.json()["sources"]) == 2
+    finally:
+        event.remove(session.get_bind(), "before_cursor_execute", capture)
+    assert sum("from credential_sources" in sql for sql in statements) == 1
+    assert sum("from sidecar_source_contributions" in sql for sql in statements) == 1

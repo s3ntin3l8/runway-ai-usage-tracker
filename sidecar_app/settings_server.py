@@ -353,7 +353,7 @@ async function refreshSources() {
   if (serialized === lastSourceReport) return;
   lastSourceReport = serialized;
   document.getElementById("sources-enable-all").disabled = !report.compatible;
-  document.getElementById('sources-compatibility').textContent = !report.compatible ? 'Keychain scrapers are available on macOS only.' : report.forwarding_supported ? 'Authenticated source controls are available on your paired server.' : 'Limited: pair with a server that supports authenticated source controls before sharing Keychain credentials.';
+  document.getElementById('sources-compatibility').textContent = report.re_pair_required ? 'Action required: device authentication is unavailable. Re-pair this sidecar with your server in Connection settings. Keychain credentials are withheld.' : !report.compatible ? 'Keychain scrapers are available on macOS only.' : report.forwarding_supported ? 'Authenticated source controls are available on your paired server.' : 'Limited: pair with a server that supports authenticated source controls before sharing Keychain credentials.';
   const focusedId = document.activeElement && document.activeElement.id;
   const list = document.getElementById('sources-list');
   list.replaceChildren();

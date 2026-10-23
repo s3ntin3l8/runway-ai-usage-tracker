@@ -186,3 +186,33 @@ def test_shared_native_denial_is_reported_without_withdrawing_local_intent(monke
     assert rows["kimi_coding.chrome"]["read"] is False
     assert rows["kimi_coding.chrome"]["state"] == "Off"
     assert client._process is None
+
+
+def test_device_auth_failure_surfaces_repair_without_shared_key_downgrade(
+    tmp_path, monkeypatch, caplog
+):
+    from urllib.error import HTTPError
+
+    from scripts.sidecar_pkg import source_settings, transport
+
+    local = config()
+    source_consent.POLICY.configure(local)
+    client = source_protocol.SourceClient(local, tmp_path / "state.json")
+    monkeypatch.setattr(source_protocol, "CLIENT", client)
+    requests = []
+
+    def reject(req, **kwargs):
+        requests.append(req)
+        raise HTTPError(req.full_url, 401, "synthetic-secret-not-for-logs", {}, None)
+
+    monkeypatch.setattr(transport, "urlopen", reject)
+    assert not client.sync(local)
+    assert not client.sync(local)
+    assert source_settings.report(local)["re_pair_required"] is True
+    assert all(req.get_header("X-runway-device-id") == local["device_id"] for req in requests)
+    assert caplog.text.count("re-pair this sidecar") == 1
+    assert "synthetic-secret" not in caplog.text
+    client.receive(local, reply())
+    assert source_settings.report(local)["re_pair_required"] is False
+    moved = {**local, "api_url": "https://other.example"}
+    assert source_settings.report(moved)["re_pair_required"] is True

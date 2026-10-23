@@ -194,11 +194,13 @@ def test_device_enrollment_is_encrypted_and_code_remains_single_use(client, sess
     )
     code = _mint(client)["code"]
     response = client.post(
-        "/api/v1/fleet/pair", json={"code": code, "hostname": "synthetic", "device_protocol": 1}
+        "/api/v1/fleet/pair",
+        json={"code": code, "hostname": "synthetic", "device_protocol": 1, "platform": "Linux"},
     )
     assert response.status_code == 200
     credentials = response.json()
     device = session.get(SidecarDevice, credentials["device_id"])
+    assert device.platform == "Linux"
     assert device.secret_encrypted != credentials["device_key"]
     assert (
         sidecar_devices.authentication_key(session, device.device_id) == credentials["device_key"]

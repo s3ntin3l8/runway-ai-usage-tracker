@@ -48,7 +48,7 @@ def setup(monkeypatch):
         monkeypatch.setattr(
             source_controls,
             "read_snapshot",
-            lambda previous: (
+            lambda previous, *_: (
                 source_controls.snapshot(session)
                 if source_controls.revision(session) != previous
                 else None
@@ -129,9 +129,72 @@ async def test_ingest_then_off_rejects_delayed_credentials_and_keeps_refresh_loc
         ).status_code
         == 200
     )
-    assert post(client, local, path, "ingest", payload).status_code == 409
+    assert post(client, local, path, "ingest", payload).status_code == 200
     assert await cache.get_pending_sources("anthropic") == []
     assert session.exec(select(SidecarSourceContribution)).one().payload_encrypted is None
+
+
+@pytest.mark.parametrize("platform", ["Linux", "Windows", "Darwin", None])
+def test_mixed_upload_keeps_files_and_platform_eligible_cookies(setup, platform):
+    from app.models.db import SidecarDevice
+
+    client, session, local = setup
+    device = session.get(SidecarDevice, local["device_id"])
+    device.platform = platform
+    session.add(device)
+    session.commit()
+
+    def card(origin):
+        return {
+            "provider_id": "anthropic",
+            "service_name": "Synthetic",
+            "remaining": "Token",
+            "unit": "oauth",
+            "metadata": {"credential_origin": origin, "oauth_token": "synthetic-access"},
+        }
+
+    origins = [
+        "keychain:Some New Store",
+        "cookie:anthropic/Chrome/Default/Cookies",
+        "cookie:openai/Chrome/Default/Cookies",
+        "file:synthetic-auth.json",
+    ]
+    response = post(
+        client,
+        local,
+        "/api/v1/fleet/ingest",
+        "ingest",
+        {
+            "provider": "synthetic",
+            "metrics": [card(origin) for origin in origins],
+            "os_platform": "Linux/forged",  # Ingest cannot alter the paired platform.
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["credentials_rejected"] == (1 if platform in {"Linux", "Windows"} else 3)
+    stored = session.exec(select(SidecarSourceContribution)).all()
+    assert {row.origin for row in stored} == set(
+        origins[1:] if platform in {"Linux", "Windows"} else origins[3:]
+    )
+    assert all(row.scraper_id is None for row in stored)
+
+
+def test_manifest_skips_unknown_store_without_claiming_completed_absence(setup):
+    client, session, local = setup
+    payload = {
+        "sidecar_id": "synthetic",
+        "entries": [
+            {"provider_id": "anthropic", "credential_origin": "keychain:Future Store"},
+            {"provider_id": "openai", "credential_origin": "file:synthetic-key.json"},
+        ],
+        "completed_providers": ["anthropic", "openai"],
+    }
+    response = post(client, local, "/api/v1/fleet/credentials/manifest", "manifest", payload)
+    assert response.status_code == 200, response.text
+    from app.models.db import PendingCredentialTag
+
+    rows = session.exec(select(PendingCredentialTag)).all()
+    assert {row.credential_origin for row in rows} == {"file:synthetic-key.json"}
 
 
 def test_legacy_key_cannot_claim_reserved_device_registry(setup):

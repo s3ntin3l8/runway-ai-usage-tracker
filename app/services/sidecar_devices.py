@@ -21,13 +21,16 @@ def reserved_registry_id(value: str) -> bool:
     return re.fullmatch(r"device-[a-f0-9]{32}", value) is not None
 
 
-def enroll(session: Session, hostname: str | None) -> tuple[SidecarDevice, str]:
+def enroll(
+    session: Session, hostname: str | None, *, platform: str | None = None
+) -> tuple[SidecarDevice, str]:
     if not encryption_service.is_enabled:
         raise ValueError("Server encryption is required for device enrollment")
     secret = secrets.token_urlsafe(32)
     device = SidecarDevice(
         device_id=uuid.uuid4().hex,
         hostname=hostname,
+        platform=platform if platform in {"Darwin", "Linux", "Windows"} else None,
         secret_encrypted=encryption_service.encrypt_string(secret),
     )
     session.add(device)

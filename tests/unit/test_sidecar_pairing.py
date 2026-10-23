@@ -91,7 +91,14 @@ class TestRedeem:
             KEY: "secret-key",
         }
         assert seen["url"] == "https://runway.example.com/api/v1/fleet/pair"
-        assert seen["body"] == {"code": "AB3DE-7XYZ9", "hostname": "laptop", "device_protocol": 1}
+        import platform
+
+        assert seen["body"] == {
+            "code": "AB3DE-7XYZ9",
+            "hostname": "laptop",
+            "device_protocol": 1,
+            "platform": platform.system(),
+        }
 
     @pytest.mark.parametrize(
         ("status", "needle"), [(400, "invalid"), (429, "Too many"), (503, "ingest"), (500, "500")]
