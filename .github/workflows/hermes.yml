@@ -53,12 +53,24 @@ jobs:
   # `auto-review` deliberately excludes `mullion/task-*` branches (see the
   # job's own `if:` below) -- Task Master's own review agent is the terminal
   # review for its tasks (s3ntin3l8/mullion-session-manager#1003, ported
-  # from that repo's #998). It also excludes dependabot and release-please
-  # PRs (both open as `dependabot[bot]` / `github-actions[bot]` respectively)
-  # -- a version-bump or changelog PR has nothing for a code review to say,
-  # ported from mullion-session-manager's hermes.yml. `on-demand-review` is
-  # NOT excluded from either -- a human can still explicitly ask for a
-  # second opinion via `@s3ntin3l8-hermes Review`.
+  # from that repo's #998). It excludes release-please PRs, which open as
+  # `github-actions[bot]` -- a changelog PR has nothing for a code review to
+  # say (ported from mullion-session-manager's hermes.yml).
+  #
+  # It does NOT exclude dependabot PRs. A version bump can change a runtime
+  # tool version without saying so: #627 moved the installed cosign CLI from
+  # v2.2.4 to v3.0.6, a major-version jump the bump body does not mention,
+  # landing a version covered by GHSA-fx35-mq7g-6g98 (high severity).
+  # Excluding dependabot is what lost us that review.
+  #
+  # A dependabot-authored `pull_request` run sees only the *Dependabot* secret
+  # store, so it needs HERMES_APP_ID, HERMES_APP_PRIVATE_KEY and
+  # HERMES_API_KEY under Settings -> Secrets and variables -> Dependabot.
+  # Without them the shared workflow's Preflight step skips the review with a
+  # notice.
+  #
+  # `on-demand-review` is untouched by any of this -- a human can always
+  # explicitly ask for a second opinion via `@s3ntin3l8-hermes Review`.
   auto-review:
     # NOTE: excluding by PR *author* (github.event.pull_request.user.login),
     # not github.actor -- on `ready_for_review`, github.actor is whoever
@@ -68,7 +80,6 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 's3ntin3l8-hermes[bot]' &&
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.user.login != 'github-actions[bot]' &&
       github.event.pull_request.draft == false &&
       !startsWith(github.event.pull_request.head.ref, 'mullion/task-')
