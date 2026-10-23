@@ -26,7 +26,7 @@ from tests.native_keychain_isolation import validate_scope
 SERVICE = "Runway synthetic public-update probe"
 ORIGINAL = b"synthetic-public-update-original"
 MODES = ("metadata-control", "data-only", "legacy-data", "combined-access")
-CONTROL_CASES = ("read-only-control", "reference-control")
+CONTROL_CASES = ("read-only-control", "reference-control", "writer-read-control")
 CASES = (*CONTROL_CASES, *MODES)
 STAGES = {
     "start",
@@ -39,6 +39,9 @@ STAGES = {
     "control_complete",
     "before_reference_lookup",
     "reference_verified",
+    "before_writer_data_read",
+    "after_writer_data_read",
+    "writer_data_verified",
 }
 SNAPSHOT_CHECKS = {
     "default_same": lambda snapshot: snapshot["default"]["path"],
@@ -179,6 +182,8 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                         ("replacement_verified", bool),
                     )
                 )
+                if mode == "writer-read-control":
+                    fields += (("control_status", int),)
                 try:
                     values = json.loads(child.stdout)
                     if not isinstance(values, dict) or any(

@@ -188,7 +188,15 @@ def test_child_preflight_block_is_not_reported_as_supervisor_failure(monkeypatch
 
 
 @pytest.mark.parametrize(
-    "case", ["read-only-control", "metadata-control", "all", "unknown-private-target"]
+    "case",
+    [
+        "read-only-control",
+        "reference-control",
+        "writer-read-control",
+        "metadata-control",
+        "all",
+        "unknown-private-target",
+    ],
 )
 def test_supervisor_case_selection_is_explicit_and_allowlisted(monkeypatch, tmp_path, case):
     from tests import native_keychain_ci as runner

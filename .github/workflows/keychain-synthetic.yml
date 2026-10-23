@@ -9,6 +9,7 @@ on:
         options:
           - read-only-control
           - reference-control
+          - writer-read-control
           - metadata-control
           - data-only
           - legacy-data

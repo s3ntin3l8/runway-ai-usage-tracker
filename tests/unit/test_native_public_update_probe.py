@@ -339,6 +339,9 @@ def test_native_synthetic_lookup_matches_python_fixture_identity():
     source = (Path(probe.ROOT) / "tests/native/keychain_public_update_probe.c").read_text()
     assert re.findall(r'kSecAttrService, CFSTR\("([^"\n]+)"\)', source) == [probe.SERVICE]
     assert re.findall(r'kSecAttrAccount, CFSTR\("([^"\n]+)"\)', source) == [probe.ACCOUNT]
+    assert re.findall(r'const unsigned char original\[\] = "([^"\n]+)"', source) == [
+        probe.ORIGINAL.decode()
+    ]
 
 
 def test_successful_writer_cannot_export_unexpected_diagnostics(
@@ -523,7 +526,7 @@ def test_missing_snapshot_checks_are_unsafe(monkeypatch, tmp_path, synthetic_cas
     assert row["isolation_failed"] is True
 
 
-@pytest.mark.parametrize("case", ["read-only-control", "reference-control"])
+@pytest.mark.parametrize("case", ["read-only-control", "reference-control", "writer-read-control"])
 def test_read_only_control_records_ordered_isolation_without_candidate(
     monkeypatch, tmp_path, synthetic_case, case
 ):
@@ -534,7 +537,7 @@ def test_read_only_control_records_ordered_isolation_without_candidate(
         lambda *args, **kwargs: subprocess.CompletedProcess(
             [],
             0,
-            stdout=b'{"control_completed":true}',
+            stdout=b'{"control_completed":true,"control_status":0}',
             stderr=b"stage:owner_verified\nstage:control_complete\n",
         ),
     )
@@ -557,7 +560,7 @@ def test_read_only_control_records_ordered_isolation_without_candidate(
 
 
 @pytest.mark.parametrize("changed_at", [1, 2, 3, 4, 5, 6])
-@pytest.mark.parametrize("case", ["read-only-control", "reference-control"])
+@pytest.mark.parametrize("case", ["read-only-control", "reference-control", "writer-read-control"])
 def test_control_stops_at_first_isolation_change(
     monkeypatch, tmp_path, synthetic_case, changed_at, case
 ):
@@ -573,7 +576,10 @@ def test_control_stops_at_first_isolation_change(
     def writer(*args, **kwargs):
         writers.append(True)
         return subprocess.CompletedProcess(
-            [], 0, stdout=b'{"control_completed":true}', stderr=b"stage:control_complete\n"
+            [],
+            0,
+            stdout=b'{"control_completed":true,"control_status":0}',
+            stderr=b"stage:control_complete\n",
         )
 
     monkeypatch.setattr(probe, "environment_snapshot", snapshot)

@@ -28,6 +28,13 @@ This separates reference resolution from mutation: the pinned public
 resolves the query before updating matches. That source-derived hypothesis is
 distinct from proof about the current OS implementation.
 
+The separately selected `writer-read-control` resolves and verifies that same
+reference, then asks the second process to read the fixed fake value and compares
+it in memory. It never updates an item and emits only completion/status fields.
+This distinguishes metadata lookup from the second process's access to protected
+data; it tests a hypothesis rather than assuming that a matching metadata
+reference proves data access. No provider or real credential is involved.
+
 ## Recorded boundaries and failure behavior
 
 Fresh-process metadata comparisons follow fixture creation, fixture seeding,
@@ -69,3 +76,11 @@ readback or cleanup on that runner. It did not exercise the exact update referen
 query or an update API, and `candidate_found` is false. The prior failed update
 attempt remains unexplained; the historical personal-machine prompt loop remains
 unattributed. These findings authorize no production write path.
+
+The subsequent explicit [reference-control run](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40014383316)
+on source `440c5cfe` also passed all checkpoints, unchanged synthetic data/policy
+and cleanup. The returned reference matched the original private item and its
+owning Keychain. Its [artifact](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40014383316/artifacts/12528185803)
+is preserved in [reference evidence](claude-keychain-reference-ci-773.json).
+It observed no isolation change while resolving the update query on that runner;
+it did not decrypt data in the second process or call an update API.
