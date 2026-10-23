@@ -58,16 +58,22 @@ jobs:
   # say (ported from mullion-session-manager's hermes.yml).
   #
   # It does NOT exclude dependabot PRs. A version bump can change a runtime
-  # tool version without saying so: #627 moved the installed cosign CLI from
-  # v2.2.4 to v3.0.6, a major-version jump the bump body does not mention,
-  # landing a version covered by GHSA-fx35-mq7g-6g98 (high severity).
-  # Excluding dependabot is what lost us that review.
+  # tool version without saying so: #627's body lists only
+  # `cosign-installer 3.5.0 -> 4.1.2`, and v4 of the installer defaults to
+  # cosign v3.0.6 -- covered by GHSA-fx35-mq7g-6g98 (high severity). A human
+  # caught it on that PR (0270de29 pinned cosign v3.1.3 there, and the squash
+  # carried the pin), so nothing shipped broken -- but it took a person
+  # reading a bump body that never mentioned the CLI underneath it. An
+  # automated reviewer would have caught it faster.
   #
   # A dependabot-authored `pull_request` run sees only the *Dependabot* secret
   # store, so it needs HERMES_APP_ID, HERMES_APP_PRIVATE_KEY and
   # HERMES_API_KEY under Settings -> Secrets and variables -> Dependabot.
   # Without them the shared workflow's Preflight step skips the review with a
-  # notice.
+  # notice. With them, note what that means: the run executes the PR's *own*
+  # copy of the workflow file on a LAN-reachable self-hosted runner, and the
+  # fork guard does not help, because a dependabot branch is in this
+  # repository. Mirroring those secrets is a trust decision, not a checkbox.
   #
   # `on-demand-review` is untouched by any of this -- a human can always
   # explicitly ask for a second opinion via `@s3ntin3l8-hermes Review`.
