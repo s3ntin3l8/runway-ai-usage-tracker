@@ -135,7 +135,7 @@ server, so the provider is not silently empty: the Home page shows a "Cookie sto
 unavailable" banner, Settings → Credentials has an "Unavailable" tab naming the store,
 the reason and the fix, and the provider's own page says *why* there is no data instead
 of "No data for this provider". The report disappears on its own once the store
-is readable again and the sidecar reports the provider as collected.
+is readable again and the sidecar stops reporting it.
 
 ## Dashboard cards or account attribution look wrong
 

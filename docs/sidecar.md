@@ -541,10 +541,16 @@ as one entry per provider that wanted a cookie from it:
 `source_unsupported` (the values are app-bound encrypted) or `source_unreadable`
 (the file could not be read for another reason). The entry carries no cookie
 value, no account id and no filesystem path. The server shows it on the Home
-banner, in Settings → Credentials → Unavailable, and on the provider page, and
-drops it once the sidecar stops reporting it and reports the provider as
-collected — the same lifecycle every other pending row has, so a provider whose
-collection keeps failing for an unrelated reason leaves the row in place.
+banner, in Settings → Credentials → Unavailable, and on the provider page.
+
+Its lifecycle is the report itself: the sidecar repeats it every cycle while
+the store stays unreadable, and the server drops it as soon as the sidecar
+stops reporting that store — the cycle the store reads fine again. That is
+deliberately not the lifecycle of a credential row: a report about a store is
+not something the operator has to tag, and on macOS the sidecar withholds a
+provider with a native source from `completed_providers` (a withheld scan must
+never read as a logout), so a row that waited for the provider to be collected
+would outlive the store it describes.
 
 `source_detail` and `source_remedy` are free text the server shows as sent. The
 bundled sidecar only ever sends the fixed sentences above, but the server does

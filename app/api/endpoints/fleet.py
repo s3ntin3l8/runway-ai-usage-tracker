@@ -1580,6 +1580,19 @@ async def post_credential_manifest(
             payload.completed_providers is None
             or row.provider_id not in payload.completed_providers
         ):
+            if is_source_blocked(row) and row.credential_origin not in keep_by_provider.get(
+                row.provider_id, set()
+            ):
+                # A row that records an unusable credential source is not a
+                # credential waiting to be mapped: there is nothing for the
+                # operator to tag. Its lifecycle is the sidecar's report, so it
+                # goes when the sidecar stops reporting that store - not when the
+                # provider is collected. On macOS the sidecar withholds a
+                # provider with a native source from completed_providers (a
+                # withheld scan never proves a logout), so the generic rule would
+                # keep the row forever and the advisory would outlive the store
+                # it describes. Leaving it out of the keep map retires it.
+                continue
             prune_keep.setdefault(row.provider_id, set()).add(row.credential_origin)
     if payload.completed_providers is not None:
         prune_keep.update(
@@ -1595,7 +1608,7 @@ async def post_credential_manifest(
             sidecar_id=payload.sidecar_id,
             keep_origins_by_provider=prune_keep,
         )
-        if prune_keep
+        if prune_keep or existing_rows
         else 0
     )
     await _retire_missing_claude_sources(session, payload)

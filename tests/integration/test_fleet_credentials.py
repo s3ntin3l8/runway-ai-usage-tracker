@@ -4758,6 +4758,40 @@ def test_an_unavailable_source_disappears_when_the_store_becomes_readable(
     assert inventory.json()["blocked_sources"] == []
 
 
+def test_an_unavailable_source_disappears_when_the_provider_is_withheld(
+    client, session, inventory_session
+):
+    """The report is retired even when the provider is not reported as collected.
+
+    On macOS the sidecar withholds a provider with a native source from
+    ``completed_providers`` - a withheld scan must never read as a logout - so
+    the row cannot wait for the provider to be collected. Its lifecycle is the
+    report itself: the sidecar repeats it every cycle while the store stays
+    unreadable, and stops when the store reads fine.
+    """
+    blocked_body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": [],
+        "entries": [_blocked_entry()],
+    }
+    assert _post_manifest(client, blocked_body).status_code == 200
+
+    inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert inventory.status_code == 200, inventory.text
+    assert len(inventory.json()["blocked_sources"]) == 1
+
+    readable_body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": [],
+        "entries": [],
+    }
+    assert _post_manifest(client, readable_body).status_code == 200
+
+    inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert inventory.status_code == 200, inventory.text
+    assert inventory.json()["blocked_sources"] == []
+
+
 def test_a_withheld_token_outranks_an_unavailable_source_for_the_same_origin(client, session):
     """One origin can be reported both ways; the louder reason wins."""
     from app.services.credential_tags import PendingCredentialTagRepo
