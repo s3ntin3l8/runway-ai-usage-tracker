@@ -192,9 +192,23 @@ def audit(
         "grype": GRYPE,
         "platforms": {},
         "passed": False,
+        # Entries whose review window closed. They waive nothing, so the
+        # findings they covered are blocked; naming them here is what turns
+        # "the document is invalid" into "this advisory lost its exception".
+        "expired_exceptions": [],
     }
     try:
         exceptions = load_exceptions(exceptions_path, datetime.now(UTC))
+        evidence["expired_exceptions"] = [
+            {
+                "id": entry["id"],
+                "package": entry["package"],
+                "version": entry["version"],
+                "architecture": entry["architecture"],
+                "expires_at": entry["expires_at"],
+            }
+            for entry in exceptions.expired.values()
+        ]
         with tempfile.TemporaryDirectory(prefix="runway-image-") as temp:
             temp_path = Path(temp)
             cache = database or temp_path / "database"
@@ -249,6 +263,7 @@ def audit(
             {
                 "passed": evidence["passed"],
                 "counts": {arch: p["counts"] for arch, p in evidence["platforms"].items()},
+                "expired_exceptions": len(evidence["expired_exceptions"]),
             },
             indent=2,
         )

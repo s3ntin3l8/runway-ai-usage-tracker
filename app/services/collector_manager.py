@@ -1283,6 +1283,7 @@ class CollectorManager:
             # A detected billing type only ever describes a new account: an
             # existing row's type is the operator's to choose.
             row.billing_type = billing_type
+            row.billing_type_source = "detected"
         session.add(row)
         return True
 
@@ -1692,7 +1693,10 @@ class CollectorManager:
                     scrub_log(source_id),
                 )
                 return False
-            if organization_id and not self._claude_binding_allowed(
+            # A proved model reaches the account even when no organization was
+            # proved: an OAuth token has no Claude organization to read, so the
+            # model its own cards describe is the only proof it can make.
+            if (organization_id or billing_type) and not self._claude_binding_allowed(
                 session,
                 provider_id,
                 target,

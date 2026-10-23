@@ -24,6 +24,9 @@ from app.services.data_health.checks.pending_events import PendingEventsCheck
 from app.services.data_health.checks.rollup_drift import RollupDriftCheck
 from app.services.data_health.checks.stale_credential_rules import StaleCredentialRulesCheck
 from app.services.data_health.checks.stale_credential_sources import StaleCredentialSourcesCheck
+from app.services.data_health.checks.unpriced_claude_accounts import (
+    UnpricedClaudeAccountsCheck,
+)
 from app.services.data_health.checks.unpriced_models import UnpricedModelsCheck
 
 REGISTRY: list[Check] = [
@@ -38,6 +41,7 @@ REGISTRY: list[Check] = [
     OrphanGaugeSeriesCheck(),
     MisidentifiedGaugeSeriesCheck(),
     UnpricedModelsCheck(),
+    UnpricedClaudeAccountsCheck(),
     RollupDriftCheck(),
     PendingEventsCheck(),
     AlertChannelsCheck(),

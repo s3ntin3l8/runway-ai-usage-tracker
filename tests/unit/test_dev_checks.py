@@ -94,6 +94,57 @@ def test_jobs_is_rejected_for_tasks_that_do_not_run_tests(monkeypatch):
         dc.main()
 
 
+@pytest.mark.parametrize(
+    ("requirements_set", "expected"),
+    [
+        ("all", "requirements-dev.txt"),
+        ("test", "requirements-test.txt"),
+        ("lint", "requirements-lint.txt"),
+    ],
+)
+def test_the_requirements_set_picks_the_file_to_install(monkeypatch, requirements_set, expected):
+    """`--set` picks which dependency set `install-python` installs.
+
+    A job that only runs tests must not install the lint tooling, and a job
+    that only lints must not install the suite's packages: the lint tree is
+    about thirty packages the suite never touches, and unpacking them onto
+    the Windows filesystem is a third of the job's install step.
+    """
+    commands = []
+    monkeypatch.setattr(dc, "execute", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(sys, "argv", ["dev_checks.py", "install-python", "--set", requirements_set])
+    assert dc.main() == 0
+    assert commands[-1][-2:] == ["-r", expected]
+
+
+@pytest.mark.parametrize("task", ["install", "lint"])
+def test_the_requirements_set_is_rejected_for_tasks_that_do_not_install(monkeypatch, task):
+    """`--set` is meaningless for a task that installs nothing.
+
+    ``install`` is the one that separates the old code from the new: it used
+    to accept ``--set`` and then die in ``install-hooks``, which needs
+    ``pre-commit`` -- a package only the lint set carries. ``lint`` was
+    always rejected, so it passes either way; it is here so that the rule
+    is pinned for both.
+    """
+    monkeypatch.setattr(sys, "argv", ["dev_checks.py", task, "--set", "test"])
+    with pytest.raises(SystemExit):
+        dc.main()
+
+
+def test_install_installs_the_union(monkeypatch):
+    """`make install` is the full set, so the hooks work afterwards.
+
+    The hooks need `pre-commit`, which is in the lint set -- so `install`
+    cannot take a narrower set than the union.
+    """
+    commands = []
+    monkeypatch.setattr(dc, "execute", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(dc, "npm_command", lambda: ["node", "npm-cli.js"])
+    dc.check("install", [])
+    assert ["-r", "requirements-dev.txt"] in [command[-2:] for command in commands]
+
+
 def test_install_uses_lockfile_and_both_hooks(monkeypatch):
     commands = []
     dc.venv_python().unlink()

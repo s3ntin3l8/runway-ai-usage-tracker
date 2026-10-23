@@ -184,6 +184,28 @@ describe('SourceRow', () => {
     expect(screen.getByText('Codex CLI · auth.json')).toBeInTheDocument();
   });
 
+  it('marks a browser cookie as a cookie, not another credential file', () => {
+    renderRow({
+      source: source({
+        origin_type: 'cookie',
+        label: 'Browser cookie',
+        origin_app: 'Browser',
+        origin_detail: 'Chrome · Profile 1',
+        token_types: ['cookie'],
+      }),
+    });
+    expect(screen.getByText('Browser cookie')).toBeInTheDocument();
+    // The badge is what tells it apart from the file credentials in the same list.
+    expect(screen.getByText('Cookie')).toBeInTheDocument();
+    expect(screen.getByText(/Chrome · Profile 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Session cookie/)).toBeInTheDocument();
+  });
+
+  it('does not badge a file credential as a cookie', () => {
+    renderRow({ source: source({ origin_type: 'file' }) });
+    expect(screen.queryByText('Cookie')).not.toBeInTheDocument();
+  });
+
   it('tells you how to re-authenticate a dead login on a live machine', () => {
     renderRow({
       source: source({

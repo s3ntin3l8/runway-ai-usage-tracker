@@ -590,7 +590,7 @@ function Step2({
               size="sm"
               onClick={() => detectBilling.mutate()}
               loading={detectBilling.isPending}
-              disabled={cookie.trim() === ''}
+              disabled={cookie.trim() === '' && apiKey.trim() === ''}
             >
               Detect billing model
             </Button>
@@ -607,8 +607,8 @@ function Step2({
           {detectError ? <HelperText>{detectError}</HelperText> : null}
           <HelperText>
             Reads how the account bills from the quota windows Claude publishes for it — a
-            web session is needed. It only suggests a value; your choice in the next step
-            still wins.
+            web session or an OAuth token is needed. It only suggests a value; your choice
+            in the next step still wins.
           </HelperText>
         </div>
       ) : null}

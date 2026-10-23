@@ -1632,6 +1632,7 @@ async def list_credential_tags(
                 "origin_label": (origin := describe_origin_full(t.credential_origin)).label,
                 "origin_app": origin.app,
                 "origin_path": origin.path,
+                "origin_detail": origin.detail,
                 "account_id": t.account_id,
                 "sidecar_id": t.sidecar_id,
                 "set_by": t.set_by,
@@ -1744,7 +1745,7 @@ async def list_pending_credential_tags(
     auto-hint doesn't oscillate, but they're not "untagged" from the
     operator's perspective.
     """
-    from app.services.credential_sources import sidecar_source_id
+    from app.services.credential_sources import describe_origin_full, sidecar_source_id
 
     visible_rows = visible_pending_rows(session)
     counts_by_sidecar: dict[str, int] = {}
@@ -1758,11 +1759,15 @@ async def list_pending_credential_tags(
     for row in visible_rows:
         preview, observed_at, preview_stale = PendingCredentialTagRepo.read_quota_preview(row)
         organization_count = _pending_organization_count(row.claude_organizations_json)
+        described = describe_origin_full(row.credential_origin)
         items.append(
             {
                 "sidecar_id": row.sidecar_id,
                 "provider_id": row.provider_id,
                 "credential_origin": row.credential_origin,
+                # What the credential is, in words: "Browser cookie", "auth.json", ...
+                "origin_label": described.label,
+                "origin_detail": described.detail,
                 "claimed_account_id": row.claimed_account_id,
                 **(
                     {"source_id": sidecar_source_id(row.sidecar_id, row.credential_origin)}

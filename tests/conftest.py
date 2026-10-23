@@ -424,14 +424,30 @@ def mock_db_session(monkeypatch):
 def close_managed_test_clients():
     """Close the TestClients a test created (see tests/fixtures/test_client).
 
-    The client in ``tests/fixtures/test_client`` enters itself so that every
-    request it makes shares one event loop; this is where that loop — and
-    the socket pair it holds — is released.
+    The clients in ``tests/fixtures/test_client`` share one event loop, so
+    this releases the clients and leaves the loop alone. The loop itself
+    belongs to the worker and is closed once, by
+    ``close_shared_test_client_portal`` below.
     """
     from tests.fixtures.test_client import close_open_clients
 
     yield
     close_open_clients()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def close_shared_test_client_portal():
+    """Close the worker's event loop when the worker finishes.
+
+    The clients in ``tests/fixtures/test_client`` share one event loop, so
+    the loop outlives every test and has to be closed once — here — rather
+    than per client. An event loop is a socket pair, and the Windows
+    ephemeral-port range is about 16k sockets; a loop per client filled it.
+    """
+    yield
+    from tests.fixtures.test_client import close_shared_portal
+
+    close_shared_portal()
 
 
 @pytest.fixture

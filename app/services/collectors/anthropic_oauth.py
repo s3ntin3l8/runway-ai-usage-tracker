@@ -1,25 +1,24 @@
 import logging
 import time
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
-from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import (
-    HealthCalculator,
-    PaceCalculator,
     error_card,
     http_request_with_retry,
-    human_delta,
 )
 from app.services.account_identity import is_placeholder_label
+from app.services.claude_oauth_usage import (
+    OAuthUsageError,
+    billing_model_from_oauth_cards,
+    fetch_oauth_usage,
+    oauth_identity_string,
+    oauth_organization_name,
+    oauth_usage_cards,
+)
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
-    anthropic_limits_from,
-    anthropic_model_id_for,
-    build_anthropic_limit_cards,
-    classify_anthropic_window_type,
 )
 from app.services.collectors.oauth_base import OAuthBaseCollector
 from app.services.identity_lookup import claude_profile_email
@@ -157,15 +156,27 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         Calls https://api.anthropic.com/api/oauth/usage and returns quota cards.
         Proactively respects 429 backoff to avoid hammering the API.
         """
-        # Safety guard: Browser session keys or bundles will 100% fail here with 401.
-        # Yield to the Web API scraper strategy instead.
-        if token.startswith("sk-ant-sid") or "sessionKey=" in token:
-            logger.debug(
-                "Skipping Anthropic OAuth API call: provided token is a browser session key or bundle."
-            )
-            return []
+        # The bundle this attempt reads with. A proof belongs to one credential:
+        # if the bundle is replaced while the answer is in flight, the answer
+        # proves nothing about the credential now in the cache.
+        generation_before = self._oauth_bundle_generation()
+        try:
+            data = await fetch_oauth_usage(client, token)
+        except OAuthUsageError as exc:
+            if exc.error_type == "rate_limited":
+                # The strategy backs off through SmartCollector; the token
+                # refreshes near its expiry instead.
+                self._last_retry_after = exc.retry_after or 300
+                logger.warning(
+                    f"Anthropic API still rate limited. Retry-After: {self._last_retry_after}s"
+                )
+                return [error_card("Claude Pro", "🟠", exc.message, error_type="rate_limited")]
+            if exc.error_type == "unsupported_credential":
+                logger.debug("Skipping Anthropic OAuth API call: not an OAuth token.")
+                return []
+            logger.error(f"Claude OAuth request failed: {exc.message}")
+            return [error_card("Claude Pro", "🟠", exc.message, error_type=exc.error_type)]
 
-        url = "https://api.anthropic.com/api/oauth/usage"
         headers = {
             "Authorization": f"Bearer {token}",
             "User-Agent": "claude-code/2.1.69",
@@ -173,58 +184,6 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         }
         name_map = ANTHROPIC_WINDOW_NAME_MAP
 
-        # --- HTTP request ---
-        try:
-            resp = await http_request_with_retry(client, "GET", url, headers=headers, timeout=10.0)
-        except httpx.HTTPError as e:
-            logger.error(f"Claude OAuth request failed: {e}")
-            return [
-                error_card("Claude Pro", "🟠", f"Conn Fail: {str(e)[:20]}", error_type="timeout")
-            ]
-
-        if resp.status_code == 401:
-            return [
-                error_card(
-                    "Claude Pro",
-                    "🟠",
-                    "Expired/Invalid Token (OAuth)",
-                    error_type="auth_failed",
-                )
-            ]
-
-        if resp.status_code == 429:
-            # A usage-endpoint 429 is a rate limit, not an expired token. Refresh tokens
-            # are single-use (a refresh rotates them), so never spend one as a remedy:
-            # back off via SmartCollector and let the token refresh near/after expiry.
-            retry_after = resp.headers.get("Retry-After")
-            # Ensure a minimum floor of 300s even if header says 0 to avoid hammering
-            wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-            wait_sec = max(wait_sec, 300)
-
-            self._last_retry_after = wait_sec
-            logger.warning(f"Anthropic API still rate limited. Retry-After: {wait_sec}s")
-            return [
-                error_card(
-                    "Claude Pro",
-                    "🟠",
-                    f"Rate Limited (429) - Try in {wait_sec / 60:.1f}m",
-                    error_type="rate_limited",
-                )
-            ]
-
-        if resp.status_code != 200:
-            return [
-                error_card(
-                    "Claude Pro", "🟠", f"API Error {resp.status_code}", error_type="api_error"
-                )
-            ]
-
-        # --- Parse response ---
-        try:
-            data = resp.json()
-        except (ValueError, KeyError) as e:
-            logger.error(f"Claude OAuth response parse failed: {e}")
-            return [error_card("Claude Pro", "🟠", "Invalid API response", error_type="api_error")]
         holder = await self._pending_identity(client, headers)
 
         # Fall back to the organization's account info when the token holder is unknown.
@@ -257,254 +216,71 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             self.account_id = holder
             if is_placeholder_label(self.account_label):
                 self.account_label = holder
+        self._publish_oauth_billing_proof(cards, generation_before)
         return cards
+
+    @staticmethod
+    def _oauth_bundle_generation() -> str | None:
+        """The generation of the bundle this attempt reads with, if any.
+
+        The generation names one exact credential bundle, so it is what a
+        proof can be bound to: a bundle replaced mid-flight has a different
+        generation, and the proof about the old one says nothing about the
+        new one.
+        """
+        selection = token_cache.selected_source("anthropic")
+        if selection is None:
+            return None
+        account_id, source_id = selection
+        return token_cache.source_generation("anthropic", account_id, source_id)
+
+    def _publish_oauth_billing_proof(
+        self, cards: list[dict[str, Any]], generation_before: str | None
+    ) -> None:
+        """Publish what this attempt proved about the credential it used.
+
+        An OAuth token has no Claude organization to read, so the model its
+        own cards describe is the only proof the strategy can make. It is
+        published together with the generation of the bundle that produced
+        it, and dropped when that bundle was replaced while the answer was in
+        flight: a proof belongs to one credential, and a stale proof can never
+        claim anything about the next one.
+        """
+        model = billing_model_from_oauth_cards(cards)
+        if model is None:
+            # The absence of a proof is no decision.
+            return
+        if generation_before is None:
+            # Nothing to bind the proof to, so it can claim nothing.
+            return
+        if self._oauth_bundle_generation() != generation_before:
+            return
+        self.verified_billing_type = model
+        self.verified_source_generation = generation_before
 
     def _extract_identity_from_oauth(self, data: dict[str, Any] | None) -> str:
         """Extract account identity string from the organization info or OAuth API response."""
-        if not data:
-            return ""
+        return oauth_identity_string(data)
 
-        # api_account_info structure
-        email = data.get("email")
-        org = data.get("organization")
-        if email and org:
-            return f"{email} @ {org}"
-        if email:
-            return email
-        if org:
-            return f"org: {org}"
-
-        # OAuth API response structure (fallback)
-        account = data.get("account", {})
-        email = account.get("email", "")
-        org = account.get("organization", "")
-
-        if email and org:
-            return f"{email} @ {org}"
-        if email:
-            return email
-        if org:
-            return f"org: {org}"
-        return ""
-
-    def _parse_oauth_response(  # noqa: PLR0915 — known-debt: provider response shape, splits poorly
+    def _parse_oauth_response(
         self,
         data: dict[str, Any],
         name_map: dict[str, str],
         api_account_info: dict | None = None,
     ) -> list[dict[str, Any]]:
-        """Parse OAuth API response into standardized quota cards."""
-        results = []
+        """Parse OAuth API response into standardized quota cards.
 
-        # Infer plan/tier from the organization info, then from the usage response.
-        tier = api_account_info.get("tier") if api_account_info else None
-
-        # Final fallback from data (if API ever includes it)
-        if not tier:
-            account = data.get("account", {})
-            plan = account.get("plan", "")
-            tier = plan.capitalize() if plan else None
-
-        # Resolve identity
-        identity_str = ""
-        if api_account_info:
-            identity_str = self._extract_identity_from_oauth(api_account_info)
-
-        if not identity_str:
-            identity_str = self._extract_identity_from_oauth(data)
-
-        identity_suffix = f" | {identity_str}" if identity_str else ""
-
-        # The account's *name*: the organization names it. Its contact address
-        # is not who holds the token, so it never becomes the account's name —
-        # and a name the operator chose is never overwritten.
-        name_str = str((api_account_info or {}).get("organization") or "") or str(
-            (data.get("account") or {}).get("organization") or ""
+        The reading itself lives in ``app.services.claude_oauth_usage`` so the
+        manual pricing path reads the same payload the same way.
+        """
+        cards = oauth_usage_cards(
+            data,
+            name_map,
+            api_account_info,
+            data_source=self.DATA_SOURCE_API,
+            input_source=getattr(self, "_current_input_source", "unknown"),
         )
-
-        # Persist identity to collector
+        name_str = oauth_organization_name(data, api_account_info)
         if name_str and is_placeholder_label(self.account_label):
             self.account_label = name_str
-
-        # Newer OAuth response shape: a top-level `limits` array of self-describing
-        # window objects (kind/group/percent/severity/scope) that coexists with (and
-        # duplicates) the legacy dict-keyed-by-window-name shape. Parse it directly
-        # as authoritative and skip synthesizing empty core cards for those, since
-        # the array already supplies session/weekly (and any per-model weekly).
-        # A present-but-empty array (partial rollout) falls back to the legacy loop.
-        limits = anthropic_limits_from(data)
-        limits_present = limits is not None
-        core_keys: list[str]
-        if limits_present:
-            results.extend(
-                build_anthropic_limit_cards(
-                    limits,
-                    tier=tier,
-                    account_label=name_str,
-                    identity_suffix=identity_suffix,
-                    data_source=self.DATA_SOURCE_API,
-                    input_source=getattr(self, "_current_input_source", "unknown"),
-                    source_label="OAuth",
-                    usage_url="https://claude.ai/settings/usage",
-                )
-            )
-            core_keys = []
-        else:
-            # Guaranteed keys to show even if null from API
-            core_keys = [
-                "five_hour",
-                "seven_day",
-            ]
-        all_keys = list(data.keys())
-        for ck in core_keys:
-            if ck not in all_keys:
-                all_keys.append(ck)
-
-        def sort_key(k):
-            try:
-                return list(name_map.keys()).index(k)
-            except ValueError:
-                return 999
-
-        for key in sorted(all_keys, key=sort_key):
-            if key == "account":
-                continue
-
-            usage = data.get(key)
-            if usage is None:
-                if key in core_keys:
-                    usage = {"utilization": 0.0, "resets_at": None}
-                else:
-                    continue
-
-            u_type = name_map.get(key, key.replace("_", " ").title())
-
-            # 1. Handle Balance/Currency fields (Prepaid or Specific Balance)
-            if key in ["current_balance", "available_balance", "balance", "credits"]:
-                try:
-                    bal = float(usage) if usage is not None else 0.0
-                    results.append(
-                        {
-                            "service_name": "Claude",
-                            "variant": u_type,
-                            "icon": "💰",
-                            "remaining": f"${bal:.2f}",
-                            "unit": "USD",
-                            "reset": "Prepaid",
-                            "health": HealthCalculator.from_balance(bal),
-                            "pace": "Manual Top-up",
-                            "detail": f"Current Balance: ${bal:.2f} [OAuth]{identity_suffix}",
-                            "used_value": 0.0,
-                            "limit_value": bal,
-                            "unit_type": "currency",
-                            "window_type": "rolling",
-                            "model_id": None,
-                            "data_source": self.DATA_SOURCE_API,
-                            "input_source": getattr(self, "_current_input_source", "unknown"),
-                            "tier": tier,
-                            "account_label": name_str,
-                            "usage_url": "https://claude.ai/settings/usage",
-                            "updated_at": datetime.now(UTC).isoformat(),
-                        }
-                    )
-                    # Only emit one balance card even if multiple keys exist
-                    break
-                except (ValueError, TypeError):
-                    logger.debug("Failed to parse balance tier", exc_info=True)
-                continue
-
-            # Skip overage when extra_usage is also present to avoid duplicate
-            # spend/limit cards (Web API parser uses the same merge logic).
-            if key == "overage" and data.get("extra_usage") is not None:
-                continue
-
-            if not isinstance(usage, dict):
-                continue
-
-            # 2. Handle Spend/Limit windows (Overage/Spent)
-            raw_spend = usage.get("spend")
-            raw_limit = usage.get("limit")
-            if raw_limit is not None and float(raw_limit) > 0:
-                spend = float(raw_spend) if raw_spend is not None else 0.0
-                limit = float(raw_limit)
-                remaining = max(0.0, limit - spend)
-                results.append(
-                    {
-                        "service_name": "Claude",
-                        "variant": u_type,
-                        "icon": "💰",
-                        "remaining": f"${remaining:.2f}",
-                        "unit": "limit",
-                        "reset": "Monthly",
-                        "health": HealthCalculator.from_spend(spend, limit),
-                        "pace": "Flexible",
-                        "detail": f"Spent: ${spend:.2f} / ${limit:.2f} [OAuth]{identity_suffix}",
-                        "used_value": spend,
-                        "limit_value": limit,
-                        "unit_type": "currency",
-                        "window_type": "monthly",
-                        "model_id": None,
-                        "data_source": self.DATA_SOURCE_API,
-                        "input_source": getattr(self, "_current_input_source", "unknown"),
-                        "tier": tier,
-                        "account_label": name_str,
-                        "usage_url": "https://claude.ai/settings/usage",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                    }
-                )
-                continue
-
-            # 3. Handle Standard Percentage windows
-            # limits[] is authoritative for percentage windows when present — skip
-            # legacy keys here to avoid duplicate/phantom cards (e.g. five_hour vs
-            # the "session" entry, or a disabled "spend"/"extra_usage" object that
-            # has neither a matching balance nor spend/limit shape).
-            if limits_present:
-                continue
-
-            raw_utilization = usage.get("utilization")
-            pct_used = float(raw_utilization) if raw_utilization is not None else 0.0
-            remaining_pct = 100.0 - pct_used
-
-            reset_raw = usage.get("resets_at") or usage.get("resetsAt")
-            reset_at = None
-            if reset_raw:
-                try:
-                    reset_at = parse_iso8601_utc(reset_raw)
-                except (ValueError, TypeError):
-                    logger.debug("Failed to parse reset_at in OAuth window", exc_info=True)
-
-            w_type = classify_anthropic_window_type(key)
-            service_name = "Claude"
-
-            results.append(
-                {
-                    "service_name": service_name,
-                    "icon": "🟠",
-                    "remaining": f"{remaining_pct:.1f}%",
-                    "unit": "capacity",
-                    "reset": human_delta(reset_at),
-                    "health": HealthCalculator.from_percentage(pct_used),
-                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                    "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
-                    "used_value": pct_used,
-                    "limit_value": 100.0,
-                    "is_unlimited": False,
-                    "unit_type": "percent",
-                    "window_type": w_type,
-                    "model_id": anthropic_model_id_for(key),
-                    "reset_at": reset_at.isoformat() if reset_at else None,
-                    "data_source": self.DATA_SOURCE_API,
-                    "input_source": getattr(self, "_current_input_source", "unknown"),
-                    "tier": tier,
-                    "account_label": name_str,
-                    "usage_url": "https://claude.ai/settings/usage",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                }
-            )
-
-        return (
-            results
-            if results
-            else [error_card("Claude Pro", "🟠", "No quota data", error_type="parse_error")]
-        )
+        return cards
