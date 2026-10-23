@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import sqlite3
 import sys
@@ -53,9 +54,25 @@ REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+
 # How far back the probe looks when the host has no cursor yet — the same
-# default the sidecar uses for its first run.
-_BOOTSTRAP_DAYS = 90
+# window the sidecar imports on its first run.
+def _bootstrap_days() -> int:
+    """The window the sidecar's first run imports.
+
+    The sidecar reads ``SIDECAR_BOOTSTRAP_DAYS``; the probe must use the
+    same one, or it would report a window the sidecar never took.
+    """
+    raw = os.getenv("SIDECAR_BOOTSTRAP_DAYS")
+    if raw is None:
+        return _DEFAULT_BOOTSTRAP_DAYS
+    try:
+        return int(raw)
+    except ValueError:
+        return _DEFAULT_BOOTSTRAP_DAYS
+
+
+_DEFAULT_BOOTSTRAP_DAYS = 90
 
 # The extractor's per-cycle row cap, quoted in the report so a reader can
 # tell "the ledger holds N requests" from "this cycle reads at most N".
@@ -90,9 +107,9 @@ def probe_command(argv: list[str]) -> bool:
 
     report = probe_minimax_code()
     if args.json:
-        print(json.dumps(report, indent=2, default=str))
+        _emit(json.dumps(report, indent=2, default=str))
     else:
-        print(format_report(report))
+        _emit(format_report(report))
     raise SystemExit(0 if report["ok"] else 1)
 
 
@@ -190,6 +207,64 @@ def _ledger_counts(db_path: Path) -> dict[str, int]:
     return counts
 
 
+def _attach_parent_console() -> bool:
+    """Attach to the console the user launched from.
+
+    PyInstaller's ``console=False`` build has ``sys.stdout is None``, so a
+    command that prints raises ``AttributeError`` instead of printing.
+    Re-attaching to the parent console is the standard fix; it fails
+    harmlessly when there is no console to attach to.
+    """
+    if sys.platform != "win32" or sys.stdout is not None:
+        return False
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        if not kernel32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
+            return False
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+        sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+        return True
+    except Exception:
+        return False
+
+
+def _write_report_file(text: str) -> Path:
+    """Write the report next to the sidecar's config, for a build with no console."""
+    path = _cursor_path().parent / "minimax_code_probe.txt"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+    return path
+
+
+def _notify_windows(message: str) -> None:
+    """Show a message box; the only way a windowed build can talk to its user."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, "Runway Sidecar", 0x40)
+    except Exception:
+        pass
+
+
+def _emit(text: str) -> None:
+    """Print the report — or put it where a windowed build's user can find it."""
+    if sys.stdout is not None:
+        print(text)
+        return
+    if _attach_parent_console():
+        print(text)
+        return
+    path = _write_report_file(text)
+    _notify_windows(f"The MiniMax Code probe wrote its report to:\n{path}")
+
+
 def probe_minimax_code() -> dict[str, Any]:
     """Collect the report the probe prints. Read-only; nothing is written."""
     from scripts.sidecar_pkg.event_extractors.minimax_code import parse_minimax_code_events
@@ -260,7 +335,7 @@ def probe_minimax_code() -> dict[str, Any]:
     events = parse_minimax_code_events(
         db_path,
         account_id="probe",
-        since=datetime.now(UTC) - timedelta(days=_BOOTSTRAP_DAYS),
+        since=datetime.now(UTC) - timedelta(days=_bootstrap_days()),
         state_file=_cursor_path(),
     )
     models: dict[str, int] = {}

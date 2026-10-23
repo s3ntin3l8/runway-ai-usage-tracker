@@ -1,7 +1,6 @@
 """Unit tests for the MiniMax Code read-only probe."""
 
 import json
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -158,8 +157,48 @@ def test_the_cursor_path_follows_the_config_dir(tmp_path, monkeypatch):
     assert probe._cursor_path() == tmp_path / "cfg" / "sidecar" / "minimax_code_watermark.json"
 
 
-def test_the_probe_uses_the_sidecar_bootstrap_window():
+def test_the_probe_uses_the_sidecar_bootstrap_window(monkeypatch):
     """The dry run looks back as far as the sidecar's first run does."""
-    assert probe._BOOTSTRAP_DAYS == 90
-    since = datetime.now(UTC) - timedelta(days=probe._BOOTSTRAP_DAYS)
-    assert since < datetime.now(UTC)
+    monkeypatch.delenv("SIDECAR_BOOTSTRAP_DAYS", raising=False)
+    assert probe._bootstrap_days() == 90
+
+
+def test_the_probe_follows_the_bootstrap_days_override(monkeypatch):
+    """The sidecar reads SIDECAR_BOOTSTRAP_DAYS; the probe must agree."""
+    monkeypatch.setenv("SIDECAR_BOOTSTRAP_DAYS", "7")
+    assert probe._bootstrap_days() == 7
+    monkeypatch.setenv("SIDECAR_BOOTSTRAP_DAYS", "not-a-number")
+    assert probe._bootstrap_days() == 90
+
+
+def test_the_probe_uses_the_same_bootstrap_window_as_the_sidecar(monkeypatch):
+    """The sidecar's own reading of the env var is the probe's reading."""
+    import scripts.sidecar as sidecar_module
+
+    monkeypatch.setenv("SIDECAR_BOOTSTRAP_DAYS", "3")
+    sidecar_days = int(sidecar_module.os.getenv("SIDECAR_BOOTSTRAP_DAYS", "90"))
+    assert probe._bootstrap_days() == sidecar_days
+
+
+def test_the_probe_finds_the_store_in_the_windows_app_data_root(tmp_path, monkeypatch):
+    """The desktop app's Windows root is probed, not just ~/.minimax."""
+    make_minimax_code_store(tmp_path, data_dir=str(Path("AppData") / "Roaming" / "MiniMax Code"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.delenv("MINIMAX_CODE_HOME", raising=False)
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+    report = probe.probe_minimax_code()
+    assert report["ok"] is True
+    assert "MiniMax Code" in report["store"]
+    assert "AppData" in report["store"]
+
+
+def test_a_windowed_build_without_a_console_writes_the_report_to_a_file(host, monkeypatch, capsys):
+    """A console=False build has sys.stdout is None; the probe must not crash."""
+    report = probe.format_report(probe.probe_minimax_code())
+    monkeypatch.setattr(probe.sys, "stdout", None)
+    monkeypatch.setattr(probe, "_attach_parent_console", lambda: False)
+    monkeypatch.setattr(probe, "_notify_windows", lambda message: None)
+    probe._emit(report)
+    written = host / "config" / "sidecar" / "minimax_code_probe.txt"
+    assert written.exists()
+    assert "RESULT: PASS" in written.read_text(encoding="utf-8")

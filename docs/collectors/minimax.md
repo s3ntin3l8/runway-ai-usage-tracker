@@ -224,22 +224,28 @@ RunwaySidecar.exe --probe-minimax-code         # Windows
 MiniMax Code runtime store — read-only probe
 
   platform            : Linux
-  store               : /home/x/.minimax/v2/sqlite/runtime-state.sqlite (117.9 MiB)
+  probed roots        : /home/x/.minimax, /home/x/Library/Application Support/MiniMax Code, …
+  store               : /home/x/.minimax/v2/sqlite/runtime-state.sqlite (129.0 MiB)
+  store modified      : 2026-10-23T16:47:13.208315+00:00
   schema              : OK
-  ledger              : 5208 requests · 34 turns · 10 sessions
+  ledger              : 5934 requests · 96 turns · 10 sessions
   plan-review rows    : 2005
-  model MiniMax-M3.1-Flash : 5000
+  model MiniMax-M3.1-Flash         : 5000
   cursor              : /home/x/.config/runway/sidecar/minimax_code_watermark.json
   cursor last id      : (none)
+  this cycle would push: 5000 request(s) (a cycle reads at most 5000 rows)
 
-  RESULT: PASS — the sidecar on this host reports MiniMax Code usage as
-  provider 'minimax' / app 'minimax_code'.
+  RESULT: PASS — the sidecar on this host reports MiniMax Code usage as provider 'minimax' / app 'minimax_code'.
 ```
 
 The probe opens the store read-only, runs the real extractor and prints its verdict; it **never
 commits the cursor**, so running it cannot make the sidecar skip rows. It exits 0 when the store was
 found and understood, and 1 when there is nothing to read (no store) or the store's schema has
 drifted. `--json` prints the same report as JSON.
+
+On a windowed build (the macOS app and the Windows `.exe` have no console of their own) the probe
+attaches to the console it was launched from; with no console to attach to it writes the report to
+`minimax_code_probe.txt` next to the sidecar's config and says so in a message box.
 
 **Platform status.** The store path is identical on every platform (the runtime resolves it from
 `homedir()`), and the probe answers the question on whichever host you run it on:
