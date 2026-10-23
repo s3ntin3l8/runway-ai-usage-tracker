@@ -73,6 +73,10 @@ Every part of the id is content-derived, which buys two properties:
   timestamp and the same usage keeps its id, so the server deduplicates
   the replay instead of counting it twice. (The ledger's own row id
   would *not* survive that: it restarts with the table.)
+
+The one case the id cannot separate is two rows with an identical
+timestamp *and* identical usage — a duplicate log entry the server would
+deduplicate anyway.
 """
 
 from __future__ import annotations
@@ -758,8 +762,11 @@ def parse_minimax_code_events(
             )
             if event_id in seen_event_ids:
                 # Two rows of the same turn share a millisecond *and* their
-                # token counts. The ledger's own row id is the last
-                # tiebreaker — it never changes for a given row.
+                # token counts — a true duplicate log entry. The ledger's own
+                # row id is the last tiebreaker. It is batch-local (the id is
+                # only known once the row is in the batch), but reaching it
+                # needs two rows with an identical timestamp and identical
+                # usage, which the server would deduplicate anyway.
                 event_id = f"{event_id}:{row_id}"
                 if event_id in seen_event_ids:
                     logger.warning(
