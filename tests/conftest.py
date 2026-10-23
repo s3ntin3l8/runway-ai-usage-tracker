@@ -261,6 +261,32 @@ def _fast_sqlite_writes():
         event.remove(Engine, "connect", disable_fsync)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def guard_implicit_text_encodings():
+    """Refuse to write non-ASCII text without an explicit encoding.
+
+    ``Path.write_text`` without an ``encoding`` argument uses the locale's
+    preferred encoding, which on a default Windows install is cp1252. Text
+    with a character outside cp1252 -- an arrow, an em-dash -- then raises
+    ``UnicodeEncodeError``, and the error names neither the encoding nor the
+    file. That is how ``tests/unit/test_gitignore_symlinked_dirs.py`` reported
+    16 errors on a Windows checkout while passing on the Linux runner.
+
+    The check runs at write time rather than in the source, because a static
+    scan cannot tell which of the suite's implicit-encoding writes can
+    produce non-ASCII: 219 of them omit the argument, and most write a value
+    a scanner cannot read. What matters is the text that is actually written.
+
+    The guard is deliberately narrow. ASCII is always safe, so it is left
+    alone; writing non-ASCII with an explicit ``encoding="utf-8"`` is the
+    supported way to do it. See ``tests/fixtures/encoding_guard.py``.
+    """
+    from tests.fixtures.encoding_guard import encoding_guard
+
+    with encoding_guard():
+        yield
+
+
 @pytest.fixture(autouse=True)
 def setup_test_settings(monkeypatch):
     """Ensure consistent settings for all tests, isolating them from the local .env."""
