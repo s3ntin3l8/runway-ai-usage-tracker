@@ -40,6 +40,15 @@ def _document() -> dict:
     return json.loads(SHIPPED_EXCEPTIONS.read_text())
 
 
+def _published_image_section() -> str:
+    """The remediation evidence's section for the published Debian 13 image."""
+    remediation = REMEDIATION.read_text()
+    heading = "### The published Debian 13 image"
+    start = remediation.index(heading)
+    end = remediation.index("\n### ", start + len(heading))
+    return remediation[start:end]
+
+
 class TestTheRecordedScan:
     def test_it_records_where_it_came_from(self):
         scan = _scan()
@@ -63,16 +72,22 @@ class TestTheRecordedScan:
                     assert severities.count(severity) == count, f"{architecture} {severity}"
 
     def test_the_image_it_records_is_the_image_the_repository_records(self):
-        """A fixture that has rotted away from its image cannot pass for ever."""
+        """A fixture that has rotted away from its image cannot pass for ever.
+
+        The remediation evidence records three images -- beta.8, the baseline
+        it replaced, and the Debian 13 one -- so the check is scoped to the
+        section this fixture claims to record. Otherwise a fixture of a
+        superseded image would still pass.
+        """
         scan = _scan()
-        remediation = REMEDIATION.read_text()
+        section = _published_image_section()
 
         digests = [scan["image"]] + [
             recorded["image"] for recorded in scan["architectures"].values()
         ]
         for reference in digests:
             digest = reference.rsplit("@", 1)[-1]
-            assert digest in remediation, f"{digest} is not recorded in the remediation evidence"
+            assert digest in section, f"{digest} is not recorded in the published image section"
 
     def test_it_records_findings(self):
         """A scan that recorded nothing would pass every check below."""
@@ -238,6 +253,16 @@ class TestRecordingAScan:
         (source / "arm64.vulnerabilities.json").unlink()
 
         with pytest.raises(ValueError, match="no arm64.vulnerabilities.json"):
+            record(source)
+
+    def test_it_refuses_evidence_without_a_database_listing(self, tmp_path):
+        """A cache with no listing.json records it as null, not as an empty mapping."""
+        source = self._audit_dir(tmp_path)
+        evidence = json.loads((source / "evidence.json").read_text())
+        evidence["database_listing"] = None
+        (source / "evidence.json").write_text(json.dumps(evidence))
+
+        with pytest.raises(ValueError, match="is not a mapping"):
             record(source)
 
     def test_it_refuses_evidence_without_the_keys_it_records(self, tmp_path):

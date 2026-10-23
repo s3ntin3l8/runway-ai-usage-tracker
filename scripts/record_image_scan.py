@@ -18,7 +18,8 @@ architectures are:
   ``release``), each with both architectures and its own ``evidence.json``.
   Pass the target with ``--target``.
 - ``image-security-amd64`` and ``image-security-arm64`` are the candidate jobs,
-  and each holds one architecture. Pass it with ``--architecture``.
+  and each holds one architecture. Neither can produce this fixture, which
+  records both architectures of one image, so the recorder does not take them.
 
 Regenerate the fixture in the same pull request that re-reviews the document,
 never on its own: a fixture that drifts from the scan it records would check
@@ -65,6 +66,8 @@ def _require(mapping: dict[str, Any], key: str, where: str) -> Any:
     with a null in it is a fixture that has quietly stopped recording
     anything.
     """
+    if not isinstance(mapping, dict):
+        raise ValueError(f"{where} is not a mapping")
     if key not in mapping:
         raise ValueError(f"{where} has no {key!r}")
     return mapping[key]
@@ -132,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     try:
         fixture = record(audit_dir, target)
-    except (OSError, ValueError) as exc:
+    except (OSError, TypeError, ValueError) as exc:
         print(f"Cannot record the scan: {exc}")
         return 1
     output.parent.mkdir(parents=True, exist_ok=True)
