@@ -329,6 +329,61 @@ def test_an_unreadable_store_does_not_hide_a_readable_one(host, monkeypatch):
     assert len(broken) == 1
 
 
+def test_a_store_whose_parse_raises_does_not_abort_the_report(host, monkeypatch):
+    """The parse is failure-isolated per store, like the other two steps."""
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    real_parse = minimax_code.parse_minimax_code_events
+
+    def fake_parse(db_path, **kwargs):
+        if ".minimax-work" in str(db_path):
+            raise RuntimeError("the store exploded")
+        return real_parse(db_path, **kwargs)
+
+    monkeypatch.setattr(minimax_code, "parse_minimax_code_events", fake_parse)
+    report = probe.probe_minimax_code()
+    assert report["ok"] is True
+    assert report["store"].endswith(".minimax/v2/sqlite/runtime-state.sqlite")
+    broken = [d for d in report["stores"] if d["error"]]
+    assert len(broken) == 1
+    assert "exploded" in broken[0]["error"]
+
+
+def test_the_report_tells_unreadable_from_incompatible(host, monkeypatch):
+    """A store that cannot be read is not the same as one that drifted."""
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    real_parse = minimax_code.parse_minimax_code_events
+
+    def fake_parse(db_path, **kwargs):
+        if ".minimax-work" in str(db_path):
+            raise RuntimeError("the store exploded")
+        return real_parse(db_path, **kwargs)
+
+    monkeypatch.setattr(minimax_code, "parse_minimax_code_events", fake_parse)
+    text = probe.format_report(probe.probe_minimax_code())
+    assert "UNREADABLE" in text
+    assert "INCOMPATIBLE" not in text
+
+
+def test_a_drifted_store_is_reported_as_incompatible(host, monkeypatch):
+    import sqlite3
+
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    conn = sqlite3.connect(host / ".minimax-work" / "v2" / "sqlite" / "runtime-state.sqlite")
+    conn.execute("ALTER TABLE local_runtime_token_usage DROP COLUMN cache_read_tokens")
+    conn.commit()
+    conn.close()
+
+    text = probe.format_report(probe.probe_minimax_code())
+    assert "INCOMPATIBLE" in text
+    assert "UNREADABLE" not in text
+
+
+def test_the_row_cap_is_stated_per_store(host):
+    """The cap is per store, so the number must not read as the cycle's total."""
+    text = probe.format_report(probe.probe_minimax_code())
+    assert "rows per store" in text
+
+
 def test_a_windowed_build_without_a_console_writes_the_report_to_a_file(host, monkeypatch, capsys):
     """A console=False build has sys.stdout is None; the probe must not crash."""
     report = probe.format_report(probe.probe_minimax_code())

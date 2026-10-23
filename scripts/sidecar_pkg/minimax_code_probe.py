@@ -359,12 +359,19 @@ def _store_detail(db_path: Path) -> dict[str, Any]:
 
     # The real extractor, on the real cursor — but its parked advance is
     # never committed, so the cursor file on disk stays exactly as it was.
-    events = parse_minimax_code_events(
-        db_path,
-        account_id="probe",
-        since=datetime.now(UTC) - timedelta(days=bootstrap_window_days()),
-        state_file=_cursor_path(),
-    )
+    # A store that blows up here must not take the whole report with it: the
+    # other stores are still readable, and the reader has to see them.
+    try:
+        events = parse_minimax_code_events(
+            db_path,
+            account_id="probe",
+            since=datetime.now(UTC) - timedelta(days=bootstrap_window_days()),
+            state_file=_cursor_path(),
+        )
+    except Exception as exc:  # noqa: BLE001 — one broken store must not abort the report
+        detail["error"] = f"the extractor failed on this store: {exc}"
+        detail["schema_ok"] = False
+        return detail
     models: dict[str, int] = {}
     plan_review = 0
     for event in events:
@@ -400,6 +407,7 @@ def probe_minimax_code() -> dict[str, Any]:
         "cursor": None,
         "cursor_last_id": None,
         "pending_requests": 0,
+        "error": None,
         "problem": None,
     }
 
@@ -442,6 +450,7 @@ def probe_minimax_code() -> dict[str, Any]:
     report["cursor_last_id"] = _cursor_last_id(cursor)
 
     if primary["error"]:
+        report["error"] = primary["error"]
         report["problem"] = primary["error"]
         return report
     if not report["schema_ok"]:
@@ -475,6 +484,20 @@ def _cursor_last_id(cursor: Path) -> int | None:
     return last
 
 
+def _schema_state(schema_ok: bool, error: str | None = None) -> str:
+    """Label a store: readable, drifted, or unreadable.
+
+    A store that cannot be read at all is a different failure from one whose
+    schema has drifted away from what the extractor understands, and the
+    reader has to be able to tell the two apart.
+    """
+    if schema_ok:
+        return "OK"
+    if error:
+        return "UNREADABLE"
+    return "INCOMPATIBLE"
+
+
 def format_report(report: dict[str, Any]) -> str:
     """Render the report as the text the probe prints."""
     lines = ["MiniMax Code runtime store — read-only probe", ""]
@@ -494,7 +517,9 @@ def format_report(report: dict[str, Any]) -> str:
         lines.append(f"  missing tables      : {', '.join(report['missing_tables'])}")
     for table, columns in report["missing_columns"].items():
         lines.append(f"  missing columns     : {table} → {', '.join(columns)}")
-    lines.append(f"  schema              : {'OK' if report['schema_ok'] else 'INCOMPATIBLE'}")
+    lines.append(
+        f"  schema              : {_schema_state(report['schema_ok'], report.get('error'))}"
+    )
     if report["store"]:
         lines.append(
             f"  ledger              : {report['requests']} requests"
@@ -508,14 +533,14 @@ def format_report(report: dict[str, Any]) -> str:
         lines.append(f"  cursor last id      : {last if last is not None else '(none)'}")
         lines.append(
             f"  this cycle would push: {report['pending_requests']} request(s)"
-            f" (a cycle reads at most {_MAX_ROWS_PER_CYCLE} rows)"
+            f" (a cycle reads at most {_MAX_ROWS_PER_CYCLE} rows per store)"
         )
     other = [detail for detail in stores if detail["path"] != report["store"]]
     if other:
         lines.append("")
         lines.append("  other stores:")
         for detail in other:
-            state = "OK" if detail["schema_ok"] else "INCOMPATIBLE"
+            state = _schema_state(detail["schema_ok"], detail.get("error"))
             lines.append(
                 f"    {detail['path']} — {state}"
                 f" · {detail['requests']} requests · {detail['sessions']} sessions"

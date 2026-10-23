@@ -252,7 +252,7 @@ MiniMax Code runtime store — read-only probe
   model MiniMax-M3.1-Flash         : 5000
   cursor              : /home/x/.config/runway/sidecar/minimax_code_watermark.json
   cursor last id      : (none)
-  this cycle would push: 5000 request(s) (a cycle reads at most 5000 rows)
+  this cycle would push: 5000 request(s) (a cycle reads at most 5000 rows per store)
 
   RESULT: PASS — the sidecar on this host reports MiniMax Code usage as provider 'minimax' / app 'minimax_code'.
 ```
