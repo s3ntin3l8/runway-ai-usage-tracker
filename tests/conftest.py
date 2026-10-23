@@ -256,9 +256,14 @@ def _restore_config_settings():
     changes is worse than one that fails loudly.
     """
     config_module = sys.modules["app.core.config"]
-    settings_obj = config_module.settings
+    snapshot = dict(config_module.__dict__)
     yield
-    config_module.settings = settings_obj
+    # Put the module back whole: the reload rebinds more than ``settings``
+    # (the ``Settings`` class among them), so restoring one attribute would
+    # leave the module half-reloaded - ``type(config.settings) is
+    # config.Settings`` would be False.
+    config_module.__dict__.clear()
+    config_module.__dict__.update(snapshot)
 
 
 def _install_stack_dump() -> None:
