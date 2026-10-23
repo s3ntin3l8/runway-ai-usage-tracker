@@ -168,7 +168,7 @@ def test_authorization_child_reports_a_denied_keychain_read(monkeypatch, tmp_pat
     path = tmp_path / "config.json"
     config.save_local_config(path, consent.SourcePolicy.enable_all({}))
     monkeypatch.setattr(config, "get_config_path", lambda: path)
-    monkeypatch.setattr(macos_keychain_store, "_NativeAPI", lambda: object())
+    monkeypatch.setattr(macos_keychain_store, "_NativeAPI", object)
     monkeypatch.setattr(
         keychain_authorization,
         "authorize_once",
