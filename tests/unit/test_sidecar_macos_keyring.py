@@ -465,6 +465,9 @@ class TestAgyKeychain:
         from scripts.sidecar_pkg import agy_keychain, keep_alive
 
         monkeypatch.setattr(keep_alive, "DEFAULT_TOKEN_PATH", tmp_path / "antigravity-oauth-token")
+        # The reader is macOS-only; pin the platform so these tests say the same
+        # thing on every host.
+        monkeypatch.setattr(agy_keychain.platform, "system", lambda: "Darwin")
         self._token_file = tmp_path / "antigravity-oauth-token"
         self._agy_keychain = agy_keychain
 
