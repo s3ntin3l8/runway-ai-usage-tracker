@@ -29,7 +29,6 @@ manifests cleanly.
 from __future__ import annotations
 
 import importlib
-import sys
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
@@ -39,29 +38,6 @@ from app.core.db import get_session
 from app.main import app
 from app.models.db import ProviderConfig
 from tests.fixtures.test_client import TestClient
-
-
-@pytest.fixture
-def _restore_config_module():
-    """Restore ``app.core.config.settings`` after this file's explicit reload.
-
-    ``importlib.reload`` re-instantiates the module's ``settings`` attribute.
-    A consumer that bound ``from app.core.config import settings`` at the top
-    of its file keeps the pre-reload instance, so leaving the fresh one in
-    place makes the two diverge for the rest of the session: a later test
-    that patches its own top-level binding silently misses the live object
-    the late-import consumers read. The fleet source protocol does exactly
-    that, and its shared-key check fails on the mismatch.
-
-    ``tests/unit/test_config.py`` restores the same attribute for the same
-    reason; without it the reload leaks past that file too.
-    """
-    config_module = sys.modules.get("app.core.config")
-    settings_obj = getattr(config_module, "settings", None)
-    yield
-    if config_module is not None and settings_obj is not None:
-        config_module.settings = settings_obj
-
 
 REGRESSION_KEY = "regression-guard-pr297-key"
 
@@ -106,9 +82,7 @@ def _add_provider_config(
     session.commit()
 
 
-def test_fleet_config_issues_token_after_explicit_settings_reload(
-    monkeypatch, client, session, _restore_config_module
-):
+def test_fleet_config_issues_token_after_explicit_settings_reload(monkeypatch, client, session):
     """Regression guard for the PR #297 late-import fix.
 
     1. Pin ``INGEST_API_KEY`` via dotted-path (reload-proof pattern).
