@@ -41,6 +41,76 @@ def venv_python() -> Path:
     return ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+def without_git_env() -> dict[str, str]:
+    """The environment without git's repository variables.
+
+    A git hook sets them for the commands it runs, and the suite must not
+    inherit them: during a commit, GIT_INDEX_FILE points at the temporary
+    index git is about to write, so a test that runs git would act on the
+    repository being committed instead of the throwaway one it created.
+
+    Everything git sets is dropped, by prefix rather than by name: git also
+    propagates arbitrary ``-c`` configuration to a hook as
+    ``GIT_CONFIG_PARAMETERS``, so a list of names would be a list to keep in
+    step with git. ``tests/conftest.py``'s ``isolated_git`` fixture drops them
+    the same way, for the same reason.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+#: The repository root, captured before anything can repoint ROOT. The git
+#: helpers below have to run in the real checkout even when a caller has
+#: pointed ROOT somewhere else.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+#: The hook script this repository installs. It resolves its interpreter at run
+#: time, so a hook installed from a worktree keeps working when that worktree
+#: is removed -- see ``scripts/hooks/git-hook.sh``.
+HOOK_SCRIPT = REPO_ROOT / "scripts" / "hooks" / "git-hook.sh"
+HOOK_TYPES = ("pre-commit", "pre-push")
+
+
+def git_hooks_dir() -> Path:
+    """The repository's shared hooks directory.
+
+    Every worktree writes to the same two hook files: ``git rev-parse
+    --git-path hooks`` resolves to the *common* git directory, not to the
+    worktree's own.
+    """
+    completed = subprocess.run(
+        ["git", "rev-parse", "--git-path", "hooks"],
+        cwd=REPO_ROOT,
+        env=without_git_env(),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    hooks = Path(completed.stdout.strip())
+    return hooks if hooks.is_absolute() else REPO_ROOT / hooks
+
+
+def install_git_hooks() -> None:
+    """Install this repository's hook script into the shared hooks directory.
+
+    ``pre-commit install`` writes a script that pins the interpreter that ran
+    it, so installing from a worktree breaks every commit in every worktree
+    once that worktree is removed. This script resolves its interpreter when
+    it runs instead, so where it was installed from does not matter.
+    """
+    hooks = git_hooks_dir()
+    hooks.mkdir(parents=True, exist_ok=True)
+    source = HOOK_SCRIPT.read_text(encoding="utf-8")
+    for hook_type in HOOK_TYPES:
+        target = hooks / hook_type
+        target.write_text(source, encoding="utf-8", newline="\n")
+        target.chmod(0o755)
+    print(f"installed {HOOK_SCRIPT.name} as {', '.join(HOOK_TYPES)} in {hooks}")
+    print("  the hook resolves its interpreter when it runs, so it survives the")
+    print("  worktree it was installed from being removed.")
+    print("  a worktree still needs its own .venv for the mypy and pytest hooks:")
+    print("    python scripts/dev_checks.py install-python")
+
+
 def npm_command() -> list[str]:
     npm = shutil.which("npm")
     if npm is None:
@@ -68,7 +138,7 @@ def execute(
     isolated_paths: dict[str, str] | None = None,
     stdout: Path | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
-    env = {**os.environ, "PYTHONUTF8": "1"}
+    env = {**without_git_env(), "PYTHONUTF8": "1"}
     if isolated_paths is not None:
         # Isolate filesystem state, not every runtime setting. Tests requiring
         # default API/CORS/auth settings must clear those inherited variables.
@@ -138,6 +208,20 @@ def parallel_args(jobs: int) -> list[str]:
     return ["-n", str(jobs), "--dist", "loadfile"]
 
 
+#: The tasks that run without a virtualenv. ``install`` and ``install-python``
+#: create one, the frontend tasks use Node, ``install-hooks`` only copies a
+#: script, and ``remove-worktree`` has to work when the environment is exactly
+#: what is broken.
+TASKS_WITHOUT_VENV = {
+    "install",
+    "install-python",
+    "install-hooks",
+    "web-test",
+    "web-lint",
+    "remove-worktree",
+}
+
+
 def check(
     task: str,
     extra: list[str],
@@ -146,12 +230,9 @@ def check(
     shards: int = DEFAULT_SHARDS,
     jobs: int = 0,
     requirements_set: str = "all",
-) -> None:
+) -> int:
     interpreter = venv_python()
-    if (
-        task not in {"install", "install-python", "web-test", "web-lint"}
-        and not interpreter.is_file()
-    ):
+    if task not in TASKS_WITHOUT_VENV and not interpreter.is_file():
         raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
     python = str(interpreter)
     if task == "install-python":
@@ -164,8 +245,17 @@ def check(
         execute([*npm_command(), "--prefix", "webapp", "ci"])
         check("install-hooks", [])
     elif task == "install-hooks":
-        execute([python, "-m", "pre_commit", "install"])
-        execute([python, "-m", "pre_commit", "install", "--hook-type", "pre-push"])
+        install_git_hooks()
+    elif task == "remove-worktree":
+        # A worktree links the main checkout's .venv into itself, and
+        # `git worktree remove` follows that link on Windows -- it deletes the
+        # main checkout's virtualenv. The helper drops the links first, so the
+        # removal only ever deletes the worktree's own files.
+        if not extra:
+            raise RuntimeError("remove-worktree needs the path of the worktree to remove")
+        from scripts.remove_worktree import remove_worktree
+
+        return remove_worktree(Path(extra[0]), cwd=ROOT)
     elif task == "lint":
         execute([python, "-m", "ruff", "check", "."])
         execute([python, "-m", "ruff", "format", "--check", "."])
@@ -279,6 +369,7 @@ def check(
         check("test", [], jobs=jobs)
         check("web-lint", [])
         check("web-test", [])
+    return 0
 
 
 def main() -> int:
@@ -289,6 +380,7 @@ def main() -> int:
             "install",
             "install-python",
             "install-hooks",
+            "remove-worktree",
             "lint",
             "mypy",
             "test",
@@ -323,7 +415,14 @@ def main() -> int:
         "included",
     )
     args, extra = parser.parse_known_args()
-    if extra and args.task not in {"test", "unit", "test-shard", "test-windows", "web-test"}:
+    if extra and args.task not in {
+        "test",
+        "unit",
+        "test-shard",
+        "test-windows",
+        "web-test",
+        "remove-worktree",
+    }:
         parser.error("additional arguments are supported only for test commands")
     if args.requirements_set != "all" and args.task != "install-python":
         parser.error("--set is supported only for the install-python task")
@@ -353,7 +452,7 @@ def main() -> int:
         default = "4" if args.task == "record-shard-weights" else "0"
         jobs = int(os.environ.get("RUNWAY_TEST_JOBS", default))
     try:
-        check(
+        status = check(
             args.task,
             extra,
             shard_id=shard_id,
@@ -365,7 +464,7 @@ def main() -> int:
         return exc.returncode
     except RuntimeError as exc:
         parser.exit(1, f"{exc}\n")
-    return 0
+    return status or 0
 
 
 if __name__ == "__main__":

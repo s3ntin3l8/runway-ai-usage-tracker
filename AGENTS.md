@@ -68,14 +68,23 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
 - **File a GitHub issue for anything a plan defers, blocks, or descopes**, and
   link it from the PR — a footnote in a plan doc is not a durable record.
 - **Post-merge cleanup:** `git branch -d <branch>`,
-  `git push origin --delete <branch>`, and `git worktree remove <path>` if a
-  worktree was used. Skipping this lets stale references accumulate.
+  `git push origin --delete <branch>`, and `python scripts/dev_checks.py
+  remove-worktree <path>` if a worktree was used. Skipping this lets stale
+  references accumulate. Remove the worktree with that helper, not with
+  `git worktree remove`: a worktree that links the main checkout's `.venv`
+  into itself holds a directory junction, and `git worktree remove` follows
+  it and deletes the main checkout's virtualenv.
 - **Fresh clone or worktree:** run `make install` first (venv, Python + webapp
   dependencies, git hooks) — none of it is inherited. On native Windows use
   `python scripts/dev_checks.py install` instead. Git hooks are shared by every
-  worktree of the repository, so install them once from the main checkout
-  (`make install-hooks`); a hook installed from a worktree keeps pointing at
-  that worktree's interpreter and stops working when the worktree is removed.
+  worktree of the repository, so install them once (`make install-hooks`); the
+  hook resolves its interpreter when it runs, so installing it from a worktree
+  is no longer a trap — the interpreter it uses is the worktree's own `.venv`
+  if it has one, and the main checkout's otherwise. A worktree that commits
+  still needs its own `.venv`, because the mypy and pytest hooks resolve the
+  interpreter from the checkout being committed. The hook script itself lives
+  in the repository (`scripts/hooks/git-hook.sh`) and is **copied** into
+  `.git/hooks`, so re-run `make install-hooks` after changing it.
   The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22.2+
   on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, `react-router` pins
   `>=22.22.0`, and the `jsdom` 30 upgrade pins

@@ -2819,3 +2819,31 @@ def test_saving_an_account_without_a_model_leaves_the_source_alone(client, sessi
     ).one()
     assert row.billing_type == "unknown"
     assert row.billing_type_source is None
+
+
+def test_preview_account_does_not_fail_on_a_corrupt_quota(client, monkeypatch):
+    """A quota the collector cannot read is no answer, not a 500.
+
+    The wizard asks the server what the account behind the credential bills.
+    A payload the collector cannot understand proves nothing, so the preview
+    answers "no model" -- the same answer the cookie path gives when the
+    organizations it read do not agree.
+    """
+    import app.services.claude_oauth_usage as oauth_usage
+
+    async def _corrupt_usage(client, token):
+        return {"five_hour": {"utilization": True}}
+
+    monkeypatch.setattr(oauth_usage, "fetch_oauth_usage", _corrupt_usage)
+
+    r = client.post(
+        "/api/v1/system/provider-config/preview-account",
+        json={
+            "provider_id": "anthropic",
+            "api_key": "sk-ant-oat-test",  # pragma: allowlist secret
+            "detect_billing": True,
+        },
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["suggested_billing_type"] is None

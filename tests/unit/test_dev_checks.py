@@ -147,6 +147,7 @@ def test_install_installs_the_union(monkeypatch):
 
 def test_install_uses_lockfile_and_both_hooks(monkeypatch):
     commands = []
+    installed = []
     dc.venv_python().unlink()
 
     def execute(command):
@@ -156,11 +157,28 @@ def test_install_uses_lockfile_and_both_hooks(monkeypatch):
 
     monkeypatch.setattr(dc, "execute", execute)
     monkeypatch.setattr(dc, "npm_command", lambda: ["node", "npm-cli.js"])
+    monkeypatch.setattr(dc, "install_git_hooks", lambda: installed.append(True))
     dc.check("install", [])
     assert commands[0][1:3] == ["-m", "venv"]
     assert ["node", "npm-cli.js", "--prefix", "webapp", "ci"] in commands
-    assert commands[-2][-3:] == ["-m", "pre_commit", "install"]
-    assert commands[-1][-2:] == ["--hook-type", "pre-push"]
+    # The hooks are no longer installed by `pre-commit install`, which wrote
+    # a script with the installing interpreter baked in.
+    assert not any("pre_commit" in part for command in commands for part in command)
+    assert installed == [True]
+
+
+def test_install_hooks_copies_the_tracked_script(tmp_path, monkeypatch):
+    """The installed hook is the repository's own script, with no baked path."""
+    hooks = tmp_path / "hooks"
+    monkeypatch.setattr(dc, "git_hooks_dir", lambda: hooks)
+    dc.install_git_hooks()
+    for hook_type in ("pre-commit", "pre-push"):
+        installed = hooks / hook_type
+        assert installed.is_file()
+        source = installed.read_text(encoding="utf-8")
+        assert source == dc.HOOK_SCRIPT.read_text(encoding="utf-8")
+        assert "INSTALL_PYTHON" not in source
+        assert str(dc.REPO_ROOT) not in source
 
 
 def test_tests_get_an_owned_root_and_keep_pytest_arguments(monkeypatch):
@@ -280,10 +298,67 @@ def test_shard_settings_come_from_the_environment(monkeypatch):
 
 @pytest.mark.parametrize(
     "task",
-    ["install-hooks", "lint", "mypy", "test", "unit", "test-shard", "gate", "record-shard-weights"],
+    ["lint", "mypy", "test", "unit", "test-shard", "gate", "record-shard-weights"],
 )
 def test_missing_venv_reports_install_before_running_commands(tmp_path, monkeypatch, task):
     dc.venv_python().unlink()
     monkeypatch.setattr(dc, "execute", lambda *a, **k: pytest.fail("check ran without .venv"))
     with pytest.raises(RuntimeError, match=r"python scripts/dev_checks.py install first"):
         dc.check(task, [])
+
+
+def test_install_hooks_does_not_need_a_venv(monkeypatch, tmp_path):
+    """Installing the hooks copies a file; it does not run a check."""
+    dc.venv_python().unlink()
+    monkeypatch.setattr(dc, "git_hooks_dir", lambda: tmp_path / "hooks")
+    monkeypatch.setattr(dc, "execute", lambda *a, **k: pytest.fail("install-hooks ran a command"))
+    dc.check("install-hooks", [])
+    assert (tmp_path / "hooks" / "pre-commit").is_file()
+
+
+@pytest.mark.parametrize(
+    "isolated_paths",
+    [
+        None,
+        {"HOME": "/tmp/runway-test", "RUNWAY_CONFIG_DIR": "/tmp/runway-test/config"},
+    ],
+)
+def test_the_suite_runs_without_gits_variables(monkeypatch, isolated_paths):
+    """No ``GIT_*`` variable survives into the environment the suite runs in.
+
+    The filter is by prefix, not by name. Git propagates arbitrary ``-c``
+    configuration to a hook as ``GIT_CONFIG_PARAMETERS``, and sets a dozen
+    more variables besides, so an allowlist of names would be a list to keep
+    in step with git. ``GIT_CONFIG_PARAMETERS`` and ``GIT_AUTHOR_NAME`` are
+    not in any list this repository has had, which is what makes them the
+    interesting ones here: a change back to a named allowlist would leave
+    them behind and fail this test.
+
+    Every suite task calls ``execute(..., isolated_paths=...)``, so the
+    isolated branch is the one production takes; it is parametrised in here
+    rather than left uncovered.
+    """
+    for name in (
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_AUTHOR_NAME",
+        "GIT_EXEC_PATH",
+    ):
+        monkeypatch.setenv(name, "value")
+    monkeypatch.setenv("NOT_A_GIT_VARIABLE", "kept")
+
+    captured: dict[str, str] = {}
+
+    def capture(command, **kwargs):
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(dc.subprocess, "run", capture)
+    dc.execute(["synthetic-check"], isolated_paths=isolated_paths)
+
+    # The names are what is useful: the whole environment would print the
+    # runner's values into the CI log.
+    leaked = [name for name in captured if name.startswith("GIT_")]
+    assert not leaked, leaked
+    assert captured["NOT_A_GIT_VARIABLE"] == "kept"

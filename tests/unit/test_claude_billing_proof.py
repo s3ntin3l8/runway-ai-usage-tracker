@@ -484,3 +484,147 @@ def test_a_web_window_with_no_usable_number_decides_nothing():
     assert all(card.get("billing_evidence") == "placeholder" for card in windows)
     # Nothing in that payload is evidence, so nothing is decided.
     assert detect_billing_type(cards) == UNKNOWN
+
+
+def test_a_boolean_percentage_is_refused_not_read_as_one_percent():
+    """``float(True)`` is 1.0, so a boolean would invent a percentage."""
+    from app.services.claude_oauth_usage import oauth_usage_cards
+    from app.services.collectors._anthropic_common import (
+        ANTHROPIC_WINDOW_NAME_MAP,
+        anthropic_published_percent,
+    )
+
+    with pytest.raises(ValueError):
+        anthropic_published_percent({"utilization": True}, "utilization")
+
+    # The window is published, but the number in it is not a number: the
+    # collector refuses it rather than reading it as the 1 % it would become.
+    with pytest.raises(ValueError):
+        oauth_usage_cards(
+            {"five_hour": {"utilization": True}},
+            ANTHROPIC_WINDOW_NAME_MAP,
+            None,
+            data_source="api",
+            input_source="config",
+        )
+
+
+def test_a_boolean_in_a_limits_entry_is_refused():
+    """The limits[] path reads its percentage through the same rule."""
+    from app.services.claude_oauth_usage import oauth_usage_cards
+    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+
+    with pytest.raises(ValueError):
+        oauth_usage_cards(
+            {
+                "limits": [
+                    {
+                        "kind": "session",
+                        "group": "session",
+                        "percent": True,
+                        "severity": "normal",
+                        "resets_at": None,
+                        "scope": {"model": None, "surface": None},
+                        "is_active": True,
+                    }
+                ]
+            },
+            ANTHROPIC_WINDOW_NAME_MAP,
+            None,
+            data_source="api",
+            input_source="config",
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_boolean_decides_no_model_on_any_path():
+    """No path may read a boolean as the percentage that decides a model."""
+    from app.services.billing_type import UNKNOWN, detect_billing_type
+    from app.services.collectors.anthropic import AnthropicCollector
+    from app.services.token_cache import token_cache
+
+    collector = AnthropicCollector(account_id="default")
+
+    # The Web path: the corrupt quota is an error card, not a 1 % window.
+    web_cards = collector._parse_web_usage({"five_hour": {"utilization": True}})
+    assert web_cards
+    assert all(card.get("error_type") == "parse_error" for card in web_cards)
+    assert detect_billing_type(web_cards) == UNKNOWN
+
+    # The OAuth strategy: the same payload is an error card there too, and it
+    # publishes no proof.
+    await token_cache.store(
+        "anthropic",
+        {"oauth_token": "sk-ant-oat-test"},  # pragma: allowlist secret
+        account_id="default",
+        source_id="source-a",
+    )
+    try:
+        strategy = AnthropicCollector()
+        async with token_cache.using_source("anthropic", "default", "source-a"):
+            cards = await strategy._get_claude_oauth(
+                _oauth_client({"five_hour": {"utilization": True}}),
+                "sk-ant-oat-test",  # pragma: allowlist secret
+            )
+        assert cards
+        assert all(card.get("error_type") == "parse_error" for card in cards)
+        assert strategy.verified_billing_type is None
+    finally:
+        await token_cache.reset()
+
+
+def test_a_boolean_money_field_is_refused():
+    """A boolean is not a balance or a limit either."""
+    from app.services.claude_oauth_usage import oauth_usage_cards
+    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    # A balance the account did not publish is no balance: the card is skipped
+    # rather than invented as $1.00.
+    cards = oauth_usage_cards(
+        {"current_balance": True},
+        ANTHROPIC_WINDOW_NAME_MAP,
+        None,
+        data_source="api",
+        input_source="config",
+    )
+    assert not [card for card in cards if card.get("unit") == "USD"]
+
+    # A limit that is a boolean would decide pay-as-you-go on a number the
+    # account never published, so it refuses instead.
+    with pytest.raises(ValueError):
+        oauth_usage_cards(
+            {"five_hour": {"limit": True, "spend": 0}},
+            ANTHROPIC_WINDOW_NAME_MAP,
+            None,
+            data_source="api",
+            input_source="config",
+        )
+
+    # The web collector reads the same fields the same way. A balance it
+    # cannot read leaves no balance card behind.
+    collector = AnthropicCollector(account_id="default")
+    web_cards = collector._parse_web_usage({"current_balance": True})
+    assert web_cards == []
+
+    # A limit it cannot read is an error, not a missing card.
+    web_limit = collector._parse_web_usage({"extra_usage": {"limit": True, "spend": 0}})
+    assert [card.get("error_type") for card in web_limit] == ["parse_error"]
+    assert not [card for card in web_limit if card.get("unit_type") == "currency"]
+
+
+@pytest.mark.asyncio
+async def test_the_manual_pricing_path_survives_a_corrupt_quota():
+    """The preview answers a question; a quota it cannot read proves nothing."""
+    from app.services.claude_oauth_usage import billing_model_from_oauth_usage
+
+    for payload in (
+        {"five_hour": {"utilization": True}},
+        {"five_hour": {"utilization": "invalid"}},
+        {"five_hour": {"limit": True, "spend": 0}},
+    ):
+        model = await billing_model_from_oauth_usage(
+            _oauth_client(payload),
+            "sk-ant-oat-test",  # pragma: allowlist secret
+        )
+        assert model is None
