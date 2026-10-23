@@ -2,6 +2,12 @@
 
 Tracks #526, #750, #764 and #773; implementation is in PR #751.
 
+The later public-API experiment, latest failed isolation result, containment,
+and diagnostic follow-up are recorded in
+[public update probe evidence](claude-keychain-public-update-probe-773.md).
+That incomplete result does not establish the cause of the lock-state change
+or recurring prompts, or a supported renewal path.
+
 The former synthetic harness changed the user's default Keychain and search list.
 Its locked-target fault used the child process's default Keychain, which could be
 login rather than the temporary fixture. This was an unsafe test isolation failure.
