@@ -149,3 +149,13 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
 export function credentialOriginKind(origin: string): CredentialOriginKind {
   return describeCredentialOrigin(origin).kind;
 }
+
+/**
+ * Include a named owning client; generic browser attribution adds no information.
+ *
+ * "Browser" is what the server calls a cookie whose browser it could not name,
+ * so it says nothing; "Chrome", "Codex CLI" or "Claude Desktop" do.
+ */
+export function hasNamedOriginApp(app: string | null | undefined): app is string {
+  return Boolean(app && app !== 'Browser');
+}

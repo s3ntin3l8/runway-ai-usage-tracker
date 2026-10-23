@@ -1029,6 +1029,12 @@ def test_pending_endpoint_describes_the_source_in_words(client: TestClient, sess
     PendingCredentialTagRepo.upsert(
         session,
         sidecar_id="alpha",
+        provider_id="anthropic",
+        credential_origin="cookie:anthropic/Chrome/Work/Cookies",
+    )
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
         provider_id="opencode",
         credential_origin="path:/home/u/.local/share/opencode/auth.json",
     )
@@ -1044,6 +1050,13 @@ def test_pending_endpoint_describes_the_source_in_words(client: TestClient, sess
     assert by_origin["cookie:opencode/session"]["origin_label"] == "Browser cookie"
     assert by_origin["cookie:opencode/session"]["origin_detail"] is None
     assert by_origin["path:/home/u/.local/share/opencode/auth.json"]["origin_label"] == "auth.json"
+    # The owning client names the credential: the browser a native Claude cookie
+    # came from, the tool a file belongs to.
+    assert by_origin["cookie:anthropic/Chrome/Work/Cookies"]["origin_app"] == "Chrome"
+    assert by_origin["cookie:opencode/Chrome/Profile 1/Cookies"]["origin_app"] == "Browser"
+    assert by_origin["path:/home/u/.local/share/opencode/auth.json"]["origin_app"] == "OpenCode"
+    # The private profile of a native Claude cookie never reaches the payload.
+    assert by_origin["cookie:anthropic/Chrome/Work/Cookies"]["origin_detail"] is None
 
 
 def test_pending_endpoint_filters_by_sidecar(client: TestClient, session: Session):

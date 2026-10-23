@@ -606,6 +606,8 @@ export interface UntaggedCredential {
   credential_origin: string;
   /** What the credential is, in words: "Browser cookie", "auth.json", … */
   origin_label?: string;
+  /** The tool that owns it: "Chrome" for a native Claude cookie, "Codex CLI" for a file, … */
+  origin_app?: string | null;
   /** Extra context for the origin: the browser and profile a cookie came from. */
   origin_detail?: string | null;
   first_seen?: string | null;

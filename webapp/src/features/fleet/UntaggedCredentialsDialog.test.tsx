@@ -744,13 +744,15 @@ describe('stageToBody', () => {
 });
 
 it('uses source organization verification for Claude browser entries without exposing fingerprints', async () => {
-  vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({ items: [{ ...entry, credential_origin: 'cookie:anthropic/Chrome/Work/Cookies#secretfingerprint', source_id: 'source-a' }], counts_by_sidecar: { laptop: 1 } });
+  vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({ items: [{ ...entry, credential_origin: 'cookie:anthropic/Chrome/Work/Cookies#secretfingerprint', source_id: 'source-a', origin_app: 'Chrome' }], counts_by_sidecar: { laptop: 1 } });
   vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
   vi.mocked(api.fetchClaudeSourceOrganizations).mockResolvedValue({ organizations: [], complete: false, selection_required: true });
   renderWithProviders(<UntaggedCredentialsDialog open onClose={vi.fn()} />);
-  // The source is named like every other credential: the cookie is named, and
-  // the browser and profile stay on the raw origin line below it.
-  expect(await screen.findByText('Session cookie')).toBeInTheDocument();
+  // The source is named like every other credential: the cookie is named and
+  // the client that holds it, and the browser and profile stay on the raw
+  // origin line below it.
+  expect(await screen.findByText('Chrome · Session cookie')).toBeInTheDocument();
+  expect(screen.queryByText('Session cookie')).not.toBeInTheDocument();
   expect(screen.queryByText('Chrome · Work')).not.toBeInTheDocument();
   // The origin is still there for the operator, without its fingerprint.
   expect(await screen.findByText('cookie:anthropic/Chrome/Work/Cookies')).toBeInTheDocument();
@@ -764,7 +766,12 @@ describe('the source of a pending credential', () => {
   it('names a browser cookie in words, and keeps the raw origin for diagnostics', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [
-        { ...entry, provider_id: 'opencode', credential_origin: 'cookie:opencode/session' },
+        {
+          ...entry,
+          provider_id: 'opencode',
+          credential_origin: 'cookie:opencode/session',
+          origin_app: 'Browser',
+        },
       ],
       counts_by_sidecar: { laptop: 1 },
     });
@@ -773,6 +780,8 @@ describe('the source of a pending credential', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('Browser cookie')).toBeInTheDocument();
+    // A generic "Browser" says nothing, so it is not named.
+    expect(within(dialog).queryByText(/^Browser · /)).not.toBeInTheDocument();
     // The operator can tell it apart from another credential file.
     expect(
       within(dialog).getByText(/A browser session cookie the machine scraped/),
@@ -803,6 +812,7 @@ describe('the source of a pending credential', () => {
           // old wording keyed on.
           source_id: 'source-a',
           origin_label: 'Session cookie',
+          origin_app: 'Chrome',
           origin_detail: null,
         },
       ],
@@ -812,7 +822,12 @@ describe('the source of a pending credential', () => {
     renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
 
     const dialog = await screen.findByRole('dialog');
-    expect(await within(dialog).findByText('Session cookie')).toBeInTheDocument();
+    expect(await within(dialog).findByText('Chrome · Session cookie')).toBeInTheDocument();
+    // The row's accessible name names the client too, so two cookie rows on
+    // one machine are not the same thing to a screen reader.
+    expect(
+      within(dialog).getByRole('group', { name: /^Chrome · Session cookie on / }),
+    ).toBeInTheDocument();
     // The private profile never reaches a label.
     expect(within(dialog).queryByText('Chrome · Work')).not.toBeInTheDocument();
     // The raw origin keeps it, for the operator.

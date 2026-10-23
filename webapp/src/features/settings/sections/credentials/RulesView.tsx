@@ -18,7 +18,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { maskAccountId } from '@/lib/accountDisplay';
-import { hasNamedOriginApp } from './display';
+import { hasNamedOriginApp } from '@/lib/credentialOrigin';
 
 function ruleKey(t: CredentialTag): string {
   return `${t.provider_id}/${t.credential_origin}/${t.sidecar_id ?? '*'}`;

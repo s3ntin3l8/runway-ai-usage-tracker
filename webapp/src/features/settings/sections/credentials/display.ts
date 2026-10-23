@@ -11,6 +11,7 @@ import type {
   CredentialUnusedReason,
 } from '@/api/types';
 import { maskAccountId } from '@/lib/accountDisplay';
+import { hasNamedOriginApp } from '@/lib/credentialOrigin';
 import { timeAgo } from '@/lib/format';
 
 export const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
@@ -65,11 +66,6 @@ export const MAPPING_HINT: Record<CredentialMapping, string> = {
   server: 'Found in an environment variable or file on the server host.',
   pending: 'No account is known yet. Assign one under "Needs mapping".',
 };
-
-/** Include a named owning client; generic browser attribution adds no information. */
-export function hasNamedOriginApp(app: string | null | undefined): app is string {
-  return Boolean(app && app !== 'Browser');
-}
 
 /** "Codex CLI · auth.json", "Browser cookie", "GITHUB_TOKEN" — what a credential is. */
 export function originTitle(s: CredentialSourceView): string {
