@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.13](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.12...v3.0.0-beta.13) (2026-10-23)
+
+
+### Features
+
+* **sidecar:** add a read-only host probe for the MiniMax Code store ([#850](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/850)) ([3e422d0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3e422d0e1e510a399d883f1b78033bb395bb15da))
+* **sidecar:** add Keychain consent and Fleet source controls ([#807](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/807)) ([00c4432](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/00c4432829fda62b532c6dddc6313da1d29f4496))
+* **sidecar:** read the Antigravity token from the macOS Keychain ([#827](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/827)) ([a9f643a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a9f643a28a695aa0e90f82ad00cd11279a3cf679))
+
+
+### Bug Fixes
+
+* **ci:** restore the image-policy tripwire and pin every CI action ([#852](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/852)) ([d846888](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d846888418371604f13c150ad1b9ec8f7dc9eebe))
+* **credentials:** a label that names its app should not repeat it ([a36c839](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a36c83902ff7d5d50902adf828a14d007c106877))
+* **docker:** drop the builder's exact apt pins ([#866](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/866)) ([b794224](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b794224c668dd09c87a23f7b113753c75ec60a71))
+* **fleet:** clarify Windows source revocation and reporting ([#859](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/859)) ([7788a0e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7788a0ea6506c2ded7fd8cd524cfbd85d3e0afc1))
+* **sidecar:** quarantine native Keychain probes in disposable CI ([#801](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/801)) ([66f53ef](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/66f53ef96e7db225ef95c4a7024876ccc6f55aea))
+* **test:** stop the config reload from leaking a stale settings object ([#860](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/860)) ([6dc2b8c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6dc2b8c3c77c75bae0419da161fa7292315215c6))
+* **webapp:** a credential's detail reads the same everywhere ([3a3bc90](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3a3bc90dbaf14f5d887d35992b40662657264bf9))
+
 ## [3.0.0-beta.12](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.11...v3.0.0-beta.12) (2026-10-23)
 
 
