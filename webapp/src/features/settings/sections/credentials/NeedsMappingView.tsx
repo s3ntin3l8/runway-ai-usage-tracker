@@ -12,7 +12,12 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { PendingUsageEventsCard } from '@/features/fleet/PendingUsageEventsCard';
-import { UntaggedCredentialsDialog } from '@/features/fleet/UntaggedCredentialsDialog';
+import {
+  UntaggedCredentialsDialog,
+  displayOrigin,
+  sourceDescription,
+  sourceLabel,
+} from '@/features/fleet/UntaggedCredentialsDialog';
 import { useSidecars, buildSidecarNameMap } from '@/features/fleet/queries';
 import { timeAgo } from '@/lib/format';
 
@@ -87,13 +92,19 @@ export function NeedsMappingView({ pendingUsageEvents }: { pendingUsageEvents: n
               >
                 <div className="min-w-0">
                   <p className="text-[13px] font-medium">
-                    {item.provider_id}{' '}
-                    <span className="font-mono text-[11px] font-normal text-fg-muted">
-                      {item.credential_origin}
-                    </span>
+                    {item.provider_id}
+                    {sourceDescription(item).label ? (
+                      <span className="text-[11px] font-normal text-fg-muted">
+                        {' '}
+                        {sourceLabel(item)}
+                      </span>
+                    ) : null}
                   </p>
                   <p className="text-[11px] text-fg-subtle">
-                    on {names.get(item.sidecar_id) ?? item.sidecar_id} · first seen{' '}
+                    <span className="font-mono">{displayOrigin(item.credential_origin)}</span>
+                    {' · on '}
+                    {names.get(item.sidecar_id) ?? item.sidecar_id}
+                    {' · first seen '}
                     {timeAgo(item.first_seen)}
                     {item.claimed_account_id ? ` · claims ${item.claimed_account_id}` : ''}
                   </p>

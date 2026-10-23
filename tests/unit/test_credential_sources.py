@@ -50,6 +50,58 @@ def test_describe_origin_returns_safe_type_and_label():
     assert describe_origin(None) == ("sidecar", "Sidecar credential")
 
 
+def test_cookie_origin_names_the_browser_and_profile_it_came_from():
+    """A cookie is a browser session, not a file — say which browser holds it."""
+    assert describe_origin_full("cookie:opencode/Chrome/Profile 1/Cookies").detail == (
+        "Chrome · Profile 1"
+    )
+    # The generic origin names no jar: only the kind is known.
+    assert describe_origin_full("cookie:opencode/session").detail is None
+    assert describe_origin_full("cookie:opencode/session").label == "Browser cookie"
+    # A fingerprint never leaks into the description.
+    assert describe_origin_full("cookie:opencode/Chrome/Default/Cookies#abc123").detail == (
+        "Chrome · Default"
+    )
+
+
+def test_an_anthropic_cookie_origin_never_reads_out_its_profile():
+    """An Anthropic cookie carries a private browser profile (#672): it is named by
+    its client instead, so no profile — and no fingerprint — ever reaches a label."""
+    native = describe_origin_full("cookie:anthropic/Claude Desktop/Default/Cookies")
+    assert (native.label, native.app) == ("Session cookie", "Claude Desktop")
+    assert native.detail is None
+    assert "Default" not in repr(native)
+    # A browser that native acceptance has not covered yet stays unnamed too.
+    other = describe_origin_full("cookie:anthropic/Firefox/private-profile/Cookies")
+    assert (other.label, other.app) == ("Browser cookie", "Browser")
+    assert other.detail is None
+    assert "private-profile" not in repr(other)
+    # The console variant is the same origin.
+    assert describe_origin_full("cookie:anthropic_console/Chrome/private/Cookies").detail is None
+
+
+def test_cookie_origin_never_reads_the_store_folder_as_a_profile():
+    """Chromium keeps the cookie file in a ``Network`` folder on some platforms
+    (``<profile>/Network/Cookies``), so that segment is part of the store path."""
+    assert describe_origin_full("cookie:opencode/Chrome/Network/Cookies").detail == "Chrome"
+    assert (
+        describe_origin_full("cookie:opencode/Chrome/Default/Cookies").detail == "Chrome · Default"
+    )
+    assert describe_origin_full(
+        "cookie:opencode/Firefox/abc123.default-release/cookies.sqlite"
+    ).detail == ("Firefox · abc123.default-release")
+
+
+def test_file_and_env_origins_carry_no_extra_detail():
+    assert describe_origin_full("path:/home/alice/.codex/auth.json").detail is None
+    assert describe_origin_full("env:OPENROUTER_API_KEY").detail is None
+    # The app already names the owner; a detail would only repeat it.
+    assert describe_origin_full("keychain:Claude Desktop/oauth/x").detail is None
+    assert describe_origin_full("keychain:Claude Code-credentials").detail is None
+    # An unnamed owner needs the service spelled out.
+    assert describe_origin_full("keychain:Gemini CLI").detail == "Gemini CLI"
+
+
 def test_sidecar_source_id_is_host_scoped_and_stable():
     source_id = sidecar_source_id("host-a", "path:~/.config/auth.json")
     assert source_id == sidecar_source_id("host-a", "path:~/.config/auth.json")

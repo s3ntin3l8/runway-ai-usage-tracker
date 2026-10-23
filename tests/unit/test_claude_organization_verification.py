@@ -6,6 +6,7 @@ from sqlmodel import Session as RealSession
 
 ORG_A = "11111111-1111-4111-8111-111111111111"
 ORG_B = "22222222-2222-4222-8222-222222222222"
+ORG_C = "33333333-3333-4333-8333-333333333333"
 
 
 @pytest.mark.asyncio
@@ -1104,3 +1105,97 @@ async def test_the_organization_picker_names_and_prices_a_console_account(claude
         # names the account — and a prepaid balance is spend.
         assert config.account_label == "API org"
         assert config.billing_type == "pay_as_you_go"
+
+
+def test_organizations_that_agree_prove_the_model():
+    """The same way of billing everywhere is what proves it."""
+    from app.services.claude_verification import agreed_billing_type
+
+    quota = {"unit_type": "percent", "used_value": 10.0, "limit_value": 100.0}
+    spend = {"unit_type": "currency", "currency": "USD"}
+    tokens = {"unit_type": "token", "used_value": 1000}
+
+    assert agreed_billing_type([quota, quota]) == "subscription"
+    assert agreed_billing_type([spend, spend]) == "pay_as_you_go"
+    # Organizations that disagree prove nothing.
+    assert agreed_billing_type([quota, spend]) is None
+    # A card that decides nothing proves nothing, even beside one that does.
+    assert agreed_billing_type([quota, tokens]) is None
+    assert agreed_billing_type([]) is None
+
+
+@pytest.mark.asyncio
+async def test_several_organizations_still_prove_the_model():
+    """The binding is the operator's to pick; the model need not wait for it."""
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": "person@example.com"})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "A"}, {"uuid": ORG_B, "name": "B"}]
+            )
+        return httpx.Response(200, json={"five_hour": {"utilization": 10}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic", "test-cookie")
+
+    # Both organizations publish percentage-of-limit windows: a subscription.
+    assert result.billing_type == "subscription"
+    # Which organization the account is bound to is still the operator's.
+    assert result.organization_id is None
+    assert result.selection_required is True
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_read_proves_nothing():
+    """A partial read decides nothing, however much the rest agrees."""
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": "person@example.com"})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200,
+                json=[
+                    {"uuid": ORG_A, "name": "A"},
+                    {"uuid": ORG_B, "name": "B"},
+                    {"uuid": ORG_C, "name": "C"},
+                ],
+            )
+        if ORG_C in request.url.path:
+            # An organization that publishes nothing about its billing model.
+            return httpx.Response(200, json={"five_hour": {}})
+        return httpx.Response(200, json={"five_hour": {"utilization": 10}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic", "test-cookie")
+
+    # Two organizations answered and agree, but the third did not answer at
+    # all: the read is partial, so the model stays undecided.
+    assert result.complete is False
+    assert result.billing_type is None
+    assert result.organization_id is None
+
+
+@pytest.mark.asyncio
+async def test_a_chosen_organization_is_priced_on_its_own_cards():
+    """A chosen organization is priced by what it publishes, not by the others."""
+    from app.services.claude_verification import verify_claude_cookie
+
+    def upstream(request):
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": "person@example.com"})
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "A"}, {"uuid": ORG_B, "name": "B"}]
+            )
+        return httpx.Response(200, json={"five_hour": {"utilization": 10}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        result = await verify_claude_cookie(client, "anthropic", "test-cookie", ORG_B)
+
+    assert result.organization_id == ORG_B
+    assert result.billing_type == "subscription"

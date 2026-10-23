@@ -748,7 +748,45 @@ it('uses source organization verification for Claude browser entries without exp
   vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [anthropicRow] });
   vi.mocked(api.fetchClaudeSourceOrganizations).mockResolvedValue({ organizations: [], complete: false, selection_required: true });
   renderWithProviders(<UntaggedCredentialsDialog open onClose={vi.fn()} />);
+  // The source is named the way a Claude browser cookie always was: the browser
+  // and the profile it came from.
   expect(await screen.findByText('Chrome · Work')).toBeInTheDocument();
+  // The fingerprint is never displayed.
+  expect(screen.queryByText(/secretfingerprint/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Tag' })).not.toBeInTheDocument();
   expect(await screen.findByText(/verification is incomplete/i)).toBeInTheDocument();
+});
+
+describe('the source of a pending credential', () => {
+  it('names a browser cookie in words, and keeps the raw origin for diagnostics', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        { ...entry, provider_id: 'opencode', credential_origin: 'cookie:opencode/session' },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Browser cookie')).toBeInTheDocument();
+    // The operator can tell it apart from another credential file.
+    expect(
+      within(dialog).getByText(/A browser session cookie the machine scraped/),
+    ).toBeInTheDocument();
+    // The raw origin stays available for debugging.
+    expect(within(dialog).getByText('cookie:opencode/session')).toBeInTheDocument();
+  });
+
+  it('keeps the origin string when the server cannot describe the source', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('provider:anthropic')).toBeInTheDocument();
+  });
 });

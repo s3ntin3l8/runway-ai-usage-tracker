@@ -968,6 +968,8 @@ async def test_promotion_names_a_discovered_claude_account(monkeypatch):
         ).one()
     assert row.account_label == "API org"
     assert row.billing_type == "pay_as_you_go"
+    # The model was detected, and the row says so: the repair leaves it alone.
+    assert row.billing_type_source == "detected"
     assert row.claude_organization_id == org_id
     await cache.reset()
 
@@ -1121,6 +1123,8 @@ async def test_promotion_names_an_existing_account_nobody_named(monkeypatch):
     assert row.account_label == "API org"
     # The row already existed, so its billing type stays the operator's to choose.
     assert row.billing_type == "unknown"
+    # Nobody decided it, so the repair may still price it.
+    assert row.billing_type_source is None
     await cache.reset()
 
 

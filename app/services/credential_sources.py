@@ -32,6 +32,7 @@ class OriginDisplay:
     label: str  # "auth.json", "OPENROUTER_API_KEY", "Browser cookie"
     app: str | None = None  # the tool that owns the file: "Codex CLI", "OpenCode" ...
     path: str | None = None  # display path with the home directory collapsed to "~"
+    detail: str | None = None  # extra context: the browser + profile a cookie came from
 
 
 # Owning tool by the file's last one or two path segments. Segments are lowercased with one
@@ -140,14 +141,28 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
             and parts[0] in {"cookie:anthropic", "cookie:anthropic_console"}
             and parts[1] in {"Chrome", "Safari", "Claude Desktop"}
         ):
+            # The client is named; the private profile and the fingerprint are not.
             return OriginDisplay("cookie", "Session cookie", app=parts[1])
-        return OriginDisplay("cookie", "Browser cookie", app="Browser")
+        return OriginDisplay(
+            "cookie",
+            "Browser cookie",
+            app="Browser",
+            detail=cookie_origin_detail(value),
+        )
     if value.startswith("keychain:"):
         service = value.split(":", 1)[1].split("#", 1)[0]
         if service.startswith("Claude Desktop/oauth/"):
+            # The app already says "Claude Desktop"; a detail would only repeat it.
             return OriginDisplay("keychain", "Desktop OAuth", app="Claude Desktop")
         app = "Claude Code" if service.startswith("Claude Code") else None
-        return OriginDisplay("keychain", "Keychain entry", app=app)
+        # The app name already identifies the entry ("Claude Code - Keychain
+        # entry"); only an unnamed owner needs the service spelled out.
+        return OriginDisplay(
+            "keychain",
+            "Keychain entry",
+            app=app,
+            detail=None if app else service or None,
+        )
     return OriginDisplay("sidecar", "Sidecar credential")
 
 
@@ -157,6 +172,63 @@ def describe_origin(origin: str | None) -> tuple[str, str]:
     if display.kind == "cookie" and display.label == "Session cookie" and display.app:
         return display.kind, f"{display.app} cookie"
     return display.kind, display.label
+
+
+# Browsers whose cookie jar a sidecar can read. A cookie origin names the jar it
+# came from ("cookie:opencode/Chrome/Profile 1/Cookies"); the generic one
+# ("cookie:opencode/session") does not, and then only the site is known.
+_BROWSER_TOKENS = (
+    "chrome",
+    "chromium",
+    "firefox",
+    "safari",
+    "edge",
+    "brave",
+    "arc",
+    "opera",
+    "vivaldi",
+    "librewolf",
+    "desktop",
+)
+
+
+def _is_cookie_store(part: str) -> bool:
+    """Whether a path segment names the store itself rather than a profile.
+
+    Chromium keeps the cookie file in a ``Network`` folder on some platforms
+    (``<profile>/Network/Cookies``), so that segment belongs to the store path
+    and must never be read as a profile name.
+    """
+    lowered = part.lower()
+    return (
+        lowered.startswith("cookies") or lowered.endswith("cookies.sqlite") or lowered == "network"
+    )
+
+
+def cookie_origin_detail(origin: str | None) -> str | None:
+    """Where a cookie credential came from: the browser and profile that hold it.
+
+    A cookie origin reads ``cookie:<provider>/<browser>/<profile>/<store>`` when the
+    machine could name the jar, and ``cookie:<provider>/session`` when it could not.
+    The first part is the provider, so only the segments after it are inspected.
+
+    An Anthropic cookie origin carries a private browser profile (#672): it is named
+    by its client instead, so no profile is ever read out of it.
+    """
+    if not origin or not origin.startswith("cookie:"):
+        return None
+    rest = origin.removeprefix("cookie:").split("#", 1)[0]
+    parts = [part for part in rest.split("/") if part]
+    if parts and parts[0] in {"anthropic", "anthropic_console"}:
+        return None
+    for index, part in enumerate(parts[1:], start=1):
+        lowered = part.lower()
+        if not any(token in lowered for token in _BROWSER_TOKENS):
+            continue
+        following = parts[index + 1] if index + 1 < len(parts) else None
+        profile = following if following and not _is_cookie_store(following) else None
+        return " · ".join([part, profile]) if profile else part
+    return None
 
 
 def pending_cache_slot(provider_id: str, source_id: str) -> str:

@@ -171,6 +171,12 @@ class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]
     claude_organization_id: str | None = Field(default=None)
     # How monetary values should be presented for this account.
     billing_type: str = "unknown"  # subscription | pay_as_you_go | unknown
+    # Who wrote ``billing_type``: "operator" when a person chose it in
+    # Settings, "detected" when the server proved it, and ``None`` when
+    # nobody decided (the value is the default). It is what tells a
+    # deliberate choice apart from a row that was never detected, so a
+    # backfill never overwrites what the operator picked.
+    billing_type_source: str | None = None  # operator | detected | None
 
     @property
     def strategies(self) -> list[dict] | None:
