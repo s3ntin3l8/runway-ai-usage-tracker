@@ -238,6 +238,36 @@ from tests.fixtures.worker_death import (
 from tests.windows_socketpair import install_windows_socketpair
 
 
+@pytest.fixture(autouse=True)
+def _restore_config_settings():
+    """Undo an ``importlib.reload(app.core.config)`` that outlives its test.
+
+    ``importlib.reload`` re-instantiates the module's ``settings`` attribute,
+    while every consumer that bound ``from app.core.config import settings``
+    at the top of its file keeps the pre-reload instance. Leave the fresh one
+    in place and the two diverge for the rest of the session: a later test
+    that patches its own top-level binding silently misses the live object
+    the late-import consumers read - the fleet source protocol's shared-key
+    check then fails on the mismatch (401 where it expects 403).
+
+    Snapshotting the module and putting it back after every test retires the
+    class of leak, not the instances of it - and it puts back the whole module,
+    because the reload rebinds more than ``settings`` (the ``Settings`` class
+    among them). The module is looked up directly: a guard that quietly
+    disables itself when the import order changes is worse than one that fails
+    loudly.
+    """
+    config_module = sys.modules["app.core.config"]
+    snapshot = dict(config_module.__dict__)
+    yield
+    # Put the module back whole: the reload rebinds more than ``settings``
+    # (the ``Settings`` class among them), so restoring one attribute would
+    # leave the module half-reloaded - ``type(config.settings) is
+    # config.Settings`` would be False.
+    config_module.__dict__.clear()
+    config_module.__dict__.update(snapshot)
+
+
 def _install_stack_dump() -> None:
     """Dump every thread's stack every two minutes, when asked to.
 
