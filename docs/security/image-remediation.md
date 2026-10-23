@@ -193,9 +193,9 @@ therefore carry `gcc-14-base` where the Bookworm document carried
 
 `libssl3t64` is in the image too, but it needs no entry: trixie ships it at
 `3.5.7-1~deb13u3`, and that is the version that fixes CVE-2026-84782, so the
-advisory no longer applies (see the fixed-advisory table below). Only GnuTLS
-left the image entirely — Debian 13's slim runtime does not carry
-`libgnutls30t64` — so the five GnuTLS advisories went with it.
+advisory no longer applies (see the fixed-advisory table below). Among the
+renamed packages only GnuTLS left the image entirely — Debian 13's slim runtime
+does not carry `libgnutls30t64` — so the five GnuTLS advisories went with it.
 
 ### The candidate scan
 
@@ -253,11 +253,10 @@ index does not change it.
 
 ### Advisories Debian lists as fixed in trixie
 
-These ten advisories no longer apply to the runtime. Their exceptions are removed rather than renewed: an exception for a fixed advisory is not a decision, it is a false record.
+These nine advisories no longer apply to the runtime. Their exceptions are removed rather than renewed: an exception for a fixed advisory is not a decision, it is a false record.
 
 | Advisory | Bookworm version it replaced | The trixie image carries |
 | --- | --- | --- |
-| [CVE-2025-13151](https://security-tracker.debian.org/tracker/CVE-2025-13151) | `libtasn1-6` `4.19.0-2+deb12u1` | not installed |
 | [CVE-2025-7458](https://security-tracker.debian.org/tracker/CVE-2025-7458) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
 | [CVE-2026-11822](https://security-tracker.debian.org/tracker/CVE-2026-11822) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
 | [CVE-2026-11824](https://security-tracker.debian.org/tracker/CVE-2026-11824) | `libsqlite3-0` `3.40.1-2+deb12u2` | `3.46.1-7+deb13u2` |
@@ -272,9 +271,11 @@ The last column is the version the trixie image installs, taken from the
 candidate's package inventory, so every row can be checked against the scan.
 It is not always Debian's first fixing version: Debian's tracker lists
 `3.42.0-1` as the release that fixed CVE-2025-7458, and the image carries the
-later `3.46.1-7+deb13u2`, which contains that fix. `libtasn1-6` is not
-installed at all — Debian 13's slim runtime does not pull in the GnuTLS
-libraries it came with.
+later `3.46.1-7+deb13u2`, which contains that fix.
+
+CVE-2025-13151 is fixed in trixie as well, but it is listed with the packages
+that left the image below rather than here: `libtasn1-6` is not installed in
+this image at all, so the absence is the operative fact.
 
 ### Advisories whose packages left the image
 
@@ -282,6 +283,7 @@ Debian 13's slim runtime does not carry these packages at all, so the advisories
 
 | Advisory | Package that left the image | Source package |
 | --- | --- | --- |
+| [CVE-2025-13151](https://security-tracker.debian.org/tracker/CVE-2025-13151) | `libtasn1-6` | `libtasn1-6` |
 | [CVE-2026-107778](https://security-tracker.debian.org/tracker/CVE-2026-107778) | `libgssapi-krb5-2, libk5crypto3, libkrb5-3, libkrb5support0` | `krb5` |
 | [CVE-2026-67693](https://security-tracker.debian.org/tracker/CVE-2026-67693) | `libgnutls30t64` | `gnutls28` |
 | [CVE-2026-88647](https://security-tracker.debian.org/tracker/CVE-2026-88647) | `libgnutls30t64` | `gnutls28` |
