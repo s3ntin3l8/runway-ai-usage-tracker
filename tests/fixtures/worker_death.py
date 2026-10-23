@@ -108,10 +108,10 @@ def worker_death_report(node: Any, error: object) -> str:
         ]
     lines += [
         "",
-        "The test that was running on that worker is lost. xdist replaces a",
-        "crashed worker by default (up to --max-worker-restart times), so the",
-        "run may still finish; the master only dies with an INTERNALERROR when",
-        "it cannot replace the worker it needs.",
+        "The test that was running on that worker is reported as a failure.",
+        "xdist reschedules the work that worker was carrying, so the run may",
+        "still finish; the master only dies with an INTERNALERROR when it",
+        "cannot replace the worker it needs.",
         "",
         DEATH_SUMMARY.rstrip(),
     ]

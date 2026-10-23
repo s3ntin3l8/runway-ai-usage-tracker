@@ -100,11 +100,20 @@ def test_the_hook_names_the_failure_and_reraises(capsys):
     assert "An xdist worker died" in capsys.readouterr().err
 
 
-class _StubDSession:
-    """xdist's master session, as far as the hook cares."""
+class _RecordingSession:
+    """A stand-in for xdist's master session that records every write.
+
+    A plain stub with a default attribute would keep a test green even if the
+    hook stopped the master some other way, so the writes are recorded.
+    """
 
     def __init__(self) -> None:
-        self.shouldstop = False
+        object.__setattr__(self, "writes", [])
+        object.__setattr__(self, "shouldstop", False)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        self.writes.append(name)
+        object.__setattr__(self, name, value)
 
 
 class _StubNode:
@@ -113,12 +122,14 @@ class _StubNode:
     def __init__(self, name: str = "gw3", workeroutput: dict | None = None) -> None:
         self.gateway = SimpleNamespace(id=name)
         self.workeroutput = workeroutput
-        self.dsession = _StubDSession()
-        self.config = SimpleNamespace(
-            pluginmanager=SimpleNamespace(
-                get_plugin=lambda plugin: self.dsession if plugin == "dsession" else None
-            )
-        )
+        self.dsession = _RecordingSession()
+        self.plugin_lookups: list[str] = []
+
+        def get_plugin(plugin: str) -> object:
+            self.plugin_lookups.append(plugin)
+            return self.dsession if plugin == "dsession" else None
+
+        self.config = SimpleNamespace(pluginmanager=SimpleNamespace(get_plugin=get_plugin))
 
 
 def test_a_worker_that_finished_normally_is_not_reported(capsys):
@@ -201,15 +212,21 @@ def test_the_master_is_left_to_recover():
     xdist replaces a crashed worker by default, so a run that can still
     finish must be allowed to finish. Stopping the master here would turn a
     recoverable death into a failed run: with one worker killed and
-    ``--dist loadfile -n 2``, the baseline is ``1 failed, 8 passed`` and the
+    ``--dist loadfile -n 2``, the baseline is ``1 failed, 9 passed`` and the
     rest of the suite runs; aborting loses the rest of it.
+
+    The guard is on *any* interference with the master, not on one attribute:
+    the session records every write, and the plugin lookup is recorded too, so
+    a hook that stopped the master by raising, or through some other
+    attribute, would still fail this test.
     """
     from tests import conftest
 
     node = _StubNode()
     conftest.pytest_testnodedown(node, "Not properly terminated")
 
-    assert node.dsession.shouldstop is False
+    assert node.dsession.writes == []
+    assert node.plugin_lookups == []
 
 
 def test_the_report_names_the_worker():
