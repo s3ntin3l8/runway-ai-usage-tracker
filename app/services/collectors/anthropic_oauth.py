@@ -211,7 +211,16 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             except (httpx.HTTPError, ValueError, KeyError) as e:
                 logger.debug(f"Failed to fetch Anthropic organization info: {e}")
 
-        cards = self._parse_oauth_response(data, name_map, api_account_info)
+        try:
+            cards = self._parse_oauth_response(data, name_map, api_account_info)
+        except (ValueError, TypeError, AttributeError, KeyError):
+            # A corrupt quota is an error, not a missing one. The account
+            # published something the collector cannot read, so the card says
+            # so -- rather than the collector inventing a window out of it.
+            logger.warning("Claude OAuth quota could not be read", exc_info=True)
+            return [
+                error_card("Claude Pro", "🟠", "Unsupported Claude quota", error_type="parse_error")
+            ]
         if holder:
             self.account_id = holder
             if is_placeholder_label(self.account_label):
