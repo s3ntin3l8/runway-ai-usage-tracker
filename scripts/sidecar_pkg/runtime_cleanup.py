@@ -31,17 +31,44 @@ _UPDATE_DIR_PREFIX = "runway-update-"
 _UPDATE_DIR_MAX_AGE_S = 3600
 
 
+def windows_pid_is_alive(pid: int) -> bool:
+    """Return True if a Windows process with `pid` is currently running.
+
+    OpenProcess alone cannot prove "running": a process that exited while a
+    handle to it is still open (the PyInstaller onefile bootloader, the update
+    helper, a console host) keeps its kernel object alive and its PID openable,
+    so the probe would call a dead sidecar alive and the single-instance lock
+    would never break. Waiting on the process object settles it: the object is
+    signalled (WAIT_OBJECT_0) only after the process has terminated.
+
+    Callers must be on Windows: this reaches into kernel32 directly.
+    """
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+
+    handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        # ERROR_INVALID_PARAMETER (87) proves the PID never existed. Any other
+        # failure (e.g. ACCESS_DENIED on another user's process) is unknown, so
+        # treat it as alive rather than clobbering another user's sidecar.
+        return ctypes.get_last_error() != 87
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) != 0  # WAIT_OBJECT_0 proves exit
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_is_alive(pid: int) -> bool:
     """Return True if a process with `pid` is currently running."""
     if sys.platform == "win32":
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        handle = kernel32.OpenProcess(1, False, pid)
-        if handle:
-            kernel32.CloseHandle(handle)
-            return True
-        return False
+        return windows_pid_is_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
