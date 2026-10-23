@@ -251,6 +251,45 @@ index references the inner image manifests, which are the digests in the rows
 above. A manifest's digest is the hash of its own bytes; being referenced by an
 index does not change it.
 
+### The published Debian 13 image
+
+The Debian 13 base is published. The `edge` image was rebuilt from `main` after
+#855 merged, audited for both architectures, signed and promoted by the release
+path; the retained `release-image-audit` artifact is the record.
+
+| Reference | Digest |
+| --- | --- |
+| Published index | `sha256:3e2d326c27ba3d6d35b64485988a95f8dc93ba2ac65408b7a8662a1ecd6511d1` |
+| linux/amd64 manifest, as published and audited | `sha256:c21dadd98c5a46a8ab982a4064aecac02cb3f312b961a87ea6f988e3f0325b11` |
+| linux/arm64 manifest, as published and audited | `sha256:0cd9eab750e2214b83b22fc444627e1a55bf58d527694ad516e8d1d8bcde8aa2` |
+
+| | amd64 | arm64 |
+| --- | --- | --- |
+| passed | true | true |
+| blocked | 0 | 0 |
+| accepted exceptions | 55 | 55 |
+| expired exceptions | 0 | 0 |
+| Critical | 0 | 0 |
+| High | 55 | 55 |
+| Medium | 54 | 54 |
+| Low | 10 | 10 |
+| Negligible | 47 | 47 |
+
+Scanned at `2026-10-23T17:42:48Z` against the database built
+`2026-10-23T06:30:15Z`, with Syft `sha256:3eb5379ba7b409c3f4069b686110527af0c47df993fa5c10d13e7cf34f49b1aa`
+and Grype `sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe`.
+
+The `digests-*` artifacts for this build record the per-platform build output
+instead: `sha256:14a3400d7ef5afe36eef30baffa6f6991c581fb54bec5c0613002cda905b4b66`
+for amd64 and `sha256:77290a91f9f55f753e1ed1fa6c6027d07a0fa0ef167637f21502d56ea7183fdd`
+for arm64. Those are the per-platform indexes buildx pushed — the image manifest
+plus its provenance attestation — and the published multi-architecture index
+references the inner image manifests in the rows above.
+
+The `v3.0.0-beta.13` release carries the same base. Its image is built from the
+release tag rather than from `main`, so the published versioned digests are
+recorded when that tag is cut.
+
 ### Advisories Debian lists as fixed in trixie
 
 These nine advisories no longer apply to the runtime. Their exceptions are removed rather than renewed: an exception for a fixed advisory is not a decision, it is a false record.
