@@ -128,6 +128,11 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
         # residual stale=True / collection_failing=True would stick.
         merged.pop("stale", None)
         merged.pop("collection_failing", None)
+        # Sticky billing evidence: a card the account has since published
+        # carries no billing_evidence key at all, so the "placeholder" a
+        # previous poll wrote would live forever and keep the account
+        # unpriceable long after it started publishing its own windows.
+        merged.pop("billing_evidence", None)
         if merged.get("data_source") == "error":
             merged.pop("data_source", None)
         if merged.get("remaining") == "ERR":

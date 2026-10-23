@@ -477,7 +477,8 @@ Workflows live in `.github/workflows/`.
   (`opened` when non-draft, or `ready_for_review`); on-demand re-reviews via
   a `@s3ntin3l8-hermes Review` comment. Deliberately no `synchronize`
   trigger — re-reviewing every push would be an unbounded review loop.
-  Auto-review excludes `mullion/task-*`, dependabot, and release-please PRs.
+  Auto-review excludes `mullion/task-*` and release-please PRs; dependabot PRs
+  are reviewed too, once the Dependabot secrets are mirrored.
 - **`claude.yml`** — `@claude` mentions on issues/PRs route to the shared
   reusable Claude Code workflow.
 - Also `codeql.yml`, `dependency-review.yml`, `cleanup-ghcr.yml`.

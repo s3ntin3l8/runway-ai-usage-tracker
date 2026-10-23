@@ -80,6 +80,7 @@ a = Analysis(
         "scripts.sidecar_pkg.event_extractors.chatgpt",
         "scripts.sidecar_pkg.event_extractors.gemini",
         "scripts.sidecar_pkg.event_extractors.hermes",
+        "scripts.sidecar_pkg.event_extractors.minimax_code",
         "scripts.sidecar_pkg.event_extractors.opencode",
         "scripts.sidecar_pkg.event_extractors.xai",
         "scripts.sidecar_pkg.event_watermark",
@@ -104,6 +105,9 @@ a = Analysis(
         "scripts.sidecar_pkg.oauth_renewal",
         "scripts.sidecar_pkg.asset_names",
         "scripts.sidecar_pkg.canonical_providers",
+        # Native Windows Credential Manager reader (advapi32). Imported lazily,
+        # so PyInstaller's static scan won't catch it.
+        "scripts.sidecar_pkg.wincred",
         "certifi",
         # Lazy imports inside the Linux browser-cookie decryption branch.
         "secretstorage",

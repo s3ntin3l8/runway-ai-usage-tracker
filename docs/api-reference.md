@@ -63,7 +63,7 @@ component fields. Cache-specific metrics remain cache-inclusive by definition.
 | `GET` | `/api/v1/fleet/credentials/tags` | List every resolved credential tag (deployment-wide and per-sidecar scopes); each carries `origin_label`, `origin_app` (the tool that owns the file, e.g. `Codex CLI`), `origin_path` (home collapsed to `~`) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1` (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI doesn't parse raw origin strings; also `last_matched_at` (freshest machine-reported credential the rule resolved, `null` = never) and `stale` (the `stale_credential_rules` data-health check would list it) |
 | `POST` | `/api/v1/fleet/credentials/tags` | Resolve a pending credential origin to a configured account (admin). `scope: "deployment"` (all machines) is refused with 422 for `cookie:` and `keychain:` origins, which exist on one machine only; `path:` and `env:` origins can still be tagged deployment-wide (a shared home directory is one origin). A tag written against a plain origin also applies to its key-scoped form (`env:ZAI_API_KEY` covers `env:ZAI_API_KEY#<fp>`) |
 | `DELETE` | `/api/v1/fleet/credentials/tags` | Remove one resolved tag in a given scope (admin) |
-| `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution, with a claimed Claude account ID when available, safe quota previews, and staleness status. Each item also carries `origin_label` (what the credential is, e.g. `Browser cookie`) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1`; `null` when the machine could not name the jar (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI can say "browser cookie" instead of showing the raw `cookie:<provider>/session` origin |
+| `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution, with a claimed Claude account ID when available, safe quota previews, and staleness status. Each item also carries `origin_label` (what the credential is, e.g. `Browser cookie`), `origin_app` (the tool that owns it, e.g. `Chrome` for a native Claude cookie or `Codex CLI` for a file) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1`; `null` when the machine could not name the jar (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI can say "browser cookie" instead of showing the raw `cookie:<provider>/session` origin |
 | `GET` | `/api/v1/fleet/events/pending` | Paginated queue of events held back under an unresolved `default` identity (admin) |
 | `GET` | `/api/v1/fleet/events/pending/sessions` | Paginated pending events grouped by provider, host, and session; supports `sidecar_id`, `provider_id`, and session/model `search` filters (admin) |
 | `POST` | `/api/v1/fleet/events/pending/assign` | Assign up to 1000 pending events to one account, promoting them into `usage_events` and creating provider/host mappings (admin). Archived accounts are accepted (disabled ones are not). An optional `target_provider_id` assigns the events to an account of a related provider instead (allow-list: `gemini` → `antigravity`; anything else is a 422); the events are re-homed to that provider and later events from the host follow. The response echoes `target_provider_id`; `provider_id`/`target_provider_id`/`assigned` describe the first provider group only (back-compat), while `mappings` lists every group as `{provider_id, target_provider_id, account_id, assigned}` |
@@ -208,6 +208,7 @@ interface LimitCard {
   stale?: boolean;        // Cache served past STALE_CEILING — real but old data (since #293)
   collection_failing?: boolean;  // Collection is failing; set alongside `stale`, drives frontend cardStale()
   tier?: string;          // "Free" | "Pro" | "Enterprise"
+  billing_evidence?: string | null;  // "placeholder" | "prepaid_credit" - evidence that decides no billing model
   usage_url?: string;     // Link to provider usage page
   updated_at?: string;    // ISO 8601 timestamp
   metadata?: Record<string, unknown>;  // Free-form, provider-specific extras
@@ -304,7 +305,7 @@ An organization with a JSON permission denial is excluded independently;
 challenges, timeouts, rate limits, and malformed responses prevent automatic
 selection. Existing disabled or archived accounts stay disabled or archived.
 
-`GET /api/v1/fleet/credentials/tags/pending` adds these safe fields to its items:
+`GET /api/v1/fleet/credentials/tags/pending` adds these safe fields to its items — `origin_label`, `origin_app` and `origin_detail` name the credential and the tool that owns it:
 
 ```json
 {"source_id":"sidecar:<stable hash>","selection_required":true,"organization_count":2}
@@ -388,15 +389,24 @@ with `org: `, lives in the card's detail, where the tagger reads it back.
 The billing model is read off the shape of the cards the account publishes: a
 card reporting a percentage of a limit describes a subscription, a card
 reporting a currency balance describes pay-as-you-go, and a quota card wins
-when an account publishes both. It is written to `ProviderConfig.billing_type`
-when the account row is created. An existing row keeps the type the operator
-chose — change it in Settings, and no later poll undoes that.
+when an account publishes both. A card may also name the kind of evidence it
+is: `"placeholder"` for a window the collector invented, `"prepaid_credit"`
+for a claude.ai account's prepaid balance. Such a card decides nothing, so an
+account that published only a balance proves no model at all.
+
+The billing model is written to `ProviderConfig.billing_type` when the
+account row is created, and a `billing_type` nobody set is filled in on a
+later poll. A model the operator chose is never overwritten — change it in
+Settings, and no later poll undoes that. `ProviderConfig.billing_type_source`
+says who wrote it: `"operator"` for the operator's own choice, `"detected"`
+for a proof the server reached, and empty when nobody has decided yet.
 
 An account added **by hand** is priced the same way: the preview returns the
 model it proved as `suggested_billing_type` (a Console connection is priced
 while the organization is picked; a subscription is priced on request with
-`detect_billing: true`), and the wizard offers it as a suggestion. The
-operator's own choice wins; a model nobody chose is left to the server's proof.
+`detect_billing: true`, which takes either a Claude web session or an OAuth
+token), and the wizard offers it as a suggestion. The operator's own choice
+wins; a model nobody chose is left to the server's proof.
 
 ### Native Claude OAuth token metadata
 

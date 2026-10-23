@@ -29,6 +29,8 @@ from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
     anthropic_model_id_for,
+    anthropic_published_number,
+    anthropic_published_percent,
     build_anthropic_limit_cards,
     classify_anthropic_window_type,
 )
@@ -231,9 +233,13 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
             continue
 
         usage: Any = data.get(key)
+        placeholder = False
         if usage is None:
             if key in core_keys:
+                # The account published no such window: the collector
+                # guarantees one, so the card it gets is a placeholder.
                 usage = {"utilization": 0.0, "resets_at": None}
+                placeholder = True
             else:
                 continue
 
@@ -242,7 +248,11 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         # 1. Handle Balance/Currency fields (Prepaid or Specific Balance)
         if key in BALANCE_KEYS:
             try:
-                bal = float(usage) if usage is not None else 0.0
+                # A balance the collector cannot read is no balance: the card
+                # is skipped, and a prepaid balance decides nothing either
+                # way. A spend or a limit is different -- it would decide a
+                # billing model -- so a corrupt one is an error.
+                bal = anthropic_published_number(usage, key) if usage is not None else 0.0
                 results.append(
                     {
                         "service_name": "Claude",
@@ -259,6 +269,10 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
                         "unit_type": "currency",
                         "window_type": "rolling",
                         "model_id": None,
+                        # A claude.ai balance says how much credit is left, not
+                        # how the account bills: a Claude plan can carry
+                        # prepaid credit, so this card decides no model.
+                        "billing_evidence": "prepaid_credit",
                         "data_source": data_source,
                         "input_source": input_source,
                         "tier": tier,
@@ -284,9 +298,9 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         # 2. Handle Spend/Limit windows (Overage/Spent)
         raw_spend = usage.get("spend")
         raw_limit = usage.get("limit")
-        if raw_limit is not None and float(raw_limit) > 0:
-            spend = float(raw_spend) if raw_spend is not None else 0.0
-            limit = float(raw_limit)
+        limit = anthropic_published_number(raw_limit, "limit") if raw_limit is not None else 0.0
+        if limit > 0:
+            spend = anthropic_published_number(raw_spend, "spend") if raw_spend is not None else 0.0
             remaining = max(0.0, limit - spend)
             results.append(
                 {
@@ -322,8 +336,12 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         if limits is not None:
             continue
 
-        raw_utilization = usage.get("utilization")
-        pct_used = float(raw_utilization) if raw_utilization is not None else 0.0
+        raw_utilization = anthropic_published_percent(usage, "utilization", "percentUsed")
+        if raw_utilization is None:
+            # The account published the window but no usable number in it:
+            # the card the collector draws is a placeholder, not evidence.
+            placeholder = True
+        pct_used = 0.0 if raw_utilization is None else raw_utilization
         remaining_pct = 100.0 - pct_used
 
         reset_raw = usage.get("resets_at") or usage.get("resetsAt")
@@ -337,31 +355,34 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         w_type = classify_anthropic_window_type(key)
         service_name = "Claude"
 
-        results.append(
-            {
-                "service_name": service_name,
-                "icon": "🟠",
-                "remaining": f"{remaining_pct:.1f}%",
-                "unit": "capacity",
-                "reset": human_delta(reset_at),
-                "health": HealthCalculator.from_percentage(pct_used),
-                "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
-                "used_value": pct_used,
-                "limit_value": 100.0,
-                "is_unlimited": False,
-                "unit_type": "percent",
-                "window_type": w_type,
-                "model_id": anthropic_model_id_for(key),
-                "reset_at": reset_at.isoformat() if reset_at else None,
-                "data_source": data_source,
-                "input_source": input_source,
-                "tier": tier,
-                "account_label": name_str,
-                "usage_url": "https://claude.ai/settings/usage",
-                "updated_at": datetime.now(UTC).isoformat(),
-            }
-        )
+        card: dict[str, Any] = {
+            "service_name": service_name,
+            "icon": "🟠",
+            "remaining": f"{remaining_pct:.1f}%",
+            "unit": "capacity",
+            "reset": human_delta(reset_at),
+            "health": HealthCalculator.from_percentage(pct_used),
+            "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+            "detail": f"{pct_used:.1f}% used [OAuth]{identity_suffix}",
+            "used_value": pct_used,
+            "limit_value": 100.0,
+            "is_unlimited": False,
+            "unit_type": "percent",
+            "window_type": w_type,
+            "model_id": anthropic_model_id_for(key),
+            "reset_at": reset_at.isoformat() if reset_at else None,
+            "data_source": data_source,
+            "input_source": input_source,
+            "tier": tier,
+            "account_label": name_str,
+            "usage_url": "https://claude.ai/settings/usage",
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        if placeholder:
+            # The account never published this window, so the card is the
+            # collector's placeholder, not the account's evidence.
+            card["billing_evidence"] = "placeholder"
+        results.append(card)
 
     return (
         results
@@ -394,17 +415,33 @@ async def billing_model_from_oauth_usage(
     A usage payload that cannot be read (an expired token, a rate limit, a
     transport failure) proves nothing: the answer is the absence of a proof,
     never a decision.
+
+    A payload that cannot be *understood* proves nothing either. The preview
+    this serves is an answer to a question, not a verdict on the account, so a
+    quota the collector cannot read ends the same way: no proof, no decision.
     """
     try:
         data = await fetch_oauth_usage(client, token)
     except OAuthUsageError as exc:
         logger.info("OAuth usage could not be read for the billing model: %s", exc.message)
         return None
-    cards = oauth_usage_cards(
-        data,
-        ANTHROPIC_WINDOW_NAME_MAP,
-        None,
-        data_source=OAUTH_DATA_SOURCE,
-        input_source=OAUTH_INPUT_SOURCE,
-    )
+    try:
+        cards = oauth_usage_cards(
+            data,
+            ANTHROPIC_WINDOW_NAME_MAP,
+            None,
+            data_source=OAUTH_DATA_SOURCE,
+            input_source=OAUTH_INPUT_SOURCE,
+        )
+    except (ValueError, TypeError, AttributeError, KeyError):
+        # A corrupt quota is an error, not a missing one, and this path does
+        # not raise for one: the operator asked what the account bills, and
+        # the honest answer to "the usage payload is unreadable" is no answer
+        # at all. The tuple is the one the native verification path already
+        # uses for a payload it cannot read, and it covers a payload that is
+        # not even a mapping. The traceback is logged, so a fault in the
+        # collector is visible here rather than looking like an account that
+        # publishes no quota.
+        logger.warning("OAuth usage could not be understood for the billing model", exc_info=True)
+        return None
     return billing_model_from_oauth_cards(cards)

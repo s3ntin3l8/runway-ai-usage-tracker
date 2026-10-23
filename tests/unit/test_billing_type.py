@@ -61,3 +61,41 @@ def test_a_card_without_numbers_is_neither_quota_nor_spend():
     assert card_pct({}) is None
     assert detect_billing_type([{}]) == UNKNOWN
     assert detect_billing_type([]) == UNKNOWN
+
+
+def test_a_placeholder_window_decides_nothing():
+    """A window the collector invented is not the account's evidence."""
+    placeholder = {
+        "unit_type": "percent",
+        "used_value": 0.0,
+        "limit_value": 100.0,
+        "billing_evidence": "placeholder",
+    }
+    assert card_billing_type(placeholder) == UNKNOWN
+    assert detect_billing_type([placeholder]) == UNKNOWN
+
+
+def test_a_prepaid_balance_decides_nothing():
+    """A claude.ai balance says how much credit is left, not how it bills."""
+    balance = {
+        "unit_type": "currency",
+        "currency": "USD",
+        "billing_evidence": "prepaid_credit",
+    }
+    assert card_billing_type(balance) == UNKNOWN
+    assert detect_billing_type([balance]) == UNKNOWN
+
+
+def test_a_marked_card_does_not_stop_an_unmarked_one_deciding():
+    """A plan with prepaid credit on top is still a plan."""
+    cards = [
+        {"unit_type": "currency", "currency": "USD", "billing_evidence": "prepaid_credit"},
+        {"used_value": 10.0, "limit_value": 100.0},
+    ]
+    assert detect_billing_type(cards) == SUBSCRIPTION
+
+
+def test_a_card_that_names_no_evidence_still_decides():
+    """Only the two named kinds of evidence are silent."""
+    card = {"unit_type": "percent", "used_value": 10.0, "limit_value": 100.0}
+    assert card_billing_type({**card, "billing_evidence": "published"}) == SUBSCRIPTION

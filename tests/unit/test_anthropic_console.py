@@ -57,6 +57,17 @@ def test_total_is_not_sum_of_balance_and_grants():
     assert grant.expires_at == "2030-01-16T00:00:00+00:00"
 
 
+def test_a_console_balance_decides_the_billing_model():
+    """A Console balance is the model: an organization buys credit against it."""
+    from app.services.billing_type import detect_billing_type
+
+    card = parse_console_balance(BALANCE, now=NOW)
+    # Unlike a claude.ai balance, a Console balance is not marked as evidence
+    # that decides nothing.
+    assert card.get("billing_evidence") is None
+    assert detect_billing_type([card]) == "pay_as_you_go"
+
+
 @pytest.mark.parametrize("remaining", [0, 2500, 10000])
 def test_subscription_used_is_exact_difference(remaining):
     data = deepcopy(BALANCE)

@@ -7,6 +7,11 @@ subscription. The order is deliberate — the dashboard ranks the percentage
 first because it picks a hero metric, while money against a cap is still
 money. A card that only counts tokens says nothing about the billing model, so
 it never decides one.
+
+A card may also name what kind of evidence it is. A window the collector
+invented is a placeholder, and a claude.ai account's prepaid balance says how
+much credit is left, not how the account bills — neither of them decides a
+model, whatever shape the card has.
 """
 
 from __future__ import annotations
@@ -21,6 +26,12 @@ BillingType = Literal["subscription", "pay_as_you_go", "unknown"]
 SUBSCRIPTION: BillingType = "subscription"
 PAY_AS_YOU_GO: BillingType = "pay_as_you_go"
 UNKNOWN: BillingType = "unknown"
+
+#: Cards that name their evidence this way never decide the billing model.
+#: "placeholder" is a window the collector invented; "prepaid_credit" is a
+#: claude.ai account's prepaid balance, which does not say how that account
+#: bills — a Claude plan can carry prepaid credit.
+NON_DECIDING_EVIDENCE = ("placeholder", "prepaid_credit")
 
 
 def _number(value: Any) -> float | None:
@@ -46,8 +57,11 @@ def card_billing_type(card: Mapping[str, Any]) -> BillingType:
 
     A card that reports a currency balance is spend, even when it also reports
     a limit — money against a cap is still money. A card that reports a
-    percentage of a limit is a plan.
+    percentage of a limit is a plan. A card that names its evidence as
+    non-deciding says nothing at all, whatever its shape.
     """
+    if card.get("billing_evidence") in NON_DECIDING_EVIDENCE:
+        return UNKNOWN
     unit_type = card.get("unit_type")
     if unit_type in ("currency", "credits") or card.get("currency"):
         return PAY_AS_YOU_GO

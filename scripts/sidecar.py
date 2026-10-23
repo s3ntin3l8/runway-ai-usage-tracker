@@ -745,6 +745,19 @@ __REGISTRY__: dict[str, Any] = {
                         "token.expiry": "_raw_expiry",
                     },
                 },
+                # The Windows counterpart of the token-file rule: on Windows the agy CLI
+                # stores the same JSON bundle in the Credential Manager instead of a
+                # file, so the sidecar reads the stored entry directly (advapi32, no
+                # PowerShell) and maps the same three fields.
+                {
+                    "type": "windows_credential_json",
+                    "target": "gemini:antigravity",
+                    "mapping": {
+                        "token.access_token": "oauth_token",
+                        "token.refresh_token": "refresh_token",
+                        "token.expiry": "_raw_expiry",
+                    },
+                },
             ],
         },
         "ollama": {
@@ -2895,7 +2908,16 @@ class BrowserCookieExtractor:
 
 
 def get_windows_credential(target: str) -> str | None:
-    """Extract credential from Windows Credential Manager with caching."""
+    """Extract credential from Windows Credential Manager with caching.
+
+    Read natively through ``advapi32!CredReadW``. The earlier route shelled
+    out to PowerShell's ``Get-StoredCredential``, which needs the
+    CredentialManager PowerShell module: that module is absent from a stock
+    Windows install, so every lookup silently returned nothing and the rule
+    was dead on the one platform it was written for. Reading the entry
+    directly also spawns no process, so the packaged windowed sidecar cannot
+    flash a console.
+    """
     if platform.system() != "Windows":
         return None
 
@@ -2904,32 +2926,15 @@ def get_windows_credential(target: str) -> str | None:
         if now < ttl and cached_target == target:
             return password
 
-    try:
-        cmd = [
-            "powershell",
-            "-Command",
-            f"(New-Object System.Net.NetworkCredential('', (Get-StoredCredential -Target '{target}').Password)).Password",
-        ]
-        # The packaged Windows sidecar is a windowed application. Console
-        # programs such as PowerShell still flash a console unless explicitly
-        # started with CREATE_NO_WINDOW, even when stdout/stderr are captured.
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            creationflags=_subprocess_creationflags(),
+    from scripts.sidecar_pkg.wincred import read_credential_text
+
+    password = read_credential_text(target)
+    if password:
+        _windows_cred_cache[target] = (
+            password,
+            time.time() + _windows_cred_ttl_seconds,
         )
-        if result.returncode == 0:
-            password = result.stdout.strip()
-            if password:
-                _windows_cred_cache[target] = (
-                    password,
-                    time.time() + _windows_cred_ttl_seconds,
-                )
-                return password
-    except Exception:
-        logging.debug("Windows Credential Manager lookup failed for %r", target, exc_info=True)
+        return password
     return None
 
 
@@ -3111,7 +3116,16 @@ _IDENTITY_REPORT: dict[str, dict[str, str]] = {}
 # Provider IDs that have event extractors. Per-account iteration loops over
 # each of these and stamps events with the resolved ``account_id``.
 _EVENT_PROVIDERS: frozenset[str] = frozenset(
-    {"anthropic", "chatgpt", "gemini", "opencode", "antigravity", "xai", "hermes"}
+    {
+        "anthropic",
+        "chatgpt",
+        "gemini",
+        "opencode",
+        "antigravity",
+        "xai",
+        "hermes",
+        "minimax",
+    }
 )
 
 # Legacy single-account identity discovery, used when the server has no
@@ -3129,6 +3143,11 @@ _LEGACY_EVENT_ACCOUNT_DISCOVERY: dict[str, Any] = {
     # Grok cards and usage events share email-first, user-ID-second identity.
     "xai": lambda: globals()["_grok_account_identity"]() or "default",
     "hermes": lambda: globals()["_hermes_account_identity"]() or "default",
+    # The MiniMax Code auth bundle carries no email (the record is keyed by
+    # an opaque provider id), so the local identity is the sentinel. The
+    # events branch retargets it onto the operator's account through the
+    # server's ``provider:minimax`` auto-hint.
+    "minimax": lambda: globals()["_minimax_code_account_identity"]() or "default",
 }
 
 
@@ -3169,6 +3188,7 @@ def _extract_events_for_provider(
     from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
     from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
     from scripts.sidecar_pkg.event_extractors.hermes import parse_hermes_events
+    from scripts.sidecar_pkg.event_extractors.minimax_code import parse_minimax_code_events
     from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_events
     from scripts.sidecar_pkg.event_extractors.xai import parse_xai_events
 
@@ -3181,6 +3201,8 @@ def _extract_events_for_provider(
         # Completed Grok CLI turns in updates.jsonl carry per-turn usage.
         "xai": _make_account_extractor(parse_xai_events, _discover_grok_updates_paths),
         "hermes": _make_account_extractor_hermes(parse_hermes_events),
+        # MiniMax Code's own runtime ledger: one event per API request.
+        "minimax": _make_account_extractor_minimax_code(parse_minimax_code_events),
     }
 
     extractor = dispatch.get(provider_id)
@@ -3496,6 +3518,42 @@ def _make_account_extractor_hermes(parser: Any, state_file: Path | None = None) 
                 seen.add(eid)
             deduped.append(ev)
         return deduped
+
+    return _extract
+
+
+def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = None) -> Any:
+    """Bind the MiniMax Code parser to the runtime store discovery.
+
+    The extractor keeps its own **id-based** cursor in ``state_file``: the
+    runtime's ``ts`` is not globally monotonic (sessions interleave), so a
+    timestamp watermark silently drops rows. The cursor is committed only
+    after the server confirms the ingest — see
+    ``minimax_code.commit_pending_state``.
+    """
+
+    def _extract(
+        account_id: str,
+        watermark: Any,
+        bootstrap_days: int,
+        *,
+        canonical_hints: dict[str, dict[str, str]] | None = None,  # noqa: ARG001 — accepted for signature parity
+    ) -> list:
+        db_path = _discover_minimax_code_db_path()
+        if db_path is None:
+            return []
+        since = watermark.last_pushed("minimax", account_id) or (
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
+        )
+        cursor_file = state_file
+        if cursor_file is None:
+            cursor_file = get_sidecar_dir() / "minimax_code_watermark.json"
+        return parser(
+            db_path,
+            account_id=account_id,
+            since=since,
+            state_file=cursor_file,
+        )
 
     return _extract
 
@@ -4182,6 +4240,34 @@ class GenericCollector:
                             ({target: val}, f"keychain:{rule.get('target')}", "keychain")
                         )
 
+            # 4b. Windows Credential Manager, JSON document
+            #
+            # Some CLIs store a whole token bundle as JSON in the Credential
+            # Manager (agy does: its OAuth token lives under the target
+            # "gemini:antigravity"). The bundle is read fresh - no cache - so
+            # a token agy just renewed is picked up on the next cycle.
+            elif rule_type == "windows_credential_json" and platform.system() == "Windows":
+                from scripts.sidecar_pkg.wincred import read_json_credential
+
+                document = read_json_credential(rule.get("target"))
+                if document:
+                    candidate_tokens = {}
+                    for key_path, target in mapping.items():
+                        val = GenericCollector.get_nested(document, key_path)
+                        if val:
+                            candidate_tokens[target] = val
+                    if candidate_tokens:
+                        token_candidates.append(
+                            (
+                                candidate_tokens,
+                                f"keychain:{rule.get('target')}",
+                                "keychain",
+                            )
+                        )
+                        logging.info(
+                            f"  [{provider_id}] Credential Manager entry matched: {rule.get('target')}"
+                        )
+
             # 5. Browser Cookies
             elif rule_type == "cookie":
                 name_to_find = rule.get("name")
@@ -4842,6 +4928,44 @@ def _hermes_account_identity() -> str:
     return os.getenv("HERMES_ACCOUNT_LABEL") or "default"
 
 
+def _reset_minimax_cursor_state() -> None:
+    """Drop a MiniMax Code cursor advance parked by an earlier cycle.
+
+    The advance is parked before the push and committed only once the
+    server confirms the ingest. A cycle that dies in between must not
+    leave it behind: the next cycle would commit it and step the cursor
+    over rows that were never stored.
+    """
+    try:
+        from scripts.sidecar_pkg.event_extractors.minimax_code import discard_pending_state
+
+        discard_pending_state()
+    except Exception:  # pragma: no cover - the extractor is optional
+        pass
+
+
+def _discover_minimax_code_db_path() -> Path | None:
+    """Return the MiniMax Code runtime store path, or None when absent.
+
+    The runtime anchors its store on ``homedir()``, so the same path works
+    on Linux, macOS and Windows.
+    """
+    from scripts.sidecar_pkg.event_extractors.minimax_code import discover_runtime_store
+
+    return discover_runtime_store()
+
+
+def _minimax_code_account_identity() -> str:
+    """Return the MiniMax Code account identity label (defaults to 'default').
+
+    The runtime's auth bundle carries no email — its record is keyed by an
+    opaque provider id — so there is no local identity to derive. The
+    events branch retargets the events onto the operator's account through
+    the server's ``provider:minimax`` auto-hint.
+    """
+    return "default"
+
+
 def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return source ids, token types, and expiry only; never return token values.
 
@@ -5126,6 +5250,11 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     all_events: list[dict[str, Any]] = []
     _EVENT_WATERMARK_ALIASES.clear()
     _IDENTITY_REPORT.clear()
+    # A parked MiniMax Code cursor advance belongs to the cycle that made
+    # it. A cycle that dies between the extraction and the push must not
+    # leave it behind for a later cycle to commit — the rows it covers
+    # were never stored, and the cursor would step over them.
+    _reset_minimax_cursor_state()
     error_count = 0
 
     credential_scan_only = providers == []
@@ -5786,6 +5915,27 @@ class DaemonRunner:
                         self.last_upload_at = self.last_cycle_at
                         self.last_metrics_count = len(metrics)
                         self.last_events_count = len(events)
+
+            # The MiniMax Code extractor keeps an id-based cursor of its own:
+            # the runtime's ``ts`` is not globally monotonic, so the shared
+            # timestamp watermark cannot bound its scan without dropping
+            # rows. The cursor moves only once the server has confirmed the
+            # ingest, so a failed push re-sends the same rows instead of
+            # skipping them — the parked advance is dropped whenever the push
+            # did not land, so the next cycle re-extracts them.
+            try:
+                from scripts.sidecar_pkg.event_extractors.minimax_code import (
+                    commit_pending_state,
+                    discard_pending_state,
+                )
+
+                minimax_pushed = any(ev.get("provider_id") == "minimax" for ev in events)
+                if minimax_pushed and success and not events_failed:
+                    commit_pending_state()
+                else:
+                    discard_pending_state()
+            except Exception as e:
+                logging.warning(f"Failed to advance the MiniMax Code cursor: {e}")
 
             if success:
                 if (metrics or events) and not events_failed:

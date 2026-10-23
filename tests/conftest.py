@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import traceback
 import uuid
 import warnings
 from pathlib import Path
@@ -230,6 +231,34 @@ from tests.fixtures.mock_data import (
     OPENCODE_GO_RESPONSE,
 )
 from tests.fixtures.sqlite import disable_fsync, skip_fsync_requested
+from tests.fixtures.worker_death import (
+    worker_death_diagnosis,
+    worker_death_report,
+)
+from tests.windows_socketpair import install_windows_socketpair
+
+
+def _install_stack_dump() -> None:
+    """Dump every thread's stack every two minutes, when asked to.
+
+    A worker that stalls takes the whole xdist run down with it, and the
+    stack that says where it stalled is the only thing that names the cause.
+    ``RUNWAY_TEST_STACKDUMP=1`` turns this on; it is off by default because
+    it writes to stderr on a timer.
+    """
+    if os.environ.get("RUNWAY_TEST_STACKDUMP") != "1":
+        return
+    import faulthandler
+
+    faulthandler.dump_traceback_later(120, repeat=True)
+
+
+# This module is imported before any event loop exists -- in every xdist
+# worker, which loads this same conftest -- so the replacement is in place
+# before the first socketpair is created. CPython's Windows fallback can
+# block a worker inside ``accept()`` forever (#830).
+install_windows_socketpair()
+_install_stack_dump()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -259,6 +288,32 @@ def _fast_sqlite_writes():
         yield
     finally:
         event.remove(Engine, "connect", disable_fsync)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def guard_implicit_text_encodings():
+    """Refuse to write non-ASCII text without an explicit encoding.
+
+    ``Path.write_text`` without an ``encoding`` argument uses the locale's
+    preferred encoding, which on a default Windows install is cp1252. Text
+    with a character outside cp1252 -- an arrow, an em-dash -- then raises
+    ``UnicodeEncodeError``, and the error names neither the encoding nor the
+    file. That is how ``tests/unit/test_gitignore_symlinked_dirs.py`` reported
+    16 errors on a Windows checkout while passing on the Linux runner.
+
+    The check runs at write time rather than in the source, because a static
+    scan cannot tell which of the suite's implicit-encoding writes can
+    produce non-ASCII: 219 of them omit the argument, and most write a value
+    a scanner cannot read. What matters is the text that is actually written.
+
+    The guard is deliberately narrow. ASCII is always safe, so it is left
+    alone; writing non-ASCII with an explicit ``encoding="utf-8"`` is the
+    supported way to do it. See ``tests/fixtures/encoding_guard.py``.
+    """
+    from tests.fixtures.encoding_guard import encoding_guard
+
+    with encoding_guard():
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -575,6 +630,53 @@ def mock_keyring():
 def pytest_configure(config):
     """Configure pytest with asyncio mode."""
     config.addinivalue_line("markers", "asyncio: mark test as asyncio")
+
+
+def pytest_testnodedown(node, error):
+    """Report a worker that died.
+
+    xdist calls this for every worker that goes down: with ``error=None``
+    for one that finished normally, and with the error for one that died.
+    It is the first moment the master knows anything, and the only place the
+    worker's id and the error the master saw are still available.
+
+    The master is deliberately left alone. xdist replaces a crashed worker
+    by default (up to ``--max-worker-restart`` times), so a run that can
+    still finish must be allowed to finish: aborting here would turn a
+    recoverable death into a failed run. The run-loop wrapper below is the
+    backstop for the case where the master cannot recover.
+    """
+    if error is None:
+        return  # a worker that finished normally
+
+    print(worker_death_report(node, error), file=sys.stderr)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtestloop(session):
+    """Name the xdist worker-death crash instead of leaving an internal error.
+
+    A worker that dies leaves the master unable to reschedule its nodes, and
+    xdist's own ``KeyError`` then takes the master down with an
+    ``INTERNALERROR`` that names neither the worker nor the cause. The verdict
+    does not change -- the run still fails -- but the log says what happened
+    and what to check.
+
+    This is a strict no-op unless that specific ``KeyError`` escapes the run
+    loop, including on the ordinary path and in the xdist workers, which load
+    this same conftest.
+    """
+    try:
+        result = yield
+    except Exception as exc:
+        diagnosis = worker_death_diagnosis(
+            exc,
+            (frame.filename for frame in traceback.extract_tb(exc.__traceback__)),
+        )
+        if diagnosis:
+            print(diagnosis, file=sys.stderr)
+        raise
+    return result
 
 
 @pytest.fixture(autouse=True)
