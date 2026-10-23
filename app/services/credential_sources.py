@@ -66,10 +66,9 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 # Owning tool by the OS credential entry it keeps its login in. The key is the
-# service (and, where the store needs one, the account) from the sidecar's
-# origin string - "keychain:gemini:antigravity" for the Antigravity CLI, which
-# keeps the same credential in the macOS login Keychain and in the Windows
-# Credential Manager.
+# origin's tail - the Keychain service and, where the store needs one, the
+# account: "gemini:antigravity" for the Antigravity CLI, which keeps the same
+# credential in the macOS login Keychain and in the Windows Credential Manager.
 _KEYCHAIN_ENTRY_APPS: dict[str, str] = {
     "gemini:antigravity": "Antigravity CLI",
 }
