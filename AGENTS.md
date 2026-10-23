@@ -68,8 +68,12 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
 - **File a GitHub issue for anything a plan defers, blocks, or descopes**, and
   link it from the PR — a footnote in a plan doc is not a durable record.
 - **Post-merge cleanup:** `git branch -d <branch>`,
-  `git push origin --delete <branch>`, and `git worktree remove <path>` if a
-  worktree was used. Skipping this lets stale references accumulate.
+  `git push origin --delete <branch>`, and `python scripts/dev_checks.py
+  remove-worktree <path>` if a worktree was used. Skipping this lets stale
+  references accumulate. Remove the worktree with that helper, not with
+  `git worktree remove`: a worktree that links the main checkout's `.venv`
+  into itself holds a directory junction, and `git worktree remove` follows
+  it and deletes the main checkout's virtualenv.
 - **Fresh clone or worktree:** run `make install` first (venv, Python + webapp
   dependencies, git hooks) — none of it is inherited. On native Windows use
   `python scripts/dev_checks.py install` instead. Git hooks are shared by every

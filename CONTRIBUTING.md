@@ -96,6 +96,15 @@ The hook script is tracked in the repository (`scripts/hooks/git-hook.sh`) and
 **copied** into `.git/hooks`, so the installed copy goes stale when the
 tracked one changes: re-run `make install-hooks` after editing it.
 
+**Remove a worktree with `python scripts/dev_checks.py remove-worktree <path>`,
+not with `git worktree remove`.** A worktree that links the main checkout's
+`.venv` into itself holds a directory junction (Windows) or a symlink
+(POSIX), and `git worktree remove` follows it: it deletes the *target's*
+contents, so the main checkout loses its virtualenv and every other worktree
+that shared it loses it too. The helper drops the links first — only the
+links — and then hands the worktree to git. It needs no virtualenv of its
+own, so it still works when the environment is what is broken.
+
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
 note that `make dev` alone no longer sees your local CLI logins (Gemini, Claude,
 Codex, `gh`, opencode, ...): the server reads no credential files, so use
