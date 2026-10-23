@@ -11,7 +11,7 @@ import type {
   CredentialUnusedReason,
 } from '@/api/types';
 import { maskAccountId } from '@/lib/accountDisplay';
-import { originTitleWithApp } from '@/lib/credentialOrigin';
+import { originTitleWithApp, originTitleWithDetail } from '@/lib/credentialOrigin';
 import { timeAgo } from '@/lib/format';
 
 export const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
@@ -93,8 +93,7 @@ export function originKindHint(s: CredentialSourceView): string | null {
 
 /** "Codex CLI · auth.json on dev-01", "GITHUB_TOKEN (server)" — plus the machine, if any. */
 export function originSummary(s: CredentialSourceView): string {
-  const detail = originDetail(s);
-  const title = detail ? `${originTitle(s)} (${detail})` : originTitle(s);
+  const title = originTitleWithDetail(originTitle(s), originDetail(s));
   if (s.origin_kind === 'machine') return `${title} on ${s.machine_name ?? s.machine_id}`;
   if (s.origin_kind === 'server') return `${title} (server)`;
   return title;

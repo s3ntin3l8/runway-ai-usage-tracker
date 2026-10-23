@@ -790,6 +790,31 @@ describe('the source of a pending credential', () => {
     expect(within(dialog).getByText('cookie:opencode/session')).toBeInTheDocument();
   });
 
+  it('names a cookie with its browser in the same words as the rules view', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [
+        {
+          ...entry,
+          provider_id: 'opencode',
+          credential_origin: 'cookie:opencode/Chrome/Profile 1/Cookies',
+          origin_label: 'Browser cookie',
+          origin_detail: 'Chrome · Profile 1',
+        },
+      ],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      await within(dialog).findByText('Browser cookie (Chrome · Profile 1)'),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByText('Browser cookie · Chrome · Profile 1'),
+    ).not.toBeInTheDocument();
+  });
+
   it('keeps the origin string when the server cannot describe the source', async () => {
     vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
       items: [entry],

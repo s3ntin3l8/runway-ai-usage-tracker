@@ -177,3 +177,14 @@ export function originTitleWithApp(app: string | null | undefined, label: string
   if (named === owner || named.startsWith(`${owner} `)) return label;
   return `${app} · ${label}`;
 }
+
+/**
+ * "Browser cookie (Chrome · Profile 1)" — what a credential is, and where the
+ * cookie came from.
+ *
+ * The detail is a parenthetical everywhere, so the same credential reads the
+ * same in the rules view, the inventory and the fleet dialog.
+ */
+export function originTitleWithDetail(title: string, detail: string | null | undefined): string {
+  return detail ? `${title} (${detail})` : title;
+}
