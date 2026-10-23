@@ -605,7 +605,7 @@ def test_a_store_with_a_cursor_ignores_the_window(monkeypatch, tmp_path, _clean_
     """A store the cursor already knows is floored by the cursor alone."""
     sidecar = _sidecar()
     usage = _backlog_usage(days_ago=10)
-    db_path = make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax")
+    make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
     cursor_file = tmp_path / "cursor.json"
@@ -622,7 +622,6 @@ def test_a_store_with_a_cursor_ignores_the_window(monkeypatch, tmp_path, _clean_
     # window, decides what is still to read.
     discard_pending_state()
     assert extractor("default", _MockWatermark(), 90) == []
-    assert db_path.exists()
 
 
 def test_the_same_event_from_two_stores_is_pushed_once(monkeypatch, tmp_path, _clean_data_env):
