@@ -50,6 +50,7 @@ import { ClaudeSourceOrganizationPicker } from './ClaudeSourceOrganizationPicker
 import { maskAccountId } from '@/lib/accountDisplay';
 import {
   describeCredentialOrigin,
+  hasNamedOriginApp,
   type CredentialOriginKind,
 } from '@/lib/credentialOrigin';
 import {
@@ -603,9 +604,12 @@ export function sourceDescription(entry: UntaggedCredential): {
   return { label, detail: detail ?? undefined, kind };
 }
 
-/** The source as one line: "Browser cookie · Chrome · Profile 1". */
+/** The source as one line: "Chrome · Session cookie", "Browser cookie · Chrome · Profile 1". */
 export function sourceLabel(entry: UntaggedCredential): string {
   const { label, detail } = sourceDescription(entry);
   if (!label) return displayOrigin(entry.credential_origin);
-  return detail ? `${label} · ${detail}` : label;
+  // The owning client names the credential the way the rules view and the
+  // credential inventory name it; a generic "Browser" says nothing.
+  const owner = hasNamedOriginApp(entry.origin_app) ? `${entry.origin_app} · ` : '';
+  return detail ? `${owner}${label} · ${detail}` : `${owner}${label}`;
 }
