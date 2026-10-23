@@ -34,6 +34,7 @@ def _account(
     account_id: str = "person@example.com",
     billing_type: str = "unknown",
     billing_type_source: str | None = None,
+    poll_interval_seconds: int | None = None,
 ) -> ProviderConfig:
     row = ProviderConfig(
         provider_id=provider_id,
@@ -41,6 +42,7 @@ def _account(
         account_label=account_id,
         billing_type=billing_type,
         billing_type_source=billing_type_source,
+        poll_interval_seconds=poll_interval_seconds,
     )
     session.add(row)
     session.commit()
@@ -371,6 +373,93 @@ def test_cards_from_one_publication_are_read_together():
             _spend_card(),
             window_type="monthly",
             updated_at=now - timedelta(seconds=5),
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert [candidate.model for candidate in plan.priced] == ["subscription"]
+    finally:
+        session.close()
+
+
+def test_a_card_from_the_previous_collection_cycle_still_counts():
+    """A card the collector has not refreshed *yet* is still the account's."""
+    session = _session()
+    try:
+        _account(session, account_id="current@example.com")
+        now = datetime.now(UTC)
+        _card(
+            session,
+            "anthropic",
+            "current@example.com",
+            _quota_card(),
+            window_type="weekly",
+            updated_at=now - timedelta(minutes=15),
+        )
+        _card(
+            session,
+            "anthropic",
+            "current@example.com",
+            _spend_card(),
+            window_type="monthly",
+            updated_at=now,
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert [candidate.model for candidate in plan.priced] == ["subscription"]
+    finally:
+        session.close()
+
+
+def test_a_card_several_cycles_behind_is_not_evidence():
+    """A card the collector has stopped publishing describes a state left behind."""
+    session = _session()
+    try:
+        _account(session, account_id="gone@example.com")
+        now = datetime.now(UTC)
+        _card(
+            session,
+            "anthropic",
+            "gone@example.com",
+            _quota_card(),
+            window_type="weekly",
+            updated_at=now - timedelta(minutes=45),
+        )
+        _card(
+            session,
+            "anthropic",
+            "gone@example.com",
+            _spend_card(),
+            window_type="monthly",
+            updated_at=now,
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert [candidate.model for candidate in plan.priced] == ["pay_as_you_go"]
+    finally:
+        session.close()
+
+
+def test_the_window_follows_the_accounts_own_poll_interval():
+    """A slowly polled account keeps its cards longer than the default."""
+    session = _session()
+    try:
+        _account(session, account_id="slow@example.com", poll_interval_seconds=86_400)
+        now = datetime.now(UTC)
+        _card(
+            session,
+            "anthropic",
+            "slow@example.com",
+            _quota_card(),
+            window_type="weekly",
+            updated_at=now - timedelta(hours=1),
+        )
+        _card(
+            session,
+            "anthropic",
+            "slow@example.com",
+            _spend_card(),
+            window_type="monthly",
+            updated_at=now,
         )
 
         plan = plan_claude_billing_type(session)

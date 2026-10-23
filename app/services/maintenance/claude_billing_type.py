@@ -26,7 +26,7 @@ from typing import Any
 
 from sqlmodel import Session, col, select
 
-from app.models.db import LatestUsage, ProviderConfig
+from app.models.db import LatestUsage, ProviderConfig, SystemConfig
 from app.services.billing_type import UNKNOWN, detect_billing_type
 
 #: The providers whose accounts the detector can price.
@@ -39,12 +39,17 @@ CLAUDE_PROVIDERS = ("anthropic", "anthropic_console")
 #: check gates on the same window for the same class of risk.
 EVIDENCE_MAX_AGE_DAYS = 30
 
-#: How far apart two cards of the same publication may be written. One
-#: publication writes an account's cards in one go, so anything further apart
-#: than this is a different, later publication. Cards from the account's most
-#: recent publication are the ones that describe it now; a card from an older
-#: publication describes a state the account may have left.
-EVIDENCE_PUBLICATION_MINUTES = 10
+#: The Claude collectors' own default poll interval, in seconds (see
+#: ``CollectorManager.collector_registry``). Used when neither the account nor
+#: the operator set one.
+DEFAULT_POLL_INTERVAL_SECONDS = 900
+
+#: How many collection cycles a card may lag behind the account's newest card
+#: and still count as part of its current state. The collector republishes a
+#: window every cycle, so a card further behind than this belongs to a state
+#: the account has since left — while a card a cycle or two behind is simply
+#: one the collector has not refreshed *yet*.
+EVIDENCE_PUBLICATION_CYCLES = 2
 
 
 @dataclass
@@ -75,7 +80,21 @@ class ClaudeBillingTypeResult:
     skipped: int = 0
 
 
-def _published_cards(session: Session, provider_id: str, account_id: str) -> list[dict[str, Any]]:
+def _default_poll_interval_seconds(session: Session) -> int:
+    """How often the collector refreshes an account's cards.
+
+    The account's own interval wins; then the operator's fleet-wide one; then
+    the collector's default.
+    """
+    cfg = session.exec(select(SystemConfig)).first()
+    if cfg is not None and cfg.default_poll_interval_seconds:
+        return int(cfg.default_poll_interval_seconds)
+    return DEFAULT_POLL_INTERVAL_SECONDS
+
+
+def _published_cards(
+    session: Session, provider_id: str, account_id: str, poll_interval_seconds: int
+) -> list[dict[str, Any]]:
     """The cards the account published, as the detector reads them.
 
     A card is evidence only while it still describes the account, so three
@@ -87,9 +106,11 @@ def _published_cards(session: Session, provider_id: str, account_id: str) -> lis
     - a card that has not been refreshed within ``EVIDENCE_MAX_AGE_DAYS``
       describes an account the collector has not reached since, so it may
       describe a state the account has since left;
-    - a card outside the account's most recent publication describes an older
-      publication, so when the account has changed since, only the newest
-      publication describes it now.
+    - a card more than ``EVIDENCE_PUBLICATION_CYCLES`` collection cycles behind
+      the account's newest card describes an older publication. The window is
+      the account's own poll interval, not a fixed span: a card a cycle behind
+      is one the collector has not refreshed *yet*, while a card further behind
+      belongs to a state the account has since left.
 
     Newest first.
     """
@@ -121,17 +142,19 @@ def _published_cards(session: Session, provider_id: str, account_id: str) -> lis
         return []
     dated.sort(key=lambda item: item[0], reverse=True)
     newest = dated[0][0]
-    publication_floor = newest - timedelta(minutes=EVIDENCE_PUBLICATION_MINUTES)
+    publication_floor = newest - timedelta(
+        seconds=EVIDENCE_PUBLICATION_CYCLES * max(poll_interval_seconds, 1)
+    )
     return [card for updated_at, card in dated if updated_at >= publication_floor]
 
 
-def _account_model(session: Session, provider_id: str, account_id: str) -> str | None:
+def _account_model(session: Session, row: ProviderConfig, poll_interval_seconds: int) -> str | None:
     """The model the account's published cards describe, or ``None``.
 
     ``None`` is the absence of a proof: an account that never published a
     card, or whose cards say nothing about how it bills, is not guessed at.
     """
-    cards = _published_cards(session, provider_id, account_id)
+    cards = _published_cards(session, row.provider_id, row.account_id, poll_interval_seconds)
     if not cards:
         return None
     model = detect_billing_type(cards)
@@ -139,7 +162,12 @@ def _account_model(session: Session, provider_id: str, account_id: str) -> str |
 
 
 def _candidates(session: Session, provider_id: str | None = None) -> list[ProviderConfig]:
-    """The rows nobody decided a billing model for."""
+    """The rows nobody decided a billing model for.
+
+    Archived and disabled rows are candidates too: pricing the model of an
+    account the operator paused is harmless, and the row keeps whatever the
+    operator set if they set one.
+    """
     query = select(ProviderConfig).where(
         col(ProviderConfig.provider_id).in_(CLAUDE_PROVIDERS),
         ProviderConfig.billing_type == UNKNOWN,
@@ -155,9 +183,10 @@ def plan_claude_billing_type(
 ) -> ClaudeBillingTypePlan:
     """What the repair would price, and what it would skip."""
     rows = _candidates(session, provider_id)
+    default_interval = _default_poll_interval_seconds(session)
     plan = ClaudeBillingTypePlan(total=len(rows))
     for row in rows:
-        model = _account_model(session, row.provider_id, row.account_id)
+        model = _account_model(session, row, row.poll_interval_seconds or default_interval)
         candidate = ClaudeBillingTypeCandidate(
             provider_id=row.provider_id,
             account_id=row.account_id,

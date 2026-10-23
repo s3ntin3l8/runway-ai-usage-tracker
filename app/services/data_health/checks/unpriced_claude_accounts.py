@@ -118,13 +118,12 @@ class UnpricedClaudeAccountsCheck(Check):
         )
 
     def plan(self, session: Session, group_key: str, params: dict[str, Any]) -> FixPlan:
-        if group_key.endswith(UNPRICEABLE_SUFFIX):
-            raise ValueError("accounts no published card prices cannot be priced automatically")
-        plan = plan_claude_billing_type(session, provider_id=group_key)
+        provider_id = self._provider_of(group_key)
+        plan = plan_claude_billing_type(session, provider_id=provider_id)
         return FixPlan(
             check_id=self.id,
             group_key=group_key,
-            summary=f"Price {len(plan.priced)} {group_key} account(s)",
+            summary=f"Price {len(plan.priced)} {provider_id} account(s)",
             counts={
                 "priced": len(plan.priced),
                 "skipped": len(plan.skipped),
@@ -145,15 +144,28 @@ class UnpricedClaudeAccountsCheck(Check):
     def apply(
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[Any]]:
-        if group_key.endswith(UNPRICEABLE_SUFFIX):
-            raise ValueError("accounts no published card prices cannot be priced automatically")
-        result = apply_claude_billing_type(session, provider_id=group_key)
+        provider_id = self._provider_of(group_key)
+        result = apply_claude_billing_type(session, provider_id=provider_id)
         return (
             FixResult(
                 check_id=self.id,
                 group_key=group_key,
-                summary=f"Priced {result.priced} {group_key} account(s)",
+                summary=f"Priced {result.priced} {provider_id} account(s)",
                 counts={"priced": result.priced, "skipped": result.skipped},
             ),
             [],
         )
+
+    @staticmethod
+    def _provider_of(group_key: str) -> str:
+        """The provider a group key names.
+
+        A key that names no Claude provider is a mistake, not an empty group,
+        so it is refused rather than answered with an empty plan.
+        """
+        if group_key.endswith(UNPRICEABLE_SUFFIX):
+            raise ValueError("accounts no published card prices cannot be priced automatically")
+        provider_id = group_key.removesuffix(UNPRICEABLE_SUFFIX)
+        if provider_id not in CLAUDE_PROVIDERS:
+            raise ValueError(f"unknown Claude provider {provider_id!r}")
+        return provider_id

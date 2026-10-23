@@ -107,6 +107,14 @@ def test_the_fixer_refuses_the_accounts_no_card_can_price(session):
         _check().apply(session, "anthropic::unpriceable", {})
 
 
+def test_the_fixer_refuses_a_provider_it_does_not_know(session):
+    """A mistyped group key is a mistake, not an empty group."""
+    with pytest.raises(ValueError):
+        _check().plan(session, "anthropc", {})
+    with pytest.raises(ValueError):
+        _check().apply(session, "anthropc", {})
+
+
 def test_detect_groups_by_provider(session):
     make_config(session, provider_id="anthropic", account_id="old@example.com")
     make_latest_usage(
