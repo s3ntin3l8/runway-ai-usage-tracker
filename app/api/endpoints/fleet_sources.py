@@ -162,6 +162,7 @@ async def command_source(
     body: SourceCommandRequest,
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    source_controls._write_lock(session)
     device = _device(session, sidecar_id)
     try:
         command = source_controls.queue_command(session, device.device_id, source_id, body.action)

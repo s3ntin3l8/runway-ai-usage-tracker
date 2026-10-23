@@ -216,3 +216,20 @@ def test_device_auth_failure_surfaces_repair_without_shared_key_downgrade(
     assert source_settings.report(local)["re_pair_required"] is False
     moved = {**local, "api_url": "https://other.example"}
     assert source_settings.report(moved)["re_pair_required"] is True
+
+
+def test_nonmac_cookie_resume_does_not_require_or_grant_keychain_consent(tmp_path, monkeypatch):
+    monkeypatch.setattr(source_protocol.sys, "platform", "linux")
+    local = config()
+    source_consent.POLICY.configure(local)
+    client = source_protocol.SourceClient(local, tmp_path / "state.json")
+    pause = {**command(1, "pause", 0), "source_id": "anthropic.chrome"}
+    resume = {**command(2, "resume", 0), "source_id": "anthropic.chrome"}
+    client.receive(local, reply(pause))
+    client.receive(local, reply(resume))
+    assert client.state["acknowledgments"] == [{"id": 2, "status": "applied"}]
+    assert source_consent.POLICY.ticket("anthropic.chrome") is None
+    revoke = {**command(3, "revoke", 0), "source_id": "anthropic.chrome"}
+    client.receive(local, reply(revoke))
+    client.receive(local, reply({**resume, "id": 4}))
+    assert client.state["acknowledgments"] == [{"id": 4, "status": "denied"}]

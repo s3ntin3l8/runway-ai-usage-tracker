@@ -443,7 +443,13 @@ consent, withdrawal, remote-control and acceptance contract.
 Updated sidecars request device_protocol=1 and platform=Darwin|Linux|Windows
 when redeeming a pairing code. The platform is bound to the enrolled identity;
 ordinary ingest OS labels cannot change it. Linux/Windows browser cookies do
-not require macOS Keychain consent. Older enrollments without a platform remain
+not require macOS Keychain consent, but retain their canonical scraper identity
+and server-owned generation so pause/revoke still applies and replay cannot
+restore withdrawn credentials. An explicit proof, when present, is always
+validated. The paired platform is a device assertion, not OS attestation;
+local Keychain permission is enforced by the sidecar, and server lifecycle
+eligibility is enforced independently of platform. Unknown native origins are skipped.
+Older enrollments without a platform remain
 conservative; re-pair to declare their platform.
 When DB_ENCRYPTION_KEY is configured, the single-use response additionally
 contains device_id, device_key, device_api_url, and source_protocol=1.
@@ -496,7 +502,7 @@ a tombstone and removes only matching encrypted credential payloads; late ingest
 cannot recreate them. Re-enabling requires a newer local generation.
 Rejected or unknown source cards/manifest entries are skipped before metadata
 mutation, without discarding the rest of the upload. Ingest returns a sanitized
-credentials_rejected count. Skipped manifest sources cannot retire last-good
+credentials_rejected card count (not a token count). Skipped manifest sources cannot retire last-good
 origins through a completed-provider declaration.
 Credential bundles remain separate across devices and origins, including identical
 tokens. Enrolled contributions survive server restart and offline Macs without a

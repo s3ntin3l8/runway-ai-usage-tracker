@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import event, text
+from sqlalchemy import delete, event, func, text
 from sqlmodel import Session, col, select
 
 from app.core.encryption import DecryptionError, encryption_service
@@ -36,19 +36,6 @@ def _write_lock(session: Session) -> None:
     snapshot cannot upgrade: SQLite rejects it, so it must never be reused.
     """
     session.execute(text("UPDATE sidecar_source_revision SET revision = revision WHERE id = 1"))
-
-
-def _expected_scraper(session: Session, device_id: str, provider: str, origin: str) -> str | None:
-    device = session.get(SidecarDevice, device_id, populate_existing=True)
-    # These cookie stores have no macOS Safe Storage dependency. The platform
-    # is fixed by the one-time pairing, never by an individual upload's label.
-    if (
-        device is not None
-        and device.platform in {"Linux", "Windows"}
-        and origin.startswith("cookie:")
-    ):
-        return None
-    return source_for_origin(provider, origin)
 
 
 def state(session: Session, device_id: str, source_id: str) -> SidecarSourceState | None:
@@ -169,7 +156,7 @@ def save_contribution(
     generation = proof.get("generation", 0)
     if type(generation) is not int:
         raise ValueError("Source contribution not authorized")
-    expected_scraper = _expected_scraper(session, device_id, provider_id, origin)
+    expected_scraper = source_for_origin(provider_id, origin)
     source = state(session, device_id, scraper_id) if isinstance(scraper_id, str) else None
     if (
         device is None
@@ -331,16 +318,18 @@ def prune_commands(session: Session, device_id: str) -> None:
     the highest ID also prevents SQLite from reusing a command ID after cleanup.
     """
     _write_lock(session)
+    latest = (
+        select(func.max(SidecarSourceCommand.id))
+        .where(SidecarSourceCommand.device_id == device_id)
+        .group_by(SidecarSourceCommand.source_id)
+    )
     session.execute(
-        text("""
-        DELETE FROM sidecar_source_commands
-        WHERE device_id = :device AND acknowledged IS NOT NULL AND issued_at < :cutoff
-          AND id NOT IN (
-            SELECT MAX(id) FROM sidecar_source_commands WHERE device_id = :device
-            GROUP BY source_id
-          )
-    """),
-        {"device": device_id, "cutoff": datetime.now(UTC) - timedelta(days=30)},
+        delete(SidecarSourceCommand).where(
+            col(SidecarSourceCommand.device_id) == device_id,
+            col(SidecarSourceCommand.acknowledged).is_not(None),
+            col(SidecarSourceCommand.issued_at) < datetime.now(UTC) - timedelta(days=30),
+            col(SidecarSourceCommand.id).not_in(latest),
+        )
     )
 
 
@@ -440,14 +429,41 @@ def contribution_proof(
     if not isinstance(provider_id, str) or not isinstance(origin, str) or len(origin) > 4096:
         raise ValueError("Source contribution not authorized")
     _write_lock(session)
-    expected = _expected_scraper(session, device_id, provider_id, origin)
+    expected = source_for_origin(provider_id, origin)
     if expected is None:
         if proof is not None:
             raise ValueError("Source contribution not authorized")
         return None
-    if not isinstance(proof, dict) or set(proof) != {"source_id", "revision", "generation"}:
+    descriptor = catalog().get(expected)
+    if descriptor is None or descriptor.provider != provider_id:
         raise ValueError("Source contribution not authorized")
     row = state(session, device_id, expected)
+    if proof is None and origin.startswith("cookie:"):
+        platforms = session.info.setdefault("source_device_platforms", {})
+        if device_id not in platforms:
+            device = session.get(SidecarDevice, device_id)
+            platforms[device_id] = device.platform if device else None
+        if platforms[device_id] in {"Linux", "Windows"}:
+            if row is None:
+                # No Keychain permission is granted here. Ordinary browser
+                # collection keeps its existing behavior, with a server-owned
+                # generation and the same revocation/paused-source bookkeeping.
+                row = apply_report(
+                    session,
+                    device_id,
+                    {
+                        "source_id": expected,
+                        "provider_id": provider_id,
+                        "label": descriptor.label,
+                        "revision": descriptor.revision,
+                        "generation": 0,
+                        "read": True,
+                        "state": "Limited",
+                    },
+                )
+            proof = {"source_id": expected, "revision": row.revision, "generation": row.generation}
+    if not isinstance(proof, dict) or set(proof) != {"source_id", "revision", "generation"}:
+        raise ValueError("Source contribution not authorized")
     if (
         proof.get("source_id") != expected
         or type(proof.get("generation")) is not int

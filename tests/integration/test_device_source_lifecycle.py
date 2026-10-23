@@ -171,12 +171,14 @@ def test_mixed_upload_keeps_files_and_platform_eligible_cookies(setup, platform)
         },
     )
     assert response.status_code == 200, response.text
-    assert response.json()["credentials_rejected"] == (1 if platform in {"Linux", "Windows"} else 3)
+    assert response.json()["credentials_rejected"] == (2 if platform in {"Linux", "Windows"} else 3)
     stored = session.exec(select(SidecarSourceContribution)).all()
     assert {row.origin for row in stored} == set(
-        origins[1:] if platform in {"Linux", "Windows"} else origins[3:]
+        [origins[1], origins[3]] if platform in {"Linux", "Windows"} else origins[3:]
     )
-    assert all(row.scraper_id is None for row in stored)
+    assert {row.scraper_id for row in stored} == (
+        {None, "anthropic.chrome"} if platform in {"Linux", "Windows"} else {None}
+    )
 
 
 def test_manifest_skips_unknown_store_without_claiming_completed_absence(setup):
@@ -259,3 +261,63 @@ def test_configured_engine_can_write_after_durable_auth_receipt(tmp_path, monkey
     finally:
         app.dependency_overrides.pop(get_session, None)
         engine.dispose()
+
+
+@pytest.mark.parametrize("reported", [False, True])
+def test_nonmac_cookie_lifecycle_keeps_mapping_and_rejects_replay_after_revoke(setup, reported):
+    from app.models.db import SidecarDevice
+
+    client, session, local = setup
+    device = session.get(SidecarDevice, local["device_id"])
+    device.platform = "Linux"
+    session.add(device)
+    session.commit()
+    if reported:
+        source = catalog()["anthropic.chrome"]
+        source_controls.apply_report(
+            session,
+            device.device_id,
+            {**report(), "source_id": source.id, "revision": source.revision},
+        )
+        session.commit()
+    cookie = {
+        "provider_id": "anthropic",
+        "service_name": "Synthetic",
+        "remaining": "Token",
+        "unit": "cookie",
+        "metadata": {
+            "credential_origin": "cookie:anthropic/Chrome/Default/Cookies",
+            "cookie_sessionKey": "synthetic-cookie",
+        },
+    }
+    payload = {"provider": "synthetic", "metrics": [cookie]}
+    assert post(client, local, "/api/v1/fleet/ingest", "ingest", payload).status_code == 200
+    row = session.exec(select(SidecarSourceContribution)).one()
+    assert row.scraper_id == "anthropic.chrome"
+    path = (
+        "/api/v1/fleet/sidecars/"
+        + sidecar_devices.registry_id(local["device_id"])
+        + "/sources/anthropic.chrome/commands"
+    )
+    assert client.post(path, json={"action": "pause"}).status_code == 200
+    assert source_controls.snapshot(session)[1] == []
+    resumed = client.post(path, json={"action": "resume"})
+    assert resumed.status_code == 200
+    ack = post(
+        client,
+        local,
+        "/api/v1/fleet/source-sync",
+        "source-sync",
+        {"acknowledgments": [{"id": resumed.json()["id"], "status": "applied"}]},
+    )
+    assert ack.status_code == 200
+    assert len(source_controls.snapshot(session)[1]) == 1
+    assert client.post(path, json={"action": "revoke"}).status_code == 200
+    assert session.get(SidecarSourceContribution, row.id).payload_encrypted is None
+    response = post(client, local, "/api/v1/fleet/ingest", "ingest", payload)
+    assert response.status_code == 200 and response.json()["credentials_rejected"] == 1
+    assert source_controls.snapshot(session)[1] == []
+    # Even non-macOS uploads cannot downgrade an explicitly supplied bad proof.
+    cookie["metadata"]["keychain_consent"] = {"source_id": "unknown"}
+    response = post(client, local, "/api/v1/fleet/ingest", "ingest", payload)
+    assert response.json()["credentials_rejected"] == 1

@@ -10,6 +10,7 @@ import logging
 import os
 import pathlib
 import re
+import sys
 import tempfile
 from typing import Any
 from urllib import error, request
@@ -190,10 +191,18 @@ class SourceClient:
                 elif action == "revoke":
                     stored["revoked_through"] = max(stored.get("revoked_through", -1), generation)
                 elif action == "resume":
-                    if (
-                        local is None
-                        or local.generation != generation
-                        or generation <= stored.get("revoked_through", -1)
+                    ordinary_cookie = sys.platform in {"linux", "win32"} and source_id.rsplit(
+                        ".", 1
+                    )[-1] in {"chrome", "chromium", "edge"}
+                    local_generation = (
+                        local.generation
+                        if local is not None
+                        else generation
+                        if ordinary_cookie
+                        else None
+                    )
+                    if local_generation != generation or generation <= stored.get(
+                        "revoked_through", -1
                     ):
                         status = "denied"
                     else:
