@@ -363,3 +363,124 @@ async def test_the_manual_path_agrees_with_the_strategy_on_every_payload():
             "sk-ant-oat-test",  # pragma: allowlist secret
         )
         assert model == expected
+
+
+def test_a_window_with_no_usable_number_proves_nothing():
+    """The account published the window but no number in it."""
+    from app.services.claude_oauth_usage import (
+        billing_model_from_oauth_cards,
+        oauth_usage_cards,
+    )
+    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+
+    for payload in ({"five_hour": {}}, {"five_hour": {"utilization": None}}):
+        cards = oauth_usage_cards(
+            payload,
+            ANTHROPIC_WINDOW_NAME_MAP,
+            None,
+            data_source="api",
+            input_source="config",
+        )
+        windows = [card for card in cards if card.get("window_type") == "session"]
+        assert windows
+        assert all(card.get("billing_evidence") == "placeholder" for card in windows)
+        # The organization verifier calls this payload "Invalid quota" and
+        # proves nothing, so the strategy must not price it either.
+        assert billing_model_from_oauth_cards(cards) is None
+
+
+def test_a_window_published_as_percent_used_still_proves_a_subscription():
+    """percentUsed is the Web API's spelling; the OAuth path reads it too."""
+    from app.services.claude_oauth_usage import (
+        billing_model_from_oauth_cards,
+        oauth_usage_cards,
+    )
+    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+
+    cards = oauth_usage_cards(
+        {"five_hour": {"percentUsed": 41}},
+        ANTHROPIC_WINDOW_NAME_MAP,
+        None,
+        data_source="api",
+        input_source="config",
+    )
+    published = [card for card in cards if card.get("billing_evidence") != "placeholder"]
+    assert len(published) == 1
+    assert published[0]["used_value"] == 41.0
+    assert billing_model_from_oauth_cards(cards) == "subscription"
+
+
+def test_a_malformed_number_is_an_error_not_a_placeholder():
+    """A corrupt quota is an error, not a missing one."""
+    import math
+
+    from app.services.claude_oauth_usage import oauth_usage_cards
+    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+
+    # A non-numeric value raises, exactly as it did before: the collector
+    # turns it into an error card.
+    with pytest.raises(ValueError):
+        oauth_usage_cards(
+            {"five_hour": {"utilization": "invalid"}},
+            ANTHROPIC_WINDOW_NAME_MAP,
+            None,
+            data_source="api",
+            input_source="config",
+        )
+
+    # A non-finite value stays non-finite, so the verification layer can
+    # reject the payload instead of the collector storing a 0 % window.
+    cards = oauth_usage_cards(
+        {"five_hour": {"utilization": float("nan")}},
+        ANTHROPIC_WINDOW_NAME_MAP,
+        None,
+        data_source="api",
+        input_source="config",
+    )
+    assert math.isnan(cards[0]["used_value"])
+    assert "billing_evidence" not in cards[0]
+
+
+def test_a_limits_entry_with_no_number_proves_nothing():
+    """A limits[] entry that names a window but carries no percentage."""
+    from app.services.claude_oauth_usage import (
+        billing_model_from_oauth_cards,
+        oauth_usage_cards,
+    )
+    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+
+    cards = oauth_usage_cards(
+        {
+            "limits": [
+                {
+                    "kind": "session",
+                    "group": "session",
+                    "severity": "normal",
+                    "resets_at": None,
+                    "scope": {"model": None, "surface": None},
+                    "is_active": True,
+                }
+            ]
+        },
+        ANTHROPIC_WINDOW_NAME_MAP,
+        None,
+        data_source="api",
+        input_source="config",
+    )
+    assert cards
+    assert all(card.get("billing_evidence") == "placeholder" for card in cards)
+    assert billing_model_from_oauth_cards(cards) is None
+
+
+def test_a_web_window_with_no_usable_number_decides_nothing():
+    """The web collector draws the same rule as the OAuth one."""
+    from app.services.billing_type import UNKNOWN, detect_billing_type
+    from app.services.collectors.anthropic import AnthropicCollector
+
+    collector = AnthropicCollector(account_id="default")
+    cards = collector._parse_web_api_response({"five_hour": {}, "current_balance": 42.0})
+    windows = [card for card in cards if card.get("unit_type") == "percent"]
+    assert windows
+    assert all(card.get("billing_evidence") == "placeholder" for card in windows)
+    # Nothing in that payload is evidence, so nothing is decided.
+    assert detect_billing_type(cards) == UNKNOWN

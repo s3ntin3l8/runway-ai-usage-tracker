@@ -25,6 +25,7 @@ from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
     anthropic_model_id_for,
+    anthropic_published_percent,
     build_anthropic_limit_cards,
     classify_anthropic_window_type,
 )
@@ -324,12 +325,9 @@ class AnthropicWebMixin:
                     continue
 
                 # Web API uses 0-100 scale directly (e.g. 1 means 1%)
-                raw_util = window_data.get("utilization")
-                if raw_util is not None:
-                    pct_used = float(raw_util)
-                else:
-                    raw_pct = window_data.get("percentUsed")
-                    pct_used = float(raw_pct) if raw_pct is not None else 0.0
+                published = anthropic_published_percent(window_data, "utilization", "percentUsed")
+                placeholder = published is None
+                pct_used = 0.0 if published is None else published
 
                 remaining_pct = 100.0 - pct_used
 
@@ -344,31 +342,35 @@ class AnthropicWebMixin:
                 w_type = classify_anthropic_window_type(api_key)
                 service_name = "Claude"
 
-                results.append(
-                    {
-                        "service_name": service_name,
-                        "icon": "🟠",
-                        "remaining": f"{remaining_pct:.1f}%",
-                        "unit": "capacity",
-                        "reset": human_delta(reset_at),
-                        "health": HealthCalculator.from_percentage(pct_used),
-                        "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
-                        "detail": f"{pct_used:.1f}% used{tier_label} [Web API]{identity_suffix}",
-                        "used_value": pct_used,
-                        "limit_value": 100.0,
-                        "is_unlimited": False,
-                        "unit_type": "percent",
-                        "window_type": w_type,
-                        "model_id": anthropic_model_id_for(api_key),
-                        "reset_at": reset_at.isoformat() if reset_at else None,
-                        "data_source": self.DATA_SOURCE_WEB,
-                        "input_source": getattr(self, "_current_input_source", "unknown"),
-                        "tier": tier,
-                        "account_label": name_str,
-                        "usage_url": "https://claude.ai/settings/usage",
-                        "updated_at": datetime.now(UTC).isoformat(),
-                    }
-                )
+                card: dict[str, Any] = {
+                    "service_name": service_name,
+                    "icon": "🟠",
+                    "remaining": f"{remaining_pct:.1f}%",
+                    "unit": "capacity",
+                    "reset": human_delta(reset_at),
+                    "health": HealthCalculator.from_percentage(pct_used),
+                    "pace": PaceCalculator.estimate_longevity(pct_used, reset_at),
+                    "detail": f"{pct_used:.1f}% used{tier_label} [Web API]{identity_suffix}",
+                    "used_value": pct_used,
+                    "limit_value": 100.0,
+                    "is_unlimited": False,
+                    "unit_type": "percent",
+                    "window_type": w_type,
+                    "model_id": anthropic_model_id_for(api_key),
+                    "reset_at": reset_at.isoformat() if reset_at else None,
+                    "data_source": self.DATA_SOURCE_WEB,
+                    "input_source": getattr(self, "_current_input_source", "unknown"),
+                    "tier": tier,
+                    "account_label": name_str,
+                    "usage_url": "https://claude.ai/settings/usage",
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+                if placeholder:
+                    # The account published the window but no usable number
+                    # in it: the card the collector draws is a placeholder,
+                    # not evidence.
+                    card["billing_evidence"] = "placeholder"
+                results.append(card)
 
         # 2. Balance / Prepaid Credits (New)
         balance_keys = ["current_balance", "available_balance", "balance", "credits"]

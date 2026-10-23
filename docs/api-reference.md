@@ -208,7 +208,7 @@ interface LimitCard {
   stale?: boolean;        // Cache served past STALE_CEILING — real but old data (since #293)
   collection_failing?: boolean;  // Collection is failing; set alongside `stale`, drives frontend cardStale()
   tier?: string;          // "Free" | "Pro" | "Enterprise"
-  billing_evidence?: string;  // "placeholder" | "prepaid_credit" - evidence that decides no billing model
+  billing_evidence?: string | null;  // "placeholder" | "prepaid_credit" - evidence that decides no billing model
   usage_url?: string;     // Link to provider usage page
   updated_at?: string;    // ISO 8601 timestamp
   metadata?: Record<string, unknown>;  // Free-form, provider-specific extras

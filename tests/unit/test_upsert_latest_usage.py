@@ -801,3 +801,33 @@ def test_reason_containing_separator_is_sanitized_and_round_trips(
     third = mark("refresh failed (HTTP 401) — re-login required")
     assert third == first
     assert third.count("Collection failing") == 1
+
+
+def test_a_stored_placeholder_clears_when_the_account_publishes_its_own_window(
+    session: Session,
+):
+    """The collector's placeholder must not outlive the account's own window.
+
+    An account that publishes only a balance gets the collector's guaranteed
+    window, marked as a placeholder. Once it publishes a real window the new
+    card carries no billing_evidence key at all, so the stored mark has to go
+    — otherwise the account stays unpriceable forever.
+    """
+    placeholder = {
+        **_make_card(),
+        "used_value": 0.0,
+        "pct_used": 0.0,
+        "billing_evidence": "placeholder",
+    }
+    upsert_latest_usage(session, placeholder)
+    session.commit()
+
+    published = {**_make_card(), "used_value": 41.0, "pct_used": 41.0}
+    upsert_latest_usage(session, published)
+    session.commit()
+
+    rows = session.exec(select(LatestUsage)).all()
+    assert len(rows) == 1
+    stored = json.loads(rows[0].card_json)
+    assert "billing_evidence" not in stored
+    assert stored["used_value"] == 41.0

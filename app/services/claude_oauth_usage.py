@@ -29,6 +29,7 @@ from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
     anthropic_model_id_for,
+    anthropic_published_percent,
     build_anthropic_limit_cards,
     classify_anthropic_window_type,
 )
@@ -330,8 +331,12 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         if limits is not None:
             continue
 
-        raw_utilization = usage.get("utilization")
-        pct_used = float(raw_utilization) if raw_utilization is not None else 0.0
+        raw_utilization = anthropic_published_percent(usage, "utilization", "percentUsed")
+        if raw_utilization is None:
+            # The account published the window but no usable number in it:
+            # the card the collector draws is a placeholder, not evidence.
+            placeholder = True
+        pct_used = 0.0 if raw_utilization is None else raw_utilization
         remaining_pct = 100.0 - pct_used
 
         reset_raw = usage.get("resets_at") or usage.get("resetsAt")
