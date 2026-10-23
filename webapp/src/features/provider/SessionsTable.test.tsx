@@ -288,4 +288,27 @@ describe('SessionsTable subagent turns and requests', () => {
     expect(screen.getByText('Turns')).toBeInTheDocument();
     expect(screen.queryByText('Requests')).not.toBeInTheDocument();
   });
+
+  it('counts a missing turn count as zero when comparing it with the requests', async () => {
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({
+            session_id: 'aaaaaaaa1111',
+            subagents: [
+              {
+                subagent_type: 'Explore',
+                requests: 0,
+                tool_calls: 0,
+                tokens_total: 0,
+              },
+            ],
+          }),
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByText('aaaaaaaa').closest('tr')!);
+    expect(screen.getByText('Turns')).toBeInTheDocument();
+    expect(screen.queryByText('Requests')).not.toBeInTheDocument();
+  });
 });
