@@ -232,6 +232,30 @@ from tests.fixtures.mock_data import (
 )
 from tests.fixtures.sqlite import disable_fsync, skip_fsync_requested
 from tests.fixtures.worker_death import worker_death_diagnosis
+from tests.windows_socketpair import install_windows_socketpair
+
+
+def _install_stack_dump() -> None:
+    """Dump every thread's stack every two minutes, when asked to.
+
+    A worker that stalls takes the whole xdist run down with it, and the
+    stack that says where it stalled is the only thing that names the cause.
+    ``RUNWAY_TEST_STACKDUMP=1`` turns this on; it is off by default because
+    it writes to stderr on a timer.
+    """
+    if os.environ.get("RUNWAY_TEST_STACKDUMP") != "1":
+        return
+    import faulthandler
+
+    faulthandler.dump_traceback_later(120, repeat=True)
+
+
+# This module is imported before any event loop exists -- in every xdist
+# worker, which loads this same conftest -- so the replacement is in place
+# before the first socketpair is created. CPython's Windows fallback can
+# block a worker inside ``accept()`` forever (#830).
+install_windows_socketpair()
+_install_stack_dump()
 
 
 @pytest.fixture(scope="session", autouse=True)

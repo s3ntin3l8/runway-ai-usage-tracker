@@ -217,6 +217,35 @@ pytest --pdb tests/
 pytest -s tests/
 ```
 
+### A Worker That Never Reports
+
+On Windows, a pytest-xdist worker can stall inside CPython's
+`socket.socketpair()`, which is what both asyncio event loops build their
+self-pipe from. The worker never finishes, xdist prints `node down: Not
+properly terminated`, and the master dies with a `KeyError` while rescheduling
+the worker it lost. The captured stack is in
+[#830](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/830).
+
+The test session replaces `socket.socketpair` with one that cannot hang:
+`tests/windows_socketpair.py` connects in blocking mode, so the handshake
+completes before the `accept()` that could otherwise wait forever. It is
+installed by `tests/conftest.py` at import time, and only on Windows, and only
+for a CPython that has no native socketpair there. Nothing outside the test
+session is affected.
+
+To watch what a stalled worker is doing, dump every thread's stack every two
+minutes:
+
+```bash
+RUNWAY_TEST_STACKDUMP=1 pytest -n 4 --dist loadfile tests/
+```
+
+To put CPython's own socketpair back while debugging something else:
+
+```bash
+RUNWAY_DISABLE_WINDOWS_SOCKETPAIR=1 pytest tests/
+```
+
 ## CI/CD Integration
 
 The project uses GitHub Actions for CI/CD, with workflow files in `.github/workflows/` (full detail in [`docs/architecture.md`](../docs/architecture.md#cicd)):
