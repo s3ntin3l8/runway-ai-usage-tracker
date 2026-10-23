@@ -247,6 +247,39 @@ async def test_credential_source_preferences_and_safe_listing(client: TestClient
     assert "private-two" not in str(account)
 
 
+def test_credential_source_listing_names_a_cookie_row_a_cookie(
+    client: TestClient, session: Session
+):
+    """A row an older ingest stored as ``sidecar`` still reads as the cookie it is:
+    the listing describes the row from its origin, so the account editor can tell
+    a browser session from a credential file."""
+    created = client.put(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        json={"account_label": "Alice"},
+        headers=_admin_headers(),
+    )
+    assert created.status_code == 200, created.text
+    session.add(
+        CredentialSource(
+            provider_id="openrouter",
+            account_id="alice@example.com",
+            source_id="sidecar:cookie",
+            source_type="sidecar",  # what ingest stored before cookies had their own type
+            source_label="Browser cookie",
+            credential_origin="cookie:openrouter/Chrome/Profile 1/Cookies",
+            sidecar_id="host-a",
+        )
+    )
+    session.commit()
+
+    listing = client.get("/api/v1/system/provider-configs").json()["providers"]
+    account = next(p for p in listing if p["provider_id"] == "openrouter")["accounts"][0]
+    source = next(s for s in account["credential_sources"] if s["source_id"] == "sidecar:cookie")
+    assert source["source_type"] == "cookie"
+    assert source["source_label"] == "Browser cookie"
+    assert source["source_detail"] == "Chrome · Profile 1"
+
+
 def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     client: TestClient, session: Session, monkeypatch
 ):

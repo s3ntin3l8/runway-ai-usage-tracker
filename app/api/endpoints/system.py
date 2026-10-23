@@ -54,7 +54,12 @@ from app.services.collectors.anthropic_console import (
 )
 from app.services.credential_inventory import build_inventory as build_credential_inventory
 from app.services.credential_provider import CredentialProvider
-from app.services.credential_sources import effective_health, is_server_source_id
+from app.services.credential_sources import (
+    describe_origin,
+    describe_origin_full,
+    effective_health,
+    is_server_source_id,
+)
 from app.services.credential_tags import CredentialTagRepo
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
@@ -1591,20 +1596,34 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             for row in credential_sources_by_account.get((provider_id, account_id), [])
             if not is_server_source_id(row.source_id)
         ]
-        summaries = [
-            {
-                "source_id": row.source_id,
-                "source_type": row.source_type,
-                "source_label": row.source_label,
-                "sidecar_id": row.sidecar_id,
-                "enabled": row.enabled,
-                "priority": row.priority,
-                "last_seen": row.last_seen.isoformat() if row.last_seen else None,
-                "health": effective_health(row) if row.source_id in live_by_id else "unavailable",
-                "available": row.source_id in live_by_id,
-            }
-            for row in sorted(rows, key=lambda item: (item.priority, item.id or 0))
-        ]
+        summaries = []
+        for row in sorted(rows, key=lambda item: (item.priority, item.id or 0)):
+            # Describe the origin instead of trusting the stored type: an older
+            # ingest stored "sidecar" for a cookie, and the row must say it is a
+            # browser session, not another credential file. A row that already
+            # names its kind keeps the label the ingest gave it.
+            described = (
+                describe_origin_full(row.credential_origin) if row.credential_origin else None
+            )
+            origin_kind = described.kind if described else row.source_type
+            origin_label = described.label if described else row.source_label
+            stale_kind = row.source_type == "sidecar" and origin_kind != "sidecar"
+            summaries.append(
+                {
+                    "source_id": row.source_id,
+                    "source_type": origin_kind if stale_kind else row.source_type,
+                    "source_label": origin_label if stale_kind else row.source_label,
+                    "source_detail": described.detail if described else None,
+                    "sidecar_id": row.sidecar_id,
+                    "enabled": row.enabled,
+                    "priority": row.priority,
+                    "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+                    "health": effective_health(row)
+                    if row.source_id in live_by_id
+                    else "unavailable",
+                    "available": row.source_id in live_by_id,
+                }
+            )
         known_ids = {row.source_id for row in rows}
         # Sidecar manifests may already have supplied live credentials while
         # the durable source summary has not yet been written. Include those
@@ -1613,14 +1632,19 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
             if item["source_id"] in known_ids:
                 continue
             origin = item.get("credential_origin") or ""
-            from app.services.credential_sources import describe_origin
-
-            source_label = describe_origin(origin)[1]
+            described = describe_origin_full(origin) if origin else None
             summaries.append(
                 {
                     "source_id": item["source_id"],
-                    "source_type": item.get("source_type", "sidecar"),
-                    "source_label": source_label,
+                    "source_type": (
+                        described.kind
+                        if described and described.kind != "sidecar"
+                        else item.get("source_type", "sidecar")
+                    ),
+                    # A native Anthropic cookie names its client ("Chrome cookie");
+                    # every other origin is named by what it is.
+                    "source_label": describe_origin(origin)[1],
+                    "source_detail": described.detail if described else None,
                     "sidecar_id": item.get("sidecar_id"),
                     "enabled": item.get("enabled", True),
                     "priority": item.get("priority", 0),

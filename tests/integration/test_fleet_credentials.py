@@ -1009,6 +1009,43 @@ def test_pending_endpoint_lists_all(client: TestClient, session: Session):
     assert counts == {"alpha": 2, "beta": 1}
 
 
+def test_pending_endpoint_describes_the_source_in_words(client: TestClient, session: Session):
+    """The pending list names the credential ("Browser cookie"), not just its origin
+    string, so the operator can tell a cookie from another credential file."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="opencode",
+        credential_origin="cookie:opencode/Chrome/Profile 1/Cookies",
+    )
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="opencode",
+        credential_origin="cookie:opencode/session",
+    )
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha",
+        provider_id="opencode",
+        credential_origin="path:/home/u/.local/share/opencode/auth.json",
+    )
+    session.commit()
+
+    items = client.get("/api/v1/fleet/credentials/tags/pending").json()["items"]
+    by_origin = {item["credential_origin"]: item for item in items}
+    assert by_origin["cookie:opencode/Chrome/Profile 1/Cookies"]["origin_label"] == "Browser cookie"
+    assert (
+        by_origin["cookie:opencode/Chrome/Profile 1/Cookies"]["origin_detail"]
+        == "Chrome · Profile 1"
+    )
+    assert by_origin["cookie:opencode/session"]["origin_label"] == "Browser cookie"
+    assert by_origin["cookie:opencode/session"]["origin_detail"] is None
+    assert by_origin["path:/home/u/.local/share/opencode/auth.json"]["origin_label"] == "auth.json"
+
+
 def test_pending_endpoint_filters_by_sidecar(client: TestClient, session: Session):
     """Per-sidecar query for the per-card badge."""
     from app.services.credential_tags import PendingCredentialTagRepo
@@ -2541,6 +2578,28 @@ def test_listed_credential_tags_describe_their_origin(client: TestClient, sessio
         "auth.json",
         "Codex CLI",
         "~/.codex/auth.json",
+    )
+
+
+def test_listed_credential_tags_name_the_browser_a_cookie_came_from(
+    client: TestClient, session: Session
+) -> None:
+    """A cookie rule says which browser holds it, so it can't be read as a file."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="opencode",
+        credential_origin="cookie:opencode/Chrome/Profile 1/Cookies",
+        account_id="alice@example.com",
+        sidecar_id="alpha",
+    )
+    session.commit()
+
+    (item,) = client.get("/api/v1/fleet/credentials/tags").json()["items"]
+    assert (item["origin_label"], item["origin_detail"]) == (
+        "Browser cookie",
+        "Chrome · Profile 1",
     )
 
 
