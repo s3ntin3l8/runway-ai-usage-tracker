@@ -24,6 +24,11 @@ Keychain worker, and only while the user has granted the
 stays quiet rather than renewing a credential the sidecar may not read). All
 are read through the same helpers, so the renewal loop is the same
 everywhere.
+
+The macOS reader is injected rather than imported: the consent map, and the
+Keychain worker that reaches it, both lead back to this module (consent ->
+protocol -> settings -> setup -> sidecar -> keep-alive), so importing either
+from here closes an import cycle.
 """
 
 import json
@@ -46,20 +51,21 @@ DEFAULT_TOKEN_PATH = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-
 # (target "gemini:antigravity") and writes no token file, so the keep-alive
 # has to read the credential store rather than the filesystem.
 WINDOWS_CREDENTIAL_TARGET = "gemini:antigravity"
-# On macOS the agy CLI keeps its OAuth token in the login Keychain (service
-# 'gemini', account 'antigravity') and writes no token file at all; the POSIX
-# layout above is what the file-based reader finds.
-MACOS_KEYRING_SERVICE = "gemini"
-MACOS_KEYRING_ACCOUNT = "antigravity"
-# The catalogued source that Keychain entry belongs to. The keep-alive only
-# reads it while the user has granted that source locally.
-MACOS_KEYRING_SOURCE = "antigravity.agy-cli"
-# agy moved its credential out of the token file in 1.4.3. The file an older
-# install left behind is stale from then on, and treating it as the credential
-# would respawn ``agy models`` every tick - the renewal writes the Keychain,
-# never the file, so the file's expiry never advances. Only a CLI that still
-# uses the file makes the file authoritative.
-FILE_LAYOUT_LAST_VERSION = (1, 4, 3)
+# The reader for the macOS Keychain entry the agy CLI keeps its login in,
+# installed by the sidecar (scripts/sidecar.py). It returns
+# (present, expiry): present=False means there is no agy login on this
+# machine at all, expiry=None means there is one whose expiry cannot be read
+# and the CLI decides.
+AgyCredentialReader = Callable[[], tuple[bool, float | None]]
+_agy_credential_reader: AgyCredentialReader | None = None
+
+
+def set_agy_credential_reader(reader: AgyCredentialReader | None) -> None:
+    """Install the reader for the macOS Keychain credential (see above)."""
+    global _agy_credential_reader
+    _agy_credential_reader = reader
+
+
 # Cheap stat + read of a ~1.6 KB file. This bounds the dead-token window to
 # one tick after expiry; agy only rewrites the file once the token has lapsed,
 # so a longer tick would leave collection failing for longer.
@@ -104,98 +110,6 @@ def is_enabled(provider: str | None = None) -> bool:
     return _enabled and (provider is None or provider not in _disabled_providers)
 
 
-def _macos_keychain_rule() -> dict[str, Any] | None:
-    """The catalogued Keychain rule for the agy credential, when there is one.
-
-    It comes from the generated catalog, so it is the very rule the consent
-    map was built from - reading the baked registry instead would mean
-    importing the whole sidecar module for one literal. Service *and* account
-    are matched, so a second rule for the same service cannot be picked up
-    by accident.
-    """
-    from scripts.sidecar_pkg import source_catalog
-
-    # Read through the catalog module, so this and ``catalog()`` always see
-    # one rules object however the generated data is regenerated.
-    providers = source_catalog.KEYCHAIN_RULES.get(AGY_PROVIDER)
-    rules = providers.get("rules", []) if isinstance(providers, dict) else []
-    for rule in rules:
-        if (
-            isinstance(rule, dict)
-            and rule.get("type") == "keychain"
-            and rule.get("service_name") == MACOS_KEYRING_SERVICE
-            and rule.get("account") == MACOS_KEYRING_ACCOUNT
-        ):
-            return rule
-    return None
-
-
-def macos_keyring_value() -> bytes | None:
-    """The raw stored value of the macOS Keychain entry, or None.
-
-    None covers every "not available" case: no local consent, no catalogued
-    rule, no entry, or a read the user has not authorized yet. The value is
-    read through the Keychain worker, never by shelling out, and never leaves
-    this process.
-    """
-    if platform.system() != "Darwin":
-        return None
-    from scripts.sidecar_pkg import source_consent as consent
-    from scripts.sidecar_pkg.macos_keychain_store import read_secret
-
-    rule = _macos_keychain_rule()
-    if rule is None or consent.POLICY.ticket(MACOS_KEYRING_SOURCE) is None:
-        return None
-    try:
-        with consent.rule_scope(AGY_PROVIDER, rule):
-            return read_secret(
-                MACOS_KEYRING_SERVICE,
-                MACOS_KEYRING_ACCOUNT,
-                group="registry:" + MACOS_KEYRING_SERVICE,
-            )
-    except Exception:
-        logger.debug("macOS Keychain credential unavailable")
-        return None
-
-
-def _macos_keyring_document(raw: bytes) -> dict[str, Any] | None:
-    """The credential document in a stored value, or None when unreadable."""
-    from scripts.sidecar_pkg.keyring_value import decode_document
-
-    return decode_document(raw.decode("utf-8", "replace"))
-
-
-def macos_keyring_document() -> dict[str, Any] | None:
-    """The agy credential document from the macOS Keychain, or None."""
-    raw = macos_keyring_value()
-    return None if raw is None else _macos_keyring_document(raw)
-
-
-def macos_keyring_expiry_epoch() -> float | None:
-    """``token.expiry`` of the macOS Keychain credential; None when unreadable."""
-    document = macos_keyring_document()
-    return None if document is None else _expiry_from_document(document)
-
-
-def _installed_agy_uses_the_file() -> bool:
-    """Whether the installed agy still keeps its credential in the token file.
-
-    An unknown version answers False: a CLI that cannot report its version is
-    no evidence that the file is live, and reading a stale file is exactly
-    what makes the keep-alive respawn the renewal every tick.
-    """
-    from scripts.sidecar_pkg.agy_version import installed_version
-
-    version = installed_version()
-    if not version:
-        return False
-    try:
-        parts = tuple(int(part) for part in version.split("."))
-    except ValueError:
-        return False
-    return parts < FILE_LAYOUT_LAST_VERSION
-
-
 def _expiry_from_document(document: Any) -> float | None:
     """``token.expiry`` as epoch seconds from a parsed token document."""
     try:
@@ -236,21 +150,15 @@ def local_expiry_epoch(token_path: Path | None = None) -> float | None:
     ``token_path`` names a token file to read (the POSIX layout, and what the
     tests inject). Without one the platform decides: the Windows Credential
     Manager entry on Windows, the login Keychain on macOS, the token file
-    elsewhere. On macOS the file is the fallback for a CLI that still uses
-    it - agy before 1.4.3 keeps its credential there, and that layout needs
-    no consent.
+    elsewhere. The macOS reader owns the Keychain entry and the token file
+    an older CLI still uses.
     """
     if token_path is not None:
         return expiry_epoch(token_path)
     if platform.system() == "Windows":
         return _windows_expiry_epoch()
-    if platform.system() == "Darwin":
-        document = macos_keyring_document()
-        if document is not None:
-            return _expiry_from_document(document)
-        if not _installed_agy_uses_the_file():
-            return None
-        return expiry_epoch(DEFAULT_TOKEN_PATH)
+    if platform.system() == "Darwin" and _agy_credential_reader is not None:
+        return _agy_credential_reader()[1]
     return expiry_epoch(DEFAULT_TOKEN_PATH)
 
 
@@ -302,19 +210,11 @@ def local_refresh_due(
         if raw is None:
             return False
         expiry = _windows_expiry_epoch_from(raw)
-    elif platform.system() == "Darwin":
-        raw = macos_keyring_value()
-        if raw is not None:
-            document = _macos_keyring_document(raw)
-            expiry = None if document is None else _expiry_from_document(document)
-        elif not _installed_agy_uses_the_file():
-            # No Keychain entry (or no consent for it), and the installed CLI
-            # writes the Keychain, so a leftover file is stale.
+    elif platform.system() == "Darwin" and _agy_credential_reader is not None:
+        present, expiry = _agy_credential_reader()
+        if not present:
             return False
-        elif not DEFAULT_TOKEN_PATH.is_file():
-            return False
-        else:
-            expiry = expiry_epoch(DEFAULT_TOKEN_PATH)
+        return _due(expiry, now, lead)
     else:
         if not DEFAULT_TOKEN_PATH.is_file():
             return False

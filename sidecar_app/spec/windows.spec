@@ -129,6 +129,9 @@ a = Analysis(
         # go-keyring envelope decoder for the macOS Keychain entry the agy CLI
         # writes. Imported lazily, so PyInstaller's static scan won't catch it.
         "scripts.sidecar_pkg.keyring_value",
+        # The macOS Keychain reader for the Antigravity CLI's login. Imported
+        # lazily, so PyInstaller's static scan won't catch it.
+        "scripts.sidecar_pkg.agy_keychain",
         "certifi",
     ],
     hookspath=[],

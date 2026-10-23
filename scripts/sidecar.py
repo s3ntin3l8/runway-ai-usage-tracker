@@ -987,10 +987,37 @@ def _make_keep_alive_renewers() -> list:
     ]
 
 
-def _make_keep_alive_thread():
-    from scripts.sidecar_pkg.keep_alive import KeepAliveThread
+def _agy_keychain_value():
+    """The agy credential from the macOS Keychain, or None when it is not
+    available here (no local consent, or no entry)."""
+    from scripts.sidecar_pkg import agy_keychain
+    from scripts.sidecar_pkg import source_consent as consent
+    from scripts.sidecar_pkg.macos_keychain_store import read_secret
 
-    return KeepAliveThread(renewers=_make_keep_alive_renewers())
+    rule = agy_keychain.rule()
+    if rule is None or consent.POLICY.ticket(agy_keychain.SOURCE_ID) is None:
+        return None
+    try:
+        with consent.rule_scope("antigravity", rule):
+            return read_secret(
+                agy_keychain.SERVICE,
+                agy_keychain.ACCOUNT,
+                group="registry:" + agy_keychain.SERVICE,
+            )
+    except Exception:
+        logging.debug("macOS Keychain credential unavailable")
+        return None
+
+
+def _make_keep_alive_thread():
+    from scripts.sidecar_pkg import agy_keychain, keep_alive
+
+    # The macOS Keychain entry the agy CLI keeps its login in is read through
+    # the consent map, so the keep-alive takes it as a reader instead of
+    # importing it - the consent map leads back to the sidecar, and the import
+    # would close a cycle.
+    keep_alive.set_agy_credential_reader(lambda: agy_keychain.state(_agy_keychain_value))
+    return keep_alive.KeepAliveThread(renewers=_make_keep_alive_renewers())
 
 
 def _keep_alive_provider_names() -> list[str]:

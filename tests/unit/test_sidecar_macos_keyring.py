@@ -401,26 +401,26 @@ class TestCatalogAndConsent:
         foreground authorization pick one."""
         assert source_setup.resources(_SOURCE_ID) == ([_SERVICE], _ACCOUNT)
 
-    def test_the_keep_alive_reads_the_catalogued_rule(self):
-        """The keep-alive must use the rule the consent map was built from, or
+    def test_the_reader_uses_the_catalogued_rule(self):
+        """The reader must use the rule the consent map was built from, or
         the worker would refuse every read it attempts."""
-        from scripts.sidecar_pkg import keep_alive
+        from scripts.sidecar_pkg import agy_keychain
 
-        rule = keep_alive._macos_keychain_rule()
+        rule = agy_keychain.rule()
         assert rule == _keychain_rule()
         assert trusted_rule("antigravity", rule)
 
-    def test_the_keep_alive_matches_the_account_too(self, monkeypatch):
+    def test_the_reader_matches_the_account_too(self, monkeypatch):
         """A second rule for the same service must not be picked up by
         accident, so the lookup matches service *and* account."""
-        from scripts.sidecar_pkg import keep_alive, source_catalog
+        from scripts.sidecar_pkg import agy_keychain, source_catalog
 
         rules = json.loads(json.dumps(source_catalog.KEYCHAIN_RULES))
         for rule in rules["antigravity"]["rules"]:
             if rule["type"] == "keychain":
                 rule["account"] = "some-other-account"
         monkeypatch.setattr(source_catalog, "KEYCHAIN_RULES", rules)
-        assert keep_alive._macos_keychain_rule() is None
+        assert agy_keychain.rule() is None
 
     def test_the_source_is_off_until_it_is_granted(self):
         from scripts.sidecar_pkg.source_settings import report
@@ -457,159 +457,62 @@ class TestCatalogAndConsent:
         assert "antigravity" not in filtered["completed_providers"]
 
 
-class TestKeepAlive:
-    """The keep-alive reads the same entry, and only with consent.
-
-    Every test here runs against a token path of its own and a pinned CLI
-    version: the machine's real agy login must not decide whether a test
-    passes.
-    """
+class TestAgyKeychain:
+    """The macOS reader: the catalogued rule, the CLI version, the file."""
 
     @pytest.fixture(autouse=True)
     def _hermetic(self, tmp_path, monkeypatch):
-        from scripts.sidecar_pkg import agy_version, keep_alive
+        from scripts.sidecar_pkg import agy_keychain, keep_alive
 
-        # No token file, and a CLI that uses the Keychain - the 1.4.3+ layout.
-        # The version is pinned rather than the predicate, so the real
-        # "is the file still the credential" logic is what runs.
         monkeypatch.setattr(keep_alive, "DEFAULT_TOKEN_PATH", tmp_path / "antigravity-oauth-token")
-        monkeypatch.setattr(agy_version, "installed_version", lambda: "1.4.3")
         self._token_file = tmp_path / "antigravity-oauth-token"
+        self._agy_keychain = agy_keychain
 
-    @staticmethod
-    def _uses_the_file(monkeypatch, version: str = "1.4.2") -> None:
-        """Pin a CLI that still keeps its credential in the token file."""
-        from scripts.sidecar_pkg import agy_version
-
-        monkeypatch.setattr(agy_version, "installed_version", lambda: version)
-
-    def _write_file(self, document: dict) -> None:
-        self._token_file.write_text(json.dumps(document))
-
-    @staticmethod
-    def _due(stored: bytes | None, *, config: dict | None = None) -> bool:
-        from scripts.sidecar_pkg import keep_alive
-
-        consent.POLICY.configure(config if config is not None else _granted_config())
-        with (
-            patch.object(keep_alive.platform, "system", return_value="Darwin"),
-            patch(
-                "scripts.sidecar_pkg.macos_keychain_store.read_secret",
-                return_value=stored,
-            ),
-        ):
-            return keep_alive.local_refresh_due()
-
-    def test_an_absent_entry_is_not_due(self):
-        """A machine that never logged into agy must not be prodded into
-        starting a login flow."""
-        assert self._due(None) is False
-
-    def test_without_local_consent_the_keep_alive_stays_quiet(self):
-        """Without a grant the keep-alive does not even ask for the entry."""
-        from scripts.sidecar_pkg import keep_alive
-
+    def test_the_read_needs_the_local_consent(self):
+        """Without a grant the worker refuses the read, so there is nothing to
+        renew and no credential to ship."""
         consent.POLICY.configure({})
-        with (
-            patch.object(keep_alive.platform, "system", return_value="Darwin"),
-            patch("scripts.sidecar_pkg.macos_keychain_store.read_secret") as read,
-        ):
-            assert keep_alive.local_refresh_due() is False
+        with patch("scripts.sidecar_pkg.macos_keychain_store.read_secret") as read:
+            assert sidecar._agy_keychain_value() is None
         read.assert_not_called()
 
-    def test_a_live_token_is_not_due(self):
-        assert self._due(_envelope(_document(_in_an_hour()))) is False
-
-    def test_a_lapsed_token_is_due(self):
-        assert self._due(_envelope(_document(_an_hour_ago()))) is True
-
-    def test_an_unreadable_expiry_is_due(self):
-        """Let the CLI decide: an expiry we cannot read must not keep the
-        keep-alive from trying."""
-        document = _document(_in_an_hour())
-        document["token"]["expiry"] = "not-a-timestamp"
-        assert self._due(_envelope(document)) is True
-
-    def test_a_corrupt_envelope_is_due(self):
-        assert self._due((BASE64_PREFIX + "not base64!!").encode()) is True
-
-    def test_the_expiry_comes_from_the_keychain_entry(self):
-        from scripts.sidecar_pkg import keep_alive
-
-        expires_at = _in_an_hour()
+    def test_the_read_names_the_account(self):
+        """Service 'gemini' holds two entries - the CLI's own and the
+        Antigravity ACP server's - so the account is what makes the selection
+        exact."""
         consent.POLICY.configure(_granted_config())
-        with (
-            patch.object(keep_alive.platform, "system", return_value="Darwin"),
-            patch(
-                "scripts.sidecar_pkg.macos_keychain_store.read_secret",
-                return_value=_envelope(_document(expires_at)),
-            ),
-        ):
-            expiry = keep_alive.local_expiry_epoch()
-        assert expiry == pytest.approx(expires_at.timestamp())
+        with patch(
+            "scripts.sidecar_pkg.macos_keychain_store.read_secret",
+            return_value=_envelope(_document(_in_an_hour())),
+        ) as read:
+            assert sidecar._agy_keychain_value() is not None
+        read.assert_called_once()
+        args, _kwargs = read.call_args
+        assert args[0] == "gemini"
+        assert args[1] == "antigravity"
 
-    def test_a_lapsed_file_token_is_still_due_on_macos(self, monkeypatch):
-        """agy before 1.4.3 keeps its credential in the token file, and that
-        layout needs no consent: the keep-alive must not go quiet on it."""
-        from scripts.sidecar_pkg import keep_alive
-
-        self._write_file(_document(_an_hour_ago()))
-        self._uses_the_file(monkeypatch)
-        consent.POLICY.configure(_granted_config())
-        with (
-            patch.object(keep_alive.platform, "system", return_value="Darwin"),
-            patch("scripts.sidecar_pkg.macos_keychain_store.read_secret", return_value=None),
-        ):
-            assert keep_alive.local_refresh_due() is True
-
-    def test_a_file_login_needs_no_consent(self, monkeypatch):
-        """The file layout is not consent-gated - the file is not the Keychain."""
-        from scripts.sidecar_pkg import keep_alive
-
-        self._write_file(_document(_an_hour_ago()))
-        self._uses_the_file(monkeypatch)
-        consent.POLICY.configure({})
-        with (
-            patch.object(keep_alive.platform, "system", return_value="Darwin"),
-            patch("scripts.sidecar_pkg.macos_keychain_store.read_secret", return_value=None),
-        ):
-            assert keep_alive.local_refresh_due() is True
+    def test_a_present_credential_with_an_unreadable_expiry_is_still_due(self):
+        """An entry we cannot parse is still an entry: the CLI decides."""
+        present, expiry = self._agy_keychain.state(lambda: b"not-an-envelope")
+        assert present is True
+        assert expiry is None
 
     def test_a_leftover_file_is_not_the_credential_on_a_newer_cli(self, monkeypatch):
         """A 1.4.3+ install leaves the old file behind, and the renewal writes
         the Keychain - never the file. Reading that stale file would say "due"
         forever and respawn ``agy models`` every tick."""
-        from scripts.sidecar_pkg import keep_alive
+        monkeypatch.setattr(self._agy_keychain, "uses_the_token_file", lambda: False)
+        self._token_file.write_text(json.dumps(_document(_an_hour_ago())))
+        present, _expiry = self._agy_keychain.state(lambda: None)
+        assert present is False
 
-        self._write_file(_document(_an_hour_ago()))
-        consent.POLICY.configure({})
-        with (
-            patch.object(keep_alive.platform, "system", return_value="Darwin"),
-            patch("scripts.sidecar_pkg.macos_keychain_store.read_secret", return_value=None),
-        ):
-            assert keep_alive.local_refresh_due() is False
-
-    def test_a_live_file_token_is_not_due_on_macos(self, monkeypatch):
-        from scripts.sidecar_pkg import keep_alive
-
-        self._write_file(_document(_in_an_hour()))
-        self._uses_the_file(monkeypatch)
-        consent.POLICY.configure(_granted_config())
-        with (
-            patch.object(keep_alive.platform, "system", return_value="Darwin"),
-            patch("scripts.sidecar_pkg.macos_keychain_store.read_secret", return_value=None),
-        ):
-            assert keep_alive.local_refresh_due() is False
-
-    def test_no_keychain_entry_and_no_file_is_not_due(self):
-        from scripts.sidecar_pkg import keep_alive
-
-        consent.POLICY.configure(_granted_config())
-        with (
-            patch.object(keep_alive.platform, "system", return_value="Darwin"),
-            patch("scripts.sidecar_pkg.macos_keychain_store.read_secret", return_value=None),
-        ):
-            assert keep_alive.local_refresh_due() is False
+    def test_a_file_login_needs_no_consent(self, monkeypatch):
+        """The file layout is not consent-gated - the file is not the Keychain."""
+        monkeypatch.setattr(self._agy_keychain, "uses_the_token_file", lambda: True)
+        self._token_file.write_text(json.dumps(_document(_an_hour_ago())))
+        present, expiry = self._agy_keychain.state(lambda: None)
+        assert present is True
+        assert expiry == pytest.approx(_an_hour_ago().timestamp())
 
     @pytest.mark.parametrize(
         ("version", "uses_the_file"),
@@ -626,13 +529,59 @@ class TestKeepAlive:
     def test_only_a_cli_that_still_writes_the_file_makes_it_authoritative(
         self, monkeypatch, version, uses_the_file
     ):
-        from scripts.sidecar_pkg import agy_version, keep_alive
+        from scripts.sidecar_pkg import agy_version
 
         monkeypatch.setattr(agy_version, "installed_version", lambda: version)
-        assert keep_alive._installed_agy_uses_the_file() is uses_the_file
+        assert self._agy_keychain.uses_the_token_file() is uses_the_file
+
+
+class TestKeepAlive:
+    """The keep-alive asks the injected reader where the agy login is."""
+
+    @pytest.fixture(autouse=True)
+    def _hermetic(self, tmp_path, monkeypatch):
+        from scripts.sidecar_pkg import keep_alive
+
+        monkeypatch.setattr(keep_alive, "DEFAULT_TOKEN_PATH", tmp_path / "antigravity-oauth-token")
+        monkeypatch.setattr(keep_alive, "_agy_credential_reader", None)
+        self._token_file = tmp_path / "antigravity-oauth-token"
+
+    def _due(self, state: tuple[bool, float | None]) -> bool:
+        from scripts.sidecar_pkg import keep_alive
+
+        keep_alive.set_agy_credential_reader(lambda: state)
+        try:
+            with patch.object(keep_alive.platform, "system", return_value="Darwin"):
+                return keep_alive.local_refresh_due()
+        finally:
+            keep_alive.set_agy_credential_reader(None)
+
+    def test_without_a_reader_the_token_file_decides(self):
+        """No reader installed means no Keychain to read - the file layout is
+        what is left."""
+        from scripts.sidecar_pkg import keep_alive
+
+        with patch.object(keep_alive.platform, "system", return_value="Darwin"):
+            assert keep_alive.local_refresh_due() is False
+
+    def test_a_present_lapsed_credential_is_due(self):
+        assert self._due((True, _an_hour_ago().timestamp())) is True
+
+    def test_a_live_credential_is_not_due(self):
+        assert self._due((True, _in_an_hour().timestamp())) is False
+
+    def test_an_absent_credential_is_not_due(self):
+        """A machine that never logged into agy must not be prodded into
+        starting a login flow."""
+        assert self._due((False, None)) is False
+
+    def test_an_unreadable_expiry_is_due(self):
+        """Let the CLI decide: an expiry we cannot read must not keep the
+        keep-alive from trying."""
+        assert self._due((True, None)) is True
 
     def test_the_file_layout_still_decides_on_posix(self):
-        """The macOS branch must not change the POSIX file behaviour."""
+        """The macOS reader must not change the POSIX file behaviour."""
         from scripts.sidecar_pkg import keep_alive
 
         with patch.object(keep_alive.platform, "system", return_value="Linux"):
