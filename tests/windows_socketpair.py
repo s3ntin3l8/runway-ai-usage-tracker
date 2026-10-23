@@ -80,10 +80,13 @@ def windows_socketpair(
             # The connect blocks: the loopback handshake completes here, so
             # the accept below never has to wait for a connect still in flight.
             csock.connect((addr, port))
+            ssock, _ = lsock.accept()
         except Exception:
+            # The accept is inside this try on purpose: a handshake that
+            # times out has to close the client socket too, or it leaks a
+            # descriptor for every pair that fails.
             csock.close()
             raise
-        ssock, _ = lsock.accept()
     finally:
         lsock.close()
 
@@ -108,6 +111,12 @@ def windows_socketpair(
     return (ssock, csock)
 
 
+def has_native_socketpair() -> bool:
+    """Whether this CPython ships a native socketpair."""
+    native: Any = getattr(socket, "_socket", None)
+    return native is not None and hasattr(native, "socketpair")
+
+
 def install_windows_socketpair() -> bool:
     """Replace ``socket.socketpair`` with one that cannot hang.
 
@@ -119,8 +128,7 @@ def install_windows_socketpair() -> bool:
         return False
     if sys.platform != "win32":
         return False
-    native: Any = getattr(socket, "_socket", None)
-    if native is not None and hasattr(native, "socketpair"):
+    if has_native_socketpair():
         # This CPython ships a native socketpair: nothing to replace.
         return False
     socket.socketpair = windows_socketpair
