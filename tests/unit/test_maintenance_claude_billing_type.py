@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
-from app.models.db import LatestUsage, ProviderConfig
+from app.models.db import LatestUsage, ProviderConfig, SystemConfig
 from app.services.maintenance.claude_billing_type import (
     apply_claude_billing_type,
     plan_claude_billing_type,
@@ -457,6 +457,37 @@ def test_the_window_follows_the_accounts_own_poll_interval():
             session,
             "anthropic",
             "slow@example.com",
+            _spend_card(),
+            window_type="monthly",
+            updated_at=now,
+        )
+
+        plan = plan_claude_billing_type(session)
+        assert [candidate.model for candidate in plan.priced] == ["subscription"]
+    finally:
+        session.close()
+
+
+def test_the_window_follows_the_fleet_wide_poll_interval():
+    """The operator's fleet-wide interval applies when the account has none."""
+    session = _session()
+    try:
+        session.add(SystemConfig(default_poll_interval_seconds=3600))
+        session.commit()
+        _account(session, account_id="fleet@example.com")
+        now = datetime.now(UTC)
+        _card(
+            session,
+            "anthropic",
+            "fleet@example.com",
+            _quota_card(),
+            window_type="weekly",
+            updated_at=now - timedelta(minutes=45),
+        )
+        _card(
+            session,
+            "anthropic",
+            "fleet@example.com",
             _spend_card(),
             window_type="monthly",
             updated_at=now,
