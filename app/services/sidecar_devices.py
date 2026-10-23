@@ -50,6 +50,19 @@ def authentication_key(session: Session, device_id: str) -> str | None:
         return None
 
 
+def request_authentication_key(session: Session | None, device_id: str) -> str | None:
+    """Finish the authentication read before the independent replay receipt commits.
+
+    Keeping that read in the handler's transaction would pin a WAL snapshot
+    from before the receipt, preventing the subsequent source write from
+    acquiring its reservation. Never commit or roll back handler-owned work.
+    """
+    if session is None:
+        return None
+    with Session(session.get_bind()) as auth_session:
+        return authentication_key(auth_session, device_id)
+
+
 def message(device_id: str, timestamp: str, purpose: str, body: bytes) -> bytes:
     """Domain-bind signatures without depending on reverse-proxy path rewriting."""
     return f"DEVICEv1|{device_id}|{timestamp}|{purpose}|".encode() + body

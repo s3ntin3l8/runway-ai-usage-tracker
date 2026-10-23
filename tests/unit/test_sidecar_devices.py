@@ -62,6 +62,7 @@ async def test_auth_binds_device_and_operation(session, forged):
     from app.core.security import validate_ingest_auth
 
     device, secret = sidecar_devices.enroll(session, "synthetic")
+    session.commit()
     timestamp, body = str(time.time()), b"{}"
     key = "legacy-shared-key" if forged else secret
     message = sidecar_devices.message(device.device_id, timestamp, "source-sync", body)
@@ -99,6 +100,7 @@ async def test_device_signature_cannot_cross_endpoints(session):
     from app.core.security import validate_ingest_auth
 
     device, secret = sidecar_devices.enroll(session, "synthetic")
+    session.commit()
     timestamp, body = str(time.time()), b"{}"
     signature = hmac.new(
         secret.encode(),

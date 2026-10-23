@@ -212,3 +212,50 @@ def test_legacy_key_cannot_claim_reserved_device_registry(setup):
         },
     )
     assert response.status_code == 403
+
+
+def test_configured_engine_can_write_after_durable_auth_receipt(tmp_path, monkeypatch):
+    from app.core import replay
+
+    engine = create_engine(
+        "sqlite:///" + str(tmp_path / "production.db"),
+        connect_args={"check_same_thread": False, "timeout": 0.1},
+    )
+    db.configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+    encryption = EncryptionService(Fernet.generate_key().decode())
+    monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
+    monkeypatch.setattr(source_controls, "encryption_service", encryption)
+    monkeypatch.setattr(config.settings, "INGEST_API_KEY", "synthetic-shared")
+    monkeypatch.setattr(replay, "receipt_engine", lambda: engine)
+
+    def request_session():
+        with Session(engine) as session:
+            yield session
+
+    app.dependency_overrides[get_session] = request_session
+    try:
+        with Session(engine) as session:
+            device, secret = sidecar_devices.enroll(session, "synthetic", platform="Darwin")
+            device_id = device.device_id
+            session.commit()
+        local = {
+            "api_url": "https://runway.example",
+            "device_api_url": "https://runway.example",
+            "api_key": "synthetic-shared",
+            "device_id": device_id,
+            "device_key": secret,
+        }
+        response = post(
+            TestClient(app),
+            local,
+            "/api/v1/fleet/source-sync",
+            "source-sync",
+            {"sources": [report()]},
+        )
+        assert response.status_code == 200, response.text
+        with Session(engine) as session:
+            assert source_controls.state(session, device_id, report()["source_id"]).local_read
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        engine.dispose()

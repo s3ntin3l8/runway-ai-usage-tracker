@@ -344,9 +344,7 @@ async def validate_ingest_auth(
     if device_id is not None:
         from app.services import sidecar_devices
 
-        device_key = (
-            sidecar_devices.authentication_key(session, device_id) if session is not None else None
-        )
+        device_key = sidecar_devices.request_authentication_key(session, device_id)
         if device_key is None:
             raise HTTPException(status_code=401, detail="Invalid sidecar device credentials")
         key = device_key
@@ -398,9 +396,7 @@ def verify_config_signature(request: Request, *, session: Session | None = None)
     if device_id is not None:
         from app.services import sidecar_devices
 
-        device_key = (
-            sidecar_devices.authentication_key(session, device_id) if session is not None else None
-        )
+        device_key = sidecar_devices.request_authentication_key(session, device_id)
         if device_key is None:
             raise HTTPException(status_code=401, detail="Invalid sidecar device credentials")
         key = device_key
