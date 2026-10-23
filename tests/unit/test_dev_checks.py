@@ -314,3 +314,37 @@ def test_install_hooks_does_not_need_a_venv(monkeypatch, tmp_path):
     monkeypatch.setattr(dc, "execute", lambda *a, **k: pytest.fail("install-hooks ran a command"))
     dc.check("install-hooks", [])
     assert (tmp_path / "hooks" / "pre-commit").is_file()
+
+
+def test_the_suite_runs_without_gits_variables(monkeypatch):
+    """No ``GIT_*`` variable survives into the environment the suite runs in.
+
+    The filter is by prefix, not by name. Git propagates arbitrary ``-c``
+    configuration to a hook as ``GIT_CONFIG_PARAMETERS``, and sets a dozen
+    more variables besides, so an allowlist of names would be a list to keep
+    in step with git. ``GIT_CONFIG_PARAMETERS`` and ``GIT_AUTHOR_NAME`` are
+    not in any list this repository has had, which is what makes them the
+    interesting ones here: a change back to a named allowlist would leave
+    them behind and fail this test.
+    """
+    for name in (
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_AUTHOR_NAME",
+        "GIT_EXEC_PATH",
+    ):
+        monkeypatch.setenv(name, "value")
+    monkeypatch.setenv("NOT_A_GIT_VARIABLE", "kept")
+
+    captured: dict[str, str] = {}
+
+    def capture(command, **kwargs):
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(dc.subprocess, "run", capture)
+    dc.execute(["synthetic-check"])
+
+    assert not [name for name in captured if name.startswith("GIT_")], captured
+    assert captured["NOT_A_GIT_VARIABLE"] == "kept"
