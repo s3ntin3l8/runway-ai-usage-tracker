@@ -45,8 +45,8 @@ def _published_image_section() -> str:
     remediation = REMEDIATION.read_text()
     heading = "### The published Debian 13 image"
     start = remediation.index(heading)
-    end = remediation.index("\n### ", start + len(heading))
-    return remediation[start:end]
+    end = remediation.find("\n### ", start + len(heading))
+    return remediation[start : end if end != -1 else len(remediation)]
 
 
 class TestTheRecordedScan:
