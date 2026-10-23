@@ -48,6 +48,25 @@ Keychain credential forwarding until the authenticated lifecycle below is
 available. Previously forwarded legacy credentials require server-side retirement;
 a local checkbox does not retroactively revoke a provider credential.
 
+### Antigravity CLI on macOS
+
+The Antigravity (agy) CLI keeps its OAuth token in the macOS login Keychain
+(service `gemini`, account `antigravity`) from 1.4.3 on and writes no token
+file, so it is a Keychain-backed scraper like the Claude Code one: it starts
+off, needs the local read consent, and is authorized by the same bounded
+foreground helper. The service holds a second entry — the Antigravity ACP
+server's own token — so the account is part of the source's identity and is
+covered by the capability revision; the foreground authorization selects that
+one exact entry and never the ACP one.
+
+The stored value is wrapped in go-keyring's envelope, which the reader
+unwraps; the fields it maps are the ones the token file maps, so every
+platform pushes the same credential shape and one Google account is filed
+under one cache key. The entry's access list trusts only the application that
+wrote it, so the read goes through the Keychain worker and never through a
+credential requester. The macOS credential stays local until the withdrawal
+lifecycle below exists, like every other Keychain-backed credential.
+
 ## Fleet source lifecycle and UI (#783 / #780)
 
 Server collectors continue using eligible credentials while a sidecar is offline.

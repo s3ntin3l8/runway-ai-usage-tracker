@@ -756,6 +756,17 @@ __REGISTRY__: dict[str, Any] = {
                         "token.expiry": "_raw_expiry",
                     },
                 },
+                {
+                    "type": "keychain",
+                    "service_name": "gemini",
+                    "account": "antigravity",
+                    "format": "keyring_json",
+                    "mapping": {
+                        "token.access_token": "oauth_token",
+                        "token.refresh_token": "refresh_token",
+                        "token.expiry": "_raw_expiry",
+                    },
+                },
             ],
         },
         "ollama": {
@@ -976,10 +987,37 @@ def _make_keep_alive_renewers() -> list:
     ]
 
 
-def _make_keep_alive_thread():
-    from scripts.sidecar_pkg.keep_alive import KeepAliveThread
+def _agy_keychain_value():
+    """The agy credential from the macOS Keychain, or None when it is not
+    available here (no local consent, or no entry)."""
+    from scripts.sidecar_pkg import agy_keychain
+    from scripts.sidecar_pkg import source_consent as consent
+    from scripts.sidecar_pkg.macos_keychain_store import read_secret
 
-    return KeepAliveThread(renewers=_make_keep_alive_renewers())
+    rule = agy_keychain.rule()
+    if rule is None or consent.POLICY.ticket(agy_keychain.SOURCE_ID) is None:
+        return None
+    try:
+        with consent.rule_scope("antigravity", rule):
+            return read_secret(
+                agy_keychain.SERVICE,
+                agy_keychain.ACCOUNT,
+                group="registry:" + agy_keychain.SERVICE,
+            )
+    except Exception:
+        logging.debug("macOS Keychain credential unavailable")
+        return None
+
+
+def _make_keep_alive_thread():
+    from scripts.sidecar_pkg import agy_keychain, keep_alive
+
+    # The macOS Keychain entry the agy CLI keeps its login in is read through
+    # the consent map, so the keep-alive takes it as a reader instead of
+    # importing it - the consent map leads back to the sidecar, and the import
+    # would close a cycle.
+    keep_alive.set_agy_credential_reader(lambda: agy_keychain.state(_agy_keychain_value))
+    return keep_alive.KeepAliveThread(renewers=_make_keep_alive_renewers())
 
 
 def _keep_alive_provider_names() -> list[str]:
@@ -4083,6 +4121,9 @@ class GenericCollector:
             with consent.rule_scope(provider_id, rule):
                 rule_type = rule.get("type")
                 mapping = rule.get("mapping", {})
+                # Fresh per rule: a branch that finds nothing must not carry the
+                # previous rule's candidate into its own origin.
+                candidate_tokens: dict[str, Any] = {}
 
                 # 1. Environment Variables
                 if rule_type == "env":
@@ -4142,7 +4183,7 @@ class GenericCollector:
                                     else:
                                         data = json.load(f)
 
-                            candidate_tokens: dict[str, Any] = {}
+                            candidate_tokens = {}
                             for key_path, target in mapping.items():
                                 val = GenericCollector.get_nested(data, key_path)
                                 if val:
@@ -4233,13 +4274,20 @@ class GenericCollector:
 
                         raw_bytes = read_secret(
                             rule.get("service_name"),
+                            rule.get("account"),
                             group="registry:" + str(rule.get("service_name")),
                         )
                         if raw_bytes is not None:
                             raw = raw_bytes.decode().strip()
                             fmt = rule.get("format", "raw")
+                            data = None
                             if fmt == "json":
                                 data = json.loads(raw)
+                            elif fmt == "keyring_json":
+                                from scripts.sidecar_pkg.keyring_value import decode_document
+
+                                data = decode_document(raw)
+                            if data is not None:
                                 candidate_tokens = {}
                                 for key_path, target in mapping.items():
                                     val = GenericCollector.get_nested(data, key_path)
@@ -4253,15 +4301,23 @@ class GenericCollector:
                                         ) or oauth_account.get("email")
                                         if email:
                                             candidate_tokens["account_id"] = email
-                            else:
+                            elif fmt not in ("json", "keyring_json"):
+                                # The plain-text format: the stored value is the
+                                # secret itself. An envelope format never falls
+                                # through here - a payload we cannot decode must
+                                # not be pushed as if it were the credential.
                                 target = mapping.get("value")
                                 if target:
                                     candidate_tokens = {target: raw}
                             if candidate_tokens:
                                 service = rule.get("service_name", "")
-                                token_candidates.append(
-                                    (candidate_tokens, f"keychain:{service}", "keychain")
+                                account = rule.get("account")
+                                origin = (
+                                    f"keychain:{service}:{account}"
+                                    if account
+                                    else f"keychain:{service}"
                                 )
+                                token_candidates.append((candidate_tokens, origin, "keychain"))
                     except Exception:
                         logging.debug("Keychain credential unavailable")
 

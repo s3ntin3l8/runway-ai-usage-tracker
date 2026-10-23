@@ -17,8 +17,18 @@ window of one tick).
 
 Where the token lives is platform-dependent: a file under the Gemini dir on
 POSIX, the Windows Credential Manager on Windows (agy writes no token file
-there, and renews the stored entry in place). Both are read through the same
-helpers, so the renewal loop is the same everywhere.
+there, and renews the stored entry in place), the login Keychain on macOS
+(agy writes no token file there either; that entry is read through the
+Keychain worker, and only while the user has granted the
+``antigravity.agy-cli`` source locally - without that consent the keep-alive
+stays quiet rather than renewing a credential the sidecar may not read). All
+are read through the same helpers, so the renewal loop is the same
+everywhere.
+
+The macOS reader is injected rather than imported: the consent map, and the
+Keychain worker that reaches it, both lead back to this module (consent ->
+protocol -> settings -> setup -> sidecar -> keep-alive), so importing either
+from here closes an import cycle.
 """
 
 import json
@@ -41,6 +51,21 @@ DEFAULT_TOKEN_PATH = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-
 # (target "gemini:antigravity") and writes no token file, so the keep-alive
 # has to read the credential store rather than the filesystem.
 WINDOWS_CREDENTIAL_TARGET = "gemini:antigravity"
+# The reader for the macOS Keychain entry the agy CLI keeps its login in,
+# installed by the sidecar (scripts/sidecar.py). It returns
+# (present, expiry): present=False means there is no agy login on this
+# machine at all, expiry=None means there is one whose expiry cannot be read
+# and the CLI decides.
+AgyCredentialReader = Callable[[], tuple[bool, float | None]]
+_agy_credential_reader: AgyCredentialReader | None = None
+
+
+def set_agy_credential_reader(reader: AgyCredentialReader | None) -> None:
+    """Install the reader for the macOS Keychain credential (see above)."""
+    global _agy_credential_reader
+    _agy_credential_reader = reader
+
+
 # Cheap stat + read of a ~1.6 KB file. This bounds the dead-token window to
 # one tick after expiry; agy only rewrites the file once the token has lapsed,
 # so a longer tick would leave collection failing for longer.
@@ -124,12 +149,16 @@ def local_expiry_epoch(token_path: Path | None = None) -> float | None:
 
     ``token_path`` names a token file to read (the POSIX layout, and what the
     tests inject). Without one the platform decides: the Windows Credential
-    Manager entry on Windows, the token file elsewhere.
+    Manager entry on Windows, the login Keychain on macOS, the token file
+    elsewhere. The macOS reader owns the Keychain entry and the token file
+    an older CLI still uses.
     """
     if token_path is not None:
         return expiry_epoch(token_path)
     if platform.system() == "Windows":
         return _windows_expiry_epoch()
+    if platform.system() == "Darwin" and _agy_credential_reader is not None:
+        return _agy_credential_reader()[1]
     return expiry_epoch(DEFAULT_TOKEN_PATH)
 
 
@@ -167,8 +196,9 @@ def local_refresh_due(
 
     A machine that never logged into agy has nothing to renew and must not
     be prodded into starting a login flow, so an absent token (no file on
-    POSIX, no Credential Manager entry on Windows) is not due. A token whose
-    expiry cannot be read counts as due — let the CLI decide.
+    POSIX, no Credential Manager entry on Windows, no Keychain entry on
+    macOS) is not due. A token whose expiry cannot be read counts as due —
+    let the CLI decide.
     """
     if token_path is not None:
         return refresh_due(token_path, now=now, lead=lead)
@@ -180,6 +210,11 @@ def local_refresh_due(
         if raw is None:
             return False
         expiry = _windows_expiry_epoch_from(raw)
+    elif platform.system() == "Darwin" and _agy_credential_reader is not None:
+        present, expiry = _agy_credential_reader()
+        if not present:
+            return False
+        return _due(expiry, now, lead)
     else:
         if not DEFAULT_TOKEN_PATH.is_file():
             return False
@@ -244,8 +279,8 @@ class KeepAliveThread(threading.Thread):
         self._renewers = list(renewers or [])
         self._renewer_resume_at: dict[str, float] = {}
         # None means "wherever this OS keeps the agy token": the Windows
-        # Credential Manager entry on Windows, the token file elsewhere. An
-        # explicit path (the tests) always wins.
+        # Credential Manager entry on Windows, the login Keychain on macOS,
+        # the token file elsewhere. An explicit path (the tests) always wins.
         self._token_path = token_path
         self._command = command
         self._tick_seconds = tick_seconds
