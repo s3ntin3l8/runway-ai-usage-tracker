@@ -250,10 +250,12 @@ def _restore_config_settings():
     the late-import consumers read - the fleet source protocol's shared-key
     check then fails on the mismatch (401 where it expects 403).
 
-    Snapshotting the module's attribute and putting it back after every test
-    retires the class of leak, not the instances of it. The module is looked
-    up directly: a guard that quietly disables itself when the import order
-    changes is worse than one that fails loudly.
+    Snapshotting the module and putting it back after every test retires the
+    class of leak, not the instances of it - and it puts back the whole module,
+    because the reload rebinds more than ``settings`` (the ``Settings`` class
+    among them). The module is looked up directly: a guard that quietly
+    disables itself when the import order changes is worse than one that fails
+    loudly.
     """
     config_module = sys.modules["app.core.config"]
     snapshot = dict(config_module.__dict__)
