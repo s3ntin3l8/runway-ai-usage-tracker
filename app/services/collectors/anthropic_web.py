@@ -19,12 +19,19 @@ from typing import Any
 import httpx
 
 from app.core.date_utils import parse_iso8601_utc
-from app.core.utils import HealthCalculator, PaceCalculator, http_request_with_retry, human_delta
+from app.core.utils import (
+    HealthCalculator,
+    PaceCalculator,
+    error_card,
+    http_request_with_retry,
+    human_delta,
+)
 from app.services.account_identity import is_placeholder_label
 from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
     anthropic_model_id_for,
+    anthropic_published_number,
     anthropic_published_percent,
     build_anthropic_limit_cards,
     classify_anthropic_window_type,
@@ -108,7 +115,7 @@ class AnthropicWebMixin:
                 return [error_card("Claude", "🟠", str(exc), error_type=exc.error_type)]
             if not verified.organization_id or verified.usage is None:
                 return []
-            return self._parse_web_api_response(verified.usage, verified.org_data, verified.account)
+            return self._parse_web_usage(verified.usage, verified.org_data, verified.account)
 
         headers = subscription_headers(session_key)
 
@@ -160,7 +167,7 @@ class AnthropicWebMixin:
                 return []
 
             usage_data = usage_resp.json()
-            return self._parse_web_api_response(usage_data, org, account_data)
+            return self._parse_web_usage(usage_data, org, account_data)
 
         except httpx.HTTPError as e:
             logger.debug("Claude Web API HTTP error: %s", type(e).__name__)
@@ -179,6 +186,26 @@ class AnthropicWebMixin:
         from app.services.claude_verification import claude_identity_string
 
         return claude_identity_string(org_data, account_data)
+
+    def _parse_web_usage(
+        self,
+        data: dict[str, Any],
+        org_data: dict[str, Any] | None = None,
+        account_data: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """The cards a Web API usage payload describes, or an error card.
+
+        A corrupt quota is an error, not a missing one: the account published
+        something the collector cannot read, so the card says so -- rather than
+        the collector inventing a window out of it.
+        """
+        try:
+            return self._parse_web_api_response(data, org_data, account_data)
+        except (ValueError, TypeError, AttributeError, KeyError):
+            logger.warning("Claude Web quota could not be read", exc_info=True)
+            return [
+                error_card("Claude", "🟠", "Unsupported Claude quota", error_type="parse_error")
+            ]
 
     def _parse_web_api_response(  # noqa: PLR0915 — known-debt: provider response shape, splits poorly
         self,
@@ -378,7 +405,7 @@ class AnthropicWebMixin:
             bal_val = data.get(b_key)
             if bal_val is not None:
                 try:
-                    bal = float(bal_val)
+                    bal = anthropic_published_number(bal_val, b_key)
                     results.append(
                         {
                             "service_name": "Claude",
@@ -433,8 +460,8 @@ class AnthropicWebMixin:
 
                 if raw_monthly_limit is not None and raw_used_credits is not None:
                     # 1 credit = 0.01 currency
-                    spend = float(raw_used_credits) * 0.01
-                    limit = float(raw_monthly_limit) * 0.01
+                    spend = anthropic_published_number(raw_used_credits, "used_credits") * 0.01
+                    limit = anthropic_published_number(raw_monthly_limit, "monthly_limit") * 0.01
                     remaining = max(0.0, limit - spend)
 
                     results.append(
@@ -466,9 +493,17 @@ class AnthropicWebMixin:
                     # Fallback to older spend/limit format
                     raw_spend = extra_data.get("spend")
                     raw_limit = extra_data.get("limit")
-                    if raw_limit is not None and float(raw_limit) > 0:
-                        spend = float(raw_spend) if raw_spend is not None else 0.0
-                        limit = float(raw_limit)
+                    limit = (
+                        anthropic_published_number(raw_limit, "limit")
+                        if raw_limit is not None
+                        else 0.0
+                    )
+                    if limit > 0:
+                        spend = (
+                            anthropic_published_number(raw_spend, "spend")
+                            if raw_spend is not None
+                            else 0.0
+                        )
                         remaining = max(0.0, limit - spend)
                         results.append(
                             {

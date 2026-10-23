@@ -39,6 +39,20 @@ def anthropic_model_id_for(key: str) -> str | None:
     return ANTHROPIC_MODEL_ID_MAP.get(key)
 
 
+def anthropic_published_number(value: Any, what: str) -> float:
+    """The number a published field carries, or a ValueError when it carries none.
+
+    A boolean is not a number the account published: ``float(True)`` is 1.0, so
+    reading one would invent a percentage, a limit or a balance out of a
+    payload that published no number at all. A corrupt quota is an error, not a
+    missing one, so this refuses rather than invents -- the same way a
+    non-numeric string already refused.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"{what} is not a number")
+    return float(value)
+
+
 def anthropic_published_percent(window: Mapping[str, Any], *keys: str) -> float | None:
     """The percentage a published window carries, or None when it carries none.
 
@@ -51,13 +65,14 @@ def anthropic_published_percent(window: Mapping[str, Any], *keys: str) -> float 
     A window that carries a *malformed* number returns that number as it is
     (a non-finite float, or the ValueError a non-numeric one raises), so the
     verification layer can still reject the payload: a corrupt quota is an
-    error, not a missing one.
+    error, not a missing one. A boolean is malformed in the same way, and
+    refuses rather than becoming the 1 % it would read as.
     """
     for key in keys:
         raw = window.get(key)
         if raw is None:
             continue
-        return float(raw)
+        return anthropic_published_number(raw, key)
     return None
 
 

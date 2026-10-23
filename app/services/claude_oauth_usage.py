@@ -29,6 +29,7 @@ from app.services.collectors._anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
     anthropic_model_id_for,
+    anthropic_published_number,
     anthropic_published_percent,
     build_anthropic_limit_cards,
     classify_anthropic_window_type,
@@ -247,7 +248,7 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         # 1. Handle Balance/Currency fields (Prepaid or Specific Balance)
         if key in BALANCE_KEYS:
             try:
-                bal = float(usage) if usage is not None else 0.0
+                bal = anthropic_published_number(usage, key) if usage is not None else 0.0
                 results.append(
                     {
                         "service_name": "Claude",
@@ -293,9 +294,9 @@ def oauth_usage_cards(  # noqa: PLR0915 — known-debt: provider response shape,
         # 2. Handle Spend/Limit windows (Overage/Spent)
         raw_spend = usage.get("spend")
         raw_limit = usage.get("limit")
-        if raw_limit is not None and float(raw_limit) > 0:
-            spend = float(raw_spend) if raw_spend is not None else 0.0
-            limit = float(raw_limit)
+        limit = anthropic_published_number(raw_limit, "limit") if raw_limit is not None else 0.0
+        if limit > 0:
+            spend = anthropic_published_number(raw_spend, "spend") if raw_spend is not None else 0.0
             remaining = max(0.0, limit - spend)
             results.append(
                 {
@@ -410,17 +411,30 @@ async def billing_model_from_oauth_usage(
     A usage payload that cannot be read (an expired token, a rate limit, a
     transport failure) proves nothing: the answer is the absence of a proof,
     never a decision.
+
+    A payload that cannot be *understood* proves nothing either. The preview
+    this serves is an answer to a question, not a verdict on the account, so a
+    quota the collector cannot read ends the same way: no proof, no decision.
     """
     try:
         data = await fetch_oauth_usage(client, token)
     except OAuthUsageError as exc:
         logger.info("OAuth usage could not be read for the billing model: %s", exc.message)
         return None
-    cards = oauth_usage_cards(
-        data,
-        ANTHROPIC_WINDOW_NAME_MAP,
-        None,
-        data_source=OAUTH_DATA_SOURCE,
-        input_source=OAUTH_INPUT_SOURCE,
-    )
+    try:
+        cards = oauth_usage_cards(
+            data,
+            ANTHROPIC_WINDOW_NAME_MAP,
+            None,
+            data_source=OAUTH_DATA_SOURCE,
+            input_source=OAUTH_INPUT_SOURCE,
+        )
+    except Exception:
+        # A corrupt quota is an error, not a missing one, and this path never
+        # raises: the operator asked what the account bills, and the honest
+        # answer to "the usage payload is unreadable" is no answer at all.
+        # The traceback is logged, so a fault in the collector is visible here
+        # rather than looking like an account that publishes no quota.
+        logger.warning("OAuth usage could not be understood for the billing model", exc_info=True)
+        return None
     return billing_model_from_oauth_cards(cards)
