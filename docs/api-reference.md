@@ -505,6 +505,13 @@ device header or claim a reserved device-<32 lowercase hex> registry identity.
   report_stale, announcement, renewal_capable, collection_health
   (withdrawn|paused|healthy|action_required|untried), and last_collection_at
   (ISO UTC or null). Stale reports never expire eligible server credentials.
+  `report_at` / `report_stale` describe source reporting, independently of the
+  device registry's `last_seen` / connectivity and server collection health.
+  macOS sources send periodic consent/status reports. Windows Credential Manager
+  sources update source contact when credentials are submitted; heartbeat-only
+  ingest and empty source-sync requests do not refresh it. A Windows source report
+  can therefore be stale while the device is online and server collection is
+  healthy. This does not require another local read or invalidate its credentials.
 - POST /api/v1/fleet/sidecars/{sidecar_id}/sources/{source_id}/commands:
   admin-authenticated {action}, one of pause, resume, revoke, request_setup,
   or dismiss. Returns {id, status: pending}. Pause/revoke immediately withdraw

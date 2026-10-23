@@ -78,6 +78,13 @@ export function SidecarSources({
           </>
         )}
       </p>
+      {!macOS ? (
+        <p className="text-xs text-fg-muted">
+          Source reporting updates when credentials are submitted. For device
+          connectivity, check “Last seen” on the Fleet card. Server collection
+          health is shown per source.
+        </p>
+      ) : null}
       {query.isPending ? <p role="status">Loading sources…</p> : null}
       {query.isError ? (
         <p role="alert">
@@ -139,7 +146,7 @@ export function SidecarSources({
                 : ''}
             </p>
             <p className="text-xs text-fg-muted">
-              {source.report_stale ? 'Stale device report' : 'Device reported'}{' '}
+              {source.report_stale ? 'Stale source report' : 'Source reported'}{' '}
               · {timeAgo(source.report_at)}. Offline reporting does not expire
               eligible credentials.
             </p>
@@ -185,6 +192,11 @@ export function SidecarSources({
                 size="sm"
                 variant="secondary"
                 aria-label={'Revoke ' + source.label + ' contribution'}
+                aria-describedby={
+                  !macOS
+                    ? `${sidecarId}-${source.source_id}-revoke-help`
+                    : undefined
+                }
                 disabled={command.isPending || source.revoked}
                 onClick={() =>
                   command.mutate({
@@ -212,6 +224,15 @@ export function SidecarSources({
                 </Button>
               ) : null}
             </div>
+            {!macOS ? (
+              <p
+                id={`${sidecarId}-${source.source_id}-revoke-help`}
+                className="mt-2 text-xs text-fg-muted"
+              >
+                Revoking this contribution requires re-pairing the device to
+                reconnect it.
+              </p>
+            ) : null}
           </article>
         );
       })}
