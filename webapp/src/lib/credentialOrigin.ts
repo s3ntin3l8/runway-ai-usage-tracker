@@ -118,7 +118,11 @@ export function describeCredentialOrigin(origin: string): CredentialOriginDescri
     const path = raw
       .replace(/^\/{2,}(localhost)?(?=\/)/, '')
       .replace(/^\/(?=[A-Za-z]:)/, '');
-    const name = path.split('/').filter(Boolean).pop() ?? 'Credential file';
+    // The server reads the file name from the path's segments, and a segment
+    // separator is a backslash on Windows: "C:\Users\u\.codex\auth.json" is
+    // "auth.json", not the whole path.
+    const name =
+      path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? 'Credential file';
     return { kind: 'file', label: name, path };
   }
   return { kind: 'sidecar', label: 'Sidecar credential' };
