@@ -239,11 +239,16 @@ above, against the same database, for the same index:
 These are the digests the published tag resolves to and the ones the audit
 scanned. They are not the digests the `digests-*` artifacts record
 (`sha256:a278ab0602695233fc2655037f930a1c44e31b5abd5a2e8b0522c379a94c5f62`
-for amd64, `sha256:925992dd6ed17da65020f06edcd7f5ce24986e97e0fba0eef3134f68d961a9d9`
-for arm64): those are buildx's per-platform build output, recorded before the
-multi-architecture index is assembled and pushed, and a manifest's digest
-changes when it is carried into an index. The rows above are the published
-bytes.
+for amd64, `sha256:925992dd6ed17da65020f06edcd7f5ce24986e97e0fba0eef3134f68d961a9d9`).
+
+The `digests-*` artifacts carry `steps.build.outputs.digest` from the
+per-architecture build, and buildx pushes each platform as its own index — the
+image manifest plus its provenance attestation — so that digest is the
+per-platform index's. `docker buildx imagetools create` then assembles the
+multi-architecture index from those per-platform indexes, and the published
+index references the inner image manifests, which are the digests in the rows
+above. A manifest's digest is the hash of its own bytes; being referenced by an
+index does not change it.
 
 ### Advisories Debian lists as fixed in trixie
 
