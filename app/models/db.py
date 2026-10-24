@@ -320,6 +320,26 @@ class ProviderAccountLabel(SQLModel, table=True):  # type: ignore[call-arg]
     account_label: str | None = None
 
 
+class ProviderAccountMerge(SQLModel, table=True):  # type: ignore[call-arg]
+    """A durable account merge: the source account went to the destination.
+
+    The machine keeps resolving its credential to the source id, so the
+    ingest needs to know that the id was retired by a merge — and where it
+    went. Without this the source account comes back on the next push.
+    """
+
+    __tablename__ = "provider_account_merges"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "source_account_id", name="uq_provider_account_merge"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str = Field(index=True)
+    source_account_id: str = Field(index=True)
+    destination_account_id: str = Field(index=True)
+    merged_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
     """Durable, non-secret settings and health for one account credential source."""
 

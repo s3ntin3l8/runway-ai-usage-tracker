@@ -292,6 +292,25 @@ account's credential (it is the operator's record of what a machine reports),
 while **Token Health** does not (it lists what is live — nothing is collectable
 with a retired account's credential, and nothing to refresh).
 
+### A merged account takes its credential with it
+
+`POST /api/v1/system/provider-account-merge/apply` merges one account into
+another: its usage history, quota cards, credential-source rows and operator
+tags move to the destination, and the source id stops naming an account. The
+machine, however, keeps resolving its credential to the source id and pushes it
+every cycle — so the merge has to say where that id went, or the source account
+comes back with a live credential and the destination is left holding a
+credential-source row it cannot collect with.
+
+The merge records the move (`provider_account_merges`: the source account, the
+destination) and **moves the credential with the account**: the durable
+contribution is re-filed under the destination and the cached bundle follows.
+The ingest then resolves a claim of a merged-away id through that record, so
+the credential is filed under the destination — and the source id's own
+credential-source row is refreshed instead of duplicated. The chain is followed
+(alice → bob → carol) and a merge whose source or destination was already
+merged away is refused, so two records can never point at each other.
+
 A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
 the hint before the account was archived was still applying it, because the
 manifest's `resolved` map was merged into the sidecar's cache and a merge

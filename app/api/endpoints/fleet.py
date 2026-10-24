@@ -44,6 +44,7 @@ from app.services.account_identity import (
     normalize_sidecar_id,
     resolve_account_id,
 )
+from app.services.account_merges import resolve_merged_account
 from app.services.accumulator import (
     prune_stale_latest_usage,
     reconcile_latest_usage_snapshot,
@@ -274,6 +275,12 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 acc_id = card.account_id or (
                     card.metadata.get("account_id") if card.metadata else None
                 )
+                # A merged-away account id was retired by the operator: the
+                # account — and the credential that belonged to it — now
+                # belongs to the merge's destination. A machine that still
+                # claims the old id must not bring that account back.
+                if acc_id:
+                    acc_id = resolve_merged_account(session, provider_id, acc_id)
                 acc_label = card.account_label or (
                     card.metadata.get("account_label") if card.metadata else None
                 )
@@ -322,7 +329,10 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         and tagged.set_by != "identity_claim"
                         and not parked.is_parked(tagged)
                     ):
-                        acc_id = tagged.account_id
+                        # The tag may name an account that was merged away (the
+                        # shared `default` identity keeps its tags through a
+                        # merge): resolve it the same way as a claim.
+                        acc_id = resolve_merged_account(session, provider_id, tagged.account_id)
                         identity_pending = False
                     elif card.unit == "oauth":
                         claimed_id = canonical_account_id(acc_id)

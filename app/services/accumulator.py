@@ -10,6 +10,7 @@ from sqlmodel import Session, col, delete, or_, select
 
 from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import is_error_card_dict, with_failing_prefix
+from app.services.account_merges import resolve_merged_account
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +508,10 @@ def upsert_latest_usage(  # noqa: PLR0915
         return
 
     canonical_account_id = resolve_account_id(card.provider_id, card.account_id, card.account_label)
+    # A card may claim an account that was merged away: the account — and the
+    # usage it reports — now belongs to the merge's destination, so the card
+    # must not bring the retired account back.
+    canonical_account_id = resolve_merged_account(session, card.provider_id, canonical_account_id)
     sidecar_id = sidecar_id_override or card.sidecar_id or "local"
     contribution_source_id = source_id or _source_id(card.provider_id, sidecar_id)
     variant = card.variant or "default"
