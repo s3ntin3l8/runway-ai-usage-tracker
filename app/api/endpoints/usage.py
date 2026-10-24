@@ -468,10 +468,28 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
     blocked_sources = [
         view.model_dump() for view in source_blocks(session, source_block_rows(session))
     ]
+
+    # The accounts that were merged away, and where each of them went. A
+    # merged-away account holds no credential and has no quota card, so it is
+    # not a fleet entry — it would need a gauge it does not have. The fleet
+    # carries the merge as a note beside the entries instead, so the operator
+    # watching usage learns that "alice" became "bob" instead of watching her
+    # disappear silently.
+    from app.services.account_merges import merged_accounts
+
     return {
         "fleet": fleet,
         "generated_at": now.isoformat(),
         "blocked_sources": blocked_sources,
+        "merged_accounts": [
+            {
+                "provider_id": merged.provider_id,
+                "account_id": merged.account_id,
+                "destination_account_id": merged.destination_account_id,
+                "merged_at": merged.merged_at,
+            }
+            for merged in merged_accounts(session)
+        ],
     }
 
 

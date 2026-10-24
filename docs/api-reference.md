@@ -8,7 +8,7 @@ All API routes are under `/api/v1/`.
 |--------|-------|-------------|
 | `GET` | `/api/v1/usage/limits` | All current quota cards (instant, from in-memory registry) |
 | `GET` | `/api/v1/usage/sources` | Distinct sidecar IDs with message usage events |
-| `GET` | `/api/v1/usage/fleet` | Fleet HUD: critical gauge + secondary limits per (provider, account), with `window_aggregations.longest` per-model/per-sidecar splits, plus `blocked_sources` (credential sources a machine could not read) |
+| `GET` | `/api/v1/usage/fleet` | Fleet HUD: critical gauge + secondary limits per (provider, account), with `window_aggregations.longest` per-model/per-sidecar splits, plus `blocked_sources` (credential sources a machine could not read) and `merged_accounts` (the accounts that were merged away, and the account each of them became — a merged-away account holds no credential and has no quota card, so it is not an entry of its own) |
 | `GET` | `/api/v1/usage/cumulative` | Usage totals across sidecars (lifetime/year/month/day); `since`/`until` narrow to a window and optional `sidecar_id` scopes to one source |
 | `GET` | `/api/v1/usage/forecast` | Theil-Sen projection to reset; `include_series=true` returns drill-down points |
 | `GET` | `/api/v1/usage/history/windows` | Paginated closed quota windows |

@@ -16,6 +16,7 @@ import { AggregateStrip } from './AggregateStrip';
 import { ArchivedSection } from './ArchivedSection';
 import { AtRiskRail } from './AtRiskRail';
 import { Banners } from './Banners';
+import { MergedSection } from './MergedSection';
 import { ProviderGrid } from './ProviderGrid';
 import {
   useAnomalies,
@@ -158,6 +159,7 @@ export function HomePage() {
           </>
         )}
         {showArchived ? <ArchivedSection /> : null}
+        <MergedSection />
       </div>
     </>
   );
