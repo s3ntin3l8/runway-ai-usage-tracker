@@ -386,6 +386,38 @@ def test_scan_failure_retains_failed_evidence(tmp_path, monkeypatch):
     assert evidence["error"] == "scanner failed"
 
 
+@pytest.mark.parametrize("failure", ["stale", "future", "superseded"])
+def test_rejected_database_retains_metadata_without_scanning(tmp_path, monkeypatch, failure):
+    status = database(built=(NOW + timedelta(hours=1) if failure == "future" else NOW).isoformat())
+    listing = {"status": "active", "checksum": "sha256:" + "a" * 64}
+    if failure == "superseded":
+        listing["checksum"] = "sha256:" + "b" * 64
+    monkeypatch.setattr(audit_module, "prepare_database", lambda _: (status, listing))
+
+    class Clock:
+        @staticmethod
+        def now(tz):
+            return NOW + timedelta(hours=31) if failure == "stale" else NOW
+
+    monkeypatch.setattr(audit_module, "datetime", Clock)
+    monkeypatch.setattr(
+        audit_module, "scan_archive", lambda *args: pytest.fail("Rejected database was scanned")
+    )
+    output = tmp_path / "audit"
+    with pytest.raises(ValueError):
+        audit_module.audit(
+            None,
+            output,
+            archive=tmp_path / "image.tar",
+            architecture="amd64",
+            exceptions_path=write_exceptions(tmp_path, []),
+        )
+    evidence = json.loads((output / "evidence.json").read_text())
+    assert evidence["passed"] is False and evidence["platforms"] == {}
+    assert evidence["database"] == status
+    assert evidence["database_listing"] == listing
+
+
 def test_audit_records_the_expired_exceptions(tmp_path, monkeypatch):
     exceptions = write_exceptions(
         tmp_path, [expired_exception(package="gone-package"), exception()]

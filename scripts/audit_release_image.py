@@ -220,9 +220,11 @@ def audit(
             else:
                 db, listing = prepare_database(cache)
             expected_checksum = listing["checksum"] if listing else None
-            check_database(db, datetime.now(UTC), expected_checksum)
+            # Keep public feed evidence even when validation rejects it. Failed
+            # audits must distinguish a stale advertised release from a stale cache.
             evidence["database"] = db
             evidence["database_listing"] = listing
+            check_database(db, datetime.now(UTC), expected_checksum)
             if archive:
                 if architecture not in {"amd64", "arm64"}:
                     raise ValueError("Local archives require --architecture amd64 or arm64")
