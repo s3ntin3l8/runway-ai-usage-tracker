@@ -15,7 +15,7 @@ _PROBE = textwrap.dedent(
     import os
     from pathlib import Path
 
-    from tests.fixtures.isolation import LIVE_STATE_ENV_VARS
+    from scripts.isolation_env import LIVE_STATE_ENV_VARS
 
     def test_probe():
         root = Path(os.environ["TEST_ISOLATION_ROOT"]).resolve()

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.isolation_env import LIVE_STATE_ENV_VARS  # noqa: E402
 from scripts.pytest_shard import (  # noqa: E402
     DEFAULT_SHARDS,
     parse_durations,
@@ -25,7 +26,6 @@ from scripts.pytest_shard import (  # noqa: E402
     weights_path,
     write_weights,
 )
-from tests.fixtures.isolation import LIVE_STATE_ENV_VARS  # noqa: E402
 
 #: The dependency sets, by name. The suite needs one set, the static gate
 #: another, and a checkout that wants to do both needs the union -- so a job

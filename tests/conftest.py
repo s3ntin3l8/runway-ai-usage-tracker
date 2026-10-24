@@ -23,7 +23,8 @@ import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.fixtures.isolation import LIVE_STATE_ENV_VARS, worker_paths
+from scripts.isolation_env import LIVE_STATE_ENV_VARS
+from tests.fixtures.isolation import worker_paths
 
 
 def _pytest_user() -> str:
