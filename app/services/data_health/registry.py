@@ -11,6 +11,9 @@ from __future__ import annotations
 from app.services.data_health.base import Check
 from app.services.data_health.checks.alert_channels import AlertChannelsCheck
 from app.services.data_health.checks.config_default_keyed import ConfigDefaultKeyedCheck
+from app.services.data_health.checks.inconsistent_project_labels import (
+    InconsistentProjectLabelsCheck,
+)
 from app.services.data_health.checks.legacy_provider_ids import LegacyProviderIdsCheck
 from app.services.data_health.checks.lone_default_events import LoneDefaultEventsCheck
 from app.services.data_health.checks.minimax_background_sessions import (
@@ -49,6 +52,7 @@ REGISTRY: list[Check] = [
     RollupDriftCheck(),
     MinimaxBackgroundSessionsCheck(),
     PathShapedProjectsCheck(),
+    InconsistentProjectLabelsCheck(),
     PendingEventsCheck(),
     AlertChannelsCheck(),
 ]
