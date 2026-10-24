@@ -463,6 +463,135 @@ describe('ProvidersSection', () => {
     ));
   });
 
+  it('offers the un-merge of a merged-away account', async () => {
+    // The merge was a mistake: the un-merge puts alice's history and her
+    // credential back. The preview says what goes back — and what does not.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 1,
+        accounts: [
+          { account_id: 'bob@example.com', account_label: 'Bob', enabled: true, archived: false },
+        ],
+        merged_accounts: [
+          {
+            account_id: 'alice@example.com',
+            destination_account_id: 'bob@example.com',
+            merged_at: '2026-10-20T10:00:00+00:00',
+          },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.previewAccountUnmerge).mockResolvedValue({
+      provider_id: 'claude',
+      source_account_id: 'alice@example.com',
+      destination_account_id: 'bob@example.com',
+      rows: { usage_events: 12 },
+      credential_sources: ['sidecar:dev-01:claude'],
+      credential_tags: 0,
+      contributions: 1,
+      config: 'archived',
+      total_collisions: 0,
+      rows_in_the_way: {},
+      not_restored: ['the stored API key / session cookie the merge wiped'],
+    });
+    vi.mocked(api.unmergeProviderAccount).mockResolvedValue({ status: 'unmerged' } as never);
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Merged accounts (1)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Unmerge' }));
+
+    expect(await screen.findByText(/Back to this account: 12 usage events/)).toBeInTheDocument();
+    expect(screen.getByText(/Not restored:/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Unmerge' }));
+
+    await waitFor(() => expect(api.unmergeProviderAccount).toHaveBeenCalledWith(
+      'claude', 'alice@example.com', false,
+    ));
+  });
+
+  it('asks the operator to acknowledge the rows that got in the way', async () => {
+    // An account recreated under the same id holds a row that would collide
+    // with a row the merge moved. The un-merge must not drop it silently.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 1,
+        accounts: [
+          { account_id: 'bob@example.com', account_label: 'Bob', enabled: true, archived: false },
+        ],
+        merged_accounts: [
+          {
+            account_id: 'alice@example.com',
+            destination_account_id: 'bob@example.com',
+            merged_at: '2026-10-20T10:00:00+00:00',
+          },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.previewAccountUnmerge).mockResolvedValue({
+      provider_id: 'claude',
+      source_account_id: 'alice@example.com',
+      destination_account_id: 'bob@example.com',
+      rows: { latest_usage: 1 },
+      credential_sources: [],
+      credential_tags: 0,
+      contributions: 0,
+      config: 'archived',
+      total_collisions: 1,
+      rows_in_the_way: { latest_usage: 1 },
+      not_restored: [],
+    });
+    vi.mocked(api.unmergeProviderAccount).mockResolvedValue({ status: 'unmerged' } as never);
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Merged accounts (1)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Unmerge' }));
+
+    const confirm = await screen.findByRole('button', { name: 'Unmerge' });
+    expect(confirm).toBeDisabled();
+    expect(screen.getByText(/1 row that got in the way/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('checkbox'));
+    await userEvent.click(screen.getByRole('button', { name: 'Unmerge' }));
+
+    await waitFor(() => expect(api.unmergeProviderAccount).toHaveBeenCalledWith(
+      'claude', 'alice@example.com', true,
+    ));
+  });
+
+  it('explains why a merge that cannot be reversed cannot be', async () => {
+    // A merge performed before the merge kept a journal has nothing to
+    // reverse. The panel says so in place, instead of offering a confirm
+    // that would fail.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 1,
+        accounts: [
+          { account_id: 'bob@example.com', account_label: 'Bob', enabled: true, archived: false },
+        ],
+        merged_accounts: [
+          {
+            account_id: 'alice@example.com',
+            destination_account_id: 'bob@example.com',
+            merged_at: '2026-10-20T10:00:00+00:00',
+          },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.previewAccountUnmerge).mockRejectedValue(
+      foreignError('This merge cannot be reversed: it was recorded before the merge kept a journal.'),
+    );
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Merged accounts (1)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Unmerge' }));
+
+    expect(await screen.findByText(/cannot be reversed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Unmerge' })).not.toBeInTheDocument();
+  });
+
   it('renders no merged section when nothing was merged', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
     vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
