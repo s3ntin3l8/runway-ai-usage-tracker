@@ -232,7 +232,7 @@ def test_scheduled_exception_check_reports_a_lapse(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"built": (NOW - timedelta(hours=30, seconds=1)).isoformat()},
+        {"built": (NOW - timedelta(hours=48, seconds=1)).isoformat()},
         {"built": (NOW + timedelta(minutes=6)).isoformat()},
         {"built": "2026-10-10"},
         {"valid": False},
@@ -246,12 +246,24 @@ def test_database_fails_closed(overrides):
 
 
 def test_fresh_database_accepted():
-    check_database(database(built=(NOW - timedelta(hours=30)).isoformat()), NOW)
+    check_database(database(built=(NOW - timedelta(hours=48)).isoformat()), NOW)
 
 
 def test_publication_lag_database_accepted():
     # The newest release upstream offers is up to ~25h old by its build stamp.
     check_database(database(built=(NOW - timedelta(hours=25, minutes=7)).isoformat()), NOW)
+
+
+def test_a_two_day_old_database_is_accepted():
+    """Two days of upstream silence is where the tripwire fires, not one."""
+    check_database(database(built=(NOW - timedelta(hours=47)).isoformat()), NOW)
+    with pytest.raises(ValueError):
+        check_database(database(built=(NOW - timedelta(hours=48, seconds=1)).isoformat()), NOW)
+
+
+def test_the_upstream_stall_of_2026_10_24_is_tolerated():
+    """The release upstream's 2026-10-24 stall left behind is 35h old."""
+    check_database(database(built=(NOW - timedelta(hours=35, minutes=12)).isoformat()), NOW)
 
 
 def test_database_must_be_the_advertised_release():
@@ -263,7 +275,7 @@ def test_database_must_be_the_advertised_release():
 def test_identity_check_is_optional_but_age_is_not():
     check_database(database(built=(NOW - timedelta(hours=25)).isoformat()), NOW, None)
     with pytest.raises(ValueError):
-        check_database(database(built=(NOW - timedelta(hours=31)).isoformat()), NOW, None)
+        check_database(database(built=(NOW - timedelta(hours=49)).isoformat()), NOW, None)
 
 
 def scanner_stub(state):

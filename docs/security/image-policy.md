@@ -30,12 +30,27 @@ The scanner receives read-only image archives/SBOMs, not Docker credentials. A
 single vulnerability database is used for the complete multi-architecture audit.
 Its validated status, checksummed source URL and build time are retained. The
 audit uses the release upstream currently advertises, verified by checksum
-against that release's source archive, and that release must be no older than 30
+against that release's source archive, and that release must be no older than 48
 hours. Upstream publishes about once a day and a release reaches its download
 location roughly an hour after its build stamp, so the newest release anybody
-can obtain is up to about 25 hours old by that stamp; the 30 hour ceiling is
-the tripwire for an upstream feed that stopped publishing, not a licence to
-scan with a database upstream has already superseded. A supplied `--database`
+can obtain is up to about 25 hours old by that stamp. The ceiling is the
+tripwire for an upstream feed that stopped publishing, not a licence to
+scan with a database upstream has already superseded.
+
+The ceiling was 30 hours, which upstream's daily cadence satisfies. On
+2026-10-23T06:30Z upstream built its last release, and thirty hours after
+that build the ceiling fired and every image audit in the repository failed on
+it — across every branch, for a feed that had published daily for years. A
+tripwire that fires on a one-day gap in an upstream feed reports the gap
+while every merge waits behind it. The ceiling is now 48 hours: two days of
+upstream silence still fails the audit, a one-and-a-half-day gap does not.
+
+The checksum check is what refuses a database upstream has already superseded,
+and it applies whenever the advertised listing is available — the automated
+audit path, where the scanner reads upstream's listing while it prepares the
+database. An operator `--database` cache without a `listing.json` has no
+advertised release to compare against, so only the age ceiling applies to it.
+A supplied `--database`
 cache permits before/after scans against the identical database. Audit artifacts
 retain raw CycloneDX SBOMs, package inventories, vulnerability reports, policy
 decisions and evidence for 90 days. The daily Image Security workflow resolves
