@@ -45,7 +45,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, or_
+from sqlalchemy import ColumnElement, func, or_, tuple_
 from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
@@ -142,6 +142,9 @@ class RepoRelabel:
 
     cwd: str
     project_ref: str
+    #: The host the directory lives on. A working directory is a path on one
+    #: machine, and two machines can hold the same path string.
+    sidecar_id: str = ""
     #: The rows this working directory holds.
     rows: int = 0
     #: The rows whose label does not follow the repository name yet.
@@ -354,60 +357,81 @@ def plan_repo_relabels(session: Session, *, sample_size: int = 20) -> RepoRelabe
     A working directory that never appears again with a repository name keeps
     its label: the server cannot know what repository it belonged to.
 
+    **The key is the (host, directory) pair, not the directory alone.** A
+    working directory is a path on *one* machine, and two machines can hold the
+    same path string — the same developer, the same folder name, two hosts. The
+    rows of one host would then be relabelled onto the other host's repository,
+    and each apply would undo the other.
+
     Two queries, not one per directory: `usage_events.cwd` carries no index, so
     a count per directory would scan the table once per directory.
     """
     reported = session.exec(
-        select(col(UsageEvent.cwd), col(UsageEvent.project_ref))
+        select(
+            col(UsageEvent.sidecar_id),
+            col(UsageEvent.cwd),
+            col(UsageEvent.project_ref),
+            func.count(),
+        )
         .where(col(UsageEvent.project_ref).is_not(None))
-        .distinct()
+        .group_by(col(UsageEvent.sidecar_id), col(UsageEvent.cwd), col(UsageEvent.project_ref))
     ).all()
-    # One repository per directory: the one the client reported most often.
-    # A tie is broken lexicographically, so the plan is the same on every run.
-    refs: dict[str, str] = {}
-    for cwd, project_ref in reported:
+    # One repository per (host, directory): the one the client reported most
+    # often, so a repository that was renamed does not pin the directory to the
+    # older name and rewrite the fresh rows back on every scan. A tie is broken
+    # lexicographically, so the plan is the same on every run.
+    refs: dict[tuple[str, str], str] = {}
+    counts: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
+    for sidecar_id, cwd, project_ref, count in reported:
         if not cwd or not project_ref:
             continue
-        current = refs.get(cwd)
-        if current is None or project_ref < current:
-            refs[cwd] = project_ref
+        counts[(sidecar_id, cwd)][project_ref] = count
+    for key, by_ref in counts.items():
+        refs[key] = min(by_ref, key=lambda ref: (-by_ref[ref], ref))
     if not refs:
         return RepoRelabelPlan()
 
     rows = session.exec(
-        select(UsageEvent.id, col(UsageEvent.cwd), col(UsageEvent.project)).where(
-            col(UsageEvent.cwd).in_(list(refs))
-        )
+        select(
+            UsageEvent.id,
+            col(UsageEvent.sidecar_id),
+            col(UsageEvent.cwd),
+            col(UsageEvent.project),
+        ).where(tuple_(col(UsageEvent.sidecar_id), col(UsageEvent.cwd)).in_(list(refs)))
     ).all()
 
-    totals: dict[str, int] = defaultdict(int)
-    stale: dict[str, list[int]] = defaultdict(list)
+    totals: dict[tuple[str, str], int] = defaultdict(int)
+    stale: dict[tuple[str, str], list[int]] = defaultdict(list)
     for row in rows:
-        row_id, cwd, project = row[0], row[1], row[2]
+        row_id, sidecar_id, cwd, project = row[0], row[1], row[2], row[3]
         if row_id is None or not cwd:
             continue
-        totals[cwd] += 1
-        if project != refs[cwd]:
-            stale[cwd].append(row_id)
+        key = (sidecar_id, cwd)
+        if key not in refs:
+            continue
+        totals[key] += 1
+        if project != refs[key]:
+            stale[key].append(row_id)
 
     plan = RepoRelabelPlan()
-    for cwd in sorted(refs):
-        row_ids = stale.get(cwd)
+    for key in sorted(refs):
+        row_ids = stale.get(key)
         if not row_ids:
             continue
-        project_ref = refs[cwd]
+        project_ref = refs[key]
         plan.relabels.append(
             RepoRelabel(
-                cwd=cwd,
+                cwd=key[1],
+                sidecar_id=key[0],
                 project_ref=project_ref,
-                rows=totals[cwd],
+                rows=totals[key],
                 stale_rows=len(row_ids),
                 row_ids=row_ids,
             )
         )
         plan.total += len(row_ids)
         if len(plan.samples) < sample_size:
-            plan.samples.append(f"{cwd} → {project_ref} ({len(row_ids)} row(s))")
+            plan.samples.append(f"{key[0]}:{key[1]} → {project_ref} ({len(row_ids)} row(s))")
     return plan
 
 

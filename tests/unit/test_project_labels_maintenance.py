@@ -42,6 +42,8 @@ def _add(
     provider="minimax",
     tokens=10,
     cost=1.0,
+    project_ref=None,
+    sidecar_id="local",
 ):
     session.add(
         UsageEvent(
@@ -51,8 +53,10 @@ def _add(
             ts=_TS,
             kind="message",
             session_id=session_id,
+            sidecar_id=sidecar_id,
             cwd=cwd,
             project=project,
+            project_ref=project_ref,
             tokens_input=tokens,
             cost_usd=cost,
         )
@@ -337,3 +341,77 @@ class TestRepoRelabels:
         rows = {r.event_id: r for r in s.exec(select(UsageEvent)).all()}
         assert rows["a"].cwd == "/home/u/ai-usage-tracker"
         assert rows["a"].project_ref is None
+
+    def test_two_hosts_with_the_same_path_keep_their_own_repository(self):
+        """A working directory is a path on one machine: two hosts can hold the
+        same path string, and one host's rows must not be relabelled onto the
+        other host's repository."""
+        s = _session()
+        _add(
+            s,
+            "a",
+            session_id="s1",
+            cwd=r"C:\Users\u\Projects\app",
+            project="app",
+            sidecar_id="host-1",
+        )
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd=r"C:\Users\u\Projects\app",
+            project="app",
+            project_ref="repo-one",
+            sidecar_id="host-1",
+        )
+        _add(
+            s,
+            "c",
+            session_id="s3",
+            cwd=r"C:\Users\u\Projects\app",
+            project="app",
+            project_ref="repo-two",
+            sidecar_id="host-2",
+        )
+
+        apply_repo_relabels(s, plan_repo_relabels(s))
+
+        projects = _projects(s)
+        assert projects["a"] == "repo-one"  # host-1's older row
+        assert projects["b"] == "repo-one"
+        assert projects["c"] == "repo-two"  # host-2's own repository
+
+    def test_the_repository_the_client_reports_most_often_wins(self):
+        """A renamed repository must not pin the directory to the older name:
+        the fresh rows would be rewritten back on every scan."""
+        s = _session()
+        _add(
+            s,
+            "old",
+            session_id="s1",
+            cwd="/home/u/app",
+            project="old-name",
+            project_ref="old-name",
+        )
+        _add(
+            s,
+            "new1",
+            session_id="s2",
+            cwd="/home/u/app",
+            project="new-name",
+            project_ref="new-name",
+        )
+        _add(
+            s,
+            "new2",
+            session_id="s3",
+            cwd="/home/u/app",
+            project="new-name",
+            project_ref="new-name",
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.relabels[0].project_ref == "new-name"
+        apply_repo_relabels(s, plan)
+        assert _projects(s)["old"] == "new-name"

@@ -35,10 +35,6 @@ _MAX_NAME_LENGTH = 128
 #: touches a handful of directories, so this is generous.
 _CACHE_LIMIT = 512
 
-#: The last path segment of a remote URL, split on every separator a URL may
-#: use: `/` for the path, `:` for the scp-like form (`git@host:owner/repo.git`).
-_URL_SEPARATORS = "/\\:"
-
 _cache: dict[str, str | None] = {}
 
 
