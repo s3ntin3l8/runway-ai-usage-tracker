@@ -69,7 +69,11 @@ def test_enable_all_is_read_only_and_banner_dismissal_is_not_consent(settings):
 
 def test_source_post_requires_same_origin_and_rejects_unknown_or_truthy_values(settings):
     server, config = settings
-    assert send(server, "POST", "/sources", {"action": "enable_all"}, origin=False)[0] == 403
+    # The Origin guard rejects on the headers alone, so this request carries no
+    # payload. An HTTP/1.0 close with an unread request body resets the
+    # connection on Windows, and the client would lose the 403 it asserts on
+    # (WinError 10053). Same convention as tests/unit/test_sidecar_pairing.py.
+    assert send(server, "POST", "/sources", origin=False)[0] == 403
     for payload in [
         {"action": "enable", "source_id": "unknown"},
         {"action": "renewal", "value": "true"},
