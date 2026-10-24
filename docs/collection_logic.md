@@ -144,3 +144,42 @@ its expiry must come from the *same* record.
 - BaseCollector `collect()` method refactored to use phases
 - Mixed strategies refactored to split output
 - `_merge_enrichment()` method handles conflict resolution
+
+## Expiry units
+
+A credential's expiry may be published in seconds, milliseconds, microseconds or
+nanoseconds. The reader does **not** take the unit from the rule — it reads it off the
+magnitude of the number, because the registry maps an expiry field by name
+(`expiry_date`) without saying which unit that field carries.
+
+Both the server (`app/services/credential_provider.py::_expiry_seconds`) and the sidecar
+(`scripts/sidecar.py::_expiry_seconds`) implement the same rule, and
+`tests/unit/test_mapping_resolver_parity.py` pins the two copies together. They have to
+agree: the server decides whether a credential is fresh and the sidecar reports
+freshness independently, so a divergence means the two sides disagree about whether a
+credential is alive.
+
+The rule, as both copies implement it:
+
+| The raw value is | Read as | Divide by |
+| --- | --- | --- |
+| `>= 1e17` | nanoseconds | 1e9 |
+| `>= 1e14` | microseconds | 1e6 |
+| `>= 1e11` | milliseconds | 1e3 |
+| anything smaller | seconds | — |
+
+A 2026 epoch is ~1.8e9 s, ~1.8e12 ms, ~1.8e15 us and ~1.8e18 ns, so each threshold sits
+clear of the next. A millisecond value has to be ~3000 years in the future before it
+would be read as microseconds, and it then lands in the past — expired, which is the safe
+direction. The old reader divided by 1000 exactly once, so a microsecond epoch landed
+thousands of years ahead and read as **fresh forever**; because the record picker takes
+the *largest* expiry, a dead microsecond record also outranked a live millisecond one.
+
+A value that is not a number, and a value that is not a plausible expiry at all (past the
+last second of year 9999), both read as **no expiry claim** — never as fresh. An unknown
+expiry must not win the largest-expiry picker over a record that states one.
+
+Every expiry field the registry maps today is epoch milliseconds
+(`claudeAiOauth.expiresAt`, `expiresAt`, `records.*.expiresAtMs`, `expiry_date`), so this
+is a robustness change rather than a fix for a live report. A provider that publishes
+another unit needs no rule change: add the magnitude to both readers and the parity test.
