@@ -320,6 +320,63 @@ export interface TopProjectsResponse {
   generated_at: string;
 }
 
+export interface TopSessionEntry {
+  session_id: string;
+  project: string | null;
+  cwd: string | null;
+  sidecar_id: string | null; // the host that pushed the session's events
+  ts_start: string | null; // ISO-8601 UTC
+  ts_end: string | null; // ISO-8601 UTC
+  msgs: number;
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+  tokens_reasoning: number;
+  cost_usd: number;
+  cost_cache: number;
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_create: number;
+  providers: string[];
+  models: string[];
+}
+
+export interface TopSessionsResponse {
+  sessions: TopSessionEntry[];
+  metric: string; // "tokens" | "cost"
+  generated_at: string;
+}
+
+export interface TopHostEntry {
+  sidecar_id: string; // the hostname that pushed these events
+  ts_start: string | null; // ISO-8601 UTC
+  ts_end: string | null; // ISO-8601 UTC
+  msgs: number;
+  sessions: number; // distinct sessions that ran on this host
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_cache_read: number;
+  tokens_cache_create: number;
+  tokens_reasoning: number;
+  cost_usd: number;
+  cost_cache: number;
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_create: number;
+  providers: string[];
+}
+
+export interface TopHostsResponse {
+  hosts: TopHostEntry[];
+  metric: string; // "tokens" | "cost"
+  generated_at: string;
+}
+
 export interface TopToolEntry {
   tool: string;
   calls: number;

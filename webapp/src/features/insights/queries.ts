@@ -2,8 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import {
   fetchGlobalStats,
   fetchHistoryChart,
+  fetchTopHosts,
   fetchTopModels,
   fetchTopProjects,
+  fetchTopSessions,
   fetchTopTools,
 } from '@/api/endpoints';
 import { rangeQueryParams, type DateRangeValue } from '@/lib/timeRange';
@@ -80,6 +82,46 @@ export const useTopTools = (range: DateRangeValue) => {
   return useQuery({
     queryKey: ['usage', 'top-tools', params, sidecarId],
     queryFn: () => fetchTopTools({ ...params, sidecar_id: sidecarId, limit: 12 }),
+    refetchInterval: 120_000,
+  });
+};
+
+// Top Sessions ranking: the sessions behind a usage spike, across every
+// provider/account. Scoped by the shared range value like the other Insights
+// rankings.
+export const useTopSessions = (metric: TopMetric, range: DateRangeValue, excludeCache: boolean) => {
+  const params = rangeQueryParams(range);
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'top-sessions', metric, params, excludeCache, sidecarId],
+    queryFn: () =>
+      fetchTopSessions({
+        metric,
+        exclude_cache: excludeCache,
+        sidecar_id: sidecarId,
+        limit: 12,
+        ...params,
+      }),
+    refetchInterval: 120_000,
+  });
+};
+
+// Top Hosts ranking: the machines that pushed the events, across every
+// provider/account. The page's source filter narrows it to the selected
+// host, like it does for every other ranking on the page.
+export const useTopHosts = (metric: TopMetric, range: DateRangeValue, excludeCache: boolean) => {
+  const params = rangeQueryParams(range);
+  const [sidecarId] = useUsageSource();
+  return useQuery({
+    queryKey: ['usage', 'top-hosts', metric, params, excludeCache, sidecarId],
+    queryFn: () =>
+      fetchTopHosts({
+        metric,
+        exclude_cache: excludeCache,
+        sidecar_id: sidecarId,
+        limit: 12,
+        ...params,
+      }),
     refetchInterval: 120_000,
   });
 };

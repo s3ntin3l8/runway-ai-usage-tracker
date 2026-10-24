@@ -1,8 +1,9 @@
 // Unified time-range picker: a trigger button showing the current range label
-// opens a Grafana-style popover with quick ranges (Last 7/14/30/90 days, This
-// month, Last month) on the left and absolute From/To date inputs on the
-// right. Shared by History, Insights, and the period-aware Provider tabs;
-// the selected value lives in the `?range=` URL param (see useRangeParam).
+// opens a Grafana-style popover with quick ranges (Last 24 hours, Last
+// 7/14/30/90 days, This month, Last month) on the left and absolute From/To
+// date inputs on the right. Shared by History, Insights, and the period-aware
+// Provider tabs; the selected value lives in the `?range=` URL param (see
+// useRangeParam).
 
 import { useEffect, useState } from 'react';
 import { CalendarDays, ChevronDown } from 'lucide-react';
