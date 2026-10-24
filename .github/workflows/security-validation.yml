@@ -47,6 +47,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+          # The npm cache: setup-node's own option, keyed on the lockfile hash.
+          # It needs no actions/cache reference of its own, so
+          # scripts/action_pins.json records no action the workflows never name.
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
       - name: Install Python test dependencies
         run: |
           python -m venv .venv
