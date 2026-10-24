@@ -45,6 +45,7 @@ import { Input } from '@/components/ui/Input';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
+import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { useProviderConfigs } from '@/features/home/queries';
 import { useCredentialInventory } from './credentials/queries';
@@ -117,6 +118,9 @@ function UnmergeButton({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [acknowledge, setAcknowledge] = useState(false);
+  // The account is an account again: the fleet, the credential inventory and
+  // the provider cards all read that state, so they refresh together.
+  const invalidateCredentialViews = useInvalidateCredentialViews();
 
   const openPreview = async () => {
     setOpen(true);
@@ -138,9 +142,10 @@ function UnmergeButton({
       await unmergeProviderAccount(providerId, accountId, plan?.total_collisions ? true : false);
       toast.success('Account unmerged');
       setOpen(false);
+      invalidateCredentialViews();
       onUnmerged();
-    } catch (error) {
-      toast.error(errorMessage(error, 'Could not un-merge account'));
+    } catch (unmergeError) {
+      toast.error(errorMessage(unmergeError, 'Could not un-merge account'));
     } finally {
       setBusy(false);
     }
