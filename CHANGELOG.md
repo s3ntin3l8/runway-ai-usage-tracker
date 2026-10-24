@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.15](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.14...v3.0.0-beta.15) (2026-10-24)
+
+
+### Features
+
+* **claude:** add offline cloud diagnostic verification ([#917](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/917)) ([34946cb](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/34946cb114ea754240102117f580f0d20a801a3a))
+* **claude:** add source-pinned cloud history diagnostic ([#908](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/908)) ([4d28629](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4d2862933a7e07d5d5eb115d52c5fa99c909dd7b))
+* **credentials:** show that an account was merged into another one ([784a03e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/784a03e78324d7ada7b6b891939d311ec2baba32))
+
+
+### Bug Fixes
+
+* **credentials:** a merged-away account follows the merge ([d0b003c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d0b003c7dc5149b3a7364ce4ad79f0785681bbd0))
+* **credentials:** a retired account holds no credential ([f3d8ad2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f3d8ad2c0121e8ca3bb27d27ec34a78f9b390feb))
+* **credentials:** read an expiry's unit from its magnitude, not as milliseconds ([#899](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/899)) ([0e0cf7f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0e0cf7f954dd7e96d5c98cc64c620fe704a22472)), closes [#779](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/779)
+* **opencode:** the reclassify script reads opencode v2's session_message table ([#902](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/902)) ([6150852](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6150852b00c4511e3c2d31ba2bb6e20a0f55b980)), closes [#633](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/633)
+* **settings:** stop filing an account under the family's representative ([#900](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/900)) ([4f0242f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4f0242f745c5ad2cd8cf64893f3e47f21cd70792)), closes [#795](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/795)
+
 ## [3.0.0-beta.14](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.13...v3.0.0-beta.14) (2026-10-24)
 
 
