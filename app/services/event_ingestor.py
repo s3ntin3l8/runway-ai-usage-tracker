@@ -293,7 +293,15 @@ class EventIngestor:
                     # Worktree/tmp cwds collapse to the project root (rule 1); the
                     # per-session subfolder-drift fix runs offline in
                     # scripts/consolidate_session_projects.py.
-                    project=derive_project(push.cwd),
+                    #
+                    # The client may name the git repository its working directory
+                    # belongs to — it resolves that on its own host, because the
+                    # server never reads the client's filesystem. That name wins:
+                    # two checkouts of one repository group together even when
+                    # their folders are named differently. Without it, the
+                    # folder's own name is the label.
+                    project=push.project_ref or derive_project(push.cwd),
+                    project_ref=push.project_ref,
                     git_branch=push.git_branch,
                     tools_json=(json.dumps(push.tool_names) if push.tool_names else None),
                     subagent_type=push.subagent_type,

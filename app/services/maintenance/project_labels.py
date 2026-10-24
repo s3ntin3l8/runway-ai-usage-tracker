@@ -13,7 +13,7 @@ This module is the single implementation of the relabel. The Data Health check
 (`scripts/consolidate_session_projects.py`) both call it, so the in-app fixer
 and the script cannot drift apart.
 
-Two scopes, one implementation:
+Three scopes, one implementation:
 
 - `plan_path_shaped_projects` — the sessions whose stored label is *path-shaped*
   (it contains a separator, which a real basename never does). This is the
@@ -21,6 +21,11 @@ Two scopes, one implementation:
 - `plan_session_relabels` — every session, whether or not its label is
   path-shaped. This is the consolidation pass the CLI has always run: a session
   whose cwd drifts into a subfolder ends up with one label per folder.
+- `plan_repo_relabels` — the rows whose label should follow the *git
+  repository* the client reported. The client resolves the repository on its own
+  host and sends its name; the rows collected before it did keep the folder's
+  name, and this pass moves them onto the repository.
+
 Both relabel a session as a whole: the canonical label is
 `derive_project(pick_canonical_cwd(<the session's cwds>))` — rule 1 plus rule
 2 — and every row of the session takes it, including the rows whose `cwd` is
@@ -38,9 +43,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, or_
+from sqlalchemy import ColumnElement, func, or_, tuple_
+from sqlalchemy import select as sa_select
 from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
@@ -129,6 +136,40 @@ class PathShapedProjectResult:
     relabeled: int = 0
     sessions: int = 0
     path_shaped_rows: int = 0
+
+
+@dataclass
+class RepoRelabel:
+    """One working directory and the repository name its rows should carry."""
+
+    cwd: str
+    project_ref: str
+    #: The host the directory lives on. A working directory is a path on one
+    #: machine, and two machines can hold the same path string.
+    sidecar_id: str = ""
+    #: The rows this working directory holds.
+    rows: int = 0
+    #: The rows whose label does not follow the repository name yet.
+    stale_rows: int = 0
+    #: The rows the apply would change.
+    row_ids: list[int] = field(default_factory=list)
+
+
+@dataclass
+class RepoRelabelPlan:
+    """The rows whose label should follow the repository the client reported."""
+
+    total: int = 0
+    relabels: list[RepoRelabel] = field(default_factory=list)
+    samples: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RepoRelabelResult:
+    """What the repair changed."""
+
+    relabeled: int = 0
+    directories: int = 0
 
 
 def _plan(
@@ -300,3 +341,149 @@ def label_map_detail(plan: PathShapedProjectPlan) -> dict[str, Any]:
         "path_shaped_rows": plan.path_shaped_rows,
         "rows_to_relabel": plan.rows_to_relabel,
     }
+
+
+def plan_repo_relabels(session: Session, *, sample_size: int = 20) -> RepoRelabelPlan:
+    """The rows whose label should follow the repository the client reported.
+
+    The client resolves the git repository of a working directory on its own
+    host and reports the repository's *name*. Every event carries that name in
+    `project_ref`, so the mapping from a working directory to a repository is
+    learned from live traffic rather than guessed.
+
+    The rows collected before the client reported one keep the label they were
+    given — the folder's name. This plan finds the rows that share a working
+    directory with a row that does carry a repository name, and would move them
+    onto that name.
+
+    A working directory that never appears again with a repository name keeps
+    its label: the server cannot know what repository it belonged to.
+
+    **The key is the (host, directory) pair, not the directory alone.** A
+    working directory is a path on *one* machine, and two machines can hold the
+    same path string — the same developer, the same folder name, two hosts. The
+    rows of one host would then be relabelled onto the other host's repository,
+    and each apply would undo the other.
+
+    Two queries, not one per directory: `usage_events.cwd` carries no index, so
+    a count per directory would scan the table once per directory.
+    """
+    reported = session.execute(
+        sa_select(
+            col(UsageEvent.sidecar_id),
+            col(UsageEvent.cwd),
+            col(UsageEvent.project_ref),
+            func.max(col(UsageEvent.ts)).label("max_ts"),
+            func.count().label("rows"),
+        )
+        .where(col(UsageEvent.project_ref).is_not(None))
+        .group_by(col(UsageEvent.sidecar_id), col(UsageEvent.cwd), col(UsageEvent.project_ref))
+    ).all()
+    # One repository per (host, directory): the one the client reported *most
+    # recently*, so a repository that was renamed is not pinned to the older
+    # name. Counting the rows instead would let the name with the longest
+    # history win forever — the relabel never rewrites `project_ref`, so the
+    # fresh rows could never outnumber the old ones, and every scan would
+    # rewrite them back. The count is only a tie-break.
+    #
+    # "Most recently" is the newest *timestamp*, not the newest row: an offline
+    # sidecar replaying its backlog inserts pre-rename events with fresh ids,
+    # and the insert order would flip the ranking back to the old name.
+    newest: dict[tuple[str, str], dict[str, tuple[float, int]]] = defaultdict(dict)
+    for sidecar_id, cwd, project_ref, max_ts, count in reported:
+        if not cwd or not project_ref:
+            continue
+        # `max(ts)` is never NULL for a group that has rows. The stored value
+        # comes back naive — it is UTC (see `iso_utc`) — so it is stamped as
+        # UTC before the conversion: the ordering survives either way, but the
+        # comparison must not depend on the deploying host's timezone.
+        stamp = max_ts.replace(tzinfo=UTC).timestamp() if isinstance(max_ts, datetime) else 0.0
+        newest[(sidecar_id, cwd)][project_ref] = (stamp, count)
+    refs: dict[tuple[str, str], str] = {
+        key: min(
+            by_ref,
+            # Newest report first, then the most-reported name, then the
+            # lexicographic order — so the choice is the same on every run.
+            key=lambda ref: (-by_ref[ref][0], -by_ref[ref][1], ref),
+        )
+        for key, by_ref in newest.items()
+    }
+    if not refs:
+        return RepoRelabelPlan()
+
+    rows = session.execute(
+        sa_select(
+            col(UsageEvent.id),
+            col(UsageEvent.sidecar_id),
+            col(UsageEvent.cwd),
+            col(UsageEvent.project),
+            col(UsageEvent.project_ref),
+        ).where(tuple_(col(UsageEvent.sidecar_id), col(UsageEvent.cwd)).in_(list(refs)))
+    ).all()
+
+    totals: dict[tuple[str, str], int] = defaultdict(int)
+    stale: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for row in rows:
+        row_id, sidecar_id, cwd, project, project_ref = row[0], row[1], row[2], row[3], row[4]
+        if row_id is None or not cwd:
+            continue
+        key = (sidecar_id, cwd)
+        if key not in refs:
+            continue
+        totals[key] += 1
+        # A row that carries a repository name of its own is not a target: it
+        # reported a repository, and the repair is for the rows that were
+        # labelled with the *folder's* name before the client reported one.
+        if project_ref is not None:
+            continue
+        if project != refs[key]:
+            stale[key].append(row_id)
+
+    plan = RepoRelabelPlan()
+    for key in sorted(refs):
+        row_ids = stale.get(key)
+        if not row_ids:
+            continue
+        project_ref = refs[key]
+        plan.relabels.append(
+            RepoRelabel(
+                cwd=key[1],
+                sidecar_id=key[0],
+                project_ref=project_ref,
+                rows=totals[key],
+                stale_rows=len(row_ids),
+                row_ids=row_ids,
+            )
+        )
+        plan.total += len(row_ids)
+        if len(plan.samples) < sample_size:
+            plan.samples.append(f"{key[0]}:{key[1]} → {project_ref} ({len(row_ids)} row(s))")
+    return plan
+
+
+def apply_repo_relabels(session: Session, plan: RepoRelabelPlan) -> RepoRelabelResult:
+    """Move the rows the plan found onto the repository name.
+
+    Only `usage_events.project` is written: the raw working directory and the
+    repository the client reported stay as they are, so the move is reversible
+    and no total can move.
+
+    The rows are written by id, in batches: `usage_events.cwd` carries no
+    index, so a per-directory UPDATE would scan the table once per directory.
+    """
+    by_ref: dict[str, list[int]] = defaultdict(list)
+    for relabel in plan.relabels:
+        by_ref[relabel.project_ref].extend(relabel.row_ids)
+
+    relabeled = 0
+    for project_ref, row_ids in by_ref.items():
+        for start in range(0, len(row_ids), _BATCH):
+            batch = row_ids[start : start + _BATCH]
+            relabeled += chunked_update(
+                session,
+                UsageEvent,
+                [col(UsageEvent.id).in_(batch)],
+                {"project": project_ref},
+                batch_size=len(batch),
+            )
+    return RepoRelabelResult(relabeled=relabeled, directories=len(plan.relabels))

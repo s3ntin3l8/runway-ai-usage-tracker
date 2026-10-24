@@ -546,6 +546,11 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     # the per-session project filter.
     cwd: str | None = None
     project: str | None = Field(default=None, index=True)
+    # The git repository the working directory belongs to, as the name only.
+    # The client resolves it on its own host and reports the name; the server
+    # never reads the client's filesystem. NULL when the client could not
+    # resolve one (no git, not a repository, an older sidecar).
+    project_ref: str | None = None
     git_branch: str | None = None  # vcs branch at the time of the message, if logged
     tools_json: str | None = None  # JSON array of tool names used in the message (Anthropic)
     subagent_type: str | None = Field(

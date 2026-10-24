@@ -16,7 +16,9 @@ from app.services.maintenance.project_labels import (
     _is_path_shaped,
     _path_shaped_filter,
     apply_path_shaped_projects,
+    apply_repo_relabels,
     plan_path_shaped_projects,
+    plan_repo_relabels,
     plan_session_relabels,
 )
 
@@ -40,17 +42,22 @@ def _add(
     provider="minimax",
     tokens=10,
     cost=1.0,
+    project_ref=None,
+    sidecar_id="local",
+    ts=_TS,
 ):
     session.add(
         UsageEvent(
             provider_id=provider,
             account_id="acc",
             event_id=event_id,
-            ts=_TS,
+            ts=ts,
             kind="message",
             session_id=session_id,
+            sidecar_id=sidecar_id,
             cwd=cwd,
             project=project,
+            project_ref=project_ref,
             tokens_input=tokens,
             cost_usd=cost,
         )
@@ -211,3 +218,292 @@ class TestPlanSessionRelabels:
 
         assert plan.sessions == 1
         assert plan.label_map == [("web", "repo", 1)]
+
+
+class TestRepoRelabels:
+    """The rows collected before the client reported a repository name."""
+
+    def test_a_row_without_a_reported_repository_is_left_alone(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.total == 0
+        assert plan.relabels == []
+
+    def test_rows_already_following_the_repository_are_left_alone(self):
+        s = _session()
+        _add(
+            s,
+            "a",
+            session_id="s1",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.total == 0
+
+    def test_an_older_row_of_the_same_directory_is_planned(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.total == 1
+        assert plan.relabels[0].project_ref == "runway-ai-usage-tracker"
+        assert plan.relabels[0].rows == 2
+
+    def test_the_apply_moves_the_older_row(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        result = apply_repo_relabels(s, plan_repo_relabels(s))
+
+        assert result.relabeled == 1
+        assert _projects(s) == {"a": "runway-ai-usage-tracker", "b": "runway-ai-usage-tracker"}
+
+    def test_the_apply_rewrites_the_label_of_a_folder_named_differently(self):
+        s = _session()
+        _add(
+            s,
+            "a",
+            session_id="s1",
+            cwd=r"C:\Users\u\Projects\ai-usage-tracker",
+            project="ai-usage-tracker",
+        )
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd=r"C:\Users\u\Projects\ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        apply_repo_relabels(s, plan_repo_relabels(s))
+
+        assert _projects(s) == {
+            "a": "runway-ai-usage-tracker",
+            "b": "runway-ai-usage-tracker",
+        }
+
+    def test_the_apply_is_idempotent(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        first = apply_repo_relabels(s, plan_repo_relabels(s))
+        second = apply_repo_relabels(s, plan_repo_relabels(s))
+
+        assert first.relabeled == 1
+        assert second.relabeled == 0
+
+    def test_the_raw_context_is_kept(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        apply_repo_relabels(s, plan_repo_relabels(s))
+
+        rows = {r.event_id: r for r in s.exec(select(UsageEvent)).all()}
+        assert rows["a"].cwd == "/home/u/ai-usage-tracker"
+        assert rows["a"].project_ref is None
+
+    def test_two_hosts_with_the_same_path_keep_their_own_repository(self):
+        """A working directory is a path on one machine: two hosts can hold the
+        same path string, and one host's rows must not be relabelled onto the
+        other host's repository."""
+        s = _session()
+        _add(
+            s,
+            "a",
+            session_id="s1",
+            cwd=r"C:\Users\u\Projects\app",
+            project="app",
+            sidecar_id="host-1",
+        )
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd=r"C:\Users\u\Projects\app",
+            project="repo-one",
+            project_ref="repo-one",
+            sidecar_id="host-1",
+        )
+        _add(
+            s,
+            "c",
+            session_id="s3",
+            cwd=r"C:\Users\u\Projects\app",
+            project="repo-two",
+            project_ref="repo-two",
+            sidecar_id="host-2",
+        )
+
+        apply_repo_relabels(s, plan_repo_relabels(s))
+
+        projects = _projects(s)
+        assert projects["a"] == "repo-one"  # host-1's older row
+        assert projects["b"] == "repo-one"
+        assert projects["c"] == "repo-two"  # host-2's own repository
+
+    def test_the_repository_the_client_reports_most_recently_wins(self):
+        """A renamed repository must not pin the directory to the older name:
+        the fresh rows would be rewritten back on every scan."""
+        s = _session()
+        _add(s, "older", session_id="s0", cwd="/home/u/app", project="app")
+        _add(
+            s,
+            "old",
+            session_id="s1",
+            cwd="/home/u/app",
+            project="old-name",
+            project_ref="old-name",
+            ts=_TS.replace(hour=6),
+        )
+        _add(
+            s,
+            "new",
+            session_id="s2",
+            cwd="/home/u/app",
+            project="new-name",
+            project_ref="new-name",
+            ts=_TS.replace(hour=12),
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.relabels[0].project_ref == "new-name"
+        apply_repo_relabels(s, plan)
+        assert _projects(s)["older"] == "new-name"
+
+    def test_the_name_with_the_longer_history_does_not_win(self):
+        """The count is only a tie-break: after a rename the old name has more
+        rows, but the client reports the new one now."""
+        s = _session()
+        _add(s, "older", session_id="s0", cwd="/home/u/app", project="app")
+        for index in range(3):
+            _add(
+                s,
+                f"old{index}",
+                session_id=f"s-old{index}",
+                cwd="/home/u/app",
+                project="old-name",
+                project_ref="old-name",
+                ts=_TS.replace(hour=6),
+            )
+        _add(
+            s,
+            "new",
+            session_id="s-new",
+            cwd="/home/u/app",
+            project="new-name",
+            project_ref="new-name",
+            ts=_TS.replace(hour=12),
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.relabels[0].project_ref == "new-name"
+
+    def test_a_replayed_backlog_does_not_flip_the_ranking(self):
+        """An offline sidecar replaying its backlog inserts pre-rename events
+        with fresh ids, so the ranking follows the event's timestamp, not the
+        insert order. The backlog is several rows, so a ranking that fell back
+        to the count would pick the old name."""
+        s = _session()
+        _add(s, "older", session_id="s0", cwd="/home/u/app", project="app")
+        _add(
+            s,
+            "new",
+            session_id="s1",
+            cwd="/home/u/app",
+            project="new-name",
+            project_ref="new-name",
+            ts=_TS.replace(hour=12),
+        )
+        # The replay lands last, but its events are older than the rename.
+        for index in range(3):
+            _add(
+                s,
+                f"replayed{index}",
+                session_id=f"s-replay{index}",
+                cwd="/home/u/app",
+                project="old-name",
+                project_ref="old-name",
+                ts=_TS.replace(hour=6),
+            )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.relabels[0].project_ref == "new-name"
+
+    def test_a_row_that_reported_a_repository_is_not_a_target(self):
+        """The repair is for the rows labelled with the *folder's* name: a row
+        that carries a repository name of its own is left alone."""
+        s = _session()
+        _add(
+            s,
+            "older",
+            session_id="s1",
+            cwd="/home/u/app",
+            project="app",
+        )
+        _add(
+            s,
+            "other",
+            session_id="s2",
+            cwd="/home/u/app",
+            project="other-name",
+            project_ref="other-name",
+        )
+        _add(
+            s,
+            "current",
+            session_id="s3",
+            cwd="/home/u/app",
+            project="current-name",
+            project_ref="current-name",
+        )
+
+        apply_repo_relabels(s, plan_repo_relabels(s))
+
+        projects = _projects(s)
+        assert projects["older"] == "current-name"
+        assert projects["other"] == "other-name"  # its own repository, untouched
+        assert projects["current"] == "current-name"

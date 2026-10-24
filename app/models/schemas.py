@@ -3,6 +3,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+#: How long a reported git repository name may be. The name becomes a project
+#: label, so it is bounded like every other label the server stores.
+_PROJECT_REF_MAX_LENGTH = 128
+
 
 class CreditBalanceComponent(BaseModel):
     """One purchased or promotional tranche explaining an upstream balance."""
@@ -139,6 +143,34 @@ class UsageEventPush(BaseModel):
     # app/services/project_label.py. tool_names = the tool_use block names in the
     # message (Anthropic), stored as a JSON array.
     cwd: str | None = None
+    # The git repository the working directory belongs to, as the *name* only
+    # ("runway-ai-usage-tracker") — never the remote URL, which can carry
+    # credentials. The client resolves it on its own host, because the server
+    # never reads the client's filesystem. Optional: an older sidecar sends
+    # none, and the server then labels the row with the folder's name.
+    #
+    # The bound and the character filter live here as well as in the client:
+    # this value ends up in the indexed, UI-facing project label, so the
+    # invariant has to hold for any client, not only the one we ship.
+    project_ref: str | None = Field(default=None, max_length=_PROJECT_REF_MAX_LENGTH)
+
+    @field_validator("project_ref", mode="before")
+    @classmethod
+    def clean_project_ref(cls, value: Any) -> str | None:
+        """A reported repository name: printable characters, bounded, not empty.
+
+        A name never holds a path separator — a basename cannot — so a value
+        that does is not a name and is dropped: it would pin a path-shaped
+        label, which the `path_shaped_projects` repair then relabels back to
+        the folder's name, and the two fixes would fight over the same rows.
+        """
+        if value is None:
+            return None
+        cleaned = "".join(char for char in str(value) if char.isprintable()).strip()
+        if not cleaned or "/" in cleaned or "\\" in cleaned:
+            return None
+        return cleaned[:_PROJECT_REF_MAX_LENGTH] or None
+
     git_branch: str | None = None
     tool_names: list[str] | None = None
     tokens_input: int = 0

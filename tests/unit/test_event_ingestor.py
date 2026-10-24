@@ -107,6 +107,63 @@ def test_ingest_without_cwd_leaves_project_null():
     assert row.tools_json is None
 
 
+def test_ingest_prefers_the_reported_repository_over_the_folder_name():
+    """The client resolves the repository on its own host; that name wins, so
+    two checkouts of one repository group together."""
+    s = _seeded_session()
+    EventIngestor(s).ingest(
+        [
+            _make_push(
+                cwd=r"C:\Users\u\Projects\ai-usage-tracker",
+                project_ref="runway-ai-usage-tracker",
+            )
+        ],
+        sidecar_id="dev-01",
+    )
+    row = s.exec(select(UsageEvent)).first()
+    assert row.project == "runway-ai-usage-tracker"
+    assert row.project_ref == "runway-ai-usage-tracker"
+
+
+def test_ingest_without_a_reported_repository_falls_back_to_the_folder_name():
+    s = _seeded_session()
+    EventIngestor(s).ingest(
+        [_make_push(cwd=r"D:\Projects\runway-ai-usage-tracker")],
+        sidecar_id="dev-01",
+    )
+    row = s.exec(select(UsageEvent)).first()
+    assert row.project == "runway-ai-usage-tracker"
+    assert row.project_ref is None
+
+
+def test_ingest_cleans_the_reported_repository_name():
+    """The reported name ends up in the indexed, UI-facing label, so the server
+    bounds and cleans it as well — the invariant must hold for any client."""
+    s = _seeded_session()
+    EventIngestor(s).ingest(
+        [_make_push(cwd="/home/u/repo", project_ref="re\npo\x00" + "x" * 200)],
+        sidecar_id="dev-01",
+    )
+    row = s.exec(select(UsageEvent)).first()
+    assert row.project_ref is not None
+    assert row.project_ref == "repo" + "x" * 124
+    assert row.project == row.project_ref
+
+
+def test_ingest_ignores_a_reported_path():
+    """A repository *name* never holds a separator: a client reporting a path
+    would pin a path-shaped label, and the two repairs would fight over the
+    same rows."""
+    s = _seeded_session()
+    EventIngestor(s).ingest(
+        [_make_push(cwd="/home/u/repo", project_ref=r"D:\repo")],
+        sidecar_id="dev-01",
+    )
+    row = s.exec(select(UsageEvent)).first()
+    assert row.project_ref is None
+    assert row.project == "repo"
+
+
 def test_ingest_uses_provided_cost_when_set():
     """Pay-as-you-go accounts display a provider-reported cost when present."""
     s = _seeded_session()
