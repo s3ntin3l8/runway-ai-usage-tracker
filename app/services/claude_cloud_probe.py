@@ -168,7 +168,7 @@ def _check_authority(
             scraper == "anthropic.claude-code"
             or origin == "env:CLAUDE_CODE_OAUTH_TOKEN"
             or (
-                origin.startswith("file:")
+                origin.startswith(("file:", "path:"))
                 and origin.endswith(("/.credentials.json", "/oauth_creds.json"))
             )
         )

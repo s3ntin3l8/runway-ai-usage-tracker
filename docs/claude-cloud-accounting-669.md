@@ -114,7 +114,8 @@ The service reads the selected source from the running application's cache. It
 never combines bundles or falls back to another source or a merged credential.
 A source must have an enabled persisted source record and an active account.
 Identity-pending sources and known-expired access credentials are not called.
-Eligible origins are Claude credential files, the existing Claude OAuth environment
+Eligible origins are Claude credential files (`path:` from the sidecar producer or
+`file:`, both retaining the recognized Code filename check), the existing Claude OAuth environment
 source, explicit configuration, and enrolled Claude Code Keychain contributions.
 Desktop OAuth sources are excluded from this Code-specific probe by their origin.
 The `oauth_read_only: "1"` marker prevents server refresh; sidecar egress also adds

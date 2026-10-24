@@ -108,9 +108,11 @@ async def run(body, upstream):
     [
         ("file:/fixture/.claude/.credentials.json", False),
         ("file:/fixture/.claude/.credentials.json", True),
+        ("path:/fixture/.claude/.credentials.json", True),
+        ("path:/fixture/.claude/oauth_creds.json", True),
         ("env:CLAUDE_CODE_OAUTH_TOKEN", True),
     ],
-    ids=["original", "sidecar-read-only", "env-read-only"],
+    ids=["original", "sidecar-read-only", "sidecar-path", "sidecar-oauth-path", "env-read-only"],
 )
 async def test_verified_exact_source_gets_bounded_history_without_leaking_evidence(
     environment, origin, forwarded
@@ -228,6 +230,7 @@ async def test_failure_stops_after_one_request_without_refresh_or_fallback(
         ("desktop", "unsupported_source"),
         ("unknown_read_only", "unsupported_source"),
         ("unproven_read_only", "unsupported_source"),
+        ("unrecognized_path", "unsupported_source"),
         ("legacy_keychain", "source_ineligible"),
         ("pending", "source_ineligible"),
         ("expired", "expired"),
@@ -247,13 +250,13 @@ async def test_ineligible_source_never_contacts_provider(environment, mutation, 
     else:
         tokens = {"oauth_token": "fixture-access"}
         metadata = {"credential_origin": "file:/fixture/.claude/.credentials.json"}
-        if mutation in ("desktop", "unproven_read_only"):
+        if mutation in ("desktop", "unproven_read_only", "unrecognized_path"):
             tokens["oauth_read_only"] = "1"
-            origin = (
-                "keychain:Claude Desktop/oauth/fixture"
-                if mutation == "desktop"
-                else "config:fixture"
-            )
+            origin = {
+                "desktop": "keychain:Claude Desktop/oauth/fixture",
+                "unrecognized_path": "path:/fixture/.claude/unrelated.json",
+                "unproven_read_only": "config:fixture",
+            }[mutation]
             metadata["credential_origin"] = origin
             with Session(engine) as s:
                 row = s.get(CredentialSource, 1)
