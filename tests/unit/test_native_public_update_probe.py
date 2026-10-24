@@ -756,8 +756,9 @@ def test_authorization_metadata_is_allowlisted_and_unknown_is_retained():
 
 
 @pytest.mark.parametrize("seed_status", [0, -25293])
+@pytest.mark.parametrize("reader_denied", [False, True])
 def test_helper_owned_control_uses_fresh_process_and_stops_after_seed_denial(
-    monkeypatch, tmp_path, synthetic_case, seed_status
+    monkeypatch, tmp_path, synthetic_case, seed_status, reader_denied
 ):
     monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
     commands = []
@@ -784,11 +785,15 @@ def test_helper_owned_control_uses_fresh_process_and_stops_after_seed_denial(
 
         def __init__(self, writer):
             super().__init__(writer)
-            self.api.call = lambda operation, query, values: (
-                {"data": probe.ORIGINAL}
-                if "persistent" in query
-                else [{"persistent": b"fake-reference"}]
-            )
+
+            def read(operation, query, values):
+                if "persistent" not in query:
+                    return [{"persistent": b"fake-reference"}]
+                if reader_denied:
+                    raise probe.KeychainError("denied")
+                return {"data": probe.ORIGINAL}
+
+            self.api.call = read
 
     monkeypatch.setattr(probe, "Fixture", HelperFixture)
     monkeypatch.setattr(probe.subprocess, "run", execute)
@@ -802,8 +807,13 @@ def test_helper_owned_control_uses_fresh_process_and_stops_after_seed_denial(
     if seed_status:
         assert row["failure"] == "seed_denied"
     else:
-        assert "failure" not in row
         assert row["authorization"] == metadata
+        assert row["control_completed"] is True
+        if reader_denied:
+            assert row["failure"] == "original_reader_denied"
+            assert row["original_reader"] == "denied"
+        else:
+            assert "failure" not in row
 
 
 def test_python_fixture_metadata_control_does_not_repeat_helper_data_read(

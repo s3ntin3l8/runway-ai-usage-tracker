@@ -293,6 +293,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                 except KeychainError as exc:
                     assert exc.reason == "denied"
                     row["original_reader"] = "denied"
+                    row.setdefault("failure", "original_reader_denied")
                 observe("after_readback")
                 if control or mode == "metadata-control":
                     if not control:

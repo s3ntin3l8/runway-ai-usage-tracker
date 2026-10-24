@@ -66,3 +66,56 @@ release consent. Do not call another update matrix until the evidence supports a
 separately reviewed experiment. #773/#750/#526 stay open; supported authorization
 remains #781 and signed-release/update continuity remains #767. Personal-machine
 native probes remain quarantined.
+
+## Hosted results: 2026-10-24
+
+Both runs used immutable source [25025ab9](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/25025ab95870620c5eb50eb3001788095ecdcb5f),
+one case per fresh hosted job. They made zero real credential operations and zero
+OAuth exchanges. No item update was attempted, and neither denied read was retried.
+
+| Observation | Python-created item | Helper-created item |
+| --- | --- | --- |
+| Python trust blob equals fresh Python metadata | true | true |
+| Helper trust blob equals fresh helper metadata | false | true |
+| Broad decrypt access | false | false |
+| Partition contains Python selected identity | true | false |
+| Partition contains helper selected identity | false | true |
+| Fresh helper protected-data read | Not attempted; historical denial retained | Verified, status 0 |
+| Separate Python read | Verified | Denied |
+| Access policy/integrity | Unchanged | Unchanged |
+| Default/search/lock comparisons and fixture cleanup | Passed | Passed |
+
+The [metadata-only run](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40075912653)
+passed. Its [sanitized report](claude-keychain-creator-metadata-ci-773.json) retains
+all seven checkpoints and the original Python data/policy verification.
+
+The [helper-owned run](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40076029539)
+failed closed because the separate Python reader was denied, despite both ordinary
+trust-blob comparisons being true. Its [sanitized report](claude-keychain-helper-owned-ci-773.json)
+retains successful seeding, unchanged helper binary, exact reference/owner
+verification, successful fresh-helper data read and unchanged policy/integrity.
+All seven observed isolation checkpoints passed and the fixture was deleted.
+The historical report's failure is `native_probe_incomplete`; subsequent orchestration
+now explicitly labels this condition `original_reader_denied`. This classification
+was validated with mocks without repeating the native denial.
+
+### What this establishes
+
+The separate helper can read a protected item created by an earlier invocation of
+that same binary. The harness therefore supports that fresh-process same-helper
+control, but it has **not established a valid fixture with shared protected-data
+access for Python and the helper**. Two ordinary trusted applications do not by
+themselves demonstrate such access on this fixture. Across these runs, the selected
+partition identity tracks the item creator, and protected reads succeed for that
+creator while the other process is denied. This supports a partition-related
+explanation; it is not a controlled proof of the OS authorization algorithm.
+The Python-created item's unequal helper trust blob is an additional unresolved
+representation difference and must not be silently attributed solely to partitions.
+
+These observations do not explain the historical update timeout, changed lock
+comparisons or personal-machine prompt loop. They prove no supported cross-app
+write path. There was no further native execution, update matrix or real-login
+acceptance after the helper-owned failure. The next authorization work remains
+#773/#781; stable signing remains #767. Require a separately reviewed, supported
+shared-access/owner-cooperation design before another write experiment, without
+broad trust, partition editing, private APIs or Keychain-password retention.
