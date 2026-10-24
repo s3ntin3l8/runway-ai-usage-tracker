@@ -53,15 +53,39 @@ jobs:
           # The suite's set, not the union: this job runs tests, not the
           # lint gate.
           .venv/bin/pip install -r requirements-test.txt
+      - name: Register the toolchain's shared library
+        # setup-python's Linux build has an empty RUNPATH, so its interpreter
+        # finds libpython only through LD_LIBRARY_PATH. The browser matrix
+        # starts the test server as a child process of node, and there the
+        # variable did not reach the dynamic loader: the job failed with
+        # "error while loading shared libraries: libpython3.12.so.1.0" before
+        # a single check ran. The image carries no other libpython -- the
+        # ubuntu base has no Python at all -- so registering the directory
+        # with the linker makes the interpreter work wherever it is started.
+        run: |
+          echo "${pythonLocation:?the toolchain location is not set}/lib" > /etc/ld.so.conf.d/runway-python.conf
+          ldconfig
       - name: Verify the toolchain
         # The versions are printed so a mismatch shows up in the log instead
         # of surfacing as an opaque `npm ci` refusal: webapp/package.json
         # states the floors as devEngines with onFail: error, so npm enforces
-        # them on install.
+        # them on install. The interpreter is then started the way the browser
+        # matrix starts it -- as a child process of node -- so the failure
+        # mode above is caught here, by name, instead of surfacing as a
+        # cryptic Playwright error.
         run: |
           node --version
           npm --version
           .venv/bin/python --version
+          node -e '
+            const { spawnSync } = require("child_process");
+            const result = spawnSync(".venv/bin/python", ["--version"], { encoding: "utf8" });
+            if (result.status !== 0) {
+              console.error("the interpreter does not start as a child process:", result.stderr);
+              process.exit(1);
+            }
+            console.log("as a child process:", result.stdout.trim());
+          '
       - name: Install webapp dependencies
         run: npm --prefix webapp ci
       - name: Browser boundaries
