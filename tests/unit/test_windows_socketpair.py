@@ -33,13 +33,17 @@ pytestmark = pytest.mark.windows
 
 
 def _winsock_error(code: int) -> OSError:
-    """A Winsock error the way the OS raises it: errno and winerror both set.
+    """A Winsock error the way Windows raises it.
 
-    ``OSError(10048, "...")`` sets ``errno`` but leaves ``winerror`` unset,
-    and the helper reads ``winerror`` because the Winsock and C ``errno``
-    spaces overlap.
+    ``winerror`` is a Windows-only attribute of ``OSError``, so it is set by
+    hand: the helper reads it, and on another platform the attribute does not
+    exist at all unless it is set. ``OSError(10048, "...")`` sets ``errno``
+    but leaves ``winerror`` unset, and the Winsock and C ``errno`` spaces
+    overlap, so the helper reads ``winerror`` alone.
     """
-    return OSError(None, "winsock", None, code, None)
+    error = OSError(None, "winsock", None, code, None)
+    error.winerror = code
+    return error
 
 
 def _record_created_sockets(monkeypatch: pytest.MonkeyPatch) -> list[socket.socket]:
