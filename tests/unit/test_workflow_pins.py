@@ -7,13 +7,16 @@ import pytest
 
 from scripts.check_workflow_pins import (
     DIGEST,
+    LOCKFILE,
     PINS_FILE,
     PINS_LABEL,
+    PLAYWRIGHT_IMAGE,
     REVISION,
     WORKFLOWS,
     findings,
     images,
     load_pins,
+    locked_playwright,
     references,
 )
 
@@ -191,19 +194,33 @@ class TestContainerImages:
         )
         assert findings(tmp_path, {}, lockfile) == []
 
-    def test_an_unreadable_lockfile_does_not_fail_the_digest_check(self, tmp_path):
-        """Without the lockfile the version cannot be checked, the digest can."""
+    def test_a_playwright_image_without_a_locked_version_is_reported(self, tmp_path):
+        """A check that cannot run is not a check: it has to say so."""
         write_workflow(
             tmp_path,
             "ci.yml",
             f"      image: mcr.microsoft.com/playwright:v1.64.1-noble@{GOOD_DIGEST}\n",
         )
-        assert findings(tmp_path, {}, tmp_path / "missing.json") == []
+        problems = findings(tmp_path, {}, tmp_path / "missing.json")
+        assert len(problems) == 1
+        assert "the lockfile pins no version" in problems[0]
 
     def test_the_shipped_images_are_digest_pinned(self):
         for image in images(WORKFLOWS):
             assert DIGEST.fullmatch(image.digest), (
                 f"{image.path}:{image.line} runs {image.reference}, which is not pinned to a digest"
+            )
+
+    def test_the_shipped_playwright_image_matches_the_locked_version(self):
+        """The image carries the browsers; the lockfile pins the version."""
+        locked = locked_playwright(LOCKFILE)
+        assert locked is not None, "the lockfile pins no Playwright version"
+        shipped = [image for image in images(WORKFLOWS) if image.repository == PLAYWRIGHT_IMAGE]
+        assert shipped, "no workflow runs the Playwright image"
+        for image in shipped:
+            assert image.version == locked, (
+                f"{image.path}:{image.line} runs {image.reference}, but the "
+                f"lockfile pins playwright-core at {locked}"
             )
 
 

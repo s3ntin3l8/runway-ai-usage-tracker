@@ -25,6 +25,13 @@ jobs:
     # job runs no apt transaction and downloads no browser. The budget covers
     # the image pull, pip, npm and the browser matrix.
     timeout-minutes: 25
+    # The runner points HOME at a directory the image's pwuser owns, but the
+    # steps of a container job run as root, and Firefox refuses to start as
+    # root with a home owned by somebody else ("Running Nightly as root in a
+    # regular user's session is not supported"). Playwright's own advice for
+    # this image is to point HOME at root's home.
+    env:
+      HOME: /root
     container:
       # The browsers and the system libraries they need are baked into this
       # image at build time. That is the point of it: `playwright install

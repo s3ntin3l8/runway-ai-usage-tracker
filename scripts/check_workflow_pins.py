@@ -182,10 +182,18 @@ def image_findings(root: Path, lockfile: Path = LOCKFILE) -> list[str]:
                 "so pin the image to its sha256 digest."
             )
             continue
-        if image.repository != PLAYWRIGHT_IMAGE or locked is None:
+        if image.repository != PLAYWRIGHT_IMAGE:
             continue
         version = image.version
-        if version is None:
+        if locked is None:
+            problems.append(
+                f"{image.path}:{image.line}: the Playwright image {image.reference} "
+                "cannot be checked against the locked Playwright, because the "
+                "lockfile pins no version. A check that cannot run is not a "
+                "check; the lockfile has to state the version the image "
+                "carries."
+            )
+        elif version is None:
             problems.append(
                 f"{image.path}:{image.line}: the Playwright image {image.reference} "
                 "carries no version, so it cannot be checked against the locked "
