@@ -1,4 +1,8 @@
-/* Public metadata APIs only. Included solely in the quarantined synthetic tool. */
+/* Public metadata APIs only. Included solely in the quarantined synthetic tool.
+ * Standalone syntax check (static helpers are intentionally unused in this form):
+ * clang -x c -fsyntax-only -Wall -Wextra -Werror -Wno-unused-function \
+ *   -Wno-deprecated-declarations tests/native/keychain_authorization_probe.h
+ */
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #include <libproc.h>

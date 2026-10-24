@@ -87,7 +87,9 @@ OAuth exchanges. No item update was attempted, and neither denied read was retri
 
 The [metadata-only run](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40075912653)
 passed. Its [sanitized report](claude-keychain-creator-metadata-ci-773.json) retains
-all seven checkpoints and the original Python data/policy verification.
+all seven checkpoints and the original Python data/policy verification. This
+historical report predates the native `control_status` field added during review;
+its original payload is intentionally preserved.
 
 The [helper-owned run](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40076029539)
 failed closed because the separate Python reader was denied, despite both ordinary
