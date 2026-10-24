@@ -64,9 +64,16 @@ def query_top_projects(
             -- emits one event per API request (MiniMax Code) carries its own
             -- turn id, so its turns are counted distinctly. A provider that
             -- emits one event per message carries none, and the fallback
-            -- counts the events — the same number, because `event_id` is
-            -- unique per provider.
-            COUNT(DISTINCT COALESCE(turn_id, event_id))         AS msgs,
+            -- counts the events.
+            --
+            -- A turn is identified by the session it belongs to — the
+            -- collector's own key is `(session_id, turn_id)` — so the session
+            -- and the provider are part of the key here. This query groups by
+            -- project across sessions, and in the global mode (no
+            -- `provider_id` filter) across providers, where `event_id` is
+            -- only unique per `(provider_id, event_id)`.
+            COUNT(DISTINCT provider_id || '|' || COALESCE(session_id, '') || '|'
+                || COALESCE(NULLIF(turn_id, ''), event_id))      AS msgs,
             COUNT(DISTINCT session_id)                          AS sessions,
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create

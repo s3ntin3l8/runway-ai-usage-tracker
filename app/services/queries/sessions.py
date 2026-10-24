@@ -89,7 +89,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
             session_id,
             MIN(ts)                                            AS ts_start,
             MAX(ts)                                            AS ts_end,
-            COUNT(DISTINCT COALESCE(turn_id, event_id))        AS msgs,
+            COUNT(DISTINCT COALESCE(NULLIF(turn_id, ''), event_id)) AS msgs,
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create
                 + tokens_reasoning)                            AS tokens_total,
@@ -109,7 +109,8 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
             MAX(cwd)                                           AS cwd,
             MAX(git_branch)                                    AS git_branch,
             GROUP_CONCAT(DISTINCT model_id)                    AS models_csv,
-            SUM(CASE WHEN subagent_type IS NOT NULL THEN 1 ELSE 0 END) AS subagent_msgs
+            COUNT(DISTINCT CASE WHEN subagent_type IS NOT NULL
+                THEN COALESCE(NULLIF(turn_id, ''), event_id) END) AS subagent_msgs
         FROM usage_events
         WHERE provider_id = :provider_id
           AND account_id  = :account_id
@@ -133,7 +134,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
         f"""
         SELECT
             subagent_type,
-            COUNT(DISTINCT COALESCE(turn_id, event_id))          AS turns,
+            COUNT(DISTINCT COALESCE(NULLIF(turn_id, ''), event_id)) AS turns,
             COUNT(*)                                            AS requests,
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create
@@ -166,7 +167,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
         f"""
         SELECT
             model_id,
-            COUNT(DISTINCT COALESCE(turn_id, event_id))         AS msgs,
+            COUNT(DISTINCT COALESCE(NULLIF(turn_id, ''), event_id)) AS msgs,
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create
                 + tokens_reasoning)                             AS tokens_total,

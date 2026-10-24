@@ -175,3 +175,30 @@ def test_a_provider_without_a_turn_id_keeps_the_event_count(db_session):
         _add(db_session, event_id=f"c{index}", project="alpha", tokens_input=100)
     rows = query_top_projects(db_session, since=_SINCE, metric="tokens")
     assert rows[0]["msgs"] == 3
+
+
+def test_a_turn_is_scoped_to_its_session(db_session):
+    """The collector's turn key is (session_id, turn_id) — two sessions with
+    the same turn label are two turns."""
+    _add(db_session, event_id="t1", project="alpha", session_id="s1", turn_id="turn_1")
+    _add(db_session, event_id="t2", project="alpha", session_id="s2", turn_id="turn_1")
+
+    rows = query_top_projects(db_session, since=_SINCE, metric="tokens")
+    assert rows[0]["msgs"] == 2
+
+
+def test_an_event_id_is_scoped_to_its_provider(db_session):
+    """In the global mode the same event id can exist under two providers."""
+    _add(db_session, event_id="shared", provider_id="anthropic", project="alpha")
+    _add(db_session, event_id="shared", provider_id="gemini", project="alpha")
+
+    rows = query_top_projects(db_session, since=_SINCE, metric="tokens")
+    assert rows[0]["msgs"] == 2
+
+
+def test_an_empty_turn_id_falls_back_to_the_event_count(db_session):
+    """A writer that stores an empty turn id must not collapse the count."""
+    for index in range(3):
+        _add(db_session, event_id=f"c{index}", project="alpha", turn_id="")
+    rows = query_top_projects(db_session, since=_SINCE, metric="tokens")
+    assert rows[0]["msgs"] == 3

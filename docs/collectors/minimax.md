@@ -402,6 +402,14 @@ your turn was made of. The Top Projects table follows. The aggregate views (the 
 monthly totals, the charts) still count requests — their numbers come from the stored rollups,
 and a distinct-turn count cannot be summed incrementally across ingest batches.
 
+Two details worth knowing:
+
+- **It is not retroactive.** Rows collected before the turn id existed carry none, so they keep
+  counting as requests until the repair fills their turn id.
+- A turn is identified by the session it belongs to, and it is attributed to **every model it
+  touched** — the same way its tokens are. A turn that used two models therefore appears in both
+  per-model buckets while the session row counts it once.
+
 #### Repairing the rows collected earlier
 
 Rows collected before this change still carry the background task's own session id, so they show up

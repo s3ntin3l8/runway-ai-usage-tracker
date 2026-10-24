@@ -553,3 +553,66 @@ class TestSessionMessageCount:
         assert explore["requests"] == 4
         # The card counts the same turns the row does.
         assert row["msgs"] == explore["turns"]
+
+
+class TestMessageCountEdgeCases:
+    """The guards around the turn-aware message count."""
+
+    def test_an_empty_turn_id_falls_back_to_the_event_count(self, db_session):
+        """A writer that stores an empty turn id must not collapse the count."""
+        for index in range(3):
+            _add_event(
+                db_session,
+                event_id=f"c{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                turn_id="",
+            )
+        row = _sessions(db_session)[0]
+        assert row["msgs"] == 3
+
+    def test_the_subagent_message_count_speaks_the_same_unit(self, db_session):
+        """It sits in the same response object as the row's message count."""
+        for index in range(4):
+            _add_event(
+                db_session,
+                event_id=f"t{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                turn_id="turn_1",
+                subagent_type="Explore",
+            )
+        row = _sessions(db_session)[0]
+        assert row["subagent_msgs"] == 1
+
+    def test_a_turn_that_used_two_models_is_counted_in_both_buckets(self, db_session):
+        """A turn is attributed to every model it touched — like its tokens.
+
+        The session row counts the turn once; the per-model buckets count it
+        once per model, so a turn that used two models appears in both. The
+        breakdown is scoped by the model, so this is the same attribution the
+        token breakdown already does.
+        """
+        _add_event(
+            db_session,
+            event_id="t1",
+            session_id="s1",
+            model_id="opus",
+            ts=_NOW,
+            turn_id="turn_1",
+        )
+        _add_event(
+            db_session,
+            event_id="t2",
+            session_id="s1",
+            model_id="sonnet",
+            ts=_NOW,
+            turn_id="turn_1",
+        )
+        row = _sessions(db_session)[0]
+        assert row["msgs"] == 1
+        by_model = {m["model_id"]: m for m in row["by_model"]}
+        assert by_model["opus"]["msgs"] == 1
+        assert by_model["sonnet"]["msgs"] == 1
