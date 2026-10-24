@@ -1158,25 +1158,39 @@ class TokenCache:
     async def remove(self, provider: str, account_id: str) -> bool:
         """
         Manually remove an account from the cache.
+
+        Removes the merged account entry *and* every source bundle of that
+        account, whether or not the merged entry exists: a durable bundle
+        (an enrolled machine's credential) is written to the source cache
+        only — ``store()`` skips the merged entry for a durable source — so
+        dropping the merged entry alone would leave the credential behind.
+
         Returns:
-            bool: True if removed, False if not found.
+            bool: True if anything was removed, False if the account held
+            nothing.
         """
         account_id = canonical_account_id(account_id)
         async with self._lock:
+            removed = False
             if provider in self._cache and account_id in self._cache[provider]:
                 del self._cache[provider][account_id]
-                self._token_timestamps.get(provider, {}).pop(account_id, None)
-                self._source_cache.get(provider, {}).pop(account_id, None)
-                logger.info(
-                    f"Manually removed {scrub_log(provider)} account {scrub_log(account_id)} from cache"
-                )
+                removed = True
+            self._token_timestamps.get(provider, {}).pop(account_id, None)
+            if self._source_cache.get(provider, {}).pop(account_id, None) is not None:
+                removed = True
+            if not removed:
+                return False
+            logger.info(
+                f"Manually removed {scrub_log(provider)} account {scrub_log(account_id)} from cache"
+            )
 
-                # Cleanup empty provider entry
-                if not self._cache[provider]:
-                    del self._cache[provider]
-                    self._token_timestamps.pop(provider, None)
-                return True
-            return False
+            # Cleanup empty provider entries
+            if not self._cache.get(provider):
+                self._cache.pop(provider, None)
+                self._token_timestamps.pop(provider, None)
+            if not self._source_cache.get(provider):
+                self._source_cache.pop(provider, None)
+            return True
 
     async def remove_tokens(self, provider: str, account_id: str, token_types: set[str]) -> None:
         """Remove selected fields while preserving other credential families."""

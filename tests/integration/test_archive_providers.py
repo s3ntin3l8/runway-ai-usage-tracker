@@ -606,6 +606,54 @@ class TestArchiveEvictsTheCachedCredential:
         # Another account's credential is untouched.
         assert clean_token_cache._cache.get("openrouter", {}).get("bob@example.com") is not None
 
+    def test_archiving_an_account_evicts_a_durable_only_bundle(
+        self, session: Session, clean_token_cache
+    ):
+        """A bundle without a merged entry must go too.
+
+        An enrolled machine's credential is durable: ``store()`` writes it to
+        the source cache only, so the account has no merged entry at all.
+        Removing just the merged entry left the bundle behind.
+        """
+        _add_provider_config(
+            session, provider_id="openrouter", account_id="alice@example.com", enabled=True
+        )
+        _seed_source_bundle(clean_token_cache, "openrouter", "alice@example.com", "sidecar:dev-01")
+        assert "alice@example.com" in clean_token_cache._source_cache.get("openrouter", {})
+
+        resp = _client().put(
+            "/api/v1/system/provider-config/openrouter/alice%40example.com",
+            json={"archived": True},
+        )
+        assert resp.status_code == 200, resp.text
+
+        assert (
+            clean_token_cache._source_cache.get("openrouter", {}).get("alice@example.com") is None
+        )
+
+    def test_archiving_an_account_that_also_stores_a_key_leaves_nothing_cached(
+        self, session: Session, clean_token_cache
+    ):
+        """A request that archives *and* stores a key must not leave the
+        credential it just archived in the cache.
+
+        Storing a key mirrors it into the token cache, so the eviction has to
+        run after that mirroring — otherwise the account ends up archived *and*
+        holding the credential it was just retired with.
+        """
+        _add_provider_config(
+            session, provider_id="gemini", account_id="alice@example.com", enabled=True
+        )
+
+        resp = _client().put(
+            "/api/v1/system/provider-config/gemini/alice%40example.com",
+            json={"archived": True, "api_key": "test-gemini-key"},  # pragma: allowlist secret
+        )
+        assert resp.status_code == 200, resp.text
+
+        assert clean_token_cache._cache.get("gemini", {}).get("alice@example.com") is None
+        assert clean_token_cache._source_cache.get("gemini", {}).get("alice@example.com") is None
+
     def test_archiving_an_account_keeps_its_stored_credential(
         self, session: Session, clean_token_cache
     ):
