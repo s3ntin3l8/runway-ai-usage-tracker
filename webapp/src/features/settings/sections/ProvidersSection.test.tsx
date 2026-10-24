@@ -424,6 +424,45 @@ describe('ProvidersSection', () => {
     expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument();
   });
 
+  it('offers the permanent delete of an empty leftover row on the merged card', async () => {
+    // The leftover row of a merged-away account cannot be restored, but an
+    // empty one can still be cleaned up — the merged card keeps that action.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 1,
+        accounts: [
+          { account_id: 'bob@example.com', account_label: 'Bob', enabled: true, archived: false },
+          {
+            account_id: 'alice@example.com',
+            account_label: 'Alice',
+            enabled: false,
+            archived: true,
+            merged_into: 'bob@example.com',
+            has_usage_events: false,
+          },
+        ],
+        merged_accounts: [
+          {
+            account_id: 'alice@example.com',
+            destination_account_id: 'bob@example.com',
+            merged_at: '2026-10-20T10:00:00+00:00',
+          },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    vi.mocked(api.deleteProviderConfig).mockResolvedValue({ status: 'ok' } as never);
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Merged accounts (1)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+    expect(screen.getByText('Permanently delete this empty account?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
+    await waitFor(() => expect(api.deleteProviderConfig).toHaveBeenCalledWith(
+      'claude', 'alice@example.com', true,
+    ));
+  });
+
   it('renders no merged section when nothing was merged', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
     vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });

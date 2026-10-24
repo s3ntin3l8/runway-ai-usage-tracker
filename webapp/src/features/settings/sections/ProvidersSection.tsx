@@ -59,6 +59,60 @@ function accountName(provider: ProviderConfig, accountId: string): string {
   return account ? labelOrMaskedId(account) : maskAccountId(accountId);
 }
 
+/**
+ * The permanent delete of an empty archived account, with its confirmation.
+ * An archived account holds no live credential, so removing the row loses
+ * nothing but the account itself. Offered wherever an archived row is listed
+ * — including the leftover row of a merged-away account, which is otherwise
+ * not restorable.
+ */
+function PermanentDeleteButton({
+  providerId,
+  accountId,
+  pendingKey,
+  setPendingKey,
+  onDeleted,
+}: {
+  providerId: string;
+  accountId: string;
+  pendingKey: string | null;
+  setPendingKey: (key: string | null) => void;
+  onDeleted: () => void;
+}) {
+  const key = `${providerId}/${accountId}`;
+  if (pendingKey === key) {
+    return (
+      <div className="flex w-full items-center justify-end gap-2 border-t border-border pt-2">
+        <span className="mr-auto text-xs text-fg-muted">Permanently delete this empty account?</span>
+        <Button variant="ghost" size="sm" onClick={() => setPendingKey(null)}>
+          Cancel
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={async () => {
+            try {
+              await deleteProviderConfig(providerId, accountId, true);
+              setPendingKey(null);
+              onDeleted();
+              toast.success('Archived account permanently deleted');
+            } catch (error) {
+              toast.error(errorMessage(error, 'Could not delete account'));
+            }
+          }}
+        >
+          Delete permanently
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <Button variant="danger" size="sm" onClick={() => setPendingKey(key)}>
+      Delete permanently
+    </Button>
+  );
+}
+
 export function reorderItems<T>(
   items: T[],
   activeId: string,
@@ -263,7 +317,13 @@ function ProvidersSectionV2({
   // the restore). It gets its own section below, and never a Restore button.
   const archivedOnly = archivedAccounts.filter(({ account }) => !account.merged_into);
   const mergedAccounts = providers.flatMap((p) =>
-    (p.merged_accounts ?? []).map((merged) => ({ provider: p, merged })),
+    (p.merged_accounts ?? []).map((merged) => ({
+      provider: p,
+      merged,
+      // The row the merge left behind (archived, no credential). It cannot be
+      // restored, but an empty one can still be cleaned up.
+      leftover: p.accounts.find((a) => a.account_id === merged.account_id),
+    })),
   );
 
   return (
@@ -382,42 +442,13 @@ function ProvidersSectionV2({
                   Restore
                 </Button>
                 {account.has_usage_events === false ? (
-                  pendingPermanentDeleteKey === `${provider.provider_id}/${account.account_id}` ? (
-                    <div className="flex w-full items-center justify-end gap-2 border-t border-border pt-2">
-                      <span className="mr-auto text-xs text-fg-muted">Permanently delete this empty account?</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setPendingPermanentDeleteKey(null)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={async () => {
-                          try {
-                            await deleteProviderConfig(provider.provider_id, account.account_id, true);
-                            setPendingPermanentDeleteKey(null);
-                            await configs.refetch();
-                            toast.success('Archived account permanently deleted');
-                          } catch (error) {
-                            toast.error(errorMessage(error, 'Could not delete account'));
-                          }
-                        }}
-                      >
-                        Delete permanently
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => setPendingPermanentDeleteKey(`${provider.provider_id}/${account.account_id}`)}
-                    >
-                      Delete permanently
-                    </Button>
-                  )
+                  <PermanentDeleteButton
+                    providerId={provider.provider_id}
+                    accountId={account.account_id}
+                    pendingKey={pendingPermanentDeleteKey}
+                    setPendingKey={setPendingPermanentDeleteKey}
+                    onDeleted={() => configs.refetch()}
+                  />
                 ) : null}
               </Card>
             ))}
@@ -433,7 +464,7 @@ function ProvidersSectionV2({
         <section className="mt-6 max-w-2xl" aria-label="Merged provider accounts">
           <h3 className="mb-2 text-sm font-semibold">Merged accounts ({mergedAccounts.length})</h3>
           <div className="flex flex-col gap-2">
-            {mergedAccounts.map(({ provider, merged }) => (
+            {mergedAccounts.map(({ provider, merged, leftover }) => (
               <Card
                 key={`${provider.provider_id}/${merged.account_id}`}
                 className="flex flex-wrap items-center gap-3 px-4 py-3"
@@ -449,6 +480,15 @@ function ProvidersSectionV2({
                 </div>
                 <Badge variant="neutral">Merged</Badge>
                 <span className="text-[11px] text-fg-subtle">{timeAgo(merged.merged_at)}</span>
+                {leftover?.archived && leftover.has_usage_events === false ? (
+                  <PermanentDeleteButton
+                    providerId={provider.provider_id}
+                    accountId={merged.account_id}
+                    pendingKey={pendingPermanentDeleteKey}
+                    setPendingKey={setPendingPermanentDeleteKey}
+                    onDeleted={() => configs.refetch()}
+                  />
+                ) : null}
               </Card>
             ))}
           </div>

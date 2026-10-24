@@ -386,6 +386,48 @@ def test_a_merged_account_cannot_be_restored(client, session):
     assert row.enabled is False
 
 
+def test_a_merged_account_cannot_be_given_a_credential_again(client, session):
+    """Any write that would make the retired id an account again is refused —
+    not only the restore. A PUT that creates the row (the add-provider path)
+    would otherwise bring the phantom back, with a live credential."""
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    for body in (
+        {"api_key": "sk-test-merged"},  # pragma: allowlist secret
+        {"enabled": True},
+        {"archived": False},
+    ):
+        resp = client.put(
+            "/api/v1/system/provider-config/openrouter/alice@example.com",
+            json=body,
+            headers=_admin_headers(),
+        )
+        assert resp.status_code == 409, (body, resp.text)
+        assert "bob@example.com" in resp.json()["detail"]
+
+    # The row is untouched: still archived, still without a credential.
+    session.expire_all()
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == "openrouter",
+            ProviderConfig.account_id == "alice@example.com",
+        )
+    ).first()
+    assert row.archived is True
+    assert row.enabled is False
+    assert row.api_key_encrypted is None
+
+    # An explicit archive is still accepted: it keeps the account inert.
+    resp = client.put(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        json={"archived": True},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+
+
 def test_a_destination_account_can_still_be_archived_and_restored(client, session):
     """The account that was merged *into* is a normal account — the guard must
     not fire for it."""

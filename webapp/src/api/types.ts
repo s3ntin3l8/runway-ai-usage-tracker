@@ -937,7 +937,11 @@ export interface ProviderConfig {
   // Total entries in `accounts` (config-backed + discovered).
   account_count: number;
   archived_count?: number;
-  /** The accounts that were merged away, and where each of them went. */
+  /**
+   * The accounts that were merged away, and where each of them went. The row
+   * a merge left behind stays in `accounts` (archived, no credential) and
+   * carries `merged_into`.
+   */
   merged_accounts?: MergedAccount[];
 }
 
@@ -1153,9 +1157,10 @@ export interface CredentialInventory {
   /** Absent from an older server. */
   blocked_sources?: BlockedSource[];
   /**
-   * The accounts that were merged away, and where each of them went. They
-   * hold no credential, so they are not among `providers[].accounts`.
-   * Absent from an older server.
+   * The accounts that were merged away, and where each of them went. The
+   * inventory lists the accounts that hold a credential, and a merged-away
+   * account holds none — so it is listed here instead. Absent from an older
+   * server.
    */
   merged_accounts?: (MergedAccount & { provider_id: string })[];
 }

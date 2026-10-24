@@ -2008,8 +2008,10 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "account_count": sum(not a.get("archived", False) for a in accounts_out),
                 "archived_count": sum(bool(a.get("archived", False)) for a in accounts_out),
                 # The accounts that were merged away, and where each of them
-                # went. They are not among `accounts`: a merged-away account
-                # holds no credential and is not an account any more.
+                # went. A merged-away account holds no credential and is not an
+                # account any more: the row the merge left behind stays in
+                # `accounts` (archived, no credential) and is marked with
+                # `merged_into`, while this says where the account went.
                 "merged_accounts": merged_by_provider.get(p_id, []),
             }
         )
@@ -2062,18 +2064,25 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
     # predating detection never mistakes a proof for a choice.
     detected_billing_type: BillingType | None = None
 
-    # Restoring an account that was merged away would resurrect a phantom:
-    # the merge moved its history and its credential to the destination, so
-    # the restored row would collect nothing while the fleet shows the
-    # account again. The merge is what retired it — not an archive — so the
-    # restore is refused, and the operator is told where the account went.
-    if body.archived is False:
-        merged_destination = is_merged_away(session, provider_id, account_id)
-        if merged_destination:
+    # A merged-away account is gone: the merge moved its history and its
+    # credential to the destination, so the source id no longer names an
+    # account. Any write that would make it one again — restoring it, creating
+    # the row, or giving it a credential — is refused; only an explicit
+    # archive is allowed, because that keeps the account inert.
+    merged_destination = is_merged_away(session, provider_id, account_id)
+    if merged_destination:
+        writes_a_credential = (
+            body.api_key is not None
+            or body.session_cookie is not None
+            or bool(body.clear_api_key)
+            or bool(body.clear_session_cookie)
+        )
+        if body.archived is not True or writes_a_credential:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"This account was merged into {merged_destination} and cannot be restored."
+                    f"This account was merged into {merged_destination} and no longer exists; "
+                    "it cannot be restored or given a credential."
                 ),
             )
 
