@@ -412,6 +412,7 @@ export const unmergeProviderAccount = (
   providerId: string,
   accountId: string,
   confirmCollisions = false,
+  previewedCollisions = 0,
 ) =>
   api<UnmergePlan & { status: string }>('/api/v1/system/provider-account-unmerge/apply', {
     method: 'POST',
@@ -419,6 +420,9 @@ export const unmergeProviderAccount = (
       provider_id: providerId,
       source_account_id: accountId,
       confirm_collisions: confirmCollisions,
+      // The count the preview showed: the server refuses when the rows in the
+      // way changed since, because the confirmation was for other rows.
+      previewed_collisions: previewedCollisions,
     }),
   });
 

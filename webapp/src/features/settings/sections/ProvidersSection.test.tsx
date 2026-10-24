@@ -506,7 +506,7 @@ describe('ProvidersSection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Unmerge' }));
 
     await waitFor(() => expect(api.unmergeProviderAccount).toHaveBeenCalledWith(
-      'claude', 'alice@example.com', false,
+      'claude', 'alice@example.com', false, 0,
     ));
   });
 
@@ -556,7 +556,7 @@ describe('ProvidersSection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Unmerge' }));
 
     await waitFor(() => expect(api.unmergeProviderAccount).toHaveBeenCalledWith(
-      'claude', 'alice@example.com', true,
+      'claude', 'alice@example.com', true, 1,
     ));
   });
 

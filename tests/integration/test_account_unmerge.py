@@ -75,9 +75,19 @@ def _admin_headers() -> dict[str, str]:
 
 
 def _add_provider_config(
-    session: Session, *, provider_id: str, account_id: str, enabled: bool = True
+    session: Session,
+    *,
+    provider_id: str,
+    account_id: str,
+    enabled: bool = True,
+    api_key: str | None = None,
 ) -> ProviderConfig:
-    row = ProviderConfig(provider_id=provider_id, account_id=account_id, enabled=enabled)
+    row = ProviderConfig(
+        provider_id=provider_id,
+        account_id=account_id,
+        enabled=enabled,
+        api_key_encrypted=api_key,
+    )
     session.add(row)
     session.commit()
     return row
@@ -106,7 +116,11 @@ def _preview(client: TestClient, provider_id: str, source_account_id: str):
 
 
 def _unmerge(
-    client: TestClient, provider_id: str, source_account_id: str, confirm_collisions: bool = False
+    client: TestClient,
+    provider_id: str,
+    source_account_id: str,
+    confirm_collisions: bool = False,
+    previewed_collisions: int = 0,
 ):
     return client.post(
         "/api/v1/system/provider-account-unmerge/apply",
@@ -114,6 +128,7 @@ def _unmerge(
             "provider_id": provider_id,
             "source_account_id": source_account_id,
             "confirm_collisions": confirm_collisions,
+            "previewed_collisions": previewed_collisions,
         },
         headers=_admin_headers(),
     )
@@ -272,7 +287,12 @@ def test_an_account_merged_away_is_not_merged_away_any_more(client, session):
 def test_the_preview_says_what_cannot_come_back(client, session):
     """What the merge destroyed stays destroyed — the preview says so instead
     of losing it silently."""
-    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(
+        session,
+        provider_id="openrouter",
+        account_id="alice@example.com",
+        api_key="sk-stored-at-rest",  # pragma: allowlist secret
+    )
     _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
     assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
 
@@ -284,6 +304,18 @@ def test_the_preview_says_what_cannot_come_back(client, session):
     assert body["config"] == "archived"
     # The stored credential the merge wiped does not come back.
     assert any("wiped" in item for item in body["not_restored"])
+
+
+def test_the_preview_does_not_claim_a_credential_that_was_never_there(client, session):
+    """The merge wipes the stored secret — but a row that held none lost
+    nothing, and the preview must not claim a loss that never happened."""
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    resp = _preview(client, "openrouter", "alice@example.com")
+    assert resp.status_code == 200, resp.text
+    assert not any("wiped" in item for item in resp.json()["not_restored"])
 
 
 def test_the_preview_says_when_the_provider_row_is_gone(client, session):
@@ -410,9 +442,30 @@ def test_a_row_in_the_way_is_refused_without_an_explicit_confirmation(client, se
     assert resp.json()["total_collisions"] == 1
     assert resp.json()["rows_in_the_way"] == {"latest_usage": 1}
 
-    resp = _unmerge(client, "openrouter", "alice@example.com")
+    resp = _unmerge(client, "openrouter", "alice@example.com", previewed_collisions=1)
     assert resp.status_code == 409, resp.text
     assert "collide" in resp.json()["detail"]
+
+
+def test_rows_that_changed_since_the_preview_are_refused(client, session):
+    """The operator confirmed what the preview showed. If the rows in the way
+    changed since, the confirmation was for a different set of rows."""
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _seed_a_quota_card(session, "alice@example.com")
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+    _seed_a_quota_card(session, "alice@example.com")
+
+    # The preview showed nothing in the way — but a row got in the way since.
+    resp = _unmerge(
+        client, "openrouter", "alice@example.com", confirm_collisions=True, previewed_collisions=0
+    )
+    assert resp.status_code == 409, resp.text
+    assert "changed since the preview" in resp.json()["detail"]
+
+    # And nothing moved: the merge is still in place.
+    session.expire_all()
+    records = session.exec(select(ProviderAccountMerge)).all()
+    assert [row.source_account_id for row in records] == ["alice@example.com"]
 
 
 def test_a_confirmed_row_in_the_way_is_replaced_by_the_row_the_merge_moved(client, session):
@@ -423,7 +476,13 @@ def test_a_confirmed_row_in_the_way_is_replaced_by_the_row_the_merge_moved(clien
     assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
     _seed_a_quota_card(session, "alice@example.com")
 
-    resp = _unmerge(client, "openrouter", "alice@example.com", confirm_collisions=True)
+    resp = _unmerge(
+        client,
+        "openrouter",
+        "alice@example.com",
+        confirm_collisions=True,
+        previewed_collisions=1,
+    )
     assert resp.status_code == 200, resp.text
 
     session.expire_all()

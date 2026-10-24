@@ -139,7 +139,15 @@ function UnmergeButton({
   const run = async () => {
     setBusy(true);
     try {
-      await unmergeProviderAccount(providerId, accountId, plan?.total_collisions ? true : false);
+      // The count the preview showed goes with the request: the server
+      // refuses when the rows in the way changed since, because the operator
+      // confirmed a different set of rows.
+      await unmergeProviderAccount(
+        providerId,
+        accountId,
+        acknowledge,
+        plan?.total_collisions ?? 0,
+      );
       toast.success('Account unmerged');
       setOpen(false);
       invalidateCredentialViews();

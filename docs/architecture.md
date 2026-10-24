@@ -366,9 +366,12 @@ carried over — which means the destination loses the quota card that came from
 the source, and rebuilds it on the next collection. The one thing that is
 dropped is a row that got in the way — an account recreated under the same id
 while the merge was in force — and only after the operator confirms it: the
-original history wins, because restoring it is the point. A chain is unwound
-from the end (alice → bob → carol: undo bob → carol first), since undoing the
-middle link would rewrite the chain twice.
+original history wins, because restoring it is the point. The confirmation is
+for a *count*, not a yes: the request carries the number the preview showed,
+and the un-merge refuses when the rows in the way changed since, because the
+operator confirmed a different set of rows. A chain is unwound from the end
+(alice → bob → carol: undo bob → carol first), since undoing the middle link
+would rewrite the chain twice.
 
 A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
 the hint before the account was archived was still applying it, because the

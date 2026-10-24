@@ -1478,6 +1478,11 @@ async def apply_provider_account_merge(
         else:
             src.enabled = False
             src.archived = True
+            # Whether the account held a secret at all: the merge wipes the
+            # secret either way, but "wiped a secret there was" and "wiped
+            # nothing" are not the same loss, and the un-merge's preview must
+            # only claim what is true.
+            journal.had_credential = bool(src.api_key_encrypted or src.session_cookie_encrypted)
             src.api_key_encrypted = None
             src.session_cookie_encrypted = None
             journal.config_outcome = "archived"
@@ -1541,6 +1546,10 @@ class _AccountUnmergeRequest(BaseModel):
     provider_id: str
     source_account_id: str
     confirm_collisions: bool = False
+    #: The number of rows in the way the preview showed. The rows may have
+    #: changed since — and a confirmation the operator gave for a different
+    #: set of rows is not a confirmation of these.
+    previewed_collisions: int = 0
 
 
 def _unmerge_response(plan: UnmergePlan) -> dict[str, Any]:
@@ -1605,6 +1614,7 @@ async def apply_provider_account_unmerge(
             body.provider_id,
             body.source_account_id,
             confirm_collisions=body.confirm_collisions,
+            previewed_collisions=body.previewed_collisions,
         )
     except UnmergeRefusedError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -1640,7 +1650,12 @@ async def apply_provider_account_unmerge(
         request,
         action="provider.account_unmerge",
         target_id=f"{body.provider_id}/{plan.source_account_id}",
-        payload={"destination_account_id": plan.destination_account_id},
+        payload={
+            "destination_account_id": plan.destination_account_id,
+            # The destructive part of the un-merge: how many rows it dropped
+            # to make room for the rows the merge moved.
+            "collisions_removed": plan.collisions,
+        },
     )
     return {"status": "unmerged", **_unmerge_response(plan)}
 

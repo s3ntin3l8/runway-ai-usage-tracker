@@ -60,6 +60,12 @@ class MergeJournal:
     config_outcome: str = "absent"  # "renamed" | "archived" | "absent"
     config_enabled: bool | None = None
     config_archived: bool | None = None
+    #: Whether the account held a stored secret when the merge archived its
+    #: row. The merge wiped the secret either way, but "wiped a secret there
+    #: was" and "wiped nothing" are not the same loss — and the preview must
+    #: only claim what is true. ``None`` is a journal from before this was
+    #: recorded: the wipe is known, the secret is not.
+    had_credential: bool | None = None
     collisions_removed: int = 0
 
     def to_json(self) -> str:
@@ -73,6 +79,7 @@ class MergeJournal:
                 "config_outcome": self.config_outcome,
                 "config_enabled": self.config_enabled,
                 "config_archived": self.config_archived,
+                "had_credential": self.had_credential,
                 "collisions_removed": self.collisions_removed,
             }
         )
@@ -104,6 +111,7 @@ class MergeJournal:
                 config_outcome=str(data.get("config_outcome") or "absent"),
                 config_enabled=data.get("config_enabled"),
                 config_archived=data.get("config_archived"),
+                had_credential=data.get("had_credential"),
                 collisions_removed=int(data.get("collisions_removed") or 0),
             )
         except (TypeError, ValueError):
@@ -436,9 +444,17 @@ def _not_restored(journal: MergeJournal) -> list[str]:
             f"{journal.collisions_removed} duplicate rows the merge dropped (they were deleted)"
         )
     if journal.config_outcome == "archived":
-        lost.append(
-            "the stored API key / session cookie the merge wiped from the account's provider row"
-        )
+        if journal.had_credential is True:
+            lost.append(
+                "the stored API key / session cookie the merge wiped from the account's provider row"
+            )
+        elif journal.had_credential is None:
+            # A journal from before the merge recorded whether the account held
+            # a secret: the wipe is known, the secret is not.
+            lost.append(
+                "the stored API key / session cookie the merge wiped from the account's provider "
+                "row, if the account held one"
+            )
     return lost
 
 
@@ -494,11 +510,34 @@ def _assert_the_account_id_is_free(
         raise UnmergeRefusedError(f"The account id {source} is taken again; it cannot be restored.")
 
 
-def preview_unmerge(session: Session, provider_id: str, source_account_id: str) -> UnmergePlan:
-    """What undoing one merge would put back.
+@dataclass
+class _UnmergeFacts:
+    """What one un-merge works from — read once, used for the plan and the moves.
 
-    Raises :class:`UnmergeRefusedError` when the merge cannot be undone at all.
+    The preview and the apply read the same facts: the record, the journal, the
+    rows that go back and the rows that got in the way. Reading them twice
+    would scan every merge table twice, and — worse — could read two different
+    worlds.
     """
+
+    record: ProviderAccountMerge
+    journal: MergeJournal
+    source: str
+    destination: str
+    #: The rows that go back, by table — only the tables this build knows.
+    rows: dict[str, list[int]]
+    #: The rows that got in the way, by table: to drop before the rows go back.
+    in_the_way: dict[str, list[int]]
+    config: str
+    not_restored: list[str]
+
+    @property
+    def collisions(self) -> int:
+        return sum(len(ids) for ids in self.in_the_way.values())
+
+
+def _build_facts(session: Session, provider_id: str, source_account_id: str) -> _UnmergeFacts:
+    """Read everything the un-merge needs, and refuse what cannot be undone."""
     record = _merge_record(session, provider_id, source_account_id)
     journal = _unmerge_journal(record)
     source = canonical_account_id(record.source_account_id)
@@ -510,26 +549,54 @@ def preview_unmerge(session: Session, provider_id: str, source_account_id: str) 
             f"The destination was merged away too (into {chain}); undo the chain from the end."
         )
 
-    in_the_way = _rows_in_the_way(session, provider_id, source, journal)
+    # Only the tables both ends know. A table the journal names that this
+    # build does not know cannot be moved back, so it must not be promised.
+    rows = {
+        table: list(ids)
+        for table, ids in journal.rows.items()
+        if ids and table in MERGE_MODELS_BY_TABLE
+    }
     config, row_gone = _config_outcome(session, journal)
     not_restored = _not_restored(journal)
     if row_gone:
         not_restored.append(
             "the account's provider row is gone; its settings have to be added again"
         )
-    return UnmergePlan(
-        provider_id=provider_id,
-        source_account_id=source,
-        destination_account_id=destination,
-        rows={table: len(ids) for table, ids in journal.rows.items() if ids},
-        credential_sources=list(journal.credential_sources),
-        credential_tags=len(journal.credential_tags),
-        contributions=len(journal.contributions),
+    return _UnmergeFacts(
+        record=record,
+        journal=journal,
+        source=source,
+        destination=destination,
+        rows=rows,
+        in_the_way=_rows_in_the_way(session, provider_id, source, journal),
         config=config,
-        collisions=sum(len(ids) for ids in in_the_way.values()),
-        rows_in_the_way={table: len(ids) for table, ids in in_the_way.items()},
         not_restored=not_restored,
     )
+
+
+def _plan(facts: _UnmergeFacts) -> UnmergePlan:
+    """The public shape of what an un-merge does."""
+    return UnmergePlan(
+        provider_id=facts.record.provider_id,
+        source_account_id=facts.source,
+        destination_account_id=facts.destination,
+        rows={table: len(ids) for table, ids in facts.rows.items()},
+        credential_sources=list(facts.journal.credential_sources),
+        credential_tags=len(facts.journal.credential_tags),
+        contributions=len(facts.journal.contributions),
+        config=facts.config,
+        collisions=facts.collisions,
+        rows_in_the_way={table: len(ids) for table, ids in facts.in_the_way.items()},
+        not_restored=list(facts.not_restored),
+    )
+
+
+def preview_unmerge(session: Session, provider_id: str, source_account_id: str) -> UnmergePlan:
+    """What undoing one merge would put back.
+
+    Raises :class:`UnmergeRefusedError` when the merge cannot be undone at all.
+    """
+    return _plan(_build_facts(session, provider_id, source_account_id))
 
 
 def unmerge_account(
@@ -538,25 +605,25 @@ def unmerge_account(
     source_account_id: str,
     *,
     confirm_collisions: bool = False,
+    previewed_collisions: int | None = None,
 ) -> UnmergePlan:
     """Put a merged account back: its history, its credential and its name.
 
     The rows go back to the account they came from, the credential sources
     and the durable contributions follow, the provider row is restored, and
     the merge record is deleted — so the source id names an account again.
+
+    ``previewed_collisions`` is the number the preview showed. If the rows in
+    the way changed since, the confirmation the operator gave was for a
+    different set of rows — and the un-merge refuses.
     """
-    record = _merge_record(session, provider_id, source_account_id)
-    journal = _unmerge_journal(record)
-    source = canonical_account_id(record.source_account_id)
-    destination = canonical_account_id(record.destination_account_id)
-
-    chain = _unmerge_chain(session, provider_id, destination)
-    if chain:
+    facts = _build_facts(session, provider_id, source_account_id)
+    plan = _plan(facts)
+    if previewed_collisions is not None and plan.collisions != previewed_collisions:
         raise UnmergeRefusedError(
-            f"The destination was merged away too (into {chain}); undo the chain from the end."
+            f"The rows in the way changed since the preview ({previewed_collisions} then, "
+            f"{plan.collisions} now); preview again."
         )
-
-    plan = preview_unmerge(session, provider_id, source_account_id)
     if plan.collisions and not confirm_collisions:
         raise UnmergeRefusedError(
             f"{plan.collisions} rows would collide with rows the account holds now; "
@@ -565,24 +632,27 @@ def unmerge_account(
 
     # Every refusal is decided before anything is touched: an un-merge that
     # half-happened would be worse than one that did not happen.
-    _assert_the_account_id_is_free(session, provider_id, source, journal)
+    _assert_the_account_id_is_free(session, provider_id, facts.source, facts.journal)
+
+    source = facts.source
+    destination = facts.destination
+    journal = facts.journal
 
     # The rows in the way go first, and the delete is flushed before the rows
     # that take their place: the unique constraint is on the account id, so
     # the row that is in the way has to be gone before a row with the same
     # identity moves into the account.
-    in_the_way = _rows_in_the_way(session, provider_id, source, journal)
-    for table, blocked_ids in in_the_way.items():
+    for table, blocked_ids in facts.in_the_way.items():
         model = MERGE_MODELS_BY_TABLE.get(table)
         if model is None:
             continue
         for row in session.exec(select(model).where(model.id.in_(blocked_ids))).all():
             session.delete(row)
-    if in_the_way:
+    if facts.in_the_way:
         session.flush()
 
     # The account-scoped rows: the merge moved them, the un-merge moves them back.
-    for table, row_ids in journal.rows.items():
+    for table, row_ids in facts.rows.items():
         model = MERGE_MODELS_BY_TABLE.get(table)
         if model is None or not row_ids:
             continue
@@ -635,7 +705,7 @@ def unmerge_account(
 
     # The record goes: the source id names an account again, and the guard
     # that refused to make it one stops refusing.
-    session.delete(record)
+    session.delete(facts.record)
     session.flush()
 
     # The rollups are derived from the usage events: rebuild both accounts'
