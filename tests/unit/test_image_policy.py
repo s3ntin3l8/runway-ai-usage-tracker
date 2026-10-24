@@ -8,6 +8,7 @@ import pytest
 
 from scripts import audit_release_image as audit_module
 from scripts.image_policy import (
+    MAX_DB_AGE,
     ExceptionSet,
     check_database,
     evaluate,
@@ -397,7 +398,7 @@ def test_rejected_database_retains_metadata_without_scanning(tmp_path, monkeypat
     class Clock:
         @staticmethod
         def now(tz):
-            return NOW + timedelta(hours=31) if failure == "stale" else NOW
+            return NOW + MAX_DB_AGE + timedelta(seconds=1) if failure == "stale" else NOW
 
     monkeypatch.setattr(audit_module, "datetime", Clock)
     monkeypatch.setattr(
