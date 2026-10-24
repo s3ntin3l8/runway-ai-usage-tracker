@@ -48,7 +48,7 @@ Reconciliation only changes the live card view; `quota_snapshots` and
 | **mixed** | Provides both quota and enrichment data in one response |
 | **enrichment** | Provides token breakdown, session counts, model usage details |
 
-Enrichment events also carry **project context** — the working directory (`cwd`), `git_branch`, and the tool names invoked in the message (`tool_names`). The server derives `project` (the basename of `cwd`) in `EventIngestor` and indexes it, which is what powers the Sessions project column and the Top Projects / Top Tools rankings.
+Enrichment events also carry **project context** — the working directory (`cwd`), `git_branch`, and the tool names invoked in the message (`tool_names`). The server derives `project` (the basename of `cwd`) in `EventIngestor` and indexes it, which is what powers the Sessions project column and the Top Projects / Top Tools rankings. The derivation is **host-independent**: a client's working directory is a path on *that* machine (`D:\Projects\repo` on Windows, `/home/u/repo` on macOS/Linux), and the server runs on Linux, so the label is the last path segment of either separator form rather than whatever the server's `os.path` would split on.
 
 They also carry **the client app that made the call** (`source_app`: `opencode`, `claude_code`, `minimax_code`, ...). That is not the same as the provider the request was billed to — several client apps share one provider, and a canonical-provider retag folds them onto one id. `source_app` survives the retag, so "which app spent the quota" stays answerable (`/usage/source-apps`).
 
