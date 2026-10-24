@@ -532,9 +532,12 @@ and `CodeQL`, which also run on the push to `main`, and `Security Validation`,
 pull request but not on the push. What they re-check is the release commit:
 a version bump and a changelog on top of commits that were each tested on the
 pull request they came in through. One measured batch cost 20.8
-runner-minutes and about an hour of waiting, most of it for a hosted runner.
-Both routes leave the release in a person's hands — one costs runner time,
-the other does not.
+runner-minutes and about an hour of wall clock — its last job waited 43
+minutes for a hosted runner before starting. The administrator merge skips
+those six runs and that hour; `CI/CD` and `CodeQL` still run on `main`
+afterwards, as they do after any merge. What it gives up is the three
+pull-request-only workflows' look at the release commit: they have no push
+equivalent, so a release merged that way never reaches them.
 
 The prerelease settings in `release-please-config.json` are temporary for
 the 3.0.0 beta cycle (`prerelease: true`, `prerelease-type: beta.1`). Before
