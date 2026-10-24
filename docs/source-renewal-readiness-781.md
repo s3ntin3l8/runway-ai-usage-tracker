@@ -22,10 +22,15 @@ read; no owner CLI, provider request, login or model call was run for this audit
 The local Sources report and Fleet protocol currently report
 `renewal_supported=false`. The catalog's Claude `renewal=true` means that a
 separate renewal permission can be requested; it is not support/acceptance proof.
-The four existing provider keep-alive mechanisms are a different capability from
-a source's direct Keychain write support. Do not infer one from the other.
+Admin Fleet source status also exposes `renewal_capable = descriptor.renewal`,
+which is true for the Claude Code descriptor. This is catalog capability metadata,
+not a local permission grant or the runtime `renewal_supported` result. The existing
+xAI (Grok), Antigravity (agy), Claude Code and Codex (ChatGPT) keep-alive mechanisms
+are a different capability from a source's direct Keychain write support. Do not
+infer one from the other.
 See [source reporting](../scripts/sidecar_pkg/source_settings.py),
-[Fleet reporting](../scripts/sidecar_pkg/source_protocol.py), and
+[Fleet reporting](../scripts/sidecar_pkg/source_protocol.py),
+[admin Fleet status](../app/api/endpoints/fleet_sources.py), and
 [keep-alive ownership rules](../app/services/refresh_policy.py).
 
 ## Native source inventory
@@ -59,8 +64,12 @@ operation/forwarding boundaries; this document changes none of them.
 
 ## File, owner-command and observation paths
 
-These paths are outside the new per-scraper Keychain consent boundary. Their
-existing activation and source-lifecycle rules remain in force.
+The file and observation paths below are outside the new per-scraper Keychain
+consent boundary. Antigravity owner-command cooperation retains its platform's
+credential-access rules: on macOS, `antigravity.agy-cli` local consent is required
+before the Keychain read and keep-alive invocation. Without it, keep-alive stays
+quiet. Existing activation and source-lifecycle rules remain in force for every
+path.
 
 | Source family | Implemented mechanism | Existing evidence and remaining gate |
 | --- | --- | --- |
