@@ -164,13 +164,18 @@ def _check_authority(
             if not isinstance(payload, dict) or payload.get("tokens") != tokens:
                 raise ProbeError("source_changed")
             authority += (device_id, scraper, generation)
-        if scraper is None and not (
-            source.source_type == "config"
+        code_origin = (
+            scraper == "anthropic.claude-code"
             or origin == "env:CLAUDE_CODE_OAUTH_TOKEN"
             or (
                 origin.startswith("file:")
                 and origin.endswith(("/.credentials.json", "/oauth_creds.json"))
             )
+        )
+        # Egress marks borrowed Code credentials read-only too: this forbids refresh,
+        # not GETs. Require Code provenance rather than treating it as Desktop identity.
+        if not code_origin and (
+            source.source_type != "config" or tokens.get("oauth_read_only") == "1"
         ):
             raise ProbeError("unsupported_source")
     return config.claude_organization_id if config else None, authority
@@ -185,7 +190,8 @@ async def _load_source(
     if snapshot is None:
         raise ProbeError("source_unavailable")
     tokens, candidate = snapshot
-    if tokens.get("oauth_read_only") not in (None, "", "0"):
+    # Syntax only: _authority_read separately requires Code provenance for "1".
+    if tokens.get("oauth_read_only") not in (None, "", "0", "1"):
         raise ProbeError("unsupported_source")
     if candidate.get("identity_pending") or not tokens.get("oauth_token"):
         raise ProbeError("source_ineligible")

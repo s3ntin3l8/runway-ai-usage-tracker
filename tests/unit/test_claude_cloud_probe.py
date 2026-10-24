@@ -103,7 +103,48 @@ async def run(body, upstream):
 
 
 @pytest.mark.asyncio
-async def test_verified_exact_source_gets_bounded_history_without_leaking_evidence(environment):
+@pytest.mark.parametrize(
+    "origin,forwarded",
+    [
+        ("file:/fixture/.claude/.credentials.json", False),
+        ("file:/fixture/.claude/.credentials.json", True),
+        ("env:CLAUDE_CODE_OAUTH_TOKEN", True),
+    ],
+    ids=["original", "sidecar-read-only", "env-read-only"],
+)
+async def test_verified_exact_source_gets_bounded_history_without_leaking_evidence(
+    environment, origin, forwarded
+):
+    if forwarded:
+        from scripts.sidecar_pkg.source_consent import filter_egress
+
+        entry = filter_egress(
+            {
+                "entries": [
+                    {
+                        "provider_id": "anthropic",
+                        "credential_origin": origin,
+                        "oauth_token": "fixture-access",
+                        "refresh_token": "unused",
+                    }
+                ]
+            }
+        )["entries"][0]
+        assert entry["oauth_read_only"] == "1" and "refresh_token" not in entry
+        engine, cache = environment
+        with Session(engine) as session:
+            row = session.get(CredentialSource, 1)
+            row.credential_origin = origin
+            session.add(row)
+            session.commit()
+        await cache.remove_source("anthropic", ACCOUNT, SOURCE)
+        await cache.store(
+            "anthropic",
+            {key: entry[key] for key in ("oauth_token", "oauth_read_only")},
+            account_id=ACCOUNT,
+            source_id=SOURCE,
+            source_metadata={"credential_origin": entry["credential_origin"]},
+        )
     calls = []
 
     def upstream(r):
@@ -185,6 +226,8 @@ async def test_failure_stops_after_one_request_without_refresh_or_fallback(
         ("disabled", "source_ineligible"),
         ("archived", "source_ineligible"),
         ("desktop", "unsupported_source"),
+        ("unknown_read_only", "unsupported_source"),
+        ("unproven_read_only", "unsupported_source"),
         ("legacy_keychain", "source_ineligible"),
         ("pending", "source_ineligible"),
         ("expired", "expired"),
@@ -204,8 +247,23 @@ async def test_ineligible_source_never_contacts_provider(environment, mutation, 
     else:
         tokens = {"oauth_token": "fixture-access"}
         metadata = {"credential_origin": "file:/fixture/.claude/.credentials.json"}
-        if mutation == "desktop":
+        if mutation in ("desktop", "unproven_read_only"):
             tokens["oauth_read_only"] = "1"
+            origin = (
+                "keychain:Claude Desktop/oauth/fixture"
+                if mutation == "desktop"
+                else "config:fixture"
+            )
+            metadata["credential_origin"] = origin
+            with Session(engine) as s:
+                row = s.get(CredentialSource, 1)
+                row.credential_origin = origin
+                if mutation == "unproven_read_only":
+                    row.source_type = "config"
+                s.add(row)
+                s.commit()
+        if mutation == "unknown_read_only":
+            tokens["oauth_read_only"] = "unsupported"
         if mutation == "legacy_keychain":
             metadata["credential_origin"] = "keychain:Claude Code-credentials"
         if mutation == "pending":
@@ -531,7 +589,7 @@ async def seed_keychain(environment, monkeypatch, blocked=None):
                 account_id=ACCOUNT,
                 generation=1,
                 payload_encrypted=probe.encryption_service.encrypt_json(
-                    {"tokens": {"oauth_token": "fixture-access"}}
+                    {"tokens": {"oauth_token": "fixture-access", "oauth_read_only": "1"}}
                 ),
             )
         )
@@ -539,7 +597,7 @@ async def seed_keychain(environment, monkeypatch, blocked=None):
     await cache.remove_source("anthropic", ACCOUNT, SOURCE)
     await cache.store(
         "anthropic",
-        {"oauth_token": "fixture-access"},
+        {"oauth_token": "fixture-access", "oauth_read_only": "1"},
         account_id=ACCOUNT,
         source_id=SOURCE,
         source_metadata={

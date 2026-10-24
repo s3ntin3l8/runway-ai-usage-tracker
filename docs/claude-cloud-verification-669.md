@@ -125,3 +125,30 @@ No live execution is performed by this tooling milestone. #669 remains open.
 #526, #750, #773, #767 and #781 retain their separate native, policy-preserving
 renewal and signed-update acceptance gates. Real-account access/rotation requires
 an isolated environment, readiness report and separate explicit approval.
+
+## First production attempt: stopped before provider access
+
+On 2026-10-24 at 20:42:08 UTC, the approved diagnostic on source
+`4d2862933a7e07d5d5eb115d52c5fa99c909dd7b`, image
+`ghcr.io/s3ntin3l8/runway@sha256:f2749ad276c2a34a91604403ca5d4991da3512a21d9e99a5a2cb7f9e27524f71`,
+returned `unsupported_source` at the source stage, with zero provider requests.
+The offline evaluator accepted the sanitized report's shape and returned `stop`;
+all acceptance, contract, ingestion and provenance flags remained false.
+Deployment health and the online backup's integrity and owner-only permissions
+were verified. No provider retry, native lookup, refresh, rotation or activation
+was performed.
+
+The selected live Code file credential carried the sidecar's no-refresh marker.
+A regression through actual sidecar egress reproduced the diagnostic rejecting
+`oauth_read_only: "1"` before examining Code provenance. The fix is tracked in
+[#933](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/933).
+The marker does not itself identify Desktop OAuth; Desktop exclusion must use
+source provenance, while the server's no-refresh restriction remains enforced.
+
+Sanitized results and remaining acceptance gaps are recorded on
+[#669](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/669#issuecomment-6389317097).
+The immutable release passed
+[main CI](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40128555610).
+This source-validation result establishes no provider API/accounting/coverage
+contract. The one-shot approval was consumed. A further attempt requires the
+reviewed fix, a verified release image and a new concrete readiness/approval step.
