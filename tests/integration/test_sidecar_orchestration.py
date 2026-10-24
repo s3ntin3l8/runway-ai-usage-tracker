@@ -72,7 +72,7 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     resp = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
     assert resp.status_code == 200
     data = resp.json()
-    assert set(data["poll_providers"]) == {"anthropic", "github"}
+    assert set(data["poll_providers"]) == {"anthropic", "github", "hermes"}
     assert data["sidecar_update_channel"] == "stable"
 
     session.add(SystemConfig(sidecar_update_channel="beta"))
@@ -106,7 +106,7 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     resp = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
     assert resp.status_code == 200
     data = resp.json()
-    assert set(data["poll_providers"]) == {"anthropic", "github"}
+    assert set(data["poll_providers"]) == {"anthropic", "github", "hermes"}
     assert data["trigger"] is True
 
 

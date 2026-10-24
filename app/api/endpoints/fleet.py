@@ -18,6 +18,7 @@ from app.core.security import (
     validate_ingest_auth,
     verify_config_signature,
 )
+from app.core.source_apps import HERMES
 from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
@@ -70,6 +71,13 @@ from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS, parse_provider_fla
 from app.services.token_cache import token_cache
 
 logger = logging.getLogger(__name__)
+# Sidecar extractors that collect usage *events* but have no provider row, card
+# or credential (the events are attributed to the real providers they call).
+# Scheduling-only: added to poll_providers so the extractor runs on every poll
+# cycle, never listed as a provider. Kept in step with the sidecar overlay's
+# `add_providers` by tests/unit/test_sidecar_only_event_providers.py.
+SIDECAR_ONLY_EVENT_PROVIDERS: frozenset[str] = frozenset({HERMES})
+
 router = APIRouter()
 
 
@@ -858,10 +866,21 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 set(session.exec(select(LatestUsage.provider_id).distinct()).all()) - configured
             )
 
-            provider_intervals = [
-                (row.provider_id, row.poll_interval_seconds or global_interval)
-                for row in enabled_provider_rows
-            ] + [(pid, global_interval) for pid in sorted(passive_pids)]
+            # Sidecar-only event providers (Hermes) are neither configured nor
+            # in latest_usage — their events are filed under the real providers
+            # they call — so without this their extractor runs only on a full
+            # cycle. A scheduling id only: never a provider, card or UI row.
+            scheduled = {row.provider_id for row in enabled_provider_rows} | passive_pids
+            event_pids = SIDECAR_ONLY_EVENT_PROVIDERS - scheduled
+
+            provider_intervals = (
+                [
+                    (row.provider_id, row.poll_interval_seconds or global_interval)
+                    for row in enabled_provider_rows
+                ]
+                + [(pid, global_interval) for pid in sorted(passive_pids)]
+                + [(pid, global_interval) for pid in sorted(event_pids)]
+            )
 
             poll_providers, trigger = fleet_registry.get_due_providers(
                 payload.sidecar_id, provider_intervals
