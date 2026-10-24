@@ -6,6 +6,10 @@ The historical endpoint envelope, account/org binding, coverage, pagination,
 sequence continuity and cloud/local deduplication still require revalidation.
 Local collection remains enabled until coverage and accounting parity pass.
 
+The [offline diagnostic verification guide](claude-cloud-verification-669.md)
+prepares immutable-build evidence and explicit sample/stop criteria for the
+source-pinned diagnostic in #908. It performs no deployment or live access.
+
 ## Accounting evidence
 
 [Claude's SDK accounting documentation](https://code.claude.com/docs/en/agent-sdk/cost-tracking)
