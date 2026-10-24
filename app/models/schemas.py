@@ -699,6 +699,20 @@ class CredentialFileMigrationNotice(BaseModel):
     recorded_at: str
 
 
+class MergedAccountView(BaseModel):
+    """An account that was merged away, and the account it became.
+
+    The merged-away account holds no credential any more (the merge moved it),
+    so it cannot appear among the inventory's accounts. This is what tells a
+    client "this account no longer exists" from "this account never existed".
+    """
+
+    provider_id: str
+    account_id: str  # the account that was merged away
+    destination_account_id: str  # where it ended up (a chain is followed)
+    merged_at: str
+
+
 class CredentialInventory(BaseModel):
     credential_file_migration_notice: CredentialFileMigrationNotice | None = None
     providers: list[CredentialProviderView] = Field(default_factory=list)
@@ -712,3 +726,5 @@ class CredentialInventory(BaseModel):
     # browser cookie store). Kept out of `unmapped_count`: there is no credential to
     # map, the source simply cannot be read.
     blocked_sources: list[BlockedSourceView] = Field(default_factory=list)
+    # The accounts that were merged away, and where each of them went.
+    merged_accounts: list[MergedAccountView] = Field(default_factory=list)

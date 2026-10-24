@@ -282,3 +282,133 @@ def test_a_chain_of_merges_resolves_to_the_last_destination(client, session, ing
         select(CredentialSource).where(CredentialSource.provider_id == "openrouter")
     ).all()
     assert [row.account_id for row in rows] == ["carol@example.com"]
+
+
+# ── The operator-facing surface (#912) ──────────────────────────────────────
+# A merged-away account holds no credential and is not an account any more, so
+# it disappears from every list the operator reads — nothing says where it
+# went. These tests pin the surface that says it.
+
+
+def _provider(payload: dict, provider_id: str = "openrouter") -> dict:
+    return next(p for p in payload["providers"] if p["provider_id"] == provider_id)
+
+
+def test_the_provider_configs_list_names_where_a_merged_account_went(client, session):
+    """The account registry says where the account went, and the leftover row
+    of the merged-away account says it too."""
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    resp = client.get("/api/v1/system/provider-configs", headers=_admin_headers())
+    assert resp.status_code == 200, resp.text
+    provider = _provider(resp.json())
+
+    merged = provider["merged_accounts"]
+    assert [(m["account_id"], m["destination_account_id"]) for m in merged] == [
+        ("alice@example.com", "bob@example.com")
+    ]
+    assert merged[0]["merged_at"]
+
+    # The row the merge left behind (archived, no credential) points at the
+    # destination, so the UI can keep it out of the archived list.
+    alice = next(a for a in provider["accounts"] if a["account_id"] == "alice@example.com")
+    assert alice["merged_into"] == "bob@example.com"
+    # An account that was never merged says nothing.
+    bob = next(a for a in provider["accounts"] if a["account_id"] == "bob@example.com")
+    assert bob["merged_into"] is None
+
+
+def test_the_credential_inventory_lists_the_merged_accounts(client, session, monkeypatch):
+    """The inventory holds no credential for a merged-away account, so the
+    merges are a list of their own."""
+    from app.services import credential_inventory
+
+    monkeypatch.setattr(credential_inventory, "engine", session.get_bind())
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    resp = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert resp.status_code == 200, resp.text
+    merged = resp.json()["merged_accounts"]
+    assert [(m["provider_id"], m["account_id"], m["destination_account_id"]) for m in merged] == [
+        ("openrouter", "alice@example.com", "bob@example.com")
+    ]
+
+
+def test_a_chain_of_merges_is_reported_at_its_end(client, session):
+    """alice → bob → carol: the operator is told where the account ended up,
+    not which hop it took."""
+    for account_id in ("alice@example.com", "bob@example.com", "carol@example.com"):
+        _add_provider_config(session, provider_id="openrouter", account_id=account_id)
+
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+    assert _merge(client, "openrouter", "bob@example.com", "carol@example.com").status_code == 200
+
+    resp = client.get("/api/v1/system/provider-configs", headers=_admin_headers())
+    provider = _provider(resp.json())
+    destinations = {
+        m["account_id"]: m["destination_account_id"] for m in provider["merged_accounts"]
+    }
+    assert destinations["alice@example.com"] == "carol@example.com"
+    assert destinations["bob@example.com"] == "carol@example.com"
+
+
+def test_a_merged_account_cannot_be_restored(client, session):
+    """Restoring it would resurrect a phantom: the merge moved its history
+    and its credential to the destination."""
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    resp = client.put(
+        "/api/v1/system/provider-config/openrouter/alice@example.com",
+        json={"archived": False},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 409, resp.text
+    assert "bob@example.com" in resp.json()["detail"]
+
+    session.expire_all()
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == "openrouter",
+            ProviderConfig.account_id == "alice@example.com",
+        )
+    ).first()
+    assert row is not None
+    assert row.archived is True
+    assert row.enabled is False
+
+
+def test_a_destination_account_can_still_be_archived_and_restored(client, session):
+    """The account that was merged *into* is a normal account — the guard must
+    not fire for it."""
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    resp = client.put(
+        "/api/v1/system/provider-config/openrouter/bob@example.com",
+        json={"archived": True},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = client.put(
+        "/api/v1/system/provider-config/openrouter/bob@example.com",
+        json={"archived": False},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_the_merge_list_is_empty_when_nothing_was_merged(client):
+    resp = client.get("/api/v1/system/provider-configs", headers=_admin_headers())
+    assert resp.status_code == 200, resp.text
+    assert _provider(resp.json())["merged_accounts"] == []

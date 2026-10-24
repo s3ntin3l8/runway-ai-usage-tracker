@@ -360,6 +360,79 @@ describe('ProvidersSection', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Server refused the restore'));
   });
 
+  it('lists a merged-away account with the account it became', async () => {
+    // The merge moved alice's history and her credential to bob: alice holds
+    // nothing and is not an account any more, so the operator is told where
+    // she went instead of watching her disappear.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 1,
+        accounts: [
+          { account_id: 'bob@example.com', account_label: 'Bob', enabled: true, archived: false },
+        ],
+        merged_accounts: [
+          {
+            account_id: 'alice@example.com',
+            destination_account_id: 'bob@example.com',
+            merged_at: '2026-10-20T10:00:00+00:00',
+          },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Merged accounts (1)')).toBeInTheDocument();
+    // The row names both accounts: the one that was merged away, and where
+    // it ended up (bob's label, not his raw id).
+    expect(screen.getByText('alice@example.com → Bob')).toBeInTheDocument();
+    expect(screen.getByText('Merged')).toBeInTheDocument();
+  });
+
+  it('keeps a merged-away account out of the archived list', async () => {
+    // The merge retired the account — it was not archived, and it cannot be
+    // restored (the API refuses it). So it is listed once, under "Merged
+    // accounts", with no Restore action.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [provider({
+        account_count: 1,
+        archived_count: 1,
+        accounts: [
+          { account_id: 'bob@example.com', account_label: 'Bob', enabled: true, archived: false },
+          {
+            account_id: 'alice@example.com',
+            account_label: 'Alice',
+            enabled: false,
+            archived: true,
+            merged_into: 'bob@example.com',
+          },
+        ],
+        merged_accounts: [
+          {
+            account_id: 'alice@example.com',
+            destination_account_id: 'bob@example.com',
+            merged_at: '2026-10-20T10:00:00+00:00',
+          },
+        ],
+      })],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Merged accounts (1)')).toBeInTheDocument();
+    expect(screen.queryByText('Archived accounts (1)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument();
+  });
+
+  it('renders no merged section when nothing was merged', async () => {
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [provider()] });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    expect(await screen.findByText('Claude')).toBeInTheDocument();
+    expect(screen.queryByText(/^Merged accounts/)).not.toBeInTheDocument();
+  });
+
   it('offers permanent deletion only for empty archived accounts', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
       providers: [provider({
