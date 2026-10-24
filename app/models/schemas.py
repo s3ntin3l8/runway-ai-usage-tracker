@@ -423,9 +423,10 @@ class TopSessionEntry(BaseModel):
     session_id: str
     project: str | None = None
     cwd: str | None = None
-    sidecar_id: str | None = None  # the host that pushed the session's events
+    sidecar_id: str | None = None  # the host that pushed the session's latest event
     ts_start: str | None = None  # ISO-8601 UTC
     ts_end: str | None = None  # ISO-8601 UTC
+    hosts: int = 0  # distinct hosts the session ran on
     msgs: int
     tokens_total: int
     tokens_input: int

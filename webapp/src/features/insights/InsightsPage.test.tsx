@@ -28,6 +28,11 @@ describe('InsightsPage', () => {
     vi.mocked(api.fetchGlobalStats).mockResolvedValue({
       lifetime: {
         tokens_total: 0,
+        tokens_input: 0,
+        tokens_output: 0,
+        tokens_cache_read: 0,
+        tokens_cache_create: 0,
+        tokens_reasoning: 0,
         tokens_cache: 0,
         cost_usd: 0,
         cost_cache: 0,

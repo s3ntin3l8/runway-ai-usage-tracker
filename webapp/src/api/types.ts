@@ -324,9 +324,10 @@ export interface TopSessionEntry {
   session_id: string;
   project: string | null;
   cwd: string | null;
-  sidecar_id: string | null; // the host that pushed the session's events
+  sidecar_id: string | null; // the host that pushed the session's latest event
   ts_start: string | null; // ISO-8601 UTC
   ts_end: string | null; // ISO-8601 UTC
+  hosts: number; // distinct hosts the session ran on
   msgs: number;
   tokens_total: number;
   tokens_input: number;

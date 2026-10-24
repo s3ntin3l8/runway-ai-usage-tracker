@@ -6,8 +6,10 @@ scoping to one provider+account the way ``query_sessions`` does. A session is
 identified by its id alone — the same id can carry events from more than one
 provider, so the row also reports the distinct providers that touched it.
 
-Rows with a NULL ``session_id`` (providers that never report one) are
-excluded: they are not a session and cannot be ranked as one.
+Rows with a NULL or empty ``session_id`` (providers that never report one, or
+report it blank) are excluded: they are not a session and cannot be ranked as
+one. The empty case matters — without it every such event collapses into one
+phantom session whose label is an empty id.
 """
 
 from datetime import datetime
@@ -33,16 +35,24 @@ def query_top_sessions(
 ) -> list[dict[str, Any]]:
     """Rank ``session_id`` across all providers/accounts in ``[since, until)``.
 
-    Each row carries the session's ``project`` / ``cwd`` / ``sidecar_id`` (the
-    host that pushed the events), its first and last event timestamp, the
-    token component sums + ``tokens_total``, ``cost_usd`` + ``cost_cache``,
-    ``msgs``, and the distinct ``providers`` / ``models`` that contributed.
-    ``metric`` ("tokens" | "cost") chooses the sort key; ``exclude_cache``
-    drops cache from that sort key only — the raw component fields stay
-    populated so the frontend can recompute either view.
+    Each row carries the session's ``project`` / ``cwd`` / ``sidecar_id`` — the
+    host that pushed its **latest** event, not a lexicographic maximum — its
+    first and last event timestamp, the token component sums +
+    ``tokens_total``, ``cost_usd`` + ``cost_cache``, ``msgs``, the number of
+    distinct ``hosts`` the session ran on, and the distinct ``providers`` /
+    ``models`` that contributed. ``metric`` ("tokens" | "cost") chooses the
+    sort key; ``exclude_cache`` drops cache from that sort key only — the raw
+    component fields stay populated so the frontend can recompute either view.
 
     The sort key is wrapped in SUM() because this query aggregates with
     GROUP BY — a bare column would order by an arbitrary row's value.
+
+    The describing columns (``project``, ``cwd``, ``sidecar_id``) come from the
+    session's latest event, because a session can move: it may start on one
+    host and finish on another, and MAX() would report the alphabetically
+    greatest of them while the UI reads the value as "the host that pushed
+    this". ``ranked`` numbers each session's events newest-first and the
+    aggregate keeps row 1's values.
     """
     until_clause = "AND ts < :until" if until is not None else ""
     provider_clause = "AND provider_id = :provider_id" if provider_id else ""
@@ -64,13 +74,41 @@ def query_top_sessions(
 
     sql = text(
         f"""
+        WITH ranked AS (
+            SELECT
+                session_id, id, ts, project, cwd, sidecar_id, model_id,
+                provider_id, event_id, turn_id,
+                tokens_input, tokens_output, tokens_cache_read,
+                tokens_cache_create, tokens_reasoning,
+                cost_usd, cost_input, cost_output,
+                cost_cache_read, cost_cache_create,
+                -- Newest first within the session, so row 1 is the session's
+                -- latest event. `id` breaks a tie on `ts` deterministically.
+                ROW_NUMBER() OVER (
+                    PARTITION BY session_id
+                    ORDER BY ts DESC, id DESC
+                ) AS rn
+            FROM usage_events
+            WHERE kind = 'message'
+              AND session_id IS NOT NULL
+              AND session_id != ''
+              AND ts >= :since
+              {until_clause}
+              {provider_clause}
+              {sidecar_clause}
+        )
         SELECT
             session_id,
-            MAX(project)                                       AS project,
-            MAX(cwd)                                           AS cwd,
-            MAX(sidecar_id)                                    AS sidecar_id,
+            -- The describing columns come from the session's latest event: a
+            -- session can move between hosts, and MAX() would report the
+            -- alphabetically greatest one while the UI reads the value as
+            -- "the host that pushed this".
+            MAX(CASE WHEN rn = 1 THEN project END)             AS project,
+            MAX(CASE WHEN rn = 1 THEN cwd END)                 AS cwd,
+            MAX(CASE WHEN rn = 1 THEN sidecar_id END)          AS sidecar_id,
             MIN(ts)                                            AS ts_start,
             MAX(ts)                                            AS ts_end,
+            COUNT(DISTINCT sidecar_id)                         AS hosts,
             -- The message count counts *turns*, not events: a provider that
             -- emits one event per API request (MiniMax Code) carries its own
             -- turn id, so its turns are counted distinctly. The key carries
@@ -94,13 +132,7 @@ def query_top_sessions(
             SUM(cost_cache_create)                              AS cost_cache_create,
             GROUP_CONCAT(DISTINCT provider_id)                  AS providers_csv,
             GROUP_CONCAT(DISTINCT model_id)                     AS models_csv
-        FROM usage_events
-        WHERE kind = 'message'
-          AND session_id IS NOT NULL
-          AND ts >= :since
-          {until_clause}
-          {provider_clause}
-          {sidecar_clause}
+        FROM ranked
         GROUP BY session_id
         ORDER BY {order_expr} DESC, ts_end DESC, session_id
         LIMIT :limit
@@ -131,6 +163,7 @@ def query_top_sessions(
                 "sidecar_id": row.sidecar_id,
                 "ts_start": iso_utc(ts_start) if ts_start else None,
                 "ts_end": iso_utc(ts_end) if ts_end else None,
+                "hosts": int(row.hosts or 0),
                 "msgs": int(row.msgs or 0),
                 "tokens_total": int(row.tokens_total or 0),
                 "tokens_input": int(row.tokens_input or 0),

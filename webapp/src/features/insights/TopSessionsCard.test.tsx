@@ -6,9 +6,22 @@ import { TopSessionsCard } from './TopSessionsCard';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
-vi.mock('@/components/charts/EChart', () => ({
-  EChart: ({ option }: { option: Record<string, unknown> }) => (
-    <div data-testid="echart" data-option={JSON.stringify(option)} />
+// Stub the ranking bar so the rows the card builds are directly readable —
+// the label and the subtitle (host, host count, providers) are what this
+// card is for, and they only reach the tooltip inside the real chart.
+vi.mock('@/components/charts/RankBar', () => ({
+  RankBar: ({
+    rows,
+  }: {
+    rows: Array<{ label: string; value: number; sub?: string }>;
+  }) => (
+    <div data-testid="rankbar">
+      {rows.map((row) => (
+        <div key={row.label} data-testid="rankrow" data-label={row.label} data-value={row.value}>
+          {row.sub}
+        </div>
+      ))}
+    </div>
   ),
 }));
 vi.mock('@/components/charts/theme', () => ({
@@ -28,6 +41,7 @@ const mockSession: TopSessionEntry = {
   sidecar_id: 'workstation',
   ts_start: '2026-05-21T10:00:00+00:00',
   ts_end: '2026-05-21T12:00:00+00:00',
+  hosts: 1,
   msgs: 10,
   tokens_total: 15000,
   tokens_input: 10000,
@@ -49,14 +63,8 @@ function makeResponse(sessions: TopSessionEntry[], metric: string) {
   return { sessions, metric, generated_at: new Date().toISOString() };
 }
 
-function capturedOption(): Record<string, unknown> {
-  const el = screen.getByTestId('echart');
-  return JSON.parse(el.getAttribute('data-option')!);
-}
-
-function stackedSeriesTotal(option: Record<string, unknown>): number {
-  const series = option.series as Array<{ data: number[] }>;
-  return series.reduce((sum, s) => sum + (s.data[0] ?? 0), 0);
+function firstRow(): HTMLElement {
+  return screen.getByTestId('rankrow');
 }
 
 describe('TopSessionsCard', () => {
@@ -69,9 +77,8 @@ describe('TopSessionsCard', () => {
 
   it('renders the session project as the row label', async () => {
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
-    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
-    const yAxis = capturedOption().yAxis as { data: string[] };
-    expect(yAxis.data).toContain('my-app');
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
+    expect(firstRow()).toHaveAttribute('data-label', 'my-app');
   });
 
   it('falls back to the session id when the session has no project', async () => {
@@ -79,24 +86,45 @@ describe('TopSessionsCard', () => {
       makeResponse([{ ...mockSession, project: null }], 'tokens'),
     );
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
-    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
-    const yAxis = capturedOption().yAxis as { data: string[] };
-    expect(yAxis.data).toContain('89abcdef');
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
+    expect(firstRow()).toHaveAttribute('data-label', '89abcdef');
+  });
+
+  it('names the host and the providers in the subtitle', async () => {
+    renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
+    expect(firstRow()).toHaveTextContent('89abcdef · workstation · via anthropic');
+  });
+
+  it('says so when a session ran on more than one host', async () => {
+    vi.mocked(api.fetchTopSessions).mockResolvedValue(
+      makeResponse([{ ...mockSession, hosts: 3 }], 'tokens'),
+    );
+    renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
+    expect(firstRow()).toHaveTextContent('3 hosts');
+  });
+
+  it('uses the fleet display name for the host', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'workstation', custom_name: 'My Laptop' }],
+    });
+    renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
+    expect(firstRow()).toHaveTextContent('My Laptop');
   });
 
   it('defaults to the tokens metric', async () => {
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
-    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
     const tabs = screen.getByRole('tablist', { name: 'Top sessions metric' });
     expect(within(tabs).getByRole('tab', { name: 'Tokens' })).toHaveAttribute('data-state', 'active');
-    expect(api.fetchTopSessions).toHaveBeenCalledWith(
-      expect.objectContaining({ metric: 'tokens' }),
-    );
+    expect(api.fetchTopSessions).toHaveBeenCalledWith(expect.objectContaining({ metric: 'tokens' }));
   });
 
   it('switches to the cost metric', async () => {
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
-    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
     const tabs = screen.getByRole('tablist', { name: 'Top sessions metric' });
     await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
     expect(api.fetchTopSessions).toHaveBeenCalledWith(expect.objectContaining({ metric: 'cost' }));
@@ -104,29 +132,29 @@ describe('TopSessionsCard', () => {
 
   it('scopes the query to the shared range', async () => {
     renderWithProviders(<TopSessionsCard range={{ days: 1 }} />);
-    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
     expect(api.fetchTopSessions).toHaveBeenCalledWith(expect.objectContaining({ days: 1 }));
   });
 
   it('maps the token totals', async () => {
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
-    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
-    expect(stackedSeriesTotal(capturedOption())).toBe(15000);
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
+    expect(firstRow()).toHaveAttribute('data-value', '15000');
   });
 
   it('maps the cost totals', async () => {
     vi.mocked(api.fetchTopSessions).mockResolvedValue(makeResponse([mockSession], 'cost'));
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
-    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
     const tabs = screen.getByRole('tablist', { name: 'Top sessions metric' });
     await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
-    await waitFor(() => expect(stackedSeriesTotal(capturedOption())).toBeCloseTo(0.15));
+    await waitFor(() => expect(Number(firstRow().getAttribute('data-value'))).toBeCloseTo(0.15));
   });
 
   it('shows skeleton during loading', () => {
     vi.mocked(api.fetchTopSessions).mockReturnValue(new Promise(() => {}));
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
-    expect(screen.queryByTestId('echart')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rankbar')).not.toBeInTheDocument();
     expect(document.querySelector('.shimmer-bg')).toBeInTheDocument();
   });
 

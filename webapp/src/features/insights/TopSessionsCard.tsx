@@ -4,8 +4,9 @@
 // detailed drill-down.
 //
 // Each row is labelled by project (falling back to the tail of the session
-// id) and names the host that pushed it, so a spike can be traced to a
-// machine without leaving the page.
+// id) and names the host that pushed the session's latest event, so a spike
+// can be traced to a machine without leaving the page. A session that moved
+// between machines says so.
 
 import { useState } from 'react';
 import type { TopSessionEntry } from '@/api/types';
@@ -33,10 +34,14 @@ function sessionRow(
   series: string[],
   hostNames: Map<string, string>,
 ): RankRow {
+  // `sidecar_id` is the host that pushed the session's *latest* event, so it
+  // is the host the session ended on. A session that moved between machines
+  // says so, rather than pretending it only ever ran on one.
   const host = s.sidecar_id ? (hostNames.get(s.sidecar_id) ?? s.sidecar_id) : 'unknown host';
   const sub = [
     shortSessionId(s.session_id),
     host,
+    ...(s.hosts > 1 ? [`${s.hosts} hosts`] : []),
     ...(s.providers.length ? [`via ${s.providers.join(', ')}`] : []),
   ].join(' · ');
   const label = s.project || shortSessionId(s.session_id);

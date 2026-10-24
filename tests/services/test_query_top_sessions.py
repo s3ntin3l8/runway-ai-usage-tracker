@@ -89,6 +89,77 @@ def test_excludes_null_session_id(db_session):
     assert [r["session_id"] for r in rows] == ["s1"]
 
 
+def test_excludes_an_empty_session_id(db_session):
+    """A blank id is not a session either — it would collapse every such event
+    into one phantom session with an empty label."""
+    _add(db_session, event_id="a", session_id="s1", tokens_input=100)
+    _add(db_session, event_id="b", session_id="", tokens_input=999)
+
+    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
+    assert [r["session_id"] for r in rows] == ["s1"]
+
+
+def test_describes_the_session_by_its_latest_event(db_session):
+    """A session that moved between hosts is described by where it ended."""
+    _add(
+        db_session,
+        event_id="early",
+        session_id="s1",
+        project="zulu",
+        cwd="/repo/zulu",
+        sidecar_id="zzz-host",
+        ts=datetime(2026, 5, 21, 10, 0, tzinfo=UTC),
+        tokens_input=10,
+    )
+    _add(
+        db_session,
+        event_id="late",
+        session_id="s1",
+        project="alpha",
+        cwd="/repo/alpha",
+        sidecar_id="aaa-host",
+        ts=datetime(2026, 5, 21, 11, 0, tzinfo=UTC),
+        tokens_input=10,
+    )
+
+    row = query_top_sessions(db_session, since=_SINCE, metric="tokens")[0]
+    assert row["sidecar_id"] == "aaa-host"
+    assert row["project"] == "alpha"
+    assert row["cwd"] == "/repo/alpha"
+
+
+def test_counts_the_hosts_a_session_ran_on(db_session):
+    _add(
+        db_session,
+        event_id="early",
+        session_id="s1",
+        sidecar_id="host-a",
+        ts=datetime(2026, 5, 21, 10, 0, tzinfo=UTC),
+        tokens_input=10,
+    )
+    _add(
+        db_session,
+        event_id="late",
+        session_id="s1",
+        sidecar_id="host-b",
+        ts=datetime(2026, 5, 21, 11, 0, tzinfo=UTC),
+        tokens_input=10,
+    )
+    _add(
+        db_session,
+        event_id="other",
+        session_id="s2",
+        sidecar_id="host-a",
+        ts=datetime(2026, 5, 21, 11, 0, tzinfo=UTC),
+        tokens_input=10,
+    )
+
+    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
+    assert rows[0]["session_id"] == "s1"
+    assert rows[0]["hosts"] == 2
+    assert rows[1]["hosts"] == 1
+
+
 def test_carries_the_project_host_and_models(db_session):
     _add(
         db_session,
