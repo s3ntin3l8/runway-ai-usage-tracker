@@ -691,6 +691,7 @@ async def get_credential_inventory(
     feeding the data. Never returns secret values."""
     from app.api.endpoints.fleet import visible_pending_rows
     from app.services.blocked_collection import blocked_collection
+    from app.services.blocked_sources import source_block_rows, source_blocks
 
     inventory = await build_credential_inventory()
     # "Unmapped" means what the Untagged list shows: rows that already have an effective
@@ -703,6 +704,9 @@ async def get_credential_inventory(
     for machine in inventory.machines:
         machine.unmapped_count = per_machine.get(machine.machine_id, 0)
     inventory.blocked_collection = blocked_collection(session, visible)
+    # Credential sources a machine found but could not read (a locked or app-bound
+    # browser cookie store). They are not "unmapped": there is no credential to map.
+    inventory.blocked_sources = source_blocks(session, source_block_rows(session))
     from app.services.credential_file_migration import get_file_migration_notice
 
     inventory.credential_file_migration_notice = get_file_migration_notice(session)

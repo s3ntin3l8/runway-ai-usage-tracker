@@ -4362,9 +4362,6 @@ def test_tag_endpoint_parks_a_credential_on_an_archived_account(
     # The origin is resolved: the pending row is gone, so the operator is not
     # nagged about a credential they already dealt with.
     assert PendingCredentialTagRepo.list_all(session) == []
-    listed = client.get("/api/v1/fleet/credentials/tags/pending")
-    assert listed.status_code == 200
-    assert listed.json()["items"] == []
 
 
 def test_tag_endpoint_reports_a_live_target_as_not_parked(client: TestClient, session: Session):
@@ -4622,3 +4619,277 @@ def test_parked_redirect_ships_no_hint_and_does_not_file_the_card(
     ).all()
     assert rows, "the ingest must still record the credential it received"
     assert [row.account_id for row in rows] != ["retired@example.com"]
+
+
+# A credential source the sidecar found but could not read (#711):
+#   POST /fleet/credentials/manifest  — sidecar reports a locked cookie store
+#   GET  /system/credentials           — the inventory lists it
+#   GET  /usage/fleet                  — the provider page reads it
+# ---------------------------------------------------------------------------
+
+
+def _blocked_entry(provider_id="ollama", reason="source_locked", origin=None):
+    return {
+        "provider_id": provider_id,
+        "credential_origin": origin or f"cookie:{provider_id}/Chrome/Default/Network/Cookies",
+        "reason": reason,
+        "source_store": "Chrome/Default/Network/Cookies",
+        "source_detail": "held open by another process",
+        "source_remedy": "set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers)",
+    }
+
+
+def _admin_headers() -> dict[str, str]:
+    from app.core.config import settings
+
+    return {"X-Admin-Key": settings.ADMIN_API_KEY} if settings.ADMIN_API_KEY else {}
+
+
+@pytest.fixture(name="inventory_session")
+def inventory_session_fixture(session: Session, monkeypatch):
+    """Point the credential inventory at the test session.
+
+    The inventory opens its own session on the app engine, so a test that
+    reads it needs the test engine instead.
+    """
+    from app.services import credential_inventory
+
+    monkeypatch.setattr(credential_inventory, "engine", session.get_bind())
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    return session
+
+
+def test_a_locked_cookie_store_is_recorded_as_an_unavailable_source(client, session):
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [_blocked_entry()],
+    }
+    result = _post_manifest(client, body)
+    assert result.status_code == 200, result.text
+
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert len(pending) == 1
+    row = pending[0]
+    assert row.reason == "source_locked"
+    assert row.source_store == "Chrome/Default/Network/Cookies"
+    assert row.source_detail == "held open by another process"
+    assert row.source_remedy.startswith("set OLLAMA_SESSION_TOKEN")
+
+
+def test_an_unavailable_source_is_not_an_untagged_credential(client, session, inventory_session):
+    """There is no credential to map, so it must not appear in the Untagged list."""
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [_blocked_entry()],
+    }
+    assert _post_manifest(client, body).status_code == 200
+
+    listed = client.get("/api/v1/fleet/credentials/tags/pending")
+    assert listed.status_code == 200
+    assert listed.json()["items"] == []
+
+    inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert inventory.status_code == 200, inventory.text
+    body_json = inventory.json()
+    assert body_json["unmapped_count"] == 0
+    assert [source["unmapped_count"] for source in body_json["machines"]] == [0]
+
+
+def test_an_unavailable_source_is_listed_with_its_store_and_remedy(client, inventory_session):
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [_blocked_entry()],
+    }
+    assert _post_manifest(client, body).status_code == 200
+
+    inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert inventory.status_code == 200, inventory.text
+    (blocked,) = inventory.json()["blocked_sources"]
+    assert blocked["provider_id"] == "ollama"
+    assert blocked["sidecar_id"] == "alpha-host"
+    assert blocked["credential_origin"] == "cookie:ollama/Chrome/Default/Network/Cookies"
+    assert blocked["source_store"] == "Chrome/Default/Network/Cookies"
+    assert blocked["reason"] == "source_locked"
+    assert blocked["detail"] == "held open by another process"
+    assert blocked["remedy"].startswith("set OLLAMA_SESSION_TOKEN")
+    assert blocked["collecting"] is False
+
+
+def test_the_fleet_view_carries_the_unavailable_sources(client):
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [_blocked_entry()],
+    }
+    assert _post_manifest(client, body).status_code == 200
+
+    fleet = client.get("/api/v1/usage/fleet")
+    assert fleet.status_code == 200, fleet.text
+    (blocked,) = fleet.json()["blocked_sources"]
+    assert blocked["provider_id"] == "ollama"
+    assert blocked["source_store"] == "Chrome/Default/Network/Cookies"
+
+
+def test_an_unavailable_source_disappears_when_the_store_becomes_readable(
+    client, session, inventory_session
+):
+    """The report is pruned the cycle the sidecar stops sending it."""
+    blocked_body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [_blocked_entry()],
+    }
+    assert _post_manifest(client, blocked_body).status_code == 200
+
+    readable_body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [],
+    }
+    assert _post_manifest(client, readable_body).status_code == 200
+
+    inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert inventory.status_code == 200, inventory.text
+    assert inventory.json()["blocked_sources"] == []
+
+
+def test_an_unavailable_source_disappears_when_the_provider_is_withheld(
+    client, session, inventory_session
+):
+    """The report is retired even when the provider is not reported as collected.
+
+    On macOS the sidecar withholds a provider with a native source from
+    ``completed_providers`` - a withheld scan must never read as a logout - so
+    the row cannot wait for the provider to be collected. Its lifecycle is the
+    report itself: the sidecar repeats it every cycle while the store stays
+    unreadable, and stops when the store reads fine.
+    """
+    blocked_body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": [],
+        "entries": [_blocked_entry()],
+    }
+    assert _post_manifest(client, blocked_body).status_code == 200
+
+    inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert inventory.status_code == 200, inventory.text
+    assert len(inventory.json()["blocked_sources"]) == 1
+
+    readable_body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": [],
+        "entries": [],
+    }
+    assert _post_manifest(client, readable_body).status_code == 200
+
+    inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert inventory.status_code == 200, inventory.text
+    assert inventory.json()["blocked_sources"] == []
+
+
+def test_a_withheld_token_outranks_an_unavailable_source_for_the_same_origin(client, session):
+    """One origin can be reported both ways; the louder reason wins."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    origin = "cookie:ollama/Chrome/Default/Network/Cookies"
+    for entries in (
+        [
+            _blocked_entry(origin=origin),
+            {**_blocked_entry(origin=origin), "reason": "token_withheld"},
+        ],
+        [
+            {**_blocked_entry(origin=origin), "reason": "token_withheld"},
+            _blocked_entry(origin=origin),
+        ],
+    ):
+        body = {
+            "sidecar_id": "alpha-host",
+            "completed_providers": ["ollama"],
+            "entries": entries,
+        }
+        assert _post_manifest(client, body).status_code == 200
+
+        pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+        assert [row.reason for row in pending] == ["token_withheld"]
+        # A withheld token is a credential awaiting an account, so it is untagged.
+        assert pending[0].source_store is None
+
+
+def test_an_older_sidecar_is_unaffected(client, session, inventory_session):
+    """A manifest without a source reason behaves exactly as before."""
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [{"provider_id": "ollama", "credential_origin": "provider:ollama"}],
+    }
+    assert _post_manifest(client, body).status_code == 200
+
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert [row.reason for row in pending] == [None]
+    inventory = client.get("/api/v1/system/credentials", headers=_admin_headers())
+    assert inventory.json()["blocked_sources"] == []
+    assert inventory.json()["unmapped_count"] == 1
+
+
+def test_an_unusable_source_without_details_is_recorded_bare(client, session):
+    """A sidecar that cannot name the store still gets the origin recorded.
+
+    The store, the detail and the remedy are all optional: a report that says
+    only "this origin is unreadable" is still true and still worth showing.
+    """
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [
+            {
+                "provider_id": "ollama",
+                "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+                "reason": "source_locked",
+            }
+        ],
+    }
+    result = _post_manifest(client, body)
+    assert result.status_code == 200, result.text
+
+    pending = PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host")
+    assert len(pending) == 1
+    row = pending[0]
+    assert row.reason == "source_locked"
+    assert row.source_store is None
+    assert row.source_detail is None
+    assert row.source_remedy is None
+
+
+def test_a_malformed_source_entry_is_dropped(client, session):
+    """A source report without a provider or an origin is not a row.
+
+    There is nothing to key the report on, so it is skipped rather than filed
+    against an empty provider.
+    """
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "completed_providers": ["ollama"],
+        "entries": [
+            {
+                "provider_id": "",
+                "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+                "reason": "source_locked",
+            },
+            {"provider_id": "ollama", "credential_origin": "", "reason": "source_locked"},
+        ],
+    }
+    result = _post_manifest(client, body)
+    assert result.status_code == 200, result.text
+
+    assert PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host") == []

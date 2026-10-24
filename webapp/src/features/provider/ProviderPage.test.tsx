@@ -51,6 +51,72 @@ describe('ProviderPage', () => {
     expect(await screen.findByText(/no data for this provider/i)).toBeInTheDocument();
   });
 
+  it('says the cookie store is unavailable instead of "no data" when it is', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue({
+      ...fleetResponse([]),
+      blocked_sources: [
+        {
+          sidecar_id: 'host-a',
+          provider_id: 'anthropic',
+          credential_origin: 'cookie:anthropic/Chrome/Default/Network/Cookies',
+          source_store: 'Chrome/Default/Network/Cookies',
+          reason: 'source_locked',
+          detail: 'held open by another process',
+          remedy: 'paste the cookie in Settings → Providers',
+          collecting: false,
+        },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText(/cookie store unavailable/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Chrome\/Default\/Network\/Cookies could not be read/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/no data for this provider/i)).not.toBeInTheDocument();
+  });
+
+  it('names the origin and no remedy when the server gives nothing else', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue({
+      ...fleetResponse([]),
+      blocked_sources: [
+        {
+          sidecar_id: 'host-a',
+          provider_id: 'anthropic',
+          credential_origin: 'cookie:anthropic/Chrome/Default/Network/Cookies',
+          source_store: null,
+          reason: 'source_locked',
+          detail: null,
+          remedy: null,
+          collecting: false,
+        },
+      ],
+    });
+    renderPage();
+    expect(
+      await screen.findByText(
+        /cookie:anthropic\/Chrome\/Default\/Network\/Cookies could not be read\./i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the plain empty state when the blocked source belongs to another provider', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue({
+      ...fleetResponse([]),
+      blocked_sources: [
+        {
+          sidecar_id: 'host-a',
+          provider_id: 'ollama',
+          credential_origin: 'cookie:ollama/Chrome/Default/Network/Cookies',
+          source_store: 'Chrome/Default/Network/Cookies',
+          reason: 'source_locked',
+          collecting: false,
+        },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText(/no data for this provider/i)).toBeInTheDocument();
+  });
+
   it('switches tabs and reflects them in the URL', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     renderPage();

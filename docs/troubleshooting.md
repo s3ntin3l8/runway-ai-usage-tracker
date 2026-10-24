@@ -130,6 +130,13 @@ sidecar reads it directly, with no restart and no policy change. The environment
 variable and the Settings → Providers paste both work regardless of which browser you
 use.
 
+**The dashboard knows about it too.** The sidecar reports the unusable store to the
+server, so the provider is not silently empty: the Home page shows a "Cookie store
+unavailable" banner, Settings → Credentials has an "Unavailable" tab naming the store,
+the reason and the fix, and the provider's own page says *why* there is no data instead
+of "No data for this provider". The report disappears on its own once the store
+is readable again and the sidecar stops reporting it.
+
 ## Dashboard cards or account attribution look wrong
 
 Before digging into logs, check Settings → Data health — a stale `default`-keyed

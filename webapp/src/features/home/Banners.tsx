@@ -6,8 +6,23 @@
 import { CredentialFileMigrationNotice } from '@/components/CredentialFileMigrationNotice';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { AlertTriangle, BellOff, HeartPulse, KeyRound, TrendingUp, Unlink, X } from 'lucide-react';
-import type { AnomalyEntry, CredentialInventory, DataHealthReport, FleetEntry } from '@/api/types';
+import {
+  AlertTriangle,
+  BellOff,
+  HeartPulse,
+  KeyRound,
+  Lock,
+  TrendingUp,
+  Unlink,
+  X,
+} from 'lucide-react';
+import type {
+  AnomalyEntry,
+  BlockedSource,
+  CredentialInventory,
+  DataHealthReport,
+  FleetEntry,
+} from '@/api/types';
 import { timeAgo } from '@/lib/format';
 import { cardStale, failingReason, reasonMentionsKeepAlive } from '@/lib/quota';
 import { cn } from '@/lib/cn';
@@ -35,6 +50,10 @@ interface BannersProps {
 export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersProps) {
   const unhealthy = credentialsNeedingAttention(credentials);
   const blocked = credentials?.blocked_collection ?? [];
+  // A credential source a machine could not read only matters while its provider is
+  // dark: when another source covers the provider, the locked store is worth knowing
+  // about but not worth a banner.
+  const blockedSources = (credentials?.blocked_sources ?? []).filter((s) => !s.collecting);
   const machineNames = new Map((credentials?.machines ?? []).map((m) => [m.machine_id, m.name]));
   const spikes = anomalies ?? [];
   const failing = (fleet ?? []).filter((e) => {
@@ -56,6 +75,11 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
     unmapped: fingerprintOf(
       blocked.map((b) => `${b.sidecar_id}/${b.provider_id}/${b.credential_origin}`),
     ),
+    // The reason is part of the fingerprint: a store that becomes readable and locks
+    // again is a new problem and should re-show a banner dismissed for the old state.
+    sourceBlocked: fingerprintOf(
+      blockedSources.map((s) => `${s.sidecar_id}/${s.provider_id}/${s.source_store}/${s.reason}`),
+    ),
     // Status is part of the fingerprint on purpose: expiring -> expired (or a recovery and a
     // relapse) is a new problem and should re-show a banner dismissed for the old state.
     credentials: fingerprintOf(
@@ -74,6 +98,10 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
   const kinds: Record<string, { active: boolean; loaded: boolean }> = {
     collection: { active: failing.length > 0, loaded: fleet !== undefined },
     unmapped: { active: blocked.length > 0, loaded: credentials !== undefined },
+    'source-blocked': {
+      active: blockedSources.length > 0,
+      loaded: credentials !== undefined,
+    },
     credentials: { active: unhealthy.length > 0, loaded: credentials !== undefined },
     anomalies: { active: spikes.length > 0, loaded: anomalies !== undefined },
     'alert-channel': { active: noAlertChannel, loaded: healthLoaded },
@@ -112,6 +140,14 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
     const reason = staleCard ? failingReason(staleCard) : null;
     const label = when ? `${name} (last ok ${timeAgo(when)})` : name;
     return reason ? `${label}: ${reason}` : label;
+  };
+
+  const blockedSourceLabel = (s: BlockedSource): string => {
+    const machine = machineNames.get(s.sidecar_id) ?? s.sidecar_id;
+    const store = s.source_store ?? s.credential_origin;
+    const detail = s.detail ? ` (${s.detail})` : '';
+    const remedy = s.remedy ? ` ${s.remedy}.` : '';
+    return `Cookie store unavailable on ${machine} — quota for ${s.provider_id} won't collect until ${store} is readable${detail}.${remedy}`;
   };
 
   return (
@@ -174,6 +210,28 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
               className="font-medium underline underline-offset-2"
             >
               Assign account
+            </Link>
+          </span>
+        </Banner>
+      ) : null}
+      {kinds['source-blocked'].active ? (
+        <Banner
+          tone="critical"
+          icon={<Lock className="size-4 shrink-0" aria-hidden />}
+          kind="source-blocked"
+          fingerprint={fp.sourceBlocked}
+        >
+          <span>
+            {blockedSources.length === 1
+              ? blockedSourceLabel(blockedSources[0])
+              : `${blockedSources.length} cookie stores are unreadable — quota for ${[
+                  ...new Set(blockedSources.map((s) => s.provider_id)),
+                ].join(', ')} won't collect until they are readable.`}{' '}
+            <Link
+              to="/settings/credentials?view=unavailable"
+              className="font-medium underline underline-offset-2"
+            >
+              Review sources
             </Link>
           </span>
         </Banner>

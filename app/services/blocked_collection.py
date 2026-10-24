@@ -39,18 +39,22 @@ def withholds_token(row: PendingCredentialTag) -> bool:
     return row.provider_id not in SERVER_IDENTITY_PROVIDERS
 
 
-def blocked_collection(
-    session: Session, visible_rows: Iterable[PendingCredentialTag], *, now: datetime | None = None
-) -> list[BlockedCollectionView]:
-    """Unmapped, token-withheld origins whose provider has no fresh collection."""
-    rows = [row for row in visible_rows if withholds_token(row)]
-    if not rows:
-        return []
+def collecting_providers(
+    session: Session, provider_ids: Iterable[str], *, now: datetime | None = None
+) -> set[str]:
+    """The providers that have had a successful collection from any enabled source.
+
+    One definition of "is this provider collecting?", shared by the withheld-credential
+    report and the unusable-source report, so the two can never disagree about whether a
+    provider is still working.
+    """
+    if not provider_ids:
+        return set()
     cutoff = (now or datetime.now(UTC)) - FRESH_WINDOW
     collecting: set[str] = set()
     for source in session.exec(
         select(CredentialSource).where(
-            CredentialSource.provider_id.in_({row.provider_id for row in rows})  # type: ignore[attr-defined]
+            CredentialSource.provider_id.in_(set(provider_ids))  # type: ignore[attr-defined]
         )
     ).all():
         succeeded = source.last_success_at
@@ -59,6 +63,17 @@ def blocked_collection(
                 succeeded = succeeded.replace(tzinfo=UTC)
             if succeeded >= cutoff:
                 collecting.add(source.provider_id)
+    return collecting
+
+
+def blocked_collection(
+    session: Session, visible_rows: Iterable[PendingCredentialTag], *, now: datetime | None = None
+) -> list[BlockedCollectionView]:
+    """Unmapped, token-withheld origins whose provider has no fresh collection."""
+    rows = [row for row in visible_rows if withholds_token(row)]
+    if not rows:
+        return []
+    collecting = collecting_providers(session, {row.provider_id for row in rows}, now=now)
     return [
         BlockedCollectionView(
             sidecar_id=row.sidecar_id,

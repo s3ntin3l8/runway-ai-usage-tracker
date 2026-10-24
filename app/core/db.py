@@ -212,6 +212,11 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("pending_credential_tags", "verify_attempts", "INTEGER NOT NULL DEFAULT 0"),
     ("pending_credential_tags", "next_verify_at", "DATETIME"),
     ("pending_credential_tags", "reason", "VARCHAR"),
+    # The unusable source behind a "source_*" reason (a browser cookie store the
+    # browser holds open, or one whose values are app-bound encrypted).
+    ("pending_credential_tags", "source_store", "TEXT"),
+    ("pending_credential_tags", "source_detail", "TEXT"),
+    ("pending_credential_tags", "source_remedy", "TEXT"),
     ("credential_tags", "target_provider_id", "VARCHAR"),
     ("credential_sources", "verified_subject", "TEXT"),
     ("credential_sources", "verified_subject_account", "TEXT"),

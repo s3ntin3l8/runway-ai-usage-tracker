@@ -522,6 +522,42 @@ browser that keeps a store locked cannot flood the log. See
 [troubleshooting.md](troubleshooting.md) for what each reason means and what
 to do about it.
 
+The sidecar also reports the unusable store to the server, so the provider
+is not silently empty. Each blocked store travels in the credential manifest
+as one entry per provider that wanted a cookie from it:
+
+```json
+{
+  "provider_id": "ollama",
+  "credential_origin": "cookie:ollama/Chrome/Default/Network/Cookies",
+  "reason": "source_locked",
+  "source_store": "Chrome/Default/Network/Cookies",
+  "source_detail": "held open by another process",
+  "source_remedy": "set OLLAMA_SESSION_TOKEN (or paste the cookie in Settings → Providers)"
+}
+```
+
+`reason` is one of `source_locked` (the browser holds the store open),
+`source_unsupported` (the values are app-bound encrypted) or `source_unreadable`
+(the file could not be read for another reason). The entry carries no cookie
+value, no account id and no filesystem path. The server shows it on the Home
+banner, in Settings → Credentials → Unavailable, and on the provider page.
+
+Its lifecycle is the report itself: the sidecar repeats it every cycle while
+the store stays unreadable, and the server drops it as soon as the sidecar
+stops reporting that store — the cycle the store reads fine again. That is
+deliberately not the lifecycle of a credential row: a report about a store is
+not something the operator has to tag, and on macOS the sidecar withholds a
+provider with a native source from `completed_providers` (a withheld scan must
+never read as a logout), so a row that waited for the provider to be collected
+would outlive the store it describes.
+
+`source_detail` and `source_remedy` are free text the server shows as sent. The
+bundled sidecar only ever sends the fixed sentences above, but the server does
+not enforce that: a manifest is trusted on this point the same way it is trusted
+for the origins it reports, so the strings are bounded in length and escaped on
+display rather than filtered.
+
 ## Troubleshooting
 
 ### Sidecar not collecting
