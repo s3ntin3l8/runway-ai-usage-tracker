@@ -6,7 +6,7 @@ import { claudeConnectionLabel } from '@/lib/providerFamilies';
 // the follow-up PR.
 //
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Archive, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -54,6 +54,10 @@ export function ProviderDetailDialog({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [editingDiscovered, setEditingDiscovered] = useState<ProviderAccount | null>(null);
   const [discoveredLabel, setDiscoveredLabel] = useState('');
+  // The master toggle's scope: which accounts the switch speaks for. The
+  // description carries it, and the switch points at it with
+  // aria-describedby so the qualifier reaches a screen reader too.
+  const masterToggleScopeId = useId();
 
   // Master enabled toggle: enables/disables every account under this provider
   // via N PUTs (one per account). For v1 the backend has no batch endpoint;
@@ -257,7 +261,10 @@ export function ProviderDetailDialog({
                 <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
                 <div>
                   <p className="text-[13px] font-medium">All accounts enabled</p>
-                  <p className="text-[11px] text-fg-subtle">
+                  {/* The scope of the switch lives here. It is wired to the
+                      switch with aria-describedby so a screen reader gets the
+                      qualifier with the name, not only on screen. */}
+                  <p id={masterToggleScopeId} className="text-[11px] text-fg-subtle">
                     Turning this off hides the provider from collection for every account this
                     card can address. An account whose provider is unavailable is left as it is.
                   </p>
@@ -268,6 +275,7 @@ export function ProviderDetailDialog({
                 disabled={addressableConfigAccounts.length === 0 || setMasterEnabled.isPending}
                 onCheckedChange={(v) => setMasterEnabled.mutate(v)}
                 aria-label="All accounts enabled"
+                aria-describedby={masterToggleScopeId}
               />
             </div>
 

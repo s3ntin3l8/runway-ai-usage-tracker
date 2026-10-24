@@ -879,4 +879,24 @@ describe('ProviderDetailDialog — an account it cannot address (#795)', () => {
       screen.getByText(/every account this card can address/i),
     ).toBeInTheDocument();
   });
+
+  it('points the master toggle at the copy that states its scope', async () => {
+    const reachable: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [{ ...alice, enabled: true, provider_id: 'anthropic' }],
+      account_count: 1,
+    };
+    renderFamily(reachable, [reachable, strangerConnection]);
+
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    // The scope has to be programmatically attached, not only on screen: the
+    // accessible name alone does not say which accounts the switch covers.
+    const describedBy = toggle.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)).toHaveTextContent(
+      /every account this card can address/i,
+    );
+  });
 });
