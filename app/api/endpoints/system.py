@@ -45,11 +45,17 @@ from app.services.account_identity import (
     canonical_account_id,
 )
 from app.services.account_merges import (
+    MERGE_MODELS,
     MergeJournal,
+    UnmergePlan,
+    UnmergeRefusedError,
     is_merged_away,
     merged_accounts,
+    preview_unmerge,
     record_account_merge,
     resolve_merged_account,
+    row_identity_keys,
+    unmerge_account,
 )
 from app.services.billing_type import UNKNOWN, BillingType, detect_billing_type
 from app.services.collector_manager import manager
@@ -1243,23 +1249,8 @@ def _account_merge_rows(
     session: Session, provider_id: str, source_id: str, destination_id: str
 ) -> list[tuple[Any, Sequence[Any], list[Any]]]:
     """Load account scoped records and identify duplicate logical identities."""
-    from app.models.db import (
-        LatestUsage,
-        LatestUsageContribution,
-        QuotaSnapshot,
-        UsageEvent,
-        UsageWindow,
-    )
-
-    models: list[Any] = [
-        UsageEvent,
-        LatestUsage,
-        LatestUsageContribution,
-        QuotaSnapshot,
-        UsageWindow,
-    ]
     result: list[tuple[Any, Sequence[Any], list[Any]]] = []
-    for model in models:
+    for model in MERGE_MODELS:
         source = session.exec(
             select(model).where(model.provider_id == provider_id, model.account_id == source_id)
         ).all()
@@ -1268,21 +1259,7 @@ def _account_merge_rows(
                 model.provider_id == provider_id, model.account_id == destination_id
             )
         ).all()
-        unique_sets = [
-            tuple(column.name for column in constraint.columns)
-            for constraint in model.__table__.constraints
-            if constraint.__class__.__name__ == "UniqueConstraint"
-        ]
-        unique_sets.extend(
-            tuple(column.name for column in index.columns)
-            for index in model.__table__.indexes
-            if index.unique
-        )
-        keys = [
-            tuple(name for name in names if name not in ("provider_id", "account_id", "id"))
-            for names in unique_sets
-        ]
-        keys = [key for key in keys if key]
+        keys = row_identity_keys(model)
         # A row is colliding if any declared uniqueness identity matches.
         collisions = []
         for row in source:
@@ -1501,6 +1478,11 @@ async def apply_provider_account_merge(
         else:
             src.enabled = False
             src.archived = True
+            # Whether the account held a secret at all: the merge wipes the
+            # secret either way, but "wiped a secret there was" and "wiped
+            # nothing" are not the same loss, and the un-merge's preview must
+            # only claim what is true.
+            journal.had_credential = bool(src.api_key_encrypted or src.session_cookie_encrypted)
             src.api_key_encrypted = None
             src.session_cookie_encrypted = None
             journal.config_outcome = "archived"
@@ -1558,6 +1540,124 @@ async def apply_provider_account_merge(
         "destination_account_id": destination_id,
         "collisions_removed": collisions,
     }
+
+
+class _AccountUnmergeRequest(BaseModel):
+    provider_id: str
+    source_account_id: str
+    confirm_collisions: bool = False
+    #: The number of rows in the way the preview showed. The rows may have
+    #: changed since — and a confirmation the operator gave for a different
+    #: set of rows is not a confirmation of these.
+    previewed_collisions: int = 0
+
+
+def _unmerge_response(plan: UnmergePlan) -> dict[str, Any]:
+    return {
+        "provider_id": plan.provider_id,
+        "source_account_id": plan.source_account_id,
+        "destination_account_id": plan.destination_account_id,
+        "rows": plan.rows,
+        "credential_sources": plan.credential_sources,
+        "credential_tags": plan.credential_tags,
+        "contributions": plan.contributions,
+        "config": plan.config,
+        "total_collisions": plan.collisions,
+        "rows_in_the_way": plan.rows_in_the_way,
+        "not_restored": plan.not_restored,
+    }
+
+
+@router.post("/provider-account-unmerge/preview")
+@limiter.limit("20/minute")
+async def preview_provider_account_unmerge(
+    request: Request,
+    body: _AccountUnmergeRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """What undoing one merge would put back — and what it cannot.
+
+    A merge moves the account's history and its credential to the
+    destination. Undoing it puts them back; what the merge destroyed (the
+    duplicates it dropped, the stored credential it wiped) does not come
+    back, and the preview says so rather than losing it silently.
+    """
+    if body.provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    try:
+        plan = preview_unmerge(session, body.provider_id, body.source_account_id)
+    except UnmergeRefusedError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return _unmerge_response(plan)
+
+
+@router.post("/provider-account-unmerge/apply")
+@limiter.limit("10/minute")
+async def apply_provider_account_unmerge(
+    request: Request,
+    body: _AccountUnmergeRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Undo one merge: the account's history, its credential and its name go
+    back to the account they came from.
+
+    The rows the merge moved are recorded by id, so the un-merge knows
+    exactly which rows to put back — the destination's own rows stay.
+    """
+    if body.provider_id not in manager.collector_registry:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    try:
+        plan = unmerge_account(
+            session,
+            body.provider_id,
+            body.source_account_id,
+            confirm_collisions=body.confirm_collisions,
+            previewed_collisions=body.previewed_collisions,
+        )
+    except UnmergeRefusedError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    session.commit()
+    # The cached bundle goes back with the credential: the durable
+    # contribution has been re-filed already, and the cache reloads every
+    # durable bundle on the next revision change.
+    for credential_source_id in plan.credential_sources:
+        await token_cache.move_source(
+            body.provider_id,
+            plan.destination_account_id,
+            plan.source_account_id,
+            credential_source_id,
+        )
+    auth_failures.clear(body.provider_id, plan.source_account_id)
+    manager._last_sync_time = 0.0
+    for account_id in (plan.source_account_id, plan.destination_account_id):
+        try:
+            await manager.reset_collector(body.provider_id, account_id)
+        except Exception:
+            logger.exception(
+                "Could not reset collector after account unmerge: %s/%s",
+                scrub_log(body.provider_id),
+                scrub_log(account_id),
+            )
+    from app.core.cache import cache_clear
+    from app.services.poller import poller
+
+    cache_clear()
+    poller.wake()
+    audit_log.record(
+        session,
+        request,
+        action="provider.account_unmerge",
+        target_id=f"{body.provider_id}/{plan.source_account_id}",
+        payload={
+            "destination_account_id": plan.destination_account_id,
+            # The destructive part of the un-merge: how many rows it dropped
+            # to make room for the rows the merge moved.
+            "collisions_removed": plan.collisions,
+        },
+    )
+    return {"status": "unmerged", **_unmerge_response(plan)}
 
 
 @router.put("/provider-account-label/{provider_id}/{account_id}")

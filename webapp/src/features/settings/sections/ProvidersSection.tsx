@@ -26,10 +26,17 @@ import { toast } from 'sonner';
 import {
   deleteProviderConfig,
   fetchUntaggedCredentials,
+  previewAccountUnmerge,
   putDashboardLayout,
   putProviderConfig,
+  unmergeProviderAccount,
 } from '@/api/endpoints';
-import type { CredentialProviderView, DashboardLayout, ProviderConfig } from '@/api/types';
+import type {
+  CredentialProviderView,
+  DashboardLayout,
+  ProviderConfig,
+  UnmergePlan,
+} from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -38,6 +45,7 @@ import { Input } from '@/components/ui/Input';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
+import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { useProviderConfigs } from '@/features/home/queries';
 import { useCredentialInventory } from './credentials/queries';
@@ -57,6 +65,155 @@ import { timeAgo } from '@/lib/format';
 function accountName(provider: ProviderConfig, accountId: string): string {
   const account = provider.accounts.find((a) => a.account_id === accountId);
   return account ? labelOrMaskedId(account) : maskAccountId(accountId);
+}
+
+/**
+ * The tables a merge moves, in words the operator can read.
+ */
+const UNMERGE_TABLE_LABELS: Record<string, string> = {
+  usage_events: 'usage events',
+  latest_usage: 'quota cards',
+  latest_usage_contributions: 'quota card sources',
+  usage_windows: 'usage windows',
+  quota_snapshots: 'quota snapshots',
+};
+
+function unmergeSummary(plan: UnmergePlan): string {
+  const parts = Object.entries(plan.rows).map(
+    ([table, count]) => `${count} ${UNMERGE_TABLE_LABELS[table] ?? table.replaceAll('_', ' ')}`,
+  );
+  if (plan.credential_sources.length > 0) {
+    parts.push(
+      `${plan.credential_sources.length} credential source${plan.credential_sources.length === 1 ? '' : 's'}`,
+    );
+  }
+  if (plan.contributions > 0) {
+    parts.push(`${plan.contributions} credential bundle${plan.contributions === 1 ? '' : 's'}`);
+  }
+  if (plan.credential_tags > 0) {
+    parts.push(`${plan.credential_tags} tag${plan.credential_tags === 1 ? '' : 's'}`);
+  }
+  return parts.length > 0 ? `Back to this account: ${parts.join(', ')}.` : 'Nothing to move back.';
+}
+
+/**
+ * Undo a merge: the account's history, its credential and its name go back to
+ * the account they came from.
+ *
+ * The preview states what goes back and what does not — the duplicates the
+ * merge dropped and the stored credential it wiped are gone for good — and the
+ * operator reads that before confirming.
+ */
+function UnmergeButton({
+  providerId,
+  accountId,
+  onUnmerged,
+}: {
+  providerId: string;
+  accountId: string;
+  onUnmerged: () => void;
+}) {
+  const [plan, setPlan] = useState<UnmergePlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [acknowledge, setAcknowledge] = useState(false);
+  // The account is an account again: the fleet, the credential inventory and
+  // the provider cards all read that state, so they refresh together.
+  const invalidateCredentialViews = useInvalidateCredentialViews();
+
+  const openPreview = async () => {
+    setOpen(true);
+    setPlan(null);
+    setError(null);
+    setAcknowledge(false);
+    try {
+      setPlan(await previewAccountUnmerge(providerId, accountId));
+    } catch (previewError) {
+      // A merge that cannot be reversed says so here, in place — the operator
+      // reads why instead of getting a toast and an empty panel.
+      setError(errorMessage(previewError, 'Could not read what the un-merge would do'));
+    }
+  };
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      // The count the preview showed goes with the request: the server
+      // refuses when the rows in the way changed since, because the operator
+      // confirmed a different set of rows.
+      await unmergeProviderAccount(
+        providerId,
+        accountId,
+        acknowledge,
+        plan?.total_collisions ?? 0,
+      );
+      toast.success('Account unmerged');
+      setOpen(false);
+      invalidateCredentialViews();
+      onUnmerged();
+    } catch (unmergeError) {
+      toast.error(errorMessage(unmergeError, 'Could not un-merge account'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <Button variant="secondary" size="sm" onClick={openPreview}>
+        Unmerge
+      </Button>
+    );
+  }
+
+  const blocked = (plan?.total_collisions ?? 0) > 0;
+  return (
+    <div className="flex w-full flex-col gap-2 border-t border-border pt-2">
+      {error ? (
+        <p className="text-xs text-fg-muted">{error}</p>
+      ) : plan ? (
+        <>
+          <p className="text-xs text-fg-muted">{unmergeSummary(plan)}</p>
+          {plan.not_restored.length > 0 ? (
+            <p className="text-xs text-fg-muted">
+              Not restored: {plan.not_restored.join('; ')}.
+            </p>
+          ) : null}
+          {blocked ? (
+            <label className="flex items-center gap-2 text-xs text-fg-muted">
+              <input
+                type="checkbox"
+                checked={acknowledge}
+                onChange={(event) => setAcknowledge(event.target.checked)}
+              />
+              {plan.total_collisions} row{plan.total_collisions === 1 ? '' : 's'} that got in the
+              way {plan.total_collisions === 1 ? 'is' : 'are'} replaced by the rows the merge
+              moved.
+            </label>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-xs text-fg-muted">Reading what the un-merge would do…</p>
+      )}
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        {error ? null : (
+          <Button
+            variant="primary"
+            size="sm"
+            loading={busy}
+            disabled={!plan || (blocked && !acknowledge)}
+            onClick={run}
+          >
+            Unmerge
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -458,8 +615,8 @@ function ProvidersSectionV2({
 
       {/* The accounts that were merged away. They are not accounts any more —
           the merge moved their history and their credential to the destination
-          — so this list only says where each of them went. It is inert: there
-          is nothing to restore, edit or remove. */}
+          — so this list says where each of them went, and offers the one thing
+          that can still be done: putting the merge back. */}
       {mergedAccounts.length > 0 ? (
         <section className="mt-6 max-w-2xl" aria-label="Merged provider accounts">
           <h3 className="mb-2 text-sm font-semibold">Merged accounts ({mergedAccounts.length})</h3>
@@ -480,6 +637,11 @@ function ProvidersSectionV2({
                 </div>
                 <Badge variant="neutral">Merged</Badge>
                 <span className="text-[11px] text-fg-subtle">{timeAgo(merged.merged_at)}</span>
+                <UnmergeButton
+                  providerId={provider.provider_id}
+                  accountId={merged.account_id}
+                  onUnmerged={() => configs.refetch()}
+                />
                 {leftover?.archived && leftover.has_usage_events === false ? (
                   <PermanentDeleteButton
                     providerId={provider.provider_id}

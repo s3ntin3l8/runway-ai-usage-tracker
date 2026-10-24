@@ -350,6 +350,29 @@ not journalled — the duplicates it deleted are gone, and so is the provider
 credential it wiped. A merge performed before the journal existed has no
 journal, and cannot be reversed.
 
+The un-merge is the way back:
+`POST /api/v1/system/provider-account-unmerge/apply` puts a journalled merge
+back. The rows the merge moved go to the account they came from, the credential
+sources and the durable contributions follow, the provider row is restored, and
+the merge record is deleted — so the retired id names an account again, and the
+guard that refused to restore it stops refusing. `preview` says what would go
+back and what cannot: the duplicates the merge dropped and the stored
+credential it wiped stay gone.
+
+What the un-merge does **not** do is take the destination's *own* rows back:
+what the destination had before the merge, and what it collected afterwards, is
+the destination's and stays. The rows that go back are the ones the merge
+carried over — which means the destination loses the quota card that came from
+the source, and rebuilds it on the next collection. The one thing that is
+dropped is a row that got in the way — an account recreated under the same id
+while the merge was in force — and only after the operator confirms it: the
+original history wins, because restoring it is the point. The confirmation is
+for a *count*, not a yes: the request carries the number the preview showed,
+and the un-merge refuses when the rows in the way changed since, because the
+operator confirmed a different set of rows. A chain is unwound from the end
+(alice → bob → carol: undo bob → carol first), since undoing the middle link
+would rewrite the chain twice.
+
 A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
 the hint before the account was archived was still applying it, because the
 manifest's `resolved` map was merged into the sidecar's cache and a merge

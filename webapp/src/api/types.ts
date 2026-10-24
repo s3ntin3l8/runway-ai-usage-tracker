@@ -926,6 +926,28 @@ export interface MergedAccount {
   merged_at: string;
 }
 
+/**
+ * What undoing a merge would put back — and what it cannot. The duplicates
+ * the merge dropped and the credential it wiped do not come back, and the
+ * preview says so instead of losing them silently.
+ */
+export interface UnmergePlan {
+  provider_id: string;
+  source_account_id: string;
+  destination_account_id: string;
+  /** The rows that go back, per table. */
+  rows: Record<string, number>;
+  credential_sources: string[];
+  credential_tags: number;
+  contributions: number;
+  /** What happened to the source's provider row: renamed | archived | absent. */
+  config: string;
+  total_collisions: number;
+  /** The rows that got in the way, per table — replaced by the rows the merge moved. */
+  rows_in_the_way: Record<string, number>;
+  not_restored: string[];
+}
+
 export interface ProviderAccount {
   account_id: string;
   // Which provider this account belongs to. The Claude family groups several

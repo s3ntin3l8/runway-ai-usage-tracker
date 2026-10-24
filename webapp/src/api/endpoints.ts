@@ -38,6 +38,7 @@ import type {
   PendingUsageMapping,
   PendingUsageSessionsResponse,
   ProviderConfig,
+  UnmergePlan,
   SessionEntry,
   SessionsPaginatedResponse,
   Sidecar,
@@ -398,6 +399,32 @@ export const patchCredentialSources = (
     body: JSON.stringify({ sources, all_machines: allMachines }),
   });
 };
+
+// --- Account merge / un-merge ---------------------------------------------
+
+export const previewAccountUnmerge = (providerId: string, accountId: string) =>
+  api<UnmergePlan>('/api/v1/system/provider-account-unmerge/preview', {
+    method: 'POST',
+    body: JSON.stringify({ provider_id: providerId, source_account_id: accountId }),
+  });
+
+export const unmergeProviderAccount = (
+  providerId: string,
+  accountId: string,
+  confirmCollisions = false,
+  previewedCollisions = 0,
+) =>
+  api<UnmergePlan & { status: string }>('/api/v1/system/provider-account-unmerge/apply', {
+    method: 'POST',
+    body: JSON.stringify({
+      provider_id: providerId,
+      source_account_id: accountId,
+      confirm_collisions: confirmCollisions,
+      // The count the preview showed: the server refuses when the rows in the
+      // way changed since, because the confirmation was for other rows.
+      previewed_collisions: previewedCollisions,
+    }),
+  });
 
 export const deleteProviderConfig = (providerId: string, accountId: string, permanent = false) =>
   api<{ status: string }>(
