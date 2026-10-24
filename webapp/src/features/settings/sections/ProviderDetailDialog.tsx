@@ -370,7 +370,14 @@ export function ProviderDetailDialog({
                               <button
                                 type="button"
                                 role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2"
+                                // An account the dialog cannot address has no
+                                // provider to open. Marked disabled for
+                                // assistive tech and dimmed, but still
+                                // clickable: a `disabled` button swallows the
+                                // click and says nothing, and the operator is
+                                // better served by being told why.
+                                aria-disabled={account.source !== 'discovered' && !providerOf(account)}
+                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2 aria-disabled:opacity-50"
                                 onClick={() => {
                                   setMenuFor(null);
                                   if (account.source === 'discovered') {

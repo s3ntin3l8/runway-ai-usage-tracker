@@ -626,7 +626,10 @@ describe('ProviderDetailDialog — the Claude family', () => {
     renderFamily(subscription, [subscription, discoveredConsole]);
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /actions for api org/i }));
-    await userEvent.click(within(dialog).getByRole('menuitem', { name: /edit/i }));
+    const editItem = within(dialog).getByRole('menuitem', { name: /edit/i });
+    // A discovered account's provider is known, so Edit is available.
+    expect(editItem).toHaveAttribute('aria-disabled', 'false');
+    await userEvent.click(editItem);
 
     const input = await screen.findByLabelText(/display label/i);
     await userEvent.clear(input);
@@ -706,7 +709,13 @@ describe('ProviderDetailDialog — an account it cannot address (#795)', () => {
     renderFamily();
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /actions for stranger/i }));
-    await userEvent.click(within(dialog).getByRole('menuitem', { name: /edit/i }));
+    const editItem = within(dialog).getByRole('menuitem', { name: /edit/i });
+
+    // Marked as unavailable for assistive tech, and dimmed — but still
+    // clickable, because the operator is better served by an explanation than
+    // by a button that swallows the click.
+    expect(editItem).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(editItem);
 
     // The operator hears why nothing happened, instead of the menu closing
     // and leaving them to guess whether the click landed.
