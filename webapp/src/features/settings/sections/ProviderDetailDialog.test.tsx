@@ -702,6 +702,36 @@ describe('ProviderDetailDialog — an account it cannot address (#795)', () => {
     expect(screen.queryByText(/Account not found/i)).not.toBeInTheDocument();
   });
 
+  it('says why it cannot edit an account it cannot address', async () => {
+    renderFamily();
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /actions for stranger/i }));
+    await userEvent.click(within(dialog).getByRole('menuitem', { name: /edit/i }));
+
+    // The operator hears why nothing happened, instead of the menu closing
+    // and leaving them to guess whether the click landed.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/cannot edit stranger — its provider is not available/i),
+      ),
+    );
+    expect(screen.queryByText(/^Edit account ·/)).not.toBeInTheDocument();
+  });
+
+  it('disables the master toggle when no account is addressable', async () => {
+    const onlyStranger: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [stranger],
+      account_count: 1,
+    };
+    renderFamily(onlyStranger, [onlyStranger]);
+
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    expect(toggle).toBeDisabled();
+  });
+
   it('names the account it could not address instead of claiming a family-wide change', async () => {
     vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
     renderFamily();
@@ -717,11 +747,49 @@ describe('ProviderDetailDialog — an account it cannot address (#795)', () => {
     // The toast names what was skipped — it does not claim all accounts changed.
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/1 of 2 accounts enabled; 1 skipped \(Stranger\)/),
+        expect.stringMatching(/1 account enabled; 1 skipped \(Stranger\)/),
       ),
     );
     expect(toast.success).not.toHaveBeenCalledWith(
       expect.stringMatching(/all accounts enabled/),
+    );
+  });
+
+  it('names how many accounts the toggle changed', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderFamily(subscription, [subscription]);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringMatching(/all accounts enabled \(1 changed\)/),
+      ),
+    );
+  });
+
+  it('pluralises the count it reports', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    const two: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [
+        { ...alice, account_id: 'a@example.com', enabled: false, provider_id: 'anthropic' },
+        { ...bob, account_id: 'b@example.com', enabled: false, provider_id: 'anthropic' },
+      ],
+      account_count: 2,
+    };
+    renderFamily(two, [two]);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringMatching(/all accounts enabled \(2 changed\)/),
+      ),
     );
   });
 });
