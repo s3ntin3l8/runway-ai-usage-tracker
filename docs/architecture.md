@@ -484,10 +484,14 @@ Workflows live in `.github/workflows/`.
     it only lands when the pin moves — but it can break the packaging when
     it does, and a push run cannot catch that, because it ran before the
     release did.
-- **`security-validation.yml`** — the trust-boundary and recovery tests: the
-    browser boundaries and the real reverse-proxy boundaries on Linux, and the
-    native Windows swap, rollback and recovery regressions. The packaging half
-    of the old workflow lives in `frozen-verifier.yml`.
+- **`security-validation.yml`** — the trust-boundary and recovery tests, in
+    three jobs that share no state: the browser boundaries, which run in the
+    digest-pinned Playwright image so the runner's apt mirror cannot spend
+    the budget before the checks run ([#876](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/876));
+    the real reverse-proxy boundaries, which need the Python set and Docker
+    but no browser and carry the immutable-reference check; and the native
+    Windows swap, rollback and recovery regressions. The packaging half of the
+    old workflow lives in `frozen-verifier.yml`.
 - **`image-security.yml` / `image-security-arm64.yml`** — the candidate
     image is built and scanned for known vulnerabilities. The amd64 leg runs
     on every pull request; the arm64 leg is a native build on an ARM runner

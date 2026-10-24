@@ -14,6 +14,13 @@ The comparison runs in both directions. A reference nothing records is a pin no
 one vouches for. A recorded revision no workflow uses is a record that has
 drifted away from the workflows it was written for.
 
+The container images a job runs in are pinned the same way, by digest. A tag
+moves under the build exactly like a branch does, and the Playwright image
+carries the browsers the browser matrix tests with, so the tag is checked
+against the Playwright version the repository locks: a bump of the lockfile
+that does not move the image would otherwise run the checks against browsers
+the repository does not pin.
+
 Usage: python scripts/check_workflow_pins.py
 """
 
@@ -29,9 +36,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PINS_FILE = REPO_ROOT / "scripts" / "action_pins.json"
 PINS_LABEL = "scripts/action_pins.json"
+LOCKFILE = REPO_ROOT / "webapp" / "package-lock.json"
 
 REVISION = re.compile(r"[0-9a-f]{40}")
 USE = re.compile(r"\s*(?:-\s*)?uses:\s*([^\s#]+)")
+IMAGE = re.compile(r"\s*(?:-\s*)?image:\s*([^\s#]+)")
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+#: The version a container tag carries, e.g. ``v1.64.1-noble`` -> ``1.64.1``.
+VERSION = re.compile(r"v?(\d+\.\d+\.\d+)")
+#: The image that carries the browsers the browser matrix runs with.
+PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright"
 
 
 @dataclass(frozen=True)
@@ -42,6 +56,49 @@ class Reference:
     line: int
     action: str
     revision: str
+
+
+@dataclass(frozen=True)
+class Image:
+    """One container image reference in a workflow file."""
+
+    path: str
+    line: int
+    reference: str
+
+    @property
+    def name(self) -> str:
+        """The image reference without its digest."""
+        return self.reference.split("@", 1)[0]
+
+    @property
+    def repository(self) -> str:
+        """The image without its tag."""
+        head, separator, tail = self.name.rpartition("/")
+        if separator and ":" in tail:
+            # A registry can carry a port (``localhost:5000/image``).
+            return f"{head}/{tail.split(':', 1)[0]}"
+        return self.name.split(":", 1)[0]
+
+    @property
+    def tag(self) -> str:
+        """The tag, or an empty string when the reference carries none."""
+        head, separator, tail = self.name.rpartition("/")
+        if separator:
+            return tail.partition(":")[2]
+        return self.name.partition(":")[2]
+
+    @property
+    def digest(self) -> str:
+        """The digest, or an empty string when the reference carries none."""
+        _, separator, digest = self.reference.partition("@")
+        return digest if separator else ""
+
+    @property
+    def version(self) -> str | None:
+        """The version the tag carries, e.g. ``1.64.1``."""
+        match = VERSION.search(self.tag)
+        return match.group(1) if match else None
 
 
 def references(root: Path) -> list[Reference]:
@@ -64,6 +121,22 @@ def references(root: Path) -> list[Reference]:
     return found
 
 
+def images(root: Path) -> list[Image]:
+    """Every container image reference in the workflows under ``root``.
+
+    A job's ``container`` and a ``services`` entry are both ``image:``
+    references, and both are images the runner pulls by name.
+    """
+    found: list[Image] = []
+    for path in sorted(root.glob("*.y*ml")):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            match = IMAGE.match(line)
+            if not match:
+                continue
+            found.append(Image(path.name, number, match.group(1)))
+    return found
+
+
 def load_pins(path: Path = PINS_FILE) -> dict[str, str]:
     """The recorded revision of each external action."""
     try:
@@ -77,7 +150,66 @@ def load_pins(path: Path = PINS_FILE) -> dict[str, str]:
     return {str(action): str(revision) for action, revision in data.items()}
 
 
-def findings(root: Path, pins: dict[str, str]) -> list[str]:
+def locked_playwright(path: Path = LOCKFILE) -> str | None:
+    """The Playwright version the repository locks, or None when it cannot tell.
+
+    The lockfile is the record of the browser version the matrix runs against;
+    the image carries the browsers themselves.
+    """
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    packages = data.get("packages")
+    if not isinstance(packages, dict):
+        return None
+    entry = packages.get("node_modules/playwright-core")
+    if not isinstance(entry, dict):
+        return None
+    version = entry.get("version")
+    return str(version) if version else None
+
+
+def image_findings(root: Path, lockfile: Path = LOCKFILE) -> list[str]:
+    """Everything wrong with the container images the workflows run."""
+    problems: list[str] = []
+    locked = locked_playwright(lockfile)
+    for image in images(root):
+        if not DIGEST.fullmatch(image.digest):
+            problems.append(
+                f"{image.path}:{image.line}: {image.reference} is not pinned to a "
+                "digest. A tag moves under the build exactly like a branch does, "
+                "so pin the image to its sha256 digest."
+            )
+            continue
+        if image.repository != PLAYWRIGHT_IMAGE:
+            continue
+        version = image.version
+        if locked is None:
+            problems.append(
+                f"{image.path}:{image.line}: the Playwright image {image.reference} "
+                "cannot be checked against the locked Playwright, because the "
+                "lockfile pins no version. A check that cannot run is not a "
+                "check; the lockfile has to state the version the image "
+                "carries."
+            )
+        elif version is None:
+            problems.append(
+                f"{image.path}:{image.line}: the Playwright image {image.reference} "
+                "carries no version, so it cannot be checked against the locked "
+                "Playwright."
+            )
+        elif version != locked:
+            problems.append(
+                f"{image.path}:{image.line}: the Playwright image is {image.tag}, "
+                f"but the lockfile pins playwright-core at {locked}. The baked "
+                "browsers would not match the locked Playwright; move the tag "
+                "and the digest in the same change as the lockfile."
+            )
+    return problems
+
+
+def findings(root: Path, pins: dict[str, str], lockfile: Path = LOCKFILE) -> list[str]:
     """Everything that has to be fixed before the workflows can be trusted."""
     problems: list[str] = []
     used: set[str] = set()
@@ -108,6 +240,7 @@ def findings(root: Path, pins: dict[str, str]) -> list[str]:
             )
     for action in sorted(set(pins) - used):
         problems.append(f"{action} is recorded in {PINS_LABEL}, but no workflow uses it")
+    problems.extend(image_findings(root, lockfile))
     return problems
 
 
