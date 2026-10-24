@@ -4626,6 +4626,109 @@ def test_parked_redirect_ships_no_hint_and_does_not_file_the_card(
     assert [row.account_id for row in rows] != ["retired@example.com"]
 
 
+# ---------------------------------------------------------------------------
+# A retired account holds no credential (#895)
+#
+# The machine still has the credential file and keeps pushing it, so the
+# ingest resolves the credential to the retired account again. The source
+# record stays (the operator still sees the machine reporting it, under the
+# archived account) — but the secret is not kept: not in the cache, not at
+# rest. A retired account is not a place a live credential can live.
+# ---------------------------------------------------------------------------
+
+
+async def test_ingest_does_not_store_the_secret_of_a_retired_account(
+    client: TestClient, session: Session
+):
+    """The record stays; the secret does not.
+
+    The eviction of the archive write path (#891) was undone by the machine's
+    next push: the credential was filed under the retired account again. The
+    source record must still be filed there — the operator needs to see that
+    a machine reports a credential for the account they retired — but nothing
+    live may be held for it.
+    """
+    from app.services.credential_sources import sidecar_source_id
+    from app.services.token_cache import token_cache
+
+    account_id = "retired@example.test"
+    origin = "path:/home/u/.kimi/credentials.json"
+    _add_archived_provider_config(session, provider_id="kimi_coding", account_id=account_id)
+
+    response = _ingest(
+        client,
+        "alpha-host",
+        [_token_card("kimi_coding", origin, "sk-retired", account_id=account_id)],
+    )
+    assert response.status_code == 200, response.text
+
+    # The record stays under the retired account.
+    rows = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == "kimi_coding",
+            CredentialSource.credential_origin == origin,
+        )
+    ).all()
+    assert [(row.account_id, row.source_id) for row in rows] == [
+        (account_id, sidecar_source_id("alpha-host", origin))
+    ]
+
+    # But no secret is held for it — neither in the cache nor at rest.
+    assert (
+        await token_cache.get_with_metadata("kimi_coding", account_id=account_id, exact=True)
+        is None
+    )
+    assert account_id not in token_cache._source_cache.get("kimi_coding", {})
+
+
+async def test_restoring_a_retired_account_lets_the_next_push_store_the_credential_again(
+    client: TestClient, session: Session
+):
+    """Retiring is reversible: the machine still has the credential file.
+
+    Once the account is live again, the next push files the credential under
+    it — nothing else has to be done by the operator.
+    """
+    from app.services.token_cache import token_cache
+
+    account_id = "restored@example.test"
+    origin = "path:/home/u/.kimi/credentials.json"
+    row = _add_provider_config(
+        session, provider_id="kimi_coding", account_id=account_id, enabled=True
+    )
+    row.archived = True
+    row.enabled = False
+    session.add(row)
+    session.commit()
+
+    card = _token_card("kimi_coding", origin, "sk-restored", account_id=account_id)
+    response = _ingest(client, "alpha-host", [card])
+    assert response.status_code == 200, response.text
+    assert (
+        await token_cache.get_with_metadata("kimi_coding", account_id=account_id, exact=True)
+        is None
+    )
+
+    row.archived = False
+    row.enabled = True
+    session.add(row)
+    session.commit()
+
+    # A different body: the ingest rejects a replayed one.
+    response = _ingest(
+        client,
+        "alpha-host",
+        [_token_card("kimi_coding", origin, "sk-restored-again", account_id=account_id)],
+    )
+    assert response.status_code == 200, response.text
+
+    tokens, _metadata = await token_cache.get_with_metadata(
+        "kimi_coding", account_id=account_id, exact=True
+    )
+    assert tokens is not None
+    assert tokens.get("api_key") == "sk-restored-again"
+
+
 # A credential source the sidecar found but could not read (#711):
 #   POST /fleet/credentials/manifest  — sidecar reports a locked cookie store
 #   GET  /system/credentials           — the inventory lists it

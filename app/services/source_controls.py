@@ -21,6 +21,7 @@ from app.models.db import (
 )
 from app.models.source_controls import ScraperReport
 from app.services import sidecar_devices
+from app.services.account_identity import canonical_account_id
 from app.services.credential_sources import sidecar_source_id
 from scripts.sidecar_pkg.source_catalog import (
     control_catalog as catalog,
@@ -243,6 +244,37 @@ def save_contribution(
     bump(session)
     _ENABLED = True
     return row
+
+
+def retire_contributions_for_account(session: Session, provider_id: str, account_id: str) -> int:
+    """Drop the durable contributions filed under a retired account.
+
+    A contribution holds the credential's secret at rest, and the cache
+    reloads every durable bundle from the snapshot on the next revision bump —
+    so a contribution filed under a retired account puts the secret back into
+    that account's slot. Retiring the account retires them.
+
+    The account id is compared canonically: a contribution stores the id the
+    ingest gave it, and the cache canonicalises it on the way in.
+
+    Returns the number of contributions retired.
+    """
+    reserve_source_writes(session)
+    wanted = canonical_account_id(account_id)
+    rows = session.exec(
+        select(SidecarSourceContribution).where(
+            SidecarSourceContribution.provider_id == provider_id
+        )
+    ).all()
+    retired = [row for row in rows if canonical_account_id(row.account_id or "") == wanted]
+    for row in retired:
+        session.delete(row)
+    if retired:
+        # The cache reloads on the next revision change: without this the
+        # retired account's bundle would stay until some unrelated write
+        # happened to bump the revision.
+        bump(session)
+    return len(retired)
 
 
 def queue_command(

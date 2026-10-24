@@ -517,16 +517,33 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # token-derived placeholder identity; use a stable host+origin key while
         # identity is pending so token rotations do not create orphan entries.
         cache_account_id = pending_cache_slot(p_id, source_id) if identity_pending else a_id
+        # A retired account holds no credential: the source record stays (the
+        # operator still sees the machine reporting it) but the secret is not
+        # kept — not in the cache, not at rest. The same predicate the
+        # inventory's marker, the refresher's rule and the parked-mapping check
+        # use, so the four can never disagree. A credential whose identity is
+        # still pending belongs to no account at all, so the rule does not
+        # apply to it.
+        retired_account = not identity_pending and parked.is_parked_account(
+            p_id, cache_account_id or ""
+        )
         if p_id in ("anthropic", "anthropic_console") and not identity_pending:
             # A pending source is cache-keyed by its stable source_id. Retire
             # that placeholder even if its durable CredentialSource row was
             # lost; otherwise its OAuth bundle survives beside the resolved one.
             await token_cache.remove_source(p_id, source_id, source_id, retire_matching_oauth=True)
-        bundle_changed = bool(origin) and not await _bundle_holds(
-            p_id, cache_account_id or "default", source_id, p_tokens
+        bundle_changed = (
+            False
+            if retired_account
+            else bool(origin)
+            and not await _bundle_holds(p_id, cache_account_id or "default", source_id, p_tokens)
         )
         secret_changed = bool(identity_pending and bundle_changed)
-        if enrolled_device is not None:
+        if retired_account:
+            # Keep the record, drop the secret: nothing is accepted for a
+            # retired account, so there is nothing to retry either.
+            actual_acc_id = cache_account_id or a_id or "default"
+        elif enrolled_device is not None:
             actual_acc_id = cache_account_id or "default"
             if p_id == "anthropic" and (
                 p_tokens.get("oauth_read_only") == "1"

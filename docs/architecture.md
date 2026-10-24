@@ -275,6 +275,23 @@ credential also survives as a durable contribution that the cache reloads on
 the next snapshot revision. Whether a credential parked on a retired account
 should be cached at all is a separate design call.
 
+A **retired account holds no credential at all** — the rule the eviction
+intends. The machine keeps pushing, so the ingest used to file the secret
+under the retired account again (and, for an enrolled machine, keep it at rest
+as a durable contribution that the cache reloads on the next snapshot
+revision). Now a credential resolved to a retired account is *recorded but not
+stored*: the source row stays filed under the account — the operator still sees
+that a machine reports a credential for the account they retired, marked
+`archived` — while the secret is kept nowhere: not in the cache, not at rest.
+Archiving the account also retires the durable contributions filed under it, so
+the retired account holds nothing from that moment. Restoring the account
+reverses it: the machine's next push files the credential under it again.
+
+The two views therefore split: the **credential inventory** lists the retired
+account's credential (it is the operator's record of what a machine reports),
+while **Token Health** does not (it lists what is live — nothing is collectable
+with a retired account's credential, and nothing to refresh).
+
 A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
 the hint before the account was archived was still applying it, because the
 manifest's `resolved` map was merged into the sidecar's cache and a merge

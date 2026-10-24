@@ -1286,6 +1286,27 @@ async def test_archived_account_is_marked_in_the_inventory(engine, cache):
 
 
 @pytest.mark.asyncio
+async def test_a_retired_account_still_lists_its_parked_credential(engine, cache):
+    """Visible but inert (#895).
+
+    A retired account holds no credential: nothing live is kept for it. The
+    source record stays, so the operator still sees that a machine reports a
+    credential for the account they retired — under the archived account,
+    marked as such, not silently dropped.
+    """
+    with Session(engine) as s:
+        s.add(ProviderConfig(provider_id="gemini", account_id=ALICE, enabled=False, archived=True))
+        _source(s)
+    inv = await build_inventory()
+
+    acct, by_id = _sources(inv)
+    assert acct.archived is True
+    assert set(by_id) == {"sidecar:a"}
+    # Nothing live is held for it: the source is a record, not a credential.
+    assert by_id["sidecar:a"].live is False
+
+
+@pytest.mark.asyncio
 async def test_live_account_is_not_marked_archived(engine, cache):
     with Session(engine) as s:
         s.add(ProviderConfig(provider_id="gemini", account_id=ALICE, enabled=True, archived=False))

@@ -680,3 +680,44 @@ def test_known_windows_origin_retains_lifecycle(session):
     assert session.get(SidecarSourceContribution, contribution.id).payload_encrypted is None
     with pytest.raises(ValueError, match="not authorized"):
         source_controls.contribution_proof(session, device.device_id, "github", origin, None)
+
+
+def test_retire_contributions_for_account_drops_only_that_account(session):
+    """Retiring an account drops the secret it holds at rest for it — and
+    nothing else.
+
+    The contribution carries the credential's secret, and the cache reloads
+    every durable bundle on the next revision change, so a contribution filed
+    under a retired account would put the secret back into that account's
+    slot. The account id is compared canonically: a contribution stores the id
+    the ingest gave it.
+    """
+    device, retired = seed(session, account="Retired@Example.test")
+    _other, live = seed(session, account="live@example.test")
+
+    assert (
+        source_controls.retire_contributions_for_account(
+            session, "anthropic", "retired@example.test"
+        )
+        == 1
+    )
+    session.commit()
+
+    assert session.get(SidecarSourceContribution, retired.id) is None
+    # Another account's credential is none of the retired account's business.
+    assert session.get(SidecarSourceContribution, live.id) is not None
+    assert device is not None
+
+
+def test_retire_contributions_for_account_leaves_an_unknown_account_alone(session):
+    _device, contribution = seed(session, account="live@example.test")
+
+    assert (
+        source_controls.retire_contributions_for_account(
+            session, "anthropic", "someone-else@example.test"
+        )
+        == 0
+    )
+    session.commit()
+
+    assert session.get(SidecarSourceContribution, contribution.id) is not None

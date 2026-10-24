@@ -37,7 +37,7 @@ from app.models.db import (
     WebhookCredentialAlert,
 )
 from app.models.schemas import CredentialInventory, LimitCard, SidecarDownloadsResponse
-from app.services import audit_log, auth_failures
+from app.services import audit_log, auth_failures, source_controls
 from app.services.account_identity import (
     EMAIL_RE,
     HASH_RE,
@@ -1454,6 +1454,12 @@ async def apply_provider_account_merge(
             src.archived = True
             src.api_key_encrypted = None
             src.session_cookie_encrypted = None
+    # The merge retires the source account id — renamed or archived — and the
+    # secret it still holds at rest under that id goes with it: the cache
+    # reloads every durable bundle on the next revision change, so the retired
+    # id would get it back. Part of the merge transaction: a failed commit
+    # leaves the source account and its credential alone.
+    source_controls.retire_contributions_for_account(session, body.provider_id, source_id)
     session.commit()
     # The merge retires the source account: its config row was renamed to the
     # destination or archived (or it had none at all — a machine-discovered
@@ -2183,6 +2189,10 @@ async def delete_provider_config_for_account(
                 col(CredentialSource.account_id) == account_id,
             )
         )
+        # A legacy row that was archived before this path retired the secret
+        # still has it at rest — and the cache would reload it. A deleted
+        # account holds no credential either.
+        source_controls.retire_contributions_for_account(session, provider_id, account_id)
         session.delete(row)
     else:
         # Soft-archive instead of hard-delete (see docstring). Remove is
@@ -2193,6 +2203,11 @@ async def delete_provider_config_for_account(
         row.session_cookie = None
         row.oai_sc_cookie = None
         session.add(row)
+        # A retired account holds no credential: retire the secret this
+        # account still holds at rest for it (the cache reloads every durable
+        # bundle on the next revision change, so the retired account would get
+        # it back without this).
+        source_controls.retire_contributions_for_account(session, provider_id, account_id)
     session.commit()
 
     # Drop the in-memory token cache entry. The async lock is held inside
@@ -2933,6 +2948,14 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
             await _store_manual_config_source(session, provider_id, account_id, tokens)
 
+    if body.archived:
+        # Retire the secret the server still holds at rest for this account:
+        # an enrolled machine's credential lives in a durable contribution, and
+        # the cache reloads every durable bundle on the next revision change —
+        # so the retired account would get it back without this. Part of the
+        # archive transaction: a failed commit leaves the account and its
+        # credential alone.
+        source_controls.retire_contributions_for_account(session, provider_id, account_id)
     session.commit()
     # A replaced/removed credential deserves a fresh verdict: drop any stale
     # "provider rejected it" flag so the next collection re-evaluates.

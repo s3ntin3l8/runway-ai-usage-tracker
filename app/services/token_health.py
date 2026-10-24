@@ -19,6 +19,7 @@ from app.models.db import CredentialSource, ProviderConfig, SidecarRegistry
 from app.services import auth_failures
 from app.services.account_identity import canonical_account_id
 from app.services.credential_provider import CredentialProvider
+from app.services.credential_tags import archived_account_pairs_from_configs
 from app.services.token_cache import _OAUTH_CREDENTIAL_KEYS, TokenCache, token_cache
 from app.services.token_refresher import (
     _REFRESH_ENDPOINTS,
@@ -411,6 +412,21 @@ class TokenHealthService:
         except Exception as e:
             logger.warning(f"Could not load sidecar names for token health: {e}")
 
+        # Two readers, one query: the retired accounts (a retired account holds
+        # no live credential — see #895) and the dashboard-saved credentials
+        # further down. Its own block, so a failure here is reported as what
+        # it is rather than as a missing sidecar name.
+        configs: list[ProviderConfig] = []
+        try:
+            with Session(engine) as _s:
+                configs = list(_s.exec(sqlselect(ProviderConfig)).all())
+        except Exception as e:
+            logger.warning(f"Could not load ProviderConfig credentials for token health: {e}")
+        # A retired account holds no live credential: its source record stays
+        # visible in the credential inventory, but nothing live is held for it,
+        # so Token Health has nothing to report about it.
+        retired_accounts = archived_account_pairs_from_configs(configs)
+
         durable_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
         for item in durable_sources:
             durable_by_account.setdefault((item.provider_id, item.account_id), []).append(item)
@@ -433,6 +449,11 @@ class TokenHealthService:
 
         for provider, accounts in stats.items():
             for acc_id, info in accounts.items():
+                if (provider, canonical_account_id(acc_id)) in retired_accounts:
+                    # A retired account holds no live credential — but the cache
+                    # can still hold one for a cycle (a push that raced the
+                    # archive). Token Health only lists what is live.
+                    continue
                 tokens = await token_cache.get(provider, acc_id) or {}
                 if provider == "anthropic" and tokens.get("oauth_token") in source_oauth_values:
                     tokens = {
@@ -528,6 +549,11 @@ class TokenHealthService:
         for durable_source in durable_sources:
             provider_id = durable_source.provider_id
             account_id = durable_source.account_id
+            if (provider_id, canonical_account_id(account_id)) in retired_accounts:
+                # A retired account holds no live credential: the credential
+                # inventory keeps the source visible under the archived
+                # account, but Token Health only lists what is live.
+                continue
             candidates = candidates_by_account.get((provider_id, account_id), [])
             live = next(
                 (item for item in candidates if item.get("source_id") == durable_source.source_id),
@@ -600,12 +626,9 @@ class TokenHealthService:
         # These are stored encrypted in ProviderConfig but never flow through token_cache
         # under their own row, so they would otherwise be invisible to the panel.
         try:
-            with Session(engine) as _s:
-                configs = _s.exec(
-                    sqlselect(ProviderConfig).where(ProviderConfig.enabled == True)  # noqa: E712
-                ).all()
-
             for cfg in configs:
+                if not cfg.enabled:
+                    continue
                 account = cfg.account_id or "default"
                 for value, prefix, token_type in (
                     (cfg.api_key, "config", "api_key"),
