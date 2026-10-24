@@ -183,6 +183,61 @@ describe('UntaggedCredentialsDialog', () => {
     await user.click(link); // exercise the link without error
   });
 
+  it('closes the dialog when the Provider Settings link is followed', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={onClose} />);
+
+    const dialog = await screen.findByRole('dialog');
+    await user.click(
+      await within(dialog).findByRole('link', { name: /add one in provider settings/i }),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the dialog when the restore link of an archived account is followed', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [entry],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          ...anthropicRow,
+          accounts: [{ ...anthropicRow.accounts[0], enabled: false, archived: true }],
+        },
+      ],
+    });
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={onClose} />);
+
+    const dialog = await screen.findByRole('dialog');
+    await user.click(
+      await within(dialog).findByRole('link', { name: /restore it in provider settings/i }),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers no "Add one" link for Hermes, which has no provider row to add', async () => {
+    vi.mocked(api.fetchUntaggedCredentials).mockResolvedValue({
+      items: [{ sidecar_id: 'laptop', provider_id: 'hermes', credential_origin: 'provider:hermes' }],
+      counts_by_sidecar: { laptop: 1 },
+    });
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({ providers: [] });
+    renderWithProviders(<UntaggedCredentialsDialog open={true} onClose={vi.fn()} />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/calls other providers' accounts/i)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('link')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/add one in provider settings/i)).not.toBeInTheDocument();
+  });
+
   it('names the machine and links to Provider Settings without a full page reload', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({
       sidecars: [{ sidecar_id: 'laptop', hostname: 'laptop', custom_name: 'My Laptop' }] as never,
