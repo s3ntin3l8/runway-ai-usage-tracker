@@ -870,16 +870,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             # in latest_usage — their events are filed under the real providers
             # they call — so without this their extractor runs only on a full
             # cycle. A scheduling id only: never a provider, card or UI row.
-            scheduled = {row.provider_id for row in enabled_provider_rows} | passive_pids
-            event_pids = SIDECAR_ONLY_EVENT_PROVIDERS - scheduled
-
             provider_intervals = (
                 [
                     (row.provider_id, row.poll_interval_seconds or global_interval)
                     for row in enabled_provider_rows
                 ]
                 + [(pid, global_interval) for pid in sorted(passive_pids)]
-                + [(pid, global_interval) for pid in sorted(event_pids)]
+                + [(pid, global_interval) for pid in sorted(SIDECAR_ONLY_EVENT_PROVIDERS)]
             )
 
             poll_providers, trigger = fleet_registry.get_due_providers(
