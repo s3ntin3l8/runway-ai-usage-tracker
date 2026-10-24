@@ -26,8 +26,10 @@ from app.models.schemas import (
     LimitCard,
     LimitsResponse,
     SourceAppsResponse,
+    TopHostsResponse,
     TopModelsResponse,
     TopProjectsResponse,
+    TopSessionsResponse,
     TopToolsResponse,
 )
 from app.services.collector_manager import manager
@@ -54,8 +56,10 @@ from app.services.queries import (
     query_projects,
     query_sessions_paginated,
     query_source_apps,
+    query_top_hosts,
     query_top_models,
     query_top_projects,
+    query_top_sessions,
     query_top_tools,
 )
 
@@ -1592,6 +1596,123 @@ async def get_top_projects(
         )
         return TopProjectsResponse.model_validate(
             {"projects": projects, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+        )
+
+    result = await asyncio.to_thread(_work)
+    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    return result
+
+
+@router.get("/top-sessions")
+@limiter.limit("30/minute")
+async def get_top_sessions(
+    request: Request,
+    metric: str = Query(default="tokens", pattern="^(tokens|cost)$"),
+    days: float | None = Query(default=None, ge=0.01, le=365.0),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    exclude_cache: bool = Query(default=False),
+    provider_id: str | None = Query(default=None),
+    sidecar_id: str | None = None,
+    limit: int = Query(default=15, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> TopSessionsResponse:
+    """Rank sessions by tokens or cost across ALL providers/accounts.
+
+    The session analog of `/top-projects`: it answers "which session drove
+    that spike" in one glance, without scoping to a single provider+account
+    the way `/usage/sessions` does. Each row carries the session's project,
+    cwd and pushing host (`sidecar_id`).
+
+    Range resolution mirrors `/top-models`: an explicit `since`/`until`
+    (exclusive) pair wins; else the last `days`; else the current month on the
+    user's local calendar.
+
+    Offloaded to a worker thread via `asyncio.to_thread` (see
+    `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
+    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    """
+    provider_id = _normalize_filter(provider_id)
+    cache_key = (
+        f"top-sessions:{metric}:{days}:{since}:{until}:{exclude_cache}:"
+        f"{provider_id}:{sidecar_id}:{limit}"
+    )
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _work() -> TopSessionsResponse:
+        sessions = query_top_sessions(
+            session,
+            since=_resolve_ranking_since(session, since, days),
+            until=parse_iso8601_utc(until) if until else None,
+            metric=metric,
+            exclude_cache=exclude_cache,
+            provider_id=provider_id,
+            sidecar_id=sidecar_id,
+            limit=limit,
+        )
+        return TopSessionsResponse.model_validate(
+            {"sessions": sessions, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+        )
+
+    result = await asyncio.to_thread(_work)
+    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    return result
+
+
+@router.get("/top-hosts")
+@limiter.limit("30/minute")
+async def get_top_hosts(
+    request: Request,
+    metric: str = Query(default="tokens", pattern="^(tokens|cost)$"),
+    days: float | None = Query(default=None, ge=0.01, le=365.0),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    exclude_cache: bool = Query(default=False),
+    provider_id: str | None = Query(default=None),
+    sidecar_id: str | None = None,
+    limit: int = Query(default=15, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> TopHostsResponse:
+    """Rank the hosts that pushed events by tokens or cost, across ALL
+    providers/accounts.
+
+    The host analog of `/top-projects`: it answers "which machine drove that
+    spike". A host is the `sidecar_id` of the events — the hostname that
+    pushed them — so the ranking follows the same identity the Fleet page
+    shows. Events with no pushing host are not attributable and are excluded.
+
+    Range resolution mirrors `/top-models`: an explicit `since`/`until`
+    (exclusive) pair wins; else the last `days`; else the current month on the
+    user's local calendar.
+
+    Offloaded to a worker thread via `asyncio.to_thread` (see
+    `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
+    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    """
+    provider_id = _normalize_filter(provider_id)
+    cache_key = (
+        f"top-hosts:{metric}:{days}:{since}:{until}:{exclude_cache}:"
+        f"{provider_id}:{sidecar_id}:{limit}"
+    )
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _work() -> TopHostsResponse:
+        hosts = query_top_hosts(
+            session,
+            since=_resolve_ranking_since(session, since, days),
+            until=parse_iso8601_utc(until) if until else None,
+            metric=metric,
+            exclude_cache=exclude_cache,
+            provider_id=provider_id,
+            sidecar_id=sidecar_id,
+            limit=limit,
+        )
+        return TopHostsResponse.model_validate(
+            {"hosts": hosts, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
         )
 
     result = await asyncio.to_thread(_work)

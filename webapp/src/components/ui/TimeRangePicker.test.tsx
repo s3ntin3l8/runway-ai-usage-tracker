@@ -58,6 +58,16 @@ describe('TimeRangePicker', () => {
     expect(onChange).toHaveBeenCalledWith({ days: 30 });
   });
 
+  it('offers the last 24 hours as a quick range', async () => {
+    renderWithProviders(<TimeRangePicker value={value} onChange={onChange} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    expect(await screen.findByText('Quick ranges')).toBeInTheDocument();
+    const option = screen.getByRole('button', { name: 'Last 24 hours' });
+    expect(option).toBeInTheDocument();
+    await userEvent.click(option);
+    expect(onChange).toHaveBeenCalledWith({ days: 1 });
+  });
+
   it('applies an absolute range when dates are selected and Apply is clicked', async () => {
     renderWithProviders(<TimeRangePicker value={value} onChange={onChange} />);
     await userEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));

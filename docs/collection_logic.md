@@ -94,6 +94,38 @@ server and the sidecar pick the record whose expiry is still in the future — a
 dead record must not win just because its key sorts first, and the token and
 its expiry must come from the *same* record.
 
+### MiniMax Code pricing: no free/paid signal
+
+MiniMax Code traffic is priced the way every other subscription plan is: the
+events carry no cost, and the server prices them against the pay-as-you-go
+API rates (see the MiniMax block in `app/services/pricing_seed.py`). The
+result is a **notional** figure — what the usage would have cost on the API —
+not an amount that was billed.
+
+That distinction matters because MiniMax Code's runtime ledger carries **no
+free/paid flag at all**: its usage rows have `cost_usd = 0` (the M Plan is a
+subscription, so the ledger's own cost column is always zero), their model
+column is `NULL`, and the only model string in the ledger is the session's
+`effectiveModel` (`minimax/MiniMax-M3.1-Flash`). There is no model catalog,
+pricing table, quota table or billing table beside them. So "is this model
+free?" is not a question the source can answer — the answer is missing
+upstream, not lost in Runway.
+
+Two consequences worth keeping in mind:
+
+- **A model that is covered by a plan is not a free model.** MiniMax lists
+  MiniMax-M3.1-Flash at $0.15 / $0.60 / $0.015 per M tokens (input / output /
+  cache read); under the M Plan the included quota draws down at that price.
+  Runway reporting a non-zero cost for it is the API-equivalent convention
+  above, not a pricing error.
+- **A real free model would price at $0 automatically.** The cost calculator
+  treats a `-free` / `:free` / `/free` model id as free and skips the pricing
+  fallback, and OpenCode's free catalog is filed under its own `opencode-free`
+  provider for the same reason. If the MiniMax Code runtime ever starts
+  emitting a free id, the existing guard prices it at $0 with no Runway
+  change — the MiniMax extractor only strips the `minimax/` prefix, so such a
+  suffix survives normalization.
+
 ## Collection Pipeline
 
 ```

@@ -46,8 +46,10 @@ import type {
   SidecarDownloads,
   SourceAppsResponse,
   SystemSettings,
+  TopHostsResponse,
   TopModelsResponse,
   TopProjectsResponse,
+  TopSessionsResponse,
   TopToolsResponse,
   UntaggedCredentialsList,
   CredentialTagList,
@@ -89,6 +91,12 @@ export const fetchSessionsPaginated = (params: Params) =>
 
 export const fetchTopProjects = (params: Params = {}) =>
   api<TopProjectsResponse>(`/api/v1/usage/top-projects${qs(params)}`);
+
+export const fetchTopSessions = (params: Params = {}) =>
+  api<TopSessionsResponse>(`/api/v1/usage/top-sessions${qs(params)}`);
+
+export const fetchTopHosts = (params: Params = {}) =>
+  api<TopHostsResponse>(`/api/v1/usage/top-hosts${qs(params)}`);
 
 export const fetchTopTools = (params: Params = {}) =>
   api<TopToolsResponse>(`/api/v1/usage/top-tools${qs(params)}`);
