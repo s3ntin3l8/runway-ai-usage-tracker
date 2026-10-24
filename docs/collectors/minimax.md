@@ -493,4 +493,4 @@ ledger is a local file the runtime writes.
 - **MiniMax (China):** https://www.minimaxi.com
 - **API Documentation:** https://api.minimax.io/document/main (or https://api.minimaxi.com/document/main for the China platform)
 
-*Last updated: 2026-10-23*
+*Last updated: 2026-10-24*
