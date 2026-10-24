@@ -396,6 +396,49 @@ def test_manifest_upserts_pending_and_returns_resolved_for_tagged_origins(
     }
 
 
+def test_manifest_ignores_pass_through_hermes_and_drops_its_stale_row(
+    client: TestClient, session: Session
+):
+    """Hermes calls other providers' accounts; it has none to tag.
+
+    An old sidecar still reports ``provider:hermes``. The entry must not become
+    a pending row, a row an earlier report left behind must go, and neither may
+    show on the Untagged list.
+    """
+    from app.api.endpoints.fleet import visible_pending_rows
+    from app.models.db import PendingCredentialTag
+    from app.services.credential_tags import PendingCredentialTagRepo
+
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha-host",
+        provider_id="hermes",
+        credential_origin="provider:hermes",
+    )
+    session.commit()
+
+    body = {
+        "sidecar_id": "alpha-host",
+        "entries": [
+            {
+                "provider_id": "hermes",
+                "credential_origin": "provider:hermes",
+                "reason": "events_untagged",
+            },
+            {
+                "provider_id": "minimax",
+                "credential_origin": "provider:minimax",
+                "reason": "events_untagged",
+            },
+        ],
+    }
+    assert _post_manifest(client, body).status_code == 200
+
+    rows = session.exec(select(PendingCredentialTag)).all()
+    assert [(r.provider_id, r.credential_origin) for r in rows] == [("minimax", "provider:minimax")]
+    assert [r.provider_id for r in visible_pending_rows(session)] == ["minimax"]
+
+
 def test_manifest_records_why_an_origin_was_reported(client: TestClient, session: Session):
     from app.models.db import PendingCredentialTag
 
