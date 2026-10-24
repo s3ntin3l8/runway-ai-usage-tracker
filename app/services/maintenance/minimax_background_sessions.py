@@ -238,12 +238,27 @@ class ProvenanceRelinkResult:
 def _provenance_parent(column: Any) -> Any:
     """The parent session a row's provenance names, or None.
 
-    ``json_extract`` raises on malformed JSON, so the extraction sits behind a
-    ``json_valid`` test in a CASE — SQLite evaluates the THEN branch only when
-    the condition holds.
+    Two guards, both needed:
+
+    - ``json_extract`` raises on malformed JSON, so the extraction sits behind
+      a ``json_valid`` test in a CASE — SQLite evaluates the THEN branch only
+      when the condition holds.
+    - The value is only taken when it is **text**. ``raw_json`` is an
+      arbitrary string the ingest schema accepts, so a payload may name a
+      numeric or a nested parent; writing one of those into ``session_id``
+      would file the row under a session id that cannot exist.
     """
     return case(
-        (func.json_valid(column) == 1, func.json_extract(column, "$.parent_session_id")),
+        (
+            func.json_valid(column) == 1,
+            case(
+                (
+                    func.json_type(column, "$.parent_session_id") == "text",
+                    func.json_extract(column, "$.parent_session_id"),
+                ),
+                else_=None,
+            ),
+        ),
         else_=None,
     )
 
@@ -252,6 +267,7 @@ def _relink_stmt(
     provider_id: str,
     source_app: str | None,
     child_session_id: str | None,
+    parent_session_id: str | None,
 ) -> Any:
     """The rows whose own provenance names a parent they are not filed under."""
     parent = _provenance_parent(UsageEvent.raw_json)
@@ -267,9 +283,14 @@ def _relink_stmt(
         parent != UsageEvent.session_id,
     )
     if source_app is not None:
-        stmt = stmt.where(UsageEvent.source_app == source_app)
+        # The same rule the store-based repair uses: a row collected before the
+        # `source_app` column existed carries the provider id there, which is
+        # the backfill's guess and the ingestor's own fallback.
+        stmt = stmt.where(col(UsageEvent.source_app).in_([source_app, provider_id]))
     if child_session_id is not None:
         stmt = stmt.where(UsageEvent.session_id == child_session_id)
+    if parent_session_id is not None:
+        stmt = stmt.where(parent == parent_session_id)
     return stmt
 
 
@@ -277,6 +298,7 @@ def plan_provenance_relinks(
     session: Session,
     *,
     child_session_id: str | None = None,
+    parent_session_id: str | None = None,
     provider_id: str = PROVIDER_ID,
     source_app: str | None = SOURCE_APP,
 ) -> ProvenanceRelinkPlan:
@@ -291,15 +313,18 @@ def plan_provenance_relinks(
     The provenance is the only thing consulted: the server never reads the
     runtime store, so it can only see the rows that already carry one.
     """
-    stmt = _relink_stmt(provider_id, source_app, child_session_id)
+    stmt = _relink_stmt(provider_id, source_app, child_session_id, parent_session_id)
     plan = ProvenanceRelinkPlan()
     for row in session.exec(stmt).all():
+        parent = row.parent_session_id
+        if not isinstance(parent, str) or not parent:
+            continue
         plan.relinks.append(
             ProvenanceRelink(
                 event_id=row.event_id,
                 row_id=row.id,
                 session_id=row.session_id,
-                parent_session_id=row.parent_session_id,
+                parent_session_id=parent,
             )
         )
     plan.total = len(plan.relinks)
