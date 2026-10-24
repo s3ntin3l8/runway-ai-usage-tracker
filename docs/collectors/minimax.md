@@ -363,8 +363,72 @@ usage — it is pruned, so it loses rows — only as a model fallback.
 
 Roughly 60 % of the ledger's rows belong to the runtime's internal plan-review sub-agent
 (`turn_id` starting with `mavis-internal:plan-review:`). They are real API calls against your
-plan quota, so they are included and tagged `subagent_type="Plan"` — the Sessions view already
-splits subagent turns out of the main-thread message count and renders them separately.
+plan quota, so they are included and tagged `subagent_type="Plan"` — the Sessions view renders
+them as a separate card, split out of the session's main thread.
+
+### Background-task sessions
+
+The runtime spawns a background task as a **child session**: its own session id, a
+`parent_session_id` pointing at the session that owns the work, an `agent_name` naming the agent
+(`explore`) and a `purpose` naming the task (`local-background-task:bg_<uuid>`). The desktop app
+runs those in the background, so their requests are real calls against your plan quota — but they
+belong to the session that spawned them, not to a conversation of their own.
+
+Claude Code models the same work as a **sidechain**: the message carries the *parent's* session id
+plus an attribution agent. The extractor reproduces that shape:
+
+- the child's rows are filed under the **parent** session,
+- they are tagged `subagent_type="Explore"`, so the Sessions view renders them as the parent's
+  **Agents** card instead of listing them as a session of their own,
+- their `raw_json` carries the provenance (`source_session_id`, `parent_session_id`, `agent_name`,
+  `purpose`), so the child session stays recoverable from the stored row.
+
+Two properties keep this safe:
+
+- **The event id keeps the child's own session id.** It is derived from the ledger row alone, so it
+  does not change when the attribution changes: every row collected before this change keeps its
+  id, and the server deduplicates the re-push instead of counting it twice.
+- **The parent-link columns are optional.** A store written by a runtime that predates them keeps
+  working (no attribution, no crash). A parent that is not in the store is never invented — the
+  rows keep their own session id and are only tagged.
+
+The **turn** dimension rides along: the extractor pushes the ledger's own `turn_id`, so the Agents
+card counts *turns* (one background task = one turn) instead of API requests. A provider that
+emits one event per message (Claude Code) carries no turn id, and its numbers are unchanged.
+
+#### Repairing the rows collected earlier
+
+Rows collected before this change still carry the background task's own session id, so they show up
+as a conversation of their own. Move them with:
+
+```bash
+python scripts/link_minimax_background_sessions.py --dry-run
+python scripts/link_minimax_background_sessions.py --apply
+```
+
+The repair reads the runtime stores (read-only), updates the attribution of the rows the server
+already holds and **never inserts**: no token count changes and no rollup move — the rollups are
+keyed by provider, account and period, never by session. A project's *session count* does drop: a
+background task was never a conversation.
+
+Every store on the host is repaired (a profile-scoped install keeps its ledger next to the default
+one, and each holds its own background tasks). Pass `--store` to repair specific ones instead.
+
+Three cases worth knowing about:
+
+- A background task whose **parent session is not in the store** keeps its own session id and is
+  only *tagged* — the same degradation the extractor applies. The repair tags it too; it does not
+  drop it.
+- A row still parked in **Untagged Credentials** (`pending_usage_events`) is outside the repair: the
+  promotion writes the payload the sidecar sent, so run the repair again after the account is
+  assigned. The run is idempotent, so that is enough.
+- A plain re-push of the same row deduplicates on its event id, so the repair stands. A re-push
+  under a **different account** is a retag: the server refreshes the stored row from the sidecar's
+  payload, so a sidecar that has not been upgraded yet puts the row back on the child. Run the
+  repair again to heal it.
+
+Run it against the dev DB or a snapshot — never the live prod DB while the server is writing
+(SQLite is single-writer).
 
 ### Attribution
 
@@ -416,7 +480,10 @@ ledger is a local file the runtime writes.
 | `scripts/sidecar_pkg/event_extractors/opencode.py` | Folds OpenCode-driven MiniMax traffic into this provider |
 | `scripts/sidecar_pkg/event_extractors/minimax_code.py` | Reads the MiniMax Code runtime ledger and pushes its requests as events |
 | `scripts/sidecar_pkg/minimax_code_probe.py` | The read-only `--probe-minimax-code` host check |
+| `scripts/link_minimax_background_sessions.py` | Files the background-task rows collected before the parent link under their parent |
+| `app/services/maintenance/minimax_background_sessions.py` | The repair's plan/apply pair (no runtime-store access of its own) |
 | `tests/unit/test_event_extractor_minimax_code.py` | Extractor coverage (join, model fallbacks, id cursor, drift) |
+| `tests/unit/test_maintenance_minimax_background_sessions.py` | Repair coverage (moves, never inserts, idempotent) |
 | `tests/unit/test_minimax_code_probe.py` | Probe coverage (store found/missing, schema drift, cursor left alone) |
 | `tests/integration/test_minimax_code_events_ingest.py` | End-to-end: runtime ledger → fleet ingest → priced MiniMax events |
 
@@ -426,4 +493,4 @@ ledger is a local file the runtime writes.
 - **MiniMax (China):** https://www.minimaxi.com
 - **API Documentation:** https://api.minimax.io/document/main (or https://api.minimaxi.com/document/main for the China platform)
 
-*Last updated: 2026-10-23*
+*Last updated: 2026-10-24*

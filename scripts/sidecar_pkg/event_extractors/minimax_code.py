@@ -87,6 +87,36 @@ Every part of the id is content-derived, which buys two properties:
 The one case the id cannot separate is two rows with an identical
 timestamp *and* identical usage — a duplicate log entry the server would
 deduplicate anyway.
+
+Why a background task is filed under its parent session
+-------------------------------------------------------
+
+The runtime spawns a background task as a **child session**: its own session
+id, a ``parent_session_id`` pointing at the session that spawned it, an
+``agent_name`` naming the agent and a ``purpose`` naming the task. The
+desktop app runs these in the background, so their rows are real requests
+against the user's plan quota that used to land as *main-thread* traffic of
+a session nobody was looking at.
+
+Claude Code models the same work as a sidechain: the message carries the
+**parent's** session id plus an attribution agent (see the sidechain fixture
+in ``tests/fixtures/anthropic-sidechain-sample.jsonl``). The extractor
+reproduces that shape: a child's rows are filed under the parent and tagged
+``subagent_type="Explore"``, so the Sessions view splits them out of the
+parent's main thread exactly like a sidechain.
+
+Two properties make this safe:
+
+- The **event id keeps the child's own session id**. It is derived from the
+  ledger row alone, so it does not change when the attribution changes —
+  every row collected before this change keeps its id, and a plain re-push
+  deduplicates on it instead of counting the row twice. A re-push under a
+  *different* account is a retag: the server refreshes the stored row from
+  the sidecar's payload, so a sidecar that has not been upgraded yet would
+  put the row back on the child. The repair heals it.
+- The parent-link columns are **optional**. A store written by a runtime
+  that predates them keeps working (no attribution, no crash); a parent
+  that is not in the store is never invented.
 """
 
 from __future__ import annotations
@@ -125,6 +155,34 @@ PROVIDER_ID = "minimax"
 # of the main-thread message count.
 INTERNAL_TURN_PREFIX = "mavis-internal:plan-review:"
 SUBAGENT_TYPE_PLAN = "Plan"
+
+# The runtime's background-task sessions. It spawns them as *child* sessions:
+# their own session id, a ``parent_session_id`` pointing at the session that
+# spawned them, an ``agent_name`` naming the agent and a ``purpose`` naming
+# the background task.
+#
+# Claude Code models the same work as a sidechain: the message carries the
+# PARENT's session id plus an attribution agent (see the sidechain fixture in
+# tests/fixtures/anthropic-sidechain-sample.jsonl). The rows here are filed
+# under the parent session and tagged as subagent work, so the Sessions view
+# splits them out of the parent's main thread exactly like a sidechain.
+SUBAGENT_TYPE_TASK = "Task"
+
+# The session columns the extractor reads when the store has them. They are
+# optional on purpose: the runtime added them in a later migration than the
+# columns in ``_REQUIRED_COLUMNS``, and a store without them must degrade to
+# "no attribution" — never to "skipped source", which would drop every row.
+_OPTIONAL_SESSION_COLUMNS: tuple[str, ...] = (
+    "agent_name",
+    "parent_session_id",
+    "session_kind",
+    "purpose",
+)
+
+# The ledger's own per-row agent name. It agrees with the session row's, and
+# is the fallback when the session row has none. Optional for the same reason
+# as the session columns above.
+_OPTIONAL_USAGE_COLUMNS: tuple[str, ...] = ("agent_name",)
 
 _TOKEN_USAGE_TABLE = "local_runtime_token_usage"
 _MESSAGE_ROWS_TABLE = "local_runtime_message_rows"
@@ -452,15 +510,29 @@ def _bootstrap_last_id(cur: sqlite3.Cursor, since: datetime) -> int:
     return int(row[0])
 
 
+def _table_columns(cur: sqlite3.Cursor, table: str) -> set[str]:
+    """Return the columns a table actually has in this store."""
+    return {info[1] for info in cur.execute(f"PRAGMA table_info({table})")}
+
+
 def _load_sessions(cur: sqlite3.Cursor, session_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Return the session metadata (cwd, effective model, history dir)."""
+    """Return the session metadata (cwd, effective model, history dir, parent link).
+
+    The parent-link columns are optional: a store written by a runtime that
+    predates them still loads — it simply has no parent to file the rows
+    under, which is today's behaviour rather than a skipped source.
+    """
+    if not session_ids:
+        return {}
+    present = _table_columns(cur, _SESSIONS_TABLE)
+    optional = [name for name in _OPTIONAL_SESSION_COLUMNS if name in present]
+    select = ", ".join(
+        ["session_id", "workspace_dir", "extra_data_json", "history_relative_dir", *optional]
+    )
     sessions: dict[str, dict[str, Any]] = {}
     for chunk in _chunks(session_ids, 200):
         placeholders = ",".join("?" for _ in chunk)
-        query = (
-            f"SELECT session_id, workspace_dir, extra_data_json, history_relative_dir "
-            f"FROM {_SESSIONS_TABLE} WHERE session_id IN ({placeholders})"
-        )
+        query = f"SELECT {select} FROM {_SESSIONS_TABLE} WHERE session_id IN ({placeholders})"
         for row in iter_cursor(cur.execute(query, chunk)):
             extra: dict[str, Any] = {}
             try:
@@ -469,12 +541,107 @@ def _load_sessions(cur: sqlite3.Cursor, session_ids: list[str]) -> dict[str, dic
                 parsed = None
             if isinstance(parsed, dict):
                 extra = parsed
-            sessions[row["session_id"]] = {
+            entry: dict[str, Any] = {
                 "workspace_dir": row["workspace_dir"],
                 "history_relative_dir": row["history_relative_dir"],
                 "extra": extra,
             }
+            for name in optional:
+                entry[name] = row[name]
+            sessions[row["session_id"]] = entry
     return sessions
+
+
+def _agent_label(agent_name: str | None) -> str:
+    """Return the dashboard label of a runtime agent name.
+
+    The runtime spells its agents in lower case (``explore``); Claude Code
+    spells its built-in agent ``Explore``, and the Sessions view groups the
+    subagent cards by this label.
+    """
+    name = (agent_name or "").strip()
+    if not name:
+        return SUBAGENT_TYPE_TASK
+    return name[:1].upper() + name[1:]
+
+
+def _child_attribution(
+    session: dict[str, Any], sessions: dict[str, dict[str, Any]]
+) -> dict[str, str | None] | None:
+    """Return the attribution of a background-task session, or None for a main session.
+
+    A child session is one the runtime spawned for a background task: it
+    carries a ``parent_session_id``. Its rows are filed under that parent and
+    tagged with the agent's name, so the Sessions view shows the work as the
+    parent's subagent traffic — the same shape a Claude Code sidechain has.
+
+    A parent that is not in this store is **not** invented: the rows keep
+    their own session id and are only tagged, so the work stays labelled as
+    subagent traffic instead of landing on a session that does not exist.
+    """
+    parent_id = session.get("parent_session_id")
+    if not parent_id:
+        return None
+    return {"parent_session_id": parent_id if parent_id in sessions else None}
+
+
+def _all_session_ids(cur: sqlite3.Cursor) -> list[str]:
+    """Return every session id in the store."""
+    rows = cur.execute(f"SELECT session_id FROM {_SESSIONS_TABLE}").fetchall()
+    return [str(row[0]) for row in rows if row and row[0]]
+
+
+def background_session_links(cur: sqlite3.Cursor) -> dict[str, dict[str, Any]]:
+    """Return every background-task session of the store and its attribution.
+
+    A background task is a session the runtime spawned: it carries a
+    ``parent_session_id`` pointing at the session that owns the work. The
+    rows of such a session are filed under that parent and tagged with the
+    agent's name.
+
+    The mapping is keyed by the *child* session id and holds the parent to
+    file the rows under, the label to tag them with and the provenance to
+    record with them. A parent that is not in the store is not invented: the
+    task keeps its own session id and is only tagged.
+
+    The repair script (``scripts/link_minimax_background_sessions.py``) uses
+    this to build the mapping it applies to the rows that were collected
+    before the extractor learned the parent link.
+    """
+    cur.row_factory = sqlite3.Row
+    sessions = _load_sessions(cur, _all_session_ids(cur))
+    children = {sid: entry for sid, entry in sessions.items() if entry.get("parent_session_id")}
+    if not children:
+        return {}
+
+    # A session row without an agent name falls back to the ledger's own
+    # per-row agent name — the same fallback the extractor applies.
+    ledger_agents: dict[str, str] = {}
+    if any(not entry.get("agent_name") for entry in children.values()):
+        if "agent_name" in _table_columns(cur, _TOKEN_USAGE_TABLE):
+            placeholders = ",".join("?" for _ in children)
+            rows = cur.execute(
+                f"SELECT session_id, agent_name FROM {_TOKEN_USAGE_TABLE} "
+                f"WHERE session_id IN ({placeholders})",
+                list(children),
+            ).fetchall()
+            for row in rows:
+                if row and row[1]:
+                    ledger_agents.setdefault(str(row[0]), str(row[1]))
+
+    links: dict[str, dict[str, Any]] = {}
+    for sid, entry in children.items():
+        attribution = _child_attribution(entry, sessions)
+        if attribution is None:  # pragma: no cover - the filter above guarantees it
+            continue
+        agent_name = entry.get("agent_name") or ledger_agents.get(sid)
+        links[sid] = {
+            "parent_session_id": attribution["parent_session_id"],
+            "label": _agent_label(agent_name),
+            "agent_name": agent_name,
+            "purpose": entry.get("purpose"),
+        }
+    return links
 
 
 def _index_message_row(
@@ -546,6 +713,55 @@ def _load_message_index(
     for candidates in index.values():
         candidates.sort(key=lambda item: item[0])
     return index
+
+
+def background_provenance(
+    source_session_id: str,
+    agent_name: str | None,
+    parent_session_id: str | None,
+    purpose: str | None,
+) -> str:
+    """Return the provenance recorded with a background-task row.
+
+    It names the session the work really came from, so the child session
+    stays recoverable from the stored row even though the row is filed under
+    the parent. The blob is kept to four short keys — it is materialized
+    whenever a wide window is scanned.
+
+    The repair script writes the same blob, through this helper.
+    """
+    provenance: dict[str, str] = {"source_session_id": source_session_id}
+    if agent_name:
+        provenance["agent_name"] = agent_name
+    if parent_session_id:
+        provenance["parent_session_id"] = parent_session_id
+    if purpose:
+        provenance["purpose"] = purpose
+    return json.dumps(provenance)
+
+
+def build_event_id(
+    session_id: str,
+    turn_id: str,
+    ts_ms: int,
+    tokens_input: int,
+    tokens_output: int,
+    tokens_cache_read: int,
+) -> str:
+    """Return the event id of one ledger request.
+
+    Derived from the **ledger row** alone — never from the session the event
+    is filed under. A background-task row is filed under its *parent* session,
+    but its id keeps the child's own session id: the id must not change when
+    the attribution changes, or every row collected before the change would
+    look new to the server and be counted twice.
+
+    The repair script (``scripts/link_minimax_background_sessions.py``) builds
+    the same ids with this helper, so the two cannot drift apart.
+    """
+    return (
+        f"mcode:{session_id}:{turn_id}:{ts_ms}:{tokens_input}:{tokens_output}:{tokens_cache_read}"
+    )
 
 
 def _normalize_model(model: str) -> str | None:
@@ -800,12 +1016,27 @@ def parse_minimax_code_events(
             )
             last_id = _bootstrap_last_id(cur, since) - 1
 
+        usage_columns = [
+            "id",
+            "session_id",
+            "turn_id",
+            "ts",
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+        ]
+        present_usage = _table_columns(cur, _TOKEN_USAGE_TABLE)
+        has_row_agent = "agent_name" in present_usage
+        for name in _OPTIONAL_USAGE_COLUMNS:
+            if name in present_usage:
+                usage_columns.append(name)
         try:
             rows = list(
                 iter_cursor(
                     cur.execute(
-                        f"SELECT id, session_id, turn_id, ts, input_tokens, output_tokens, "
-                        f"reasoning_tokens, cache_read_tokens, cache_write_tokens "
+                        f"SELECT {', '.join(usage_columns)} "
                         f"FROM {_TOKEN_USAGE_TABLE} WHERE id > ? ORDER BY id LIMIT ?",
                         (last_id, _MAX_ROWS_PER_CYCLE),
                     )
@@ -822,6 +1053,31 @@ def parse_minimax_code_events(
         session_ids = sorted({row["session_id"] for row in rows if row["session_id"]})
         turn_pairs = {(row["session_id"], row["turn_id"]) for row in rows}
         sessions = _load_sessions(cur, session_ids)
+        # A background task's parent is not necessarily part of this cycle's
+        # window (the parent's own rows may all have been collected already),
+        # so load it too — otherwise the rows would have nowhere to go. The
+        # loop follows a chain of parents (a task spawned by a task); each
+        # round either loads the missing ones or stops.
+        while True:
+            parent_ids = {
+                entry["parent_session_id"]
+                for entry in sessions.values()
+                if entry.get("parent_session_id")
+            }
+            missing_parents = sorted(parent_ids - set(sessions))
+            if not missing_parents:
+                break
+            loaded = _load_sessions(cur, missing_parents)
+            if not loaded:
+                # The parent is not in this store. It is never invented, so
+                # the rows keep their own session id and are only tagged.
+                break
+            sessions.update(loaded)
+        attributions = {
+            sid: attribution
+            for sid, entry in sessions.items()
+            if (attribution := _child_attribution(entry, sessions)) is not None
+        }
         message_index = _load_message_index(cur, turn_pairs)
 
         model_cache: dict[str, str | None] = {}
@@ -858,10 +1114,50 @@ def parse_minimax_code_events(
             model_id = _resolve_model(session_id, data, session, db_path, model_cache)
             tool_names = _tool_names(data)
 
-            event_id = (
-                f"mcode:{session_id}:{turn_id}:{ts_ms}"
-                f":{row['input_tokens'] or 0}:{row['output_tokens'] or 0}"
-                f":{row['cache_read_tokens'] or 0}"
+            # Where the row is filed and how it is labelled.
+            #
+            # A background task's rows belong to the session that spawned it,
+            # so they are filed under the parent and tagged as subagent work —
+            # the same shape a Claude Code sidechain row has. The runtime's own
+            # plan-review turns win the label: they are a different kind of
+            # subagent work inside the same session.
+            event_session_id = session_id or None
+            subagent_type: str | None = None
+            raw_json: str | None = None
+            attribution = attributions.get(session_id)
+            agent_name: str | None = None
+            if attribution is not None:
+                row_agent = row["agent_name"] if has_row_agent else None
+                agent_name = session.get("agent_name") or row_agent
+                parent_id = attribution["parent_session_id"]
+                if parent_id:
+                    # The work belongs to the session that spawned it, so the
+                    # rows are filed under the parent — exactly like a Claude
+                    # Code sidechain row.
+                    event_session_id = parent_id
+                else:
+                    logger.debug(
+                        "MiniMax Code background task %s names a parent that is not in "
+                        "this store; keeping its own session id",
+                        session_id,
+                    )
+                raw_json = background_provenance(
+                    session_id, agent_name, parent_id, session.get("purpose")
+                )
+            if turn_id.startswith(INTERNAL_TURN_PREFIX):
+                # The runtime's own plan-review sub-agent wins the label: it is
+                # a different kind of subagent work inside the same session.
+                subagent_type = SUBAGENT_TYPE_PLAN
+            elif attribution is not None:
+                subagent_type = _agent_label(agent_name)
+
+            event_id = build_event_id(
+                session_id,
+                turn_id,
+                ts_ms,
+                int(row["input_tokens"] or 0),
+                int(row["output_tokens"] or 0),
+                int(row["cache_read_tokens"] or 0),
             )
             if event_id in seen_event_ids:
                 # Two rows of the same turn share a millisecond *and* their
@@ -889,10 +1185,10 @@ def parse_minimax_code_events(
                         event_id=event_id,
                         ts=ts.isoformat(),
                         model_id=model_id,
-                        session_id=session_id or None,
-                        subagent_type=(
-                            SUBAGENT_TYPE_PLAN if turn_id.startswith(INTERNAL_TURN_PREFIX) else None
-                        ),
+                        session_id=event_session_id,
+                        subagent_type=subagent_type,
+                        turn_id=turn_id or None,
+                        raw_json=raw_json,
                         cwd=session.get("workspace_dir") or None,
                         tool_names=tool_names or None,
                         tokens_input=int(row["input_tokens"] or 0),

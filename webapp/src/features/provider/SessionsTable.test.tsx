@@ -236,3 +236,80 @@ describe('SessionsTable sortable headers', () => {
     );
   });
 });
+
+describe('SessionsTable subagent turns and requests', () => {
+  it('shows the request count next to the turns when the two differ', async () => {
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({
+            session_id: 'aaaaaaaa1111',
+            subagents: [
+              {
+                subagent_type: 'Explore',
+                turns: 6,
+                requests: 484,
+                tool_calls: 5,
+                tokens_total: 2000,
+                cost_usd: 0.2,
+              },
+            ],
+          }),
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByText('aaaaaaaa').closest('tr')!);
+    expect(screen.getByText('Turns')).toBeInTheDocument();
+    expect(screen.getByText('Requests')).toBeInTheDocument();
+    expect(screen.getByText('484')).toBeInTheDocument();
+  });
+
+  it('omits the request count when it matches the turn count', async () => {
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({
+            session_id: 'aaaaaaaa1111',
+            subagents: [
+              {
+                subagent_type: 'Explore',
+                turns: 3,
+                requests: 3,
+                tool_calls: 5,
+                tokens_total: 2000,
+                cost_usd: 0.2,
+              },
+            ],
+          }),
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByText('aaaaaaaa').closest('tr')!);
+    expect(screen.getByText('Turns')).toBeInTheDocument();
+    expect(screen.queryByText('Requests')).not.toBeInTheDocument();
+  });
+
+  it('counts a missing turn count as zero when comparing it with the requests', async () => {
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({
+            session_id: 'aaaaaaaa1111',
+            subagents: [
+              {
+                subagent_type: 'Explore',
+                requests: 3,
+                tool_calls: 0,
+                tokens_total: 0,
+              },
+            ],
+          }),
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByText('aaaaaaaa').closest('tr')!);
+    expect(screen.getByText('Turns')).toBeInTheDocument();
+    expect(screen.getByText('Requests')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+  });
+});

@@ -129,6 +129,11 @@ class UsageEventPush(BaseModel):
     source_app: str | None = None
     session_id: str | None = None
     subagent_type: str | None = None  # "Explore" | "Plan" | None for main thread
+    # The provider's own turn identifier, when it has one. A provider that
+    # emits one event per *request* (MiniMax Code) uses it to count turns
+    # instead of requests; a provider that emits one event per message leaves
+    # it unset, and the turn count falls back to the event count.
+    turn_id: str | None = None
     # Working-directory / project context (enrichment). cwd = raw per-message
     # path; the server derives `project` (root basename) in EventIngestor via
     # app/services/project_label.py. tool_names = the tool_use block names in the

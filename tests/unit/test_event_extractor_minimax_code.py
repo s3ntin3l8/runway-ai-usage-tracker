@@ -126,6 +126,232 @@ def test_main_thread_turns_are_not_tagged(tmp_path):
     assert len(main) == 3
 
 
+# --- background-task sessions ----------------------------------------------
+
+
+def _background_sessions() -> list[dict]:
+    """A parent session and the background task it spawned."""
+    return [
+        {
+            "session_id": "mvs_main",
+            "workspace_dir": "/home/user/project",
+            "history_relative_dir": "2026/10/22/20-28-11-224-session_main",
+            "extra_data_json": {"effectiveModel": "minimax/MiniMax-M3.1-Flash"},
+        },
+        {
+            "session_id": "mvs_bg",
+            "agent_name": "explore",
+            "workspace_dir": "/home/user/project",
+            "history_relative_dir": "2026/10/22/20-30-00-000-session_bg",
+            "extra_data_json": {"effectiveModel": "minimax/MiniMax-M3.1-Flash"},
+            "parent_session_id": "mvs_main",
+            "session_kind": "task",
+            "purpose": "local-background-task:bg_1234",
+        },
+    ]
+
+
+def _background_usage() -> list[dict]:
+    """Two requests of one background turn, plus a plan-review turn."""
+    return [
+        {
+            "id": 10,
+            "session_id": "mvs_bg",
+            "agent_name": "explore",
+            "turn_id": "turn_task_bg_bg_1234",
+            "ts": _TS + 30000,
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 500,
+            "cache_write_tokens": 0,
+        },
+        {
+            "id": 11,
+            "session_id": "mvs_bg",
+            "agent_name": "explore",
+            "turn_id": "turn_task_bg_bg_1234",
+            "ts": _TS + 31000,
+            "input_tokens": 120,
+            "output_tokens": 25,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 600,
+            "cache_write_tokens": 0,
+        },
+        {
+            "id": 12,
+            "session_id": "mvs_bg",
+            "agent_name": "explore",
+            "turn_id": "mavis-internal:plan-review:ask_bg",
+            "ts": _TS + 32000,
+            "input_tokens": 80,
+            "output_tokens": 10,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        },
+    ]
+
+
+def _background_store(tmp_path: Path, **kwargs) -> Path:
+    """A store with a parent session and a background-task child session."""
+    return make_minimax_code_store(
+        tmp_path,
+        sessions=_background_sessions(),
+        usage=[*DEFAULT_USAGE, *_background_usage()],
+        parent_links=True,
+        **kwargs,
+    )
+
+
+def _background_events(tmp_path: Path, **kwargs) -> list:
+    db_path = _background_store(tmp_path, **kwargs)
+    return _parse(db_path, tmp_path)
+
+
+def test_background_task_rows_are_filed_under_the_parent_session(tmp_path):
+    """The work belongs to the session that spawned it, like a sidechain."""
+    events = _background_events(tmp_path)
+    bg = [e for e in events if e.turn_id == "turn_task_bg_bg_1234"]
+    assert len(bg) == 2
+    assert all(e.session_id == "mvs_main" for e in bg)
+    assert all(e.subagent_type == "Explore" for e in bg)
+
+
+def test_background_task_event_id_keeps_the_child_session_id(tmp_path):
+    """The id must not move with the attribution — that would double count."""
+    events = _background_events(tmp_path)
+    bg = [e for e in events if e.turn_id == "turn_task_bg_bg_1234"]
+    assert all(e.event_id.startswith("mcode:mvs_bg:") for e in bg)
+
+
+def test_background_task_rows_carry_their_provenance(tmp_path):
+    events = _background_events(tmp_path)
+    bg = [e for e in events if e.turn_id == "turn_task_bg_bg_1234"]
+    provenance = json.loads(bg[0].raw_json)
+    assert provenance["source_session_id"] == "mvs_bg"
+    assert provenance["parent_session_id"] == "mvs_main"
+    assert provenance["agent_name"] == "explore"
+    assert provenance["purpose"] == "local-background-task:bg_1234"
+
+
+def test_main_thread_rows_carry_no_provenance(tmp_path):
+    events = _background_events(tmp_path)
+    main = [e for e in events if e.subagent_type is None]
+    assert main
+    assert all(e.raw_json is None for e in main)
+
+
+def test_the_parent_sessions_own_rows_are_untouched(tmp_path):
+    events = _background_events(tmp_path)
+    main = [e for e in events if e.subagent_type is None]
+    assert {e.session_id for e in main} == {"mvs_main", "mvs_other"}
+    assert all(e.turn_id for e in main)
+
+
+def test_the_turn_id_is_pushed(tmp_path):
+    """The turn id is what lets the Sessions view count turns, not requests."""
+    events = _background_events(tmp_path)
+    assert {e.turn_id for e in events} >= {"turn_main", "turn_other", "turn_task_bg_bg_1234"}
+
+
+def test_a_plan_review_turn_inside_a_background_task_keeps_the_plan_label(tmp_path):
+    events = _background_events(tmp_path)
+    plan = [e for e in events if e.turn_id == "mavis-internal:plan-review:ask_bg"]
+    assert len(plan) == 1
+    assert plan[0].subagent_type == "Plan"
+    # It is still the background task's work, so it is filed under the parent.
+    assert plan[0].session_id == "mvs_main"
+
+
+def test_a_background_task_without_its_parent_keeps_its_own_session(tmp_path):
+    """A parent that is not in the store is never invented."""
+    sessions = [s for s in _background_sessions() if s["session_id"] != "mvs_main"]
+    db_path = make_minimax_code_store(
+        tmp_path,
+        sessions=sessions,
+        usage=_background_usage(),
+        parent_links=True,
+    )
+    events = _parse(db_path, tmp_path)
+    bg = [e for e in events if e.turn_id == "turn_task_bg_bg_1234"]
+    assert len(bg) == 2
+    assert all(e.session_id == "mvs_bg" for e in bg)
+    assert all(e.subagent_type == "Explore" for e in bg)
+
+
+def test_a_task_spawned_by_a_task_follows_its_own_parent(tmp_path):
+    """The attribution follows the parent link one level, like the sidechain."""
+    sessions = [
+        *_background_sessions(),
+        {
+            "session_id": "mvs_bg2",
+            "agent_name": "explore",
+            "workspace_dir": "/home/user/project",
+            "history_relative_dir": "2026/10/22/20-31-00-000-session_bg2",
+            "extra_data_json": {"effectiveModel": "minimax/MiniMax-M3.1-Flash"},
+            "parent_session_id": "mvs_bg",
+            "session_kind": "task",
+            "purpose": "local-background-task:bg_5678",
+        },
+    ]
+    usage = [
+        {
+            "id": 20,
+            "session_id": "mvs_bg2",
+            "agent_name": "explore",
+            "turn_id": "turn_task_bg_bg_5678",
+            "ts": _TS + 40000,
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+    ]
+    db_path = make_minimax_code_store(
+        tmp_path,
+        sessions=sessions,
+        usage=[*DEFAULT_USAGE, *_background_usage(), *usage],
+        parent_links=True,
+    )
+    events = _parse(db_path, tmp_path)
+    nested = [e for e in events if e.turn_id == "turn_task_bg_bg_5678"]
+    assert len(nested) == 1
+    assert nested[0].session_id == "mvs_bg"
+    assert nested[0].subagent_type == "Explore"
+
+
+def test_a_store_without_the_parent_link_columns_keeps_the_old_behaviour(tmp_path):
+    """An older runtime degrades to "no attribution", not to "skipped source"."""
+    db_path = make_minimax_code_store(
+        tmp_path,
+        sessions=_background_sessions(),
+        usage=[*DEFAULT_USAGE, *_background_usage()],
+    )
+    events = _parse(db_path, tmp_path)
+    bg = [e for e in events if e.turn_id == "turn_task_bg_bg_1234"]
+    assert len(bg) == 2
+    assert all(e.session_id == "mvs_bg" for e in bg)
+    assert all(e.subagent_type is None for e in bg)
+    assert all(e.raw_json is None for e in bg)
+
+
+def test_background_session_links_name_the_parent_and_the_label(tmp_path):
+    """The mapping the repair script builds from the store."""
+    db_path = _background_store(tmp_path)
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        links = minimax_code.background_session_links(conn.cursor())
+    finally:
+        conn.close()
+    assert set(links) == {"mvs_bg"}
+    assert links["mvs_bg"]["parent_session_id"] == "mvs_main"
+    assert links["mvs_bg"]["label"] == "Explore"
+    assert links["mvs_bg"]["agent_name"] == "explore"
+    assert links["mvs_bg"]["purpose"] == "local-background-task:bg_1234"
+
+
 # --- model resolution ------------------------------------------------------
 
 

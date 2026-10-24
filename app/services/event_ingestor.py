@@ -286,6 +286,7 @@ class EventIngestor:
                     kind=push.kind,
                     model_id=push.model_id,
                     session_id=push.session_id,
+                    turn_id=push.turn_id,
                     cwd=push.cwd,
                     # Derive the project label server-side (single source of truth)
                     # so all providers normalise the same way regardless of sidecar.

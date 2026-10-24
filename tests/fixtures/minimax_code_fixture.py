@@ -32,18 +32,6 @@ _SCHEMA = (
     )
     """,
     """
-    CREATE TABLE local_runtime_sessions (
-        session_id TEXT PRIMARY KEY,
-        record_json TEXT NOT NULL,
-        updated_at_ms INTEGER NOT NULL,
-        agent_name TEXT,
-        workspace_dir TEXT,
-        title TEXT,
-        extra_data_json TEXT NOT NULL DEFAULT '{}',
-        history_relative_dir TEXT
-    )
-    """,
-    """
     CREATE TABLE local_runtime_message_rows (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -58,6 +46,33 @@ _SCHEMA = (
     )
     """,
 )
+
+# The session columns a later runtime migration added: the parent link of a
+# background-task session, its kind and its purpose. A store without them is
+# an older runtime — the extractor must degrade to "no attribution", never to
+# "skipped source", so both shapes are buildable.
+_PARENT_LINK_COLUMNS = ("parent_session_id", "session_kind", "purpose")
+
+
+def _sessions_table(*, parent_links: bool) -> str:
+    """Return the CREATE statement for the session table.
+
+    ``parent_links=True`` adds the columns a background-task session needs.
+    """
+    extra = "".join(f", {name} TEXT" for name in _PARENT_LINK_COLUMNS) if parent_links else ""
+    return f"""
+    CREATE TABLE local_runtime_sessions (
+        session_id TEXT PRIMARY KEY,
+        record_json TEXT NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        agent_name TEXT,
+        workspace_dir TEXT,
+        title TEXT,
+        extra_data_json TEXT NOT NULL DEFAULT '{{}}',
+        history_relative_dir TEXT{extra}
+    )
+    """
+
 
 # 2026-10-22T20:12:31.617Z and neighbours.
 _TS = 1792699951617
@@ -255,6 +270,7 @@ def make_minimax_code_store(
     usage: list[dict[str, Any]] | None = None,
     messages: list[dict[str, Any]] | None = None,
     data_dir: str = ".minimax",
+    parent_links: bool = False,
 ) -> Path:
     """Create a MiniMax Code runtime store and return its path.
 
@@ -262,6 +278,11 @@ def make_minimax_code_store(
     so the extractor resolves the session history the same way it does on a
     real install. ``data_dir`` defaults to the runtime's own ``.minimax``;
     the desktop app's app-data roots are covered by the probe's tests.
+
+    ``parent_links=True`` gives the session table the columns a
+    background-task session needs (``parent_session_id``, ``session_kind``,
+    ``purpose``). The default store keeps the older shape, so a test can
+    cover the runtime that predates them.
     """
     db_dir = root / data_dir / "v2" / "sqlite"
     db_dir.mkdir(parents=True, exist_ok=True)
@@ -272,26 +293,48 @@ def make_minimax_code_store(
         cur = conn.cursor()
         for statement in _SCHEMA:
             cur.execute(statement)
+        cur.execute(_sessions_table(parent_links=parent_links))
+
+        session_columns = [
+            "session_id",
+            "record_json",
+            "updated_at_ms",
+            "agent_name",
+            "workspace_dir",
+            "title",
+            "extra_data_json",
+            "history_relative_dir",
+        ]
+        if parent_links:
+            session_columns.extend(_PARENT_LINK_COLUMNS)
+        placeholders = ",".join("?" for _ in session_columns)
 
         for session in sessions if sessions is not None else DEFAULT_SESSIONS:
             extra = session.get("extra_data_json")
             if not isinstance(extra, str):
                 extra = json.dumps(extra or {})
+            values: list[Any] = [
+                session["session_id"],
+                "{}",
+                session.get("updated_at_ms", _TS),
+                session.get("agent_name", "mavis"),
+                session.get("workspace_dir"),
+                session.get("title"),
+                extra,
+                session.get("history_relative_dir"),
+            ]
+            if parent_links:
+                values.extend(
+                    [
+                        session.get("parent_session_id"),
+                        session.get("session_kind"),
+                        session.get("purpose"),
+                    ]
+                )
             cur.execute(
-                "INSERT INTO local_runtime_sessions "
-                "(session_id, record_json, updated_at_ms, agent_name, workspace_dir, "
-                " title, extra_data_json, history_relative_dir) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    session["session_id"],
-                    "{}",
-                    session.get("updated_at_ms", _TS),
-                    session.get("agent_name", "mavis"),
-                    session.get("workspace_dir"),
-                    session.get("title"),
-                    extra,
-                    session.get("history_relative_dir"),
-                ),
+                f"INSERT INTO local_runtime_sessions ({', '.join(session_columns)}) "
+                f"VALUES ({placeholders})",
+                values,
             )
 
         for row in usage if usage is not None else DEFAULT_USAGE:
