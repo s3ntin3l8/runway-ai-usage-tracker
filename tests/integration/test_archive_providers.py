@@ -15,12 +15,15 @@ import time
 from datetime import UTC, datetime
 
 import pytest
+from cryptography.fernet import Fernet
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
+from app.core.encryption import EncryptionService
 from app.main import app
-from app.models.db import LatestUsage, ProviderConfig, UsageEvent
+from app.models.db import LatestUsage, ProviderConfig, SidecarSourceContribution, UsageEvent
+from app.services import sidecar_devices, source_controls
 from tests.fixtures.test_client import TestClient
 
 # ---------------------------------------------------------------------------
@@ -769,6 +772,59 @@ class TestArchiveEvictsTheCachedCredential:
         ).first()
         assert row is not None
         assert row.archived is True
+
+    def test_archiving_an_account_retires_its_durable_contributions(
+        self, session: Session, monkeypatch
+    ):
+        """A retired account holds no secret — not even at rest.
+
+        An enrolled machine's credential lives in a durable contribution, and
+        the cache reloads every durable bundle on the next revision change, so
+        a contribution filed under a retired account would put the secret back
+        into that account's slot.
+        """
+        encryption = EncryptionService(Fernet.generate_key().decode())
+        monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
+        monkeypatch.setattr(source_controls, "encryption_service", encryption)
+
+        account_id = "retired@example.test"
+        origin = "keychain:Claude Code-credentials"
+        _add_provider_config(session, provider_id="anthropic", account_id=account_id, enabled=True)
+        device, _ = sidecar_devices.enroll(session, "synthetic")
+        proof = {
+            "source_id": "anthropic.claude-code",
+            "provider_id": "anthropic",
+            "label": "Claude Code",
+            "revision": source_controls.catalog()["anthropic.claude-code"].revision,
+            "generation": 1,
+            "read": True,
+            "state": "Limited",
+            "renewal_requested": False,
+            "renewal_supported": False,
+            "new": False,
+        }
+        source_controls.apply_report(session, device.device_id, proof)
+        source_controls.save_contribution(
+            session,
+            device.device_id,
+            proof,
+            provider_id="anthropic",
+            origin=origin,
+            account_id=account_id,
+            tokens={"oauth_token": "synthetic-access"},
+            metadata={},
+        )
+        session.commit()
+        assert session.exec(select(SidecarSourceContribution)).all()
+
+        resp = _client().put(
+            "/api/v1/system/provider-config/anthropic/retired%40example.test",
+            json={"archived": True},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # The secret is gone from under the retired account.
+        assert session.exec(select(SidecarSourceContribution)).all() == []
 
     def test_merging_a_machine_discovered_account_evicts_its_cached_credential(
         self, session: Session, clean_token_cache

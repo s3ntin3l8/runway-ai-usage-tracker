@@ -437,6 +437,115 @@ class TestTokenHealthService:
         get_candidates.assert_awaited_once_with("antigravity", "alice@example.com")
 
     @pytest.mark.asyncio
+    async def test_a_retired_account_is_not_listed_as_a_live_credential(self):
+        """A retired account holds no live credential (#895).
+
+        The credential inventory keeps the source visible under the archived
+        account — the operator still sees that a machine reports it — but
+        Token Health only lists what is live: there is nothing to collect with
+        and nothing to refresh.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.db import CredentialSource, ProviderConfig, SidecarRegistry
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="kimi_coding",
+            account_id="retired@example.test",
+            source_id="sidecar:dev-01:kimi",
+            source_type="file",
+            source_label="credentials.json",
+            credential_origin="path:/home/user/.kimi/credentials.json",
+            sidecar_id="dev-01",
+            credential_expires_at=datetime.now(UTC) - timedelta(days=1),
+            token_types_json='["api_key"]',
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        retired = ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="retired@example.test",
+            enabled=False,
+            archived=True,
+        )
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [
+            [sidecar],
+            [source],
+            [retired],
+        ]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch("app.services.token_health._collect_server_credentials", return_value={}),
+        ):
+            result = await service.get_health()
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_a_live_account_is_still_listed(self):
+        """The retired-account rule is narrow: a live account's credential is
+        listed as before."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.db import CredentialSource, ProviderConfig, SidecarRegistry
+
+        service = TokenHealthService()
+        source = CredentialSource(
+            provider_id="kimi_coding",
+            account_id="live@example.test",
+            source_id="sidecar:dev-01:kimi",
+            source_type="file",
+            source_label="credentials.json",
+            credential_origin="path:/home/user/.kimi/credentials.json",
+            sidecar_id="dev-01",
+            credential_expires_at=datetime.now(UTC) - timedelta(days=1),
+            token_types_json='["api_key"]',
+        )
+        sidecar = SidecarRegistry(sidecar_id="dev-01", hostname="dev-01")
+        live = ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="live@example.test",
+            enabled=True,
+            archived=False,
+        )
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [
+            [sidecar],
+            [source],
+            [live],
+        ]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch("app.services.token_health._collect_server_credentials", return_value={}),
+        ):
+            result = await service.get_health()
+
+        assert [r["account_id"] for r in result] == ["live@example.test"]
+
+    @pytest.mark.asyncio
     async def test_expired_token_status(self):
         service = TokenHealthService()
         past_exp = time.time() - 3600

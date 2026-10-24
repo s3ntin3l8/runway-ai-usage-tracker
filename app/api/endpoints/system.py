@@ -37,7 +37,7 @@ from app.models.db import (
     WebhookCredentialAlert,
 )
 from app.models.schemas import CredentialInventory, LimitCard, SidecarDownloadsResponse
-from app.services import audit_log, auth_failures
+from app.services import audit_log, auth_failures, source_controls
 from app.services.account_identity import (
     EMAIL_RE,
     HASH_RE,
@@ -2933,6 +2933,14 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
 
             await _store_manual_config_source(session, provider_id, account_id, tokens)
 
+    if body.archived:
+        # Retire the secret the server still holds at rest for this account:
+        # an enrolled machine's credential lives in a durable contribution, and
+        # the cache reloads every durable bundle on the next revision change —
+        # so the retired account would get it back without this. Part of the
+        # archive transaction: a failed commit leaves the account and its
+        # credential alone.
+        source_controls.retire_contributions_for_account(session, provider_id, account_id)
     session.commit()
     # A replaced/removed credential deserves a fresh verdict: drop any stale
     # "provider rejected it" flag so the next collection re-evaluates.
