@@ -927,6 +927,119 @@ class TestArchiveEvictsTheCachedCredential:
 
         assert session.exec(select(SidecarSourceContribution)).all() == []
 
+    def test_merging_without_a_destination_config_retires_the_contributions_too(
+        self, session: Session, monkeypatch
+    ):
+        """The merge's rename branch retires the source account id as well.
+
+        With no destination config the source row is *renamed* to the
+        destination, so the source id stops naming an account — the call is
+        unconditional for that reason. (#903 covers the account coming back
+        when the machine pushes under the old id again.)
+        """
+        encryption = EncryptionService(Fernet.generate_key().decode())
+        monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
+        monkeypatch.setattr(source_controls, "encryption_service", encryption)
+
+        source_account = "renamed@example.test"
+        origin = "keychain:Claude Code-credentials"
+        _add_provider_config(
+            session, provider_id="anthropic", account_id=source_account, enabled=True
+        )
+        device, _ = sidecar_devices.enroll(session, "synthetic")
+        proof = {
+            "source_id": "anthropic.claude-code",
+            "provider_id": "anthropic",
+            "label": "Claude Code",
+            "revision": source_controls.catalog()["anthropic.claude-code"].revision,
+            "generation": 1,
+            "read": True,
+            "state": "Limited",
+            "renewal_requested": False,
+            "renewal_supported": False,
+            "new": False,
+        }
+        source_controls.apply_report(session, device.device_id, proof)
+        source_controls.save_contribution(
+            session,
+            device.device_id,
+            proof,
+            provider_id="anthropic",
+            origin=origin,
+            account_id=source_account,
+            tokens={"oauth_token": "synthetic-access"},
+            metadata={},
+        )
+        session.commit()
+        assert session.exec(select(SidecarSourceContribution)).all()
+
+        # No destination config: the source row is renamed to the destination.
+        resp = _client().post(
+            "/api/v1/system/provider-account-merge/apply",
+            json={
+                "provider_id": "anthropic",
+                "source_account_id": source_account,
+                "destination_account_id": "fresh@example.test",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        assert session.exec(select(SidecarSourceContribution)).all() == []
+
+    def test_the_permanent_remove_retires_the_durable_contributions(
+        self, session: Session, monkeypatch
+    ):
+        """A legacy archived row that reaches `?permanent=true` still has its
+        secret at rest — a deleted account holds no credential either."""
+        encryption = EncryptionService(Fernet.generate_key().decode())
+        monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
+        monkeypatch.setattr(source_controls, "encryption_service", encryption)
+
+        account_id = "legacy@example.test"
+        origin = "keychain:Claude Code-credentials"
+        row = _add_provider_config(
+            session, provider_id="anthropic", account_id=account_id, enabled=True
+        )
+        # A legacy row: archived before this path retired the secret, so it
+        # still has it at rest.
+        row.archived = True
+        row.enabled = False
+        session.add(row)
+        session.commit()
+        device, _ = sidecar_devices.enroll(session, "synthetic")
+        proof = {
+            "source_id": "anthropic.claude-code",
+            "provider_id": "anthropic",
+            "label": "Claude Code",
+            "revision": source_controls.catalog()["anthropic.claude-code"].revision,
+            "generation": 1,
+            "read": True,
+            "state": "Limited",
+            "renewal_requested": False,
+            "renewal_supported": False,
+            "new": False,
+        }
+        source_controls.apply_report(session, device.device_id, proof)
+        source_controls.save_contribution(
+            session,
+            device.device_id,
+            proof,
+            provider_id="anthropic",
+            origin=origin,
+            account_id=account_id,
+            tokens={"oauth_token": "synthetic-access"},
+            metadata={},
+        )
+        session.commit()
+        assert session.exec(select(SidecarSourceContribution)).all()
+
+        resp = _client().delete(
+            "/api/v1/system/provider-config/anthropic/legacy%40example.test?permanent=true"
+        )
+        assert resp.status_code == 200, resp.text
+
+        assert session.exec(select(SidecarSourceContribution)).all() == []
+
     def test_merging_a_machine_discovered_account_evicts_its_cached_credential(
         self, session: Session, clean_token_cache
     ):

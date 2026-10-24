@@ -2189,6 +2189,10 @@ async def delete_provider_config_for_account(
                 col(CredentialSource.account_id) == account_id,
             )
         )
+        # A legacy row that was archived before this path retired the secret
+        # still has it at rest — and the cache would reload it. A deleted
+        # account holds no credential either.
+        source_controls.retire_contributions_for_account(session, provider_id, account_id)
         session.delete(row)
     else:
         # Soft-archive instead of hard-delete (see docstring). Remove is
