@@ -256,6 +256,66 @@ describe('ProvidersSection', () => {
     expect(screen.getByTitle('A credential is invalid — see Credentials')).toBeInTheDocument();
   });
 
+  it('marks a provider whose accounts are all archived as archived, not unconfigured', async () => {
+    // The operator retired this provider: it is set up, just closed. The card
+    // must not claim "Not configured" while the same provider is listed
+    // below under "Archived accounts" with a Restore action.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider(),
+        provider({
+          provider_id: 'kimi_coding',
+          name: 'Kimi Coding',
+          account_count: 0,
+          archived_count: 1,
+          accounts: [
+            { account_id: 'old@example.com', account_label: 'Old', enabled: false, archived: true },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    // The name shows twice: on the provider card and on its row in the
+    // archived-accounts list below.
+    expect((await screen.findAllByText('Kimi Coding')).length).toBe(2);
+    expect(
+      screen.getByText((_, node) => node?.textContent?.startsWith('Archived · 1 account') ?? false),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Not configured')).not.toBeInTheDocument();
+    // The card badge reads "archived" (the archived-account list below uses
+    // the capitalized "Archived" badge for the account row).
+    expect(screen.getByText('archived')).toBeInTheDocument();
+    expect(screen.queryByText('unconfigured')).not.toBeInTheDocument();
+    // The account is still restorable from the archived list.
+    expect(screen.getByText('Archived accounts (1)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument();
+  });
+
+  it('does not call a deployment with only a retired provider unconfigured', async () => {
+    // The fresh-install empty state ("No providers configured") is wrong for a
+    // deployment whose only provider was archived: it is set up, just closed.
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        provider({
+          provider_id: 'kimi_coding',
+          name: 'Kimi Coding',
+          account_count: 0,
+          archived_count: 1,
+          accounts: [
+            { account_id: 'old@example.com', account_label: 'Old', enabled: false, archived: true },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(api.getDashboardLayout).mockResolvedValue({ provider_order: [], card_orders: {} });
+    renderV2(<ProvidersSection />);
+
+    expect((await screen.findAllByText('Kimi Coding')).length).toBe(2);
+    expect(screen.queryByText('No providers configured')).not.toBeInTheDocument();
+  });
+
   it('shows archived accounts separately and restores the existing row', async () => {
     vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
       providers: [provider({

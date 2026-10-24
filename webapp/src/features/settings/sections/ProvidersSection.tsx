@@ -236,7 +236,13 @@ function ProvidersSectionV2({
     );
   }
 
-  const hasAnyConfig = providers.some((p) => p.account_count > 0);
+  // A retired provider still counts as configured: its accounts are archived,
+  // not missing. Without this, a deployment whose only provider was retired
+  // would render the fresh-install "No providers configured" empty state and
+  // hide the card that says the provider is archived.
+  const hasAnyConfig = providers.some(
+    (p) => p.account_count > 0 || (p.archived_count ?? 0) > 0,
+  );
   const archivedAccounts = providers.flatMap((p) =>
     p.accounts.filter((a) => a.archived).map((account) => ({ provider: p, account })),
   );
@@ -473,6 +479,12 @@ function SortableProviderCard({
   });
 
   const activeAccounts = provider.accounts.filter((a) => !a.archived);
+  const archivedAccounts = provider.accounts.filter((a) => a.archived);
+  // A provider whose every account is archived is *retired*, not unconfigured:
+  // it is set up, the operator just closed it. It must not claim "Not
+  // configured" — the account list below shows the same provider under
+  // "Archived accounts" with the Restore action.
+  const isArchivedOnly = activeAccounts.length === 0 && archivedAccounts.length > 0;
   const hasKey = activeAccounts.some((a) => a.api_key_set);
   const hasCookie = activeAccounts.some((a) => a.session_cookie_set);
   const allEnabled = activeAccounts.length > 0 && activeAccounts.every((a) => a.enabled);
@@ -523,11 +535,15 @@ function SortableProviderCard({
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium">{provider.name}</p>
           <p className="truncate text-[11px] text-fg-subtle">
-            {provider.account_count === 0
-              ? 'Not configured'
-              : `${provider.account_count} ${provider.account_count === 1 ? 'account' : 'accounts'} · poll ${
-                  provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
-                }s${provider.archived_count ? ` · ${provider.archived_count} archived` : ''}`}
+            {isArchivedOnly
+              ? `Archived · ${archivedAccounts.length} ${
+                  archivedAccounts.length === 1 ? 'account' : 'accounts'
+                }`
+              : provider.account_count === 0
+                ? 'Not configured'
+                : `${provider.account_count} ${provider.account_count === 1 ? 'account' : 'accounts'} · poll ${
+                    provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
+                  }s${provider.archived_count ? ` · ${provider.archived_count} archived` : ''}`}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -552,23 +568,27 @@ function SortableProviderCard({
           ) : (
             <Badge
               variant={
-                activeAccounts.length === 0
+                isArchivedOnly
                   ? 'neutral'
-                  : allEnabled
-                    ? 'accent'
-                    : anyEnabled
-                      ? 'warning'
-                      : 'neutral'
+                  : activeAccounts.length === 0
+                    ? 'neutral'
+                    : allEnabled
+                      ? 'accent'
+                      : anyEnabled
+                        ? 'warning'
+                        : 'neutral'
               }
             >
               {family ? 'connections: ' : null}
-              {activeAccounts.length === 0
-                ? 'unconfigured'
-                : allEnabled
-                  ? 'enabled'
-                  : anyEnabled
-                    ? 'partial'
-                    : 'disabled'}
+              {isArchivedOnly
+                ? 'archived'
+                : activeAccounts.length === 0
+                  ? 'unconfigured'
+                  : allEnabled
+                    ? 'enabled'
+                    : anyEnabled
+                      ? 'partial'
+                      : 'disabled'}
             </Badge>
           )}
         </div>

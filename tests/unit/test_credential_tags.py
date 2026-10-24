@@ -1655,3 +1655,92 @@ def test_keep_alive_column_is_added_to_existing_sidecar_registries():
     from app.core.db import _DEFERRED_COLUMNS
 
     assert ("sidecar_registry", "keep_alive", "BOOLEAN") in _DEFERRED_COLUMNS
+
+
+def test_archived_account_pairs_lists_only_archived_rows(session: Session):
+    """The parked set: the (provider, account) pairs whose row is archived.
+
+    Parked-ness is derived from ``ProviderConfig.archived`` — never stored on
+    the tag — so archiving an account parks the mappings that point at it and
+    restoring it revives them with no backfill.
+    """
+    from app.models.db import ProviderConfig
+    from app.services.credential_tags import archived_account_pairs
+
+    session.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="retired@example.com",
+            enabled=False,
+            archived=True,
+        )
+    )
+    session.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="live@example.com",
+            enabled=True,
+            archived=False,
+        )
+    )
+    session.add(
+        ProviderConfig(
+            provider_id="other",
+            account_id="retired@example.com",
+            enabled=False,
+            archived=True,
+        )
+    )
+    session.commit()
+
+    assert archived_account_pairs(session, ["kimi_coding"]) == {
+        ("kimi_coding", "retired@example.com")
+    }
+    # An empty provider list must not turn into a full-table scan.
+    assert archived_account_pairs(session, []) == set()
+
+
+def test_parked_mapping_resolves_its_seeded_providers_in_one_query(session: Session, monkeypatch):
+    """The seeded provider set resolves in a single query, not one per provider.
+
+    `/fleet/config` asks about every provider with a tag, so a per-provider
+    lookup would turn one request into a query per provider.
+    """
+    from app.services import credential_tags as credential_tags_module
+
+    calls: list[tuple[str, ...]] = []
+    original = credential_tags_module.archived_account_pairs
+
+    def counting(session: Session, providers):  # noqa: ANN001 — mirrors the wrapped helper
+        calls.append(tuple(providers))
+        return original(session, providers)
+
+    monkeypatch.setattr(credential_tags_module, "archived_account_pairs", counting)
+
+    parked = credential_tags_module.ParkedMapping(session, ["anthropic", "kimi_coding", "gemini"])
+    for provider_id, account_id in (
+        ("anthropic", "a@example.com"),
+        ("kimi_coding", "b@example.com"),
+        ("gemini", "c@example.com"),
+    ):
+        assert parked.is_parked_account(provider_id, account_id) is False
+
+    assert len(calls) == 1
+    assert set(calls[0]) == {"anthropic", "kimi_coding", "gemini"}
+
+
+def test_parked_mapping_asks_no_query_when_nobody_looks(session: Session, monkeypatch):
+    """A reader that never asks pays no query at all."""
+    from app.services import credential_tags as credential_tags_module
+
+    calls: list[tuple[str, ...]] = []
+    original = credential_tags_module.archived_account_pairs
+
+    def counting(session: Session, providers):  # noqa: ANN001 — mirrors the wrapped helper
+        calls.append(tuple(providers))
+        return original(session, providers)
+
+    monkeypatch.setattr(credential_tags_module, "archived_account_pairs", counting)
+
+    credential_tags_module.ParkedMapping(session, ["anthropic"])
+    assert calls == []

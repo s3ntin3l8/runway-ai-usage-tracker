@@ -51,6 +51,7 @@ from app.services.accumulator import (
 )
 from app.services.credential_tags import (
     CredentialTagRepo,
+    ParkedMapping,
     PendingCredentialTagRepo,
     live_sidecar_ids,
 )
@@ -240,6 +241,22 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         accepted_cards.append(card)
     payload.metrics = accepted_cards
 
+    # A mapping onto an archived account is *parked*: it resolves the credential
+    # but must never stamp the archived account with new usage. The predicate is
+    # tag-aware — a redirect tag names an account of its *target* provider, so
+    # its parked-ness is looked up there.
+    parked = ParkedMapping(
+        session,
+        [
+            pid
+            for pid in (
+                card.provider_id or (card.metadata.get("provider_id") if card.metadata else None)
+                for card in payload.metrics
+            )
+            if isinstance(pid, str) and pid
+        ],
+    )
+
     tokens_to_store = []
     local_cards = []
 
@@ -279,7 +296,11 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                         credential_origin=credential_origin,
                         sidecar_id=payload.sidecar_id,
                     )
-                    if verified_tag is not None and verified_tag.set_by != "identity_claim":
+                    if (
+                        verified_tag is not None
+                        and verified_tag.set_by != "identity_claim"
+                        and not parked.is_parked(verified_tag)
+                    ):
                         acc_id = verified_tag.account_id
                         identity_pending = False
                 if provider_id == "anthropic" and credential_origin and payload.sidecar_id:
@@ -295,7 +316,11 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                             credential_origin=credential_origin,
                             sidecar_id=payload.sidecar_id,
                         )
-                    if tagged is not None and tagged.set_by != "identity_claim":
+                    if (
+                        tagged is not None
+                        and tagged.set_by != "identity_claim"
+                        and not parked.is_parked(tagged)
+                    ):
                         acc_id = tagged.account_id
                         identity_pending = False
                     elif card.unit == "oauth":
@@ -969,7 +994,11 @@ async def _bundle_holds(
 
 
 def _account_tag_hints_for_providers(
-    session: Session, providers: list[str], *, sidecar_id: str | None = None
+    session: Session,
+    providers: list[str],
+    *,
+    sidecar_id: str | None = None,
+    include_parked: bool = True,
 ) -> dict[str, dict[str, str]]:
     """Return ``{provider_id: {credential_origin: account_id, ...}}`` for the
     requested providers, scoped to the requesting sidecar (#319).
@@ -1006,15 +1035,27 @@ def _account_tag_hints_for_providers(
     single-host operator's newly created machine-scoped tags still
     reach an un-upgraded binary — and falls back to deployment-wide
     tags only when zero or 2+ sidecars are live.
+
+    ``include_parked=False`` drops the mappings whose target account is
+    archived (see :class:`ParkedMapping`). A parked mapping
+    resolves the credential but must never reach a sidecar: shipping it
+    would make the sidecar stamp the archived account with new usage
+    and resurrect a pair the operator retired. Callers that decide
+    whether an origin is *resolved* — ``visible_pending_rows`` — keep
+    the default, because a parked mapping does resolve the origin and
+    the operator must not be nagged about it again.
     """
     effective_sidecar_id = sidecar_id
     if effective_sidecar_id is None:
         live = live_sidecar_ids(session)
         if len(live) == 1:
             effective_sidecar_id = live[0]
-    resolved = CredentialTagRepo.list_pending_payload(
+    tags = CredentialTagRepo.list_effective_tags(
         session, providers=providers, sidecar_id=effective_sidecar_id
     )
+    resolved: dict[str, dict[str, str]] = {}
+    for (pid, origin), tag in tags.items():
+        resolved.setdefault(pid, {})[origin] = tag.account_id
     # A fingerprint match outranks the auto-hint but never an operator tag:
     # the tag is a deliberate per-origin choice, the fingerprint a derived
     # one. Unlike tags, the fingerprint hint is not scoped to a sidecar —
@@ -1024,6 +1065,26 @@ def _account_tag_hints_for_providers(
         bucket = resolved.setdefault(pid, {})
         for origin, account_id in by_origin.items():
             bucket.setdefault(origin, account_id)
+    if not include_parked:
+        # A parked mapping resolves the credential but must never reach a
+        # sidecar: shipping it would make the sidecar stamp the archived
+        # account with new usage and resurrect a pair the operator retired.
+        # The check is tag-aware — a redirect tag names an account of its
+        # *target* provider, so its parked-ness is looked up there.
+        parked = ParkedMapping(session, providers)
+        # A redirect tag names an account of its *target* provider — seed those
+        # too, so the whole check costs two queries instead of one per
+        # provider.
+        parked.seed(
+            {tag.target_provider_id for tag in tags.values() if tag.target_provider_id is not None}
+        )
+        for (pid, origin), tag in tags.items():
+            if parked.is_parked(tag):
+                tagged_origins = resolved.get(pid)
+                if tagged_origins is not None:
+                    tagged_origins.pop(origin, None)
+                    if not tagged_origins:
+                        resolved.pop(pid, None)
     return resolved
 
 
@@ -1147,6 +1208,77 @@ def _validate_device_manifest(
             ]
 
 
+def _refresh_observed_sources(
+    session: Session,
+    payload: CredentialManifestRequest,
+    parked: ParkedMapping,
+) -> None:
+    """File each observed credential origin under the account it belongs to.
+
+    Each manifest is authoritative: the latest observed token names and
+    expiry replace the prior health metadata for that source.
+
+    ``parked`` answers whether a mapping is parked — one whose target account
+    is archived. A parked mapping resolves the credential, but the observation
+    must not be filed under the retired account, so the source stays where the
+    machine's own resolution put it.
+    """
+    from app.services.credential_sources import (
+        describe_origin,
+        resolve_source_account,
+        sidecar_source_id,
+        touch_source,
+    )
+
+    for observation in payload.observations:
+        observation_provider = observation.provider_id
+        observation_origin = observation.credential_origin
+        source_type, source_label = describe_origin(observation_origin)
+        try:
+            expires_at = (
+                datetime.fromtimestamp(observation.expires_at, tz=UTC)
+                if observation.expires_at is not None
+                else None
+            )
+        except (TypeError, ValueError, OverflowError, OSError):
+            expires_at = None
+        token_types = observation.token_types
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id=observation_provider,
+            credential_origin=observation_origin,
+            sidecar_id=payload.sidecar_id,
+        )
+        if parked.is_parked(tag):
+            # Parked: the operator parked this credential on a retired account.
+            # Keep the source where the machine's own resolution filed it.
+            tag = None
+        observed_source_id = sidecar_source_id(payload.sidecar_id, observation_origin)
+        # No operator tag does not mean "unidentified": the sidecar may have resolved
+        # the identity locally (id_token email, gh login), in which case ingest already
+        # registered this source under the real account. Reuse that row rather than
+        # filing a second one under the ``default`` placeholder, which would show as a
+        # phantom "Pending identity" credential next to the real one.
+        observed_account = (
+            tag.account_id
+            if tag
+            else resolve_source_account(session, observation_provider, observed_source_id)
+            or "default"
+        )
+        touch_source(
+            session,
+            provider_id=observation_provider,
+            account_id=observed_account,
+            source_id=observed_source_id,
+            source_type=source_type,
+            source_label=source_label,
+            credential_origin=observation_origin,
+            sidecar_id=payload.sidecar_id,
+            credential_expires_at=expires_at,
+            token_types=token_types,
+        )
+
+
 @router.post("/credentials/manifest")
 @limiter.limit("60/minute")
 async def post_credential_manifest(
@@ -1189,60 +1321,15 @@ async def post_credential_manifest(
     # curl) might not (PR #290 round-2 review, Hermes suggestion #7).
     payload.sidecar_id = normalize_sidecar_id(payload.sidecar_id)
 
-    from app.services.credential_sources import (
-        describe_origin,
-        resolve_source_account,
-        sidecar_source_id,
-        touch_source,
-    )
-
     _validate_device_manifest(request, payload, session)
 
-    # Each manifest is authoritative: the latest observed token names and
-    # expiry replace the prior health metadata for that source.
-    for observation in payload.observations:
-        observation_provider = observation.provider_id
-        observation_origin = observation.credential_origin
-        source_type, source_label = describe_origin(observation_origin)
-        try:
-            expires_at = (
-                datetime.fromtimestamp(observation.expires_at, tz=UTC)
-                if observation.expires_at is not None
-                else None
-            )
-        except (TypeError, ValueError, OverflowError, OSError):
-            expires_at = None
-        token_types = observation.token_types
-        tag = CredentialTagRepo.get(
-            session,
-            provider_id=observation_provider,
-            credential_origin=observation_origin,
-            sidecar_id=payload.sidecar_id,
-        )
-        observed_source_id = sidecar_source_id(payload.sidecar_id, observation_origin)
-        # No operator tag does not mean "unidentified": the sidecar may have resolved
-        # the identity locally (id_token email, gh login), in which case ingest already
-        # registered this source under the real account. Reuse that row rather than
-        # filing a second one under the ``default`` placeholder, which would show as a
-        # phantom "Pending identity" credential next to the real one.
-        observed_account = (
-            tag.account_id
-            if tag
-            else resolve_source_account(session, observation_provider, observed_source_id)
-            or "default"
-        )
-        touch_source(
-            session,
-            provider_id=observation_provider,
-            account_id=observed_account,
-            source_id=observed_source_id,
-            source_type=source_type,
-            source_label=source_label,
-            credential_origin=observation_origin,
-            sidecar_id=payload.sidecar_id,
-            credential_expires_at=expires_at,
-            token_types=token_types,
-        )
+    # A mapping onto an archived account is *parked*: it resolves the credential
+    # but must never file an observation under the archived account.
+    parked = ParkedMapping(
+        session, [observation.provider_id for observation in payload.observations]
+    )
+
+    _refresh_observed_sources(session, payload, parked)
     if payload.observations:
         session.flush()
 
@@ -1413,7 +1500,7 @@ async def post_credential_manifest(
     await _retire_missing_claude_sources(session, payload)
 
     resolved = _account_tag_hints_for_providers(
-        session, candidate_pids, sidecar_id=payload.sidecar_id
+        session, candidate_pids, sidecar_id=payload.sidecar_id, include_parked=False
     )
 
     return {
@@ -1461,6 +1548,14 @@ async def post_credential_tag(
     matching pending row(s), and writes an audit-log row. A
     deployment-wide scope clears every sidecar's pending row for the
     origin; a sidecar scope clears only that sidecar's.
+
+    An **archived** target is a *parked* mapping: the operator parked this
+    credential on an account they retired. The binding resolves the origin —
+    it never becomes pending again and the operator is not nagged — but it
+    is inert while the account stays archived: no hint ships to the
+    sidecar and no new usage is stamped on the archived account. Restoring
+    the account revives the binding automatically. The response reports
+    which it was as ``target_archived``.
     """
     from app.services.account_identity import canonical_account_id
     from app.services.credential_sources import is_machine_bound_origin, merge_source_provenance
@@ -1518,6 +1613,13 @@ async def post_credential_tag(
             ),
         )
 
+    # An archived target is a *parked* mapping: the operator parked this
+    # credential on an account they retired. The binding resolves the origin
+    # (the origin stops being pending and the operator is not nagged), but it
+    # is inert — no hint ships, nothing is stamped on the archived account, and
+    # restoring the account revives it automatically.
+    target_archived = bool(row is not None and row.archived)
+
     CredentialTagRepo.set_tag(
         session,
         provider_id=body.provider_id,
@@ -1536,7 +1638,7 @@ async def post_credential_tag(
     )
     if body.scope == "sidecar":
         source_stmt = source_stmt.where(CredentialSource.sidecar_id == sidecar_id)
-    source_rows = list(session.exec(source_stmt).all())
+    source_rows = [] if target_archived else list(session.exec(source_stmt).all())
     cache_moves: list[tuple[str, str, bool, int]] = []
     for source_row in source_rows:
         if source_row.account_id == target_account_id:
@@ -1621,10 +1723,11 @@ async def post_credential_tag(
             "credential_origin": body.credential_origin,
             "sidecar_id": sidecar_id or None,
             "scope": body.scope,
+            "parked": target_archived,
         },
     )
 
-    return {"status": "ok"}
+    return {"status": "ok", "target_archived": target_archived}
 
 
 @router.get("/credentials/tags")
@@ -2876,7 +2979,10 @@ async def get_fleet_config(
     # hint maps the credential's `origin_descriptor` to a known
     # provider_configs.account_id. Scoped to ?sidecar_id= when given (#319).
     account_tag_hints = _account_tag_hints_for_providers(
-        session, list(config["providers"].keys()), sidecar_id=sidecar_id
+        session,
+        list(config["providers"].keys()),
+        sidecar_id=sidecar_id,
+        include_parked=False,
     )
 
     if not trusted:
