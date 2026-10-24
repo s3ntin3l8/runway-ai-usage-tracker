@@ -51,6 +51,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from scripts.sidecar_pkg import browser_store
 from scripts.sidecar_pkg import transport as server_http
+from scripts.sidecar_pkg.expiry import expiry_seconds
 from scripts.sidecar_pkg.opencode_credentials import (
     key_binding as opencode_key_binding,
 )
@@ -4043,44 +4044,10 @@ def _is_expiry_key(name):
     return "expires" in lowered or "expiry" in lowered
 
 
-#: The epoch-second magnitudes that tell an expiry's unit apart. A 2026 epoch
-#: is ~1.8e9 s, ~1.8e12 ms, ~1.8e15 us and ~1.8e18 ns, so each threshold sits
-#: clear of the next: a millisecond value has to reach ~1e14 — some three
-#: thousand years ahead — before it would be read as microseconds.
-_EPOCH_MILLIS_THRESHOLD = 1e11
-_EPOCH_MICROS_THRESHOLD = 1e14
-_EPOCH_NANOS_THRESHOLD = 1e17
-
-#: The last second of year 9999. An expiry beyond it is not a real expiry, so
-#: it is unknown rather than fresh.
-_MAX_EXPIRY_SECONDS = 253402300799.0
-
-
-def _expiry_seconds(value):
-    """Epoch seconds of *value*, normalising the unit it is published in.
-
-    A provider may publish an expiry in seconds, milliseconds, microseconds or
-    nanoseconds. The magnitude of the number says which: dividing a microsecond
-    epoch by 1000 exactly once leaves it thousands of years in the future, where
-    it reads as permanently fresh.
-
-    Returns None when *value* isn't a number, and when it is not a plausible
-    expiry: an implausible value is unknown, never fresh.
-    """
-    try:
-        moment = float(value)
-    except (TypeError, ValueError):
-        return None
-    if moment >= _EPOCH_NANOS_THRESHOLD:
-        moment /= 1e9
-    elif moment >= _EPOCH_MICROS_THRESHOLD:
-        moment /= 1e6
-    elif moment >= _EPOCH_MILLIS_THRESHOLD:
-        moment /= 1e3
-    if moment > _MAX_EXPIRY_SECONDS:
-        # Past the last year this could name: not an expiry at all.
-        return None
-    return moment
+#: The epoch reader. The server has its own copy in ``app/core/expiry.py``;
+#: the two are pinned together by
+#: ``tests/unit/test_mapping_resolver_parity.py``.
+_expiry_seconds = expiry_seconds
 
 
 def _record_expiry(record):

@@ -343,6 +343,16 @@ class TestHelpers:
         ms = f"a.{base64.urlsafe_b64encode(json.dumps({'exp': 1_700_000_000_000}).encode()).decode()}.c"
         assert xai_renewer.jwt_expiry_epoch(ms) == 1_700_000_000
 
+    def test_jwt_expiry_normalises_microseconds(self):
+        us = f"a.{base64.urlsafe_b64encode(json.dumps({'exp': 1_700_000_000_000_000}).encode()).decode()}.c"
+        assert xai_renewer.jwt_expiry_epoch(us) == 1_700_000_000
+
+    def test_jwt_expiry_of_an_implausible_claim_is_unknown(self):
+        # A claim that names no real year is not an expiry — and it must not
+        # read as fresh, which is what an unnormalised far-future value does.
+        far = f"a.{base64.urlsafe_b64encode(json.dumps({'exp': 1e21}).encode()).decode()}.c"
+        assert xai_renewer.jwt_expiry_epoch(far) is None
+
     @pytest.mark.parametrize("token", ["", "abc", "a.b.c", "a.e30.c"])
     def test_jwt_expiry_unreadable(self, token):
         assert xai_renewer.jwt_expiry_epoch(token) is None

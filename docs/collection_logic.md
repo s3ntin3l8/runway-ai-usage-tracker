@@ -152,12 +152,16 @@ nanoseconds. The reader does **not** take the unit from the rule — it reads it
 magnitude of the number, because the registry maps an expiry field by name
 (`expiry_date`) without saying which unit that field carries.
 
-Both the server (`app/services/credential_provider.py::_expiry_seconds`) and the sidecar
-(`scripts/sidecar.py::_expiry_seconds`) implement the same rule, and
+Both sides of the fence implement the same rule, and
 `tests/unit/test_mapping_resolver_parity.py` pins the two copies together. They have to
 agree: the server decides whether a credential is fresh and the sidecar reports
 freshness independently, so a divergence means the two sides disagree about whether a
 credential is alive.
+
+| | copy | read by |
+|---|---|---|
+| server | `app/core/expiry.py::expiry_seconds` | `app/services/credential_provider.py` (the freshness probe) and `app/core/utils.py` (`IdentityExtractor.exp_from_tokens`, the single source of truth for a *stored* bundle's expiry — the token cache, the auto-refresher and Token Health all read through it) |
+| sidecar | `scripts/sidecar_pkg/expiry.py::expiry_seconds` | `scripts/sidecar.py` (the freshness probe) and `scripts/sidecar_pkg/xai_renewer.py` (a JWT's `exp` claim) |
 
 The rule, as both copies implement it:
 
@@ -176,10 +180,12 @@ thousands of years ahead and read as **fresh forever**; because the record picke
 the *largest* expiry, a dead microsecond record also outranked a live millisecond one.
 
 A value that is not a number, and a value that is not a plausible expiry at all (past the
-last second of year 9999), both read as **no expiry claim** — never as fresh. An unknown
-expiry must not win the largest-expiry picker over a record that states one.
+last second of year 9999), both read as **no expiry claim** — never as fresh. So do `nan`
+and an infinity: `nan` compares False against everything, so without an explicit check it
+would pass every test and be reported as an expiry of its own. An unknown expiry must not
+win the largest-expiry picker over a record that states one.
 
 Every expiry field the registry maps today is epoch milliseconds
 (`claudeAiOauth.expiresAt`, `expiresAt`, `records.*.expiresAtMs`, `expiry_date`), so this
 is a robustness change rather than a fix for a live report. A provider that publishes
-another unit needs no rule change: add the magnitude to both readers and the parity test.
+another unit needs no rule change: the magnitude table covers s/ms/us/ns.

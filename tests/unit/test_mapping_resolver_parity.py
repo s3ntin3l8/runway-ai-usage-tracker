@@ -208,9 +208,9 @@ _EPOCH_2026 = 1_792_518_384
 #:
 #: The unit is read off the magnitude, so the same instant in seconds,
 #: milliseconds, microseconds and nanoseconds has to land on the same second.
-#: The last two rows are the edges: an implausible value is unknown rather
-#: than fresh, and a millisecond value far enough ahead to be misread lands in
-#: the past rather than in the far future.
+#: The last rows are the edges: a value that is not a plausible expiry is
+#: unknown rather than fresh, and a millisecond value far enough ahead to be
+#: misread lands in the past rather than in the far future.
 EXPIRY_CASES = [
     ("seconds", _EPOCH_2026, _EPOCH_2026),
     ("milliseconds", _EPOCH_2026 * 1_000, _EPOCH_2026),
@@ -220,6 +220,9 @@ EXPIRY_CASES = [
     ("an expired millisecond", 1_600_000_000_000, 1_600_000_000),
     ("not a number", "not-a-number", None),
     ("none", None, None),
+    ("nan", float("nan"), None),
+    ("infinity", float("inf"), None),
+    ("negative infinity", float("-inf"), None),
     ("a value past the last representable year is unknown", 1e21, None),
     (
         "a millisecond value three thousand years ahead reads as expired",
@@ -235,7 +238,11 @@ EXPIRY_CASES = [
 )
 def test_expiry_units(name, case_id, raw, expected):
     """Both copies read the same expiry in the same unit the same way."""
-    assert EXPIRY_RESOLVERS[name](raw) == pytest.approx(expected)
+    got = EXPIRY_RESOLVERS[name](raw)
+    if expected is None:
+        assert got is None
+    else:
+        assert got == pytest.approx(expected)
 
 
 @pytest.mark.parametrize(

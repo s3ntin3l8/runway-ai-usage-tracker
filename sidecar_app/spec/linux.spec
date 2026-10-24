@@ -118,6 +118,8 @@ a = Analysis(
         "scripts.sidecar_pkg.agy_version",
         "scripts.sidecar_pkg.codex_renewer",
         "scripts.sidecar_pkg.oauth_renewal",
+        # The expiry reader, imported by the renewers and by sidecar.py.
+        "scripts.sidecar_pkg.expiry",
         "scripts.sidecar_pkg.asset_names",
         "scripts.sidecar_pkg.canonical_providers",
         # Native Windows Credential Manager reader (advapi32). Imported lazily,
