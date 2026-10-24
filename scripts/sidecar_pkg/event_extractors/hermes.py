@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -222,11 +223,33 @@ def _discover_hermes_db_paths() -> list[Path]:
 
 
 def _default_watermark_state_path() -> Path:
+    """Return the Hermes watermark file path.
+
+    Mirrors ``sidecar.get_sidecar_dir()`` (``RUNWAY_CONFIG_DIR``, then
+    ``%APPDATA%\\runway\\sidecar`` on Windows, then
+    ``~/.config/runway/sidecar``) without importing it: the frozen app runs
+    ``scripts/sidecar.py`` as a script, so a module import would create a
+    second copy of its state. A test pins the two together. Resolution goes
+    through ``Path.home()`` rather than a literal ``~`` so it follows the
+    same home the rest of the sidecar uses.
+
+    Upgrade note (Windows): earlier builds read ``~/.config/runway/sidecar``
+    here even on Windows, so an existing install's watermark file there is
+    orphaned and the first run re-scans the whole Hermes history. The server
+    deduplicates on ``event_id``, so no usage is counted twice.
+    """
     config_dir = os.getenv("RUNWAY_CONFIG_DIR")
     if config_dir:
         base = Path(config_dir) / "sidecar"
+    elif platform.system() == "Windows":
+        app_data = os.getenv("APPDATA")
+        base = (
+            Path(app_data) / "runway" / "sidecar"
+            if app_data
+            else Path.home() / "AppData" / "Roaming" / "runway" / "sidecar"
+        )
     else:
-        base = Path("~/.config/runway/sidecar").expanduser()
+        base = Path.home() / ".config" / "runway" / "sidecar"
     return base / "hermes_watermark.json"
 
 

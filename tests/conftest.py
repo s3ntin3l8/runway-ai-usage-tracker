@@ -23,6 +23,7 @@ import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from scripts.isolation_env import LIVE_STATE_ENV_VARS
 from tests.fixtures.isolation import worker_paths
 
 
@@ -199,17 +200,41 @@ os.environ["PYSTRAY_BACKEND"] = "dummy"
 # imported and its settings singleton reads the paths.
 _worker = os.environ.get("PYTEST_XDIST_WORKER", "").strip()
 _isolation_root = os.environ.get("TEST_ISOLATION_ROOT", "").strip()
-if _isolation_root:
-    _home, _config = worker_paths(Path(_isolation_root), _worker)
-    _home.mkdir(parents=True, exist_ok=True)
-    _config.mkdir(parents=True, exist_ok=True)
-    os.environ["HOME"] = str(_home)
-    os.environ["USERPROFILE"] = str(_home)
-    os.environ["APPDATA"] = str(_home / "AppData/Roaming")
-    os.environ["LOCALAPPDATA"] = str(_home / "AppData/Local")
-    os.environ["XDG_CONFIG_HOME"] = str(_home / ".config")
-    os.environ["XDG_DATA_HOME"] = str(_home / ".local/share")
-    os.environ["RUNWAY_CONFIG_DIR"] = str(_config)
+if not _isolation_root:
+    # A bare ``pytest`` run (no runner exported a root) is isolated too: with
+    # nothing to point HOME elsewhere, anything that resolves a home-relative
+    # path writes into the operator's real one -- a Hermes extractor test did
+    # exactly that and filled a live sidecar watermark with fixture keys. The
+    # root is exported so xdist workers, which inherit this environment, split
+    # it per worker instead of creating roots of their own; only this process
+    # removes it.
+    _isolation_root = tempfile.mkdtemp(prefix="runway-pytest-")
+    os.environ["TEST_ISOLATION_ROOT"] = _isolation_root
+    atexit.register(shutil.rmtree, _isolation_root, True)
+_home, _config = worker_paths(Path(_isolation_root), _worker)
+_home.mkdir(parents=True, exist_ok=True)
+_config.mkdir(parents=True, exist_ok=True)
+# State paths exported in the operator's shell would still reach live files
+# (the app database, the CLI logins, the Hermes profiles) from a bare run, so
+# they are scrubbed the same way the runner scrubs them.
+for _name in LIVE_STATE_ENV_VARS:
+    os.environ.pop(_name, None)
+os.environ["HOME"] = str(_home)
+os.environ["USERPROFILE"] = str(_home)
+os.environ["APPDATA"] = str(_home / "AppData/Roaming")
+os.environ["LOCALAPPDATA"] = str(_home / "AppData/Local")
+os.environ["XDG_CONFIG_HOME"] = str(_home / ".config")
+os.environ["XDG_DATA_HOME"] = str(_home / ".local/share")
+os.environ["RUNWAY_CONFIG_DIR"] = str(_config)
+
+
+def _inside(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
 
 import httpx
 import pytest
@@ -236,6 +261,34 @@ from tests.fixtures.worker_death import (
     worker_death_report,
 )
 from tests.windows_socketpair import install_windows_socketpair
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _guard_real_home_is_isolated():
+    """Fail the whole run if it could still reach the operator's real home.
+
+    The isolation above is what keeps a test from writing into the real
+    ``~/.config/runway``; this proves the environment it set is still in
+    force when the first test runs, so a later change to ``HOME`` or
+    ``RUNWAY_CONFIG_DIR`` (a plugin, a fixture) cannot silently undo it. It
+    cannot see a module that captured a home path before the block ran.
+    """
+    isolation_root = Path(os.environ["TEST_ISOLATION_ROOT"])
+    problems: list[str] = []
+    for label, path in (
+        ("Path.home()", Path.home()),
+        ("RUNWAY_CONFIG_DIR", Path(os.environ["RUNWAY_CONFIG_DIR"])),
+    ):
+        if not _inside(path, isolation_root):
+            problems.append(f"{label} = {path}")
+    if problems:
+        pytest.exit(
+            "tests are not isolated from the real home directory ("
+            + "; ".join(problems)
+            + f"); expected everything under {isolation_root}",
+            returncode=3,
+        )
+    yield
 
 
 @pytest.fixture(autouse=True)
