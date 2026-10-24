@@ -48,8 +48,10 @@ _UNFIXABLE_GROUP = "path_shaped_projects_unfixable"
 _STALE_SUMMARY = "This finding is stale — rescan to see the current groups."
 
 #: The wording for the rows that carry a path-shaped label but hold no working
-#: directory to derive one from.
-_UNFIXABLE_SUMMARY = "These rows have no working directory to derive a label from."
+#: directory to derive one from. The plan describes the finding; the result
+#: reports the outcome, the way the fixable branch does.
+_UNFIXABLE_PLAN_SUMMARY = "These rows have no working directory to derive a label from."
+_UNFIXABLE_RESULT_SUMMARY = "Nothing to relabel — these rows have no usable working directory."
 
 
 def _stale_plan(check_id: str, group_key: str) -> FixPlan:
@@ -144,7 +146,7 @@ class PathShapedProjectsCheck(Check):
             return FixPlan(
                 check_id=self.id,
                 group_key=group_key,
-                summary=_UNFIXABLE_SUMMARY,
+                summary=_UNFIXABLE_PLAN_SUMMARY,
                 counts={"rows_to_relabel": 0},
             )
         if group_key != _FIXABLE_GROUP:
@@ -176,7 +178,7 @@ class PathShapedProjectsCheck(Check):
                 FixResult(
                     check_id=self.id,
                     group_key=group_key,
-                    summary=_UNFIXABLE_SUMMARY,
+                    summary=_UNFIXABLE_RESULT_SUMMARY,
                     counts={"rows_relabeled": 0},
                 ),
                 [],
