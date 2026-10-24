@@ -103,7 +103,11 @@ disposable hosted macOS CI, with no provider credentials or release secrets,
 process-group/job deadlines and isolation/cleanup checks. Incomplete experiments
 fail. The latest metadata-only public update control timed out and reported lock
 metadata changes; causality of those changes and recurring credential prompts is
-unresolved. See claude-keychain-public-update-probe-773.md.
+unresolved. See claude-keychain-public-update-probe-773.md. Subsequent #886
+controls preserved observed isolation and demonstrated a creator/helper read
+boundary, not a supported shared-access store. The current
+[source renewal readiness inventory](source-renewal-readiness-781.md) separates
+implemented mechanisms, historical evidence and remaining acceptance gates.
 
 Retain the unsupported-policy write guard until a public supported write path
 proves policy preservation. Prefer an independently authorized Runway grant or a
