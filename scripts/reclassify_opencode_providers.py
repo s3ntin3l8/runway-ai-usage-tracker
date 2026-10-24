@@ -28,6 +28,11 @@ whatever OpenCode logged (typically 0.0 for a subscription). Run
 scripts/recost_events.py against the new provider_id afterward to price it
 from provider_pricing.
 
+Both OpenCode database layouts are read: v1's ``message`` table and v2's
+``session_message`` table (which opencode v2 left the v1 table behind, frozen).
+The v2 path reuses the live extractor's own detection, query and reshaping, so
+the two readers cannot drift apart.
+
 Must run on the host where opencode.db lives (local topology) — the sidecar's
 raw per-message data isn't retained server-side. Rows whose event_id is no
 longer present in opencode.db (pruned locally, or ingested from a different
@@ -65,6 +70,8 @@ import argparse
 import json
 import sqlite3
 import sys
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Ensure repo root is on sys.path when the script is invoked directly.
@@ -83,7 +90,11 @@ from scripts.backfill_rollups import backfill  # noqa: E402
 from scripts.sidecar_pkg.event_extractors.opencode import (  # noqa: E402
     _OC_CANONICAL_MAP,
     _OC_PROVIDER_MAP,
+    _V2_QUERY,
     _classify_opencode_error,
+    _is_v2,
+    _normalize_v2_message,
+    _v2_row_status,
     map_opencode_canonical,
     map_opencode_provider_id,
 )
@@ -105,6 +116,53 @@ _RESCAN_PROVIDERS = _OLD_PROVIDERS + tuple(
 _ReclassifyMap = dict[str, tuple[str, str | None, str, str | None]]
 
 
+def _iter_v1_messages(cur: sqlite3.Cursor) -> Iterator[tuple[str, dict]]:
+    """Yield (message id, message data) for every assistant message in a v1 DB."""
+    cur.execute("SELECT id, data FROM message WHERE json_extract(data, '$.role') = 'assistant'")
+    for msg_id, data_json in cur:
+        try:
+            data = json.loads(data_json) if data_json else {}
+        except Exception:
+            continue
+        yield msg_id, data
+
+
+def _iter_v2_messages(cur: sqlite3.Cursor) -> Iterator[tuple[str, dict]]:
+    """Yield (message id, message data) for every settled message in a v2 DB.
+
+    opencode v2 moved the messages into ``session_message`` and left the v1
+    ``message`` table behind, frozen — so a reader that only queries ``message``
+    sees the history from before the migration and nothing after it. The live
+    extractor already reads both; this reuses its detection, its query and its
+    reshaping, so the two readers cannot drift apart.
+    """
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    # since_ms of 0 — every row, not a watermark window.
+    cur.execute(_V2_QUERY, (0,))
+    for (
+        msg_id,
+        _session_id,
+        time_created_ms,
+        msg_type,
+        data_json,
+        directory,
+        model_json,
+    ) in cur:
+        try:
+            raw = json.loads(data_json) if data_json else {}
+            session_model = json.loads(model_json) if model_json else None
+        except Exception:
+            continue
+        # A row that never settled was never ingested either, so there is no
+        # event to reclassify — the live extractor skipped it for the same reason.
+        if _v2_row_status(raw, msg_type, time_created_ms, now_ms) != "ready":
+            continue
+        data = _normalize_v2_message(raw, msg_type, directory, session_model)
+        if data is None:
+            continue
+        yield msg_id, data
+
+
 def _read_opencode_db(db_path: Path) -> _ReclassifyMap:
     """Recompute the correct provider_id/account_id/kind for every assistant message."""
     if not db_path.exists():
@@ -114,12 +172,12 @@ def _read_opencode_db(db_path: Path) -> _ReclassifyMap:
     conn = sqlite3.connect(str(db_path))
     try:
         cur = conn.cursor()
-        cur.execute("SELECT id, data FROM message WHERE json_extract(data, '$.role') = 'assistant'")
-        for msg_id, data_json in cur.fetchall():
-            try:
-                data = json.loads(data_json) if data_json else {}
-            except Exception:
-                continue
+        # opencode v2 moved the messages into ``session_message`` and left the v1
+        # ``message`` table behind, frozen. Reading only ``message`` would see
+        # the pre-migration history and none of the usage since — the migration
+        # would then silently reclassify nothing.
+        rows = _iter_v2_messages(cur) if _is_v2(cur) else _iter_v1_messages(cur)
+        for msg_id, data in rows:
             oc_provider_id = data.get("providerID") or ""
             canonical = map_opencode_canonical(oc_provider_id)
             if canonical is not None:

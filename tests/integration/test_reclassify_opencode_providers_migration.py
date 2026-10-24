@@ -20,8 +20,12 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import UsageEvent, UsagePeriodRollup
 from app.services.pricing_seed import seed_pricing_table
+from tests.fixtures.opencode_fixture import make_opencode_v2_db, v2_assistant_data
 
 NOW = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
+
+#: A settled v2 row's timestamp — old enough that no row is "still streaming".
+_V2_CREATED_MS = 1_778_248_860_000
 
 
 @pytest.fixture(autouse=True)
@@ -512,3 +516,160 @@ def test_migration_dry_run_writes_nothing(engine):
     with Session(engine) as s:
         ev = s.exec(select(UsageEvent)).one()
         assert ev.provider_id == "opencode"  # unchanged — dry run only
+
+
+def _make_opencode_v2_db(messages: list[dict]) -> Path:
+    """A migrated opencode DB: ``session_v2`` + ``session_message``, v1 frozen."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db_path = Path(tmp.name)
+    make_opencode_v2_db(
+        str(db_path),
+        messages=messages,
+        sessions=[{"id": "ses1", "directory": "/home/user/project", "model": None}],
+    )
+    return db_path
+
+
+def _v2_message(msg_id: str, provider_id: str, **data_overrides) -> dict:
+    return {
+        "id": msg_id,
+        "session_id": "ses1",
+        "type": "assistant",
+        "time_created": _V2_CREATED_MS,
+        "data": v2_assistant_data(
+            _V2_CREATED_MS,
+            model={"providerID": provider_id, "id": "some-model"},
+            **data_overrides,
+        ),
+    }
+
+
+def test_migration_reclassifies_a_v2_database(engine):
+    """opencode v2 moved the messages into ``session_message`` and left the v1
+    ``message`` table behind, frozen.
+
+    Reading only ``message`` sees the history from before the migration and
+    none of the usage since, so the migration silently reclassified nothing —
+    the events kept the old buggy provider ids forever.
+    """
+    with Session(engine) as s:
+        _seed_event(s, "msg_v2_byok", "opencode", tokens_input=999, tokens_output=999)
+        _seed_event(s, "msg_v2_err", "opencode", tokens_input=1, tokens_output=1)
+        s.commit()
+
+    db_path = _make_opencode_v2_db(
+        [
+            _v2_message("msg_v2_byok", "open-design-byok"),
+            _v2_message(
+                "msg_v2_err",
+                "openrouter",
+                error={"name": "APIError", "data": {"statusCode": 401}},
+            ),
+        ]
+    )
+
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            changed = migrate(db_path, apply=True)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    assert changed == 2
+
+    with Session(engine) as s:
+        by_id = {ev.event_id: ev for ev in s.exec(select(UsageEvent)).all()}
+
+        assert by_id["msg_v2_byok"].provider_id == "opencode-byok"
+        assert by_id["msg_v2_byok"].kind == "message"
+        assert by_id["msg_v2_byok"].tokens_input == 999
+
+        err = by_id["msg_v2_err"]
+        assert err.provider_id == "openrouter"
+        assert err.kind == "error"
+        assert err.stop_reason == "auth_failed"
+        assert err.tokens_input == 0
+        assert err.cost_usd == 0.0
+
+
+def test_migration_ignores_the_frozen_v1_table_on_a_v2_database(engine):
+    """The v1 ``message`` table is left behind, frozen, by a v2 migration.
+
+    Its rows describe the world before the migration, so a v2 reader must not
+    reclassify from them: the row here would move to "opencode" if the frozen
+    table were read.
+    """
+    with Session(engine) as s:
+        # "msg_frozen_v1" is the frozen row the v2 fixture always writes, with
+        # providerID "opencode-go" — which maps to "opencode".
+        _seed_event(s, "msg_frozen_v1", "opencode-free", tokens_input=10, tokens_output=5)
+        s.commit()
+
+    db_path = _make_opencode_v2_db([_v2_message("msg_v2_go", "opencode-go")])
+
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            migrate(db_path, apply=True)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    with Session(engine) as s:
+        by_id = {ev.event_id: ev for ev in s.exec(select(UsageEvent)).all()}
+        # Untouched — the frozen row was not read.
+        assert by_id["msg_frozen_v1"].provider_id == "opencode-free"
+
+
+def test_migration_on_a_v2_database_with_no_usable_rows_reports_nothing_to_do(engine):
+    """A v2 DB whose only rows carry no usage reclassifies nothing, and says so.
+
+    The migration must report "nothing to do" rather than erroring on a row it
+    cannot make sense of.
+    """
+    with Session(engine) as s:
+        _seed_event(s, "msg_v2_byok", "opencode", tokens_input=999)
+        s.commit()
+
+    # A compaction with no cost and no tokens — the live extractor drops it, so
+    # there is no event to reclassify.
+    db_path = _make_opencode_v2_db(
+        [
+            {
+                "id": "msg_v2_compaction",
+                "session_id": "ses1",
+                "type": "compaction",
+                "time_created": _V2_CREATED_MS,
+                "data": {
+                    "status": "completed",
+                    "cost": 0,
+                    "tokens": {"input": 0, "output": 0, "cache": {"read": 0, "write": 0}},
+                    "time": {"created": _V2_CREATED_MS, "completed": _V2_CREATED_MS + 10},
+                },
+            }
+        ]
+    )
+
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            changed = migrate(db_path, apply=True)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    assert changed == 0
+    with Session(engine) as s:
+        ev = s.exec(select(UsageEvent)).one()
+        assert ev.provider_id == "opencode"  # unchanged
