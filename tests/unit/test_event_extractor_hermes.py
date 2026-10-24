@@ -18,9 +18,9 @@ from scripts.sidecar_pkg.event_extractors.hermes import (
 from tests.fixtures.hermes_fixture import make_hermes_db
 
 
-def _make_db() -> tuple[Path, sqlite3.Connection]:
-    """Create a temp SQLite file with the Hermes schema and sample data."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+def _make_db(directory: Path) -> tuple[Path, sqlite3.Connection]:
+    """Create a SQLite file in ``directory`` with the Hermes schema and sample data."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", dir=directory, delete=False)
     tmp.close()
     db_path = Path(tmp.name)
     conn = make_hermes_db(str(db_path))
@@ -202,7 +202,7 @@ def test_discover_hermes_db_paths_with_hermes_home_profiles(monkeypatch, tmp_pat
 
 
 def test_parse_hermes_events_basic(tmp_path):
-    db_path, _ = _make_db()
+    db_path, _ = _make_db(tmp_path)
     state_file = tmp_path / "hermes_watermark.json"
 
     try:
@@ -248,7 +248,7 @@ def test_parse_hermes_events_basic(tmp_path):
 
 
 def test_parse_hermes_events_with_canonical_hints(tmp_path):
-    db_path, _ = _make_db()
+    db_path, _ = _make_db(tmp_path)
     state_file = tmp_path / "hermes_watermark.json"
 
     canonical_hints = {
@@ -284,7 +284,7 @@ def test_unhinted_canonical_provider_holds_back_as_default_even_with_custom_host
     upstream provider account owns the message. It must be held back as
     account_id='default' and account_source='default' for operator assignment.
     """
-    db_path, _ = _make_db()
+    db_path, _ = _make_db(tmp_path)
     state_file = tmp_path / "hermes_watermark.json"
 
     try:
@@ -364,7 +364,7 @@ def test_native_provider_preserves_host_account_id_and_leaves_account_source_non
 
 
 def test_incremental_deltas_watermark(tmp_path):
-    db_path, _ = _make_db()
+    db_path, _ = _make_db(tmp_path)
     state_file = tmp_path / "hermes_watermark.json"
 
     try:
@@ -422,7 +422,7 @@ def test_watermark_counters_decrease_resilience(tmp_path):
     the watermark must not regress. When counters later exceed the previous
     high-water mark, only the genuine net-new delta is emitted without double-counting.
     """
-    db_path, _ = _make_db()
+    db_path, _ = _make_db(tmp_path)
     state_file = tmp_path / "hermes_watermark.json"
 
     try:
@@ -488,7 +488,7 @@ def test_late_cost_correction_emits_distinct_event_id(tmp_path):
     it must emit a new event with the cost delta and a unique event_id that
     won't be deduped by the server.
     """
-    db_path, _ = _make_db()
+    db_path, _ = _make_db(tmp_path)
     state_file = tmp_path / "hermes_watermark.json"
 
     try:
@@ -561,8 +561,8 @@ def test_distinct_db_roots_have_independent_watermarks(tmp_path):
     dir1.mkdir()
     dir2.mkdir()
 
-    db1, _ = _make_db()
-    db2, _ = _make_db()
+    db1, _ = _make_db(tmp_path)
+    db2, _ = _make_db(tmp_path)
     target1 = dir1 / "state.db"
     target2 = dir2 / "state.db"
     db1.rename(target1)
@@ -629,6 +629,7 @@ def test_missing_both_timestamps_skips_and_warns(tmp_path, caplog):
             db_paths=[db_path],
             account_id="default",
             since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=tmp_path / "hermes_watermark.json",
         )
     assert not any(e.session_id == "sess-null-ts" for e in events)
     assert any("has both last_seen and first_seen NULL" in r.message for r in caplog.records)
@@ -639,7 +640,7 @@ def test_watermark_mixed_counter_regression_preserves_high_watermark(tmp_path):
     is lower than the prior high-water mark (e.g. session truncation / partial context reset),
     max(curr_in, prev_in) prevents input_tokens from regressing to the lower value.
     """
-    db_path, _ = _make_db()
+    db_path, _ = _make_db(tmp_path)
     state_file = tmp_path / "hermes_watermark.json"
 
     try:
@@ -734,7 +735,12 @@ def test_hermes_entrypoint_distinguishes_source(tmp_path):
     file_conn.close()
     conn.close()
 
-    events = parse_hermes_events([db_path], "default", datetime(2020, 1, 1, tzinfo=UTC))
+    events = parse_hermes_events(
+        [db_path],
+        "default",
+        datetime(2020, 1, 1, tzinfo=UTC),
+        state_file=tmp_path / "hermes_watermark.json",
+    )
     discord_ev = next(e for e in events if e.session_id == "sess-discord-01")
     assert discord_ev.entrypoint == "hermes-discord"
 
@@ -779,7 +785,12 @@ def test_gemini_model_ids_are_normalized_to_pricing_buckets(tmp_path):
     file_conn.close()
     conn.close()
 
-    events = parse_hermes_events([db_path], "default", datetime(2020, 1, 1, tzinfo=UTC))
+    events = parse_hermes_events(
+        [db_path],
+        "default",
+        datetime(2020, 1, 1, tzinfo=UTC),
+        state_file=tmp_path / "hermes_watermark.json",
+    )
     gem_ev = next(e for e in events if e.session_id == "sess-gem-01")
     assert gem_ev.provider_id == "gemini"
     assert gem_ev.model_id == "flash-2.5"
@@ -789,7 +800,7 @@ def test_gemini_model_ids_are_normalized_to_pricing_buckets(tmp_path):
 def test_watermark_state_key_scoped_by_account_id(tmp_path):
     """Watermark state keys are scoped by account_id so multiple accounts
     iterating through scoped_accounts do not advance each other's watermarks."""
-    db_path, _ = _make_db()
+    db_path, _ = _make_db(tmp_path)
     state_file = tmp_path / "hermes_watermark.json"
 
     events1 = parse_hermes_events(
@@ -812,9 +823,7 @@ def test_watermark_state_key_scoped_by_account_id(tmp_path):
 def test_watermark_state_key_distinguishes_billing_base_url_and_mode(tmp_path):
     """Watermark state keys include billing_base_url and billing_mode to prevent
     collision when a session produces multiple slices with different endpoints or modes."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    tmp.close()
-    db_path = Path(tmp.name)
+    db_path = tmp_path / "state.db"
     conn = make_hermes_db(str(db_path))
 
     # Add a second row for the same session and model but differing in billing_base_url
@@ -853,9 +862,7 @@ def test_watermark_state_key_distinguishes_billing_base_url_and_mode(tmp_path):
 
 def test_first_seen_newer_than_last_seen_extracted(tmp_path):
     """Rows where first_seen > since_epoch are extracted even if last_seen is older or zero."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    tmp.close()
-    db_path = Path(tmp.name)
+    db_path = tmp_path / "state.db"
     conn = make_hermes_db(str(db_path))
 
     # Add a row where last_seen is 0.0 (or older) but first_seen is 1790000000.0 (> since)
@@ -885,9 +892,7 @@ def test_first_seen_newer_than_last_seen_extracted(tmp_path):
 
 def test_hermes_parent_session_and_model_heuristics_extraction(tmp_path):
     """Auxiliary tasks with empty or auto billing_provider resolve via parent session and model heuristics."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    tmp.close()
-    db_path = Path(tmp.name)
+    db_path = tmp_path / "state.db"
     conn = make_hermes_db(str(db_path))
 
     # 1. Parent session is opencode-go; title_generation task has empty billing_provider
@@ -987,6 +992,7 @@ def test_hermes_parent_session_and_model_heuristics_extraction(tmp_path):
             "fallback@host.com",
             datetime.fromtimestamp(1779000000.0, tz=UTC),
             canonical_hints=canonical_hints,
+            state_file=tmp_path / "hermes_watermark.json",
         )
 
         by_session_task = {(ev.session_id, ev.subagent_type): ev for ev in events}
@@ -1017,3 +1023,33 @@ def test_hermes_parent_session_and_model_heuristics_extraction(tmp_path):
         assert ev_kimi.account_source == "default"
     finally:
         db_path.unlink(missing_ok=True)
+
+
+def test_the_default_watermark_path_matches_the_sidecar_config_dir(monkeypatch, tmp_path):
+    """The extractor's fallback path must not drift from the sidecar's.
+
+    The extractor cannot import ``sidecar.get_sidecar_dir()`` (the frozen app
+    runs ``scripts/sidecar.py`` as a script), so the two are pinned together
+    here, including the Windows ``%APPDATA%`` branch.
+    """
+    import scripts.sidecar as sidecar
+    from scripts.sidecar_pkg.event_extractors import hermes
+
+    def assert_in_step() -> None:
+        assert hermes._default_watermark_state_path() == (
+            sidecar.get_sidecar_dir() / "hermes_watermark.json"
+        )
+
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path))
+    assert_in_step()
+    monkeypatch.delenv("RUNWAY_CONFIG_DIR")
+    assert_in_step()
+
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    assert_in_step()
+    assert hermes._default_watermark_state_path() == (
+        tmp_path / "roaming" / "runway" / "sidecar" / "hermes_watermark.json"
+    )
+    monkeypatch.delenv("APPDATA")
+    assert_in_step()
