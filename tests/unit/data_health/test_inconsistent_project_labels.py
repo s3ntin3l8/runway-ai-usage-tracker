@@ -100,3 +100,29 @@ def test_apply_unifies_a_folder_named_differently(session):
 
     projects = {r.event_id: r.project for r in session.exec(select(UsageEvent)).all()}
     assert set(projects.values()) == {"runway-ai-usage-tracker"}
+
+
+def test_an_unknown_group_key_is_refused(session):
+    """A key from an older scan must not fall through to the relabel."""
+    _event(session, "1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+    _event(
+        session,
+        "2",
+        cwd="/home/u/ai-usage-tracker",
+        project="runway-ai-usage-tracker",
+        project_ref="runway-ai-usage-tracker",
+    )
+
+    result, _hooks = _check().apply(session, "some-older-key", {})
+
+    assert result.counts["rows_relabeled"] == 0
+    ev = session.exec(select(UsageEvent).where(UsageEvent.event_id == "msg_1")).one()
+    assert ev.project == "ai-usage-tracker"
+
+
+def test_an_unknown_group_key_plans_nothing(session):
+    _event(session, "1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+
+    plan = _check().plan(session, "some-older-key", {})
+
+    assert plan.counts["rows_to_relabel"] == 0

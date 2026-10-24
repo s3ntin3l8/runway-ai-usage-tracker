@@ -40,6 +40,30 @@ from app.services.maintenance.project_labels import (
 #: The group of rows whose label does not follow the reported repository.
 _GROUP = "inconsistent_project_labels"
 
+#: The wording for a group key this check does not know. One string, so the
+#: plan and the result the UI shows side by side cannot drift apart.
+_STALE_SUMMARY = "This finding is stale — rescan to see the current groups."
+
+
+def _stale_plan(check_id: str, group_key: str) -> FixPlan:
+    """The plan for a group key this check does not know."""
+    return FixPlan(
+        check_id=check_id,
+        group_key=group_key,
+        summary=_STALE_SUMMARY,
+        counts={"rows_to_relabel": 0},
+    )
+
+
+def _stale_result(check_id: str, group_key: str) -> FixResult:
+    """The result for a group key this check does not know."""
+    return FixResult(
+        check_id=check_id,
+        group_key=group_key,
+        summary=_STALE_SUMMARY,
+        counts={"rows_relabeled": 0},
+    )
+
 
 class InconsistentProjectLabelsCheck(Check):
     id = "inconsistent_project_labels"
@@ -86,6 +110,11 @@ class InconsistentProjectLabelsCheck(Check):
         )
 
     def plan(self, session: Session, group_key: str, params: dict[str, Any]) -> FixPlan:
+        if group_key != _GROUP:
+            # A key from an older scan (or a renamed group) must not fall
+            # through to the relabel: it would rewrite every row it can reach
+            # instead of refusing.
+            return _stale_plan(self.id, group_key)
         relabel_plan = plan_repo_relabels(session)
         return FixPlan(
             check_id=self.id,
@@ -103,6 +132,9 @@ class InconsistentProjectLabelsCheck(Check):
     def apply(
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
+        if group_key != _GROUP:
+            # See `plan`: an unknown key is refused, never guessed at.
+            return (_stale_result(self.id, group_key), [])
         # Re-plan at apply time: rows may have been collected since the scan.
         relabel_plan = plan_repo_relabels(session)
         result = apply_repo_relabels(session, relabel_plan)
