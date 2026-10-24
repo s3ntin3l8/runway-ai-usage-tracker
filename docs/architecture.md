@@ -528,14 +528,14 @@ is off on `main` — skips the held runs entirely and leaves them unstarted.
 
 Approval is not free, though. The release PR carries six workflows — `CI/CD`
 and `CodeQL`, which also run on the push to `main`, and `Security Validation`,
-`Image Security` (amd64 and arm64) and `Dependency Review`, which run on a
-pull request but not on the push. What they re-check is the release commit:
-a version bump and a changelog on top of commits that were each tested on the
-pull request they came in through. One measured batch cost 20.8
+`Image Security`, `Image Security (arm64)` and `Dependency Review`, which run
+on a pull request but not on the push. What they re-check is the release
+commit: a version bump and a changelog on top of commits that were each
+tested on the pull request they came in through. One measured batch cost 20.8
 runner-minutes and about an hour of wall clock — its last job waited 43
 minutes for a hosted runner before starting. The administrator merge skips
 those six runs and that hour; `CI/CD` and `CodeQL` still run on `main`
-afterwards, as they do after any merge. What it gives up is the three
+afterwards, as they do after any merge. What it gives up is the four
 pull-request-only workflows' look at the release commit: they have no push
 equivalent, so a release merged that way never reaches them.
 
