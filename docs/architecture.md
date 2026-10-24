@@ -517,6 +517,25 @@ Releases are managed by **Release Please**
 - To force a version jump (e.g. v1.0.0): tag manually, push the tag, create
   the GitHub Release by hand — Release Please picks up from there.
 
+The release PR's own CI is held for approval, and the merge is always
+somebody's. Release Please pushes the release branch with the workflow's own
+`GITHUB_TOKEN`, and GitHub holds `pull_request` runs from a push like that,
+so the release PR sits at `BLOCKED` with its required checks stuck at pending.
+There is no auto-merge on this repository: approving the held runs lets the
+required contexts report so the PR can be merged normally, and merging it
+with administrator privileges — `enforce_admins` is off on `main` — skips
+the held runs entirely and leaves them unstarted.
+
+Approval is not free, though. The release PR carries six workflows — `CI/CD`
+and `CodeQL`, which also run on the push to `main`, and `Security Validation`,
+`Image Security` (amd64 and arm64) and `Dependency Review`, which run on a
+pull request but not on the push. What they re-check is the release commit:
+a version bump and a changelog on top of commits that were each tested on the
+pull request they came in through. One measured batch cost 20.8
+runner-minutes and about an hour of waiting, most of it for a hosted runner.
+Both routes leave the release in a person's hands — one costs runner time,
+the other does not.
+
 The prerelease settings in `release-please-config.json` are temporary for
 the 3.0.0 beta cycle (`prerelease: true`, `prerelease-type: beta.1`). Before
 merging a stable release, follow
