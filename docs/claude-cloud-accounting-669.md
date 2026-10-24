@@ -35,8 +35,10 @@ input/cache aggregate, and that exclusion is reported.
 
 Output contains fixed categories and numeric usage observations. It omits message,
 session, account, tool and model identifiers, content, unknown properties and raw
-exceptions. Repeated assistant IDs count once. Conflicting usage invalidates the
-input/cache aggregate; there is no first/last-wins correction policy. Missing,
+exceptions. Repeated assistant IDs count once. Conflicting input/cache usage
+invalidates the aggregate; there is no first/last-wins correction policy.
+Output-only placeholder divergence is reported separately and preserves matching
+input/cache. Missing,
 noninteger, negative, boolean or oversized counters remain unknown. All four token
 fields must be present; absent cache fields do not silently become zero.
 
@@ -50,7 +52,8 @@ zero counters do not prove zero consumption.
 only that recognized observations were obtained. Exit 2 signals incomplete or
 invalid evidence. Input is bounded to 64 MiB, 1 MiB per line and 100,000 nonblank
 records. Invalid encoding, duplicate JSON keys and nonstandard constants are
-rejected with sanitized diagnostics.
+rejected with sanitized diagnostics. A UTF-8 BOM is accepted only at the start
+of the file. Success and failure reports share the same schema.
 
 ## Next gates
 

@@ -16,20 +16,26 @@ TOKEN_FIELDS = (
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
 )
-MODEL_FIELDS = ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens")
+MODEL_FIELDS = {
+    "input_tokens": "inputTokens",
+    "output_tokens": "outputTokens",
+    "cache_read_input_tokens": "cacheReadInputTokens",
+    "cache_creation_input_tokens": "cacheCreationInputTokens",
+}
 
 
 class AuditInputError(ValueError):
     """A fixed, sanitized input failure."""
 
 
-def _counters(value: object, fields: tuple[str, ...] = TOKEN_FIELDS) -> dict[str, int] | None:
+def _counters(value: object, fields: dict[str, str] | None = None) -> dict[str, int] | None:
     if not isinstance(value, dict):
         return None
-    numbers = [value.get(field) for field in fields]
-    if any(type(number) is not int or not 0 <= number < 2**63 for number in numbers):
+    mapping = fields if fields is not None else {field: field for field in TOKEN_FIELDS}
+    numbers = {destination: value.get(source) for destination, source in mapping.items()}
+    if any(type(number) is not int or not 0 <= number < 2**63 for number in numbers.values()):
         return None
-    return dict(zip(TOKEN_FIELDS, numbers, strict=True))
+    return numbers
 
 
 def _model_counters(value: object) -> dict[str, int] | None:
@@ -49,7 +55,8 @@ def audit_messages(records: Iterable[object]) -> dict[str, Any]:
     """Compare observations without assuming result/reset/resume accounting scopes.
 
     IDs and model names remain in memory only. A conflicting repeated assistant
-    ID invalidates the entire input/cache aggregate; neither first nor last wins.
+    ID invalidates the input/cache aggregate if input/cache differs. Placeholder
+    output divergence is reported separately; neither first nor last wins.
     """
     seen: dict[str, dict[str, int]] = {}
     conflicts: set[str] = set()
@@ -99,10 +106,16 @@ def audit_messages(records: Iterable[object]) -> dict[str, Any]:
                 continue
             if identifier in seen:
                 assistant["duplicate_messages"] += 1
-                if seen[identifier] != counters:
+                if any(
+                    seen[identifier][field] != counters[field]
+                    for field in TOKEN_FIELDS
+                    if field != "output_tokens"
+                ):
                     conflicts.add(identifier)
                     diagnostics.add("conflicting_assistant_usage")
                     input_complete = False
+                if seen[identifier]["output_tokens"] != counters["output_tokens"]:
+                    diagnostics.add("output_placeholder_divergence")
             else:
                 seen[identifier] = counters
         elif kind == "result":
@@ -131,7 +144,9 @@ def audit_messages(records: Iterable[object]) -> dict[str, Any]:
                 counters = parse(record.get(source))
                 previous = result[destination]
                 if counters is None:
-                    prefix = "missing" if record.get(source) is None else "invalid"
+                    raw = record.get(source)
+                    missing = raw is None or (source == "modelUsage" and raw == {})
+                    prefix = "missing" if missing else "invalid"
                     suffix = "usage" if source == "usage" else "model_usage"
                     diagnostics.add(f"{prefix}_result_{suffix}")
                 else:
@@ -154,7 +169,11 @@ def audit_messages(records: Iterable[object]) -> dict[str, Any]:
         }
     if not seen and not result["usage_observations"] and not result["model_usage_observations"]:
         diagnostics.add("no_usage_observations")
-    incomplete = diagnostics - {"result_scope_unverified", "subagent_scope_excluded"}
+    incomplete = diagnostics - {
+        "result_scope_unverified",
+        "subagent_scope_excluded",
+        "output_placeholder_divergence",
+    }
     return {
         "format_version": 1,
         "status": "incomplete" if incomplete else "observations_only",
@@ -194,6 +213,8 @@ def read_records(
         total += len(line)
         if len(line) > max_line_bytes or total > max_bytes:
             raise AuditInputError("input_limit_exceeded")
+        if total == len(line):
+            line = line.removeprefix(b"\xef\xbb\xbf")
         if not line.strip():
             continue
         count += 1
@@ -218,19 +239,11 @@ def main() -> int:
     try:
         report = audit_messages(read_records(sys.stdin.buffer))
     except AuditInputError as exc:
-        report = {
-            "status": "incomplete",
-            "ready_for_ingestion": False,
-            "cloud_contract_verified": False,
-            "diagnostics": [str(exc)],
-        }
+        report = audit_messages(())
+        report["diagnostics"] = [str(exc)]
     except OSError:
-        report = {
-            "status": "incomplete",
-            "ready_for_ingestion": False,
-            "cloud_contract_verified": False,
-            "diagnostics": ["input_unavailable"],
-        }
+        report = audit_messages(())
+        report["diagnostics"] = ["input_unavailable"]
     print(json.dumps(report, sort_keys=True))
     return 2 if report["status"] == "incomplete" else 0
 
