@@ -23,6 +23,7 @@ from typing import Any
 from sqlmodel import Session, and_, col, or_, select
 
 from app.models.db import CredentialTag, PendingCredentialTag, ProviderConfig
+from app.services.account_identity import canonical_account_id
 
 _QUOTA_PREVIEW_FIELDS = frozenset(
     {
@@ -94,6 +95,23 @@ def pick_effective_tag(
     return next((tag for tag in candidates if tag.sidecar_id is None), None)
 
 
+def archived_account_pairs_from_configs(
+    configs: Iterable[ProviderConfig],
+) -> set[tuple[str, str]]:
+    """The ``(provider_id, account_id)`` pairs of the archived config rows.
+
+    The account id is canonicalised: every write path stores an account in
+    the canonical form (see :func:`canonical_account_id`), while a config row
+    carries whatever the operator typed — so the two only match once the same
+    rule has been applied to both.
+    """
+    return {
+        (cfg.provider_id, canonical_account_id(cfg.account_id))
+        for cfg in configs
+        if cfg.archived and cfg.provider_id
+    }
+
+
 def archived_account_pairs(session: Session, providers: Sequence[str]) -> set[tuple[str, str]]:
     """``(provider_id, account_id)`` pairs whose ``provider_configs`` row is archived.
 
@@ -112,16 +130,12 @@ def archived_account_pairs(session: Session, providers: Sequence[str]) -> set[tu
     if not providers:
         return set()
     rows = session.exec(
-        select(ProviderConfig.provider_id, ProviderConfig.account_id).where(
+        select(ProviderConfig).where(
             col(ProviderConfig.provider_id).in_(list(providers)),
             ProviderConfig.archived == True,  # noqa: E712 — SQLModel needs the ==
         )
     ).all()
-    return {
-        (pid, aid)
-        for pid, aid in rows
-        if isinstance(pid, str) and isinstance(aid, str) and pid and aid
-    }
+    return archived_account_pairs_from_configs(rows)
 
 
 class ParkedMapping:
@@ -199,11 +213,11 @@ class ParkedMapping:
         if tag is None:
             return False
         owner = tag.target_provider_id or tag.provider_id
-        return tag.account_id in self._archived_accounts(owner)
+        return canonical_account_id(tag.account_id) in self._archived_accounts(owner)
 
     def is_parked_account(self, provider_id: str, account_id: str) -> bool:
         """Whether ``(provider_id, account_id)`` is an archived account."""
-        return account_id in self._archived_accounts(provider_id)
+        return canonical_account_id(account_id) in self._archived_accounts(provider_id)
 
 
 class CredentialTagRepo:

@@ -387,9 +387,12 @@ def test_manifest_upserts_pending_and_returns_resolved_for_tagged_origins(
     assert payload["sidecar_id"] == "alpha-host"
     assert payload["entries_received"] == 3
     # Tagged entry resolves; untagged entries are absent from resolved but
-    # recorded in pending_credential_tags.
+    # recorded in pending_credential_tags. The answer is complete per
+    # provider, so a provider with no hints comes back as an empty map
+    # rather than being absent (#874).
     assert payload["resolved"] == {
-        "anthropic": {"path:/tagged/.claude/.credentials.json": "alice@example.com"}
+        "anthropic": {"path:/tagged/.claude/.credentials.json": "alice@example.com"},
+        "chatgpt": {},
     }
 
 
@@ -1772,7 +1775,9 @@ def test_manifest_prunes_stale_pending_credential_origin(
         },
     )
     assert r1.status_code == 200, r1.text
-    assert r1.json()["resolved"] == {}
+    # The provider is answered for, with no hints: the answer is complete per
+    # provider, so the sidecar can tell "no hints" from "not answered" (#874).
+    assert r1.json()["resolved"] == {"minimax": {}}
     assert PendingCredentialTagRepo.get(
         session,
         sidecar_id="alpha",
@@ -4893,3 +4898,132 @@ def test_a_malformed_source_entry_is_dropped(client, session):
     assert result.status_code == 200, result.text
 
     assert PendingCredentialTagRepo.list_all(session, sidecar_id="alpha-host") == []
+
+
+def test_manifest_answers_with_an_explicit_empty_bucket_for_a_parked_provider(
+    client: TestClient, session: Session
+):
+    """The server's answer for a provider is complete.
+
+    A parked mapping is not shipped, so the provider's bucket comes back
+    empty — explicitly, not absent. A sidecar that reads "absent" as "no
+    answer" keeps the hint it cached before the account was archived.
+    """
+    from app.services.credential_tags import CredentialTagRepo
+
+    _add_archived_provider_config(
+        session, provider_id="kimi_coding", account_id="retired@example.com"
+    )
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="kimi_coding",
+        credential_origin="provider:kimi_coding",
+        account_id="retired@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    result = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "entries": [
+                {
+                    "provider_id": "kimi_coding",
+                    "credential_origin": "provider:kimi_coding",
+                }
+            ],
+        },
+    )
+    assert result.status_code == 200, result.text
+    resolved = result.json()["resolved"]
+    assert "kimi_coding" in resolved
+    assert resolved["kimi_coding"] == {}
+
+
+def test_manifest_still_ships_a_live_mapping(client: TestClient, session: Session):
+    """The explicit empty bucket must not swallow a live mapping."""
+    from app.services.credential_tags import CredentialTagRepo
+
+    CredentialTagRepo.set_tag(
+        session,
+        provider_id="anthropic",
+        credential_origin="provider:anthropic",
+        account_id="alice@example.com",
+        sidecar_id="alpha-host",
+    )
+    session.commit()
+
+    result = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "entries": [
+                {
+                    "provider_id": "anthropic",
+                    "credential_origin": "provider:anthropic",
+                }
+            ],
+        },
+    )
+    assert result.status_code == 200, result.text
+    resolved = result.json()["resolved"]
+    assert resolved["anthropic"] == {"provider:anthropic": "alice@example.com"}
+
+
+def test_manifest_answers_for_a_provider_the_sidecar_names(client: TestClient, session: Session):
+    """The sidecar names the providers whose hints it holds.
+
+    A provider whose tag was deleted has no tag row left to make it a
+    candidate, yet the sidecar may still be holding its hint — so the
+    server has to answer for it too, or the stale hint survives.
+    """
+    result = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "entries": [],
+            "hint_providers": ["kimi_coding"],
+        },
+    )
+    assert result.status_code == 200, result.text
+    resolved = result.json()["resolved"]
+    assert "kimi_coding" in resolved
+    assert resolved["kimi_coding"] == {}
+
+
+def test_manifest_caps_the_named_providers(client: TestClient, session: Session):
+    """`hint_providers` is bounded like `observations`.
+
+    Every id becomes one term in the query that collects the hints and one
+    bucket in the response, so an unbounded list is a way to make the server
+    build an arbitrarily large query.
+    """
+    result = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "entries": [],
+            "hint_providers": [f"provider_{i}" for i in range(257)],
+        },
+    )
+    assert result.status_code == 400, result.text
+
+
+def test_manifest_answers_for_a_repeated_named_provider_once(client: TestClient, session: Session):
+    """A repeated id is one provider, not two.
+
+    The id becomes one term in the query that collects the hints, so a
+    repeated id must not be counted twice.
+    """
+    result = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "entries": [],
+            "hint_providers": ["kimi_coding", "kimi_coding"],
+        },
+    )
+    assert result.status_code == 200, result.text
+    resolved = result.json()["resolved"]
+    assert resolved == {"kimi_coding": {}}

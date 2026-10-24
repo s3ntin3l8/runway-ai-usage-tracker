@@ -214,7 +214,14 @@ The sidecar therefore reads **every** store it finds, not just the first:
 | `~/.minimax-<profile>` | A profile-scoped install, next to the default one. |
 | `~/.mavis`, `~/.mavis-<profile>` | The legacy basename, for a host that never migrated. |
 | `~/Library/Application Support/MiniMax Agent` | The macOS desktop app's Electron profile — probed as insurance, but it holds the Chromium profile and never the ledger. |
-| `%APPDATA%\MiniMax Code` | The same, on Windows. |
+| `%APPDATA%\MiniMax Agent` | The same, on Windows: the Electron profile is named after the app's *product* name on both platforms, not after the installer's. |
+| `%APPDATA%\MiniMax Code` | The installer's spelling of the same dir — the other one is probed too, so a rename cannot hide the store. |
+
+The Windows app-data root is read from `%APPDATA%` on Windows, the same variable the sidecar's
+own state dir (`%APPDATA%\runway\sidecar`) reads, so a host that redirects it — a roaming
+profile, a relocated `AppData` — is probed where the app actually writes.
+`%USERPROFILE%\AppData\Roaming` is the fallback when the variable is unset, and the variable is
+ignored off Windows, where it is not a Windows variable.
 
 Each store carries its own cursor — the cursor file is keyed by database path — so several stores
 advance on their own id axes without interfering. A host that never migrated keeps `~/.mavis` as a
@@ -262,6 +269,24 @@ The probe opens every store read-only, runs the real extractor and prints its ve
 store was found and understood, and 1 when there is nothing to read (no store) or the schema has
 drifted. `--json` prints the same report as JSON, with one entry per store under `stores`.
 
+On a Windows host the same probe reports the Windows paths:
+
+```
+MiniMax Code runtime store — read-only probe
+
+  platform            : Windows
+  probed roots        : C:\Users\<you>\.minimax, C:\Users\<you>\AppData\Roaming\MiniMax Agent, …
+  stores found        : 1
+  store               : C:\Users\<you>\.minimax\v2\sqlite\runtime-state.sqlite (302.0 MiB)
+  schema              : OK
+  ledger              : 14454 requests · 186 turns · 22 sessions
+  model MiniMax-M3.1-Flash         : 5000
+  cursor              : C:\Users\<you>\AppData\Roaming\runway\sidecar\minimax_code_watermark.json
+  this cycle would push: 5000 request(s) (a cycle reads at most 5000 rows per store)
+
+  RESULT: PASS — the sidecar on this host reports MiniMax Code usage as provider 'minimax' / app 'minimax_code'.
+```
+
 A host can hold more than one store — a profile-scoped install keeps a second ledger next to the
 default one. The report names each of them, and the counts are the whole host's, because the
 sidecar reads them all.
@@ -277,7 +302,7 @@ attaches to the console it was launched from; with no console to attach to it wr
 |---|---|---|
 | Linux | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Yes — full extraction verified against a live store |
 | macOS | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Yes — the probe passes against a live store; 99.97 % of the ledger rows join, the model resolves for every row |
-| Windows | `%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` | Path confirmed from the runtime bundle and from the install that opened this issue; run the probe on a Windows host to confirm the extraction |
+| Windows | `%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` | Yes — the probe passes against a live store; the schema matches, the model resolves for every row and the cursor lands in `%APPDATA%\runway\sidecar` |
 
 A platform that has not been confirmed reports **nothing** rather than wrong numbers: a missing
 store yields no events and a drifted schema yields no events.
@@ -395,6 +420,24 @@ Two properties keep this safe:
 The **turn** dimension rides along: the extractor pushes the ledger's own `turn_id`, so the Agents
 card counts *turns* (one background task = one turn) instead of API requests. A provider that
 emits one event per message (Claude Code) carries no turn id, and its numbers are unchanged.
+
+The session's own **Messages** column counts turns the same way, so a session row and its Agents
+card speak the same unit: a MiniMax Code session reports the turns you took, not the requests
+your turn was made of. The Top Projects table follows. The aggregate views (the provider's
+monthly totals, the charts) still count requests — their numbers come from the stored rollups,
+and a distinct-turn count cannot be summed incrementally across ingest batches.
+
+Two details worth knowing:
+
+- **It is not retroactive.** Rows collected before the turn id existed carry none, so they keep
+  counting as requests until the repair fills their turn id.
+- A turn is attributed to **every model it touched** — the same way its tokens are. A turn that
+  used two models therefore appears in both per-model buckets while the session row counts it
+  once.
+- A **turn id names its turn on its own**: the runtime mints them uniquely, across every
+  sidecar of the provider — not only within one host (a live store holds 130 distinct turn ids
+  across 18 sessions, none shared). That also keeps a turn's identity stable when the repair
+  moves its row from the task's session to the parent.
 
 #### Repairing the rows collected earlier
 

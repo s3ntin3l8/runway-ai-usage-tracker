@@ -50,7 +50,11 @@ from app.services.credential_sources import (
     login_hint,
     server_source_id,
 )
-from app.services.credential_tags import origin_candidates, pick_effective_tag
+from app.services.credential_tags import (
+    archived_account_pairs_from_configs,
+    origin_candidates,
+    pick_effective_tag,
+)
 from app.services.fleet_registry import STALE_THRESHOLD_MINUTES
 from app.services.refresh_policy import (
     KEEP_ALIVE_PROVIDERS,
@@ -334,6 +338,12 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             configs_by_provider.setdefault(cfg.provider_id, []).append(cfg)
             if cfg.account_label:
                 labels[(cfg.provider_id, cfg.account_id)] = cfg.account_label
+        # The retired accounts: a credential mapped onto one is *parked* — it
+        # resolves the origin, but nothing is collected for it. The same rule
+        # the parked-mapping check uses, so the two can never disagree.
+        archived_accounts = archived_account_pairs_from_configs(
+            [cfg for cfgs in configs_by_provider.values() for cfg in cfgs]
+        )
         pending_by_sidecar: dict[str, int] = {}
         pending_rows = session.exec(select(PendingCredentialTag)).all()
         for pending in pending_rows:
@@ -628,6 +638,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 data_source=data_source,
                 input_source=input_source,
                 sources=views,
+                archived=(provider_id, canonical_account_id(account_id)) in archived_accounts,
             )
         )
 

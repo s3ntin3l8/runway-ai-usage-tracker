@@ -1266,3 +1266,52 @@ async def test_claude_override_is_exposed_next_to_the_reported_state(engine, cac
         s.commit()
     src = await _only_source("anthropic")
     assert src.keep_alive == "off" and src.keep_alive_desired is True
+
+
+@pytest.mark.asyncio
+async def test_archived_account_is_marked_in_the_inventory(engine, cache):
+    """A retired account says so.
+
+    A credential parked on an archived account is visible in the inventory,
+    but without this flag the account row reads like a live one and the
+    operator cannot tell a parked credential from an active one.
+    """
+    with Session(engine) as s:
+        s.add(ProviderConfig(provider_id="gemini", account_id=ALICE, enabled=False, archived=True))
+        _source(s)
+    inv = await build_inventory()
+
+    acct, _by_id = _sources(inv)
+    assert acct.archived is True
+
+
+@pytest.mark.asyncio
+async def test_live_account_is_not_marked_archived(engine, cache):
+    with Session(engine) as s:
+        s.add(ProviderConfig(provider_id="gemini", account_id=ALICE, enabled=True, archived=False))
+        _source(s)
+    inv = await build_inventory()
+
+    acct, _by_id = _sources(inv)
+    assert acct.archived is False
+
+
+@pytest.mark.asyncio
+async def test_archived_account_matches_a_mixed_case_account_id(engine, cache):
+    """The config row carries what the operator typed; the source row carries
+    the canonical form. The comparison must bridge the two, or a retired
+    account would read as live."""
+    with Session(engine) as s:
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="Alice@Example.com",
+                enabled=False,
+                archived=True,
+            )
+        )
+        _source(s)
+    inv = await build_inventory()
+
+    acct, _by_id = _sources(inv)
+    assert acct.archived is True

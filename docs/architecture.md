@@ -51,7 +51,7 @@ live in `app/models/db.py`.
 
 | Table | Role |
 |-------|------|
-| `usage_events` | Per-message events. Unique on `(provider_id, event_id)` — a re-push under a new account from the *same* sidecar re-attributes the row and moves its rollups (retag-safe); another sidecar can't steal it. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — raw per-message `cwd`, indexed `project` (the session's root basename, derived in `EventIngestor` via `app/services/project_label.py` — worktree/tmp cwds collapse at the `/.claude/` boundary, and `scripts/consolidate_session_projects.py` consolidates per-session subfolder drift offline; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. Also carries `source_app` — the **client app** that made the call (`opencode`, `claude_code`, `minimax_code`, ...), which is not the same thing as `provider_id`, the upstream provider the request was billed to: several client apps share one provider, and a canonical-provider retag (`scripts/sidecar_pkg/canonical_providers.py`) folds them onto one id. `source_app` survives that retag, so "which app spent the quota" stays answerable; it falls back to `provider_id` when a pushing sidecar reports none (an older sidecar), and pre-column rows are backfilled the same way. Carries `session_id` + `subagent_type` — the session a row belongs to and the subagent that produced it. A provider that emits one event per **request** (MiniMax Code) also carries `turn_id`, the provider's own turn identifier, so the Sessions view can count turns instead of requests; a provider that emits one event per message leaves it NULL and the turn count falls back to the event count. |
+| `usage_events` | Per-message events. Unique on `(provider_id, event_id)` — a re-push under a new account from the *same* sidecar re-attributes the row and moves its rollups (retag-safe); another sidecar can't steal it. `kind="message"` for billable activity, `kind="error"` for provider failures. Carries project-context enrichment — raw per-message `cwd`, indexed `project` (the session's root basename, derived in `EventIngestor` via `app/services/project_label.py` — worktree/tmp cwds collapse at the `/.claude/` boundary, and `scripts/consolidate_session_projects.py` consolidates per-session subfolder drift offline; backed by `ix_usage_events_project_ts`), `git_branch`, and `tool_names` — that powers the project/tool rankings. Also carries `source_app` — the **client app** that made the call (`opencode`, `claude_code`, `minimax_code`, ...), which is not the same thing as `provider_id`, the upstream provider the request was billed to: several client apps share one provider, and a canonical-provider retag (`scripts/sidecar_pkg/canonical_providers.py`) folds them onto one id. `source_app` survives that retag, so "which app spent the quota" stays answerable; it falls back to `provider_id` when a pushing sidecar reports none (an older sidecar), and pre-column rows are backfilled the same way. Carries `session_id` + `subagent_type` — the session a row belongs to and the subagent that produced it. A provider that emits one event per **request** (MiniMax Code) also carries `turn_id`, the provider's own turn identifier, so the Sessions view can count turns instead of requests; a provider that emits one event per message leaves it NULL and the turn count falls back to the event count. The session and per-project message counts follow that turn: the session-scoped ones count `COUNT(DISTINCT COALESCE(NULLIF(turn_id, ''), event_id))` — the session is constant inside their groups — and the per-project one prefixes the provider, because it groups across providers in the global mode and an event id is only unique per `(provider_id, event_id)`. A session row and its Agents card therefore speak the same unit. |
 | `usage_period_rollup` | Pre-aggregated rollups (hour/day/month/year/lifetime × model × sidecar grain). Updated incrementally on each event ingest. |
 | `usage_windows` | Closed-window archive — totals frozen at each authoritative `reset_at` boundary by `app/services/window_closer.py`. |
 | `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`) — what scrapers see. Merged via `merge_card_json` in `app/services/accumulator.py`. |
@@ -239,6 +239,45 @@ re-tagging. Whether a mapping is parked is answered in one place (`ParkedMapping
 `app/services/credential_tags.py`), because a *redirect* tag names an account of its **target**
 provider and the archived row has to be looked up there. See
 [Parked mappings](api-reference.md#parked-mappings) for the API contract.
+
+A retired account is left alone by the token auto-refresher too: it collects
+nothing, its subscription has ended, so refreshing its credential can only
+fail. The rule is keyed on the **account** — a retired account's credential is
+skipped even when the provider still has another, live account — and on the
+provider, whose every configured account being archived retires it as a whole
+(a parked mapping leaves that credential unattributed, so it sits under no
+account of its own). It is deliberately narrower than the collector's
+`inactive_providers` rule, which also counts *disabled* rows: a disabled
+account is a reversible state, and its credential should stay fresh for the day
+the operator re-enables it. The credential inventory marks a retired account as
+archived, so a parked credential does not read like an active one.
+
+The archived rows are read in one place — `archived_account_pairs()` in
+`app/services/credential_tags.py`, which canonicalises the account id (every
+write path stores accounts canonically, a config row carries whatever the
+operator typed) and is shared with `ParkedMapping`, so the inventory's marker
+and the parked-mapping check can never disagree.
+
+A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
+the hint before the account was archived was still applying it, because the
+manifest's `resolved` map was merged into the sidecar's cache and a merge
+never deletes a key. The manifest response is now **complete per provider**
+(an empty map for a provider it resolves no origin for), and the sidecar
+replaces what it holds for the providers it answered for, so a retraction
+lands on the next manifest instead of the next `/fleet/config`. The sidecar
+names the providers whose hints it holds in `hint_providers`, so the server
+also answers for a provider whose tag was deleted — that provider has no tag
+row left to make it a candidate.
+
+The sidecar's cache therefore equals what it holds: a provider the server
+answered for with an empty map is dropped from the cache, and so from
+`hint_providers` — it is not asked about again on every manifest. The list
+is bounded (256 ids, like `observations`): every id becomes one term in the
+query that collects the hints and one bucket in the response. The sidecar
+truncates the list to that cap rather than exceeding it — the server
+rejects an oversized list, and a rejected manifest takes the cycle's
+`completed_providers` with it, so the host's stale pending rows would stop
+being pruned.
 
 ### Who refreshes an OAuth login
 
@@ -445,10 +484,14 @@ Workflows live in `.github/workflows/`.
     it only lands when the pin moves — but it can break the packaging when
     it does, and a push run cannot catch that, because it ran before the
     release did.
-- **`security-validation.yml`** — the trust-boundary and recovery tests: the
-    browser boundaries and the real reverse-proxy boundaries on Linux, and the
-    native Windows swap, rollback and recovery regressions. The packaging half
-    of the old workflow lives in `frozen-verifier.yml`.
+- **`security-validation.yml`** — the trust-boundary and recovery tests, in
+    three jobs that share no state: the browser boundaries, which run in the
+    digest-pinned Playwright image so the runner's apt mirror cannot spend
+    the budget before the checks run ([#876](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/876));
+    the real reverse-proxy boundaries, which need the Python set and Docker
+    but no browser and carry the immutable-reference check; and the native
+    Windows swap, rollback and recovery regressions. The packaging half of the
+    old workflow lives in `frozen-verifier.yml`.
 - **`image-security.yml` / `image-security-arm64.yml`** — the candidate
     image is built and scanned for known vulnerabilities. The amd64 leg runs
     on every pull request; the arm64 leg is a native build on an ARM runner
@@ -516,6 +559,28 @@ Releases are managed by **Release Please**
   `:latest`, beta prerelease → `:beta`).
 - To force a version jump (e.g. v1.0.0): tag manually, push the tag, create
   the GitHub Release by hand — Release Please picks up from there.
+
+The release PR's own CI is held for approval, and the merge is always
+somebody's. Release Please pushes the release branch with the workflow's own
+`GITHUB_TOKEN`, and GitHub holds `pull_request` runs from a push like that,
+so the release PR sits at `BLOCKED` with its required checks stuck at pending.
+There is no auto-merge on this repository (`allow_auto_merge` is off).
+Approving the held runs lets the required contexts report so the PR can be
+merged normally; merging it with administrator privileges — `enforce_admins`
+is off on `main` — skips the held runs entirely and leaves them unstarted.
+
+Approval is not free, though. The release PR carries six workflows — `CI/CD`
+and `CodeQL`, which also run on the push to `main`, and `Security Validation`,
+`Image Security`, `Image Security (arm64)` and `Dependency Review`, which run
+on a pull request but not on the push. What they re-check is the release
+commit: a version bump and a changelog on top of commits that were each
+tested on the pull request they came in through. One measured batch cost 20.8
+runner-minutes and about an hour of wall clock — its last job waited 43
+minutes for a hosted runner before starting. The administrator merge skips
+those six runs and that hour; `CI/CD` and `CodeQL` still run on `main`
+afterwards, as they do after any merge. What it gives up is the four
+pull-request-only workflows' look at the release commit: they have no push
+equivalent, so a release merged that way never reaches them.
 
 The prerelease settings in `release-please-config.json` are temporary for
 the 3.0.0 beta cycle (`prerelease: true`, `prerelease-type: beta.1`). Before

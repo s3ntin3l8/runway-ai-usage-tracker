@@ -16,8 +16,11 @@ def _clean_data_env(monkeypatch):
 
     Without this a developer's own ``MINIMAX_DATA_DIR`` (or the runtime's
     internal overrides) would leak into the probe's discovery.
+    ``APPDATA`` goes with them: the Windows app-data root is read from it,
+    so on a Windows host the developer's real roaming dir would otherwise
+    be probed.
     """
-    for name in ("MINIMAX_CODE_HOME", *minimax_code._DATA_DIR_ENV_VARS):
+    for name in ("MINIMAX_CODE_HOME", "APPDATA", *minimax_code._DATA_DIR_ENV_VARS):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -223,15 +226,43 @@ def test_the_sidecar_and_the_probe_share_the_bootstrap_window(monkeypatch):
     )
 
 
-def test_the_probe_finds_the_store_in_the_windows_app_data_root(tmp_path, monkeypatch):
+@pytest.fixture
+def _windows_host(monkeypatch):
+    """Make the extractor believe it runs on Windows.
+
+    The app-data root is read from ``%APPDATA%`` only on Windows, the same
+    way the sidecar's own state dir reads it, so the tests that exercise
+    that branch have to say which platform they mean.
+    """
+    monkeypatch.setattr(minimax_code.platform, "system", lambda: "Windows")
+
+
+def test_the_probe_finds_the_store_in_the_windows_app_data_root(
+    tmp_path, monkeypatch, _windows_host
+):
     """The desktop app's Windows root is probed, not just ~/.minimax."""
     make_minimax_code_store(tmp_path, data_dir=str(Path("AppData") / "Roaming" / "MiniMax Code"))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+    # The Windows app-data root is read from %APPDATA%; point it at the
+    # same place so the test means the same thing on every platform.
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
     report = probe.probe_minimax_code()
     assert report["ok"] is True
     assert "MiniMax Code" in report["store"]
     assert "AppData" in report["store"]
+
+
+def test_the_probe_follows_a_redirected_windows_app_data_root(tmp_path, monkeypatch, _windows_host):
+    """A host that relocates ``%APPDATA%`` keeps its app data there."""
+    roaming = tmp_path / "Roaming"
+    make_minimax_code_store(tmp_path, data_dir=str(Path("Roaming") / "MiniMax Agent"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "elsewhere"))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("APPDATA", str(roaming))
+    report = probe.probe_minimax_code()
+    assert report["ok"] is True
+    assert str(roaming) in report["store"]
 
 
 def test_the_probe_reports_every_store_on_the_host(host, monkeypatch):
@@ -324,7 +355,9 @@ def test_an_unreadable_store_does_not_hide_a_readable_one(host, monkeypatch):
     monkeypatch.setattr(probe, "_introspect", fake_introspect)
     report = probe.probe_minimax_code()
     assert report["ok"] is True
-    assert report["store"].endswith(".minimax/v2/sqlite/runtime-state.sqlite")
+    assert report["store"].endswith(
+        str(Path(".minimax") / "v2" / "sqlite" / "runtime-state.sqlite")
+    )
     broken = [d for d in report["stores"] if d["error"]]
     assert len(broken) == 1
 
@@ -342,7 +375,9 @@ def test_a_store_whose_parse_raises_does_not_abort_the_report(host, monkeypatch)
     monkeypatch.setattr(minimax_code, "parse_minimax_code_events", fake_parse)
     report = probe.probe_minimax_code()
     assert report["ok"] is True
-    assert report["store"].endswith(".minimax/v2/sqlite/runtime-state.sqlite")
+    assert report["store"].endswith(
+        str(Path(".minimax") / "v2" / "sqlite" / "runtime-state.sqlite")
+    )
     broken = [d for d in report["stores"] if d["error"]]
     assert len(broken) == 1
     assert "exploded" in broken[0]["error"]

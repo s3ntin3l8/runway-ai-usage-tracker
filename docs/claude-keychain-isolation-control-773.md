@@ -131,3 +131,8 @@ qualify as a renewal candidate. Historical committed reports remain unmodified;
 their original `native_probe_incomplete` diagnostic predates this classification.
 These changes were validated with nonnative tests; the recorded hosted controls
 were not rerun after denial.
+
+The subsequent [creator/helper authorization investigation](claude-keychain-helper-authorization-773.md#hosted-results-2026-10-24)
+records one metadata-only run and one helper-owned fresh-process run. It preserves
+the prior denial and narrows the fixture's access boundary without another update
+experiment or real-login operation.

@@ -1,0 +1,152 @@
+{
+  "date": "2026-10-24",
+  "source_commit_url": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/25025ab95870620c5eb50eb3001788095ecdcb5f",
+  "workflow_run": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40076029539",
+  "artifact": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40076029539/artifacts/12553461413",
+  "workflow_conclusion": "failure",
+  "renewal_acceptance": false,
+  "result": {
+    "scope": "private-synthetic-keychains-public-api-only",
+    "real_claude_credential_operations": 0,
+    "claude_oauth_exchanges": 0,
+    "cases": [
+      {
+        "case": "helper-owned-control",
+        "candidate_preserves_shared_access": false,
+        "control_only": true,
+        "update_attempted": false,
+        "fixture_creator": "helper",
+        "isolation_checkpoints": [
+          {
+            "stage": "fixture_created",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_seed",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "fixture_seeded",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "before_writer",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_writer",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_readback",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_cleanup",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          }
+        ],
+        "seed_stages": [
+          "start",
+          "interaction_disabled",
+          "private_keychain_opened",
+          "before_helper_seed",
+          "after_helper_seed"
+        ],
+        "seed_exit_code": 0,
+        "seed_status": 0,
+        "seed_completed": true,
+        "helper_binary_unchanged": true,
+        "stages": [
+          "start",
+          "interaction_disabled",
+          "private_keychain_opened",
+          "before_item_metadata",
+          "owner_verified",
+          "before_reference_lookup",
+          "reference_verified",
+          "before_authorization_metadata",
+          "after_authorization_metadata",
+          "before_writer_data_read",
+          "after_writer_data_read",
+          "writer_data_verified",
+          "control_complete"
+        ],
+        "writer_exit_code": 0,
+        "control_completed": true,
+        "control_status": 0,
+        "authorization": {
+          "metadata_status": 0,
+          "python_reader_identity_available": true,
+          "helper_identity_available": true,
+          "identity_partitions_equal": false,
+          "trust_comparison_available": true,
+          "python_reader_trust_blob_equal": true,
+          "helper_trust_blob_equal": true,
+          "broad_decrypt_access": false,
+          "partition_acl_present": true,
+          "partition_metadata_available": true,
+          "partition_contains_python_reader_identity": false,
+          "partition_contains_helper_identity": true
+        },
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": [],
+        "original_reader": "denied",
+        "failure": "native_probe_incomplete",
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true,
+        "metadata_checks": {
+          "default_same": true,
+          "default_lock_same": true,
+          "search_list_same": true,
+          "search_locks_same": true
+        }
+      }
+    ],
+    "matrix_complete": false,
+    "candidate_found": false,
+    "selected_cases": [
+      "helper-owned-control"
+    ],
+    "phase": "case",
+    "active_case": "helper-owned-control",
+    "stopped_after_failure": true,
+    "child_exit_code": 1
+  }
+}

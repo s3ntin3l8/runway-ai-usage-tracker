@@ -5316,6 +5316,54 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
     return list(found.values())
 
 
+# Mirrors the server's cap on the manifest's ``hint_providers`` field. The
+# list is truncated here rather than allowed to exceed the cap: the server
+# rejects an oversized list, and a rejected manifest takes this cycle's
+# ``completed_providers`` with it — the server would then stop pruning this
+# host's stale pending rows. Truncating degrades to fewer answers instead of
+# failing the report. The headroom is wide (a provider per registered
+# provider), so this is a guard, not a limit that is ever reached.
+_MAX_HINT_PROVIDERS = 256
+
+
+def _apply_resolved_hints(
+    cached: dict[str, dict[str, str]], resolved: dict[str, dict[str, str]]
+) -> dict[str, dict[str, str]]:
+    """Replace the cached hints of the providers the server answered for.
+
+    The server's answer for a provider is *complete* — every origin it
+    resolves for that provider, and an empty map when it resolves none — so
+    the bucket is replaced rather than merged into. That is what makes a
+    retraction take effect: a hint the sidecar cached before the account was
+    archived (or before the tag was deleted) is dropped on this cycle,
+    instead of surviving until the next ``/fleet/config`` round-trip replaces
+    the whole map.
+
+    Providers the server did not answer for keep what the sidecar holds: the
+    answer is not about them.
+
+    A provider the server answered for with an *empty* map is dropped from
+    the cache as well: the complete answer is empty, so the sidecar holds no
+    hint for it any more. The key goes too — a surviving empty bucket would
+    keep naming the provider in ``hint_providers``, re-asking for it on every
+    manifest for a hint the sidecar no longer has.
+    """
+    merged: dict[str, dict[str, str]] = {k: dict(v) for k, v in cached.items()}
+    for pid, by_origin in resolved.items():
+        if not isinstance(pid, str) or not isinstance(by_origin, dict):
+            continue
+        filtered = {
+            origin: account_id
+            for origin, account_id in by_origin.items()
+            if (isinstance(origin, str) and isinstance(account_id, str) and origin and account_id)
+        }
+        if filtered:
+            merged[pid] = filtered
+        else:
+            merged.pop(pid, None)
+    return merged
+
+
 def _post_credential_manifest(
     *,
     api_url: str | None,
@@ -5324,6 +5372,7 @@ def _post_credential_manifest(
     entries: list[dict[str, str]],
     completed_providers: list[str] | None = None,
     observations: list[dict[str, Any]] | None = None,
+    hint_providers: list[str] | None = None,
     on_resolved: Callable[[dict[str, dict[str, str]]], None] | None = None,
     config: dict[str, Any] | None = None,
 ) -> None:
@@ -5336,12 +5385,19 @@ def _post_credential_manifest(
     unset, which we just pass through silently.
 
     When the response is 200, the server's ``resolved`` field carries
-    ``{provider_id: {credential_origin: account_id}}`` for any tag the
-    operator set since the sidecar last refreshed its hint cache. The
-    caller passes ``on_resolved`` to merge those hints into its cache
-    immediately — that closes the silent-listener loop on the *same*
-    cycle instead of waiting on the next ``/fleet/config`` round-trip
-    (Hermes suggestion #9 in PR #290 review).
+    ``{provider_id: {credential_origin: account_id}}`` for the providers it
+    answered for. The answer is *complete per provider* — a provider with no
+    hints comes back as an empty map — so the caller replaces what it holds
+    for those providers instead of merging into it, and drops the provider
+    entirely when the answer is empty. That is how a hint the server stopped
+    holding (the account was archived, the tag was deleted) is dropped on
+    this cycle rather than surviving until the next ``/fleet/config``
+    round-trip.
+
+    ``hint_providers`` names the providers whose hints this sidecar holds,
+    so the server answers for those too: a provider whose tag was deleted
+    has no tag row left to make it a candidate, yet the sidecar may still
+    be holding its hint.
     """
     if not api_url or not api_key:
         return
@@ -5371,6 +5427,12 @@ def _post_credential_manifest(
                 else {}
             ),
             "observations": observations or [],
+            # The providers whose hints this sidecar holds: the server answers
+            # for those too, so a hint it no longer holds is dropped here.
+            # Truncated to the server's cap: an oversized list is rejected
+            # outright, and a rejected manifest takes this cycle's
+            # completed_providers with it.
+            "hint_providers": sorted(hint_providers or [])[:_MAX_HINT_PROVIDERS],
         }
     ).encode("utf-8")
     ts = server_http.signing_timestamp()
@@ -5884,36 +5946,21 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     def _consume_resolved_into_cache(
         resolved: dict[str, dict[str, str]],
     ) -> None:
-        """Merge the server's just-returned tag map into the local cache.
+        """Replace the cached hints of the providers the server answered for.
 
-        Lets the silent-listener loop close on the *same* cycle instead
-        of waiting on the next ``/fleet/config`` round-trip — the
-        operator's tag decision lands on the sidecar within seconds, not
-        up to 10 minutes later (PR #290 round-2 review, Hermes
-        suggestion #9).
+        The server's answer for a provider is complete, so the bucket is
+        replaced rather than merged into: a hint the sidecar cached before
+        the account was archived (or before the tag was deleted) is dropped
+        on this cycle, instead of surviving until the next ``/fleet/config``
+        round-trip. Providers the server did not answer for keep what the
+        sidecar holds.
         """
         nonlocal server_account_tag_hints
-        # Merge into the live map so the *current* run's downstream
-        # callers — if any — see the freshly-resolved tags without
-        # needing to wait for the next ``/fleet/config``. The next
-        # ``run_collection`` cycle's cache refresh will overwrite this
-        # with whatever the server says at that point.
-        merged: dict[str, dict[str, str]] = {
-            k: dict(v) for k, v in server_account_tag_hints.items()
-        }
-        for pid, by_origin in resolved.items():
-            if not isinstance(pid, str) or not isinstance(by_origin, dict):
-                continue
-            bucket = merged.setdefault(pid, {})
-            for origin, account_id in by_origin.items():
-                if (
-                    isinstance(origin, str)
-                    and isinstance(account_id, str)
-                    and origin
-                    and account_id
-                ):
-                    bucket[origin] = account_id
-        server_account_tag_hints = merged
+        # The next ``run_collection`` cycle's cache refresh will overwrite this
+        # with whatever the server says at that point; until then the live map
+        # carries the server's answer so the current run's downstream callers
+        # see it without waiting for the next ``/fleet/config``.
+        server_account_tag_hints = _apply_resolved_hints(server_account_tag_hints, resolved)
         # Also update the persistent cache so the next cycle doesn't
         # re-fetch what we just learned.
         try:
@@ -5940,6 +5987,12 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
             entries=blocked_origins_this_cycle,
             completed_providers=completed_providers_this_cycle,
             observations=_credential_health_observations(all_metrics),
+            # The providers whose hints this sidecar holds: the server answers
+            # for those too, so a hint it no longer holds is dropped on this
+            # cycle instead of surviving until the next /fleet/config. A
+            # provider whose hints were all retracted is no longer in the map,
+            # so it is not asked about again.
+            hint_providers=sorted(server_account_tag_hints),
             on_resolved=_consume_resolved_into_cache,
             config=config,
         )

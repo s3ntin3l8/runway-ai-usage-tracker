@@ -11,6 +11,7 @@ import pytest
 
 from tests import native_claude_keychain_acceptance as acceptance
 from tests import native_keychain_public_update_probe as probe
+from tests.keychain_authorization_diagnostics import FIELDS as AUTH_FIELDS
 
 
 @pytest.fixture(autouse=True)
@@ -570,7 +571,9 @@ def test_read_only_control_records_ordered_isolation_without_candidate(
 
 
 @pytest.mark.parametrize("changed_at", [1, 2, 3, 4, 5, 6])
-@pytest.mark.parametrize("case", probe.CASES)
+@pytest.mark.parametrize(
+    "case", tuple(case for case in probe.CASES if case != "helper-owned-control")
+)
 def test_case_stops_at_first_isolation_change(
     monkeypatch, tmp_path, synthetic_case, changed_at, case
 ):
@@ -588,7 +591,16 @@ def test_case_stops_at_first_isolation_change(
         return subprocess.CompletedProcess(
             [],
             0,
-            stdout=b'{"control_completed":true,"control_status":0,"update_status":0,"read_status":0,"replacement_verified":false}',
+            stdout=json.dumps(
+                {
+                    "control_completed": True,
+                    "control_status": 0,
+                    "update_status": 0,
+                    "read_status": 0,
+                    "replacement_verified": False,
+                    "authorization": dict(dict.fromkeys(AUTH_FIELDS), metadata_status=0),
+                }
+            ).encode(),
             stderr=b"stage:control_complete\n",
         )
 
@@ -715,15 +727,16 @@ def test_failed_writer_read_cannot_claim_replacement_verified(
 
 def test_native_controls_exit_before_update_calls():
     source = (Path(probe.ROOT) / "tests/native/keychain_public_update_probe.c").read_text()
+    # JSON string literals contain braces; only C code braces delimit branches.
+    source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source)
     first_update = min(
-        source.index(marker)
-        for marker in (
-            'fputs("stage:before_update',
-            "SecItemUpdate(",
-            "SecKeychainItemModifyAttributesAndData(",
-        )
+        source.index(call) for call in ("SecItemUpdate(", "SecKeychainItemModifyAttributesAndData(")
     )
-    for condition in ("if (control) {", "if (reference_control || data_control) {"):
+    for condition in (
+        "if (control) {",
+        "if (reference_control || data_control) {",
+        "if (authorization_control) {",
+    ):
         start = source.index(condition)
         depth = 1
         end = start + len(condition)
@@ -735,3 +748,373 @@ def test_native_controls_exit_before_update_calls():
         assert block.rstrip().endswith("goto cleanup;\n    }")
         assert "SecItemUpdate(" not in block
         assert "SecKeychainItemModifyAttributesAndData(" not in block
+
+
+def test_authorization_metadata_is_allowlisted_and_unknown_is_retained():
+    from tests.keychain_authorization_diagnostics import sanitize
+
+    raw = dict.fromkeys(AUTH_FIELDS)
+    raw["metadata_status"] = -50
+    raw["private_identifier"] = "must-not-escape"
+    result = sanitize(raw)
+    assert result == {name: raw[name] for name in AUTH_FIELDS}
+    assert "must-not-escape" not in json.dumps(result)
+    raw["helper_identity_available"] = "private-detail"
+    with pytest.raises(ValueError, match="invalid authorization metadata"):
+        sanitize(raw)
+
+
+@pytest.mark.parametrize("seed_status", [0, -25293])
+@pytest.mark.parametrize("reader_denied", [False, True])
+def test_helper_owned_control_uses_fresh_process_and_stops_after_seed_denial(
+    monkeypatch, tmp_path, synthetic_case, seed_status, reader_denied
+):
+    monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
+    commands = []
+    metadata = dict.fromkeys(AUTH_FIELDS)
+    metadata["metadata_status"] = 0
+
+    def execute(command, **kwargs):
+        commands.append(command)
+        fields = (
+            {"seed_completed": seed_status == 0, "seed_status": seed_status}
+            if command[-1] == "helper-seed"
+            else {"control_completed": True, "control_status": 0, "authorization": metadata}
+        )
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(fields).encode(), stderr=b""
+        )
+
+    (tmp_path / "writer").write_bytes(b"synthetic executable")
+    original_fixture = probe.Fixture
+
+    class HelperFixture(original_fixture):
+        def add(self, **kwargs):
+            pytest.fail("Python must not seed helper-owned item")
+
+        def __init__(self, writer):
+            super().__init__(writer)
+
+            def read(operation, query, values):
+                if "persistent" not in query:
+                    return [{"persistent": b"fake-reference"}]
+                if reader_denied:
+                    raise probe.KeychainError("denied")
+                return {"data": probe.ORIGINAL}
+
+            self.api.call = read
+
+    monkeypatch.setattr(probe, "Fixture", HelperFixture)
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    row = probe.run_case(tmp_path / "writer", "helper-owned-control")
+    assert [command[-1] for command in commands] == (
+        ["helper-seed", "helper-owned-control"] if seed_status == 0 else ["helper-seed"]
+    )
+    assert all(command[0] == str(tmp_path / "writer") for command in commands)
+    assert row["candidate_preserves_shared_access"] is False
+    assert row["update_attempted"] is False
+    if seed_status:
+        assert row["failure"] == "seed_denied"
+    else:
+        assert row["authorization"] == metadata
+        assert row["control_completed"] is True
+        if reader_denied:
+            assert row["failure"] == "original_reader_denied"
+            assert row["original_reader"] == "denied"
+        else:
+            assert "failure" not in row
+
+
+def test_python_fixture_metadata_control_does_not_repeat_helper_data_read(
+    monkeypatch, tmp_path, synthetic_case
+):
+    metadata = dict.fromkeys(AUTH_FIELDS)
+    metadata["metadata_status"] = 0
+    commands = []
+
+    def execute(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "control_completed": metadata["metadata_status"] == 0,
+                    "control_status": metadata["metadata_status"],
+                    "authorization": metadata,
+                }
+            ).encode(),
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
+    row = probe.run_case(tmp_path / "writer", "authorization-metadata")
+    assert [command[-1] for command in commands] == ["authorization-metadata"]
+    assert "failure" not in row
+    assert row["authorization"] == metadata
+
+
+@pytest.mark.parametrize("bad", [None, {}, {"metadata_status": True}, {"metadata_status": 0}])
+def test_malformed_authorization_metadata_is_rejected(bad):
+    from tests.keychain_authorization_diagnostics import sanitize
+
+    with pytest.raises(ValueError, match="invalid authorization metadata"):
+        sanitize(bad)
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "interrupted", "invalid_json", "changed_binary"])
+def test_helper_seed_failure_never_dispatches_read(monkeypatch, tmp_path, synthetic_case, outcome):
+    writer = tmp_path / "writer"
+    writer.write_bytes(b"synthetic executable")
+    calls = []
+    progress = []
+
+    def execute(command, **kwargs):
+        calls.append(command[-1])
+        assert command[-1] == "helper-seed"
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(
+                command, 5, stderr=b"stage:before_helper_seed\nprivate-detail"
+            )
+        if outcome == "interrupted":
+            raise KeyboardInterrupt("private-detail")
+        if outcome == "changed_binary":
+            writer.write_bytes(b"different synthetic executable")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=b"private-invalid-json"
+            if outcome == "invalid_json"
+            else b'{"seed_completed":true,"seed_status":0}',
+            stderr=b"",
+        )
+
+    original = probe.Fixture
+
+    class SeedFixture(original):
+        def __init__(self, path):
+            super().__init__(path)
+            self.api.call = lambda operation, query, values: [{"persistent": b"fake-reference"}]
+
+    monkeypatch.setattr(probe, "Fixture", SeedFixture)
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    if outcome == "interrupted":
+        with pytest.raises(KeyboardInterrupt):
+            probe.run_case(
+                writer,
+                "helper-owned-control",
+                checkpoint=lambda row: progress.append(json.loads(json.dumps(row))),
+            )
+        assert progress[-1]["isolation_checkpoints"][-1]["stage"] == "fixture_created"
+    else:
+        row = probe.run_case(writer, "helper-owned-control")
+        assert "failure" in row
+        assert row["candidate_preserves_shared_access"] is False
+        assert row["temporary_keychains_deleted"] is True
+        assert "private-" not in json.dumps(row)
+        if outcome == "changed_binary":
+            assert row["failure"] == "helper_binary_changed"
+    assert calls == ["helper-seed"]
+
+
+def test_authorization_metadata_unavailable_stops_readback(monkeypatch, tmp_path, synthetic_case):
+    metadata = dict.fromkeys(AUTH_FIELDS)
+    metadata["metadata_status"] = -50
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps(
+                {
+                    "control_completed": metadata["metadata_status"] == 0,
+                    "control_status": metadata["metadata_status"],
+                    "authorization": metadata,
+                }
+            ).encode(),
+            stderr=b"",
+        ),
+    )
+    monkeypatch.setattr(
+        probe, "compare", lambda *a: pytest.fail("no readback after unavailable metadata")
+    )
+    row = probe.run_case(tmp_path / "writer", "authorization-metadata")
+    assert row["failure"] == "authorization_metadata_unavailable"
+    assert row["authorization"]["helper_identity_available"] is None
+
+
+def test_authorization_controls_are_scoped_and_do_not_update():
+    source = (probe.ROOT / "tests/native/keychain_public_update_probe.c").read_text()
+    header = (probe.ROOT / "tests/native/keychain_authorization_probe.h").read_text()
+    assert re.findall(r'kSecAttrService, CFSTR\("([^"\n]+)"\)', header) == [probe.SERVICE]
+    assert re.findall(r'kSecAttrAccount, CFSTR\("([^"\n]+)"\)', header) == [probe.ACCOUNT]
+    assert "proc_pidpath(getppid()," in header
+    assert "SecItemUpdate(" not in header
+    assert "SecKeychainItemModifyAttributesAndData(" not in header
+    assert "SecACLSet" not in header
+    assert "SecTrustedApplicationValidateWithPath" not in header
+    assert "SecKeychainSet" not in header
+    assert source.index("!private_fixture(argv[1])") < source.index("seed_helper_item(keychain)")
+    branch = source[source.index("if (authorization_control) {") : source.index("if (control) {")]
+    assert "SecItemCopyMatching" not in branch
+    assert "goto cleanup;" in branch
+    assert source.index("if (authorization_control) {") < source.index("stage:before_update")
+    metadata = header[
+        header.index("static OSStatus authorization_metadata(") : header.index(
+            "static OSStatus seed_helper_item("
+        )
+    ]
+    assert "SecItemCopyMatching" not in metadata
+    assert "kSecReturnData" not in metadata
+    assert "SecItemAdd(" not in metadata
+
+
+@pytest.mark.parametrize("mode", probe.MODES)
+def test_original_reader_denial_stops_every_update_mode(
+    monkeypatch, tmp_path, synthetic_case, mode
+):
+    original = probe.Fixture
+    reads, dispatched = [], []
+
+    class DeniedReader(original):
+        def __init__(self, writer):
+            super().__init__(writer)
+
+            def read(*args):
+                reads.append(True)
+                if len(reads) > 1:
+                    raise probe.KeychainError("denied")
+                return {"data": probe.ORIGINAL}
+
+            self.api.call = read
+
+    def execute(command, **kwargs):
+        if Path(command[0]).name == "synthetic-writer":
+            dispatched.append(command[-1])
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=b'{"update_status":0,"read_status":0,"replacement_verified":true}',
+                stderr=b"",
+            )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(probe, "Fixture", DeniedReader)
+    monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    report = probe.run((mode, "read-only-control"), report_path=tmp_path / "report.json")
+    assert dispatched == [mode]
+    assert len(reads) == 2
+    assert len(report["cases"]) == 1
+    assert report["cases"][0]["failure"] == "original_reader_denied"
+    assert report["cases"][0]["candidate_preserves_shared_access"] is False
+    assert report["stopped_after_failure"] is True
+    assert report["matrix_complete"] is False
+    assert probe.report_exit_code(report) == 1
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"metadata_status": True}])
+def test_invalid_authorization_payload_has_specific_failure(
+    monkeypatch, tmp_path, synthetic_case, metadata
+):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps(
+                {"control_completed": True, "control_status": 0, "authorization": metadata}
+            ).encode(),
+            stderr=b"",
+        ),
+    )
+    monkeypatch.setattr(
+        probe, "compare", lambda *a: pytest.fail("no readback after invalid metadata")
+    )
+    row = probe.run_case(tmp_path / "writer", "authorization-metadata")
+    assert row["failure"] == "invalid_authorization_metadata"
+    assert row["candidate_preserves_shared_access"] is False
+    assert row["temporary_keychains_deleted"] is True
+
+
+def test_metadata_native_branch_reports_status_and_completion():
+    source = (probe.ROOT / "tests/native/keychain_public_update_probe.c").read_text()
+    branch = source[source.index("if (authorization_control) {") : source.index("if (control) {")]
+    assert "status = authorization_metadata(item);" in branch
+    assert "control_status" in branch
+    assert '!status ? "true" : "false"' in branch
+
+
+@pytest.mark.parametrize("changed_at", range(1, 8))
+def test_helper_owned_isolation_change_stops_next_operation(
+    monkeypatch, tmp_path, synthetic_case, changed_at
+):
+    writer = tmp_path / "writer"
+    writer.write_bytes(b"synthetic executable")
+    original = probe.Fixture
+    calls, snapshots = [], []
+    metadata = dict(dict.fromkeys(AUTH_FIELDS), metadata_status=0)
+
+    class HelperFixture(original):
+        def __init__(self, path):
+            super().__init__(path)
+            self.api.call = lambda op, query, values: (
+                {"data": probe.ORIGINAL}
+                if "persistent" in query
+                else [{"persistent": b"fake-reference"}]
+            )
+
+        def add(self, **kwargs):
+            pytest.fail("Python must not seed helper item")
+
+    def snapshot():
+        snapshots.append(True)
+        return {
+            "default": {"path": "synthetic", "unlocked": len(snapshots) < changed_at},
+            "search_list": [],
+        }
+
+    def execute(command, **kwargs):
+        calls.append(command[-1])
+        fields = (
+            {"seed_completed": True, "seed_status": 0}
+            if command[-1] == "helper-seed"
+            else {"control_completed": True, "control_status": 0, "authorization": metadata}
+        )
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(fields).encode(), stderr=b""
+        )
+
+    monkeypatch.setattr(probe, "Fixture", HelperFixture)
+    monkeypatch.setattr(probe, "environment_snapshot", snapshot)
+    monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    row = probe.run_case(writer, "helper-owned-control")
+    assert row["isolation_failed"] is True
+    assert row["candidate_preserves_shared_access"] is False
+    assert calls == (
+        []
+        if changed_at == 1
+        else ["helper-seed"]
+        if changed_at <= 4
+        else ["helper-seed", "helper-owned-control"]
+    )
+    first_bad = next(
+        point for point in row["isolation_checkpoints"] if not all(point["checks"].values())
+    )
+    assert (
+        first_bad["stage"]
+        == [
+            "fixture_created",
+            "after_seed",
+            "fixture_seeded",
+            "before_writer",
+            "after_writer",
+            "after_readback",
+            "after_cleanup",
+        ][changed_at - 1]
+    )
+    assert probe.report_exit_code({"matrix_complete": True, "cases": [row]}) == 1
