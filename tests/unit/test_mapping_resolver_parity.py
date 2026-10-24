@@ -10,12 +10,22 @@ from __future__ import annotations
 
 import pytest
 
+from app.services import credential_provider
 from app.services.credential_provider import CredentialProvider
 from scripts import sidecar
 
 RESOLVERS = {
     "sidecar": sidecar.GenericCollector.get_nested,
     "server": CredentialProvider._resolve_mapping_value,
+}
+
+#: The two copies of the expiry reader. The server decides whether a credential
+#: is fresh and the sidecar reports freshness independently, so a divergence
+#: between them means the two sides disagree about whether a credential is
+#: alive — the server would collect with a token the sidecar calls dead.
+EXPIRY_RESOLVERS = {
+    "sidecar": sidecar._expiry_seconds,
+    "server": credential_provider._expiry_seconds,
 }
 
 APPS = {
@@ -189,3 +199,55 @@ def test_key_glob_helpers_agree():
         side = sidecar._key_glob(pattern)
         for key in ("github.com:me", "a?b", "ab", "xyz", "x-y-z", "plain", ""):
             assert bool(server.fullmatch(key)) == bool(side.fullmatch(key)), (pattern, key)
+
+
+#: A 2026 epoch, published in each unit a provider might use it in.
+_EPOCH_2026 = 1_792_518_384
+
+#: id, raw value, expected epoch seconds.
+#:
+#: The unit is read off the magnitude, so the same instant in seconds,
+#: milliseconds, microseconds and nanoseconds has to land on the same second.
+#: The last rows are the edges: a value that is not a plausible expiry is
+#: unknown rather than fresh, and a millisecond value far enough ahead to be
+#: misread lands in the past rather than in the far future.
+EXPIRY_CASES = [
+    ("seconds", _EPOCH_2026, _EPOCH_2026),
+    ("milliseconds", _EPOCH_2026 * 1_000, _EPOCH_2026),
+    ("microseconds", _EPOCH_2026 * 1_000_000, _EPOCH_2026),
+    ("nanoseconds", _EPOCH_2026 * 1_000_000_000, _EPOCH_2026),
+    ("an expired second", 1_000_000_000, 1_000_000_000),
+    ("an expired millisecond", 1_600_000_000_000, 1_600_000_000),
+    ("not a number", "not-a-number", None),
+    ("none", None, None),
+    ("nan", float("nan"), None),
+    ("infinity", float("inf"), None),
+    ("negative infinity", float("-inf"), None),
+    ("a value past the last representable year is unknown", 1e21, None),
+    (
+        "a millisecond value three thousand years ahead reads as expired",
+        1e14,
+        1e8,
+    ),
+]
+
+
+@pytest.mark.parametrize("name", EXPIRY_RESOLVERS)
+@pytest.mark.parametrize(
+    ("case_id", "raw", "expected"), EXPIRY_CASES, ids=[c[0] for c in EXPIRY_CASES]
+)
+def test_expiry_units(name, case_id, raw, expected):
+    """Both copies read the same expiry in the same unit the same way."""
+    got = EXPIRY_RESOLVERS[name](raw)
+    if expected is None:
+        assert got is None
+    else:
+        assert got == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "raw", "_expected"), EXPIRY_CASES, ids=[c[0] for c in EXPIRY_CASES]
+)
+def test_sidecar_and_server_agree_on_expiry_units(case_id, raw, _expected):
+    """The two copies must not drift: they decide the same thing about a credential."""
+    assert sidecar._expiry_seconds(raw) == (credential_provider._expiry_seconds(raw))

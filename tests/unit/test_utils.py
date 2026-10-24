@@ -38,6 +38,39 @@ def _make_mock_response(status_code: int, headers: dict | None = None) -> MagicM
 
 # ─── IdentityExtractor ────────────────────────────────────────────────────────
 
+#: A 2026 epoch in milliseconds — the unit every writer of the stored
+#: ``expiry_date`` uses today. The reader takes the unit off the magnitude, so
+#: a fixture has to name a plausible epoch rather than an arbitrary number.
+_MS_EPOCH = 1_792_518_384_753
+
+
+class TestIdentityExtractorStoredExpiry:
+    """The stored ``expiry_date`` is read through the shared expiry rule.
+
+    The writers store an millisecond epoch today, so that is the case that has
+    to keep working. A provider that publishes another unit must not be read as
+    1970 — that would make the "Expired" badge disagree with what collection
+    actually sees.
+    """
+
+    def test_a_millisecond_expiry_is_read_as_epoch_seconds(self):
+        exp = IdentityExtractor.exp_from_tokens({"expiry_date": "1792518384753"})
+        assert exp == pytest.approx(1792518384.753)
+
+    def test_a_second_expiry_is_read_as_epoch_seconds(self):
+        exp = IdentityExtractor.exp_from_tokens({"expiry_date": "1792518384"})
+        assert exp == pytest.approx(1792518384)
+
+    def test_a_microsecond_expiry_is_read_as_epoch_seconds(self):
+        exp = IdentityExtractor.exp_from_tokens({"expiry_date": "1792518384753000"})
+        assert exp == pytest.approx(1792518384.753)
+
+    def test_an_unreadable_expiry_is_no_expiry_at_all(self):
+        assert IdentityExtractor.exp_from_tokens({"expiry_date": "not-a-number"}) is None
+
+    def test_a_nan_expiry_is_no_expiry_at_all(self):
+        assert IdentityExtractor.exp_from_tokens({"expiry_date": "nan"}) is None
+
 
 class TestIdentityExtractorJwtPayload:
     def test_valid_jwt_returns_payload_dict(self):
@@ -147,9 +180,9 @@ class TestIdentityExtractorExpFromTokens:
         # id_token exp — Gemini's opaque access token has no JWT exp of its own.
         tokens = {
             "id_token": _make_jwt({"exp": 100.0}),  # seconds
-            "expiry_date": "500000",  # ms → 500.0 s
+            "expiry_date": str(_MS_EPOCH),
         }
-        assert IdentityExtractor.exp_from_tokens(tokens) == 500.0
+        assert IdentityExtractor.exp_from_tokens(tokens) == pytest.approx(_MS_EPOCH / 1000.0)
 
     def test_access_token_jwt_outranks_expiry_date(self):
         # The access token is what the collector sends and what the server
@@ -158,22 +191,22 @@ class TestIdentityExtractorExpFromTokens:
         # fine, and neither was provably right).
         tokens = {
             "xai_access": _make_jwt({"exp": 100.0}),
-            "expiry_date": "500000",  # ms → 500.0 s
+            "expiry_date": str(_MS_EPOCH),
         }
         assert IdentityExtractor.exp_from_tokens(tokens) == 100.0
 
     def test_expiry_date_still_wins_for_an_opaque_access_token(self):
         # Google's `ya29.*` carries no JWT exp of its own, so expiry_date —
         # which tracks that access token — is all there is.
-        tokens = {"oauth_token": "ya29.a0AfBearerOpaqueValue", "expiry_date": "500000"}
-        assert IdentityExtractor.exp_from_tokens(tokens) == 500.0
+        tokens = {"oauth_token": "ya29.a0AfBearerOpaqueValue", "expiry_date": str(_MS_EPOCH)}
+        assert IdentityExtractor.exp_from_tokens(tokens) == pytest.approx(_MS_EPOCH / 1000.0)
 
     def test_expired_access_jwt_beats_a_future_expiry_date(self):
         # The badge must go red when the token collection actually holds is
         # dead, even if expiry_date claims otherwise.
         tokens = {
             "access_token": _make_jwt({"exp": 0.0}),  # already expired
-            "expiry_date": "500000",  # ms → 500.0 s (in the future)
+            "expiry_date": str(_MS_EPOCH),  # ms → in the future
         }
         assert IdentityExtractor.exp_from_tokens(tokens) == 0.0
 

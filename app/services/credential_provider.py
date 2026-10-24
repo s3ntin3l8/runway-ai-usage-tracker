@@ -12,6 +12,7 @@ from sqlmodel import select as sqlselect
 from app.core.config import get_platform_config_dir, settings
 from app.core.db import engine
 from app.core.encryption import encryption_service
+from app.core.expiry import expiry_seconds
 from app.core.registry import registry
 from app.models.db import ProviderConfig
 
@@ -152,19 +153,12 @@ def _is_expiry_key(name: str) -> bool:
     return "expires" in lowered or "expiry" in lowered
 
 
-def _expiry_seconds(value: Any) -> float | None:
-    """Epoch seconds of *value*, normalising epoch milliseconds.
-
-    Returns None when *value* isn't a number.
-    """
-    try:
-        moment = float(value)
-    except (TypeError, ValueError):
-        return None
-    # Epoch milliseconds are ~1e3x the seconds value.
-    if moment > 1e11:
-        moment /= 1000.0
-    return moment
+#: The epoch reader. Every expiry the server reads goes through it — the
+#: freshness probe below and ``IdentityExtractor.exp_from_tokens``, which is
+#: the single source of truth for a *stored* bundle's expiry. The sidecar has
+#: its own copy in ``scripts/sidecar_pkg/expiry.py``; the two are pinned
+#: together by ``tests/unit/test_mapping_resolver_parity.py``.
+_expiry_seconds = expiry_seconds
 
 
 def _record_expiry(record: Any) -> float | None:

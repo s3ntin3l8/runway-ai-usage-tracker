@@ -191,6 +191,19 @@ showing up as a quota gauge.
 The extractor lives in `scripts/sidecar_pkg/event_extractors/minimax_code.py` and pushes one
 event per **API request** under `provider_id="minimax"` with `source_app="minimax_code"`.
 
+### The app login's expiry unit
+
+The desktop app's own login (`~/.minimax/auth/*/*/mcode-public/auth.json`) is read by the
+`minimax` provider's file rule, which maps `records.*.expiresAtMs` to `expiry_date`. That
+field is an **epoch-millisecond** value, and the `Ms` suffix says so — but the reader does not
+take the unit from the field name. The registry maps an expiry field by name without saying
+which unit that field carries, so both the server and the sidecar read the unit off the
+*magnitude* of the number instead (seconds / milliseconds / microseconds / nanoseconds).
+
+The convention, and why both readers have to implement it identically, is in
+[`docs/collection_logic.md`](../collection_logic.md#expiry-units). A record that publishes
+its expiry in another unit needs no rule change.
+
 ### Where the ledger lives
 
 ```

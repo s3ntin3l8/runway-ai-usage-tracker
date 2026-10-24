@@ -7,6 +7,57 @@ import pytest
 from app.services.credential_provider import CredentialProvider
 
 
+def test_record_expiry_prefers_the_live_millisecond_record_over_a_dead_microsecond_one():
+    """A microsecond expiry has to be read as microseconds.
+
+    Dividing it by a thousand only once leaves it thousands of years in the
+    future, and the picker takes the *largest* expiry — so a dead microsecond
+    record would outrank a live millisecond one and the collector would keep
+    presenting a dead token.
+    """
+    from app.services.credential_provider import _record_expiry
+
+    record = {
+        # 2020-09-13, in microseconds — long expired.
+        "expiresAtUs": 1_600_000_000_000_000,
+        # 2100-01-01, in milliseconds — still live.
+        "expiresAtMs": 4_102_444_800_000,
+    }
+    assert _record_expiry(record) == pytest.approx(4_102_444_800)
+
+
+def test_record_expiry_ignores_an_implausible_expiry():
+    """An expiry past the last representable year is unknown, not the largest.
+
+    Treating it as "no expiry" is the safe direction: an unknown expiry must
+    not win the largest-expiry picker over a record that states one.
+    """
+    from app.services.credential_provider import _record_expiry
+
+    record = {
+        "expiresAt": 1e21,
+        "expiresAtMs": 4_102_444_800_000,
+    }
+    assert _record_expiry(record) == pytest.approx(4_102_444_800)
+
+
+def test_has_unexpired_token_does_not_call_a_microsecond_expiry_fresh(tmp_path):
+    """A microsecond expiry must not read as live forever.
+
+    Dividing a microsecond epoch by a thousand only once leaves it thousands of
+    years ahead, so the freshness probe would call a dead credential live.
+    """
+    from app.services.credential_provider import _has_unexpired_token
+
+    dead = tmp_path / "microsecond-expiry.json"
+    dead.write_text(json.dumps({"accessToken": "tok", "expiresAtUs": 1_600_000_000_000_000}))
+    assert _has_unexpired_token(str(dead)) is False
+
+    live = tmp_path / "millisecond-expiry.json"
+    live.write_text(json.dumps({"accessToken": "tok", "expiresAtMs": 4_102_444_800_000}))
+    assert _has_unexpired_token(str(live)) is True
+
+
 @pytest.mark.asyncio
 async def test_credential_provider_reads_the_selected_source_bundle(monkeypatch):
     from app.services import token_cache as token_cache_module

@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.core.expiry import expiry_seconds
+
 if TYPE_CHECKING:
     from sqlmodel import Session
 
@@ -160,9 +162,12 @@ class IdentityExtractor:
            it must beat a stored `expiry_date` — which can drift from the token
            it describes and otherwise makes the "Expired" badge disagree with
            what collection actually sees.
-        2. `expiry_date` (ms epoch, as written by gemini-cli / Google
+        2. `expiry_date` (an epoch timestamp, as written by gemini-cli / Google
            `oauth_creds.json`) for *opaque* access tokens: Google's `ya29.*`
            carries no `exp` claim, so there is nothing JWT-shaped to read.
+           The unit is read off the magnitude, so a provider that publishes
+           seconds, milliseconds or microseconds is read correctly whichever
+           it uses — see `app/core/expiry.py`.
         3. An identity token's `exp` as a last resort. It describes who, not the
            access token, and a Gemini refresh returns no fresh `id_token`, so it
            can be permanently stale — which is why it never outranks
@@ -177,12 +182,14 @@ class IdentityExtractor:
                 if exp is not None:
                     return exp
 
-        expiry_ms = tokens.get("expiry_date")
-        if expiry_ms is not None:
-            try:
-                return float(expiry_ms) / 1000.0
-            except (TypeError, ValueError):
-                pass
+        expiry = tokens.get("expiry_date")
+        if expiry is not None:
+            # The unit is read off the magnitude, not off the field name: the
+            # writers store an ms epoch today, but a provider that publishes
+            # another unit must not be read as 1970.
+            seconds = expiry_seconds(expiry)
+            if seconds is not None:
+                return seconds
 
         tok = tokens.get("id_token")
         if tok:

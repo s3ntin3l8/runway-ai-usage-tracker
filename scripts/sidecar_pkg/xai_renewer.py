@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from scripts.sidecar_pkg.expiry import expiry_seconds
 from scripts.sidecar_pkg.oauth_renewal import RefreshRejectedError, atomic_replace_json
 from scripts.sidecar_pkg.opencode_credentials import (
     read_oauth_row,
@@ -63,10 +64,12 @@ def jwt_expiry_epoch(token: str) -> float | None:
     try:
         payload = token.split(".")[1]
         claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-        exp = float(claims["exp"])
+        exp = claims["exp"]
     except (IndexError, ValueError, KeyError, TypeError):
         return None
-    return exp / 1000 if exp > 1e11 else exp
+    # The unit is read off the magnitude: a JWT ``exp`` is spec-seconds, but
+    # the xAI auth file has been seen to carry a millisecond claim.
+    return expiry_seconds(exp)
 
 
 @dataclass
