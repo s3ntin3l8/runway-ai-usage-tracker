@@ -25,6 +25,11 @@ def _check() -> MinimaxBackgroundSessionsCheck:
     return MinimaxBackgroundSessionsCheck()
 
 
+def _key(child_session_id: str = "mvs_bg", parent_session_id: str = "mvs_main") -> str:
+    """The group key of one (child, parent) pair."""
+    return json.dumps([child_session_id, parent_session_id], separators=(",", ":"))
+
+
 def _event(session, **overrides):
     base = {
         "provider_id": "minimax",
@@ -47,7 +52,7 @@ def test_detect_finds_a_row_filed_on_the_wrong_session(session):
 
     assert report.total_count == 1
     group = report.groups[0]
-    assert group.key == "mvs_bg->mvs_main"
+    assert group.key == _key()
     assert group.fixable is True
     assert group.detail["parent_session_id"] == "mvs_main"
     assert group.detail["usage_events"] == 1
@@ -104,7 +109,7 @@ def test_the_plan_reports_the_rows_it_would_move(session):
     _event(session, event_id="e1")
     _event(session, event_id="e2")
 
-    plan = _check().plan(session, "mvs_bg->mvs_main", {})
+    plan = _check().plan(session, _key(), {})
 
     assert plan.counts["usage_events_to_move"] == 2
     assert "mvs_main" in plan.summary
@@ -113,7 +118,7 @@ def test_the_plan_reports_the_rows_it_would_move(session):
 def test_the_apply_files_the_row_under_its_parent(session):
     row = _event(session)
 
-    result, hooks = _check().apply(session, "mvs_bg->mvs_main", {})
+    result, hooks = _check().apply(session, _key(), {})
 
     assert result.counts["usage_events_moved"] == 1
     assert hooks == []
@@ -128,12 +133,12 @@ def test_the_apply_files_the_row_under_its_parent(session):
 
 def test_the_apply_is_idempotent(session):
     _event(session)
-    _check().apply(session, "mvs_bg->mvs_main", {})
+    _check().apply(session, _key(), {})
 
     report = _check().detect(session)
 
     assert report.total_count == 0
-    result, _ = _check().apply(session, "mvs_bg->mvs_main", {})
+    result, _ = _check().apply(session, _key(), {})
     assert result.counts["usage_events_moved"] == 0
 
 
@@ -169,7 +174,10 @@ def test_detect_groups_by_the_parent_as_well_as_the_child(session):
     report = _check().detect(session)
 
     assert len(report.groups) == 2
-    assert {g.key for g in report.groups} == {"mvs_bg->mvs_main", "mvs_bg->mvs_other"}
+    assert {g.key for g in report.groups} == {
+        _key("mvs_bg", "mvs_main"),
+        _key("mvs_bg", "mvs_other"),
+    }
     assert all(g.count == 1 for g in report.groups)
 
 
@@ -190,7 +198,7 @@ def test_the_plan_names_the_parent_it_moves_to(session):
         raw_json=_provenance(parent_session_id="mvs_other"),
     )
 
-    plan = _check().plan(session, "mvs_bg->mvs_other", {})
+    plan = _check().plan(session, _key("mvs_bg", "mvs_other"), {})
 
     assert plan.counts["usage_events_to_move"] == 1
     assert "mvs_other" in plan.summary
@@ -199,9 +207,62 @@ def test_the_plan_names_the_parent_it_moves_to(session):
 
 def test_the_plan_of_a_filed_group_says_so(session):
     _event(session, event_id="e1")
-    _check().apply(session, "mvs_bg->mvs_main", {})
+    _check().apply(session, _key(), {})
 
-    plan = _check().plan(session, "mvs_bg->mvs_main", {})
+    plan = _check().plan(session, _key(), {})
 
     assert plan.counts["usage_events_to_move"] == 0
     assert "already filed" in plan.summary
+
+
+def test_detect_ignores_a_blank_parent(session):
+    """A blank id would file the row under a session id that cannot exist."""
+    _event(session, raw_json=json.dumps({"parent_session_id": "   "}))
+
+    report = _check().detect(session)
+
+    assert report.total_count == 0
+
+
+def test_detect_ignores_a_parent_with_whitespace_inside_it(session):
+    _event(session, raw_json=json.dumps({"parent_session_id": "mvs main"}))
+
+    report = _check().detect(session)
+
+    assert report.total_count == 0
+
+
+def test_the_group_key_is_unambiguous(session):
+    """A session id may contain anything, so the pair is encoded as JSON.
+
+    With a separator, `(a->b, c)` and `(a, b->c)` would encode to the same
+    string and one group's fix would move the other group's rows.
+    """
+    _event(
+        session,
+        event_id="e1",
+        raw_json=_provenance(source_session_id="a->b", parent_session_id="c"),
+    )
+    _event(
+        session,
+        event_id="e2",
+        raw_json=_provenance(source_session_id="a", parent_session_id="b->c"),
+    )
+
+    report = _check().detect(session)
+
+    assert len(report.groups) == 2
+    assert len({g.key for g in report.groups}) == 2
+    for group in report.groups:
+        assert group.detail["usage_events"] == 1
+
+
+def test_a_stale_group_key_says_so(session):
+    """A report cached across a deploy may hold a key of an older shape."""
+    plan = _check().plan(session, "mvs_bg", {})
+
+    assert plan.counts["usage_events_to_move"] == 0
+    assert "stale" in plan.summary
+
+    result, _ = _check().apply(session, "mvs_bg", {})
+    assert result.counts["usage_events_moved"] == 0

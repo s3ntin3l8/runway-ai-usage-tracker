@@ -225,7 +225,6 @@ class ProvenanceRelinkPlan:
     total: int = 0
     relinks: list[ProvenanceRelink] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)
-    parent_session_id: str | None = None
 
 
 @dataclass
@@ -317,7 +316,13 @@ def plan_provenance_relinks(
     plan = ProvenanceRelinkPlan()
     for row in session.exec(stmt).all():
         parent = row.parent_session_id
-        if not isinstance(parent, str) or not parent:
+        if not isinstance(parent, str):
+            continue
+        # A session id is not blank and does not carry whitespace inside it.
+        # The provenance is sidecar-supplied text, and a blank or padded
+        # value would file the row under a session id that cannot exist.
+        parent = parent.strip()
+        if not parent or any(char.isspace() for char in parent):
             continue
         plan.relinks.append(
             ProvenanceRelink(
@@ -328,8 +333,6 @@ def plan_provenance_relinks(
             )
         )
     plan.total = len(plan.relinks)
-    if plan.relinks:
-        plan.parent_session_id = plan.relinks[0].parent_session_id
     plan.samples = [f"{r.event_id} -> {r.parent_session_id}" for r in plan.relinks[:5]]
     return plan
 

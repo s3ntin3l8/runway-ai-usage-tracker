@@ -22,6 +22,7 @@ can map those, so the repair script
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sqlmodel import Session
@@ -45,16 +46,30 @@ from app.services.maintenance.minimax_background_sessions import (
 def _group_key(child_session_id: str, parent_session_id: str) -> str:
     """The key of one (child, parent) group.
 
-    A session id never contains the separator, so the pair round-trips.
+    The pair is encoded as a JSON array: a session id is unvalidated
+    sidecar text, so no separator can be assumed absent — the pairs
+    ``(a->b, c)`` and ``(a, b->c)`` would encode to the same string with
+    one. The key travels in a JSON request body, so the encoding costs
+    nothing.
     """
-    return f"{child_session_id}->{parent_session_id}"
+    return json.dumps([child_session_id, parent_session_id], separators=(",", ":"))
 
 
-def _parse_group_key(group_key: str) -> tuple[str, str]:
-    """Split a group key back into the (child, parent) pair."""
-    child, separator, parent = group_key.partition("->")
-    if not separator:
-        return group_key, group_key
+def _parse_group_key(group_key: str) -> tuple[str, str] | None:
+    """Split a group key back into the (child, parent) pair.
+
+    ``None`` when the key is not one of ours — a report cached across a
+    deploy may hold a key from an older shape.
+    """
+    try:
+        pair = json.loads(group_key)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(pair, list) or len(pair) != 2:
+        return None
+    child, parent = pair
+    if not isinstance(child, str) or not isinstance(parent, str):
+        return None
     return child, parent
 
 
@@ -123,7 +138,15 @@ class MinimaxBackgroundSessionsCheck(Check):
         )
 
     def plan(self, session: Session, group_key: str, params: dict[str, Any]) -> FixPlan:
-        child_session_id, parent_session_id = _parse_group_key(group_key)
+        pair = _parse_group_key(group_key)
+        if pair is None:
+            return FixPlan(
+                check_id=self.id,
+                group_key=group_key,
+                summary="This finding is stale — rescan to see the current groups.",
+                counts={"usage_events_to_move": 0},
+            )
+        child_session_id, parent_session_id = pair
         plan = plan_provenance_relinks(
             session,
             child_session_id=child_session_id,
@@ -145,7 +168,18 @@ class MinimaxBackgroundSessionsCheck(Check):
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
         # Re-plan at apply time: the rows may have been filed since the scan.
-        child_session_id, parent_session_id = _parse_group_key(group_key)
+        pair = _parse_group_key(group_key)
+        if pair is None:
+            return (
+                FixResult(
+                    check_id=self.id,
+                    group_key=group_key,
+                    summary="This finding is stale — rescan to see the current groups.",
+                    counts={"usage_events_moved": 0},
+                ),
+                [],
+            )
+        child_session_id, parent_session_id = pair
         plan = plan_provenance_relinks(
             session,
             child_session_id=child_session_id,
