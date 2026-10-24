@@ -45,8 +45,73 @@ import { useDashboardLayout } from '@/features/home/queries';
 import { ProviderDetailDialog } from './ProviderDetailDialog';
 import { AddProviderWizard } from './AddProviderWizard';
 import { UntaggedCredentialsDialog } from '@/features/fleet/UntaggedCredentialsDialog';
-import { labelOrMaskedId } from '@/lib/accountDisplay';
+import { labelOrMaskedId, maskAccountId } from '@/lib/accountDisplay';
 import { errorMessage } from '@/lib/errorMessage';
+import { timeAgo } from '@/lib/format';
+
+/**
+ * The display name of one of a provider's accounts: its label when it has
+ * one, otherwise the masked id. A merged-away account is no longer listed
+ * under the provider, so this falls back to the id.
+ */
+function accountName(provider: ProviderConfig, accountId: string): string {
+  const account = provider.accounts.find((a) => a.account_id === accountId);
+  return account ? labelOrMaskedId(account) : maskAccountId(accountId);
+}
+
+/**
+ * The permanent delete of an empty archived account, with its confirmation.
+ * An archived account holds no live credential, so removing the row loses
+ * nothing but the account itself. Offered wherever an archived row is listed
+ * — including the leftover row of a merged-away account, which is otherwise
+ * not restorable.
+ */
+function PermanentDeleteButton({
+  providerId,
+  accountId,
+  pendingKey,
+  setPendingKey,
+  onDeleted,
+}: {
+  providerId: string;
+  accountId: string;
+  pendingKey: string | null;
+  setPendingKey: (key: string | null) => void;
+  onDeleted: () => void;
+}) {
+  const key = `${providerId}/${accountId}`;
+  if (pendingKey === key) {
+    return (
+      <div className="flex w-full items-center justify-end gap-2 border-t border-border pt-2">
+        <span className="mr-auto text-xs text-fg-muted">Permanently delete this empty account?</span>
+        <Button variant="ghost" size="sm" onClick={() => setPendingKey(null)}>
+          Cancel
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={async () => {
+            try {
+              await deleteProviderConfig(providerId, accountId, true);
+              setPendingKey(null);
+              onDeleted();
+              toast.success('Archived account permanently deleted');
+            } catch (error) {
+              toast.error(errorMessage(error, 'Could not delete account'));
+            }
+          }}
+        >
+          Delete permanently
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <Button variant="danger" size="sm" onClick={() => setPendingKey(key)}>
+      Delete permanently
+    </Button>
+  );
+}
 
 export function reorderItems<T>(
   items: T[],
@@ -246,6 +311,20 @@ function ProvidersSectionV2({
   const archivedAccounts = providers.flatMap((p) =>
     p.accounts.filter((a) => a.archived).map((account) => ({ provider: p, account })),
   );
+  // An account that was merged away is retired by the *merge*, not by an
+  // archive: the merge moved its history and its credential to the
+  // destination, so it holds nothing and cannot be restored (the API refuses
+  // the restore). It gets its own section below, and never a Restore button.
+  const archivedOnly = archivedAccounts.filter(({ account }) => !account.merged_into);
+  const mergedAccounts = providers.flatMap((p) =>
+    (p.merged_accounts ?? []).map((merged) => ({
+      provider: p,
+      merged,
+      // The row the merge left behind (archived, no credential). It cannot be
+      // restored, but an empty one can still be cleaned up.
+      leftover: p.accounts.find((a) => a.account_id === merged.account_id),
+    })),
+  );
 
   return (
     <>
@@ -336,11 +415,11 @@ function ProvidersSectionV2({
         )}
       </div>
 
-      {archivedAccounts.length > 0 ? (
+      {archivedOnly.length > 0 ? (
         <section className="mt-6 max-w-2xl" aria-label="Archived provider accounts">
-          <h3 className="mb-2 text-sm font-semibold">Archived accounts ({archivedAccounts.length})</h3>
+          <h3 className="mb-2 text-sm font-semibold">Archived accounts ({archivedOnly.length})</h3>
           <div className="flex flex-col gap-2">
-            {archivedAccounts.map(({ provider, account }) => (
+            {archivedOnly.map(({ provider, account }) => (
               <Card key={`${provider.provider_id}/${account.account_id}`} className="flex flex-wrap items-center gap-3 px-4 py-3">
                 <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
                 <div className="min-w-0 flex-1">
@@ -363,42 +442,52 @@ function ProvidersSectionV2({
                   Restore
                 </Button>
                 {account.has_usage_events === false ? (
-                  pendingPermanentDeleteKey === `${provider.provider_id}/${account.account_id}` ? (
-                    <div className="flex w-full items-center justify-end gap-2 border-t border-border pt-2">
-                      <span className="mr-auto text-xs text-fg-muted">Permanently delete this empty account?</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setPendingPermanentDeleteKey(null)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={async () => {
-                          try {
-                            await deleteProviderConfig(provider.provider_id, account.account_id, true);
-                            setPendingPermanentDeleteKey(null);
-                            await configs.refetch();
-                            toast.success('Archived account permanently deleted');
-                          } catch (error) {
-                            toast.error(errorMessage(error, 'Could not delete account'));
-                          }
-                        }}
-                      >
-                        Delete permanently
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => setPendingPermanentDeleteKey(`${provider.provider_id}/${account.account_id}`)}
-                    >
-                      Delete permanently
-                    </Button>
-                  )
+                  <PermanentDeleteButton
+                    providerId={provider.provider_id}
+                    accountId={account.account_id}
+                    pendingKey={pendingPermanentDeleteKey}
+                    setPendingKey={setPendingPermanentDeleteKey}
+                    onDeleted={() => configs.refetch()}
+                  />
+                ) : null}
+              </Card>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {/* The accounts that were merged away. They are not accounts any more —
+          the merge moved their history and their credential to the destination
+          — so this list only says where each of them went. It is inert: there
+          is nothing to restore, edit or remove. */}
+      {mergedAccounts.length > 0 ? (
+        <section className="mt-6 max-w-2xl" aria-label="Merged provider accounts">
+          <h3 className="mb-2 text-sm font-semibold">Merged accounts ({mergedAccounts.length})</h3>
+          <div className="flex flex-col gap-2">
+            {mergedAccounts.map(({ provider, merged, leftover }) => (
+              <Card
+                key={`${provider.provider_id}/${merged.account_id}`}
+                className="flex flex-wrap items-center gap-3 px-4 py-3"
+              >
+                <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{provider.name}</p>
+                  <p className="truncate text-[11px] text-fg-subtle">
+                    {accountName(provider, merged.account_id)}
+                    {' → '}
+                    {accountName(provider, merged.destination_account_id)}
+                  </p>
+                </div>
+                <Badge variant="neutral">Merged</Badge>
+                <span className="text-[11px] text-fg-subtle">{timeAgo(merged.merged_at)}</span>
+                {leftover?.archived && leftover.has_usage_events === false ? (
+                  <PermanentDeleteButton
+                    providerId={provider.provider_id}
+                    accountId={merged.account_id}
+                    pendingKey={pendingPermanentDeleteKey}
+                    setPendingKey={setPendingPermanentDeleteKey}
+                    onDeleted={() => configs.refetch()}
+                  />
                 ) : null}
               </Card>
             ))}
@@ -479,7 +568,9 @@ function SortableProviderCard({
   });
 
   const activeAccounts = provider.accounts.filter((a) => !a.archived);
-  const archivedAccounts = provider.accounts.filter((a) => a.archived);
+  // An account that was merged away is listed under "Merged accounts", not
+  // here: it is not an archived account the operator can restore.
+  const archivedAccounts = provider.accounts.filter((a) => a.archived && !a.merged_into);
   // A provider whose every account is archived is *retired*, not unconfigured:
   // it is set up, the operator just closed it. It must not claim "Not
   // configured" — the account list below shows the same provider under
@@ -543,7 +634,7 @@ function SortableProviderCard({
                 ? 'Not configured'
                 : `${provider.account_count} ${provider.account_count === 1 ? 'account' : 'accounts'} · poll ${
                     provider.effective_poll_interval ?? provider.default_ttl_seconds ?? '—'
-                  }s${provider.archived_count ? ` · ${provider.archived_count} archived` : ''}`}
+                  }s${archivedAccounts.length ? ` · ${archivedAccounts.length} archived` : ''}`}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">

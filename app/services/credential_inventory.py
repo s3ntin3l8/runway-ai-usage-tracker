@@ -39,9 +39,11 @@ from app.models.schemas import (
     CredentialMachineView,
     CredentialProviderView,
     CredentialSourceView,
+    MergedAccountView,
     read_login_directory_report,
 )
 from app.services.account_identity import canonical_account_id, credential_fingerprint
+from app.services.account_merges import merged_accounts
 from app.services.credential_provider import CredentialProvider
 from app.services.credential_sources import (
     describe_origin_full,
@@ -674,4 +676,15 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         unmapped_count=len(pending_rows),
         rule_count=rule_count,
         pending_usage_events=pending_usage,
+        # The accounts that were merged away hold no credential, so they are not
+        # among the accounts above — this is what says where they went.
+        merged_accounts=[
+            MergedAccountView(
+                provider_id=merged.provider_id,
+                account_id=merged.account_id,
+                destination_account_id=merged.destination_account_id,
+                merged_at=merged.merged_at,
+            )
+            for merged in merged_accounts(session)
+        ],
     )

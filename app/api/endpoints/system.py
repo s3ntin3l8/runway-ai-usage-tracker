@@ -44,7 +44,12 @@ from app.services.account_identity import (
     account_usage_provider_ids,
     canonical_account_id,
 )
-from app.services.account_merges import record_account_merge, resolve_merged_account
+from app.services.account_merges import (
+    is_merged_away,
+    merged_accounts,
+    record_account_merge,
+    resolve_merged_account,
+)
 from app.services.billing_type import UNKNOWN, BillingType, detect_billing_type
 from app.services.collector_manager import manager
 from app.services.collectors.anthropic_console import (
@@ -1632,6 +1637,22 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
         session, [row for row in db_rows if row.archived]
     )
 
+    # The accounts that were merged away, and where each of them went. They
+    # hold no credential any more, so they are not among the accounts below —
+    # this is what tells the operator "alice was merged into bob" instead of
+    # letting alice disappear without a trace.
+    merged_by_provider: dict[str, list[dict[str, str]]] = {}
+    merged_into: dict[tuple[str, str], str] = {}
+    for merged in merged_accounts(session):
+        merged_by_provider.setdefault(merged.provider_id, []).append(
+            {
+                "account_id": merged.account_id,
+                "destination_account_id": merged.destination_account_id,
+                "merged_at": merged.merged_at,
+            }
+        )
+        merged_into[(merged.provider_id, merged.account_id)] = merged.destination_account_id
+
     credential_sources_by_account: dict[tuple[str, str], list[CredentialSource]] = {}
     for source in session.exec(select(CredentialSource)).all():
         credential_sources_by_account.setdefault(
@@ -1853,6 +1874,10 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "provider_id": p_id,
                 "enabled": r.enabled,
                 "archived": r.archived,
+                # Where this account went, when it was merged away. The row
+                # stays behind (archived, no credential) — the merge record is
+                # what says the account is gone, not this row.
+                "merged_into": merged_into.get((p_id, canonical_account_id(r.account_id))),
                 "has_usage_events": archived_account_usage.get((p_id, r.account_id), False),
                 "api_key_set": bool(r.api_key_encrypted),
                 "session_cookie_set": bool(r.session_cookie_encrypted),
@@ -1901,6 +1926,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                     "provider_id": p_id,
                     "enabled": True,
                     "archived": False,
+                    "merged_into": None,
                     "has_usage_events": False,
                     "api_key_set": False,
                     "session_cookie_set": False,
@@ -1931,6 +1957,7 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                         "provider_id": p_id,
                         "enabled": True,
                         "archived": False,
+                        "merged_into": None,
                         "has_usage_events": False,
                         "api_key_set": False,
                         "session_cookie_set": False,
@@ -1980,6 +2007,12 @@ async def list_provider_configs(request: Request, session: Session = Depends(get
                 "accounts": accounts_out,
                 "account_count": sum(not a.get("archived", False) for a in accounts_out),
                 "archived_count": sum(bool(a.get("archived", False)) for a in accounts_out),
+                # The accounts that were merged away, and where each of them
+                # went. A merged-away account holds no credential and is not an
+                # account any more: the row the merge left behind stays in
+                # `accounts` (archived, no credential) and is marked with
+                # `merged_into`, while this says where the account went.
+                "merged_accounts": merged_by_provider.get(p_id, []),
             }
         )
 
@@ -2030,6 +2063,28 @@ async def upsert_provider_config_for_account(  # noqa: PLR0915 — known-debt: p
     # column tells the two apart, so the repair that prices the accounts
     # predating detection never mistakes a proof for a choice.
     detected_billing_type: BillingType | None = None
+
+    # A merged-away account is gone: the merge moved its history and its
+    # credential to the destination, so the source id no longer names an
+    # account. Any write that would make it one again — restoring it, creating
+    # the row, or giving it a credential — is refused; only an explicit
+    # archive is allowed, because that keeps the account inert.
+    merged_destination = is_merged_away(session, provider_id, account_id)
+    if merged_destination:
+        writes_a_credential = (
+            body.api_key is not None
+            or body.session_cookie is not None
+            or bool(body.clear_api_key)
+            or bool(body.clear_session_cookie)
+        )
+        if body.archived is not True or writes_a_credential:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This account was merged into {merged_destination} and no longer exists; "
+                    "it cannot be restored or given a credential."
+                ),
+            )
 
     if provider_id == "anthropic_console":
         try:
