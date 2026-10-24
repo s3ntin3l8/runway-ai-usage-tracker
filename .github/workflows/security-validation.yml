@@ -25,13 +25,6 @@ jobs:
     # job runs no apt transaction and downloads no browser. The budget covers
     # the image pull, pip, npm and the browser matrix.
     timeout-minutes: 25
-    # The runner points HOME at a directory the image's pwuser owns, but the
-    # steps of a container job run as root, and Firefox refuses to start as
-    # root with a home owned by somebody else ("Running Nightly as root in a
-    # regular user's session is not supported"). Playwright's own advice for
-    # this image is to point HOME at root's home.
-    env:
-      HOME: /root
     container:
       # The browsers and the system libraries they need are baked into this
       # image at build time. That is the point of it: `playwright install
@@ -71,31 +64,53 @@ jobs:
         # with the linker makes the interpreter work wherever it is started.
         run: |
           echo "${pythonLocation:?the toolchain location is not set}/lib" > /etc/ld.so.conf.d/runway-python.conf
+          command -v ldconfig >/dev/null || { echo "the image has no ldconfig, so the toolchain's shared library cannot be registered" >&2; exit 1; }
           ldconfig
       - name: Verify the toolchain
         # The versions are printed so a mismatch shows up in the log instead
         # of surfacing as an opaque `npm ci` refusal: webapp/package.json
         # states the floors as devEngines with onFail: error, so npm enforces
-        # them on install. The interpreter is then started the way the browser
-        # matrix starts it -- as a child process of node -- so the failure
-        # mode above is caught here, by name, instead of surfacing as a
-        # cryptic Playwright error.
+        # them on install.
+        #
+        # The interpreter is then started the way the browser matrix starts
+        # it -- as a child process of node -- but with an environment that
+        # carries no LD_LIBRARY_PATH, so the child can only start through the
+        # linker registration above. Inheriting the full environment would
+        # make this check pass whether or not that registration works, and
+        # the failure would come back with the next browser matrix.
+        env:
+          # The runner points HOME at a directory the image's pwuser owns,
+          # but the steps of a container job run as root, and Firefox refuses
+          # to start as root with a home owned by somebody else ("Running
+          # Nightly as root in a regular user's session is not supported").
+          # Playwright's own advice for this image is to point HOME at root's
+          # home. The override stays on the steps that need it: a job-level
+          # one would also reach the runner's own docker client, which would
+          # then look for its credentials in the wrong home.
+          HOME: /root
         run: |
           node --version
           npm --version
           .venv/bin/python --version
           node -e '
             const { spawnSync } = require("child_process");
-            const result = spawnSync(".venv/bin/python", ["--version"], { encoding: "utf8" });
+            const result = spawnSync(".venv/bin/python", ["--version"], {
+              encoding: "utf8",
+              env: { PATH: process.env.PATH },
+            });
             if (result.status !== 0) {
-              console.error("the interpreter does not start as a child process:", result.stderr);
+              console.error("the interpreter does not start without LD_LIBRARY_PATH:", result.stderr);
               process.exit(1);
             }
-            console.log("as a child process:", result.stdout.trim());
+            console.log("without LD_LIBRARY_PATH:", result.stdout.trim());
           '
       - name: Install webapp dependencies
         run: npm --prefix webapp ci
       - name: Browser boundaries
+        # HOME is pointed at root's home for the same reason as in the
+        # toolchain step: the browsers run as root here.
+        env:
+          HOME: /root
         run: npm --prefix webapp run test:security
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
