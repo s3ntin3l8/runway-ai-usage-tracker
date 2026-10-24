@@ -20,7 +20,13 @@ BLOCKING_SEVERITIES = frozenset({"Critical", "High"})
 # upstream currently advertises (see check_database) and keeps this ceiling as
 # the tripwire for an upstream feed that stopped publishing; the newest
 # advertised release never reaches it while upstream keeps publishing daily.
-MAX_DB_AGE = timedelta(hours=30)
+#
+# The ceiling was 30 hours, which upstream's daily cadence satisfies but a
+# one-day gap in that cadence does not. It is now 48 hours: two days of
+# upstream silence still fails the audit, a one-and-a-half-day gap does not.
+# The incident that set the window, and the scope of the checksum check that
+# refuses a superseded database, are in docs/security/image-policy.md.
+MAX_DB_AGE = timedelta(hours=48)
 MAX_EXCEPTION_AGE = timedelta(days=30)
 # How close an exception may come to its expiry before the repository notices.
 # The shipped document expires on a single horizon, so the tripwire has to fire
