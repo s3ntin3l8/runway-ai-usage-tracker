@@ -3284,6 +3284,12 @@ _EVENT_PROVIDERS: frozenset[str] = frozenset(
     }
 )
 
+# Event sources that are not providers: Hermes calls other providers' accounts, so
+# its events belong to the provider each one used, never to a ``hermes`` account.
+# No hint, no untagged origin and no ``provider:hermes`` manifest entry exists for
+# these; the unresolved events report their own provider's origin instead.
+_PASS_THROUGH_EVENT_PROVIDERS: frozenset[str] = frozenset({"hermes"})
+
 # Legacy single-account identity discovery, used when the server has no
 # per-account config for a provider (back-compat for older servers and the
 # fallback path). Each entry returns the ``account_id`` to use.
@@ -5760,8 +5766,19 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 # the legacy ``[local or "default"]`` sentinel — which the
                 # warning log below accurately describes.
                 untagged = False
+                pass_through = provider_id in _PASS_THROUGH_EVENT_PROVIDERS
 
-                if provider_accounts and local_account_id and local_account_id in provider_accounts:
+                if pass_through:
+                    # Not an account-bearing provider: the value only keys the
+                    # watermark. Events that name a canonical provider carry their
+                    # own account_id/account_source from the extractor.
+                    scoped_accounts = [local_account_id or "default"]
+                    identity_source = (
+                        "local" if local_account_id and local_account_id != "default" else "default"
+                    )
+                elif (
+                    provider_accounts and local_account_id and local_account_id in provider_accounts
+                ):
                     # Best case: server knows about us, and our local
                     # identity matches one of its rows.
                     scoped_accounts = [local_account_id]
@@ -5853,7 +5870,36 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 # PR #318 round-2 re-review W: gate on the explicit ``untagged``
                 # flag rather than re-deriving it from ``scoped_accounts``
                 # — the old proxy matched the resolved branches 1/2 too.
-                if untagged and post_count > pre_count:
+                if pass_through:
+                    # Report the provider each unresolved event used (the one an
+                    # operator can tag), once per provider. Events the extractor
+                    # already placed on a tagged account are not unresolved.
+                    unresolved: list[str] = []
+                    for payload in all_events[pre_count:]:
+                        if payload.get("account_source") != "default":
+                            continue
+                        event_provider = payload.get("provider_id")
+                        if (
+                            isinstance(event_provider, str)
+                            and event_provider
+                            and event_provider not in _PASS_THROUGH_EVENT_PROVIDERS
+                            and event_provider not in unresolved
+                        ):
+                            unresolved.append(event_provider)
+                    for event_provider in unresolved:
+                        blocked_origins_this_cycle.append(
+                            {
+                                "provider_id": event_provider,
+                                "credential_origin": credential_origin_for_provider(event_provider),
+                                "reason": "events_untagged",
+                            }
+                        )
+                        logging.warning(
+                            f"  [{provider_id}] events for {event_provider} untagged "
+                            f"(origin={credential_origin_for_provider(event_provider)}) — "
+                            "shipping under 'default' until the operator tags that provider."
+                        )
+                elif untagged and post_count > pre_count:
                     blocked_origins_this_cycle.append(
                         {
                             "provider_id": provider_id,

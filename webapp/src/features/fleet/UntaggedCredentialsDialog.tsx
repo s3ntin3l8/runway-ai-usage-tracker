@@ -254,6 +254,7 @@ export function UntaggedCredentialsDialog({
               }}
               saving={save.isPending}
               onOrganizationComplete={() => { invalidateCredentialViews(); if (singleEntry) onClose(); }}
+              onNavigate={onClose}
             />
           ))}
         </div>
@@ -367,6 +368,13 @@ export function stageToBody(
   };
 }
 
+/**
+ * Event sources that are not providers: Hermes calls other providers' accounts, so
+ * it has no provider row to add and nothing to map to. (Mirrors the server's
+ * PASS_THROUGH_PROVIDERS; a stale entry from an old sidecar can still reach the list.)
+ */
+const PASS_THROUGH_PROVIDERS: ReadonlySet<string> = new Set(['hermes']);
+
 interface UntaggedRowProps {
   entry: UntaggedCredential;
   /** Display name of the reporting machine; falls back to the raw sidecar id. */
@@ -378,6 +386,9 @@ interface UntaggedRowProps {
   onSave: () => void;
   saving: boolean;
   onOrganizationComplete: () => void;
+  /** Called when a link leaves the dialog (it is opened from Provider Settings itself,
+   *  so a same-route link would otherwise leave it open and look dead). */
+  onNavigate: () => void;
 }
 
 function UntaggedRow({
@@ -390,6 +401,7 @@ function UntaggedRow({
   onSave,
   saving,
   onOrganizationComplete,
+  onNavigate,
 }: UntaggedRowProps) {
   // Each row tracks its own Select state via currentSelection.account_id
   // when the entry matches. We keep that gating intentionally simple —
@@ -499,6 +511,12 @@ function UntaggedRow({
 
       {isClaudeBrowserSource(entry) ? (
         <ClaudeSourceOrganizationPicker sourceId={entry.source_id!} providerId={entry.provider_id} onComplete={onOrganizationComplete} />
+      ) : pickableAccounts.length === 0 && PASS_THROUGH_PROVIDERS.has(entry.provider_id) ? (
+        <p className="mt-2 text-[12px] text-fg-subtle">
+          <span className="font-mono">{entry.provider_id}</span> calls other providers&apos; accounts,
+          so there is no account of its own to add or tag. Its events are attributed to the provider
+          each one used.
+        </p>
       ) : pickableAccounts.length === 0 ? (
         <p className="mt-2 flex items-start gap-2 text-[12px] text-warning">
           <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
@@ -510,7 +528,11 @@ function UntaggedRow({
             {notice.lead}{' '}
             <span className="font-mono">{entry.provider_id}</span>{' '}
             {notice.tail}{' '}
-            <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+            <Link
+              to="/settings/providers"
+              onClick={onNavigate}
+              className="text-accent underline underline-offset-2"
+            >
               {notice.linkLabel}
             </Link>
             .
@@ -574,7 +596,11 @@ function UntaggedRow({
           {parkedNotice.lead}{' '}
           <span className="font-mono">{entry.provider_id}</span>{' '}
           {parkedNotice.tail}{' '}
-          <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+          <Link
+            to="/settings/providers"
+            onClick={onNavigate}
+            className="text-accent underline underline-offset-2"
+          >
             {parkedNotice.linkLabel}
           </Link>
           .
