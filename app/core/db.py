@@ -12,6 +12,10 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# The SQLite capability warning is worth saying once, not once per pooled
+# connection — a busy server opens and drops connections all day.
+_sqlite_capability_warned = False
+
 # Ensure data directory exists
 db_dir = os.path.dirname(settings.DATABASE_PATH)
 if not os.path.exists(db_dir):
@@ -59,28 +63,33 @@ def configure_sqlite_engine(engine_: Engine) -> None:
     def _on_connect(dbapi_conn: Any, _conn_record: Any) -> None:
         dbapi_conn.isolation_level = None
         cursor = dbapi_conn.cursor()
-        try:
-            # The pending-events query groups in SQL and needs SQLite 3.38:
-            # the JSON functions (native from 3.38, JSON1 before that) and
-            # `AS MATERIALIZED` (3.35+), which is what keeps the plan sane.
-            # The app runs against the *system* SQLite — Debian 12 ships
-            # 3.40, macOS 14 ships 3.43 — so a source install can land on a
-            # build that is too old. Say so at startup rather than letting
-            # the query fail with an opaque error later.
+        # The pending-events query groups in SQL and needs SQLite 3.38: the
+        # JSON functions (native from 3.38, JSON1 before that) and
+        # `AS MATERIALIZED` (3.35+), which is what keeps the plan sane. The
+        # app runs against the *system* SQLite — Debian 12 ships 3.40, macOS
+        # 14 ships 3.43 — so a source install can land on a build that is too
+        # old. Say so at startup rather than letting the query fail with an
+        # opaque error later. Once per process: a pool opens and drops
+        # connections all day.
+        global _sqlite_capability_warned
+        if not _sqlite_capability_warned:
+            _sqlite_capability_warned = True
             if sqlite3.sqlite_version_info < (3, 38):
                 logger.warning(
                     "SQLite %s is older than 3.38; the Fleet 'unassigned usage' "
                     "view needs SQLite 3.38 or newer.",
                     sqlite3.sqlite_version,
                 )
-            cursor.execute("SELECT json_valid('{}')")
-        except Exception as e:  # pragma: no cover - depends on the system SQLite
-            logger.warning(
-                "This SQLite build has no JSON functions (%s); the Fleet "
-                "'unassigned usage' view needs them. SQLite 3.38 or newer "
-                "(or a build with the JSON1 extension) is required.",
-                e,
-            )
+            else:
+                try:
+                    cursor.execute("SELECT json_valid('{}')")
+                except Exception as e:  # pragma: no cover - depends on the build
+                    logger.warning(
+                        "This SQLite build has no JSON functions (%s); the Fleet "
+                        "'unassigned usage' view needs them. SQLite 3.38 or newer "
+                        "(or a build with the JSON1 extension) is required.",
+                        e,
+                    )
         try:
             # `journal_mode=WAL` returns the journal mode actually in effect
             # ("memory" for :memory: DBs, "wal" for files). Either way it's

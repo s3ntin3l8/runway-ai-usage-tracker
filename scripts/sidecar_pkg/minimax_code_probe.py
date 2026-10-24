@@ -360,7 +360,6 @@ def _store_detail(db_path: Path) -> dict[str, Any]:
         "out_of_window_requests": 0,
         "skipped_requests": 0,
         "abandoned_requests": 0,
-        "db_key": str(db_path),
         "error": None,
     }
     try:
@@ -407,13 +406,22 @@ def _store_detail(db_path: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — one broken store must not abort the report
         detail["error"] = f"the extractor failed on this store: {exc}"
         detail["schema_ok"] = False
+        events = []
+
+    # The skips of this store. The probe's own run is authoritative when it
+    # parked something for the store: it re-read the rows and knows what is
+    # still blocked. A run that parked *nothing* — no rows past the cursor,
+    # or a store the extractor could not read — has no opinion, and the
+    # cursor file stays the only record. That is the steady state of an idle
+    # host, which is exactly when an operator runs the probe to ask where
+    # the usage went.
+    counts = parked_skip_counts(_cursor_path(), db_path)
+    if counts is None:
+        counts = _cursor_skips(_cursor_path()).get(str(db_path.resolve()), (0, 0))
+    detail["skipped_requests"], detail["abandoned_requests"] = counts
+
+    if detail["error"]:
         return detail
-    # The skips this very extraction found. They live in the extractor's
-    # parked bookkeeping, not in the cursor file: the probe never commits, so
-    # on disk there is nothing to read them from.
-    detail["skipped_requests"], detail["abandoned_requests"] = parked_skip_counts(
-        _cursor_path(), db_path
-    )
     models: dict[str, int] = {}
     plan_review = 0
     for event in events:
@@ -496,16 +504,16 @@ def probe_minimax_code() -> dict[str, Any]:
     report["cursor"] = str(cursor)
     report["cursor_last_id"] = _cursor_last_id(cursor)
 
-    # A store the probe scanned reports the skips its own extraction found —
-    # that run never commits, so the cursor file on disk cannot say them. A
-    # store the probe did *not* scan has no such run, so the cursor file is
-    # all there is for it.
+    # Every store reports its own skips: the counts its own extraction found
+    # when it had an opinion, the cursor file's counts when it did not. A
+    # store the probe did not scan at all has no run and no detail, so the
+    # cursor file is all there is for it.
     on_disk = _cursor_skips(cursor)
     scanned: set[str] = set()
     for detail in details:
         report["skipped_requests"] += detail["skipped_requests"]
         report["abandoned_requests"] += detail["abandoned_requests"]
-        scanned.add(str(Path(detail["db_key"]).resolve()))
+        scanned.add(str(Path(detail["path"]).resolve()))
     for db_key, (skipped, abandoned) in on_disk.items():
         if db_key in scanned:
             continue

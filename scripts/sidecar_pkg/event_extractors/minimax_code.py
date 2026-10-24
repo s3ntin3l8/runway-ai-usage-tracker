@@ -522,7 +522,7 @@ _PENDING_ADVANCES: dict[str, dict[str, int]] = {}
 _PENDING_SKIPS: dict[str, dict[str, dict[str, Any]]] = {}
 
 
-def parked_skip_counts(state_file: Path, db_path: Path) -> tuple[int, int]:
+def parked_skip_counts(state_file: Path, db_path: Path) -> tuple[int, int] | None:
     """Return the (skipped, abandoned) counts the last extraction parked.
 
     The extractor parks its skip bookkeeping next to the cursor advance, and
@@ -530,15 +530,20 @@ def parked_skip_counts(state_file: Path, db_path: Path) -> tuple[int, int]:
     that runs the extractor without committing — the probe does exactly that
     — therefore cannot read the numbers from the cursor file: they only
     exist in memory. This is where such a run's own numbers come from.
+
+    Returns None when the last extraction parked nothing for this store —
+    no rows past the cursor, or the store could not be read at all. That is
+    not "nothing is skipped": it means the run has no opinion, and the
+    cursor file stays the only record.
     """
     try:
         state_key = str(Path(state_file).resolve())
         db_key = str(Path(db_path).resolve())
     except OSError:
-        return 0, 0
+        return None
     parked = _PENDING_SKIPS.get(state_key, {}).get(db_key)
     if not isinstance(parked, dict):
-        return 0, 0
+        return None
     skipped = parked.get("skipped")
     abandoned = parked.get("abandoned")
     return (

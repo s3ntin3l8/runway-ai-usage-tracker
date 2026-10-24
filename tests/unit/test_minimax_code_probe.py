@@ -1,6 +1,7 @@
 """Unit tests for the MiniMax Code read-only probe."""
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -132,6 +133,62 @@ def test_probe_reports_the_skips_its_own_extraction_finds(tmp_path, monkeypatch)
     text = probe.format_report(report)
     assert "skipped requests    : 1" in text
     assert "WARNING" in text
+
+
+def test_probe_reports_the_persisted_skips_of_an_idle_store(tmp_path, monkeypatch):
+    """A store with no rows past the cursor still has its persisted skips.
+
+    The probe's own run has no opinion there — nothing to read — so the
+    cursor file is the only record of what is still blocked. This is the
+    steady state of an idle host, which is exactly when an operator runs
+    the probe to ask where the usage went.
+    """
+    make_minimax_code_store(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    # The cursor sits on the last row, so the probe's own run has nothing to
+    # read — and the cursor remembers a row it skipped and one it abandoned.
+    db_path = tmp_path / ".minimax" / "v2" / "sqlite" / "runtime-state.sqlite"
+    with sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True) as conn:
+        max_id = conn.execute("SELECT MAX(id) FROM local_runtime_token_usage").fetchone()[0]
+    cursor = probe._cursor_path()
+    cursor.parent.mkdir(parents=True, exist_ok=True)
+    cursor.write_text(
+        json.dumps(
+            {
+                "databases": {
+                    str(db_path.resolve()): {
+                        "last_id": max_id,
+                        "skipped": {"7": 1},
+                        "abandoned": [2],
+                    }
+                }
+            }
+        )
+    )
+
+    report = probe.probe_minimax_code()
+
+    assert report["skipped_requests"] == 1
+    assert report["abandoned_requests"] == 1
+    assert any("abandoned" in warning for warning in report["warnings"])
+    text = probe.format_report(report)
+    assert "skipped requests    : 1" in text
+    assert "abandoned requests  : 1" in text
+
+
+def test_probe_does_not_repeat_the_store_key_in_the_json_report(tmp_path, monkeypatch):
+    """The store's key is plumbing; the report already carries its path."""
+    make_minimax_code_store(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    report = probe.probe_minimax_code()
+
+    for store in report["stores"]:
+        assert "db_key" not in store
+        assert store["path"]
 
 
 def test_probe_reports_the_skipped_and_abandoned_rows(host):
