@@ -7,11 +7,15 @@ Claude Code sidechain row has. Rows collected before that change still carry
 the background task's own session id, so they show up in the Sessions view as
 a conversation of their own.
 
-This script builds the mapping from the MiniMax Code runtime store (read-only)
-and applies it to the rows the server already holds. It only ever **updates**
-the attribution: no row is inserted, no token count changes and no rollup
-moves. A project's session count does drop — a background task was never a
-conversation.
+This script builds the mapping from the MiniMax Code runtime stores
+(read-only) and applies it to the rows the server already holds. It only ever
+**updates** the attribution: no row is inserted, no token count changes and no
+rollup moves. A project's session count does drop — a background task was never
+a conversation.
+
+More than one store can exist on a host (a profile-scoped install keeps its
+ledger next to the default one), and each holds its own background tasks, so
+every store is repaired. Pass ``--store`` to repair specific ones instead.
 
 The event ids are built with the extractor's own helper, so they cannot drift
 from the ids the sidecar pushes.
@@ -54,7 +58,7 @@ from scripts.sidecar_pkg.event_extractors.minimax_code import (  # noqa: E402
     background_provenance,
     background_session_links,
     build_event_id,
-    discover_runtime_store,
+    discover_runtime_stores,
 )
 
 
@@ -145,46 +149,51 @@ def main() -> None:
     )
     parser.add_argument(
         "--store",
-        help="path to the runtime store (default: the store this host runs)",
+        action="append",
+        help="path to a runtime store (default: every store this host runs)",
     )
     args = parser.parse_args()
 
-    db_path = Path(args.store) if args.store else discover_runtime_store()
-    if db_path is None:
+    stores = [Path(path) for path in args.store] if args.store else discover_runtime_stores()
+    if not stores:
         print(
             "No MiniMax Code runtime store found — MiniMax Code never ran on this host.",
             flush=True,
         )
         return
-    if not db_path.is_file():
-        print(f"No runtime store at {db_path}.", flush=True)
-        return
 
-    links = collect_links(db_path)
-    if not links:
-        print(f"No background-task rows in {db_path}.", flush=True)
+    missing = [store for store in stores if not store.is_file()]
+    if missing:
+        for store in missing:
+            print(f"No runtime store at {store}.", flush=True)
         return
 
     init_db()
     with Session(engine) as session:
-        plan = plan_background_attribution(session, links)
-        print(
-            f"{plan.total:,} background-task row(s) in the store: "
-            f"{len(plan.linked):,} to update, {plan.already_linked:,} already filed, "
-            f"{len(plan.missing):,} not collected.",
-            flush=True,
-        )
-        for sample in plan.samples:
-            print(f"  {sample}", flush=True)
+        for store in stores:
+            links = collect_links(store)
+            if not links:
+                print(f"No background-task rows in {store}.", flush=True)
+                continue
+            plan = plan_background_attribution(session, links)
+            print(
+                f"{plan.total:,} background-task row(s) in {store}: "
+                f"{len(plan.linked):,} to update, {plan.already_linked:,} already filed, "
+                f"{len(plan.missing):,} not collected.",
+                flush=True,
+            )
+            for sample in plan.samples:
+                print(f"  {sample}", flush=True)
+            if not args.apply:
+                continue
+            result = apply_background_attribution(session, plan)
+            print(
+                f"\nDone — updated {result.linked:,} row(s), "
+                f"{result.already_linked:,} already filed, {result.missing:,} not collected.",
+                flush=True,
+            )
         if not args.apply:
             print("\nDry run — nothing written. Re-run with --apply to write.", flush=True)
-            return
-        result = apply_background_attribution(session, plan)
-        print(
-            f"\nDone — updated {result.linked:,} row(s), "
-            f"{result.already_linked:,} already filed, {result.missing:,} not collected.",
-            flush=True,
-        )
 
 
 if __name__ == "__main__":

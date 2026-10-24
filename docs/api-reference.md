@@ -61,7 +61,7 @@ component fields. Cache-specific metrics remain cache-inclusive by definition.
 | `POST` | `/api/v1/fleet/pair` | Unauthenticated one-time-code redeem: exchanges a pairing code for `api_url` + ingest key (10/min/IP) |
 | `POST` | `/api/v1/fleet/credentials/manifest` | Sidecar reports credential origins found this cycle (an entry may carry `reason: "token_withheld"` when the token stayed on the machine because the server cannot verify that provider by source); Claude OAuth entries may include a claimed `account_id`, which Runway matches to an enabled account or surfaces for assignment |
 | `GET` | `/api/v1/fleet/credentials/tags` | List every resolved credential tag (deployment-wide and per-sidecar scopes); each carries `origin_label`, `origin_app` (the tool that owns the file, e.g. `Codex CLI`), `origin_path` (home collapsed to `~`) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1` (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI doesn't parse raw origin strings; also `last_matched_at` (freshest machine-reported credential the rule resolved, `null` = never) and `stale` (the `stale_credential_rules` data-health check would list it) |
-| `POST` | `/api/v1/fleet/credentials/tags` | Resolve a pending credential origin to a configured account (admin). `scope: "deployment"` (all machines) is refused with 422 for `cookie:` and `keychain:` origins, which exist on one machine only; `path:` and `env:` origins can still be tagged deployment-wide (a shared home directory is one origin). A tag written against a plain origin also applies to its key-scoped form (`env:ZAI_API_KEY` covers `env:ZAI_API_KEY#<fp>`) |
+| `POST` | `/api/v1/fleet/credentials/tags` | Resolve a pending credential origin to a configured account (admin). `scope: "deployment"` (all machines) is refused with 422 for `cookie:` and `keychain:` origins, which exist on one machine only; `path:` and `env:` origins can still be tagged deployment-wide (a shared home directory is one origin). A tag written against a plain origin also applies to its key-scoped form (`env:ZAI_API_KEY` covers `env:ZAI_API_KEY#<fp>`). The response is `{"status": "ok", "target_archived": false}`; `target_archived` is `true` when the target account is archived — the mapping is then *parked*: it resolves the origin (the credential stops being pending and the operator is not warned any more) but stays inert while the account is archived (no hint ships to the sidecar, no new usage is stamped on the archived account, no collector runs for the provider). Restoring the account revives the mapping automatically — see [Parked mappings](#parked-mappings) |
 | `DELETE` | `/api/v1/fleet/credentials/tags` | Remove one resolved tag in a given scope (admin) |
 | `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution, with a claimed Claude account ID when available, safe quota previews, and staleness status. Each item also carries `origin_label` (what the credential is, e.g. `Browser cookie`), `origin_app` (the tool that owns it, e.g. `Chrome` for a native Claude cookie or `Codex CLI` for a file) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1`; `null` when the machine could not name the jar (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI can say "browser cookie" instead of showing the raw `cookie:<provider>/session` origin |
 | `GET` | `/api/v1/fleet/events/pending` | Paginated queue of events held back under an unresolved `default` identity (admin) |
@@ -291,6 +291,41 @@ Kimi Coding sidecar token cards may include `metadata.cli_device_id` alongside
 `cli_access_token`. It is trimmed printable ASCII, at most 256 characters,
 and is accepted only for a `kimi_coding` CLI bundle. It is device metadata,
 not an authentication value, and is never returned by the credential inventory.
+
+
+### Parked mappings
+
+An archived account can no longer collect — a provider whose accounts are all
+archived runs no collector — but the machine that reported its credential keeps
+reporting the origin. The operator can map that credential onto the archived
+account; the mapping is then **parked**.
+
+A parked mapping:
+
+- **resolves the origin** — the credential stops appearing in
+  `GET /api/v1/fleet/credentials/tags/pending`, drops out of
+  `unmapped_count` and out of `blocked_collection`, and is not re-opened as
+  pending by the next sidecar manifest;
+- **is never acted on** — it is not shipped in `GET /fleet/config`'s
+  `account_tag_hints` nor in the manifest's `resolved` map, it never stamps
+  the archived account with incoming usage (neither with a card nor with a
+  usage event), and it never moves the cached credential into the retired
+  account's slot. A usage event that only the parked mapping could attribute
+  is held for assignment in `GET /api/v1/fleet/events/pending` instead of
+  being booked on the retired account;
+- **comes back to life on restore** — parking is derived from
+  `provider_configs.archived`, never stored on the tag, so restoring the
+  account (`PUT /api/v1/system/provider-config/{provider}/{account}` with
+  `{"archived": false}`) ships the hint again on the next `/fleet/config` and
+  collection resumes without re-tagging.
+
+A *redirect* tag (one with `target_provider_id`) names an account of its
+**target** provider, so whether it is parked is looked up under that target
+provider — a retired target account stops receiving the redirected credential
+as well.
+
+`POST /api/v1/fleet/credentials/tags` reports which kind of mapping it wrote
+as `target_archived`.
 
 
 ### Automatic Claude browser connections

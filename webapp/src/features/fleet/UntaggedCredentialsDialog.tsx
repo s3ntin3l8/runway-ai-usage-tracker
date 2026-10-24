@@ -57,7 +57,9 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/Select';
@@ -170,8 +172,15 @@ export function UntaggedCredentialsDialog({
   const invalidateCredentialViews = useInvalidateCredentialViews();
   const save = useMutation({
     mutationFn: (body: CredentialTagRequest) => tagCredential(body),
-    onSuccess: () => {
-      toast.success('Credential tagged');
+    onSuccess: (data, body) => {
+      // A mapping onto a retired account is parked: it resolves the credential
+      // but collects nothing until the account is restored. Say so — the
+      // operator must not read "tagged" as "collecting now".
+      toast.success(
+        data.target_archived
+          ? `Credential parked on ${body.provider_id} · ${maskAccountId(body.account_id)} (archived)`
+          : 'Credential tagged',
+      );
       // Tagging changes the untagged list, the rules, the sidecars' identities,
       // token health and the provider cards — refresh them together.
       invalidateCredentialViews();
@@ -305,6 +314,32 @@ export function accountPickNotice(accountCount: number): AccountPickNotice {
   };
 }
 
+/**
+ * The copy for a credential whose provider has retired accounts. An archived
+ * account is a legal target: mapping to it *parks* the credential — the
+ * binding is recorded so the origin stops being pending and the operator is
+ * not nagged — but nothing is collected until the account is restored.
+ *
+ * This is information, not a warning: the operator has an action, so the copy
+ * explains what the action does instead of blocking it.
+ */
+export function archivedAccountNotice(archivedCount: number): AccountPickNotice {
+  const parked =
+    'Mapping here parks the credential — nothing is collected until it is restored.';
+  if (archivedCount === 1) {
+    return {
+      lead: 'The',
+      tail: `account is archived. ${parked}`,
+      linkLabel: 'Restore it in Provider Settings',
+    };
+  }
+  return {
+    lead: `All ${archivedCount}`,
+    tail: `accounts are archived. ${parked}`,
+    linkLabel: 'Restore one in Provider Settings',
+  };
+}
+
 export function stageToBody(
   entry: UntaggedCredential,
   state: DialogState,
@@ -372,13 +407,26 @@ function UntaggedRow({
   // A key-scoped origin carries a `#fingerprint`; a plain path/env origin is shared as-is.
   const isShared = allMachines && !entry.credential_origin.includes('#');
 
-  // Filter out disabled accounts — tagging to a disabled row stores
+  // The accounts this credential can be mapped to, in two groups:
+  //
+  // - active: enabled and not archived — the normal case.
+  // - archived: the operator retired the account. Mapping here *parks* the
+  //   credential: the binding is recorded (the origin stops being pending and
+  //   the operator is not nagged) but nothing is collected until the account
+  //   is restored, which revives the binding automatically.
+  //
+  // Disabled-but-not-archived rows stay unpickable: tagging to one stores
   // a hint the server won't collect (the sidecar's
   // ``accounts`` view in /fleet/config only ships enabled rows).
   // PR #290 round-2 review (Hermes body suggestion #4).
-  const enabledAccounts = accounts.filter((a) => a.enabled !== false);
-  // The copy shown when there is no enabled account to map to.
-  const notice = accountPickNotice(accounts.length);
+  const activeAccounts = accounts.filter((a) => !a.archived && a.enabled !== false);
+  const archivedAccounts = accounts.filter((a) => a.archived);
+  const disabledAccounts = accounts.filter((a) => !a.archived && a.enabled === false);
+  const pickableAccounts = [...activeAccounts, ...archivedAccounts];
+  // The copy shown when there is no account to map to at all.
+  const notice = accountPickNotice(disabledAccounts.length);
+  // The copy shown when the only options are retired accounts.
+  const parkedNotice = archivedAccountNotice(archivedAccounts.length);
 
   return (
     <Card
@@ -451,7 +499,7 @@ function UntaggedRow({
 
       {isClaudeBrowserSource(entry) ? (
         <ClaudeSourceOrganizationPicker sourceId={entry.source_id!} providerId={entry.provider_id} onComplete={onOrganizationComplete} />
-      ) : enabledAccounts.length === 0 ? (
+      ) : pickableAccounts.length === 0 ? (
         <p className="mt-2 flex items-start gap-2 text-[12px] text-warning">
           <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
           {/* The whole message lives in one span: as flex children of this <p>, the
@@ -483,7 +531,7 @@ function UntaggedRow({
                 <SelectValue placeholder="Pick an account…" />
               </SelectTrigger>
               <SelectContent>
-                {enabledAccounts.map((a) => (
+                {activeAccounts.map((a) => (
                   <SelectItem
                     key={`${entry.provider_id}/${a.account_id}`}
                     value={a.account_id}
@@ -492,6 +540,21 @@ function UntaggedRow({
                     {a.account_label ? ` · ${maskAccountId(a.account_id)}` : ''}
                   </SelectItem>
                 ))}
+                {archivedAccounts.length > 0 ? (
+                  <SelectGroup>
+                    <SelectLabel>Archived · parked until restored</SelectLabel>
+                    {archivedAccounts.map((a) => (
+                      <SelectItem
+                        key={`${entry.provider_id}/${a.account_id}`}
+                        value={a.account_id}
+                      >
+                        {a.account_label || maskAccountId(a.account_id)}
+                        {a.account_label ? ` · ${maskAccountId(a.account_id)}` : ''}
+                        {' · archived'}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ) : null}
               </SelectContent>
             </Select>
           </div>
@@ -506,7 +569,19 @@ function UntaggedRow({
         </div>
       )}
 
-      {enabledAccounts.length > 0 && !isClaudeBrowserSource(entry) ? (
+      {activeAccounts.length === 0 && archivedAccounts.length > 0 ? (
+        <p className="mt-2 text-[12px] text-fg-subtle">
+          {parkedNotice.lead}{' '}
+          <span className="font-mono">{entry.provider_id}</span>{' '}
+          {parkedNotice.tail}{' '}
+          <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+            {parkedNotice.linkLabel}
+          </Link>
+          .
+        </p>
+      ) : null}
+
+      {pickableAccounts.length > 0 && !isClaudeBrowserSource(entry) ? (
         <div className="mt-2">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] text-fg-subtle">

@@ -27,7 +27,7 @@ from scripts.record_image_scan import record
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHIPPED_EXCEPTIONS = REPO_ROOT / "docs" / "security" / "image-exceptions.json"
-RECORDED_SCAN = REPO_ROOT / "tests" / "fixtures" / "image-exceptions" / "published-edge.json"
+RECORDED_SCAN = REPO_ROOT / "tests" / "fixtures" / "image-exceptions" / "published-release.json"
 REMEDIATION = REPO_ROOT / "docs" / "security" / "image-remediation.md"
 ARCHITECTURES = ("amd64", "arm64")
 

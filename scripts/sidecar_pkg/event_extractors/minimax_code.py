@@ -8,8 +8,18 @@ app data dir::
 
 The runtime anchors that dir on ``homedir()`` — verified in the installed
 bundle (``join(homeDir ?? homedir(), ".minimax")``) — so the path is the
-same on Linux, macOS and Windows. The desktop app's app-data roots are probed
-as well (they are not covered by a live verification, see ``_data_roots``).
+same on Linux, macOS and Windows. That default is only the *default*: the
+runtime also scopes the dir per profile (``~/.minimax-<profile>``), honours
+environment overrides and used to live in ``~/.mavis`` before it migrated.
+Every store that exists is read, each with its own cursor; see
+:func:`discover_runtime_stores` and ``_data_roots``.
+
+The path and the extraction were live-verified on macOS (probe PASS, 99.97 %
+of the ledger rows joined, the model resolved for every row) and on Linux
+(full extraction verified against a live store). Windows is not live-verified.
+The desktop app's macOS / Windows app-data roots are probed as well; on macOS
+the app's Electron profile is ``~/Library/Application Support/MiniMax Agent``,
+which holds the Chromium profile and never the ledger.
 
 Three tables matter:
 
@@ -213,23 +223,86 @@ _MAX_ROWS_PER_CYCLE = 5000
 _PROVIDER_MODEL_PREFIX = "minimax/"
 
 
+# The environment variables the runtime itself honours for its data dir.
+#
+# ``join(homeDir ?? homedir(), ".minimax")`` is only the *last* step of the
+# runtime's resolution: every layer above it can move the dir. ``MINIMAX_DATA_DIR``
+# and ``MAVIS_DATA_DIR`` are the public knobs; the ``__MAVIS_*`` ones are
+# internal and are injected by the daemon supervisor into the processes it
+# spawns. The runtime's own Python helper reads ``__MAVIS_PARENT_DATA_DIR`` and
+# ``MINIMAX_DATA_DIR``; its JS side reads ``MINIMAX_DATA_DIR`` and
+# ``MAVIS_DATA_DIR``.
+_DATA_DIR_ENV_VARS = (
+    "MINIMAX_DATA_DIR",
+    "MAVIS_DATA_DIR",
+    "__MAVIS_RUNTIME_DATA_DIR",
+    "__MAVIS_PARENT_DATA_DIR",
+)
+
+# The data-dir basenames: the current one and the legacy one it migrated
+# away from. A named profile gets ``<basename>-<profile>``.
+_DATA_DIR_BASENAMES = (".minimax", ".mavis")
+
+
+def _env_data_roots() -> list[Path]:
+    """Return the data dirs the runtime's environment points at."""
+    roots: list[Path] = []
+    for name in _DATA_DIR_ENV_VARS:
+        raw = os.getenv(name)
+        if raw and raw.strip():
+            roots.append(Path(raw.strip()).expanduser())
+    return roots
+
+
+def _profile_scoped_roots(home: Path) -> list[Path]:
+    """Return the profile-scoped data dirs under the user's home.
+
+    The runtime scopes its data dir per profile: ``basenameForProfile`` turns
+    ``.minimax`` into ``.minimax-<profile>``. A profile comes from the desktop
+    app, the CLI's ``--profile`` flag or the supervisor — and the runtime also
+    derives one from the current branch when it runs inside its own
+    repository, which gives each branch its own ledger.
+
+    Globbing catches every profile without having to know how it was named.
+    """
+    roots: list[Path] = []
+    for basename in _DATA_DIR_BASENAMES:
+        try:
+            matches = sorted(home.glob(f"{basename}-*"))
+        except OSError:
+            # An unreadable home directory simply yields no profile roots.
+            continue
+        roots.extend(matches)
+    return roots
+
+
 def _data_roots() -> list[Path]:
     """Return the candidate MiniMax Code data roots, most likely first.
 
     The runtime resolves its data dir from ``join(homeDir ?? homedir(),
-    ".minimax")``, so ``~/.minimax`` is the root on every platform. The
-    desktop app's macOS / Windows app-data roots are probed as insurance:
-    they are not covered by a live verification, but a miss costs nothing
-    while a hit keeps the extractor working.
+    ".minimax")``, so ``~/.minimax`` is the root on every platform — but that
+    is only the *default*. The runtime also scopes the dir per profile
+    (``~/.minimax-<profile>``), honours environment overrides, and used to
+    live in ``~/.mavis`` before it migrated. The desktop app's macOS /
+    Windows app-data roots are probed as insurance: on macOS the app's
+    Electron profile is ``~/Library/Application Support/MiniMax Agent``, but
+    that dir holds the Chromium profile, never the ledger.
+
+    The list is deduplicated by *resolved* path, so the legacy ``~/.mavis``
+    symlink to ``~/.minimax`` does not show up twice.
     """
     roots: list[Path] = []
     override = os.getenv("MINIMAX_CODE_HOME")
     if override:
         roots.append(Path(override).expanduser())
+    roots.extend(_env_data_roots())
     home = Path.home()
+    roots.append(home / ".minimax")
+    roots.extend(_profile_scoped_roots(home))
+    roots.append(home / ".mavis")
     roots.extend(
         [
-            home / ".minimax",
+            home / "Library" / "Application Support" / "MiniMax Agent",
             home / "Library" / "Application Support" / "MiniMax Code",
             home / "Library" / "Application Support" / "minimax",
             home / "Library" / "Application Support" / "MiniMax",
@@ -251,17 +324,37 @@ def _data_roots() -> list[Path]:
     return unique
 
 
-def discover_runtime_store() -> Path | None:
-    """Return the MiniMax Code runtime SQLite store, or None when absent.
+def discover_runtime_stores() -> list[Path]:
+    """Return every MiniMax Code runtime store on this host.
 
-    ``None`` is the normal answer on a host where MiniMax Code never ran —
-    the extractor then contributes nothing instead of raising.
+    More than one can exist: a profile-scoped install keeps its ledger in
+    ``~/.minimax-<profile>`` next to the default one, and the runtime's
+    environment can point at a third. Each store carries its own cursor (they
+    are keyed by database path), so all of them are read — reporting only the
+    first would silently drop the usage in the others.
+
+    The list is deduplicated by *resolved* path: on a migrated install the
+    legacy ``~/.mavis`` is a symlink to ``~/.minimax``, and both would
+    otherwise report the same requests twice.
+
+    An empty list is the normal answer on a host where MiniMax Code never ran
+    — the extractor then contributes nothing instead of raising.
     """
+    stores: list[Path] = []
+    seen: set[str] = set()
     for root in _data_roots():
         candidate = root / "v2" / "sqlite" / "runtime-state.sqlite"
-        if candidate.is_file():
-            return candidate
-    return None
+        if not candidate.is_file():
+            continue
+        try:
+            key = str(candidate.resolve())
+        except OSError:
+            key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        stores.append(candidate)
+    return stores
 
 
 def _default_state_path() -> Path:
@@ -911,6 +1004,16 @@ def parse_minimax_code_events(
             last_id = 0
         elif not has_cursor:
             # No cursor at all: the bootstrap window decides where to start.
+            # The window is the *only* floor that is safe here — the shared
+            # timestamp watermark is not about this store, and the runtime's
+            # `ts` is not globally monotonic, so a timestamp floor would drop
+            # the rows that fall outside it.
+            logger.info(
+                "MiniMax Code runtime store %s is being read for the first time; "
+                "importing the rows newer than %s",
+                db_path,
+                since.isoformat(),
+            )
             last_id = _bootstrap_last_id(cur, since) - 1
 
         usage_columns = [

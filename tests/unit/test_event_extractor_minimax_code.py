@@ -12,7 +12,7 @@ from scripts.sidecar_pkg.event_extractors import minimax_code
 from scripts.sidecar_pkg.event_extractors.minimax_code import (
     commit_pending_state,
     discard_pending_state,
-    discover_runtime_store,
+    discover_runtime_stores,
     parse_minimax_code_events,
 )
 from tests.fixtures.minimax_code_fixture import (
@@ -600,26 +600,117 @@ def test_missing_column_returns_no_events(tmp_path):
 # --- discovery -------------------------------------------------------------
 
 
-def test_discovery_finds_the_runtime_store(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def _clean_data_env(monkeypatch):
+    """Clear every env var that can move the runtime's data dir.
+
+    Without this a developer's own ``MINIMAX_DATA_DIR`` (or the runtime's
+    internal overrides) would leak into the discovery tests.
+    """
+    for name in ("MINIMAX_CODE_HOME", *minimax_code._DATA_DIR_ENV_VARS):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_discovery_finds_the_runtime_store(tmp_path, monkeypatch, _clean_data_env):
     make_minimax_code_store(tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.delenv("MINIMAX_CODE_HOME", raising=False)
-    found = discover_runtime_store()
-    assert found is not None
-    assert found.name == "runtime-state.sqlite"
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert found[0].name == "runtime-state.sqlite"
 
 
-def test_discovery_returns_none_when_the_runtime_never_ran(tmp_path, monkeypatch):
+def test_discovery_returns_nothing_when_the_runtime_never_ran(
+    tmp_path, monkeypatch, _clean_data_env
+):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.delenv("MINIMAX_CODE_HOME", raising=False)
-    assert discover_runtime_store() is None
+    assert discover_runtime_stores() == []
 
 
-def test_discovery_honours_the_home_override(tmp_path, monkeypatch):
+def test_discovery_honours_the_home_override(tmp_path, monkeypatch, _clean_data_env):
     make_minimax_code_store(tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "elsewhere"))
     monkeypatch.setenv("MINIMAX_CODE_HOME", str(tmp_path / ".minimax"))
-    assert discover_runtime_store() is not None
+    assert discover_runtime_stores() != []
+
+
+def test_discovery_finds_every_store_on_the_host(tmp_path, monkeypatch, _clean_data_env):
+    """A profile-scoped install keeps a second ledger next to the default one."""
+    make_minimax_code_store(tmp_path)
+    make_minimax_code_store(tmp_path, data_dir=".minimax-work")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    found = {path.parent.parent.parent.name for path in discover_runtime_stores()}
+    assert found == {".minimax", ".minimax-work"}
+
+
+def test_discovery_finds_a_profile_scoped_store(tmp_path, monkeypatch, _clean_data_env):
+    """The runtime scopes its data dir per profile (``basenameForProfile``)."""
+    make_minimax_code_store(tmp_path, data_dir=".minimax-feature")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert found[0].parent.parent.parent.name == ".minimax-feature"
+
+
+def test_discovery_finds_the_legacy_store(tmp_path, monkeypatch, _clean_data_env):
+    """``~/.mavis`` predates the rename; a host that never migrated keeps it."""
+    make_minimax_code_store(tmp_path, data_dir=".mavis")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert found[0].parent.parent.parent.name == ".mavis"
+
+
+def test_discovery_dedupes_the_legacy_symlink(tmp_path, monkeypatch, _clean_data_env):
+    """``~/.mavis`` is a symlink to ``~/.minimax`` — one store, not two."""
+    make_minimax_code_store(tmp_path)
+    (tmp_path / ".mavis").symlink_to(tmp_path / ".minimax", target_is_directory=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert len(discover_runtime_stores()) == 1
+
+
+def test_discovery_dedupes_two_roots_that_point_at_one_store(
+    tmp_path, monkeypatch, _clean_data_env
+):
+    """Two roots can name the same store; it must be reported once."""
+    make_minimax_code_store(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("MINIMAX_DATA_DIR", str(tmp_path / ".minimax"))
+    assert len(discover_runtime_stores()) == 1
+
+
+@pytest.mark.parametrize(
+    "env_var",
+    [
+        "MINIMAX_DATA_DIR",
+        "MAVIS_DATA_DIR",
+        "__MAVIS_RUNTIME_DATA_DIR",
+        "__MAVIS_PARENT_DATA_DIR",
+    ],
+)
+def test_discovery_honours_the_runtime_env_overrides(
+    tmp_path, monkeypatch, _clean_data_env, env_var
+):
+    """The runtime's own environment can point its data dir elsewhere."""
+    make_minimax_code_store(tmp_path, data_dir="elsewhere")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    monkeypatch.setenv(env_var, str(tmp_path / "elsewhere"))
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert found[0].parent.parent.parent.name == "elsewhere"
+
+
+def test_discovery_finds_the_store_under_the_macos_app_data_root(
+    tmp_path, monkeypatch, _clean_data_env
+):
+    """The desktop app's Electron profile dir is probed as insurance."""
+    make_minimax_code_store(
+        tmp_path,
+        data_dir=str(Path("Library") / "Application Support" / "MiniMax Agent"),
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert "MiniMax Agent" in str(found[0])
 
 
 # --- sidecar wiring --------------------------------------------------------
@@ -632,8 +723,13 @@ def _sidecar():
 
 
 class _MockWatermark:
+    """A shared watermark that reports a fixed last-push timestamp."""
+
+    def __init__(self, ts: datetime | None = None):
+        self._ts = ts
+
     def last_pushed(self, provider_id, account_id):
-        return None
+        return self._ts
 
 
 def test_minimax_is_an_event_provider():
@@ -652,13 +748,13 @@ def test_minimax_account_extractor_wiring(monkeypatch, tmp_path):
     extractor = sidecar._make_account_extractor_minimax_code(mock_parser)
 
     # No store on this host: nothing to extract, and the parser is not called.
-    monkeypatch.setattr(sidecar, "_discover_minimax_code_db_path", lambda: None)
+    monkeypatch.setattr(sidecar, "_discover_minimax_code_db_paths", lambda: [])
     assert extractor("default", _MockWatermark(), 30) == []
     assert not mock_parser.called
 
     mock_db = tmp_path / "runtime-state.sqlite"
     mock_db.touch()
-    monkeypatch.setattr(sidecar, "_discover_minimax_code_db_path", lambda: mock_db)
+    monkeypatch.setattr(sidecar, "_discover_minimax_code_db_paths", lambda: [mock_db])
     events = extractor("default", _MockWatermark(), 30)
     assert events == ["mock_event"]
     args, kwargs = mock_parser.call_args
@@ -670,10 +766,112 @@ def test_minimax_account_extractor_wiring(monkeypatch, tmp_path):
     assert kwargs["state_file"].parent == sidecar.get_sidecar_dir()
 
 
+def test_minimax_extractor_reads_every_store_on_the_host(monkeypatch, tmp_path):
+    """A profile-scoped install keeps a second ledger; both are reported."""
+    sidecar = _sidecar()
+    mock_parser = MagicMock(side_effect=lambda db_path, **_: [f"event:{db_path.parent.name}"])
+    extractor = sidecar._make_account_extractor_minimax_code(mock_parser)
+
+    first = tmp_path / "a" / "runtime-state.sqlite"
+    second = tmp_path / "b" / "runtime-state.sqlite"
+    monkeypatch.setattr(sidecar, "_discover_minimax_code_db_paths", lambda: [first, second])
+
+    events = extractor("default", _MockWatermark(), 30)
+    assert events == ["event:a", "event:b"]
+    # One cursor file holds both stores' cursors — it is keyed by path.
+    assert {call.kwargs["state_file"] for call in mock_parser.call_args_list} == {
+        sidecar.get_sidecar_dir() / "minimax_code_watermark.json"
+    }
+
+
+def _backlog_usage(days_ago: int = 10) -> list[dict]:
+    """One ledger row whose timestamp sits ``days_ago`` days in the past."""
+    ts_ms = int((datetime.now(UTC) - timedelta(days=days_ago)).timestamp() * 1000)
+    return [
+        {
+            "id": 1,
+            "session_id": "mvs_backlog",
+            "turn_id": "turn_backlog",
+            "ts": ts_ms,
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+    ]
+
+
+def test_a_newly_discovered_store_bootstraps_from_the_window(
+    monkeypatch, tmp_path, _clean_data_env
+):
+    """A store seen for the first time imports its backlog.
+
+    The shared timestamp watermark says "this provider's history up to T was
+    pushed" — which is about the store that was pushed, not about a store
+    discovered later. Using it as the floor would skip the backlog of the new
+    store for good, because the cursor then advances past those rows.
+    """
+    sidecar = _sidecar()
+    usage = _backlog_usage(days_ago=10)
+    make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax")
+    make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax-work")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    extractor = sidecar._make_account_extractor_minimax_code(parse_minimax_code_events)
+    # The provider was pushed a minute ago; the backlog is ten days old.
+    watermark = _MockWatermark(datetime.now(UTC) - timedelta(minutes=1))
+    events = extractor("default", watermark, 90)
+
+    assert events, "the backlog of a newly discovered store was skipped"
+    assert {event.session_id for event in events} == {"mvs_backlog"}
+
+
+def test_a_store_with_a_cursor_ignores_the_window(monkeypatch, tmp_path, _clean_data_env):
+    """A store the cursor already knows is floored by the cursor alone."""
+    sidecar = _sidecar()
+    usage = _backlog_usage(days_ago=10)
+    make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    cursor_file = tmp_path / "cursor.json"
+    extractor = sidecar._make_account_extractor_minimax_code(
+        parse_minimax_code_events, state_file=cursor_file
+    )
+    # First cycle: the backlog is imported and the cursor advances to the end.
+    first = extractor("default", _MockWatermark(), 90)
+    assert first
+    commit_pending_state()
+    assert json.loads(cursor_file.read_text())["databases"]
+
+    # Second cycle: nothing new, so nothing is emitted — the cursor, not the
+    # window, decides what is still to read.
+    discard_pending_state()
+    assert extractor("default", _MockWatermark(), 90) == []
+
+
+def test_the_same_event_from_two_stores_is_pushed_once(monkeypatch, tmp_path, _clean_data_env):
+    """A data dir that was *copied* holds the same rows under two paths."""
+    sidecar = _sidecar()
+    usage = _backlog_usage(days_ago=10)
+    first = make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax")
+    second = make_minimax_code_store(tmp_path, usage=usage, data_dir=".minimax-copy")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    extractor = sidecar._make_account_extractor_minimax_code(parse_minimax_code_events)
+    events = extractor("default", _MockWatermark(), 90)
+
+    # Both stores hold the same row, so it is one request: the same event id
+    # twice would be pushed twice, and the server would drop the second.
+    assert len(events) == 1, "the copied row was reported twice"
+    assert len({event.event_id for event in events}) == len(events)
+    assert first != second
+
+
 def test_minimax_events_are_dispatched_under_the_minimax_provider(monkeypatch, tmp_path):
     sidecar = _sidecar()
     db_path = make_minimax_code_store(tmp_path)
-    monkeypatch.setattr(sidecar, "_discover_minimax_code_db_path", lambda: db_path)
+    monkeypatch.setattr(sidecar, "_discover_minimax_code_db_paths", lambda: [db_path])
     out_events: list[dict] = []
     failures = sidecar._extract_events_for_provider(
         provider_id="minimax",

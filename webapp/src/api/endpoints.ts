@@ -209,7 +209,7 @@ export const assignPendingUsageEventsBatch = (assignments: PendingUsageAssignmen
   });
 
 export const tagCredential = (body: CredentialTagRequest) =>
-  api<{ status: string }>('/api/v1/fleet/credentials/tags', {
+  api<{ status: string; target_archived?: boolean }>('/api/v1/fleet/credentials/tags', {
     method: 'POST',
     body: JSON.stringify(body),
   });

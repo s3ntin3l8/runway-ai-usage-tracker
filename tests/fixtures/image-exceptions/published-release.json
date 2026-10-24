@@ -7,7 +7,7 @@
         "Medium": 54,
         "Negligible": 47
       },
-      "image": "ghcr.io/s3ntin3l8/runway@sha256:c21dadd98c5a46a8ab982a4064aecac02cb3f312b961a87ea6f988e3f0325b11",
+      "image": "ghcr.io/s3ntin3l8/runway@sha256:dc93d4d4c8930e586b28f0509d59fb5d440c3adbe11dcce9cd75303fc20cc5c5",
       "matches": [
         {
           "artifact": {
@@ -843,7 +843,7 @@
         "Medium": 54,
         "Negligible": 47
       },
-      "image": "ghcr.io/s3ntin3l8/runway@sha256:0cd9eab750e2214b83b22fc444627e1a55bf58d527694ad516e8d1d8bcde8aa2",
+      "image": "ghcr.io/s3ntin3l8/runway@sha256:06fa29acf76312cf32672ddbc6873279bf6289222110fd7b7218ab1362aa7fe2",
       "matches": [
         {
           "artifact": {
@@ -1677,7 +1677,7 @@
     "built": "2026-10-23T06:30:15Z",
     "checksum": "sha256:6e78c0f757fe96976b37b138e54e83fd75f2ad1f6c5feae2ecb008cefa8fcc0f"
   },
-  "image": "ghcr.io/s3ntin3l8/runway@sha256:3e2d326c27ba3d6d35b64485988a95f8dc93ba2ac65408b7a8662a1ecd6511d1",
-  "scanned_at": "2026-10-23T17:42:48.844944+00:00",
+  "image": "ghcr.io/s3ntin3l8/runway@sha256:64fe0f2d562ba8d7a5d672f48b9c2d1fdbe0354b7417601bbc12c57df867a518",
+  "scanned_at": "2026-10-23T21:01:55.380731+00:00",
   "schema_version": 1
 }

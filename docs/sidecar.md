@@ -96,8 +96,9 @@ Restart the app after editing the config for changes to take effect.
 `--probe-minimax-code` is a read-only diagnostic that prints what the sidecar can read from the
 MiniMax Code runtime store on this machine — the store's path and size, whether its schema is
 still what the extractor understands, how many requests it holds, the model they resolve to and
-where the cursor stands. It runs the real extractor and never commits the cursor, so it cannot
-change what the sidecar reports afterwards:
+where the cursor stands. A host can hold more than one store (a profile-scoped install keeps a
+second ledger next to the default one); the report names each of them. It runs the real extractor
+and never commits the cursor, so it cannot change what the sidecar reports afterwards:
 
 ```bash
 runway-sidecar-cli --probe-minimax-code                              # Linux

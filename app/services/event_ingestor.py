@@ -18,7 +18,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.models.db import PendingUsageEvent, ProviderConfig, UsageEvent
 from app.models.schemas import UsageEventPush
 from app.services.account_identity import canonical_account_id, is_redirect_source_provider
-from app.services.credential_tags import CredentialTagRepo
+from app.services.credential_tags import CredentialTagRepo, ParkedMapping
 from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.model_normalization import normalize_ag_model
 from app.services.period_rollups import update_rollups_for_event
@@ -78,6 +78,12 @@ class EventIngestor:
     ) -> IngestResult:
         result = IngestResult(events_received=len(pushes))
         redirects: dict[str, tuple[str, str] | None] = {}
+        # A mapping onto an archived account is *parked*: it resolves the
+        # credential, but nothing may be stamped on the retired account — not
+        # a card, not a usage event. The predicate is tag-aware: a redirect
+        # tag names an account of its *target* provider, so its parked-ness
+        # is looked up there.
+        parked = ParkedMapping(self.session, [push.provider_id for push in pushes])
         try:
             for push in pushes:
                 if is_redirect_source_provider(push.provider_id):
@@ -92,6 +98,16 @@ class EventIngestor:
                             else None
                         )
                     redirect = redirects[push.provider_id]
+                    if redirect is not None:
+                        target_provider_id, target_account = redirect
+                        if parked.is_parked_account(target_provider_id, target_account):
+                            # Parked: the target account is retired, so the
+                            # events must not be re-homed onto it. The push
+                            # keeps its own provider and falls through to the
+                            # identity-less branch below, where the parked
+                            # mapping keeps it out of the retired account and
+                            # holds it for assignment instead.
+                            redirect = None
                     if redirect is not None:
                         target_provider_id, target_account = redirect
                         is_default = push.account_source == "default" or (
@@ -137,12 +153,22 @@ class EventIngestor:
                     # is the available identity signal. Resolve it at ingest
                     # time as well as in the sidecar so a saved mapping takes
                     # effect immediately, even with a stale hint cache.
-                    mapped_account = CredentialTagRepo.get_account_id(
+                    #
+                    # A *parked* mapping — one whose account is archived — does
+                    # not name an account to bill: the event is held for
+                    # assignment instead of being stamped on the account the
+                    # operator retired.
+                    mapped_tag = CredentialTagRepo.get(
                         self.session,
                         provider_id=push.provider_id,
                         credential_origin=push.credential_origin
                         or CredentialTagRepo.provider_origin(push.provider_id),
                         sidecar_id=sidecar_id,
+                    )
+                    mapped_account = (
+                        mapped_tag.account_id
+                        if mapped_tag is not None and not parked.is_parked(mapped_tag)
+                        else None
                     )
                     if mapped_account:
                         account_id = canonical_account_id(mapped_account)

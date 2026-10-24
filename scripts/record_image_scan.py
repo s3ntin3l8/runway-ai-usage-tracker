@@ -28,7 +28,7 @@ the document against a fiction.
 Usage:
     python -m scripts.record_image_scan \\
         --audit-dir image-audit \\
-        --output tests/fixtures/image-exceptions/published-edge.json
+        --output tests/fixtures/image-exceptions/published-release.json
 """
 
 import json

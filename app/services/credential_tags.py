@@ -16,12 +16,13 @@ goes through this surface so the lookup key stays in one place.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, and_, col, or_, select
 
-from app.models.db import CredentialTag, PendingCredentialTag
+from app.models.db import CredentialTag, PendingCredentialTag, ProviderConfig
 
 _QUOTA_PREVIEW_FIELDS = frozenset(
     {
@@ -91,6 +92,118 @@ def pick_effective_tag(
         if tag.sidecar_id and tag.sidecar_id == sidecar_id:
             return tag
     return next((tag for tag in candidates if tag.sidecar_id is None), None)
+
+
+def archived_account_pairs(session: Session, providers: Sequence[str]) -> set[tuple[str, str]]:
+    """``(provider_id, account_id)`` pairs whose ``provider_configs`` row is archived.
+
+    A mapping onto one of these pairs is *parked*: it resolves the credential —
+    the origin stops being pending and the operator is not nagged any more — but
+    it is never acted on. The sidecar receives no hint for it, the server never
+    stamps the archived account with new usage, and a provider whose accounts
+    are all archived runs no collector at all.
+
+    Parked-ness is *derived* from ``ProviderConfig.archived`` rather than stored
+    on the tag, so archiving an account parks the mappings that point at it and
+    restoring it revives them — no backfill, no new column, and both archive
+    paths (the destructive *Remove* and the reversible *Archive*) end up
+    behaving the same way for the credential.
+    """
+    if not providers:
+        return set()
+    rows = session.exec(
+        select(ProviderConfig.provider_id, ProviderConfig.account_id).where(
+            col(ProviderConfig.provider_id).in_(list(providers)),
+            ProviderConfig.archived == True,  # noqa: E712 — SQLModel needs the ==
+        )
+    ).all()
+    return {
+        (pid, aid)
+        for pid, aid in rows
+        if isinstance(pid, str) and isinstance(aid, str) and pid and aid
+    }
+
+
+class ParkedMapping:
+    """Which stored mappings point at an archived account.
+
+    A mapping onto an archived account is *parked*: it resolves the credential
+    but must never be acted on — no hint ships to a sidecar, no usage is
+    stamped on the retired account, no collector runs for the provider. The
+    state is derived from ``ProviderConfig.archived``, never stored on the tag,
+    so archiving an account parks the mappings that point at it and restoring
+    it revives them.
+
+    One instance per request or batch: the archived rows are queried once per
+    provider — seeded in a single query when the caller knows its providers —
+    and every reader asks this object instead of re-deriving the rule for
+    itself.
+    """
+
+    def __init__(self, session: Session, providers: Iterable[str] | None = None) -> None:
+        self._session = session
+        self._archived: dict[str, set[str]] = {}
+        self._pending: list[str] = []
+        if providers:
+            self.seed(providers)
+
+    def seed(self, providers: Iterable[str]) -> None:
+        """Remember these providers, so the next lookup resolves them together.
+
+        The callers that know their provider set up front name it here: the
+        whole set is then resolved in a single query, instead of one query per
+        provider. The resolution stays lazy — a reader that never asks pays no
+        query at all.
+        """
+        for provider_id in providers:
+            if (
+                isinstance(provider_id, str)
+                and provider_id
+                and provider_id not in self._archived
+                and provider_id not in self._pending
+            ):
+                self._pending.append(provider_id)
+
+    def _resolve_pending(self) -> None:
+        if not self._pending:
+            return
+        pending = self._pending
+        self._pending = []
+        for provider_id, account_id in archived_account_pairs(self._session, pending):
+            self._archived.setdefault(provider_id, set()).add(account_id)
+        for provider_id in pending:
+            self._archived.setdefault(provider_id, set())
+
+    def _archived_accounts(self, provider_id: str) -> set[str]:
+        cached = self._archived.get(provider_id)
+        if cached is None:
+            self._resolve_pending()
+            cached = self._archived.get(provider_id)
+            if cached is None:
+                cached = {
+                    account_id
+                    for _, account_id in archived_account_pairs(self._session, [provider_id])
+                }
+                self._archived[provider_id] = cached
+        return cached
+
+    def is_parked(self, tag: CredentialTag | None) -> bool:
+        """Whether ``tag`` names an account that is archived.
+
+        A tag names an account of its own provider, except a *redirect* tag:
+        ``target_provider_id`` says the account belongs to another provider
+        (Gemini usage assigned to an Antigravity account), so the archived row
+        is looked up under the target provider. Keying the check by the tag's
+        own provider would miss exactly that case.
+        """
+        if tag is None:
+            return False
+        owner = tag.target_provider_id or tag.provider_id
+        return tag.account_id in self._archived_accounts(owner)
+
+    def is_parked_account(self, provider_id: str, account_id: str) -> bool:
+        """Whether ``(provider_id, account_id)`` is an archived account."""
+        return account_id in self._archived_accounts(provider_id)
 
 
 class CredentialTagRepo:
@@ -489,6 +602,56 @@ class CredentialTagRepo:
         )
 
     @staticmethod
+    def list_effective_tags(
+        session: Session,
+        *,
+        providers: list[str],
+        sidecar_id: str | None = None,
+    ) -> dict[tuple[str, str], CredentialTag]:
+        """The stored tag that applies to each ``(provider_id, credential_origin)``.
+
+        Same selection and scoping as :meth:`list_pending_payload` — a
+        sidecar-scoped row wins over a deployment-wide one for the same origin
+        — but it keeps the whole row, so a caller can see
+        ``target_provider_id``: a *redirect* tag names an account of another
+        provider, and only the row knows that.
+
+        ``identity_claim`` rows are excluded — they are the sidecar's own
+        claim, not an operator mapping.
+        """
+        if not providers:
+            return {}
+
+        predicates = [CredentialTag.provider_id == pid for pid in providers]
+        stmt = (
+            select(CredentialTag)
+            .where(or_(*predicates), CredentialTag.set_by != "identity_claim")
+            .order_by(col(CredentialTag.sidecar_id).is_(None))
+        )
+        if sidecar_id is None:
+            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+        else:
+            stmt = stmt.where(
+                or_(
+                    CredentialTag.sidecar_id == sidecar_id,
+                    col(CredentialTag.sidecar_id).is_(None),
+                )
+            )
+        rows = list(session.exec(stmt).all())
+        effective: dict[tuple[str, str], CredentialTag] = {}
+        for row in rows:
+            key = (row.provider_id, row.credential_origin)
+            if not row.provider_id or not row.credential_origin or not row.account_id:
+                continue
+            if row.sidecar_id is None:
+                # Deployment-wide row — never clobbers a scoped one.
+                effective.setdefault(key, row)
+            else:
+                # Sidecar-scoped row wins over deployment-wide.
+                effective[key] = row
+        return effective
+
+    @staticmethod
     def list_pending_payload(
         session: Session,
         *,
@@ -515,37 +678,11 @@ class CredentialTagRepo:
         Empty ``providers`` returns an empty map. Empty ``account_id``
         values are filtered out defensively.
         """
-        if not providers:
-            return {}
-
-        predicates = [CredentialTag.provider_id == pid for pid in providers]
-        stmt = select(
-            CredentialTag.provider_id,
-            CredentialTag.credential_origin,
-            CredentialTag.account_id,
-            CredentialTag.sidecar_id,
-        ).where(or_(*predicates), CredentialTag.set_by != "identity_claim")
-        if sidecar_id is None:
-            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
-        else:
-            stmt = stmt.where(
-                or_(
-                    CredentialTag.sidecar_id == sidecar_id,
-                    col(CredentialTag.sidecar_id).is_(None),
-                )
-            )
-        rows = list(session.exec(stmt).all())
         out: dict[str, dict[str, str]] = {}
-        for pid, origin, account_id, row_sidecar_id in rows:
-            if isinstance(pid, str) and isinstance(origin, str) and isinstance(account_id, str):
-                if pid and origin and account_id:
-                    bucket = out.setdefault(pid, {})
-                    if row_sidecar_id is None:
-                        # Deployment-wide row — never clobbers a scoped one.
-                        bucket.setdefault(origin, account_id)
-                    else:
-                        # Sidecar-scoped row wins over deployment-wide.
-                        bucket[origin] = account_id
+        for (pid, origin), tag in CredentialTagRepo.list_effective_tags(
+            session, providers=providers, sidecar_id=sidecar_id
+        ).items():
+            out.setdefault(pid, {})[origin] = tag.account_id
         return out
 
     @staticmethod

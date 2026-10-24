@@ -10,12 +10,22 @@ from scripts.sidecar_pkg.event_extractors import minimax_code
 from tests.fixtures.minimax_code_fixture import make_minimax_code_store
 
 
+@pytest.fixture(autouse=True)
+def _clean_data_env(monkeypatch):
+    """Clear every env var that can move the runtime's data dir.
+
+    Without this a developer's own ``MINIMAX_DATA_DIR`` (or the runtime's
+    internal overrides) would leak into the probe's discovery.
+    """
+    for name in ("MINIMAX_CODE_HOME", *minimax_code._DATA_DIR_ENV_VARS):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def host(tmp_path, monkeypatch):
     """A host with a MiniMax Code runtime store and an isolated cursor dir."""
     make_minimax_code_store(tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.delenv("MINIMAX_CODE_HOME", raising=False)
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
     return tmp_path
 
@@ -217,12 +227,161 @@ def test_the_probe_finds_the_store_in_the_windows_app_data_root(tmp_path, monkey
     """The desktop app's Windows root is probed, not just ~/.minimax."""
     make_minimax_code_store(tmp_path, data_dir=str(Path("AppData") / "Roaming" / "MiniMax Code"))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.delenv("MINIMAX_CODE_HOME", raising=False)
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
     report = probe.probe_minimax_code()
     assert report["ok"] is True
     assert "MiniMax Code" in report["store"]
     assert "AppData" in report["store"]
+
+
+def test_the_probe_reports_every_store_on_the_host(host, monkeypatch):
+    """A profile-scoped install keeps a second ledger; both are reported."""
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    report = probe.probe_minimax_code()
+    assert report["ok"] is True
+    assert len(report["stores"]) == 2
+    assert {detail["path"] for detail in report["stores"]} == {
+        str(host / ".minimax" / "v2" / "sqlite" / "runtime-state.sqlite"),
+        str(host / ".minimax-work" / "v2" / "sqlite" / "runtime-state.sqlite"),
+    }
+    # The counts are the whole host's: the sidecar reports every store.
+    assert report["requests"] == sum(detail["requests"] for detail in report["stores"])
+    assert report["pending_requests"] == sum(
+        detail["pending_requests"] for detail in report["stores"]
+    )
+
+
+def test_the_probe_names_the_other_stores_in_its_report(host, monkeypatch):
+    """The text report has to say which store is which."""
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    text = probe.format_report(probe.probe_minimax_code())
+    assert "stores found        : 2" in text
+    assert "other stores:" in text
+    assert ".minimax-work" in text
+
+
+def test_the_probe_passes_when_one_store_drifted_and_another_did_not(host, monkeypatch):
+    """A drifted store must not hide a readable one."""
+    import sqlite3
+
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    conn = sqlite3.connect(host / ".minimax-work" / "v2" / "sqlite" / "runtime-state.sqlite")
+    conn.execute("ALTER TABLE local_runtime_token_usage DROP COLUMN cache_read_tokens")
+    conn.commit()
+    conn.close()
+
+    report = probe.probe_minimax_code()
+    assert report["ok"] is True
+    assert report["schema_ok"] is True
+    drifted = [d for d in report["stores"] if not d["schema_ok"]]
+    assert len(drifted) == 1
+    assert "cache_read_tokens" in drifted[0]["missing_columns"]["local_runtime_token_usage"]
+
+
+def test_the_probe_reports_nothing_when_the_runtime_never_ran(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    report = probe.probe_minimax_code()
+    assert report["ok"] is False
+    assert report["stores"] == []
+
+
+def test_the_probe_reports_an_unreadable_store_with_its_error(host, monkeypatch):
+    """A store that cannot be opened is an error, not a schema drift."""
+    real_introspect = probe._introspect
+
+    def fake_introspect(db_path):
+        if ".minimax" in str(db_path):
+            return {
+                "error": "cannot open the store read-only: disk I/O error",
+                "tables": {},
+                "missing_tables": [],
+                "missing_columns": {},
+            }
+        return real_introspect(db_path)
+
+    monkeypatch.setattr(probe, "_introspect", fake_introspect)
+    report = probe.probe_minimax_code()
+    assert report["ok"] is False
+    assert "disk I/O error" in report["problem"]
+    assert "drifted" not in report["problem"]
+
+
+def test_an_unreadable_store_does_not_hide_a_readable_one(host, monkeypatch):
+    """One broken store must not cost the host its working one."""
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    real_introspect = probe._introspect
+
+    def fake_introspect(db_path):
+        if ".minimax-work" in str(db_path):
+            return {
+                "error": "cannot open the store read-only: disk I/O error",
+                "tables": {},
+                "missing_tables": [],
+                "missing_columns": {},
+            }
+        return real_introspect(db_path)
+
+    monkeypatch.setattr(probe, "_introspect", fake_introspect)
+    report = probe.probe_minimax_code()
+    assert report["ok"] is True
+    assert report["store"].endswith(".minimax/v2/sqlite/runtime-state.sqlite")
+    broken = [d for d in report["stores"] if d["error"]]
+    assert len(broken) == 1
+
+
+def test_a_store_whose_parse_raises_does_not_abort_the_report(host, monkeypatch):
+    """The parse is failure-isolated per store, like the other two steps."""
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    real_parse = minimax_code.parse_minimax_code_events
+
+    def fake_parse(db_path, **kwargs):
+        if ".minimax-work" in str(db_path):
+            raise RuntimeError("the store exploded")
+        return real_parse(db_path, **kwargs)
+
+    monkeypatch.setattr(minimax_code, "parse_minimax_code_events", fake_parse)
+    report = probe.probe_minimax_code()
+    assert report["ok"] is True
+    assert report["store"].endswith(".minimax/v2/sqlite/runtime-state.sqlite")
+    broken = [d for d in report["stores"] if d["error"]]
+    assert len(broken) == 1
+    assert "exploded" in broken[0]["error"]
+
+
+def test_the_report_tells_unreadable_from_incompatible(host, monkeypatch):
+    """A store that cannot be read is not the same as one that drifted."""
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    real_parse = minimax_code.parse_minimax_code_events
+
+    def fake_parse(db_path, **kwargs):
+        if ".minimax-work" in str(db_path):
+            raise RuntimeError("the store exploded")
+        return real_parse(db_path, **kwargs)
+
+    monkeypatch.setattr(minimax_code, "parse_minimax_code_events", fake_parse)
+    text = probe.format_report(probe.probe_minimax_code())
+    assert "UNREADABLE" in text
+    assert "INCOMPATIBLE" not in text
+
+
+def test_a_drifted_store_is_reported_as_incompatible(host, monkeypatch):
+    import sqlite3
+
+    make_minimax_code_store(host, data_dir=".minimax-work")
+    conn = sqlite3.connect(host / ".minimax-work" / "v2" / "sqlite" / "runtime-state.sqlite")
+    conn.execute("ALTER TABLE local_runtime_token_usage DROP COLUMN cache_read_tokens")
+    conn.commit()
+    conn.close()
+
+    text = probe.format_report(probe.probe_minimax_code())
+    assert "INCOMPATIBLE" in text
+    assert "UNREADABLE" not in text
+
+
+def test_the_row_cap_is_stated_per_store(host):
+    """The cap is per store, so the number must not read as the cycle's total."""
+    text = probe.format_report(probe.probe_minimax_code())
+    assert "rows per store" in text
 
 
 def test_a_windowed_build_without_a_console_writes_the_report_to_a_file(host, monkeypatch, capsys):
