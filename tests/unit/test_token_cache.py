@@ -1287,11 +1287,13 @@ async def test_remove_drops_a_bundle_that_has_no_merged_entry(cache):
     }
     assert "acc_a" not in cache._cache.get("openrouter", {})
 
-    assert await cache.remove("openrouter", "acc_a") is True
+    removed = await cache.remove("openrouter", "acc_a")
+    assert removed is True
 
     assert "acc_a" not in cache._source_cache.get("openrouter", {})
 
 
 @pytest.mark.asyncio
 async def test_remove_reports_nothing_removed_for_an_unknown_account(cache):
-    assert await cache.remove("openrouter", "acc_a") is False
+    removed = await cache.remove("openrouter", "acc_a")
+    assert removed is False
