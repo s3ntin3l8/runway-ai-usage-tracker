@@ -521,10 +521,10 @@ The release PR's own CI is held for approval, and the merge is always
 somebody's. Release Please pushes the release branch with the workflow's own
 `GITHUB_TOKEN`, and GitHub holds `pull_request` runs from a push like that,
 so the release PR sits at `BLOCKED` with its required checks stuck at pending.
-There is no auto-merge on this repository: approving the held runs lets the
-required contexts report so the PR can be merged normally, and merging it
-with administrator privileges — `enforce_admins` is off on `main` — skips
-the held runs entirely and leaves them unstarted.
+There is no auto-merge on this repository (`allow_auto_merge` is off).
+Approving the held runs lets the required contexts report so the PR can be
+merged normally; merging it with administrator privileges — `enforce_admins`
+is off on `main` — skips the held runs entirely and leaves them unstarted.
 
 Approval is not free, though. The release PR carries six workflows — `CI/CD`
 and `CodeQL`, which also run on the push to `main`, and `Security Validation`,
