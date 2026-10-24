@@ -642,3 +642,86 @@ describe('ProviderDetailDialog — the Claude family', () => {
     );
   });
 });
+
+// An account that names a provider the dialog does not know cannot be
+// addressed: the mutations already refuse to act on it rather than filing it
+// under the family's representative (#795). The account dialog and the master
+// toggle have to agree with them.
+describe('ProviderDetailDialog — an account it cannot address (#795)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const subscription: ProviderConfig = {
+    ...multiAccount,
+    provider_id: 'anthropic',
+    name: 'Claude',
+    // Disabled, so the master toggle has something to change on it.
+    accounts: [{ ...alice, enabled: false, provider_id: 'anthropic' }],
+    account_count: 1,
+  };
+
+  // Names a provider that is not among the family's connections, so it cannot
+  // be addressed.
+  const stranger: ProviderAccount = {
+    ...alice,
+    account_id: 'stranger@example.com',
+    account_label: 'Stranger',
+    enabled: false,
+    provider_id: 'mystery_provider',
+  };
+
+  const strangerConnection: ProviderConfig = {
+    ...multiAccount,
+    provider_id: 'mystery_connection',
+    name: 'Mystery',
+    accounts: [stranger],
+    account_count: 1,
+  };
+
+  function renderFamily(
+    provider: ProviderConfig = subscription,
+    connections: ProviderConfig[] = [subscription, strangerConnection],
+  ) {
+    return renderWithProviders(
+      <ProviderDetailDialog
+        provider={provider}
+        connections={connections}
+        onClose={vi.fn()}
+      />,
+    );
+  }
+
+  it('does not open the account dialog against the family representative', async () => {
+    renderFamily();
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /actions for stranger/i }));
+    await userEvent.click(within(dialog).getByRole('menuitem', { name: /edit/i }));
+
+    // No account dialog at all — neither the representative's account nor a
+    // dead "Account not found" end.
+    expect(screen.queryByText(/^Edit account ·/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Account not found/i)).not.toBeInTheDocument();
+  });
+
+  it('names the account it could not address instead of claiming a family-wide change', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderFamily();
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
+    // Only the addressable account was written.
+    expect(vi.mocked(api.putProviderConfig).mock.calls).toEqual([
+      ['anthropic', 'alice@example.com', { enabled: true }],
+    ]);
+    // The toast names what was skipped — it does not claim all accounts changed.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/1 of 2 accounts enabled; 1 skipped \(Stranger\)/),
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalledWith(
+      expect.stringMatching(/all accounts enabled/),
+    );
+  });
+});

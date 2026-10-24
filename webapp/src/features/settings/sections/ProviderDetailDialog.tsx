@@ -110,31 +110,53 @@ export function ProviderDetailDialog({
     if (id === provider.provider_id) return provider;
     return (connections ?? []).find((c) => c.provider_id === id) ?? null;
   };
+  // The provider the account dialog opens against — its own, or nothing. There
+  // is no fallback to the family's representative: the account mutations already
+  // refuse to act on an account they cannot address, and this dialog has to
+  // agree with them rather than show the wrong provider's settings.
+  const editingAccountProvider = editingAccount ? providerOf(editingAccount) : null;
   const setMasterEnabled = useMutation({
     mutationFn: async (next: boolean) => {
-      if (!provider) return;
+      if (!provider) return { changed: 0, skipped: [] as string[] };
+      const skipped: string[] = [];
       const updates = configAccounts
         .filter((a) => a.enabled !== next)
         .flatMap((a) => {
           const target = providerOf(a);
-          return target
-            ? [putProviderConfig(target.provider_id, a.account_id, { enabled: next })]
-            : [];
+          if (!target) {
+            // An account the dialog cannot address is left alone — and named,
+            // so the toast can never claim a family-wide change that did not
+            // happen.
+            skipped.push(a.account_label ?? a.account_id);
+            return [];
+          }
+          return [putProviderConfig(target.provider_id, a.account_id, { enabled: next })];
         });
       await Promise.all(updates);
+      return { changed: updates.length, skipped };
     },
-    onSuccess: (_data, next) => {
+    onSuccess: ({ changed, skipped }, next) => {
       // Capture `next` from the mutation variables — by the time onSuccess
       // fires, the parent state may have updated and `masterEnabled` reflects
       // the post-toggle value, not the user's intent. (Variable form of
       // useMutation's onSuccess callback.)
-      if (provider) {
-        toast.success(
-          configAccounts.length === 0
-            ? 'No accounts to update'
-            : `${provider.name} · all accounts ${next ? 'enabled' : 'disabled'}`,
-        );
+      if (!provider) return;
+      if (configAccounts.length === 0) {
+        toast.success('No accounts to update');
+        return;
       }
+      const verb = next ? 'enabled' : 'disabled';
+      if (skipped.length > 0) {
+        // Not a success: part of the family was left alone, and the operator
+        // has to hear that from the one report they get.
+        toast.error(
+          `${provider.name} · ${changed} of ${configAccounts.length} accounts ${verb}; ` +
+            `${skipped.length} skipped (${skipped.join(', ')})`,
+        );
+        return;
+      }
+      const changedLabel = changed === 0 ? '' : ` (${changed} changed)`;
+      toast.success(`${provider.name} · all accounts ${verb}${changedLabel}`);
     },
     onError: (err) => toast.error(err.message),
     // Refetch on success *and* failure so a mid-batch partial failure still
@@ -444,9 +466,9 @@ export function ProviderDetailDialog({
         ) : null}
       </ResponsiveDialog>
 
-      {provider && editingAccount ? (
+      {provider && editingAccount && editingAccountProvider ? (
         <ProviderAccountDialog
-          provider={providerOf(editingAccount) ?? provider}
+          provider={editingAccountProvider}
           accountId={editingAccount.account_id}
           onClose={() => setEditingAccount(null)}
         />
