@@ -128,7 +128,7 @@ export function PendingUsageEventsCard() {
       setSelected((current) =>
         Object.fromEntries(
           Object.entries(current)
-            .map(([key, group]) => {
+            .map(([key, group]): [string, PendingUsageSession] => {
               const remaining = group.event_ids.filter((id) => !confirmed.has(id));
               return [key, { ...group, event_ids: remaining, event_count: remaining.length }];
             })

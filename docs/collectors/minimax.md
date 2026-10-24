@@ -390,6 +390,10 @@ abandonment is reported rather than dropped in silence. The cursor file keeps th
 abandoned row ids next to the cursor, and the probe prints their counts, so a row whose usage was
 never reported is visible to the operator.
 
+The cursor file keeps the **last 100** abandoned row ids per store; older ones are dropped from
+it. The durable record of an abandoned row is therefore its `ERROR` log line, not the cursor
+file — the log is where to look for a request whose usage was never reported.
+
 A cycle reads at most 5000 rows **per store**, so a host with N stores can emit up to N × 5000
 events in one cycle.
 

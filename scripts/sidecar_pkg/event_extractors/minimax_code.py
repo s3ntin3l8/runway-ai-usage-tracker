@@ -522,6 +522,31 @@ _PENDING_ADVANCES: dict[str, dict[str, int]] = {}
 _PENDING_SKIPS: dict[str, dict[str, dict[str, Any]]] = {}
 
 
+def parked_skip_counts(state_file: Path, db_path: Path) -> tuple[int, int]:
+    """Return the (skipped, abandoned) counts the last extraction parked.
+
+    The extractor parks its skip bookkeeping next to the cursor advance, and
+    the advance is only written when the server confirms the ingest. A reader
+    that runs the extractor without committing — the probe does exactly that
+    — therefore cannot read the numbers from the cursor file: they only
+    exist in memory. This is where such a run's own numbers come from.
+    """
+    try:
+        state_key = str(Path(state_file).resolve())
+        db_key = str(Path(db_path).resolve())
+    except OSError:
+        return 0, 0
+    parked = _PENDING_SKIPS.get(state_key, {}).get(db_key)
+    if not isinstance(parked, dict):
+        return 0, 0
+    skipped = parked.get("skipped")
+    abandoned = parked.get("abandoned")
+    return (
+        len(skipped) if isinstance(skipped, dict) else 0,
+        len(abandoned) if isinstance(abandoned, list) else 0,
+    )
+
+
 def commit_pending_state() -> bool:
     """Persist the cursor advances left behind by the last extraction.
 

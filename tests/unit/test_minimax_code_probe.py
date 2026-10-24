@@ -1,6 +1,7 @@
 """Unit tests for the MiniMax Code read-only probe."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -81,7 +82,55 @@ def test_probe_reports_the_rows_outside_the_first_run_window(tmp_path, monkeypat
     assert report["out_of_window_requests"] == 1
     assert any("SIDECAR_BOOTSTRAP_DAYS" in warning for warning in report["warnings"])
     text = probe.format_report(report)
-    assert "outside the window" in text
+    assert "not imported" in text
+    assert "WARNING" in text
+
+
+def test_probe_counts_only_the_rows_a_first_run_really_skips(tmp_path, monkeypatch):
+    """The window's floor is on the id axis, not on the timestamp.
+
+    A first run starts at the lowest id whose timestamp falls inside the
+    window, so a row with an older timestamp but a higher id is still
+    imported. Counting every old-timestamped row would overstate the gap.
+    """
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    usage = [
+        {**DEFAULT_USAGE[0], "id": 1, "ts": now_ms - 200 * 86_400_000},
+        {**DEFAULT_USAGE[1], "id": 2, "ts": now_ms},
+        {**DEFAULT_USAGE[2], "id": 3, "ts": now_ms - 200 * 86_400_000},
+    ]
+    make_minimax_code_store(tmp_path, usage=usage)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    report = probe.probe_minimax_code()
+
+    # The first run starts at id 2, so only the row before it is skipped.
+    assert report["out_of_window_requests"] == 1
+    assert report["requests"] == 3
+
+
+def test_probe_reports_the_skips_its_own_extraction_finds(tmp_path, monkeypatch):
+    """A skip the probe's own run finds has to be reported.
+
+    The probe runs the real extractor and never commits, so the numbers
+    exist only in the extractor's parked bookkeeping — the cursor file on
+    disk cannot say them.
+    """
+    usage = [
+        {**DEFAULT_USAGE[0], "id": 1},
+        {**DEFAULT_USAGE[1], "id": 2, "ts": "not-a-timestamp"},
+    ]
+    make_minimax_code_store(tmp_path, usage=usage)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    report = probe.probe_minimax_code()
+
+    assert report["skipped_requests"] == 1
+    assert any("skipped" in warning for warning in report["warnings"])
+    text = probe.format_report(report)
+    assert "skipped requests    : 1" in text
     assert "WARNING" in text
 
 

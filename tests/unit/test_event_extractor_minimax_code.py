@@ -1221,12 +1221,11 @@ def test_a_skipped_row_is_retried_until_it_is_abandoned(tmp_path):
 
 def test_a_failed_push_keeps_the_skip_count(tmp_path):
     """A failed push is not an attempt: the row is read again from scratch."""
-    db_path, state_file, broken_id = _store_with_a_broken_row(tmp_path)
+    db_path, state_file, _broken_id = _store_with_a_broken_row(tmp_path)
 
     _parse(db_path, tmp_path)
     discard_pending_state()
 
-    state_key = str(state_file.resolve())
     assert minimax_code._PENDING_ADVANCES == {}
     assert minimax_code._PENDING_SKIPS == {}
     # Nothing was written, so the next cycle starts over.

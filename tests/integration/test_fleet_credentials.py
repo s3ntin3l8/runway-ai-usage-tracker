@@ -2242,6 +2242,71 @@ def test_pending_usage_assignment_guards_the_request_size_and_keeps_the_events(
     assert session.exec(select(UsageEvent)).all() == []
 
 
+def test_pending_usage_batch_assigns_a_split_session_group_in_two_calls(
+    client: TestClient, session: Session
+):
+    """A session group larger than the batch limit is assigned in two calls.
+
+    The Fleet UI splits a selection into requests of at most 10,000 event
+    ids. The second call carries the remainder of the same session group, so
+    it has to succeed like any other assignment — and every event of the
+    group has to end up attributed, with nothing left pending.
+
+    The group is small on purpose: promoting ten thousand rows takes minutes,
+    and the 10,000 boundary itself is pinned by the guard test above and by
+    the frontend's chunking test.
+    """
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="xai", account_id="alice@example.com")
+    rows: list[PendingUsageEvent] = []
+    for index in range(250):
+        push = UsageEventPush(
+            provider_id="xai",
+            account_id="default",
+            account_source="default",
+            event_id=f"split-{index}",
+            ts="2026-09-01T10:00:00Z",
+            model_id="grok-4",
+            session_id="split-session",
+        )
+        rows.append(
+            PendingUsageEvent(
+                provider_id="xai",
+                event_id=push.event_id,
+                sidecar_id="host-a",
+                ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+                payload_json=push.model_dump_json(),
+            )
+        )
+    session.add_all(rows)
+    session.flush()
+    ids = [row.id for row in rows if row.id is not None]
+    session.commit()
+    assert len(ids) == 250
+
+    first = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={"assignments": [{"event_ids": ids[:150], "account_id": "alice@example.com"}]},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["assigned"] == 150
+
+    second = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={"assignments": [{"event_ids": ids[150:], "account_id": "alice@example.com"}]},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["assigned"] == 100
+
+    # Everything is attributed: nothing is left pending.
+    assert session.exec(select(PendingUsageEvent)).all() == []
+    assert len(session.exec(select(UsageEvent)).all()) == 250
+
+
 def test_pending_usage_batch_assigns_provider_specific_accounts_and_host_tags(
     client: TestClient, session: Session
 ):
