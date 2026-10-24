@@ -636,6 +636,10 @@ class CredentialAccountView(BaseModel):
     data_source: str | None = None  # from the account's latest quota card
     input_source: str | None = None
     sources: list[CredentialSourceView] = Field(default_factory=list)
+    # The account is retired: its ``provider_configs`` row is archived, so
+    # nothing is collected for it. A credential mapped onto it is *parked*
+    # (see docs/api-reference.md#parked-mappings).
+    archived: bool = False
 
 
 class CredentialProviderView(BaseModel):

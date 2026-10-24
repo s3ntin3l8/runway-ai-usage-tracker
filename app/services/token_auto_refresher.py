@@ -13,8 +13,11 @@ config-sourced API keys are left untouched.
 import asyncio
 import logging
 import time
+from collections.abc import Iterable
 
 from app.core.utils import IdentityExtractor, has_refresh_credential
+from app.services.account_identity import canonical_account_id
+from app.services.credential_tags import archived_account_pairs_from_configs
 from app.services.token_cache import server_may_refresh, token_cache
 from app.services.token_refresher import (
     _REFRESH_ENDPOINTS,
@@ -22,6 +25,57 @@ from app.services.token_refresher import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _retired_credentials(
+    providers: Iterable[str],
+) -> tuple[set[tuple[str, str]], set[str]]:
+    """The retired ``(provider, account)`` pairs, and the retired providers.
+
+    A retired *account* is archived: nothing is collected for it, and a
+    credential mapped onto it is parked. A *provider* whose every configured
+    account is archived is retired as a whole — the collector's own rule stops
+    it — so a credential the machine reported for it is dead too: a parked
+    mapping deliberately leaves that credential unattributed, so it sits under
+    no account of its own.
+
+    A *disabled* account is deliberately not covered: that state is reversible,
+    and keeping the credential fresh is what the operator wants when they
+    re-enable it.
+    """
+    wanted = {
+        provider_id for provider_id in providers if isinstance(provider_id, str) and provider_id
+    }
+    if not wanted:
+        return set(), set()
+    from sqlmodel import Session, col, select
+
+    from app.core.db import engine
+    from app.models.db import ProviderConfig
+
+    try:
+        with Session(engine) as session:
+            rows = list(
+                session.exec(
+                    select(ProviderConfig).where(
+                        col(ProviderConfig.provider_id).in_(sorted(wanted))
+                    )
+                ).all()
+            )
+    except Exception as exc:  # pragma: no cover — defensive only
+        # A DB hiccup must not stop the refresher from doing its job: without
+        # the answer it behaves as it does today (refresh what is cached).
+        logger.debug(f"Could not read the retired accounts: {exc}")
+        return set(), set()
+    archived = archived_account_pairs_from_configs(rows)
+    flags_by_provider: dict[str, list[bool]] = {}
+    for cfg in rows:
+        if isinstance(cfg.provider_id, str) and cfg.provider_id:
+            flags_by_provider.setdefault(cfg.provider_id, []).append(bool(cfg.archived))
+    retired_providers = {
+        provider_id for provider_id, flags in flags_by_provider.items() if flags and all(flags)
+    }
+    return archived, retired_providers
 
 
 class TokenAutoRefresher:
@@ -82,7 +136,19 @@ class TokenAutoRefresher:
         now = time.time()
         refreshed = 0
 
+        # One query per pass, not per token: the retired accounts and the
+        # retired providers refresh nothing.
+        retired_accounts, retired_providers = _retired_credentials(
+            {provider for provider, _account, _label in accounts}
+        )
+
         for provider, account_id, _label in accounts:
+            if provider in retired_providers:
+                logger.debug(f"Not refreshing {provider}/{account_id}: the provider is retired")
+                continue
+            if (provider, canonical_account_id(account_id)) in retired_accounts:
+                logger.debug(f"Not refreshing {provider}/{account_id}: the account is retired")
+                continue
             if provider not in _REFRESH_ENDPOINTS:
                 continue
 
