@@ -5888,17 +5888,27 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                     # operator can tag), once per provider. Events the extractor
                     # already placed on a tagged account are not unresolved.
                     unresolved: list[str] = []
+                    skipped: list[str] = []
                     for payload in all_events[pre_count:]:
                         if payload.get("account_source") != "default":
                             continue
                         event_provider = payload.get("provider_id")
-                        if (
-                            isinstance(event_provider, str)
-                            and event_provider
-                            and not _is_pass_through_provider(event_provider)
-                            and event_provider not in unresolved
-                        ):
+                        if not isinstance(event_provider, str) or not event_provider:
+                            continue
+                        if _is_pass_through_provider(event_provider):
+                            # Nothing an operator can tag (an upstream with no
+                            # Runway provider): the events ship under 'default'.
+                            # Say so once, or they are unattributable in silence.
+                            if event_provider not in skipped:
+                                skipped.append(event_provider)
+                            continue
+                        if event_provider not in unresolved:
                             unresolved.append(event_provider)
+                    for event_provider in skipped:
+                        logging.info(
+                            f"  [{provider_id}] events for {event_provider} have no Runway "
+                            "provider to tag — shipping under 'default'."
+                        )
                     for event_provider in unresolved:
                         blocked_origins_this_cycle.append(
                             {

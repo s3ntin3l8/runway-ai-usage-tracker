@@ -409,12 +409,13 @@ def test_manifest_ignores_pass_through_hermes_and_drops_its_stale_row(
     from app.models.db import PendingCredentialTag
     from app.services.credential_tags import PendingCredentialTagRepo
 
-    PendingCredentialTagRepo.upsert(
-        session,
-        sidecar_id="alpha-host",
-        provider_id="hermes",
-        credential_origin="provider:hermes",
-    )
+    for stale in ("hermes", "hermes-nous"):
+        PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id="alpha-host",
+            provider_id=stale,
+            credential_origin=f"provider:{stale}",
+        )
     session.commit()
 
     body = {
@@ -423,6 +424,11 @@ def test_manifest_ignores_pass_through_hermes_and_drops_its_stale_row(
             {
                 "provider_id": "hermes",
                 "credential_origin": "provider:hermes",
+                "reason": "events_untagged",
+            },
+            {
+                "provider_id": "hermes-nous",
+                "credential_origin": "provider:hermes-nous",
                 "reason": "events_untagged",
             },
             {
@@ -436,6 +442,16 @@ def test_manifest_ignores_pass_through_hermes_and_drops_its_stale_row(
 
     rows = session.exec(select(PendingCredentialTag)).all()
     assert [(r.provider_id, r.credential_origin) for r in rows] == [("minimax", "provider:minimax")]
+    assert [r.provider_id for r in visible_pending_rows(session)] == ["minimax"]
+
+    # A prefixed row that is already stored stays out of the list on its own.
+    PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id="alpha-host",
+        provider_id="hermes-openai",
+        credential_origin="provider:hermes-openai",
+    )
+    session.commit()
     assert [r.provider_id for r in visible_pending_rows(session)] == ["minimax"]
 
 
