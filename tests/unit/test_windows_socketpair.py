@@ -212,7 +212,6 @@ def test_a_non_retryable_error_is_not_retried(monkeypatch):
     mystery.
     """
     calls: list[Any] = []
-    real_connect = socket.socket.connect
 
     def refusing_connect(self: socket.socket, addr: Any) -> Any:
         calls.append(addr)
@@ -232,7 +231,6 @@ def test_an_exhausted_retry_raises_the_last_error_and_leaks_nothing(monkeypatch)
     monkeypatch.setattr(socketpair_module, "_PAIR_RETRY_BACKOFF_SECONDS", 0)
     created = _record_created_sockets(monkeypatch)
     calls: list[Any] = []
-    real_connect = socket.socket.connect
 
     def always_collides(self: socket.socket, addr: Any) -> Any:
         calls.append(addr)
