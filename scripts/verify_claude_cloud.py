@@ -332,6 +332,7 @@ def main() -> int:
         try:
             sys.stdout.close()
         except OSError:
+            # Closing marks the stream closed even if its buffered flush fails again.
             pass
         return 2
     return 0 if result["status"] == "sample_observed" else 2
