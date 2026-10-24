@@ -444,7 +444,8 @@ class TestRepoRelabels:
     def test_a_replayed_backlog_does_not_flip_the_ranking(self):
         """An offline sidecar replaying its backlog inserts pre-rename events
         with fresh ids, so the ranking follows the event's timestamp, not the
-        insert order."""
+        insert order. The backlog is several rows, so a ranking that fell back
+        to the count would pick the old name."""
         s = _session()
         _add(s, "older", session_id="s0", cwd="/home/u/app", project="app")
         _add(
@@ -456,16 +457,17 @@ class TestRepoRelabels:
             project_ref="new-name",
             ts=_TS.replace(hour=12),
         )
-        # The replay lands last, but its event is older than the rename.
-        _add(
-            s,
-            "replayed",
-            session_id="s2",
-            cwd="/home/u/app",
-            project="old-name",
-            project_ref="old-name",
-            ts=_TS.replace(hour=6),
-        )
+        # The replay lands last, but its events are older than the rename.
+        for index in range(3):
+            _add(
+                s,
+                f"replayed{index}",
+                session_id=f"s-replay{index}",
+                cwd="/home/u/app",
+                project="old-name",
+                project_ref="old-name",
+                ts=_TS.replace(hour=6),
+            )
 
         plan = plan_repo_relabels(s)
 
