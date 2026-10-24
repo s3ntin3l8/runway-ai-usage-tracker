@@ -50,15 +50,18 @@ def test_server_image_includes_pure_usage_audit_without_credential_runtime(tmp_p
     package = tmp_path / "scripts"
     package.mkdir()
     shutil.copyfile(ROOT / source, package / "audit_claude_usage.py")
+    code = """import sys
+sys.path.insert(0, sys.argv[1])
+from scripts.audit_claude_usage import audit_messages
+assert audit_messages([])['ready_for_ingestion'] is False
+assert not any(n == 'app' or n.startswith(('app.', 'scripts.sidecar_pkg.')) for n in sys.modules)
+"""
     result = subprocess.run(
         [
             sys.executable,
             "-I",
             "-c",
-            "import sys; sys.path.insert(0,sys.argv[1]); "
-            "from scripts.audit_claude_usage import audit_messages; "
-            "assert audit_messages([])['ready_for_ingestion'] is False; "
-            "assert not any(n == 'app' or n.startswith(('app.', 'scripts.sidecar_pkg.')) for n in sys.modules)",
+            code,
             str(tmp_path),
         ],
         cwd=tmp_path,

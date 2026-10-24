@@ -449,7 +449,7 @@ async def test_cancelled_probe_closes_stream_and_releases_admission(environment)
     await asyncio.wait_for(started.wait(), 1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=1)
     assert stream.closed and not probe._gate.locked()
 
 
@@ -648,3 +648,48 @@ async def test_enrolled_file_contribution_is_not_a_device_revocation_bypass(
     )
     result = await run(request(), lambda r: pytest.fail("Revoked file contribution was used"))
     assert result["outcome"] == "source_ineligible" and result["requests"] == 0
+
+
+@pytest.mark.asyncio
+async def test_selected_session_uses_only_a_validated_listed_identifier(environment):
+    paths = []
+
+    def upstream(r):
+        paths.append(r.url.path)
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": "first"}, {"id": "second"}], "next_cursor": None}
+            )
+        assert r.url.path == "/v1/code/sessions/second/events"
+        return httpx.Response(200, json={"data": [], "next_cursor": None})
+
+    result = await run(request(session_id="second"), upstream)
+    assert result["outcome"] == "sample_complete" and len(paths) == 3
+
+
+@pytest.mark.asyncio
+async def test_unsafe_provider_session_id_never_becomes_a_request_path(environment):
+    paths = []
+
+    def upstream(r):
+        paths.append(r.url.path)
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(
+            200, json={"data": [{"id": "../../other?private"}], "next_cursor": None}
+        )
+
+    result = await run(request(), upstream)
+    assert result["outcome"] == "unsupported_contract" and len(paths) == 2
+
+
+@pytest.mark.asyncio
+async def test_history_sink_rejects_unsafe_identifier_even_for_internal_callers(environment):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: pytest.fail("Unsafe path reached HTTP"))
+    ) as client:
+        attempt = probe._Probe(request(), client)
+        with pytest.raises(probe.ProbeError, match="^unsupported_contract$"):
+            await attempt.history("../other?private", {})

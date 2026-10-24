@@ -31,7 +31,7 @@ from app.services.account_identity import canonical_account_id
 from app.services.probe_mode import probing
 from app.services.source_controls import allowed
 from app.services.token_cache import token_cache
-from scripts.audit_claude_usage import AuditInputError, audit_messages
+from scripts.audit_claude_usage import audit_messages
 from scripts.sidecar_pkg.source_catalog import source_for_origin
 
 BASE_URL = "https://api.anthropic.com"
@@ -295,7 +295,6 @@ class _Probe:
             raise ProbeError("unsupported_contract") from None
 
     async def identity(self) -> dict[str, str]:
-        assert self.tokens is not None
         headers = {
             "Authorization": f"Bearer {self.tokens['oauth_token']}",
             "anthropic-beta": "oauth-2025-04-20",
@@ -351,10 +350,15 @@ class _Probe:
         if not ids:
             self.report["outcome"] = "no_sessions" if cursor is None else "sample_limited"
             return
-        sid = self.request.session_id or cast(str, ids[0])
+        sid = next(
+            (cast(str, value) for value in ids if value == self.request.session_id),
+            cast(str, ids[0]),
+        )
         await self.history(sid, headers)
 
     async def history(self, sid: str, headers: dict[str, str]) -> None:
+        if not _SESSION_ID.fullmatch(sid):
+            raise ProbeError("unsupported_contract")
         self.report["stage"] = "history"
         self.report["history_complete"] = False
         records_by_location: dict[str, list[dict[str, Any]]] = {
@@ -369,7 +373,8 @@ class _Probe:
             if cursor is not None:
                 params["cursor"] = cursor
             records, cursor = _page(
-                await self.get(f"/v1/code/sessions/{sid}/events", headers, params), 50
+                await self.get(f"/v1/code/sessions/{quote(sid, safe='')}/events", headers, params),
+                50,
             )
             self.report["history_pages"] += 1
             self.report["history_events"] += len(records)
@@ -438,7 +443,6 @@ async def probe_cloud_history(
                             httpx.HTTPError,
                             ValueError,
                             RecursionError,
-                            AuditInputError,
                         ):
                             await attempt.check_source()
                             raise
@@ -451,7 +455,7 @@ async def probe_cloud_history(
                 attempt.report["outcome"] = "source_unavailable"
             except httpx.HTTPError:
                 attempt.report["outcome"] = "unavailable"
-            except (AuditInputError, ValueError, RecursionError):
+            except (ValueError, RecursionError):
                 attempt.report["outcome"] = "unsupported_contract"
             if attempt.report["outcome"] in ("source_changed", "timeout", "source_unavailable"):
                 report = _empty_report()

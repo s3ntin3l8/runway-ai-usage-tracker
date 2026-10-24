@@ -9,6 +9,7 @@ Architecture:
 """
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -680,7 +681,7 @@ class TokenCache:
             tokens, metadata, timestamp = entry
             if metadata.get("durable_source") is not True and time.time() - timestamp > self._ttl:
                 return None
-            return dict(tokens), dict(metadata)
+            return dict(tokens), copy.deepcopy(metadata)
 
     async def get_source_candidates(self, provider: str, account_id: str) -> list[dict[str, Any]]:
         """Return live source bundles in configured priority order."""

@@ -59,3 +59,18 @@ async def test_snapshot_preserves_legacy_ttl_without_deleting_or_reloading(monke
     assert cache._source_cache["anthropic"]["one"]["a"] == expired
     metadata["durable_source"] = True
     assert (await cache.peek_source("anthropic", "one", "a"))[0] == {"oauth_token": "fixture"}
+
+
+@pytest.mark.asyncio
+async def test_snapshot_nested_metadata_cannot_mutate_live_cache():
+    cache = TokenCache()
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "fixture"},
+        account_id="one",
+        source_id="a",
+        source_metadata={"cards": [{"remaining": "10"}]},
+    )
+    _, metadata = await cache.peek_source("anthropic", "one", "a")
+    metadata["cards"][0]["remaining"] = "changed"
+    assert (await cache.peek_source("anthropic", "one", "a"))[1]["cards"] == [{"remaining": "10"}]

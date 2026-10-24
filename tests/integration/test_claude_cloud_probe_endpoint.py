@@ -114,3 +114,45 @@ def test_duplicate_request_keys_cannot_select_a_different_source(client):
     assert response.status_code == 422
     assert response.json() == {"detail": "invalid_probe_request"}
     service.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"not-json", b"x" * 9000, b'{"source_id":"one","source_id":"two"}'],
+    ids=["invalid-json", "oversized", "duplicate-keys"],
+)
+def test_unauthorized_body_shapes_have_uniform_auth_response(client, body):
+    http, service = client
+    response = http.post(PATH, content=body, headers={"Content-Type": "application/json"})
+    assert response.status_code == 403
+    service.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_is_clean_without_publishing_or_logging_body(client):
+    from starlette.requests import Request
+
+    _, service = client
+
+    async def disconnected():
+        return {"type": "http.disconnect"}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": PATH,
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("testclient", 123),
+            "headers": [(b"host", b"testserver"), (b"x-admin-key", b"probe-test-admin")],
+            "app": app,
+        },
+        disconnected,
+    )
+    route = next(route for route in endpoint.router.routes if route.path == "/debug/claude-cloud")
+    response = await route.get_route_handler()(request)
+    assert response.status_code == 400
+    assert response.body == b'{"detail":"probe_request_disconnected"}'
+    service.assert_not_awaited()
