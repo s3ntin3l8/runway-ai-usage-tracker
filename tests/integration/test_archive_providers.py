@@ -8,7 +8,10 @@ Covers:
 - PUT via account-scoped endpoint for multi-account providers
 """
 
+import hashlib
+import hmac
 import json
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -471,6 +474,253 @@ class TestMultiAccountArchive:
         ).first()
         assert row_a is not None and row_a.archived is True and row_a.enabled is False
         assert row_b is not None and row_b.archived is False and row_b.enabled is True
+
+
+# ---------------------------------------------------------------------------
+# Archiving evicts the retired account's cached credential (#891)
+# ---------------------------------------------------------------------------
+
+INGEST_SECRET = "test-sidecar-secret-for-archive"  # pragma: allowlist secret
+
+
+@pytest.fixture(autouse=True)
+def _isolated_ingest_key(monkeypatch):
+    """Pin INGEST_API_KEY — the sidecar push in the restore test needs it.
+
+    The dotted-path form (not the bound ``settings`` import) survives a
+    ``importlib.reload(app.core.config)`` from ``tests/unit/test_config.py``.
+    Same shape as the fixture in ``test_fleet_credentials.py``.
+    """
+    monkeypatch.setattr("app.core.config.settings.INGEST_API_KEY", INGEST_SECRET)
+    yield
+
+
+@pytest.fixture
+def clean_token_cache():
+    """Give the test a clean cache, and leave none behind.
+
+    The token cache is a process-wide singleton while the test's database is
+    per test, so a seeded credential would otherwise leak into the next test.
+    ``reset()`` is async, and awaiting it from the test body would bind the
+    cache's lock to that throwaway loop — the same trap the DELETE test
+    documents — so the dicts are cleared directly.
+    """
+    from app.services.token_cache import token_cache
+
+    def _clear() -> None:
+        token_cache._cache.clear()
+        token_cache._token_timestamps.clear()
+        token_cache._source_cache.clear()
+
+    _clear()
+    yield token_cache
+    _clear()
+
+
+def _seed_source_bundle(token_cache, provider: str, account_id: str, source_id: str) -> None:
+    """Seed a source bundle without touching the cache's asyncio lock.
+
+    ``seed_sync`` writes the merged account entry only; a source bundle is
+    what the collectors read, and ``remove()`` drops both. The layout is the
+    one ``store()`` uses: ``(tokens, metadata, last_seen)``.
+    """
+    accounts = token_cache._source_cache.setdefault(provider, {}).setdefault(account_id, {})
+    accounts[source_id] = (
+        {"api_key": "sk-or-test-alice"},  # pragma: allowlist secret
+        {"source": "sidecar"},
+        time.time(),
+    )
+
+
+def _signed_ingest(client: TestClient, sidecar_id: str, cards: list[dict]):
+    """POST one sidecar heartbeat, signed the way the server expects."""
+    body = json.dumps({"provider": "sidecar", "sidecar_id": sidecar_id, "metrics": cards}).encode()
+    ts = str(int(time.time()))
+    sig = hmac.new(INGEST_SECRET.encode(), ts.encode() + body, hashlib.sha256).hexdigest()
+    return client.post(
+        "/api/v1/fleet/ingest",
+        content=body,
+        headers={"X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"},
+    )
+
+
+def _token_card(provider: str, account_id: str, api_key: str, origin: str) -> dict:
+    """A token-only card — the shape a sidecar reports a credential in."""
+    return {
+        "service_name": provider,
+        "remaining": "Token",
+        "unit": "api_key",
+        "provider_id": provider,
+        "account_id": account_id,
+        "metadata": {
+            "provider_id": provider,
+            "api_key": api_key,
+            "credential_origin": origin,
+            "account_id": account_id,
+        },
+    }
+
+
+class TestArchiveEvictsTheCachedCredential:
+    """An archived account must not keep a live credential (#891).
+
+    The Remove path has always evicted the account's cache entry; the archive
+    write path did not, so a retired account kept a bundle that only reads
+    "expired" and stays refreshable.
+    """
+
+    def test_archiving_an_account_evicts_its_cached_credential(
+        self, session: Session, clean_token_cache
+    ):
+        _add_provider_config(
+            session, provider_id="openrouter", account_id="alice@example.com", enabled=True
+        )
+        clean_token_cache.seed_sync(
+            "openrouter",
+            "alice@example.com",
+            {"api_key": "sk-or-test-alice"},  # pragma: allowlist secret
+            {"account_label": "Alice", "source": "sidecar"},
+            time.time(),
+        )
+        _seed_source_bundle(clean_token_cache, "openrouter", "alice@example.com", "sidecar:dev-01")
+        # Another account's credential must survive the eviction.
+        clean_token_cache.seed_sync(
+            "openrouter",
+            "bob@example.com",
+            {"api_key": "sk-or-test-bob"},  # pragma: allowlist secret
+            {"account_label": "Bob", "source": "sidecar"},
+            time.time(),
+        )
+
+        resp = _client().put(
+            "/api/v1/system/provider-config/openrouter/alice%40example.com",
+            json={"archived": True},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # The retired account holds neither the merged entry nor its bundles.
+        assert clean_token_cache._cache.get("openrouter", {}).get("alice@example.com") is None
+        assert (
+            clean_token_cache._source_cache.get("openrouter", {}).get("alice@example.com") is None
+        )
+        # Another account's credential is untouched.
+        assert clean_token_cache._cache.get("openrouter", {}).get("bob@example.com") is not None
+
+    def test_archiving_an_account_keeps_its_stored_credential(
+        self, session: Session, clean_token_cache
+    ):
+        """Archive is not Remove: the stored credential survives, so a restore
+        is usable immediately."""
+        row = _add_provider_config(
+            session, provider_id="openrouter", account_id="alice@example.com", enabled=True
+        )
+        row.api_key = "sk-or-test-alice"  # pragma: allowlist secret
+        session.add(row)
+        session.commit()
+
+        resp = _client().put(
+            "/api/v1/system/provider-config/openrouter/alice%40example.com",
+            json={"archived": True},
+        )
+        assert resp.status_code == 200, resp.text
+
+        stored = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "openrouter",
+                ProviderConfig.account_id == "alice@example.com",
+            )
+        ).first()
+        assert stored is not None
+        assert stored.archived is True
+        assert stored.api_key is not None
+
+    def test_restoring_an_account_lets_the_next_sidecar_push_bring_the_credential_back(
+        self, session: Session, clean_token_cache
+    ):
+        """The machine still has the credential file: after a restore, its
+        next push puts the credential back."""
+        _add_provider_config(
+            session, provider_id="openrouter", account_id="alice@example.com", enabled=True
+        )
+        client = _client()
+
+        archived = client.put(
+            "/api/v1/system/provider-config/openrouter/alice%40example.com",
+            json={"archived": True},
+        )
+        assert archived.status_code == 200, archived.text
+        assert clean_token_cache._cache.get("openrouter", {}).get("alice@example.com") is None
+
+        restored = client.put(
+            "/api/v1/system/provider-config/openrouter/alice%40example.com",
+            json={"archived": False},
+        )
+        assert restored.status_code == 200, restored.text
+
+        pushed = _signed_ingest(
+            client,
+            "dev-01",
+            [
+                _token_card(
+                    "openrouter",
+                    "alice@example.com",
+                    "sk-or-test-alice",  # pragma: allowlist secret
+                    "path:/home/u/.opencode/auth.json",
+                )
+            ],
+        )
+        assert pushed.status_code == 200, pushed.text
+
+        assert clean_token_cache._cache.get("openrouter", {}).get("alice@example.com") is not None
+
+    def test_merging_accounts_evicts_the_source_accounts_cached_credential(
+        self, session: Session, clean_token_cache
+    ):
+        """The merge retires the source account too — it must not keep a live
+        cached credential either."""
+        _add_provider_config(
+            session, provider_id="openrouter", account_id="alice@example.com", enabled=True
+        )
+        _add_provider_config(
+            session, provider_id="openrouter", account_id="bob@example.com", enabled=True
+        )
+        clean_token_cache.seed_sync(
+            "openrouter",
+            "alice@example.com",
+            {"api_key": "sk-or-test-alice"},  # pragma: allowlist secret
+            {"account_label": "Alice", "source": "sidecar"},
+            time.time(),
+        )
+        clean_token_cache.seed_sync(
+            "openrouter",
+            "bob@example.com",
+            {"api_key": "sk-or-test-bob"},  # pragma: allowlist secret
+            {"account_label": "Bob", "source": "sidecar"},
+            time.time(),
+        )
+
+        resp = _client().post(
+            "/api/v1/system/provider-account-merge/apply",
+            json={
+                "provider_id": "openrouter",
+                "source_account_id": "alice@example.com",
+                "destination_account_id": "bob@example.com",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        # The retired source holds nothing; the destination keeps its own.
+        assert clean_token_cache._cache.get("openrouter", {}).get("alice@example.com") is None
+        assert clean_token_cache._cache.get("openrouter", {}).get("bob@example.com") is not None
+
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == "openrouter",
+                ProviderConfig.account_id == "alice@example.com",
+            )
+        ).first()
+        assert row is not None
+        assert row.archived is True
 
 
 # ---------------------------------------------------------------------------

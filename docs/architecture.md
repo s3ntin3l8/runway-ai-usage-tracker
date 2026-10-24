@@ -258,6 +258,23 @@ write path stores accounts canonically, a config row carries whatever the
 operator typed) and is shared with `ParkedMapping`, so the inventory's marker
 and the parked-mapping check can never disagree.
 
+Archiving also **evicts the account's cached credential** — the token cache
+entry and every source bundle of that account — so a retired account holds
+nothing live: no credential to collect with, nothing to refresh, and no
+expired row sitting in Token Health for an account the operator retired. The
+Remove path has always done this, and so has the maintenance rekey when it
+archives a source row; the archive write path was the one site that did not.
+The stored credential (`provider_configs.api_key`, `session_cookie`) is *not*
+touched — Archive is reversible, Remove is destructive — so restoring the
+account makes it usable again at once, while a machine-reported credential
+returns with that machine's next push.
+
+The eviction narrows the window rather than closing it: the machine still has
+the credential file and pushes it every cycle, and an enrolled machine's
+credential also survives as a durable contribution that the cache reloads on
+the next snapshot revision. Whether a credential parked on a retired account
+should be cached at all is a separate design call.
+
 A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
 the hint before the account was archived was still applying it, because the
 manifest's `resolved` map was merged into the sidecar's cache and a merge
