@@ -1074,6 +1074,59 @@ def test_passive_provider_added_to_poll_providers(session):
     )
 
 
+def _hermes_ingest(client: TestClient, sidecar_id: str) -> dict:
+    payload = {
+        "provider": f"sidecar-{sidecar_id}",
+        "sidecar_id": sidecar_id,
+        "metrics": [],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        return _ingest(client, payload)
+
+
+def test_hermes_event_provider_scheduled_on_its_interval(session):
+    """Hermes has no provider_configs or latest_usage row, yet its extractor must
+    run on the poll cadence rather than only on full cycles — and only when due."""
+    from app.services.fleet_registry import fleet_registry
+
+    sidecar_id = "sidecar-hermes-cadence"
+    fleet_registry._last_provider_polls.pop(sidecar_id, None)
+    fleet_registry._pending_triggers.discard(sidecar_id)
+    client = TestClient(app)
+
+    first = _hermes_ingest(client, sidecar_id)
+    assert "hermes" in first["poll_providers"]
+    second = _hermes_ingest(client, sidecar_id)
+    assert "hermes" not in second["poll_providers"]
+
+
+def test_paused_sidecar_gets_no_hermes_poll(session):
+    from app.models.db import SidecarRegistry
+    from app.services.fleet_registry import fleet_registry
+
+    sidecar_id = "sidecar-hermes-paused"
+    fleet_registry._last_provider_polls.pop(sidecar_id, None)
+    fleet_registry._pending_triggers.discard(sidecar_id)
+    client = TestClient(app)
+
+    _hermes_ingest(client, sidecar_id)  # registers the sidecar
+    fleet_registry._last_provider_polls.pop(sidecar_id, None)
+    row = session.get(SidecarRegistry, sidecar_id)
+    assert row is not None
+    row.collection_enabled = False
+    session.add(row)
+    session.commit()
+
+    assert _hermes_ingest(client, sidecar_id)["poll_providers"] == []
+
+
 def test_sidecar_quota_guard_rejects_non_lsp(session):
     """Sidecar-pushed quota cards (unit_type=percent / pct_used set) must be
     dropped unless data_source is 'lsp'.  Enforces the architecture rule:
