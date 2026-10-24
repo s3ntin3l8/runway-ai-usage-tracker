@@ -336,8 +336,13 @@ def _emit(text: str) -> None:
     _notify_windows(f"The MiniMax Code probe wrote its report to:\n{path}")
 
 
-def _store_detail(db_path: Path) -> dict[str, Any]:
-    """Report one store: its schema, its ledger counts and what it yields."""
+def _store_detail(db_path: Path, on_disk: dict[str, tuple[int, int]]) -> dict[str, Any]:
+    """Report one store: its schema, its ledger counts and what it yields.
+
+    ``on_disk`` is the cursor file's per-store skip counts, parsed once by
+    the caller and passed in — a store the probe's own run had no opinion
+    about falls back to them.
+    """
     from scripts.sidecar_pkg.event_extractors.minimax_code import (
         parked_skip_counts,
         parse_minimax_code_events,
@@ -417,7 +422,7 @@ def _store_detail(db_path: Path) -> dict[str, Any]:
     # the usage went.
     counts = parked_skip_counts(_cursor_path(), db_path)
     if counts is None:
-        counts = _cursor_skips(_cursor_path()).get(str(db_path.resolve()), (0, 0))
+        counts = on_disk.get(str(db_path.resolve()), (0, 0))
     detail["skipped_requests"], detail["abandoned_requests"] = counts
 
     if detail["error"]:
@@ -473,7 +478,10 @@ def probe_minimax_code() -> dict[str, Any]:
         )
         return report
 
-    details = [_store_detail(db_path) for db_path in db_paths]
+    # The cursor file's per-store skip counts, parsed once: a store the
+    # probe's own run had no opinion about falls back to them.
+    on_disk = _cursor_skips(_cursor_path())
+    details = [_store_detail(db_path, on_disk) for db_path in db_paths]
     report["stores"] = details
 
     # The primary store is the first one the extractor understands. A store
@@ -508,7 +516,6 @@ def probe_minimax_code() -> dict[str, Any]:
     # when it had an opinion, the cursor file's counts when it did not. A
     # store the probe did not scan at all has no run and no detail, so the
     # cursor file is all there is for it.
-    on_disk = _cursor_skips(cursor)
     scanned: set[str] = set()
     for detail in details:
         report["skipped_requests"] += detail["skipped_requests"]

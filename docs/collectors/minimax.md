@@ -268,7 +268,7 @@ MiniMax Code runtime store — read-only probe
   store modified      : 2026-10-23T16:47:13.208315+00:00
   schema              : OK
   ledger              : 5934 requests · 96 turns · 10 sessions
-  outside the window  : 0 request(s) (a first run imports 90 days)
+  not imported        : 0 request(s) would be skipped by a first run (it imports 90 days)
   plan-review rows    : 2005
   model MiniMax-M3.1-Flash         : 5000
   cursor              : /home/x/.config/runway/sidecar/minimax_code_watermark.json
@@ -286,12 +286,17 @@ store was found and understood, and 1 when there is nothing to read (no store) o
 drifted. `--json` prints the same report as JSON, with one entry per store under `stores`.
 
 Two lines of the report are about *coverage* rather than about the store's shape.
-**outside the window** counts the ledger rows a *first* run would not import — the rows older
-than the bootstrap window. While the cursor advances they are all reported, but a rebuilt store
-or a deleted cursor file starts from the window, so a non-zero count is a warning that names
-`SIDECAR_BOOTSTRAP_DAYS` as the remedy. **skipped requests** and **abandoned requests** count
-the rows the extractor could not turn into events: the skipped ones are waiting for the next
-cycle, the abandoned ones exhausted their attempts and their usage was never reported.
+**not imported** counts the ledger rows a *first* run would not import. The first run's floor is
+on the **id axis** — the lowest id whose timestamp falls inside the window — so the rows it skips
+are the ones *before* that id, and a row with an older timestamp but a higher id is still
+imported. While the cursor advances every row is reported, but a rebuilt store or a deleted cursor
+file starts from the window, so a non-zero count is a warning that names `SIDECAR_BOOTSTRAP_DAYS` as
+the remedy. **skipped requests** and **abandoned requests** count the rows the extractor could not
+turn into events: the skipped ones are waiting for the next cycle, the abandoned ones exhausted
+their attempts and their usage was never reported.
+
+A store the probe's own run had nothing to read keeps the cursor file's counts — that is the
+steady state of an idle host, which is exactly when the probe is run to ask where the usage went.
 
 On a Windows host the same probe reports the Windows paths:
 
@@ -304,7 +309,7 @@ MiniMax Code runtime store — read-only probe
   store               : C:\Users\<you>\.minimax\v2\sqlite\runtime-state.sqlite (302.0 MiB)
   schema              : OK
   ledger              : 14454 requests · 186 turns · 22 sessions
-  outside the window  : 0 request(s) (a first run imports 90 days)
+  not imported        : 0 request(s) would be skipped by a first run (it imports 90 days)
   model MiniMax-M3.1-Flash         : 5000
   cursor              : C:\Users\<you>\AppData\Roaming\runway\sidecar\minimax_code_watermark.json
   skipped requests    : 0 (retried on the next cycle)
