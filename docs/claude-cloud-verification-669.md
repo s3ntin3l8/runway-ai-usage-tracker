@@ -96,6 +96,7 @@ invalid input produces only a fixed failure envelope.
 | Reason | Next action |
 | --- | --- |
 | `invalid_evidence` | Check the supported report contract and private input preparation; do not paste rejected input into logs or issues. |
+| `input_limit_exceeded` | Stop and check why the sanitized envelope exceeds 256 KiB; do not save raw responses or increase the bound to bypass investigation. |
 | `probe_not_complete` | Inspect the fixed probe outcome; stop on rejection, timeout, unavailable source, unsupported shape or partial history. |
 | `sample_requires_review` | Investigate missing identity/completeness flags or inconsistent sample bounds. |
 | `sequence_requires_review` | Investigate invalid, duplicate, missing or out-of-order sequence evidence. |
@@ -107,6 +108,10 @@ remain separate and are never converted to consumed totals. A successful sample
 still requires manual contract/envelope analysis, resume/reset/subagent/error
 accounting comparisons, durable checkpoint design, overlap reconciliation, and
 coverage evidence before a collector can be enabled. Retain local collection.
+
+Closing the output pipe exits 2 without printing a traceback. A failed output
+write leaves no complete evidence artifact; obtain a complete local validation
+result before treating its status as usable.
 
 ## Delivery and acceptance boundaries
 

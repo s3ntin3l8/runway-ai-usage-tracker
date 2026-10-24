@@ -246,10 +246,19 @@ def test_cli_only_reads_stdin_and_emits_fixed_errors():
 @pytest.mark.parametrize("field", ["usage_decreases", "model_usage_decreases", "error_results"])
 def test_resets_and_errors_need_review_even_if_status_claims_complete(field):
     item = evidence()
-    item["report"]["history_events"] = 2
-    item["report"]["sequence"]["numeric"] = 2
-    item["report"]["observations"][0]["report"]["result"]["records"] = 1
-    item["report"]["observations"][0]["report"]["result"][field] = 1
+    item["report"]["history_events"] = 3
+    item["report"]["sequence"]["numeric"] = 3
+    result = item["report"]["observations"][0]["report"]["result"]
+    result["records"] = 2
+    for prefix in ("usage", "model_usage"):
+        result[prefix + "_observations"] = 2
+        result["last_" + prefix + "_observation"] = {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        }
+    result[field] = 1
     assert "usage_requires_review" in evaluate(item)["reasons"]
 
 
@@ -274,3 +283,94 @@ def test_cli_runs_without_site_packages_or_application_imports():
     )
     assert result.returncode == 0
     assert json.loads(result.stdout)["status"] == "sample_observed"
+
+
+def test_a_limited_session_list_does_not_invalidate_the_selected_complete_sample():
+    item = evidence()
+    item["report"]["session_list_complete"] = False
+    assert evaluate(item)["status"] == "sample_observed"
+
+
+@pytest.mark.parametrize("which", ["usage", "model_usage"])
+@pytest.mark.parametrize("contradiction", ["zero_count", "missing_last", "excess_decreases"])
+def test_result_counter_payload_contradictions_are_rejected(which, contradiction):
+    item = evidence()
+    item["report"]["history_events"] = 2
+    item["report"]["sequence"]["numeric"] = 2
+    result = item["report"]["observations"][0]["report"]["result"]
+    result["records"] = 1
+    result[which + "_observations"] = 1
+    result["last_" + which + "_observation"] = {
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    if contradiction == "zero_count":
+        result[which + "_observations"] = 0
+    elif contradiction == "missing_last":
+        result["last_" + which + "_observation"] = None
+    else:
+        result[which + "_decreases"] = 1
+    with pytest.raises(EvidenceError):
+        evaluate(item)
+
+
+def test_cli_distinguishes_oversize_input_without_echoing_it():
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.verify_claude_cloud"],
+        input=b"x" * (MAX_BYTES + 1),
+        capture_output=True,
+        cwd=root,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["reasons"] == ["input_limit_exceeded"]
+    assert result.stderr == b""
+
+
+def test_cli_closed_output_pipe_exits_without_a_traceback():
+    script = Path(__file__).resolve().parents[2] / "scripts/verify_claude_cloud.py"
+    with subprocess.Popen(
+        [sys.executable, "-I", "-S", str(script)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as process:
+        process.stdout.close()
+        process.stdin.write(json.dumps(evidence()).encode())
+        process.stdin.close()
+        try:
+            assert process.wait(timeout=10) == 2
+            assert process.stderr.read() == b""
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+
+
+def test_incomplete_final_result_may_clear_an_earlier_snapshot_but_still_stops():
+    item = evidence()
+    audit = audit_messages(
+        [
+            {
+                "type": "result",
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+            },
+            {"type": "result", "usage": {}},
+        ]
+    )
+    assert audit["result"]["usage_observations"] == 1
+    assert audit["result"]["last_usage_observation"] is None
+    item["report"]["observations"][0]["report"] = audit
+    item["report"]["history_events"] = 2
+    item["report"]["sequence"]["numeric"] = 2
+    result = evaluate(item)
+    assert result["status"] == "stop" and "usage_requires_review" in result["reasons"]
+    assert result["report"]["observations"][0]["report"] == audit

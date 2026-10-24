@@ -126,6 +126,14 @@ def _audit(value: Any) -> None:
     for key in ("last_usage_observation", "last_model_usage_observation"):
         if result[key] is not None:
             _counters(result[key], TOKENS)
+    for prefix in ("usage", "model_usage"):
+        count = result[prefix + "_observations"]
+        last = result["last_" + prefix + "_observation"]
+        _require(last is None or count > 0)
+        if value["status"] == "observations_only":
+            _require(count == 0 or last is not None)
+        # Incomplete final records may clear a previously valid observation.
+        _require(result[prefix + "_decreases"] <= max(0, count - 1))
     diagnostics = value["diagnostics"]
     _require(type(diagnostics) is list and len(diagnostics) <= len(DIAGNOSTICS))
     for diagnostic in diagnostics:
@@ -209,12 +217,12 @@ def _usage_requires_review(observations: list[dict[str, Any]]) -> bool:
     if set(audit["diagnostics"]) - {"result_scope_unverified", "output_placeholder_divergence"}:
         return True
     return not (
-        assistant["unique_messages"]
-        and assistant["input_cache_observations"] is not None
-        or result["usage_observations"]
-        and result["last_usage_observation"] is not None
-        or result["model_usage_observations"]
-        and result["last_model_usage_observation"] is not None
+        (assistant["unique_messages"] and assistant["input_cache_observations"] is not None)
+        or (result["usage_observations"] and result["last_usage_observation"] is not None)
+        or (
+            result["model_usage_observations"]
+            and result["last_model_usage_observation"] is not None
+        )
     )
 
 
@@ -252,6 +260,7 @@ def evaluate(value: Any) -> dict[str, Any]:
     reasons = []
     if report["outcome"] != "sample_complete":
         reasons.append("probe_not_complete")
+    # The session list may be sampled; only the selected history chain must be complete.
     if report["stage"] != "complete" or not (
         report["account_verified"]
         and report["organization_verified"]
@@ -307,9 +316,24 @@ def main() -> int:
         if len(sys.argv) != 1:
             raise EvidenceError("invalid_evidence")
         result = evaluate(read_evidence(sys.stdin.buffer))
-    except (EvidenceError, OSError, RecursionError):
+    except EvidenceError as exc:
+        reason = (
+            "input_limit_exceeded" if str(exc) == "input_limit_exceeded" else "invalid_evidence"
+        )
+        result = _decision("stop", [reason])
+    except (OSError, RecursionError):
         result = _decision("stop", ["invalid_evidence"])
-    print(json.dumps(result, sort_keys=True, indent=2))
+    try:
+        print(json.dumps(result, sort_keys=True, indent=2))
+        sys.stdout.flush()
+    except OSError:
+        # Closing a broken buffered pipe can fail again. Mark it closed so
+        # interpreter shutdown does not emit an unraisable flush traceback.
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
+        return 2
     return 0 if result["status"] == "sample_observed" else 2
 
 
