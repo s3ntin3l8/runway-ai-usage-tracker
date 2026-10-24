@@ -388,7 +388,6 @@ class TokenHealthService:
 
         sidecar_names = {}
         durable_sources: list[CredentialSource] = []
-        configs: list[ProviderConfig] = []
         try:
             with Session(engine) as _s:
                 for sc in _s.exec(sqlselect(SidecarRegistry)).all():
@@ -410,12 +409,19 @@ class TokenHealthService:
                     and isinstance(item.source_id, str)
                     and isinstance(item.sidecar_id, str)
                 ]
-                # One query for two readers: the retired accounts (a retired
-                # account holds no live credential — see #895) and the
-                # dashboard-saved credentials further down.
-                configs = list(_s.exec(sqlselect(ProviderConfig)).all())
         except Exception as e:
             logger.warning(f"Could not load sidecar names for token health: {e}")
+
+        # Two readers, one query: the retired accounts (a retired account holds
+        # no live credential — see #895) and the dashboard-saved credentials
+        # further down. Its own block, so a failure here is reported as what
+        # it is rather than as a missing sidecar name.
+        configs: list[ProviderConfig] = []
+        try:
+            with Session(engine) as _s:
+                configs = list(_s.exec(sqlselect(ProviderConfig)).all())
+        except Exception as e:
+            logger.warning(f"Could not load ProviderConfig credentials for token health: {e}")
         # A retired account holds no live credential: its source record stays
         # visible in the credential inventory, but nothing live is held for it,
         # so Token Health has nothing to report about it.
@@ -443,6 +449,11 @@ class TokenHealthService:
 
         for provider, accounts in stats.items():
             for acc_id, info in accounts.items():
+                if (provider, canonical_account_id(acc_id)) in retired_accounts:
+                    # A retired account holds no live credential — but the cache
+                    # can still hold one for a cycle (a push that raced the
+                    # archive). Token Health only lists what is live.
+                    continue
                 tokens = await token_cache.get(provider, acc_id) or {}
                 if provider == "anthropic" and tokens.get("oauth_token") in source_oauth_values:
                     tokens = {

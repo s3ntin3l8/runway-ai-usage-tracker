@@ -494,6 +494,55 @@ class TestTokenHealthService:
         assert result == []
 
     @pytest.mark.asyncio
+    async def test_a_retired_account_is_not_listed_even_while_the_cache_holds_it(self):
+        """The cache can still hold a bundle for a retired account for a cycle.
+
+        A push that raced the archive files the secret under the retired
+        account; the next push drops it again. Token Health must not list it
+        in the meantime — it lists what is live, and a retired account's
+        credential is not.
+        """
+        from app.models.db import ProviderConfig
+
+        service = TokenHealthService()
+        retired = ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="retired@example.test",
+            enabled=False,
+            archived=True,
+        )
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.all.side_effect = [[], [], [retired]]
+
+        with (
+            patch(
+                "app.services.token_health.token_cache.get_all_stats",
+                new=AsyncMock(
+                    return_value={
+                        "kimi_coding": {
+                            "retired@example.test": {"source": "sidecar", "last_seen": None}
+                        }
+                    }
+                ),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get",
+                new=AsyncMock(return_value={"api_key": "synthetic-key"}),
+            ),
+            patch(
+                "app.services.token_health.token_cache.get_source_candidates",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("app.services.token_health.Session", return_value=mock_session),
+            patch("app.services.token_health._collect_server_credentials", return_value={}),
+        ):
+            result = await service.get_health()
+
+        assert result == []
+
+    @pytest.mark.asyncio
     async def test_a_live_account_is_still_listed(self):
         """The retired-account rule is narrow: a live account's credential is
         listed as before."""

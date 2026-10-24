@@ -1454,6 +1454,12 @@ async def apply_provider_account_merge(
             src.archived = True
             src.api_key_encrypted = None
             src.session_cookie_encrypted = None
+    # The merge retires the source account id — renamed or archived — and the
+    # secret it still holds at rest under that id goes with it: the cache
+    # reloads every durable bundle on the next revision change, so the retired
+    # id would get it back. Part of the merge transaction: a failed commit
+    # leaves the source account and its credential alone.
+    source_controls.retire_contributions_for_account(session, body.provider_id, source_id)
     session.commit()
     # The merge retires the source account: its config row was renamed to the
     # destination or archived (or it had none at all — a machine-discovered
@@ -2193,6 +2199,11 @@ async def delete_provider_config_for_account(
         row.session_cookie = None
         row.oai_sc_cookie = None
         session.add(row)
+        # A retired account holds no credential: retire the secret this
+        # account still holds at rest for it (the cache reloads every durable
+        # bundle on the next revision change, so the retired account would get
+        # it back without this).
+        source_controls.retire_contributions_for_account(session, provider_id, account_id)
     session.commit()
 
     # Drop the in-memory token cache entry. The async lock is held inside
