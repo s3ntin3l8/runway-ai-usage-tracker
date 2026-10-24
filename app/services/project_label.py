@@ -9,6 +9,9 @@ make that non-trivial, so they live here as the single source of truth shared by
   often points inside a git worktree (`<root>/.claude/worktrees/<name>/…`) or a
   temp dir (`<root>/.claude/tmp/…`). The `.claude` segment reliably marks the
   project-root boundary, so we cut there. Safe to apply to a single cwd at ingest.
+  The segment has to be a whole one — and it has to be *preceded* by a
+  separator, so a relative path that starts with `.claude` is left alone: there
+  is no root to cut back to, and cutting it would lose the label entirely.
 - **Rule 2 — per-session shallowest cwd**: Claude Code records a `cwd` that drifts
   into subfolders (`services/api`, `apps/web`, …) mid-session. The shallowest cwd
   observed in a session is the root. This needs the whole session, so it runs in
@@ -72,7 +75,9 @@ def normalize_cwd(cwd: str | None) -> str | None:
 
     If `cwd` contains a `.claude` segment, truncate to the part before the FIRST
     occurrence (drops worktrees/tmp). The segment is matched in either
-    separator form, so a Windows worktree path collapses like a POSIX one.
+    separator form, so a Windows worktree path collapses like a POSIX one, and
+    it must be preceded by a separator — a relative path that *starts* with
+    `.claude` has no root to cut back to and is left alone.
     Trailing separators are stripped. Returns None for None/empty input.
     """
     if not cwd:
