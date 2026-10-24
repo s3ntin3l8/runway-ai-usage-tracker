@@ -18,16 +18,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  browser-and-proxy:
-    runs-on: ubuntu-latest
-    # The job's own work takes a minute or two; the Playwright system
-    # dependencies come from the runner's apt mirror, and a slow mirror spent
-    # 19.5 minutes on 74 fetches (the slowest one took 201 seconds). At a
-    # 20-minute budget the job was cancelled while the install was still
-    # running, so the browser tests never ran and the failure looked like a
-    # code problem. 40 minutes covers that install with room to spare and
-    # still fails a genuinely stuck runner.
-    timeout-minutes: 40
+  browser-boundaries:
+    name: Browser boundaries (Chromium, Firefox and WebKit)
+    runs-on: ubuntu-24.04
+    # The image carries the browsers and their system dependencies, so this
+    # job runs no apt transaction and downloads no browser. The budget covers
+    # the image pull, pip, npm and the browser matrix.
+    timeout-minutes: 25
+    container:
+      # The browsers and the system libraries they need are baked into this
+      # image at build time. That is the point of it: `playwright install
+      # --with-deps` unconditionally runs `apt-get update` against the
+      # runner's apt mirror, and a stalled mirror took 39 minutes and 27
+      # seconds of this job's budget on 2026-10-23 (#876) -- the browser
+      # checks never ran at all. The image also carries no Python and no
+      # repository-pinned Node, so setup-python and setup-node provide those.
+      #
+      # The tag follows the locked playwright-core version in
+      # webapp/package-lock.json, and scripts/check_workflow_pins.py fails the
+      # build when the two disagree. The digest is the multi-arch index
+      # digest; docs/security-validation.md records how to resolve it again.
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -36,51 +47,57 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      - name: Cache Playwright browsers
-        # The browser binaries are a ~150 MB download that `playwright install`
-        # repeated on every run. The version follows the playwright release in
-        # package-lock.json, so the lockfile's hash is the right cache key.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('webapp/package-lock.json') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-      - name: Tune apt for a slow mirror
-        # The Playwright system dependencies are the only part of this job
-        # that talks to a third-party mirror. Retrying a failed fetch and
-        # bounding a hung one keeps one slow package from taking the job
-        # down with it.
-        run: |
-          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries
-          echo 'Acquire::http::Timeout "120";' | sudo tee /etc/apt/apt.conf.d/80-timeout
       - name: Install Python test dependencies
         run: |
           python -m venv .venv
           # The suite's set, not the union: this job runs tests, not the
           # lint gate.
           .venv/bin/pip install -r requirements-test.txt
+      - name: Verify the toolchain
+        # The versions are printed so a mismatch shows up in the log instead
+        # of surfacing as an opaque `npm ci` refusal: webapp/package.json
+        # states the floors as devEngines with onFail: error, so npm enforces
+        # them on install.
+        run: |
+          node --version
+          npm --version
+          .venv/bin/python --version
       - name: Install webapp dependencies
         run: npm --prefix webapp ci
-      - name: Install Playwright browsers and system dependencies
-        # Its own step, so a job that runs out of time says which install was
-        # slow instead of cancelling the whole job.
-        run: cd webapp && npx playwright install --with-deps
-      - name: Check immutable CI references
-        run: python scripts/check_workflow_pins.py
       - name: Browser boundaries
         run: npm --prefix webapp run test:security
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: browser-security-report
+          path: webapp/playwright-report
+  proxy-trust-boundaries:
+    name: Real reverse-proxy trust boundaries
+    runs-on: ubuntu-24.04
+    # The proxy test needs the Python set and Docker; it needs no browser, so
+    # it no longer shares a job with the browser matrix. A stalled package
+    # mirror cannot spend this job's budget, and the pin check below runs
+    # whatever the browser job does.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Install Python test dependencies
+        run: |
+          python -m venv .venv
+          # The suite's set, not the union: this job runs tests, not the
+          # lint gate.
+          .venv/bin/pip install -r requirements-test.txt
+      - name: Check immutable CI references
+        run: python scripts/check_workflow_pins.py
       - name: Real reverse-proxy trust boundaries
         env:
           RUNWAY_PROXY_TEST: '1'
         run: |
           export RUNWAY_CONFIG_DIR="$(mktemp -d)"
           .venv/bin/pytest tests/security/test_real_proxy.py
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: always()
-        with:
-          name: browser-security-report
-          path: webapp/playwright-report
   native-windows-recovery:
     runs-on: windows-latest
     timeout-minutes: 15
