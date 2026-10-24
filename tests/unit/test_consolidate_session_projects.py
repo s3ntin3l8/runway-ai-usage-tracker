@@ -131,3 +131,21 @@ def test_provider_filter_scopes_rows():
     # None → all providers.
     cs.consolidate(s, None, dry_run=False)
     assert _projects(s)["c"] == "other"
+
+
+def test_a_windows_path_is_relabelled_with_its_folder_name():
+    s = _session()
+    _add(s, "a", session_id="s1", cwd=r"D:\Projects\repo", project=r"D:\Projects\repo")
+    _add(
+        s,
+        "b",
+        session_id="s1",
+        cwd=r"D:\Projects\repo\apps\web",
+        project=r"D:\Projects\repo\apps\web",
+    )
+    _add(s, "c", session_id="s1", cwd=None, project=None)
+
+    changed = cs.consolidate(s, ["anthropic"], dry_run=False)
+
+    assert changed == 3
+    assert _projects(s) == {"a": "repo", "b": "repo", "c": "repo"}

@@ -73,3 +73,65 @@ class TestPickCanonicalCwd:
     def test_all_null_returns_none(self):
         assert pick_canonical_cwd([None, None]) is None
         assert pick_canonical_cwd([]) is None
+
+
+class TestWindowsPaths:
+    """A Windows client reports backslash paths and the server runs on Linux,
+    so the derivation must not depend on the *server's* separator."""
+
+    def test_backslash_path_labels_with_its_basename(self):
+        assert derive_project(r"D:\Projects\runway-ai-usage-tracker") == "runway-ai-usage-tracker"
+
+    def test_forward_slash_windows_path_labels_the_same(self):
+        assert derive_project("D:/Projects/runway-ai-usage-tracker") == "runway-ai-usage-tracker"
+
+    def test_one_drive_path(self):
+        assert (
+            derive_project(r"C:\Users\bjoer\OneDrive\Projects\ai-usage-tracker")
+            == "ai-usage-tracker"
+        )
+
+    def test_worktree_collapses_to_the_root(self):
+        assert derive_project(r"D:\repo\.claude\worktrees\agent-x") == "repo"
+
+    def test_normalize_cwd_truncates_a_windows_worktree(self):
+        assert normalize_cwd(r"D:\repo\.claude\worktrees\x") == r"D:\repo"
+
+    def test_trailing_backslash_stripped(self):
+        assert normalize_cwd("D:\\repo\\") == "D:\\repo"
+
+    def test_drive_root_has_no_label(self):
+        assert derive_project("C:\\") is None
+        assert derive_project("C:/") is None
+
+    def test_unc_path(self):
+        assert derive_project(r"\\server\share\repo") == "repo"
+
+    def test_mixed_separators(self):
+        assert derive_project(r"D:\repo/apps\web") == "web"
+
+    def test_label_does_not_depend_on_the_host_os(self):
+        # The regression pin: `os.path.basename` on a POSIX host returns the
+        # whole Windows path, so this assertion fails the moment it comes back.
+        assert derive_project(r"D:\repo") == "repo"
+
+    def test_path_ending_at_a_claude_segment_is_truncated(self):
+        # The one intentional change for POSIX paths: the `.claude` segment
+        # marks the root boundary even when it is the last one.
+        assert normalize_cwd("/a/.claude") == "/a"
+
+
+class TestPickCanonicalCwdOnWindows:
+    def test_shallowest_windows_path_wins(self):
+        assert pick_canonical_cwd([r"D:\repo\apps\web", r"D:\repo"]) == r"D:\repo"
+
+    def test_a_windows_path_is_not_counted_as_shallow(self):
+        # A Windows path counts zero separators when the host is POSIX, so the
+        # depth comparison used to be decided by string length alone.
+        assert pick_canonical_cwd([r"D:\repo\apps\web"]) == r"D:\repo\apps\web"
+
+    def test_the_drive_spec_is_not_a_directory_level(self):
+        assert pick_canonical_cwd([r"C:\repo", r"D:\a\b\c"]) == r"C:\repo"
+
+    def test_ties_are_broken_deterministically(self):
+        assert pick_canonical_cwd([r"D:\b\repo", r"D:\a\repo"]) == r"D:\a\repo"
