@@ -44,6 +44,7 @@ from app.services.account_identity import (
     account_usage_provider_ids,
     canonical_account_id,
 )
+from app.services.account_merges import record_account_merge, resolve_merged_account
 from app.services.billing_type import UNKNOWN, BillingType, detect_billing_type
 from app.services.collector_manager import manager
 from app.services.collectors.anthropic_console import (
@@ -1289,6 +1290,28 @@ def _account_merge_rows(
     return result
 
 
+def _reject_merged_away_accounts(
+    session: Session, provider_id: str, source_id: str, destination_id: str
+) -> None:
+    """Refuse a merge whose source or destination was already merged away.
+
+    A merge is a durable claim on the source account id — the machine keeps
+    resolving its credential to it, so the ingest resolves it to the
+    destination. Merging an account that was already merged away, in either
+    direction, would leave two records pointing at each other.
+    """
+    if resolve_merged_account(session, provider_id, source_id) != source_id:
+        raise HTTPException(
+            status_code=409,
+            detail="The source account has been merged away; merge the account it went to instead.",
+        )
+    if resolve_merged_account(session, provider_id, destination_id) != destination_id:
+        raise HTTPException(
+            status_code=409,
+            detail="The destination account has been merged away; merge into the account it went to instead.",
+        )
+
+
 @router.post("/provider-account-merge/preview")
 @limiter.limit("20/minute")
 async def preview_provider_account_merge(
@@ -1303,6 +1326,7 @@ async def preview_provider_account_merge(
     destination_id = canonical_account_id(body.destination_account_id)
     if source_id == destination_id:
         raise HTTPException(status_code=400, detail="Source and destination must differ")
+    _reject_merged_away_accounts(session, body.provider_id, source_id, destination_id)
     tables = _account_merge_rows(session, body.provider_id, source_id, destination_id)
     counts = {
         model.__tablename__: {"affected": len(rows), "collisions": len(collisions)}
@@ -1376,6 +1400,7 @@ async def apply_provider_account_merge(
     )
     if source_id == destination_id:
         raise HTTPException(status_code=400, detail="Source and destination must differ")
+    _reject_merged_away_accounts(session, body.provider_id, source_id, destination_id)
     if (source_id == "default" or destination_id == "default") and not body.confirm_shared_default:
         raise HTTPException(
             status_code=409,
@@ -1454,20 +1479,28 @@ async def apply_provider_account_merge(
             src.archived = True
             src.api_key_encrypted = None
             src.session_cookie_encrypted = None
-    # The merge retires the source account id — renamed or archived — and the
-    # secret it still holds at rest under that id goes with it: the cache
-    # reloads every durable bundle on the next revision change, so the retired
-    # id would get it back. Part of the merge transaction: a failed commit
-    # leaves the source account and its credential alone.
-    source_controls.retire_contributions_for_account(session, body.provider_id, source_id)
+    # The merge moves the account, so the credential that belonged to it
+    # follows: the durable contribution is re-filed under the destination (the
+    # cache reloads every durable bundle on the next revision change, so the
+    # re-filing is what moves the bundle), and the record tells the ingest to
+    # resolve the machine's claim of the source id to the destination — without
+    # it the source account comes back on the next push, with a live
+    # credential. Part of the merge transaction: a failed commit leaves the
+    # source account and its credential alone.
+    source_controls.move_contributions_for_account(
+        session, body.provider_id, source_id, destination_id
+    )
+    record_account_merge(session, body.provider_id, source_id, destination_id)
     session.commit()
-    # The merge retires the source account: its config row was renamed to the
-    # destination or archived (or it had none at all — a machine-discovered
-    # account), and its credential sources and tags moved to the destination.
-    # Whatever the cache still holds under the source id is stale, so it goes
-    # — the same rule the archive write path follows. Evicted after the
-    # commit, like the DELETE path: a failed commit must not leave a live
-    # account without its credential.
+    # The credential follows the account into the destination; whatever is
+    # left under the retired source id is stale and goes — the same rule the
+    # archive write path follows. Evicted after the commit, like the DELETE
+    # path: a failed commit must not leave a live account without its
+    # credential.
+    for moved_source in credential_sources:
+        await token_cache.move_source(
+            body.provider_id, source_id, destination_id, moved_source.source_id
+        )
     await token_cache.remove(body.provider_id, source_id)
     auth_failures.clear(body.provider_id, source_id)
     manager._last_sync_time = 0.0

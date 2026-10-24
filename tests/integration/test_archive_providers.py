@@ -872,7 +872,7 @@ class TestArchiveEvictsTheCachedCredential:
 
         assert session.exec(select(SidecarSourceContribution)).all() == []
 
-    def test_merging_accounts_retires_the_source_accounts_durable_contributions(
+    def test_merging_accounts_moves_the_source_accounts_durable_contributions(
         self, session: Session, monkeypatch
     ):
         """The merge retires the source account too — so it retires the secret."""
@@ -925,17 +925,19 @@ class TestArchiveEvictsTheCachedCredential:
         )
         assert resp.status_code == 200, resp.text
 
-        assert session.exec(select(SidecarSourceContribution)).all() == []
+        # The merge moves the credential to the destination: the secret is not
+        # under the retired source id any more, and it is not lost either.
+        contributions = session.exec(select(SidecarSourceContribution)).all()
+        assert [row.account_id for row in contributions] == ["kept@example.test"]
 
-    def test_merging_without_a_destination_config_retires_the_contributions_too(
+    def test_merging_without_a_destination_config_moves_the_contributions_too(
         self, session: Session, monkeypatch
     ):
-        """The merge's rename branch retires the source account id as well.
+        """The merge's rename branch moves the credential as well.
 
         With no destination config the source row is *renamed* to the
-        destination, so the source id stops naming an account — the call is
-        unconditional for that reason. (#903 covers the account coming back
-        when the machine pushes under the old id again.)
+        destination, so the source id stops naming an account — the move is
+        unconditional for that reason.
         """
         encryption = EncryptionService(Fernet.generate_key().decode())
         monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
@@ -984,7 +986,10 @@ class TestArchiveEvictsTheCachedCredential:
         )
         assert resp.status_code == 200, resp.text
 
-        assert session.exec(select(SidecarSourceContribution)).all() == []
+        # The merge moves the credential to the destination: the secret is not
+        # under the retired source id any more, and it is not lost either.
+        contributions = session.exec(select(SidecarSourceContribution)).all()
+        assert [row.account_id for row in contributions] == ["fresh@example.test"]
 
     def test_the_permanent_remove_retires_the_durable_contributions(
         self, session: Session, monkeypatch

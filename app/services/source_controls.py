@@ -246,6 +246,42 @@ def save_contribution(
     return row
 
 
+def move_contributions_for_account(
+    session: Session, provider_id: str, from_account_id: str, to_account_id: str
+) -> int:
+    """Re-file the durable contributions of one account under another.
+
+    The merge moves an account to another one: the credential that belonged
+    to it follows, secret included. The contribution is the secret at rest,
+    and the cache reloads every durable bundle from the snapshot on the next
+    revision change — so re-filing the row is what moves the bundle.
+
+    The account id is compared canonically: a contribution stores the id the
+    ingest gave it, and the cache canonicalises it on the way in.
+
+    Returns the number of contributions moved.
+    """
+    reserve_source_writes(session)
+    source = canonical_account_id(from_account_id)
+    destination = canonical_account_id(to_account_id)
+    if source == destination:
+        return 0
+    rows = session.exec(
+        select(SidecarSourceContribution).where(
+            SidecarSourceContribution.provider_id == provider_id
+        )
+    ).all()
+    moved = [row for row in rows if canonical_account_id(row.account_id or "") == source]
+    for row in moved:
+        row.account_id = destination
+    if moved:
+        # The cache reloads on the next revision change: without this the
+        # bundle would stay under the old account until some unrelated write
+        # happened to bump the revision.
+        bump(session)
+    return len(moved)
+
+
 def retire_contributions_for_account(session: Session, provider_id: str, account_id: str) -> int:
     """Drop the durable contributions filed under a retired account.
 
