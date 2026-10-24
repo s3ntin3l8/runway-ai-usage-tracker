@@ -51,6 +51,47 @@ describe('ProviderPage', () => {
     expect(await screen.findByText(/no data for this provider/i)).toBeInTheDocument();
   });
 
+  it('says where a merged-away account went instead of "no data"', async () => {
+    // The account was merged away: it holds nothing, so it has no fleet
+    // entry. The operator followed a link to it — saying where it went beats
+    // an unexplained empty state.
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue({
+      ...fleetResponse([]),
+      merged_accounts: [
+        {
+          provider_id: 'anthropic',
+          account_id: 'old@example.com',
+          destination_account_id: 'me@example.com',
+          merged_at: '2026-10-20T10:00:00+00:00',
+        },
+      ],
+    });
+    renderPage('/provider/anthropic?account=old@example.com');
+    expect(await screen.findByText(/merged away/i)).toBeInTheDocument();
+    expect(screen.getByText(/me@example\.com/)).toBeInTheDocument();
+    expect(screen.queryByText(/no data for this provider/i)).not.toBeInTheDocument();
+  });
+
+  it('does not show the destination data under a merged-away account', async () => {
+    // The destination usually has a fleet entry of its own. Falling back to
+    // it would show the destination's usage under the merged-away account's
+    // name — the very confusion the merge notice exists to prevent.
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue({
+      ...fleetResponse([fleetEntry({ account_id: 'me@example.com' })]),
+      merged_accounts: [
+        {
+          provider_id: 'anthropic',
+          account_id: 'old@example.com',
+          destination_account_id: 'me@example.com',
+          merged_at: '2026-10-20T10:00:00+00:00',
+        },
+      ],
+    });
+    renderPage('/provider/anthropic?account=old@example.com');
+    expect(await screen.findByText(/merged away/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('overview-tab')).not.toBeInTheDocument();
+  });
+
   it('says the cookie store is unavailable instead of "no data" when it is', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue({
       ...fleetResponse([]),

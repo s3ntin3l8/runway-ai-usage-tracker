@@ -82,7 +82,22 @@ export function ProviderPage() {
     [fleet.data, providerId],
   );
   const accountParam = searchParams.get('account');
-  const entry = entries.find((e) => e.account_id === accountParam) ?? entries[0];
+  // The account was merged away: it holds nothing, so it has no entry here.
+  // Saying where it went beats an unexplained "no data" — the operator
+  // followed a link to an account that no longer exists.
+  const mergedAway = useMemo(
+    () =>
+      (fleet.data?.merged_accounts ?? []).find(
+        (m) => m.provider_id === providerId && m.account_id === accountParam,
+      ),
+    [fleet.data, providerId, accountParam],
+  );
+  // A merged-away account does not fall back to another account's entry: the
+  // destination usually has one, and showing its data under the merged-away
+  // account's name would be worse than saying where the account went.
+  const entry = mergedAway
+    ? undefined
+    : (entries.find((e) => e.account_id === accountParam) ?? entries[0]);
   const accountId = entry?.account_id ?? accountParam ?? 'default';
 
   // Shared time-range picker — `?range=` holds 'Nd' or an absolute
@@ -226,21 +241,40 @@ export function ProviderPage() {
             <Skeleton className="h-64 w-full" />
           </div>
         ) : !entry ? (
-          <EmptyState
-            title={
-              blockedSources.length > 0 ? 'Cookie store unavailable' : 'No data for this provider'
-            }
-            description={
-              blockedSources.length > 0
-                ? blockedSourceDescription(blockedSources[0])
-                : `Nothing reported for "${providerId}" yet.`
-            }
-            action={
-              <Button size="sm" onClick={() => collect.mutate()} loading={collect.isPending}>
-                Collect now
-              </Button>
-            }
-          />
+          mergedAway ? (
+            <EmptyState
+              title="This account was merged away"
+              description={`Its usage and credential moved to "${mergedAway.destination_account_id}".`}
+              action={
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    navigate(
+                      `/provider/${providerId}?account=${encodeURIComponent(mergedAway.destination_account_id)}`,
+                    )
+                  }
+                >
+                  Go to the destination
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title={
+                blockedSources.length > 0 ? 'Cookie store unavailable' : 'No data for this provider'
+              }
+              description={
+                blockedSources.length > 0
+                  ? blockedSourceDescription(blockedSources[0])
+                  : `Nothing reported for "${providerId}" yet.`
+              }
+              action={
+                <Button size="sm" onClick={() => collect.mutate()} loading={collect.isPending}>
+                  Collect now
+                </Button>
+              }
+            />
+          )
         ) : (
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList>

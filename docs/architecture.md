@@ -328,6 +328,12 @@ where it went, and the read surfaces carry it:
 - Settings → Providers lists them under "Merged accounts", where they are
   inert: they are not in the archived list, because the merge retired them —
   not an archive — and they have no Restore action.
+- `GET /api/v1/usage/fleet` carries the merges beside its entries, and the Home
+  page lists them under "Merged". A merged-away account is **not** a fleet entry:
+  the merge moved its quota card to the destination, so it has no gauge, and
+  inventing one would feed the risk rail and the stale-card banner a card that
+  was never scraped. The provider page says where the account went instead of
+  showing "no data" for a link the operator followed.
 
 Restoring one would resurrect a phantom: the merge moved its history and its
 credential to the destination, so the restored row would collect nothing while

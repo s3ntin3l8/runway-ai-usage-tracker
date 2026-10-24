@@ -101,6 +101,13 @@ export interface FleetResponse {
   generated_at: string;
   /** Credential sources a machine found but could not read. Absent from an older server. */
   blocked_sources?: BlockedSource[];
+  /**
+   * The accounts that were merged away, and where each of them went. A
+   * merged-away account holds no credential and has no quota card, so it is
+   * not a fleet entry — it would need a gauge it does not have. Absent from
+   * an older server.
+   */
+  merged_accounts?: (MergedAccount & { provider_id: string })[];
 }
 
 // Flat token/cost bucket used by cumulative rollups (also the per-model and

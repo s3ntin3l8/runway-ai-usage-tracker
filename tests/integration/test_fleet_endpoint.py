@@ -13,7 +13,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import LatestUsage, UsageEvent
+from app.models.db import LatestUsage, ProviderAccountMerge, UsageEvent
 from tests.fixtures.test_client import TestClient
 
 # ---------------------------------------------------------------------------
@@ -198,6 +198,45 @@ def test_empty_db_returns_empty_fleet(session: Session):
     body = resp.json()
     assert body["fleet"] == []
     assert "generated_at" in body
+
+
+def test_fleet_carries_the_accounts_that_were_merged_away(session: Session):
+    """The merge rides beside the entries.
+
+    A merged-away account holds no credential and has no quota card (the
+    merge moved both), so it is not a fleet entry — it would need a gauge it
+    does not have. The fleet says where the account went instead, so the
+    operator watching usage is not left with a silent hole.
+    """
+    _seed_card(session, provider_id="anthropic", account_id="bob@example.com", pct_used=30.0)
+    session.add(
+        ProviderAccountMerge(
+            provider_id="anthropic",
+            source_account_id="alice@example.com",
+            destination_account_id="bob@example.com",
+        )
+    )
+    session.commit()
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert [
+        (m["provider_id"], m["account_id"], m["destination_account_id"])
+        for m in body["merged_accounts"]
+    ] == [("anthropic", "alice@example.com", "bob@example.com")]
+    # The merged-away account is not an entry of its own — no invented gauge.
+    assert [e["account_id"] for e in body["fleet"]] == ["bob@example.com"]
+
+
+def test_fleet_reports_no_merges_when_nothing_was_merged(session: Session):
+    _seed_card(session, provider_id="anthropic", account_id="bob@example.com")
+    session.commit()
+
+    resp = _client().get("/api/v1/usage/fleet")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["merged_accounts"] == []
 
 
 def test_fleet_synthetic_card_carries_lifetime_token_totals(session: Session):
