@@ -157,10 +157,18 @@ class UsageEventPush(BaseModel):
     @field_validator("project_ref", mode="before")
     @classmethod
     def clean_project_ref(cls, value: Any) -> str | None:
-        """A reported repository name: printable characters, bounded, not empty."""
+        """A reported repository name: printable characters, bounded, not empty.
+
+        A name never holds a path separator — a basename cannot — so a value
+        that does is not a name and is dropped: it would pin a path-shaped
+        label, which the `path_shaped_projects` repair then relabels back to
+        the folder's name, and the two fixes would fight over the same rows.
+        """
         if value is None:
             return None
         cleaned = "".join(char for char in str(value) if char.isprintable()).strip()
+        if not cleaned or "/" in cleaned or "\\" in cleaned:
+            return None
         return cleaned[:_PROJECT_REF_MAX_LENGTH] or None
 
     git_branch: str | None = None

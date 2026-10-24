@@ -360,7 +360,7 @@ class TestRepoRelabels:
             "b",
             session_id="s2",
             cwd=r"C:\Users\u\Projects\app",
-            project="app",
+            project="repo-one",
             project_ref="repo-one",
             sidecar_id="host-1",
         )
@@ -369,7 +369,7 @@ class TestRepoRelabels:
             "c",
             session_id="s3",
             cwd=r"C:\Users\u\Projects\app",
-            project="app",
+            project="repo-two",
             project_ref="repo-two",
             sidecar_id="host-2",
         )
@@ -381,10 +381,11 @@ class TestRepoRelabels:
         assert projects["b"] == "repo-one"
         assert projects["c"] == "repo-two"  # host-2's own repository
 
-    def test_the_repository_the_client_reports_most_often_wins(self):
+    def test_the_repository_the_client_reports_most_recently_wins(self):
         """A renamed repository must not pin the directory to the older name:
         the fresh rows would be rewritten back on every scan."""
         s = _session()
+        _add(s, "older", session_id="s0", cwd="/home/u/app", project="app")
         _add(
             s,
             "old",
@@ -395,16 +396,8 @@ class TestRepoRelabels:
         )
         _add(
             s,
-            "new1",
+            "new",
             session_id="s2",
-            cwd="/home/u/app",
-            project="new-name",
-            project_ref="new-name",
-        )
-        _add(
-            s,
-            "new2",
-            session_id="s3",
             cwd="/home/u/app",
             project="new-name",
             project_ref="new-name",
@@ -414,4 +407,66 @@ class TestRepoRelabels:
 
         assert plan.relabels[0].project_ref == "new-name"
         apply_repo_relabels(s, plan)
-        assert _projects(s)["old"] == "new-name"
+        assert _projects(s)["older"] == "new-name"
+
+    def test_the_name_with_the_longer_history_does_not_win(self):
+        """The count is only a tie-break: after a rename the old name has more
+        rows, but the client reports the new one now."""
+        s = _session()
+        _add(s, "older", session_id="s0", cwd="/home/u/app", project="app")
+        for index in range(3):
+            _add(
+                s,
+                f"old{index}",
+                session_id=f"s-old{index}",
+                cwd="/home/u/app",
+                project="old-name",
+                project_ref="old-name",
+            )
+        _add(
+            s,
+            "new",
+            session_id="s-new",
+            cwd="/home/u/app",
+            project="new-name",
+            project_ref="new-name",
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.relabels[0].project_ref == "new-name"
+
+    def test_a_row_that_reported_a_repository_is_not_a_target(self):
+        """The repair is for the rows labelled with the *folder's* name: a row
+        that carries a repository name of its own is left alone."""
+        s = _session()
+        _add(
+            s,
+            "older",
+            session_id="s1",
+            cwd="/home/u/app",
+            project="app",
+        )
+        _add(
+            s,
+            "other",
+            session_id="s2",
+            cwd="/home/u/app",
+            project="other-name",
+            project_ref="other-name",
+        )
+        _add(
+            s,
+            "current",
+            session_id="s3",
+            cwd="/home/u/app",
+            project="current-name",
+            project_ref="current-name",
+        )
+
+        apply_repo_relabels(s, plan_repo_relabels(s))
+
+        projects = _projects(s)
+        assert projects["older"] == "current-name"
+        assert projects["other"] == "other-name"  # its own repository, untouched
+        assert projects["current"] == "current-name"

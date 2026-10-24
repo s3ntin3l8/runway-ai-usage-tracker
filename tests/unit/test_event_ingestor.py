@@ -150,6 +150,20 @@ def test_ingest_cleans_the_reported_repository_name():
     assert row.project == row.project_ref
 
 
+def test_ingest_ignores_a_reported_path():
+    """A repository *name* never holds a separator: a client reporting a path
+    would pin a path-shaped label, and the two repairs would fight over the
+    same rows."""
+    s = _seeded_session()
+    EventIngestor(s).ingest(
+        [_make_push(cwd="/home/u/repo", project_ref=r"D:\repo")],
+        sidecar_id="dev-01",
+    )
+    row = s.exec(select(UsageEvent)).first()
+    assert row.project_ref is None
+    assert row.project == "repo"
+
+
 def test_ingest_uses_provided_cost_when_set():
     """Pay-as-you-go accounts display a provider-reported cost when present."""
     s = _seeded_session()

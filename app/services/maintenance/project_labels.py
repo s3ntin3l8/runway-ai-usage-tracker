@@ -45,7 +45,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, or_, tuple_
+from sqlalchemy import ColumnElement, Integer, cast, func, or_, tuple_
+from sqlalchemy import select as sa_select
 from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
@@ -366,50 +367,65 @@ def plan_repo_relabels(session: Session, *, sample_size: int = 20) -> RepoRelabe
     Two queries, not one per directory: `usage_events.cwd` carries no index, so
     a count per directory would scan the table once per directory.
     """
-    reported = session.exec(
-        select(
+    reported = session.execute(
+        sa_select(
             col(UsageEvent.sidecar_id),
             col(UsageEvent.cwd),
             col(UsageEvent.project_ref),
-            func.count(),
+            func.max(cast(UsageEvent.id, Integer)).label("max_id"),
+            func.count().label("rows"),
         )
         .where(col(UsageEvent.project_ref).is_not(None))
         .group_by(col(UsageEvent.sidecar_id), col(UsageEvent.cwd), col(UsageEvent.project_ref))
     ).all()
-    # One repository per (host, directory): the one the client reported most
-    # often, so a repository that was renamed does not pin the directory to the
-    # older name and rewrite the fresh rows back on every scan. A tie is broken
-    # lexicographically, so the plan is the same on every run.
-    refs: dict[tuple[str, str], str] = {}
-    counts: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
-    for sidecar_id, cwd, project_ref, count in reported:
+    # One repository per (host, directory): the one the client reported *most
+    # recently*, so a repository that was renamed is not pinned to the older
+    # name. Counting the rows instead would let the name with the longest
+    # history win forever — the relabel never rewrites `project_ref`, so the
+    # fresh rows could never outnumber the old ones, and every scan would
+    # rewrite them back. The count is only a tie-break.
+    newest: dict[tuple[str, str], dict[str, tuple[int, int]]] = defaultdict(dict)
+    for sidecar_id, cwd, project_ref, max_id, count in reported:
         if not cwd or not project_ref:
             continue
-        counts[(sidecar_id, cwd)][project_ref] = count
-    for key, by_ref in counts.items():
-        refs[key] = min(by_ref, key=lambda ref: (-by_ref[ref], ref))
+        newest[(sidecar_id, cwd)][project_ref] = (max_id, count)
+    refs: dict[tuple[str, str], str] = {
+        key: min(
+            by_ref,
+            # Newest report first, then the most-reported name, then the
+            # lexicographic order — so the choice is the same on every run.
+            key=lambda ref: (-by_ref[ref][0], -by_ref[ref][1], ref),
+        )
+        for key, by_ref in newest.items()
+    }
     if not refs:
         return RepoRelabelPlan()
 
-    rows = session.exec(
-        select(
-            UsageEvent.id,
+    rows = session.execute(
+        sa_select(
+            col(UsageEvent.id),
             col(UsageEvent.sidecar_id),
             col(UsageEvent.cwd),
             col(UsageEvent.project),
+            col(UsageEvent.project_ref),
         ).where(tuple_(col(UsageEvent.sidecar_id), col(UsageEvent.cwd)).in_(list(refs)))
     ).all()
 
     totals: dict[tuple[str, str], int] = defaultdict(int)
     stale: dict[tuple[str, str], list[int]] = defaultdict(list)
     for row in rows:
-        row_id, sidecar_id, cwd, project = row[0], row[1], row[2], row[3]
+        row_id, sidecar_id, cwd, project, project_ref = row[0], row[1], row[2], row[3], row[4]
         if row_id is None or not cwd:
             continue
         key = (sidecar_id, cwd)
         if key not in refs:
             continue
         totals[key] += 1
+        # A row that carries a repository name of its own is not a target: it
+        # reported a repository, and the repair is for the rows that were
+        # labelled with the *folder's* name before the client reported one.
+        if project_ref is not None:
+            continue
         if project != refs[key]:
             stale[key].append(row_id)
 
