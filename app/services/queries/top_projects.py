@@ -66,13 +66,17 @@ def query_top_projects(
             -- emits one event per message carries none, and the fallback
             -- counts the events.
             --
-            -- A turn is identified by the session it belongs to — the
-            -- collector's own key is `(session_id, turn_id)` — so the session
-            -- and the provider are part of the key here. This query groups by
-            -- project across sessions, and in the global mode (no
-            -- `provider_id` filter) across providers, where `event_id` is
-            -- only unique per `(provider_id, event_id)`.
-            COUNT(DISTINCT provider_id || '|' || COALESCE(session_id, '') || '|'
+            -- The key carries the provider because this query groups across
+            -- providers in the global mode (no `provider_id` filter), where
+            -- `event_id` is only unique per `(provider_id, event_id)`.
+            --
+            -- The turn id is the turn's identity on its own: a provider mints
+            -- its turn ids uniquely (a live MiniMax Code store holds 130
+            -- distinct turn ids across 18 sessions, none shared), and the
+            -- background-session repair moves a row between sessions without
+            -- touching its turn id — so keying on the session would change a
+            -- turn's identity when it is repaired.
+            COUNT(DISTINCT provider_id || '|'
                 || COALESCE(NULLIF(turn_id, ''), event_id))      AS msgs,
             COUNT(DISTINCT session_id)                          AS sessions,
             SUM(tokens_input + tokens_output

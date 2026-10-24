@@ -406,9 +406,12 @@ Two details worth knowing:
 
 - **It is not retroactive.** Rows collected before the turn id existed carry none, so they keep
   counting as requests until the repair fills their turn id.
-- A turn is identified by the session it belongs to, and it is attributed to **every model it
-  touched** — the same way its tokens are. A turn that used two models therefore appears in both
-  per-model buckets while the session row counts it once.
+- A turn is attributed to **every model it touched** — the same way its tokens are. A turn that
+  used two models therefore appears in both per-model buckets while the session row counts it
+  once.
+- A **turn id names its turn on its own**: the runtime mints them uniquely (a live store holds
+  130 distinct turn ids across 18 sessions, none shared). That also keeps a turn's identity
+  stable when the repair moves its row from the task's session to the parent.
 
 #### Repairing the rows collected earlier
 

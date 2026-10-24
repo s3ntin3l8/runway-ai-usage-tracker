@@ -177,14 +177,15 @@ def test_a_provider_without_a_turn_id_keeps_the_event_count(db_session):
     assert rows[0]["msgs"] == 3
 
 
-def test_a_turn_is_scoped_to_its_session(db_session):
-    """The collector's turn key is (session_id, turn_id) — two sessions with
-    the same turn label are two turns."""
+def test_a_turn_id_is_the_turns_identity(db_session):
+    """A provider mints its turn ids uniquely, so the turn id alone names the
+    turn — and it keeps naming it when the background-session repair moves the
+    row from the task's session to its parent."""
     _add(db_session, event_id="t1", project="alpha", session_id="s1", turn_id="turn_1")
     _add(db_session, event_id="t2", project="alpha", session_id="s2", turn_id="turn_1")
 
     rows = query_top_projects(db_session, since=_SINCE, metric="tokens")
-    assert rows[0]["msgs"] == 2
+    assert rows[0]["msgs"] == 1
 
 
 def test_an_event_id_is_scoped_to_its_provider(db_session):
