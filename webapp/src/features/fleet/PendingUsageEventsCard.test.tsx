@@ -6,6 +6,7 @@ import * as api from '@/api/endpoints';
 import { foreignError } from '@/test/foreignError';
 import { renderWithProviders } from '@/test/utils';
 import { PendingUsageEventsCard } from './PendingUsageEventsCard';
+import { assignBatchInChunks, chunkBatchAssignments } from './pendingUsageBatch';
 
 // Option values encode [providerId, accountId].
 const target = (providerId: string, accountId: string) => JSON.stringify([providerId, accountId]);
@@ -804,5 +805,171 @@ describe('PendingUsageEventsCard', () => {
     // Closing wizard returns to batch dialog
     await user.click(screen.getByRole('button', { name: 'Simulate Close' }));
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
+  describe('batch chunking', () => {
+    const ids = (count: number, from = 1) => Array.from({ length: count }, (_, index) => from + index);
+
+    it('splits a selection above the server limit into requests the server accepts', () => {
+      const chunks = chunkBatchAssignments([
+        { event_ids: ids(10_001), account_id: 'alice@example.com' },
+      ]);
+
+      expect(chunks).toHaveLength(2);
+      expect(chunks[0][0].event_ids).toHaveLength(10_000);
+      expect(chunks[1][0].event_ids).toHaveLength(1);
+      // Every event is still there exactly once.
+      expect(chunks.flatMap((chunk) => chunk.flatMap((group) => group.event_ids))).toEqual(ids(10_001));
+    });
+
+    it('keeps a selection at the server limit in one request', () => {
+      const chunks = chunkBatchAssignments([
+        { event_ids: ids(10_000), account_id: 'alice@example.com' },
+      ]);
+
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0][0].event_ids).toHaveLength(10_000);
+    });
+
+    it('counts the event ids across the whole batch, not per provider', () => {
+      const chunks = chunkBatchAssignments(
+        [
+          { event_ids: [1, 2, 3], account_id: 'alice@example.com' },
+          { event_ids: [4, 5], account_id: 'bob@example.com' },
+        ],
+        4,
+      );
+
+      // The chunks are filled to the limit, so the second provider starts in
+      // the first chunk and continues in the second one.
+      expect(chunks).toEqual([
+        [
+          { event_ids: [1, 2, 3], account_id: 'alice@example.com' },
+          { event_ids: [4], account_id: 'bob@example.com' },
+        ],
+        [{ event_ids: [5], account_id: 'bob@example.com' }],
+      ]);
+    });
+
+    it('sends the chunks one after another', async () => {
+      const calls: number[][] = [];
+      const outcome = await assignBatchInChunks(
+        [{ event_ids: ids(5), account_id: 'alice@example.com' }],
+        async (chunk) => {
+          calls.push(chunk[0].event_ids);
+          return { assigned: chunk[0].event_ids.length, mappings: [] };
+        },
+        3,
+      );
+
+      expect(calls).toEqual([[1, 2, 3], [4, 5]]);
+      expect(outcome.assigned).toBe(5);
+      expect(outcome.assignedEventIds).toEqual([1, 2, 3, 4, 5]);
+      expect(outcome.unassignedEventIds).toEqual([]);
+      expect(outcome.chunks).toBe(2);
+    });
+
+    it('stops at the first failed chunk and leaves the rest unassigned', async () => {
+      const calls: number[][] = [];
+      const outcome = await assignBatchInChunks(
+        [{ event_ids: ids(5), account_id: 'alice@example.com' }],
+        async (chunk) => {
+          calls.push(chunk[0].event_ids);
+          if (calls.length === 2) throw new Error('the server said no');
+          return { assigned: chunk[0].event_ids.length, mappings: [] };
+        },
+        3,
+      );
+
+      expect(calls).toEqual([[1, 2, 3], [4, 5]]);
+      expect(outcome.assigned).toBe(3);
+      expect(outcome.assignedEventIds).toEqual([1, 2, 3]);
+      expect(outcome.unassignedEventIds).toEqual([4, 5]);
+      expect(outcome.error).toBeInstanceOf(Error);
+    });
+  });
+
+  it('assigns a backlog above the server limit in chunks and reports the total', async () => {
+    const user = userEvent.setup();
+    const eventIds = Array.from({ length: 10_001 }, (_, index) => index + 1);
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'xai',
+          sidecar_id: 'laptop',
+          session_id: 'session-12',
+          event_ids: eventIds,
+          event_count: eventIds.length,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:01:00Z',
+          model_ids: ['grok-4'],
+        },
+      ],
+      total_events: eventIds.length,
+      matching_events: eventIds.length,
+      total_groups: 1,
+      sidecars: ['laptop'],
+      providers: ['xai'],
+      offset: 0,
+      limit: 100,
+    });
+    vi.mocked(api.assignPendingUsageEventsBatch).mockImplementation(async (assignments) => ({
+      assigned: assignments.reduce((total, group) => total + group.event_ids.length, 0),
+      providers: ['xai'],
+      mappings: [
+        { provider_id: 'xai', sidecar_id: 'laptop', target_provider_id: 'xai', account_id: 'alice@example.com' },
+      ],
+    }));
+
+    renderWithProviders(<PendingUsageEventsCard />);
+    await user.click(await screen.findByRole('checkbox', { name: /select xai on laptop session session-12/i }));
+    await user.click(screen.getByRole('button', { name: 'Assign selected' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Batch account for xai' }), target('xai', 'alice@example.com'));
+    await user.click(screen.getByRole('button', { name: `Assign ${eventIds.length} events` }));
+
+    await waitFor(() => expect(api.assignPendingUsageEventsBatch).toHaveBeenCalledTimes(2));
+    const [firstCall, secondCall] = vi.mocked(api.assignPendingUsageEventsBatch).mock.calls;
+    expect(firstCall[0][0].event_ids).toHaveLength(10_000);
+    expect(secondCall[0][0].event_ids).toHaveLength(1);
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('10001 usage events assigned')));
+  });
+
+  it('keeps the events of a failed chunk selected for a retry', async () => {
+    const user = userEvent.setup();
+    const eventIds = Array.from({ length: 10_001 }, (_, index) => index + 1);
+    vi.mocked(api.fetchPendingUsageSessions).mockResolvedValue({
+      items: [
+        {
+          provider_id: 'xai',
+          sidecar_id: 'laptop',
+          session_id: 'session-12',
+          event_ids: eventIds,
+          event_count: eventIds.length,
+          first_ts: '2026-09-01T10:00:00Z',
+          last_ts: '2026-09-01T10:01:00Z',
+          model_ids: ['grok-4'],
+        },
+      ],
+      total_events: eventIds.length,
+      matching_events: eventIds.length,
+      total_groups: 1,
+      sidecars: ['laptop'],
+      providers: ['xai'],
+      offset: 0,
+      limit: 100,
+    });
+    vi.mocked(api.assignPendingUsageEventsBatch)
+      .mockResolvedValueOnce({ assigned: 10_000, providers: ['xai'], mappings: [] })
+      .mockRejectedValueOnce(new Error('Could not reach the server'));
+
+    renderWithProviders(<PendingUsageEventsCard />);
+    await user.click(await screen.findByRole('checkbox', { name: /select xai on laptop session session-12/i }));
+    await user.click(screen.getByRole('button', { name: 'Assign selected' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Batch account for xai' }), target('xai', 'alice@example.com'));
+    await user.click(screen.getByRole('button', { name: `Assign ${eventIds.length} events` }));
+
+    // The first chunk was assigned, the second failed: one event is left.
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('1 usage event not assigned')));
+    await waitFor(() => expect(screen.getByText('1 groups · 1 events selected')).toBeInTheDocument());
   });
 });
