@@ -473,6 +473,14 @@ Three cases worth knowing about:
 Run it against the dev DB or a snapshot — never the live prod DB while the server is writing
 (SQLite is single-writer).
 
+#### Rows that carry their provenance
+
+A row the extractor filed carries the parent in its `raw_json`, so the **server** can file it
+without the runtime store. The `minimax_background_sessions` Data Health check finds the rows
+whose provenance names a parent they are not filed under and offers to move them. The rows that
+carry **no** provenance — the ones collected before the extractor learned the parent link — are
+only visible to the script above.
+
 ### Attribution
 
 The MiniMax Code auth bundle carries no email (its record is keyed by an opaque provider id), so

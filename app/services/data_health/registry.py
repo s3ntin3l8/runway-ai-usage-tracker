@@ -13,6 +13,9 @@ from app.services.data_health.checks.alert_channels import AlertChannelsCheck
 from app.services.data_health.checks.config_default_keyed import ConfigDefaultKeyedCheck
 from app.services.data_health.checks.legacy_provider_ids import LegacyProviderIdsCheck
 from app.services.data_health.checks.lone_default_events import LoneDefaultEventsCheck
+from app.services.data_health.checks.minimax_background_sessions import (
+    MinimaxBackgroundSessionsCheck,
+)
 from app.services.data_health.checks.misidentified_gauge_series import (
     MisidentifiedGaugeSeriesCheck,
 )
@@ -43,6 +46,7 @@ REGISTRY: list[Check] = [
     UnpricedModelsCheck(),
     UnpricedClaudeAccountsCheck(),
     RollupDriftCheck(),
+    MinimaxBackgroundSessionsCheck(),
     PendingEventsCheck(),
     AlertChannelsCheck(),
 ]
