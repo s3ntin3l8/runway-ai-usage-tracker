@@ -23,6 +23,7 @@ from app.services.data_health.checks.openrouter_model_events import OpenRouterMo
 from app.services.data_health.checks.orphan_credential_sources import OrphanCredentialSourcesCheck
 from app.services.data_health.checks.orphan_credential_tags import OrphanCredentialTagsCheck
 from app.services.data_health.checks.orphan_gauge_series import OrphanGaugeSeriesCheck
+from app.services.data_health.checks.path_shaped_projects import PathShapedProjectsCheck
 from app.services.data_health.checks.pending_events import PendingEventsCheck
 from app.services.data_health.checks.rollup_drift import RollupDriftCheck
 from app.services.data_health.checks.stale_credential_rules import StaleCredentialRulesCheck
@@ -47,6 +48,7 @@ REGISTRY: list[Check] = [
     UnpricedClaudeAccountsCheck(),
     RollupDriftCheck(),
     MinimaxBackgroundSessionsCheck(),
+    PathShapedProjectsCheck(),
     PendingEventsCheck(),
     AlertChannelsCheck(),
 ]

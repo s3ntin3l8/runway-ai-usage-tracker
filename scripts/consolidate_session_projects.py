@@ -6,12 +6,22 @@ Claude Code (and OpenCode) record a per-message `cwd` that drifts into subfolder
 as the agent works, even when it was launched from the project root. The basename
 derivation at ingest therefore scatters one repo across many `project` labels.
 
+A Windows client reports its working directory with backslashes (`D:\\Projects\\repo`),
+and a derivation that split on the *server's* separator had nothing to split on — so
+the whole path became the label. The derivation is now host-independent (see
+`app/services/project_label.py`), but the rows already collected that way keep the
+path until this pass relabels them.
+
 This is a pure-DB pass (cwd is already populated, unlike
 `backfill_project_context.py` which re-reads logs): it groups events by
 `session_id`, picks the session's canonical root cwd (rule 1 `.claude/` truncation
 + rule 2 shallowest cwd, see app/services/project_label.py), and relabels every
 row in the session — including NULL-cwd rows — to that root's basename. The raw
 per-message `cwd` is left untouched.
+
+The relabel itself lives in `app/services/maintenance/project_labels.py`, which the
+`path_shaped_projects` Data Health check uses as well — one implementation, so the
+in-app fixer and this script cannot drift apart.
 
 Idempotency is by determinism, not a NULL guard: the canonical project is a pure
 function of the session's cwd set, so a second run changes nothing. Relabeling
@@ -32,19 +42,20 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from sqlmodel import Session, select  # noqa: E402
+from sqlmodel import Session  # noqa: E402
 
 from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine, init_db  # noqa: E402
-from app.models.db import UsageEvent  # noqa: E402
-from app.services.project_label import derive_project, pick_canonical_cwd  # noqa: E402
+from app.services.maintenance.project_labels import (  # noqa: E402
+    apply_session_relabels,
+    plan_session_relabels,
+)
 from scripts.sidecar_pkg.event_extractors.opencode import _OC_CANONICAL_MAP  # noqa: E402
 
 # Per-message providers, where cwd drifts within a session and rule 2 applies.
@@ -69,36 +80,20 @@ def consolidate(session: Session, providers: list[str] | None, dry_run: bool) ->
     `providers=None` means every provider in the table. Returns the number of
     rows whose `project` changed.
     """
-    stmt = select(UsageEvent).where(UsageEvent.session_id.is_not(None))  # type: ignore[union-attr]
-    if providers is not None:
-        stmt = stmt.where(UsageEvent.provider_id.in_(providers))  # type: ignore[attr-defined]
-    events = session.exec(stmt).all()
+    plan = plan_session_relabels(session, providers=providers)
+    if dry_run:
+        print(
+            f"{plan.sessions:,} session(s), {plan.rows_to_relabel:,} row(s) relabeled (dry-run)",
+            flush=True,
+        )
+        return plan.rows_to_relabel
 
-    by_session: dict[str, list[UsageEvent]] = defaultdict(list)
-    for ev in events:
-        # session_id is non-NULL by the WHERE clause above.
-        by_session[ev.session_id].append(ev)  # type: ignore[index]
-
-    total_changed = 0
-    for rows in by_session.values():
-        canonical = derive_project(pick_canonical_cwd(ev.cwd for ev in rows))
-        if canonical is None:
-            continue  # no usable cwd anywhere in the session — leave as-is
-        for ev in rows:
-            if ev.project != canonical:
-                total_changed += 1
-                if not dry_run:
-                    ev.project = canonical
-                    session.add(ev)
-
+    result = apply_session_relabels(session, plan)
     print(
-        f"{len(by_session):,} session(s), {total_changed:,} row(s) relabeled"
-        + (" (dry-run)" if dry_run else ""),
+        f"{result.sessions:,} session(s), {result.relabeled:,} row(s) relabeled",
         flush=True,
     )
-    if not dry_run and total_changed:
-        session.commit()
-    return total_changed
+    return result.relabeled
 
 
 def main() -> None:
