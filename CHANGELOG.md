@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.14](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.13...v3.0.0-beta.14) (2026-10-24)
+
+
+### Features
+
+* **audit:** add offline Claude usage accounting evidence ([#897](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/897)) ([008ca54](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/008ca544778777ed84c68afdd080c1ea6333bbd6))
+* **credentials:** mark a retired account as archived and leave it unrefreshed ([eb89056](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/eb89056b1a5dda4e44052695f8e6270accdf970f))
+* **data-health:** flag MiniMax Code background work filed as a conversation ([#890](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/890)) ([6dd9e1f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6dd9e1f662591cd085d7dc557e88f8f79c6576e4))
+* **sessions:** count turns instead of requests in the session message counts ([#889](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/889)) ([dfdaead](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/dfdaeadbfc0131260a5aefd7a6158490b047d203))
+* **sidecar:** attribute MiniMax Code background-task sessions to their parent ([#879](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/879)) ([c5cae11](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c5cae113f18c4eadea5e425d47cf1c4af7a22383))
+* **sidecar:** report an unreadable browser cookie store to the server ([#793](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/793)) ([4ee6b58](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4ee6b58d7d7854c0b79855627fcf999ba60b4d19))
+
+
+### Bug Fixes
+
+* **ci:** run the browser security matrix in the pinned Playwright image ([#893](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/893)) ([763ef6b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/763ef6ba453c2a67a226cda55efacf9ce2dc66d7))
+* **credentials:** archiving an account evicts its cached credential ([a50d013](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a50d0131a3127e6621c6e6b84dfba34f05888ac4))
+* **credentials:** park credentials on archived accounts and mark retired providers ([05ccda4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/05ccda448b77c2c36c4344ec90c7fcac9972eb83))
+* **sidecar:** keep the POSIX ownership checks off the Windows native gate ([#875](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/875)) ([3f025ce](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3f025ce1ba0e5501b1447393656ae70a97abe600))
+* **sidecar:** read every MiniMax Code store, not just the first ([#868](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/868)) ([6f5c117](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6f5c1171be13d67a922b47bd4531a712247b717b))
+* **sidecar:** read the Windows app-data root from %APPDATA% and probe the desktop app's profile dir ([#882](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/882)) ([fa5965b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fa5965be8b8561053b199fa05e4e1ced9628af45))
+* **sidecar:** the manifest answer replaces the hint cache instead of merging ([4827393](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4827393c6edbd442ec4a22c9d3487362829b023f))
+
 ## [3.0.0-beta.13](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.12...v3.0.0-beta.13) (2026-10-23)
 
 
