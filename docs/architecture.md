@@ -240,6 +240,24 @@ re-tagging. Whether a mapping is parked is answered in one place (`ParkedMapping
 provider and the archived row has to be looked up there. See
 [Parked mappings](api-reference.md#parked-mappings) for the API contract.
 
+A retired account is left alone by the token auto-refresher too: it collects
+nothing, its subscription has ended, so refreshing its credential can only
+fail. The rule is keyed on the **account** — a retired account's credential is
+skipped even when the provider still has another, live account — and on the
+provider, whose every configured account being archived retires it as a whole
+(a parked mapping leaves that credential unattributed, so it sits under no
+account of its own). It is deliberately narrower than the collector's
+`inactive_providers` rule, which also counts *disabled* rows: a disabled
+account is a reversible state, and its credential should stay fresh for the day
+the operator re-enables it. The credential inventory marks a retired account as
+archived, so a parked credential does not read like an active one.
+
+The archived rows are read in one place — `archived_account_pairs()` in
+`app/services/credential_tags.py`, which canonicalises the account id (every
+write path stores accounts canonically, a config row carries whatever the
+operator typed) and is shared with `ParkedMapping`, so the inventory's marker
+and the parked-mapping check can never disagree.
+
 ### Who refreshes an OAuth login
 
 A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT, xAI and

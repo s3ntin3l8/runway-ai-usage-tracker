@@ -1744,3 +1744,42 @@ def test_parked_mapping_asks_no_query_when_nobody_looks(session: Session, monkey
 
     credential_tags_module.ParkedMapping(session, ["anthropic"])
     assert calls == []
+
+
+def test_parked_mapping_matches_a_legacy_non_canonical_account_row(session: Session):
+    """A legacy config row whose id was never canonicalised still matches.
+
+    Every write path stores an account in the canonical form (see
+    ``canonical_account_id``), so the archived set and the tag have to be
+    compared in that form too — otherwise a mapping onto a legacy row would
+    keep shipping and the retired account would keep being stamped.
+    """
+    from app.models.db import ProviderConfig
+    from app.services.credential_tags import ParkedMapping
+
+    session.add(
+        ProviderConfig(
+            provider_id="kimi_coding",
+            account_id="Alice@Example.com",
+            enabled=False,
+            archived=True,
+        )
+    )
+    session.add(
+        CredentialTag(
+            provider_id="kimi_coding",
+            credential_origin="provider:kimi_coding",
+            account_id="alice@example.com",
+            set_by="operator",
+        )
+    )
+    session.commit()
+
+    parked = ParkedMapping(session)
+    tag = CredentialTagRepo.get(
+        session, provider_id="kimi_coding", credential_origin="provider:kimi_coding"
+    )
+    assert tag is not None
+    assert parked.is_parked(tag) is True
+    assert parked.is_parked_account("kimi_coding", "alice@example.com") is True
+    assert parked.is_parked_account("kimi_coding", "live@example.com") is False

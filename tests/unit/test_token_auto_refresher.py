@@ -6,7 +6,9 @@ import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlmodel import Session as RealSession
 
+from app.models.db import ProviderConfig
 from app.services.token_auto_refresher import TokenAutoRefresher
 from app.services.token_cache import TokenCache
 
@@ -28,6 +30,27 @@ def cache(monkeypatch):
 @pytest.fixture
 def refresher():
     return TokenAutoRefresher(interval_seconds=300, threshold_seconds=600)
+
+
+@pytest.fixture(autouse=True)
+def config_db(monkeypatch):
+    """Every refresh pass reads the provider configs, so point it at a test DB.
+
+    Autouse: without it a test would read the *machine's* database and depend
+    on what the operator happens to have configured there.
+    """
+    from sqlmodel import SQLModel, StaticPool, create_engine
+
+    eng = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(eng)
+    # The repo's conftest mocks ``sqlmodel.Session`` for every test; the
+    # refresher reads real rows, so the real class goes back in here.
+    monkeypatch.setattr("sqlmodel.Session", RealSession)
+    monkeypatch.setattr("app.core.db.engine", eng)
+    yield eng
+    eng.dispose()
 
 
 @pytest.mark.asyncio
@@ -308,3 +331,216 @@ async def test_purge_expired_strips_oauth_fields_with_blank_refresh_token(cache)
     assert removed == 1
     tokens = await cache.get("gemini", "u@example.com")
     assert tokens is not None and "oauth_token" not in tokens and tokens["api_key"] == "k"
+
+
+@pytest.mark.asyncio
+async def test_refresh_due_skips_a_provider_whose_accounts_are_all_archived(
+    config_db, cache, refresher
+):
+    """A retired provider's subscription has ended.
+
+    It collects nothing (the collector's own inactive-provider rule) and its
+    refresh can only fail, so the refresher must not try.
+    """
+    with RealSession(config_db) as s:
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="u@example.com",
+                enabled=False,
+                archived=True,
+            )
+        )
+        s.commit()
+    exp = time.time() + 300
+    id_token = _jwt({"exp": exp, "email": "u@example.com"})
+    await cache.store(
+        "gemini",
+        {"oauth_token": "v1", "refresh_token": "rt", "id_token": id_token},
+        account_id="u@example.com",
+    )
+
+    with patch(
+        "app.services.token_auto_refresher.refresh_oauth_token",
+        new=AsyncMock(),
+    ) as mock_refresh:
+        count = await refresher.refresh_due()
+
+    assert count == 0
+    mock_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refresh_due_refreshes_a_provider_with_one_live_account(config_db, cache, refresher):
+    """One live account is enough: the provider is not retired."""
+    with RealSession(config_db) as s:
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="old@example.com",
+                enabled=False,
+                archived=True,
+            )
+        )
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="u@example.com",
+                enabled=True,
+                archived=False,
+            )
+        )
+        s.commit()
+    exp = time.time() + 300
+    id_token = _jwt({"exp": exp, "email": "u@example.com"})
+    await cache.store(
+        "gemini",
+        {"oauth_token": "v1", "refresh_token": "rt", "id_token": id_token},
+        account_id="u@example.com",
+    )
+
+    mock_refresh = AsyncMock(
+        return_value={
+            "oauth_token": "v2",
+            "refresh_token": "rt",
+            "id_token": _jwt({"exp": time.time() + 3600, "email": "u@example.com"}),
+        }
+    )
+    with patch("app.services.token_auto_refresher.refresh_oauth_token", new=mock_refresh):
+        count = await refresher.refresh_due()
+
+    assert count == 1
+    mock_refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_due_still_refreshes_a_disabled_provider(config_db, cache, refresher):
+    """A disabled account is a reversible state.
+
+    Unlike an archived one it can come back, so its credential stays fresh.
+    """
+    with RealSession(config_db) as s:
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="u@example.com",
+                enabled=False,
+                archived=False,
+            )
+        )
+        s.commit()
+    exp = time.time() + 300
+    id_token = _jwt({"exp": exp, "email": "u@example.com"})
+    await cache.store(
+        "gemini",
+        {"oauth_token": "v1", "refresh_token": "rt", "id_token": id_token},
+        account_id="u@example.com",
+    )
+
+    mock_refresh = AsyncMock(
+        return_value={
+            "oauth_token": "v2",
+            "refresh_token": "rt",
+            "id_token": _jwt({"exp": time.time() + 3600, "email": "u@example.com"}),
+        }
+    )
+    with patch("app.services.token_auto_refresher.refresh_oauth_token", new=mock_refresh):
+        count = await refresher.refresh_due()
+
+    assert count == 1
+    mock_refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_due_skips_a_credential_whose_own_account_is_archived(
+    config_db, cache, refresher
+):
+    """The rule is keyed by the account, not only by the provider.
+
+    A retired account collects nothing, so its credential is refreshed
+    against a dead subscription — even when the provider still has another,
+    live account.
+    """
+    with RealSession(config_db) as s:
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="old@example.com",
+                enabled=False,
+                archived=True,
+            )
+        )
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="live@example.com",
+                enabled=True,
+                archived=False,
+            )
+        )
+        s.commit()
+    exp = time.time() + 300
+    id_token = _jwt({"exp": exp, "email": "old@example.com"})
+    await cache.store(
+        "gemini",
+        {"oauth_token": "v1", "refresh_token": "rt", "id_token": id_token},
+        account_id="old@example.com",
+    )
+
+    with patch(
+        "app.services.token_auto_refresher.refresh_oauth_token",
+        new=AsyncMock(),
+    ) as mock_refresh:
+        count = await refresher.refresh_due()
+
+    assert count == 0
+    mock_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refresh_due_still_refreshes_a_discovered_account_of_a_live_provider(
+    config_db, cache, refresher
+):
+    """An account with no config row is not a retired one.
+
+    The provider has a live account, so a credential the machine reported
+    under no account of its own is still worth keeping fresh.
+    """
+    with RealSession(config_db) as s:
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="old@example.com",
+                enabled=False,
+                archived=True,
+            )
+        )
+        s.add(
+            ProviderConfig(
+                provider_id="gemini",
+                account_id="live@example.com",
+                enabled=True,
+                archived=False,
+            )
+        )
+        s.commit()
+    exp = time.time() + 300
+    id_token = _jwt({"exp": exp, "email": "u@example.com"})
+    await cache.store(
+        "gemini",
+        {"oauth_token": "v1", "refresh_token": "rt", "id_token": id_token},
+        account_id="u@example.com",
+    )
+
+    mock_refresh = AsyncMock(
+        return_value={
+            "oauth_token": "v2",
+            "refresh_token": "rt",
+            "id_token": _jwt({"exp": time.time() + 3600, "email": "u@example.com"}),
+        }
+    )
+    with patch("app.services.token_auto_refresher.refresh_oauth_token", new=mock_refresh):
+        count = await refresher.refresh_due()
+
+    assert count == 1
+    mock_refresh.assert_awaited_once()

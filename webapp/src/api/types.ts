@@ -1068,6 +1068,8 @@ export interface CredentialAccountView {
   data_source?: string | null;
   input_source?: string | null;
   sources: CredentialSourceView[];
+  /** The account is retired (its provider_configs row is archived). */
+  archived?: boolean;
 }
 
 export interface CredentialProviderView {
