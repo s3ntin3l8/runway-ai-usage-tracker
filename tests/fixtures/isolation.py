@@ -11,6 +11,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Environment variables that point the app at filesystem state outside HOME.
+# Every way of running the suite scrubs them: the runner (scripts/dev_checks.py)
+# and a bare ``pytest`` (tests/conftest.py) share this list so they cannot
+# drift apart.
+LIVE_STATE_ENV_VARS: tuple[str, ...] = (
+    "DATABASE_PATH",
+    "GITHUB_OAUTH_PATH",
+    "OPENCODE_DB_PATH",
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "HERMES_HOME",
+)
+
 
 def worker_paths(isolation_root: Path, worker: str) -> tuple[Path, Path]:
     """The home and config roots for ``worker`` under ``isolation_root``.

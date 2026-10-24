@@ -25,6 +25,7 @@ from scripts.pytest_shard import (  # noqa: E402
     weights_path,
     write_weights,
 )
+from tests.fixtures.isolation import LIVE_STATE_ENV_VARS  # noqa: E402
 
 #: The dependency sets, by name. The suite needs one set, the static gate
 #: another, and a checkout that wants to do both needs the union -- so a job
@@ -142,14 +143,7 @@ def execute(
     if isolated_paths is not None:
         # Isolate filesystem state, not every runtime setting. Tests requiring
         # default API/CORS/auth settings must clear those inherited variables.
-        for name in (
-            "DATABASE_PATH",
-            "GITHUB_OAUTH_PATH",
-            "OPENCODE_DB_PATH",
-            "CODEX_HOME",
-            "CLAUDE_CONFIG_DIR",
-            "HERMES_HOME",
-        ):
+        for name in LIVE_STATE_ENV_VARS:
             env.pop(name, None)
         env.update(isolated_paths)
     if stdout is None:

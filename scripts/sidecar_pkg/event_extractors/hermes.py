@@ -232,6 +232,11 @@ def _default_watermark_state_path() -> Path:
     second copy of its state. A test pins the two together. Resolution goes
     through ``Path.home()`` rather than a literal ``~`` so it follows the
     same home the rest of the sidecar uses.
+
+    Upgrade note (Windows): earlier builds read ``~/.config/runway/sidecar``
+    here even on Windows, so an existing install's watermark file there is
+    orphaned and the first run re-scans the whole Hermes history. The server
+    deduplicates on ``event_id``, so no usage is counted twice.
     """
     config_dir = os.getenv("RUNWAY_CONFIG_DIR")
     if config_dir:

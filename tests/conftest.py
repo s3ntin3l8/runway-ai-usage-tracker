@@ -23,7 +23,7 @@ import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.fixtures.isolation import worker_paths
+from tests.fixtures.isolation import LIVE_STATE_ENV_VARS, worker_paths
 
 
 def _pytest_user() -> str:
@@ -213,6 +213,11 @@ if not _isolation_root:
 _home, _config = worker_paths(Path(_isolation_root), _worker)
 _home.mkdir(parents=True, exist_ok=True)
 _config.mkdir(parents=True, exist_ok=True)
+# State paths exported in the operator's shell would still reach live files
+# (the app database, the CLI logins, the Hermes profiles) from a bare run, so
+# they are scrubbed the same way the runner scrubs them.
+for _name in LIVE_STATE_ENV_VARS:
+    os.environ.pop(_name, None)
 os.environ["HOME"] = str(_home)
 os.environ["USERPROFILE"] = str(_home)
 os.environ["APPDATA"] = str(_home / "AppData/Roaming")
@@ -220,22 +225,6 @@ os.environ["LOCALAPPDATA"] = str(_home / "AppData/Local")
 os.environ["XDG_CONFIG_HOME"] = str(_home / ".config")
 os.environ["XDG_DATA_HOME"] = str(_home / ".local/share")
 os.environ["RUNWAY_CONFIG_DIR"] = str(_config)
-
-
-def _real_home() -> Path | None:
-    """The operator's real home directory, from the account database.
-
-    Unlike ``Path.home()`` this ignores ``$HOME``, which the block above has
-    just replaced. None where there is no account database (native Windows).
-    """
-    try:
-        import pwd
-    except ImportError:  # pragma: no cover - native Windows
-        return None
-    try:
-        return Path(pwd.getpwuid(os.getuid()).pw_dir)
-    except (KeyError, OSError):  # pragma: no cover - uid without an account
-        return None
 
 
 def _inside(path: Path, parent: Path) -> bool:
@@ -278,20 +267,19 @@ def _guard_real_home_is_isolated():
     """Fail the whole run if it could still reach the operator's real home.
 
     The isolation above is what keeps a test from writing into the real
-    ``~/.config/runway``; this proves it took effect, so a future change to
-    the block (or an import that cached a path first) cannot silently undo it.
+    ``~/.config/runway``; this proves the environment it set is still in
+    force when the first test runs, so a later change to ``HOME`` or
+    ``RUNWAY_CONFIG_DIR`` (a plugin, a fixture) cannot silently undo it. It
+    cannot see a module that captured a home path before the block ran.
     """
     isolation_root = Path(os.environ["TEST_ISOLATION_ROOT"])
     problems: list[str] = []
-    real = _real_home()
     for label, path in (
         ("Path.home()", Path.home()),
         ("RUNWAY_CONFIG_DIR", Path(os.environ["RUNWAY_CONFIG_DIR"])),
     ):
         if not _inside(path, isolation_root):
             problems.append(f"{label} = {path}")
-        elif real is not None and path.resolve() == real.resolve():
-            problems.append(f"{label} is the real home {real}")
     if problems:
         pytest.exit(
             "tests are not isolated from the real home directory ("
