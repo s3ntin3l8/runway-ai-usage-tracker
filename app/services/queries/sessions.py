@@ -74,6 +74,14 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
 
     # These SQL f-strings interpolate only server-built clauses from fixed
     # conditions above; all request values stay in bound parameters below.
+    #
+    # The message count counts *turns*, not events. A provider that emits one
+    # event per API request (MiniMax Code) carries its own turn id, so its
+    # turns are counted distinctly; a provider that emits one event per message
+    # (Claude Code) carries none, and the fallback counts the events — which
+    # is the same number, because `event_id` is unique per provider. The
+    # Agents card below counts turns the same way, so a session row and its
+    # subagent cards speak the same unit.
     # Main aggregation query
     agg_sql = text(
         f"""
@@ -81,7 +89,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
             session_id,
             MIN(ts)                                            AS ts_start,
             MAX(ts)                                            AS ts_end,
-            COUNT(*)                                           AS msgs,
+            COUNT(DISTINCT COALESCE(turn_id, event_id))        AS msgs,
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create
                 + tokens_reasoning)                            AS tokens_total,
@@ -158,7 +166,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
         f"""
         SELECT
             model_id,
-            COUNT(*)                                            AS msgs,
+            COUNT(DISTINCT COALESCE(turn_id, event_id))         AS msgs,
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create
                 + tokens_reasoning)                             AS tokens_total,

@@ -60,7 +60,13 @@ def query_top_projects(
         f"""
         SELECT
             project,
-            COUNT(*)                                            AS msgs,
+            -- The message count counts *turns*, not events: a provider that
+            -- emits one event per API request (MiniMax Code) carries its own
+            -- turn id, so its turns are counted distinctly. A provider that
+            -- emits one event per message carries none, and the fallback
+            -- counts the events — the same number, because `event_id` is
+            -- unique per provider.
+            COUNT(DISTINCT COALESCE(turn_id, event_id))         AS msgs,
             COUNT(DISTINCT session_id)                          AS sessions,
             SUM(tokens_input + tokens_output
                 + tokens_cache_read + tokens_cache_create

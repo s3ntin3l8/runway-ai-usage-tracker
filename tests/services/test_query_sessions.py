@@ -473,3 +473,83 @@ class TestSubagentTurns:
         row = _sessions(db_session)[0]
         explore = {e["subagent_type"]: e for e in row["subagents"]}["Explore"]
         assert explore["tokens_total"] == 6 * 110
+
+
+class TestSessionMessageCount:
+    """The session's Messages column counts turns, not events."""
+
+    def test_turns_are_counted_distinctly_when_the_provider_names_a_turn(self, db_session):
+        # A provider that emits one event per request (MiniMax Code): four
+        # requests, one turn.
+        for index in range(4):
+            _add_event(
+                db_session,
+                event_id=f"t{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                turn_id="turn_1",
+            )
+        row = _sessions(db_session)[0]
+        assert row["msgs"] == 1
+
+    def test_several_turns_are_counted_separately(self, db_session):
+        for index in range(4):
+            _add_event(
+                db_session,
+                event_id=f"t{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                turn_id=f"turn_{index % 2}",
+            )
+        row = _sessions(db_session)[0]
+        assert row["msgs"] == 2
+
+    def test_a_provider_without_a_turn_id_keeps_the_event_count(self, db_session):
+        # Claude Code emits one event per message, so the turn count is the
+        # event count and nothing changes.
+        for index in range(3):
+            _add_event(
+                db_session,
+                event_id=f"c{index}",
+                session_id="s2",
+                model_id="m",
+                ts=_NOW,
+            )
+        row = _sessions(db_session)[0]
+        assert row["msgs"] == 3
+
+    def test_the_by_model_breakdown_counts_turns_too(self, db_session):
+        """The breakdown lives in the session's own panel — same unit."""
+        for index in range(4):
+            _add_event(
+                db_session,
+                event_id=f"t{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                turn_id="turn_1",
+            )
+        row = _sessions(db_session)[0]
+        by_model = {m["model_id"]: m for m in row["by_model"]}
+        assert by_model["m"]["msgs"] == 1
+
+    def test_the_message_count_agrees_with_the_agents_card(self, db_session):
+        """The session row and its Agents card speak the same unit."""
+        for index in range(4):
+            _add_event(
+                db_session,
+                event_id=f"t{index}",
+                session_id="s1",
+                model_id="m",
+                ts=_NOW,
+                turn_id="turn_1",
+                subagent_type="Explore",
+            )
+        row = _sessions(db_session)[0]
+        explore = {a["subagent_type"]: a for a in row["subagents"]}["Explore"]
+        assert explore["turns"] == 1
+        assert explore["requests"] == 4
+        # The card counts the same turns the row does.
+        assert row["msgs"] == explore["turns"]

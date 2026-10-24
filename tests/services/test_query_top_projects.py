@@ -42,6 +42,7 @@ def _add(
     cost_usd=0.0,
     cost_cache_read=0.0,
     kind="message",
+    turn_id=None,
 ):
     session.add(
         UsageEvent(
@@ -57,6 +58,7 @@ def _add(
             cost_cache_read=cost_cache_read,
             sidecar_id="local",
             kind=kind,
+            turn_id=turn_id,
         )
     )
     session.commit()
@@ -152,3 +154,24 @@ def test_same_day_bounds_filter_top_projects_and_project_options(db_session):
     rows = query_top_projects(db_session, since=since, until=until, metric="tokens")
     assert [row["project"] for row in rows] == ["inside"]
     assert query_projects(db_session, since=since, until=until) == ["inside"]
+
+
+def test_the_message_count_counts_turns(db_session):
+    """A provider that emits one event per request carries its own turn id."""
+    for index in range(4):
+        _add(
+            db_session,
+            event_id=f"t{index}",
+            project="alpha",
+            tokens_input=100,
+            turn_id="turn_1",
+        )
+    rows = query_top_projects(db_session, since=_SINCE, metric="tokens")
+    assert rows[0]["msgs"] == 1
+
+
+def test_a_provider_without_a_turn_id_keeps_the_event_count(db_session):
+    for index in range(3):
+        _add(db_session, event_id=f"c{index}", project="alpha", tokens_input=100)
+    rows = query_top_projects(db_session, since=_SINCE, metric="tokens")
+    assert rows[0]["msgs"] == 3
