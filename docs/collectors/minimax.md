@@ -421,6 +421,24 @@ The **turn** dimension rides along: the extractor pushes the ledger's own `turn_
 card counts *turns* (one background task = one turn) instead of API requests. A provider that
 emits one event per message (Claude Code) carries no turn id, and its numbers are unchanged.
 
+The session's own **Messages** column counts turns the same way, so a session row and its Agents
+card speak the same unit: a MiniMax Code session reports the turns you took, not the requests
+your turn was made of. The Top Projects table follows. The aggregate views (the provider's
+monthly totals, the charts) still count requests — their numbers come from the stored rollups,
+and a distinct-turn count cannot be summed incrementally across ingest batches.
+
+Two details worth knowing:
+
+- **It is not retroactive.** Rows collected before the turn id existed carry none, so they keep
+  counting as requests until the repair fills their turn id.
+- A turn is attributed to **every model it touched** — the same way its tokens are. A turn that
+  used two models therefore appears in both per-model buckets while the session row counts it
+  once.
+- A **turn id names its turn on its own**: the runtime mints them uniquely, across every
+  sidecar of the provider — not only within one host (a live store holds 130 distinct turn ids
+  across 18 sessions, none shared). That also keeps a turn's identity stable when the repair
+  moves its row from the task's session to the parent.
+
 #### Repairing the rows collected earlier
 
 Rows collected before this change still carry the background task's own session id, so they show up
