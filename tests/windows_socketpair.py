@@ -24,6 +24,15 @@ This implementation connects in blocking mode, so the loopback handshake
 completes before ``accept()`` is called and there is no pending connect to
 wait on. The listening socket carries a timeout, so a handshake that somehow
 never lands becomes a loud ``socket.timeout`` instead of an endless wait.
+
+A crowded machine can refuse a source port outright: Windows raises
+``WSAEADDRINUSE`` (WinError 10048) from ``connect()`` when it cannot hand the
+client socket a port that is free, and ``WSAENOBUFS`` (WinError 10055) when
+there is no buffer space for one. An IP Helper ``portproxy`` rule that
+forwards a port to itself can eat the machine's whole dynamic range that way
+(see ``CONTRIBUTING.md``). The pair is rebuilt for a fresh source port,
+because a fresh socket gets a fresh port. Every other failure — a timeout,
+a refused peer, a bad argument — still surfaces at once.
 """
 
 from __future__ import annotations
@@ -31,10 +40,22 @@ from __future__ import annotations
 import os
 import socket
 import sys
+import time
 from typing import Any
 
 #: How long the listening socket may wait for the handshake to land.
 ACCEPT_TIMEOUT_SECONDS = 10.0
+
+#: Windows socket errors a crowded machine raises transiently, and that a
+#: fresh socket clears: the source port is taken, or there is no buffer space
+#: for one. Anything else is a real failure and must surface at once.
+_RETRYABLE_WINERRORS = frozenset({10048, 10055})  # WSAEADDRINUSE, WSAENOBUFS
+
+#: How many pairs to attempt before the last error is raised.
+_PAIR_ATTEMPTS = 5
+
+#: The wait between attempts, doubling each time.
+_PAIR_RETRY_BACKOFF_SECONDS = 0.05
 
 #: The loopback addresses CPython's own fallback uses.
 _LOCALHOST = "127.0.0.1"
@@ -54,6 +75,9 @@ def windows_socketpair(
     The pair is a loopback TCP connection, exactly what CPython's fallback
     returns on Windows, and the peer is authenticated the same way: a
     connection from anything else that reached the same port is refused.
+
+    A transient port error from a crowded machine is retried on a fresh
+    socket; everything else surfaces at once.
     """
     if family == socket.AF_INET:
         host = _LOCALHOST
@@ -66,6 +90,35 @@ def windows_socketpair(
     if proto != 0:
         raise ValueError("Only protocol zero is supported")
 
+    # The machine can hand the client socket a source port that is already
+    # bound, and the connect then fails with WSAEADDRINUSE. That is the
+    # machine's condition, not the suite's, so the pair is rebuilt for a
+    # fresh source port instead of failing the run over it.
+    last: OSError | None = None
+    for attempt in range(_PAIR_ATTEMPTS):
+        try:
+            return _make_pair(family, type, proto, host)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) not in _RETRYABLE_WINERRORS:
+                raise
+            last = exc
+            if attempt < _PAIR_ATTEMPTS - 1:
+                time.sleep(_PAIR_RETRY_BACKOFF_SECONDS * (2**attempt))
+
+    # Every attempt failed with a retryable error: the last one is the
+    # truth, and a machine that cannot spare a port must say so loudly.
+    if last is not None:
+        raise last
+    raise RuntimeError("the socketpair was never attempted")  # pragma: no cover
+
+
+def _make_pair(
+    family: int,
+    type: int,  # noqa: A002 — the stdlib's own parameter name
+    proto: int,
+    host: str,
+) -> tuple[socket.socket, socket.socket]:
+    """One attempt at a connected pair. The caller decides whether to try again."""
     lsock = socket.socket(family, type, proto)
     try:
         lsock.bind((host, 0))

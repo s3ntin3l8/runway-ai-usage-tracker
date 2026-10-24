@@ -626,7 +626,10 @@ describe('ProviderDetailDialog — the Claude family', () => {
     renderFamily(subscription, [subscription, discoveredConsole]);
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /actions for api org/i }));
-    await userEvent.click(within(dialog).getByRole('menuitem', { name: /edit/i }));
+    const editItem = within(dialog).getByRole('menuitem', { name: /edit/i });
+    // A discovered account's provider is known, so Edit is available.
+    expect(editItem).toHaveAttribute('aria-disabled', 'false');
+    await userEvent.click(editItem);
 
     const input = await screen.findByLabelText(/display label/i);
     await userEvent.clear(input);
@@ -639,6 +642,261 @@ describe('ProviderDetailDialog — the Claude family', () => {
         discovered.account_id,
         'Team wallet',
       ),
+    );
+  });
+});
+
+// An account that names a provider the dialog does not know cannot be
+// addressed: the mutations already refuse to act on it rather than filing it
+// under the family's representative (#795). The account dialog and the master
+// toggle have to agree with them.
+describe('ProviderDetailDialog — an account it cannot address (#795)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const subscription: ProviderConfig = {
+    ...multiAccount,
+    provider_id: 'anthropic',
+    name: 'Claude',
+    // Disabled, so the master toggle has something to change on it.
+    accounts: [{ ...alice, enabled: false, provider_id: 'anthropic' }],
+    account_count: 1,
+  };
+
+  // Names a provider that is not among the family's connections, so it cannot
+  // be addressed.
+  const stranger: ProviderAccount = {
+    ...alice,
+    account_id: 'stranger@example.com',
+    account_label: 'Stranger',
+    enabled: false,
+    provider_id: 'mystery_provider',
+  };
+
+  const strangerConnection: ProviderConfig = {
+    ...multiAccount,
+    provider_id: 'mystery_connection',
+    name: 'Mystery',
+    accounts: [stranger],
+    account_count: 1,
+  };
+
+  function renderFamily(
+    provider: ProviderConfig = subscription,
+    connections: ProviderConfig[] = [subscription, strangerConnection],
+  ) {
+    return renderWithProviders(
+      <ProviderDetailDialog
+        provider={provider}
+        connections={connections}
+        onClose={vi.fn()}
+      />,
+    );
+  }
+
+  it('does not open the account dialog against the family representative', async () => {
+    renderFamily();
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /actions for stranger/i }));
+    await userEvent.click(within(dialog).getByRole('menuitem', { name: /edit/i }));
+
+    // No account dialog at all — neither the representative's account nor a
+    // dead "Account not found" end.
+    expect(screen.queryByText(/^Edit account ·/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Account not found/i)).not.toBeInTheDocument();
+  });
+
+  it('says why it cannot edit an account it cannot address', async () => {
+    renderFamily();
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /actions for stranger/i }));
+    const editItem = within(dialog).getByRole('menuitem', { name: /edit/i });
+
+    // Marked as unavailable for assistive tech, and dimmed — but still
+    // clickable, because the operator is better served by an explanation than
+    // by a button that swallows the click.
+    expect(editItem).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(editItem);
+
+    // The operator hears why nothing happened, instead of the menu closing
+    // and leaving them to guess whether the click landed.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/cannot edit stranger — its provider is not available/i),
+      ),
+    );
+    expect(screen.queryByText(/^Edit account ·/)).not.toBeInTheDocument();
+  });
+
+  it('disables the master toggle when no account is addressable', async () => {
+    const onlyStranger: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [stranger],
+      account_count: 1,
+    };
+    renderFamily(onlyStranger, [onlyStranger]);
+
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    expect(toggle).toBeDisabled();
+  });
+
+  it('names the account it could not address instead of claiming a family-wide change', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderFamily();
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(api.putProviderConfig).toHaveBeenCalled());
+    // Only the addressable account was written.
+    expect(vi.mocked(api.putProviderConfig).mock.calls).toEqual([
+      ['anthropic', 'alice@example.com', { enabled: true }],
+    ]);
+    // The toast names what was skipped — it does not claim all accounts changed.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/1 account enabled; 1 skipped \(Stranger\)/),
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalledWith(
+      expect.stringMatching(/all accounts enabled/),
+    );
+  });
+
+  it('names how many accounts the toggle changed', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    renderFamily(subscription, [subscription]);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringMatching(/all accounts enabled \(1 changed\)/),
+      ),
+    );
+  });
+
+  it('pluralises the count it reports', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    const two: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [
+        { ...alice, account_id: 'a@example.com', enabled: false, provider_id: 'anthropic' },
+        { ...bob, account_id: 'b@example.com', enabled: false, provider_id: 'anthropic' },
+      ],
+      account_count: 2,
+    };
+    renderFamily(two, [two]);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringMatching(/all accounts enabled \(2 changed\)/),
+      ),
+    );
+  });
+
+  it('pluralises the count in the skipped toast too', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    const two: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [
+        { ...alice, account_id: 'a@example.com', enabled: false, provider_id: 'anthropic' },
+        { ...bob, account_id: 'b@example.com', enabled: false, provider_id: 'anthropic' },
+      ],
+      account_count: 2,
+    };
+    renderFamily(two, [two, strangerConnection]);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    // Two accounts changed, one could not be addressed: "2 accounts", not
+    // "2 account".
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/2 accounts enabled; 1 skipped \(Stranger\)/),
+      ),
+    );
+  });
+
+  it('masks an opaque account id in the skipped toast', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    // No label, and an id that is a 64-hex credential hash: the toast must
+    // show the masked form, not the raw id.
+    const opaque: ProviderAccount = {
+      ...stranger,
+      account_id: 'a'.repeat(64),
+      account_label: null,
+    };
+    const opaqueConnection: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'mystery_connection',
+      name: 'Mystery',
+      accounts: [opaque],
+      account_count: 1,
+    };
+    renderFamily(subscription, [subscription, opaqueConnection]);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/1 skipped \(aaaaaaaa…aaaa\)/),
+      ),
+    );
+    // The raw id never reaches the toast.
+    expect(toast.error).not.toHaveBeenCalledWith(
+      expect.stringContaining('a'.repeat(64)),
+    );
+  });
+
+  it('the master toggle speaks for the accounts it can address', async () => {
+    // The reachable account is enabled; the unreachable one is not. The
+    // switch is checked, and the copy says which accounts it covers — so the
+    // row's "disabled" badge is not a contradiction.
+    const reachable: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [{ ...alice, enabled: true, provider_id: 'anthropic' }],
+      account_count: 1,
+    };
+    renderFamily(reachable, [reachable, strangerConnection]);
+
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    expect(toggle).toBeChecked();
+    expect(
+      screen.getByText(/every account this card can address/i),
+    ).toBeInTheDocument();
+  });
+
+  it('points the master toggle at the copy that states its scope', async () => {
+    const reachable: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [{ ...alice, enabled: true, provider_id: 'anthropic' }],
+      account_count: 1,
+    };
+    renderFamily(reachable, [reachable, strangerConnection]);
+
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    // The scope has to be programmatically attached, not only on screen: the
+    // accessible name alone does not say which accounts the switch covers.
+    const describedBy = toggle.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)).toHaveTextContent(
+      /every account this card can address/i,
     );
   });
 });
