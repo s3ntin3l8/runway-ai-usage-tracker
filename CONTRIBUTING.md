@@ -79,6 +79,19 @@ changes materially - that command runs the full suite once and rewrites the
 table for the platform it ran on. The Windows table is what the native Windows
 shards are planned with; measure it on Windows, not on Linux.
 
+One Windows-native trap catches every test that talks to a local HTTP server.
+A server that rejects a request on its headers alone — the settings server's
+`Origin` guard, its `Host` check, a size gate — answers and closes without
+reading the request body. On Windows that close is a TCP reset rather than a
+graceful close, and the reset discards the response the client has not read
+yet, so the client sees `ConnectionAbortedError` (WinError 10053) instead of
+the status code it is asserting on. Linux and macOS send a FIN there and the
+response arrives normally, so the failure only ever surfaces on the Windows
+runner. A request the server rejects on its headers must therefore carry no
+payload: send `Content-Length: 0`, or declare the length and send nothing.
+`tests/unit/test_sidecar_pairing.py` and
+`tests/unit/test_keychain_sources_settings.py` both work that way.
+
 Git hooks live in the repository's shared `.git/hooks`, so every worktree of
 this repository writes into the same two hook files. Install them once with
 `make install-hooks`: the hook this repository installs resolves its
