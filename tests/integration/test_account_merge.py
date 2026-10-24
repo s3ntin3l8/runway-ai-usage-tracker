@@ -341,6 +341,29 @@ def test_the_credential_inventory_lists_the_merged_accounts(client, session, mon
     ]
 
 
+def test_building_the_inventory_gives_its_connection_back(client, session, monkeypatch):
+    """Every inventory build must return its connection to the pool.
+
+    The merged accounts are read inside the inventory's session block. Read
+    after it, a query on the closed session checks out a connection that
+    nothing ever returns to the pool — one leaked connection per build, and a
+    file handle that stays open, which is what breaks the Windows suite.
+    """
+    from app.services import credential_inventory
+
+    engine = session.get_bind().engine
+    monkeypatch.setattr(credential_inventory, "engine", engine)
+    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+
+    # Warm up first: the endpoint's own session checks its connection out
+    # lazily, and that one stays checked out for the rest of the test.
+    assert client.get("/api/v1/system/credentials", headers=_admin_headers()).status_code == 200
+    baseline = engine.pool.checkedout()
+    for _ in range(3):
+        assert client.get("/api/v1/system/credentials", headers=_admin_headers()).status_code == 200
+    assert engine.pool.checkedout() == baseline
+
+
 def test_a_chain_of_merges_is_reported_at_its_end(client, session):
     """alice → bob → carol: the operator is told where the account ended up,
     not which hop it took."""

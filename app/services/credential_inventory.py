@@ -355,6 +355,15 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         rule_count = len(session.exec(select(CredentialTag)).all())
         pending_usage = len(session.exec(select(PendingUsageEvent)).all())
         data_path = _data_path(session)
+        # The accounts that were merged away, and where each of them went.
+        # They hold no credential, so they are not among the accounts above —
+        # this is what says where the account went.
+        #
+        # Read them *here*, inside this session's block. The session is closed
+        # when the block ends, and a query on a closed session checks out a
+        # fresh connection that nothing ever returns to the pool — one leaked
+        # connection per inventory build, and a file handle that stays open.
+        merges = merged_accounts(session)
 
     stale_cutoff = datetime.now(UTC) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
 
@@ -685,6 +694,6 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 destination_account_id=merged.destination_account_id,
                 merged_at=merged.merged_at,
             )
-            for merged in merged_accounts(session)
+            for merged in merges
         ],
     )
