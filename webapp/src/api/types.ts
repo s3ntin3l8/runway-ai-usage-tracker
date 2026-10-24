@@ -1439,10 +1439,27 @@ export interface ClaudeCloudProbeRequest {
   organization_id?: string | null;
   session_id?: string | null;
   max_history_pages?: number;
+  report_version?: 1 | 2;
 }
 
-export interface ClaudeCloudProbeReport {
-  format_version: 1;
+export type CloudStructureLocation = 'event' | 'data' | 'content' | 'message' | 'payload'
+  | 'event.event' | 'data.message' | 'content.message' | 'event.event.message';
+export interface CloudStructure {
+  events: number;
+  locations: Record<CloudStructureLocation, {
+    types: Record<'missing' | 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object', number>;
+    categories: Record<'assistant' | 'result' | 'user' | 'system' | 'tool_result' | 'tool_use'
+      | 'stream_event' | 'message' | 'text' | 'thinking' | 'other' | 'missing' | 'non_string' | 'not_object', number>;
+    fields: Record<'type' | 'event' | 'message' | 'data' | 'content' | 'payload' | 'usage' | 'modelUsage' | 'role', number>;
+  }>;
+}
+
+export type ClaudeCloudProbeReport = ClaudeCloudProbeFields & (
+  | { format_version: 1 }
+  | { format_version: 2; structure: CloudStructure }
+);
+
+interface ClaudeCloudProbeFields {
   outcome:
     | 'sample_complete' | 'sample_limited' | 'sample_not_found' | 'no_sessions' | 'busy'
     | 'source_unavailable' | 'source_ineligible' | 'unsupported_source' | 'source_changed'

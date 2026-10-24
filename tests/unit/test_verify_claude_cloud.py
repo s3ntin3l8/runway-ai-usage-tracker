@@ -273,11 +273,12 @@ def test_impossible_observation_counts_and_unknown_diagnostics_are_rejected():
         evaluate(item)
 
 
-def test_cli_runs_without_site_packages_or_application_imports():
+@pytest.mark.parametrize("version", [1, 2])
+def test_cli_runs_without_site_packages_or_application_imports(version):
     script = Path(__file__).resolve().parents[2] / "scripts/verify_claude_cloud.py"
     result = subprocess.run(
         [sys.executable, "-I", "-S", str(script)],
-        input=json.dumps(evidence()).encode(),
+        input=json.dumps(evidence() if version == 1 else structured_evidence()).encode(),
         capture_output=True,
         timeout=10,
     )
@@ -374,3 +375,86 @@ def test_incomplete_final_result_may_clear_an_earlier_snapshot_but_still_stops()
     result = evaluate(item)
     assert result["status"] == "stop" and "usage_requires_review" in result["reasons"]
     assert result["report"]["observations"][0]["report"] == audit
+
+
+def structured_evidence():
+    from scripts.claude_cloud_structure import empty_structure, observe_structure
+
+    value = evidence()
+    value["report"]["format_version"] = 2
+    shape = empty_structure()
+    observe_structure(shape, {"data": {"type": "assistant", "message": {"usage": {}}}})
+    value["report"]["structure"] = shape
+    return value
+
+
+def test_v2_structure_is_validated_without_promoting_acceptance():
+    value = structured_evidence()
+    result = evaluate(value)
+    assert result["status"] == "sample_observed"
+    assert result["report"]["structure"] == value["report"]["structure"]
+    assert result["live_acceptance_passed"] is result["ready_for_ingestion"] is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "unknown_location",
+        "unknown_type",
+        "unknown_category",
+        "unknown_field",
+        "negative",
+        "boolean",
+        "sum",
+        "field_bound",
+        "child_presence",
+        "wrong_total",
+        "v1_extra",
+        "v2_missing",
+    ],
+)
+def test_malformed_structure_cannot_leave_the_offline_validator(mutation):
+    value = structured_evidence()
+    report = value["report"]
+    row = report["structure"]["locations"]["event"]
+    if mutation == "unknown_location":
+        report["structure"]["locations"]["private-location"] = row
+    if mutation == "unknown_type":
+        row["types"]["private-type"] = 0
+    if mutation == "unknown_category":
+        row["categories"]["private-category"] = 0
+    if mutation == "unknown_field":
+        row["fields"]["private-field"] = 0
+    if mutation == "negative":
+        row["types"]["object"] = -1
+    if mutation == "boolean":
+        row["types"]["object"] = True
+    if mutation == "sum":
+        row["types"]["object"] = 2
+    if mutation == "field_bound":
+        row["fields"]["usage"] = 2
+    if mutation == "child_presence":
+        row["fields"]["data"] = 0
+    if mutation == "wrong_total":
+        report["structure"]["events"] = 0
+    if mutation == "v1_extra":
+        report["format_version"] = 1
+    if mutation == "v2_missing":
+        del report["structure"]
+    with pytest.raises(EvidenceError, match="invalid_evidence"):
+        evaluate(value)
+
+
+def test_v2_cli_rejects_unknown_structural_keys_without_echoing_them():
+    value = structured_evidence()
+    value["report"]["structure"]["locations"]["event"]["fields"]["private-transcript-key"] = 1
+    script = Path(__file__).resolve().parents[2] / "scripts/verify_claude_cloud.py"
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", str(script)],
+        input=json.dumps(value).encode(),
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 2 and result.stderr == b""
+    assert json.loads(result.stdout)["reasons"] == ["invalid_evidence"]
+    assert b"private-transcript-key" not in result.stdout

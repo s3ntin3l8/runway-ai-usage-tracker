@@ -8,6 +8,38 @@ import sys
 from datetime import datetime
 from typing import Any, BinaryIO
 
+# Deliberately mirrored: this verifier must also run as a standalone file with
+# python -I -S. Round-trip contract tests catch drift from the producer vocabulary.
+LOCATION_PATHS = {
+    "event": (),
+    "data": ("data",),
+    "content": ("content",),
+    "message": ("message",),
+    "payload": ("payload",),
+    "event.event": ("event",),
+    "data.message": ("data", "message"),
+    "content.message": ("content", "message"),
+    "event.event.message": ("event", "message"),
+}
+VALUE_TYPES = ("missing", "null", "boolean", "number", "string", "array", "object")
+CATEGORIES = (
+    "assistant",
+    "result",
+    "user",
+    "system",
+    "tool_result",
+    "tool_use",
+    "stream_event",
+    "message",
+    "text",
+    "thinking",
+    "other",
+    "missing",
+    "non_string",
+    "not_object",
+)
+FIELDS = ("type", "event", "message", "data", "content", "payload", "usage", "modelUsage", "role")
+
 MAX_BYTES = 256 * 1024
 OUTCOMES = {
     "sample_complete",
@@ -141,7 +173,37 @@ def _audit(value: Any) -> None:
     _require(len(set(diagnostics)) == len(diagnostics))
 
 
+def _structure(value: Any, events: int) -> None:
+    _keys(value, {"events", "locations"})
+    _integer(value["events"], 150)
+    _require(value["events"] == events)
+    rows = value["locations"]
+    _keys(rows, set(LOCATION_PATHS))
+    for row in rows.values():
+        _keys(row, {"types", "categories", "fields"})
+        for name, keys in (("types", VALUE_TYPES), ("categories", CATEGORIES), ("fields", FIELDS)):
+            _counters(row[name], set(keys))
+            for count in row[name].values():
+                _integer(count, events)
+        _require(sum(row["types"].values()) == events)
+        _require(sum(row["categories"].values()) == events)
+        objects = row["types"]["object"]
+        _require(row["categories"]["not_object"] == events - objects)
+        _require(all(count <= objects for count in row["fields"].values()))
+        _require(row["categories"]["missing"] == objects - row["fields"]["type"])
+    _require(rows["event"]["types"]["object"] == events)
+    for location, path in LOCATION_PATHS.items():
+        if path:
+            parent = next(key for key, parts in LOCATION_PATHS.items() if parts == path[:-1])
+            _require(
+                rows[location]["types"]["missing"] == events - rows[parent]["fields"][path[-1]]
+            )
+
+
 def _report(value: Any) -> None:
+    _require(type(value) is dict)
+    version = value.get("format_version")
+    _require(type(version) is int and version in (1, 2))
     _keys(
         value,
         {
@@ -161,9 +223,9 @@ def _report(value: Any) -> None:
             "observations",
             "cloud_contract_verified",
             "ready_for_ingestion",
-        },
+        }
+        | ({"structure"} if version == 2 else set()),
     )
-    _require(type(value["format_version"]) is int and value["format_version"] == 1)
     _false_flags(value)
     _choice(value["outcome"], OUTCOMES)
     _choice(value["stage"], {"source", "profile", "sessions", "history", "complete"})
@@ -182,6 +244,8 @@ def _report(value: Any) -> None:
         _integer(value["http_status"], 599)
         _require(value["http_status"] >= 100)
     _counters(value["sequence"], SEQUENCE)
+    if version == 2:
+        _structure(value["structure"], value["history_events"])
     observations = value["observations"]
     _require(type(observations) is list and len(observations) <= 3)
     locations = set()

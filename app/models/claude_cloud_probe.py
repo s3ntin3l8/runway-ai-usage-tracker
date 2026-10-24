@@ -4,6 +4,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
+from scripts.claude_cloud_structure import (
+    StructureCategory,
+    StructureField,
+    StructureLocation,
+    StructureType,
+)
+
 
 class ClaudeCloudProbeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -15,6 +22,7 @@ class ClaudeCloudProbeRequest(BaseModel):
     )
     session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
     max_history_pages: StrictInt = Field(default=2, ge=1, le=3)
+    report_version: StrictInt = Field(default=1, ge=1, le=2)
 
 
 class CloudUsageObservation(BaseModel):
@@ -22,8 +30,8 @@ class CloudUsageObservation(BaseModel):
     report: dict[str, Any]
 
 
-class ClaudeCloudProbeReport(BaseModel):
-    format_version: Literal[1] = 1
+class _ClaudeCloudProbeFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     outcome: Literal[
         "sample_complete",
         "sample_limited",
@@ -58,3 +66,25 @@ class ClaudeCloudProbeReport(BaseModel):
     observations: list[CloudUsageObservation] = Field(default_factory=list)
     cloud_contract_verified: Literal[False] = False
     ready_for_ingestion: Literal[False] = False
+
+
+class ClaudeCloudProbeReport(_ClaudeCloudProbeFields):
+    format_version: Literal[1] = 1
+
+
+class CloudStructureLocationCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    types: dict[StructureType, int]
+    categories: dict[StructureCategory, int]
+    fields: dict[StructureField, int]
+
+
+class CloudStructure(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    events: StrictInt = Field(ge=0, le=150)
+    locations: dict[StructureLocation, CloudStructureLocationCounts]
+
+
+class ClaudeCloudProbeReportV2(_ClaudeCloudProbeFields):
+    format_version: Literal[2] = 2
+    structure: CloudStructure
