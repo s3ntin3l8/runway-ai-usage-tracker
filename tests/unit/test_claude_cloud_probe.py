@@ -103,9 +103,17 @@ async def run(body, upstream):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("forwarded", [False, True], ids=["original", "sidecar-read-only"])
+@pytest.mark.parametrize(
+    "origin,forwarded",
+    [
+        ("file:/fixture/.claude/.credentials.json", False),
+        ("file:/fixture/.claude/.credentials.json", True),
+        ("env:CLAUDE_CODE_OAUTH_TOKEN", True),
+    ],
+    ids=["original", "sidecar-read-only", "env-read-only"],
+)
 async def test_verified_exact_source_gets_bounded_history_without_leaking_evidence(
-    environment, forwarded
+    environment, origin, forwarded
 ):
     if forwarded:
         from scripts.sidecar_pkg.source_consent import filter_egress
@@ -115,7 +123,7 @@ async def test_verified_exact_source_gets_bounded_history_without_leaking_eviden
                 "entries": [
                     {
                         "provider_id": "anthropic",
-                        "credential_origin": "file:/fixture/.claude/.credentials.json",
+                        "credential_origin": origin,
                         "oauth_token": "fixture-access",
                         "refresh_token": "unused",
                     }
@@ -123,7 +131,12 @@ async def test_verified_exact_source_gets_bounded_history_without_leaking_eviden
             }
         )["entries"][0]
         assert entry["oauth_read_only"] == "1" and "refresh_token" not in entry
-        _, cache = environment
+        engine, cache = environment
+        with Session(engine) as session:
+            row = session.get(CredentialSource, 1)
+            row.credential_origin = origin
+            session.add(row)
+            session.commit()
         await cache.remove_source("anthropic", ACCOUNT, SOURCE)
         await cache.store(
             "anthropic",

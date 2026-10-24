@@ -190,6 +190,7 @@ async def _load_source(
     if snapshot is None:
         raise ProbeError("source_unavailable")
     tokens, candidate = snapshot
+    # Syntax only: _authority_read separately requires Code provenance for "1".
     if tokens.get("oauth_read_only") not in (None, "", "0", "1"):
         raise ProbeError("unsupported_source")
     if candidate.get("identity_pending") or not tokens.get("oauth_token"):
