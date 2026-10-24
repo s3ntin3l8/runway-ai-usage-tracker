@@ -847,6 +847,20 @@ export interface CredentialSourceSummary {
 // about the same set.
 export type BillingType = 'subscription' | 'pay_as_you_go' | 'unknown';
 
+/**
+ * An account that was merged away, and the account it became. The merge
+ * moved the account's history and its credential to the destination, so the
+ * merged-away account holds nothing — this is what says where it went.
+ */
+export interface MergedAccount {
+  /** The account that was merged away. */
+  account_id: string;
+  /** Where it ended up (a chain of merges is followed to its end). */
+  destination_account_id: string;
+  /** When the merge happened (server timestamp, UTC). */
+  merged_at: string;
+}
+
 export interface ProviderAccount {
   account_id: string;
   // Which provider this account belongs to. The Claude family groups several
@@ -857,6 +871,10 @@ export interface ProviderAccount {
   provider_id?: string;
   enabled?: boolean;
   archived?: boolean; // PR #292 — hide discontinued providers from the dashboard
+  // Where this account went, when it was merged away. The row itself stays
+  // behind (archived, no credential) — the merge is what retired the
+  // account, not the archive. Absent from an older server.
+  merged_into?: string | null;
   has_usage_events?: boolean;
   api_key_set?: boolean;
   session_cookie_set?: boolean;
@@ -919,6 +937,12 @@ export interface ProviderConfig {
   // Total entries in `accounts` (config-backed + discovered).
   account_count: number;
   archived_count?: number;
+  /**
+   * The accounts that were merged away, and where each of them went. The row
+   * a merge left behind stays in `accounts` (archived, no credential) and
+   * carries `merged_into`.
+   */
+  merged_accounts?: MergedAccount[];
 }
 
 // Wizard (#287) preview-endpoint types — keep in sync with
@@ -1132,6 +1156,13 @@ export interface CredentialInventory {
   blocked_collection?: BlockedCollection[];
   /** Absent from an older server. */
   blocked_sources?: BlockedSource[];
+  /**
+   * The accounts that were merged away, and where each of them went. The
+   * inventory lists the accounts that hold a credential, and a merged-away
+   * account holds none — so it is listed here instead. Absent from an older
+   * server.
+   */
+  merged_accounts?: (MergedAccount & { provider_id: string })[];
 }
 
 export interface AuditEntry {

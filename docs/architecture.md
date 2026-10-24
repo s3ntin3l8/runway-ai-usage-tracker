@@ -311,6 +311,29 @@ credential-source row is refreshed instead of duplicated. The chain is followed
 (alice → bob → carol) and a merge whose source or destination was already
 merged away is refused, so two records can never point at each other.
 
+A merged-away account is therefore **not an account any more**: the merge
+moved its history and its credential to the destination, so it holds nothing
+and it disappears from every list the operator reads. The record is what says
+where it went, and the read surfaces carry it:
+
+- `GET /api/v1/system/provider-configs` lists the merges per provider under
+  `merged_accounts` (the destination a chain ends at), and every account entry
+  carries `merged_into` when that account was merged away — the leftover
+  `provider_configs` row (archived, no credential) stays behind, and the flag
+  is what tells a merged-away account from a merely archived one.
+- `GET /api/v1/system/credentials` carries the same list: a merged-away
+  account holds no credential, so it cannot appear among the inventory's
+  accounts, and this is what tells a client "this account no longer exists"
+  from "this account never existed".
+- Settings → Providers lists them under "Merged accounts", where they are
+  inert: they are not in the archived list, because the merge retired them —
+  not an archive — and they have no Restore action.
+
+Restoring one would resurrect a phantom: the merge moved its history and its
+credential to the destination, so the restored row would collect nothing while
+the account showed up in the fleet again. The API refuses it (`409`, with the
+destination in the message) rather than leaving the hole open to every client.
+
 A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
 the hint before the account was archived was still applying it, because the
 manifest's `resolved` map was merged into the sidecar's cache and a merge
