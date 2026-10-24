@@ -409,9 +409,10 @@ Two details worth knowing:
 - A turn is attributed to **every model it touched** — the same way its tokens are. A turn that
   used two models therefore appears in both per-model buckets while the session row counts it
   once.
-- A **turn id names its turn on its own**: the runtime mints them uniquely (a live store holds
-  130 distinct turn ids across 18 sessions, none shared). That also keeps a turn's identity
-  stable when the repair moves its row from the task's session to the parent.
+- A **turn id names its turn on its own**: the runtime mints them uniquely, across every
+  sidecar of the provider — not only within one host (a live store holds 130 distinct turn ids
+  across 18 sessions, none shared). That also keeps a turn's identity stable when the repair
+  moves its row from the task's session to the parent.
 
 #### Repairing the rows collected earlier
 

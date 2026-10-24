@@ -71,11 +71,17 @@ def query_top_projects(
             -- `event_id` is only unique per `(provider_id, event_id)`.
             --
             -- The turn id is the turn's identity on its own: a provider mints
-            -- its turn ids uniquely (a live MiniMax Code store holds 130
-            -- distinct turn ids across 18 sessions, none shared), and the
-            -- background-session repair moves a row between sessions without
-            -- touching its turn id — so keying on the session would change a
-            -- turn's identity when it is repaired.
+            -- its turn ids uniquely, and the background-session repair moves
+            -- a row between sessions without touching its turn id — so
+            -- keying on the session would change a turn's identity when it
+            -- is repaired. The property has to hold across every sidecar of
+            -- the provider, not only within one host: a live MiniMax Code
+            -- store holds 130 distinct turn ids across 18 sessions, none
+            -- shared.
+            --
+            -- The separator cannot make the key ambiguous: a provider id is a
+            -- fixed enum that never contains it, so the key splits on the
+            -- first one and the rest is the turn.
             COUNT(DISTINCT provider_id || '|'
                 || COALESCE(NULLIF(turn_id, ''), event_id))      AS msgs,
             COUNT(DISTINCT session_id)                          AS sessions,
