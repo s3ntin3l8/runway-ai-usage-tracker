@@ -116,7 +116,11 @@ A source must have an enabled persisted source record and an active account.
 Identity-pending sources and known-expired access credentials are not called.
 Eligible origins are Claude credential files, the existing Claude OAuth environment
 source, explicit configuration, and enrolled Claude Code Keychain contributions.
-Desktop OAuth/read-only sources are excluded from this Code-specific probe.
+Desktop OAuth sources are excluded from this Code-specific probe by their origin.
+The `oauth_read_only: "1"` marker prevents server refresh; sidecar egress also adds
+it to borrowed Code credentials. A read-only credential needs a recognized Code
+file/environment origin or an enrolled Code Keychain contribution; the marker
+alone never establishes source provenance. Unknown marker values fail closed.
 A cached Keychain contribution also needs its current device, scraper revision,
 consent generation and unpaused/unrevoked local permission. The server action
 cannot authorize a local scraper.
