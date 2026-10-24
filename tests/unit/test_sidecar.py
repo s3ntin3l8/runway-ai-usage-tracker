@@ -2851,6 +2851,18 @@ def test_run_collection_hermes_unresolved_events_report_their_own_provider(monke
     assert all(e["provider_id"] != "hermes" for e in posted["entries"])
 
 
+def test_run_collection_hermes_unmapped_upstream_reports_no_origin(monkeypatch) -> None:
+    """A ``hermes-<upstream>`` event (no Runway provider) has nothing to tag, so
+    it ships under ``default`` without an untaggable ``provider:hermes-nous`` row."""
+    emitted = [
+        {"event_id": "h1", "provider_id": "hermes-nous", "account_source": "default"},
+        {"event_id": "h2", "provider_id": "hermes-openai", "account_source": None},
+        {"event_id": "h3", "provider_id": "minimax", "account_source": "default"},
+    ]
+    _, posted = _run_hermes_collection(monkeypatch, emitted)
+    assert [e["provider_id"] for e in posted["entries"]] == ["minimax"]
+
+
 def test_run_collection_events_untagged_only_when_events_extracted(
     monkeypatch,
 ) -> None:

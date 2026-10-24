@@ -3289,6 +3289,19 @@ _EVENT_PROVIDERS: frozenset[str] = frozenset(
 # No hint, no untagged origin and no ``provider:hermes`` manifest entry exists for
 # these; the unresolved events report their own provider's origin instead.
 _PASS_THROUGH_EVENT_PROVIDERS: frozenset[str] = frozenset({"hermes"})
+# Hermes names an upstream it cannot map to a Runway provider ``hermes-<name>``
+# (``hermes-nous``, ``hermes-openai``, ...). No provider row can exist for such
+# an id either, so it is a pass-through name too. Mirrored by the server's
+# ``is_pass_through_provider`` (a parity test pins the two together).
+_PASS_THROUGH_PROVIDER_PREFIX = "hermes-"
+
+
+def _is_pass_through_provider(provider_id: str) -> bool:
+    """True for an event source that is never an account an operator can tag."""
+    return provider_id in _PASS_THROUGH_EVENT_PROVIDERS or provider_id.startswith(
+        _PASS_THROUGH_PROVIDER_PREFIX
+    )
+
 
 # Legacy single-account identity discovery, used when the server has no
 # per-account config for a provider (back-compat for older servers and the
@@ -5882,7 +5895,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                         if (
                             isinstance(event_provider, str)
                             and event_provider
-                            and event_provider not in _PASS_THROUGH_EVENT_PROVIDERS
+                            and not _is_pass_through_provider(event_provider)
                             and event_provider not in unresolved
                         ):
                             unresolved.append(event_provider)

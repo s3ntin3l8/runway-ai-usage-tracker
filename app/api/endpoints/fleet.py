@@ -1202,8 +1202,18 @@ def _source_field(entry: dict[str, str], key: str) -> str | None:
 
 # Event sources that are never an account: Hermes calls other providers'
 # accounts, so a credential origin reported for it has nothing to tag. Old
-# sidecars still report ``provider:hermes``; the server drops it.
+# sidecars still report ``provider:hermes``; the server drops it. Hermes names
+# an upstream it cannot map ``hermes-<name>``, which has no provider row either.
+# Mirrored by the sidecar's ``_is_pass_through_provider`` (a parity test pins them).
 PASS_THROUGH_PROVIDERS: frozenset[str] = frozenset({"hermes"})
+PASS_THROUGH_PROVIDER_PREFIX = "hermes-"
+
+
+def is_pass_through_provider(provider_id: str) -> bool:
+    """True for an event source that is never an account an operator can tag."""
+    return provider_id in PASS_THROUGH_PROVIDERS or provider_id.startswith(
+        PASS_THROUGH_PROVIDER_PREFIX
+    )
 
 
 def _record_pending_entry(
@@ -1224,7 +1234,7 @@ def _record_pending_entry(
     A pass-through provider (Hermes) never has an account to tag: its entry is
     ignored, and a row an earlier report left behind is removed.
     """
-    if provider_id in PASS_THROUGH_PROVIDERS:
+    if is_pass_through_provider(provider_id):
         PendingCredentialTagRepo.delete(
             session,
             sidecar_id=payload.sidecar_id,
@@ -2031,7 +2041,7 @@ def visible_pending_rows(session: Session) -> list[PendingCredentialTag]:
     """
     by_sidecar: dict[str, list[PendingCredentialTag]] = {}
     for r in PendingCredentialTagRepo.list_all(session):
-        if is_source_blocked(r) or r.provider_id in PASS_THROUGH_PROVIDERS:
+        if is_source_blocked(r) or is_pass_through_provider(r.provider_id):
             continue
         by_sidecar.setdefault(r.sidecar_id, []).append(r)
 

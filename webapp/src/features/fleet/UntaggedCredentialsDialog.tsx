@@ -368,13 +368,6 @@ export function stageToBody(
   };
 }
 
-/**
- * Event sources that are not providers: Hermes calls other providers' accounts, so
- * it has no provider row to add and nothing to map to. (Mirrors the server's
- * PASS_THROUGH_PROVIDERS; a stale entry from an old sidecar can still reach the list.)
- */
-const PASS_THROUGH_PROVIDERS: ReadonlySet<string> = new Set(['hermes']);
-
 interface UntaggedRowProps {
   entry: UntaggedCredential;
   /** Display name of the reporting machine; falls back to the raw sidecar id. */
@@ -511,12 +504,6 @@ function UntaggedRow({
 
       {isClaudeBrowserSource(entry) ? (
         <ClaudeSourceOrganizationPicker sourceId={entry.source_id!} providerId={entry.provider_id} onComplete={onOrganizationComplete} />
-      ) : pickableAccounts.length === 0 && PASS_THROUGH_PROVIDERS.has(entry.provider_id) ? (
-        <p className="mt-2 text-[12px] text-fg-subtle">
-          <span className="font-mono">{entry.provider_id}</span> calls other providers&apos; accounts,
-          so there is no account of its own to add or tag. Its events are attributed to the provider
-          each one used.
-        </p>
       ) : pickableAccounts.length === 0 ? (
         <p className="mt-2 flex items-start gap-2 text-[12px] text-warning">
           <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
