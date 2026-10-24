@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from scripts import dev_checks as dc
+from scripts.isolation_env import LIVE_STATE_ENV_VARS
 
 
 @pytest.fixture(autouse=True)
@@ -228,25 +229,13 @@ def test_web_test_arguments_are_forwarded_to_vitest(monkeypatch):
 
 
 def test_isolated_checks_remove_inherited_database_and_login_paths(monkeypatch):
-    for name in (
-        "DATABASE_PATH",
-        "GITHUB_OAUTH_PATH",
-        "CODEX_HOME",
-        "CLAUDE_CONFIG_DIR",
-        "HERMES_HOME",
-    ):
+    for name in LIVE_STATE_ENV_VARS:
         monkeypatch.setenv(name, "operator-private-path")
 
     def capture(command, **kwargs):
         env = kwargs["env"]
         assert env["RUNWAY_CONFIG_DIR"] == "isolated-config"
-        for name in (
-            "DATABASE_PATH",
-            "GITHUB_OAUTH_PATH",
-            "CODEX_HOME",
-            "CLAUDE_CONFIG_DIR",
-            "HERMES_HOME",
-        ):
+        for name in LIVE_STATE_ENV_VARS:
             assert name not in env
 
     monkeypatch.setattr(dc.subprocess, "run", capture)
