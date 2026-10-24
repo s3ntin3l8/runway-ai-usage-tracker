@@ -11,13 +11,23 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import UTC, datetime
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import CredentialSource, ProviderAccountMerge, ProviderConfig
+from app.models.db import (
+    CredentialSource,
+    CredentialTag,
+    LatestUsage,
+    ProviderAccountMerge,
+    ProviderConfig,
+    SidecarSourceContribution,
+    UsageEvent,
+)
+from app.services.account_merges import load_journal
 from tests.fixtures.test_client import TestClient
 
 
@@ -477,3 +487,163 @@ def test_the_merge_list_is_empty_when_nothing_was_merged(client):
     resp = client.get("/api/v1/system/provider-configs", headers=_admin_headers())
     assert resp.status_code == 200, resp.text
     assert _provider(resp.json())["merged_accounts"] == []
+
+
+# ── The journal: what the merge moved (#919) ───────────────────────────────
+# The rows are journalled by id: once they sit under the destination they
+# cannot be told apart from the destination's own rows, so the merge has to
+# say which ones it carried over.
+
+
+def _seed_rows_for_the_journal(session: Session) -> dict[str, int]:
+    event = UsageEvent(
+        provider_id="openrouter",
+        account_id="alice@example.com",
+        event_id="evt-1",
+        ts=datetime.now(UTC),
+    )
+    source = CredentialSource(
+        provider_id="openrouter",
+        account_id="alice@example.com",
+        source_id="host-a:openrouter",
+        source_type="sidecar",
+        source_label="Host A",
+    )
+    tag = CredentialTag(
+        provider_id="openrouter",
+        account_id="alice@example.com",
+        credential_origin="env:OPENROUTER_API_KEY",
+    )
+    contribution = SidecarSourceContribution(
+        device_id="dev-01",
+        provider_id="openrouter",
+        credential_source_id="host-a:openrouter",
+        origin="env:OPENROUTER_API_KEY",
+        account_id="alice@example.com",
+    )
+    session.add(event)
+    session.add(source)
+    session.add(tag)
+    session.add(contribution)
+    session.commit()
+    return {
+        "event": event.id,
+        "source": source.id,
+        "tag": tag.id,
+        "contribution": contribution.id,
+    }
+
+
+def test_the_merge_journals_what_it_moved(client, session):
+    ids = _seed_rows_for_the_journal(session)
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    journal = load_journal(session, "openrouter", "alice@example.com")
+    assert journal is not None
+    assert journal.rows["usage_events"] == [ids["event"]]
+    assert journal.credential_sources == ["host-a:openrouter"]
+    assert journal.credential_tags == [ids["tag"]]
+    assert journal.contributions == [ids["contribution"]]
+    # The source had no destination config row, so its row was renamed.
+    assert journal.config_outcome == "renamed"
+    assert journal.config_row_id is not None
+    assert journal.config_enabled is True
+
+
+def test_the_journal_records_the_archived_config_outcome(client, session):
+    """With a destination config row, the source's row is archived instead —
+    the journal says which of the two happened."""
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    journal = load_journal(session, "openrouter", "alice@example.com")
+    assert journal is not None
+    assert journal.config_outcome == "archived"
+    # The flags before the merge: the un-merge restores them, and it has to
+    # tell the merge's own archive from an archive the operator did earlier.
+    assert journal.config_enabled is True
+    assert journal.config_archived is False
+
+
+def test_the_journal_records_an_already_archived_source(client, session):
+    """Merging an account the operator had already archived is reachable — the
+    journal has to say which archive the row carried."""
+    _add_provider_config(
+        session, provider_id="openrouter", account_id="alice@example.com", enabled=False
+    )
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == "openrouter",
+            ProviderConfig.account_id == "alice@example.com",
+        )
+    ).first()
+    row.archived = True
+    session.commit()
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    journal = load_journal(session, "openrouter", "alice@example.com")
+    assert journal is not None
+    assert journal.config_archived is True
+
+
+def test_the_journal_does_not_list_the_rows_the_merge_deleted(client, session):
+    """The duplicates the operator confirmed dropping are gone; the journal
+    says how many, not which — they cannot be brought back."""
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+    # The same quota card under both accounts: the same window, variant and
+    # model — the identity the merge deduplicates on.
+    for account_id in ("alice@example.com", "bob@example.com"):
+        session.add(
+            LatestUsage(
+                provider_id="openrouter",
+                account_id=account_id,
+                sidecar_id="local",
+                window_type="monthly",
+                variant="default",
+                model_id="m1",
+                card_json="{}",
+            )
+        )
+    session.commit()
+
+    resp = client.post(
+        "/api/v1/system/provider-account-merge/apply",
+        json={
+            "provider_id": "openrouter",
+            "source_account_id": "alice@example.com",
+            "destination_account_id": "bob@example.com",
+            "confirm_collisions": True,
+        },
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["collisions_removed"] == 1
+
+    journal = load_journal(session, "openrouter", "alice@example.com")
+    assert journal is not None
+    assert journal.collisions_removed == 1
+    assert journal.rows["latest_usage"] == []
+
+
+# ---------------------------------------------------------------------------
+# Upgrade-path guard
+# ---------------------------------------------------------------------------
+
+
+def test_deferred_columns_includes_the_merge_journal():
+    """The journal column must be in _DEFERRED_COLUMNS for existing DB upgrades.
+
+    Every other test builds a fresh database from the model, so nothing else
+    covers this path: a typo here would only show up as "no such column" on
+    an install that already has a database.
+    """
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert ("provider_account_merges", "moved", "TEXT") in _DEFERRED_COLUMNS

@@ -248,7 +248,7 @@ def save_contribution(
 
 def move_contributions_for_account(
     session: Session, provider_id: str, from_account_id: str, to_account_id: str
-) -> int:
+) -> list[int]:
     """Re-file the durable contributions of one account under another.
 
     The merge moves an account to another one: the credential that belonged
@@ -259,13 +259,14 @@ def move_contributions_for_account(
     The account id is compared canonically: a contribution stores the id the
     ingest gave it, and the cache canonicalises it on the way in.
 
-    Returns the number of contributions moved.
+    Returns the ids of the contributions that moved — the merge journals them
+    so the move can be reversed.
     """
     reserve_source_writes(session)
     source = canonical_account_id(from_account_id)
     destination = canonical_account_id(to_account_id)
     if source == destination:
-        return 0
+        return []
     rows = session.exec(
         select(SidecarSourceContribution).where(
             SidecarSourceContribution.provider_id == provider_id
@@ -279,7 +280,7 @@ def move_contributions_for_account(
         # bundle would stay under the old account until some unrelated write
         # happened to bump the revision.
         bump(session)
-    return len(moved)
+    return [row.id for row in moved if row.id is not None]
 
 
 def retire_contributions_for_account(session: Session, provider_id: str, account_id: str) -> int:

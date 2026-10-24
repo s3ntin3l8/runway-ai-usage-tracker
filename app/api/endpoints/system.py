@@ -45,6 +45,7 @@ from app.services.account_identity import (
     canonical_account_id,
 )
 from app.services.account_merges import (
+    MergeJournal,
     is_merged_away,
     merged_accounts,
     record_account_merge,
@@ -1438,13 +1439,21 @@ async def apply_provider_account_merge(
                 "collisions": collisions,
             },
         )
+    # The journal of what this merge moves, so it can be reversed. The rows
+    # are recorded by id: once a row sits under the destination it cannot be
+    # told apart from the destination's own row.
+    journal = MergeJournal()
     for model, rows, dupes in tables:
         duplicate_ids = {row.id for row in dupes}
+        moved_ids: list[int] = []
         for row in rows:
             if row.id in duplicate_ids:
                 session.delete(row)
             else:
                 row.account_id = destination_id
+                if row.id is not None:
+                    moved_ids.append(row.id)
+        journal.rows[model.__tablename__] = moved_ids
     # Rollups are derived from UsageEvent. Rebuild both account views after
     # moving/deduplicating authoritative events instead of editing rollups.
     from app.services.period_rollups import rebuild_rollups_for_pairs
@@ -1459,12 +1468,15 @@ async def apply_provider_account_merge(
             session.delete(row)
         else:
             row.account_id = destination_id
+            journal.credential_sources.append(row.source_id)
     if source_id != "default":
         for row in CredentialTagRepo.list_for_account_provider(
             session, provider_id=body.provider_id
         ):
             if row.account_id == source_id:
                 row.account_id = destination_id
+                if row.id is not None:
+                    journal.credential_tags.append(row.id)
     src = session.exec(
         select(ProviderConfig).where(
             ProviderConfig.provider_id == body.provider_id, ProviderConfig.account_id == source_id
@@ -1477,13 +1489,21 @@ async def apply_provider_account_merge(
                 ProviderConfig.account_id == destination_id,
             )
         ).first()
+        # The flags before the merge: the un-merge restores them. Both of
+        # them — the merge's own archive must not be confused with an archive
+        # the operator did earlier.
+        journal.config_row_id = src.id
+        journal.config_enabled = src.enabled
+        journal.config_archived = src.archived
         if destination_config is None:
             src.account_id = destination_id
+            journal.config_outcome = "renamed"
         else:
             src.enabled = False
             src.archived = True
             src.api_key_encrypted = None
             src.session_cookie_encrypted = None
+            journal.config_outcome = "archived"
     # The merge moves the account, so the credential that belonged to it
     # follows: the durable contribution is re-filed under the destination (the
     # cache reloads every durable bundle on the next revision change, so the
@@ -1492,10 +1512,11 @@ async def apply_provider_account_merge(
     # it the source account comes back on the next push, with a live
     # credential. Part of the merge transaction: a failed commit leaves the
     # source account and its credential alone.
-    source_controls.move_contributions_for_account(
+    journal.contributions = source_controls.move_contributions_for_account(
         session, body.provider_id, source_id, destination_id
     )
-    record_account_merge(session, body.provider_id, source_id, destination_id)
+    journal.collisions_removed = collisions
+    record_account_merge(session, body.provider_id, source_id, destination_id, journal)
     session.commit()
     # The credential follows the account into the destination; whatever is
     # left under the retired source id is stale and goes — the same rule the
