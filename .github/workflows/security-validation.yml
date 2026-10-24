@@ -85,9 +85,13 @@ jobs:
           # Nightly as root in a regular user's session is not supported").
           # Playwright's own advice for this image is to point HOME at root's
           # home. The override stays on the steps that need it: a job-level
-          # one would also reach the runner's own docker client, which would
-          # then look for its credentials in the wrong home.
+          # one would also reach the runner's own docker client.
           HOME: /root
+          # That client reads its configuration from HOME, and root's home is
+          # not readable by the runner's user, so it would look in the wrong
+          # place and find no credentials. Point it at the directory it
+          # would have used anyway.
+          DOCKER_CONFIG: /github/home/.docker
         run: |
           node --version
           npm --version
@@ -108,9 +112,12 @@ jobs:
         run: npm --prefix webapp ci
       - name: Browser boundaries
         # HOME is pointed at root's home for the same reason as in the
-        # toolchain step: the browsers run as root here.
+        # toolchain step: the browsers run as root here. DOCKER_CONFIG keeps
+        # the runner's own docker client reading its configuration where it
+        # expects it.
         env:
           HOME: /root
+          DOCKER_CONFIG: /github/home/.docker
         run: npm --prefix webapp run test:security
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
