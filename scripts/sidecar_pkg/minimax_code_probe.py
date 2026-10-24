@@ -15,7 +15,9 @@ It is a diagnostic, not a collector:
   make the sidecar skip rows.
 
 Every platform resolves the runtime's data dir from ``homedir()``, so the
-same probe covers Linux, macOS and Windows.
+same probe covers Linux, macOS and Windows — and it has been run on all
+three. On a live Windows host it reports the store, the schema, the ledger
+counts and the model, with the cursor under ``%APPDATA%\\runway\\sidecar``.
 """
 
 from __future__ import annotations

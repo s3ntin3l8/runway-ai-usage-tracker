@@ -6,21 +6,36 @@ from pathlib import Path
 import pytest
 
 from scripts.check_workflow_pins import (
+    DIGEST,
+    LOCKFILE,
     PINS_FILE,
     PINS_LABEL,
+    PLAYWRIGHT_IMAGE,
     REVISION,
     WORKFLOWS,
     findings,
+    images,
     load_pins,
+    locked_playwright,
     references,
 )
 
 GOOD_SHA = "a" * 40
 OTHER_SHA = "b" * 40
+GOOD_DIGEST = "sha256:" + "c" * 64
 
 
 def write_workflow(directory: Path, name: str, body: str) -> None:
     (directory / name).write_text(body)
+
+
+def write_lockfile(directory: Path, version: str) -> Path:
+    """A lockfile that pins one Playwright version."""
+    path = directory / "package-lock.json"
+    path.write_text(
+        json.dumps({"packages": {"node_modules/playwright-core": {"version": version}}})
+    )
+    return path
 
 
 class TestShippedWorkflowsArePinned:
@@ -124,6 +139,89 @@ class TestFindings:
             f"      - uses: actions/checkout@{GOOD_SHA} # v7\n",
         )
         assert findings(tmp_path, {"actions/checkout": GOOD_SHA}) == []
+
+
+class TestContainerImages:
+    """A container image moves under the build exactly like a branch does."""
+
+    def test_an_image_pinned_to_a_tag_is_reported(self, tmp_path):
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            "      image: mcr.microsoft.com/playwright:v1.64.1-noble\n",
+        )
+        problems = findings(tmp_path, {})
+        assert len(problems) == 1
+        assert "not pinned to a digest" in problems[0]
+
+    def test_a_digest_pinned_image_is_accepted(self, tmp_path):
+        lockfile = write_lockfile(tmp_path, "1.64.1")
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            f"      image: mcr.microsoft.com/playwright:v1.64.1-noble@{GOOD_DIGEST}\n",
+        )
+        assert findings(tmp_path, {}, lockfile) == []
+
+    def test_a_service_image_is_covered_too(self, tmp_path):
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            "    services:\n      nginx:\n        image: nginx:latest\n",
+        )
+        problems = findings(tmp_path, {})
+        assert len(problems) == 1
+        assert "not pinned to a digest" in problems[0]
+
+    def test_the_playwright_image_must_match_the_locked_version(self, tmp_path):
+        """The image carries the browsers; the lockfile pins the version."""
+        lockfile = write_lockfile(tmp_path, "1.63.0")
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            f"      image: mcr.microsoft.com/playwright:v1.64.1-noble@{GOOD_DIGEST}\n",
+        )
+        problems = findings(tmp_path, {}, lockfile)
+        assert len(problems) == 1
+        assert "lockfile pins playwright-core at 1.63.0" in problems[0]
+
+    def test_the_playwright_image_at_the_locked_version_is_accepted(self, tmp_path):
+        lockfile = write_lockfile(tmp_path, "1.64.1")
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            f"      image: mcr.microsoft.com/playwright:v1.64.1-noble@{GOOD_DIGEST}\n",
+        )
+        assert findings(tmp_path, {}, lockfile) == []
+
+    def test_a_playwright_image_without_a_locked_version_is_reported(self, tmp_path):
+        """A check that cannot run is not a check: it has to say so."""
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            f"      image: mcr.microsoft.com/playwright:v1.64.1-noble@{GOOD_DIGEST}\n",
+        )
+        problems = findings(tmp_path, {}, tmp_path / "missing.json")
+        assert len(problems) == 1
+        assert "the lockfile pins no version" in problems[0]
+
+    def test_the_shipped_images_are_digest_pinned(self):
+        for image in images(WORKFLOWS):
+            assert DIGEST.fullmatch(image.digest), (
+                f"{image.path}:{image.line} runs {image.reference}, which is not pinned to a digest"
+            )
+
+    def test_the_shipped_playwright_image_matches_the_locked_version(self):
+        """The image carries the browsers; the lockfile pins the version."""
+        locked = locked_playwright(LOCKFILE)
+        assert locked is not None, "the lockfile pins no Playwright version"
+        shipped = [image for image in images(WORKFLOWS) if image.repository == PLAYWRIGHT_IMAGE]
+        assert shipped, "no workflow runs the Playwright image"
+        for image in shipped:
+            assert image.version == locked, (
+                f"{image.path}:{image.line} runs {image.reference}, but the "
+                f"lockfile pins playwright-core at {locked}"
+            )
 
 
 class TestLoadPins:

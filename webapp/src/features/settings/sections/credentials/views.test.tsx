@@ -85,6 +85,33 @@ describe('ByProviderView', () => {
     expect(screen.getByText('No successful collection recorded yet')).toBeInTheDocument();
   });
 
+  it('marks a retired account as archived', () => {
+    // A credential parked on a retired account is visible here, but the
+    // account row must say the account is retired — otherwise a parked
+    // credential reads like an active one.
+    renderWithProviders(
+      <ByProviderView
+        providers={[
+          {
+            provider_id: 'gemini',
+            name: 'Gemini',
+            accounts: [account([source()], { archived: true })],
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText('archived')).toBeInTheDocument();
+  });
+
+  it('does not mark a live account as archived', () => {
+    renderWithProviders(
+      <ByProviderView
+        providers={[{ provider_id: 'gemini', name: 'Gemini', accounts: [account([source()])] }]}
+      />,
+    );
+    expect(screen.queryByText('archived')).not.toBeInTheDocument();
+  });
+
   it('names an unidentified account instead of showing a placeholder id', () => {
     renderWithProviders(
       <ByProviderView

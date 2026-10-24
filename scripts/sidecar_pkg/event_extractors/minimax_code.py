@@ -16,10 +16,12 @@ Every store that exists is read, each with its own cursor; see
 
 The path and the extraction were live-verified on macOS (probe PASS, 99.97 %
 of the ledger rows joined, the model resolved for every row) and on Linux
-(full extraction verified against a live store). Windows is not live-verified.
-The desktop app's macOS / Windows app-data roots are probed as well; on macOS
-the app's Electron profile is ``~/Library/Application Support/MiniMax Agent``,
-which holds the Chromium profile and never the ledger.
+(full extraction verified against a live store). Windows is live-verified too:
+the probe passes against a live store on a Windows host, the model resolves
+for every row, and the cursor lands in ``%APPDATA%\\runway\\sidecar``.
+The desktop app's macOS / Windows app-data roots are probed as well; the app's
+Electron profile dir is ``MiniMax Agent`` on both platforms — it holds the
+Chromium profile and never the ledger.
 
 Three tables matter:
 
@@ -243,6 +245,14 @@ _DATA_DIR_ENV_VARS = (
 # away from. A named profile gets ``<basename>-<profile>``.
 _DATA_DIR_BASENAMES = (".minimax", ".mavis")
 
+# The desktop app's app-data dir names.
+#
+# The Electron profile dir is named after the app's *product* name — on
+# Windows and macOS alike it is "MiniMax Agent" — while the installer and
+# the CLI ship under "MiniMax Code"; both are probed, so a rename on
+# either platform cannot hide the store.
+_APP_DATA_DIR_NAMES = ("MiniMax Agent", "MiniMax Code", "minimax")
+
 
 def _env_data_roots() -> list[Path]:
     """Return the data dirs the runtime's environment points at."""
@@ -276,6 +286,40 @@ def _profile_scoped_roots(home: Path) -> list[Path]:
     return roots
 
 
+def _macos_app_data_roots(home: Path) -> list[Path]:
+    """Return the desktop app's macOS app-data roots.
+
+    The Electron profile lives in ``~/Library/Application Support/<name>``.
+    It holds the Chromium profile and never the ledger, but it is probed as
+    insurance.
+    """
+    base = home / "Library" / "Application Support"
+    return [base / name for name in (*_APP_DATA_DIR_NAMES, "MiniMax")]
+
+
+def _windows_app_data_root() -> Path:
+    """Return the Windows roaming app-data root (``%APPDATA%``).
+
+    Mirrors ``sidecar.get_sidecar_dir()``: on Windows it reads ``%APPDATA%``,
+    so a host that redirects it — a roaming profile, a relocated ``AppData``
+    — is probed where the app actually writes. The variable is a Windows one,
+    so it is ignored elsewhere: an ``APPDATA`` exported on macOS or Linux
+    cannot add a root the sidecar's own state dir would never use. Falls back
+    to the conventional ``%USERPROFILE%\\AppData\\Roaming`` when it is unset.
+    """
+    if platform.system() == "Windows":
+        app_data = os.getenv("APPDATA")
+        if app_data and app_data.strip():
+            return Path(app_data.strip())
+    return Path.home() / "AppData" / "Roaming"
+
+
+def _windows_app_data_roots() -> list[Path]:
+    """Return the desktop app's Windows app-data roots."""
+    base = _windows_app_data_root()
+    return [base / name for name in _APP_DATA_DIR_NAMES]
+
+
 def _data_roots() -> list[Path]:
     """Return the candidate MiniMax Code data roots, most likely first.
 
@@ -284,9 +328,9 @@ def _data_roots() -> list[Path]:
     is only the *default*. The runtime also scopes the dir per profile
     (``~/.minimax-<profile>``), honours environment overrides, and used to
     live in ``~/.mavis`` before it migrated. The desktop app's macOS /
-    Windows app-data roots are probed as insurance: on macOS the app's
-    Electron profile is ``~/Library/Application Support/MiniMax Agent``, but
-    that dir holds the Chromium profile, never the ledger.
+    Windows app-data roots are probed as insurance: the app's Electron
+    profile is ``MiniMax Agent`` on both platforms, but that dir holds the
+    Chromium profile, never the ledger.
 
     The list is deduplicated by *resolved* path, so the legacy ``~/.mavis``
     symlink to ``~/.minimax`` does not show up twice.
@@ -300,16 +344,8 @@ def _data_roots() -> list[Path]:
     roots.append(home / ".minimax")
     roots.extend(_profile_scoped_roots(home))
     roots.append(home / ".mavis")
-    roots.extend(
-        [
-            home / "Library" / "Application Support" / "MiniMax Agent",
-            home / "Library" / "Application Support" / "MiniMax Code",
-            home / "Library" / "Application Support" / "minimax",
-            home / "Library" / "Application Support" / "MiniMax",
-            home / "AppData" / "Roaming" / "MiniMax Code",
-            home / "AppData" / "Roaming" / "minimax",
-        ]
-    )
+    roots.extend(_macos_app_data_roots(home))
+    roots.extend(_windows_app_data_roots())
     seen: set[str] = set()
     unique: list[Path] = []
     for root in roots:

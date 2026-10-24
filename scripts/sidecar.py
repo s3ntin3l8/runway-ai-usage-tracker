@@ -37,7 +37,7 @@ import urllib.request
 from collections import deque
 from collections.abc import Callable
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 from urllib import error, request
@@ -2449,8 +2449,21 @@ def decrypt_chromium_cookie(encrypted_value, browser_name="Chrome", host=None, s
 
 
 # Which provider wanted a cookie from a store that could not be read, so the
-# cycle report can name the environment variable that would work instead.
-_cookie_store_blocked: dict[str, dict[str, str]] = {}
+# cycle report can name the environment variable that would work instead and
+# the server can say the source is unavailable rather than absent.
+@dataclass
+class _BlockedCookieStore:
+    """A cookie store this cycle could not use, and who wanted a cookie from it."""
+
+    probe: browser_store.StoreProbe
+    providers: dict[str, str] = field(default_factory=dict)  # provider_id -> cookie mapping value
+
+
+_cookie_store_blocked: dict[str, _BlockedCookieStore] = {}
+
+# The reasons the server understands for an unusable store. Mirrored by
+# ``app/services/blocked_sources.py``; a parity test keeps the two equal.
+SOURCE_BLOCK_REASONS = browser_store.SOURCE_BLOCK_REASONS
 
 
 def reset_cookie_store_tracking() -> None:
@@ -2459,11 +2472,25 @@ def reset_cookie_store_tracking() -> None:
     _cookie_store_blocked.clear()
 
 
+def _record_cookie_store_block(
+    probe: browser_store.StoreProbe, provider_id: str, mapping_value: str
+) -> None:
+    """Note that *provider_id* wanted a cookie from a store it could not use."""
+    blocked = _cookie_store_blocked.setdefault(probe.identity(), _BlockedCookieStore(probe))
+    blocked.providers[provider_id] = mapping_value or ""
+
+
 def _session_cookie_env_var(provider_id: str, mapping_value: str) -> str | None:
     """The environment variable that supplies the same credential as a cookie.
 
-    The registry pairs a cookie rule with an environment rule for some
-    providers (Ollama's ``OLLAMA_SESSION_TOKEN``, Kimi's ``KIMI_AUTH_TOKEN``).
+    The registry pairs a cookie rule with an environment rule for the providers
+    whose session credential the sidecar reads from the environment (Ollama's
+    ``OLLAMA_SESSION_TOKEN``, Kimi's ``KIMI_AUTH_TOKEN``). The pairing is by the
+    credential field both rules map, so the lookup never offers a variable that
+    supplies a different credential - and never one the sidecar does not read:
+    the server-only session variables (``CLAUDE_SESSION_TOKEN``,
+    ``CHATGPT_SESSION_TOKEN``) are dropped from the sidecar's registry on
+    purpose, so for those providers the remedy is the paste instead.
     """
     if not mapping_value:
         return None
@@ -2476,6 +2503,36 @@ def _session_cookie_env_var(provider_id: str, mapping_value: str) -> str | None:
             if isinstance(variable, str) and variable:
                 return variable
     return None
+
+
+def _cookie_store_reason(state: browser_store.StoreState) -> str | None:
+    """The wire reason for a store state, or ``None`` when the state is not a fault."""
+    return browser_store.STATE_REASONS.get(state)
+
+
+def _cookie_store_detail(state: browser_store.StoreState) -> str:
+    """The sentence the server shows for a store state."""
+    return browser_store.STATE_DETAILS.get(state, "the store could not be used")
+
+
+def _cookie_store_remedy(providers: dict[str, str], only: str | None = None) -> str:
+    """What the operator can do about a store that could not be used.
+
+    ``only`` narrows the answer to one provider, which is what a per-provider
+    report entry wants.
+    """
+    variables = sorted(
+        {
+            variable
+            for provider, mapping_value in providers.items()
+            if (only is None or provider == only)
+            and (variable := _session_cookie_env_var(provider, mapping_value))
+        }
+    )
+    remedy = "paste the cookie in Settings → Providers"
+    if variables:
+        remedy = f"set {', '.join(variables)} (or {remedy})"
+    return remedy
 
 
 def _cookie_store_advice(probe: browser_store.StoreProbe) -> str:
@@ -2493,6 +2550,34 @@ def _cookie_store_advice(probe: browser_store.StoreProbe) -> str:
     return ""
 
 
+def blocked_source_entries() -> list[dict[str, str]]:
+    """Manifest entries for every cookie store this cycle could not use.
+
+    The server turns each one into an unavailable credential source, so a
+    provider whose cookie sits behind a locked store is not mistaken for a
+    provider nobody is signed into. The entries carry no cookie value, no
+    account identifier and no filesystem path.
+    """
+    entries: list[dict[str, str]] = []
+    for identity, blocked in sorted(_cookie_store_blocked.items()):
+        reason = _cookie_store_reason(blocked.probe.state)
+        if reason is None:
+            continue
+        detail = _cookie_store_detail(blocked.probe.state)
+        for provider_id in sorted(blocked.providers):
+            entries.append(
+                {
+                    "provider_id": provider_id,
+                    "credential_origin": f"cookie:{provider_id}/{identity}",
+                    "reason": reason,
+                    "source_store": identity,
+                    "source_detail": detail,
+                    "source_remedy": _cookie_store_remedy(blocked.providers, provider_id),
+                }
+            )
+    return entries
+
+
 def report_cookie_stores() -> None:
     """Report the cookie stores this cycle could not use, one line each.
 
@@ -2505,17 +2590,9 @@ def report_cookie_stores() -> None:
     if not unusable:
         return
     for probe in unusable:
-        blocked = _cookie_store_blocked.get(probe.identity(), {})
-        variables = sorted(
-            {
-                variable
-                for provider, mapping_value in blocked.items()
-                if (variable := _session_cookie_env_var(provider, mapping_value))
-            }
-        )
-        remedy = "paste the cookie in Settings → Providers"
-        if variables:
-            remedy = f"set {', '.join(variables)} (or {remedy})"
+        blocked = _cookie_store_blocked.get(probe.identity())
+        providers = blocked.providers if blocked else {}
+        remedy = _cookie_store_remedy(providers)
         advice = _cookie_store_advice(probe)
         reason = f"{probe.detail}; {advice}" if advice else probe.detail
         logging.warning(
@@ -2914,9 +2991,7 @@ class BrowserCookieExtractor:
                 # cycle. The reason is reported once per cycle by
                 # ``report_cookie_stores`` instead of once per cookie name.
                 if provider:
-                    _cookie_store_blocked.setdefault(probe.identity(), {})[provider] = (
-                        mapping_value or ""
-                    )
+                    _record_cookie_store_block(probe, provider, mapping_value or "")
                 continue
             try:
                 conn = browser_store.open_store(probe)
@@ -2939,6 +3014,29 @@ class BrowserCookieExtractor:
                                     "Cookie source: %s", target.get("browser", target["type"])
                                 )
                                 return val
+                            # The store opened but the value could not be
+                            # decrypted. An app-bound store is readable as a
+                            # file, so the probe does not skip it and this is
+                            # the only place the block becomes visible.
+                            if provider and browser_store.is_app_bound(row[0]):
+                                # The probe samples one row, and Chrome 127+
+                                # keeps the cookies written before the
+                                # upgrade as v10 while writing v20 only for
+                                # the ones set afterwards. The sample can
+                                # therefore call a store readable whose
+                                # provider cookie is app-bound; the value
+                                # that failed to decrypt is the better
+                                # evidence.
+                                #
+                                # The record is gated on that value too, not
+                                # on the store: reclassifying the probe
+                                # sticks for the rest of the cycle, and a
+                                # value that failed for some other reason
+                                # would then be labelled app-bound when it
+                                # is not. The reclassification still buys
+                                # the store its line in the log.
+                                probe = browser_store.mark_app_bound(probe)
+                                _record_cookie_store_block(probe, provider, mapping_value or "")
                     else:  # Firefox
                         cursor.execute(
                             "SELECT value FROM moz_cookies "
@@ -5218,6 +5316,54 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
     return list(found.values())
 
 
+# Mirrors the server's cap on the manifest's ``hint_providers`` field. The
+# list is truncated here rather than allowed to exceed the cap: the server
+# rejects an oversized list, and a rejected manifest takes this cycle's
+# ``completed_providers`` with it — the server would then stop pruning this
+# host's stale pending rows. Truncating degrades to fewer answers instead of
+# failing the report. The headroom is wide (a provider per registered
+# provider), so this is a guard, not a limit that is ever reached.
+_MAX_HINT_PROVIDERS = 256
+
+
+def _apply_resolved_hints(
+    cached: dict[str, dict[str, str]], resolved: dict[str, dict[str, str]]
+) -> dict[str, dict[str, str]]:
+    """Replace the cached hints of the providers the server answered for.
+
+    The server's answer for a provider is *complete* — every origin it
+    resolves for that provider, and an empty map when it resolves none — so
+    the bucket is replaced rather than merged into. That is what makes a
+    retraction take effect: a hint the sidecar cached before the account was
+    archived (or before the tag was deleted) is dropped on this cycle,
+    instead of surviving until the next ``/fleet/config`` round-trip replaces
+    the whole map.
+
+    Providers the server did not answer for keep what the sidecar holds: the
+    answer is not about them.
+
+    A provider the server answered for with an *empty* map is dropped from
+    the cache as well: the complete answer is empty, so the sidecar holds no
+    hint for it any more. The key goes too — a surviving empty bucket would
+    keep naming the provider in ``hint_providers``, re-asking for it on every
+    manifest for a hint the sidecar no longer has.
+    """
+    merged: dict[str, dict[str, str]] = {k: dict(v) for k, v in cached.items()}
+    for pid, by_origin in resolved.items():
+        if not isinstance(pid, str) or not isinstance(by_origin, dict):
+            continue
+        filtered = {
+            origin: account_id
+            for origin, account_id in by_origin.items()
+            if (isinstance(origin, str) and isinstance(account_id, str) and origin and account_id)
+        }
+        if filtered:
+            merged[pid] = filtered
+        else:
+            merged.pop(pid, None)
+    return merged
+
+
 def _post_credential_manifest(
     *,
     api_url: str | None,
@@ -5226,6 +5372,7 @@ def _post_credential_manifest(
     entries: list[dict[str, str]],
     completed_providers: list[str] | None = None,
     observations: list[dict[str, Any]] | None = None,
+    hint_providers: list[str] | None = None,
     on_resolved: Callable[[dict[str, dict[str, str]]], None] | None = None,
     config: dict[str, Any] | None = None,
 ) -> None:
@@ -5238,12 +5385,19 @@ def _post_credential_manifest(
     unset, which we just pass through silently.
 
     When the response is 200, the server's ``resolved`` field carries
-    ``{provider_id: {credential_origin: account_id}}`` for any tag the
-    operator set since the sidecar last refreshed its hint cache. The
-    caller passes ``on_resolved`` to merge those hints into its cache
-    immediately — that closes the silent-listener loop on the *same*
-    cycle instead of waiting on the next ``/fleet/config`` round-trip
-    (Hermes suggestion #9 in PR #290 review).
+    ``{provider_id: {credential_origin: account_id}}`` for the providers it
+    answered for. The answer is *complete per provider* — a provider with no
+    hints comes back as an empty map — so the caller replaces what it holds
+    for those providers instead of merging into it, and drops the provider
+    entirely when the answer is empty. That is how a hint the server stopped
+    holding (the account was archived, the tag was deleted) is dropped on
+    this cycle rather than surviving until the next ``/fleet/config``
+    round-trip.
+
+    ``hint_providers`` names the providers whose hints this sidecar holds,
+    so the server answers for those too: a provider whose tag was deleted
+    has no tag row left to make it a candidate, yet the sidecar may still
+    be holding its hint.
     """
     if not api_url or not api_key:
         return
@@ -5273,6 +5427,12 @@ def _post_credential_manifest(
                 else {}
             ),
             "observations": observations or [],
+            # The providers whose hints this sidecar holds: the server answers
+            # for those too, so a hint it no longer holds is dropped here.
+            # Truncated to the server's cap: an oversized list is rejected
+            # outright, and a rejected manifest takes this cycle's
+            # completed_providers with it.
+            "hint_providers": sorted(hint_providers or [])[:_MAX_HINT_PROVIDERS],
         }
     ).encode("utf-8")
     ts = server_http.signing_timestamp()
@@ -5767,6 +5927,13 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     # let the server prune stale pending entries. The POST is gated on
     # the same INGEST_API_KEY HMAC scheme as /fleet/ingest.
     #
+    # A cookie store that could not be read is reported as an unavailable
+    # credential source, so the server does not mistake the provider for one
+    # nobody is signed into. The entries carry the store, the reason and the
+    # remedy - never a cookie value, an account id or a filesystem path.
+    blocked_source_entries_this_cycle = blocked_source_entries()
+    blocked_origins_this_cycle.extend(blocked_source_entries_this_cycle)
+
     # Send provider completion explicitly. The server prunes only origins
     # for providers listed here, so a raised scrape/extractor cannot turn
     # an omitted provider into an empty snapshot.
@@ -5779,36 +5946,21 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     def _consume_resolved_into_cache(
         resolved: dict[str, dict[str, str]],
     ) -> None:
-        """Merge the server's just-returned tag map into the local cache.
+        """Replace the cached hints of the providers the server answered for.
 
-        Lets the silent-listener loop close on the *same* cycle instead
-        of waiting on the next ``/fleet/config`` round-trip — the
-        operator's tag decision lands on the sidecar within seconds, not
-        up to 10 minutes later (PR #290 round-2 review, Hermes
-        suggestion #9).
+        The server's answer for a provider is complete, so the bucket is
+        replaced rather than merged into: a hint the sidecar cached before
+        the account was archived (or before the tag was deleted) is dropped
+        on this cycle, instead of surviving until the next ``/fleet/config``
+        round-trip. Providers the server did not answer for keep what the
+        sidecar holds.
         """
         nonlocal server_account_tag_hints
-        # Merge into the live map so the *current* run's downstream
-        # callers — if any — see the freshly-resolved tags without
-        # needing to wait for the next ``/fleet/config``. The next
-        # ``run_collection`` cycle's cache refresh will overwrite this
-        # with whatever the server says at that point.
-        merged: dict[str, dict[str, str]] = {
-            k: dict(v) for k, v in server_account_tag_hints.items()
-        }
-        for pid, by_origin in resolved.items():
-            if not isinstance(pid, str) or not isinstance(by_origin, dict):
-                continue
-            bucket = merged.setdefault(pid, {})
-            for origin, account_id in by_origin.items():
-                if (
-                    isinstance(origin, str)
-                    and isinstance(account_id, str)
-                    and origin
-                    and account_id
-                ):
-                    bucket[origin] = account_id
-        server_account_tag_hints = merged
+        # The next ``run_collection`` cycle's cache refresh will overwrite this
+        # with whatever the server says at that point; until then the live map
+        # carries the server's answer so the current run's downstream callers
+        # see it without waiting for the next ``/fleet/config``.
+        server_account_tag_hints = _apply_resolved_hints(server_account_tag_hints, resolved)
         # Also update the persistent cache so the next cycle doesn't
         # re-fetch what we just learned.
         try:
@@ -5835,6 +5987,12 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
             entries=blocked_origins_this_cycle,
             completed_providers=completed_providers_this_cycle,
             observations=_credential_health_observations(all_metrics),
+            # The providers whose hints this sidecar holds: the server answers
+            # for those too, so a hint it no longer holds is dropped on this
+            # cycle instead of surviving until the next /fleet/config. A
+            # provider whose hints were all retracted is no longer in the map,
+            # so it is not asked about again.
+            hint_providers=sorted(server_account_tag_hints),
             on_resolved=_consume_resolved_into_cache,
             config=config,
         )

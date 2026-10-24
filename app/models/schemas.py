@@ -636,6 +636,10 @@ class CredentialAccountView(BaseModel):
     data_source: str | None = None  # from the account's latest quota card
     input_source: str | None = None
     sources: list[CredentialSourceView] = Field(default_factory=list)
+    # The account is retired: its ``provider_configs`` row is archived, so
+    # nothing is collected for it. A credential mapped onto it is *parked*
+    # (see docs/api-reference.md#parked-mappings).
+    archived: bool = False
 
 
 class CredentialProviderView(BaseModel):
@@ -664,6 +668,26 @@ class BlockedCollectionView(BaseModel):
     first_seen: str | None = None
 
 
+class BlockedSourceView(BaseModel):
+    """A credential source a machine found but could not read.
+
+    The provider is not "not signed in" - its credential exists, the sidecar just cannot
+    read it (a browser holds the cookie store open, or the values are app-bound
+    encrypted). ``collecting`` says whether another source covers the provider anyway.
+    """
+
+    sidecar_id: str
+    provider_id: str
+    credential_origin: str
+    source_store: str | None = None
+    reason: str
+    detail: str | None = None
+    remedy: str | None = None
+    collecting: bool = False
+    first_seen: str | None = None
+    last_seen: str | None = None
+
+
 class AffectedCredentialProvider(BaseModel):
     provider_id: str
     name: str
@@ -684,3 +708,7 @@ class CredentialInventory(BaseModel):
     pending_usage_events: int = 0  # collected events with no account yet
     # Unmapped credentials whose provider has no fresh collection anywhere (Home banner).
     blocked_collection: list[BlockedCollectionView] = Field(default_factory=list)
+    # Credential sources a machine found but could not read (a locked or app-bound
+    # browser cookie store). Kept out of `unmapped_count`: there is no credential to
+    # map, the source simply cannot be read.
+    blocked_sources: list[BlockedSourceView] = Field(default_factory=list)

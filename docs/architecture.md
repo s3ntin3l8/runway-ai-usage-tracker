@@ -62,7 +62,7 @@ live in `app/models/db.py`.
 | `credential_sources` | One row per credential *source* — a secret found in one place: a sidecar's file/env/cookie (`sidecar_id` set), a key pasted in Settings → Providers (`config:`), or an env var on the server host, or Runway's own `github_oauth.json` (`server:`, no origin; the server reads no other credential file, and a startup sweep drops `server:*:file:*` rows left by older builds). Holds the operator's `enabled`/`priority` failover order — a bundle whose access token has already expired is attempted after every live one, so priority orders usable credentials rather than dead ones; a source whose last attempt was rejected (`auth_failed`) rests between retries on the 15 min → 6 h doubling schedule (`next_retry_at`; once the rest is over it is simply tried in its normal place, reset by a success or by a changed secret at ingest), except that the last credential standing is always tried; `consecutive_failures`/`failing_since` track the current failure streak, and a streak of three or more `unavailable` attempts lasting over an hour makes the source read `failing` unless a sibling has collected since — the credential's non-secret expiry/token types, `health` (reported as `untried` until a first collection attempt is recorded — a registered but never-used credential must not read as working), and collection provenance (`last_attempt_at`, `last_success_at`, `last_error`) stamped by the failover loop, and the `verified_subject` last seen behind a cookie source (account-switch detection) — the "active source" for an account is the one with the latest success. Backs `GET /system/credentials`. Unique on `(provider_id, account_id, source_id)`, so an account rename has to carry these rows with it (`config_rekey` does; rows an older build stranded are removed by `orphan_credential_sources`). |
 | `provider_account_labels` | Operator display-name override for a discovered `(provider, account)`. |
 | `credential_tags` | Operator mapping from a host-side credential origin (`path:...`/`env:...`, never the value) to a server account, optionally scoped to one sidecar or deployment-wide. Unresolved origins sit in `pending_credential_tags` until tagged in the Fleet UI. Origins are fingerprinted per credential, so a CLI re-login re-keys them; when the base location is unchanged and exactly one account was ever tagged there, the manifest carries that binding to the new origin (`set_by=rotation`) instead of reopening a pending row and withholding the token (#474). `target_provider_id` (nullable) marks a tag whose account belongs to a related provider (Gemini usage assigned to an Antigravity account): the ingestor re-homes matching events to that provider, so they land on the `(antigravity, account)` series. |
-| `pending_credential_tags` | Credential origins a sidecar has reported but no operator tag exists yet (`reason = token_withheld` marks one whose token stayed on the machine, so its provider cannot collect until an account is assigned — the inventory's `blocked_collection` and the Home banner; an older sidecar sends no reason and the server infers it for providers it cannot verify by source) — powers the "Untagged credentials" surface (`GET /fleet/credentials/tags/pending`). |
+| `pending_credential_tags` | Credential origins a sidecar has reported but no operator tag exists yet (`reason = token_withheld` marks one whose token stayed on the machine, so its provider cannot collect until an account is assigned — the inventory's `blocked_collection` and the Home banner; an older sidecar sends no reason and the server infers it for providers it cannot verify by source) — powers the "Untagged credentials" surface (`GET /fleet/credentials/tags/pending`). A `source_locked` / `source_unsupported` / `source_unreadable` reason marks a credential source the sidecar found but could not read (a browser cookie store the browser holds open, or one whose values are app-bound encrypted): there is no credential to map, so the row is kept out of the Untagged list and surfaces as the inventory's `blocked_sources` (the "Unavailable" tab, the Home banner, the provider page's empty state). The `source_store` / `source_detail` / `source_remedy` columns name the store, why it could not be read, and the fix — never a credential value, an account id or a filesystem path. |
 | `pending_usage_events` | Collected events awaiting account assignment (evidence-backed or manual) — `GET /fleet/events/pending`, assign via `POST /fleet/events/pending/assign`. |
 | `sidecar_registry` | Known sidecars with hostname, custom name, tags, last-seen, version, OS, recent log lines, and a `collection_enabled` pause flag. |
 | `webhook_configs` | Discord/Slack threshold alerts: `provider_id`, `account_id` (NULL = all accounts), `threshold_pct`, `url`, `channel`, last-fired timestamp, `credential_alerts` (opt-in, default on, for the credential-health alerts below). |
@@ -239,6 +239,45 @@ re-tagging. Whether a mapping is parked is answered in one place (`ParkedMapping
 `app/services/credential_tags.py`), because a *redirect* tag names an account of its **target**
 provider and the archived row has to be looked up there. See
 [Parked mappings](api-reference.md#parked-mappings) for the API contract.
+
+A retired account is left alone by the token auto-refresher too: it collects
+nothing, its subscription has ended, so refreshing its credential can only
+fail. The rule is keyed on the **account** — a retired account's credential is
+skipped even when the provider still has another, live account — and on the
+provider, whose every configured account being archived retires it as a whole
+(a parked mapping leaves that credential unattributed, so it sits under no
+account of its own). It is deliberately narrower than the collector's
+`inactive_providers` rule, which also counts *disabled* rows: a disabled
+account is a reversible state, and its credential should stay fresh for the day
+the operator re-enables it. The credential inventory marks a retired account as
+archived, so a parked credential does not read like an active one.
+
+The archived rows are read in one place — `archived_account_pairs()` in
+`app/services/credential_tags.py`, which canonicalises the account id (every
+write path stores accounts canonically, a config row carries whatever the
+operator typed) and is shared with `ParkedMapping`, so the inventory's marker
+and the parked-mapping check can never disagree.
+
+A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
+the hint before the account was archived was still applying it, because the
+manifest's `resolved` map was merged into the sidecar's cache and a merge
+never deletes a key. The manifest response is now **complete per provider**
+(an empty map for a provider it resolves no origin for), and the sidecar
+replaces what it holds for the providers it answered for, so a retraction
+lands on the next manifest instead of the next `/fleet/config`. The sidecar
+names the providers whose hints it holds in `hint_providers`, so the server
+also answers for a provider whose tag was deleted — that provider has no tag
+row left to make it a candidate.
+
+The sidecar's cache therefore equals what it holds: a provider the server
+answered for with an empty map is dropped from the cache, and so from
+`hint_providers` — it is not asked about again on every manifest. The list
+is bounded (256 ids, like `observations`): every id becomes one term in the
+query that collects the hints and one bucket in the response. The sidecar
+truncates the list to that cap rather than exceeding it — the server
+rejects an oversized list, and a rejected manifest takes the cycle's
+`completed_providers` with it, so the host's stale pending rows would stop
+being pruned.
 
 ### Who refreshes an OAuth login
 
@@ -445,10 +484,14 @@ Workflows live in `.github/workflows/`.
     it only lands when the pin moves — but it can break the packaging when
     it does, and a push run cannot catch that, because it ran before the
     release did.
-- **`security-validation.yml`** — the trust-boundary and recovery tests: the
-    browser boundaries and the real reverse-proxy boundaries on Linux, and the
-    native Windows swap, rollback and recovery regressions. The packaging half
-    of the old workflow lives in `frozen-verifier.yml`.
+- **`security-validation.yml`** — the trust-boundary and recovery tests, in
+    three jobs that share no state: the browser boundaries, which run in the
+    digest-pinned Playwright image so the runner's apt mirror cannot spend
+    the budget before the checks run ([#876](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/876));
+    the real reverse-proxy boundaries, which need the Python set and Docker
+    but no browser and carry the immutable-reference check; and the native
+    Windows swap, rollback and recovery regressions. The packaging half of the
+    old workflow lives in `frozen-verifier.yml`.
 - **`image-security.yml` / `image-security-arm64.yml`** — the candidate
     image is built and scanned for known vulnerabilities. The amd64 leg runs
     on every pull request; the arm64 leg is a native build on an ARM runner
@@ -516,6 +559,28 @@ Releases are managed by **Release Please**
   `:latest`, beta prerelease → `:beta`).
 - To force a version jump (e.g. v1.0.0): tag manually, push the tag, create
   the GitHub Release by hand — Release Please picks up from there.
+
+The release PR's own CI is held for approval, and the merge is always
+somebody's. Release Please pushes the release branch with the workflow's own
+`GITHUB_TOKEN`, and GitHub holds `pull_request` runs from a push like that,
+so the release PR sits at `BLOCKED` with its required checks stuck at pending.
+There is no auto-merge on this repository (`allow_auto_merge` is off).
+Approving the held runs lets the required contexts report so the PR can be
+merged normally; merging it with administrator privileges — `enforce_admins`
+is off on `main` — skips the held runs entirely and leaves them unstarted.
+
+Approval is not free, though. The release PR carries six workflows — `CI/CD`
+and `CodeQL`, which also run on the push to `main`, and `Security Validation`,
+`Image Security`, `Image Security (arm64)` and `Dependency Review`, which run
+on a pull request but not on the push. What they re-check is the release
+commit: a version bump and a changelog on top of commits that were each
+tested on the pull request they came in through. One measured batch cost 20.8
+runner-minutes and about an hour of wall clock — its last job waited 43
+minutes for a hosted runner before starting. The administrator merge skips
+those six runs and that hour; `CI/CD` and `CodeQL` still run on `main`
+afterwards, as they do after any merge. What it gives up is the four
+pull-request-only workflows' look at the release commit: they have no push
+equivalent, so a release merged that way never reaches them.
 
 The prerelease settings in `release-please-config.json` are temporary for
 the 3.0.0 beta cycle (`prerelease: true`, `prerelease-type: beta.1`). Before

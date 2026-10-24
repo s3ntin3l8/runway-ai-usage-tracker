@@ -49,6 +49,7 @@ from app.services.accumulator import (
     reconcile_latest_usage_snapshot,
     upsert_latest_usage,
 )
+from app.services.blocked_sources import SOURCE_REASONS, is_source_blocked
 from app.services.credential_tags import (
     CredentialTagRepo,
     ParkedMapping,
@@ -1044,6 +1045,13 @@ def _account_tag_hints_for_providers(
     whether an origin is *resolved* — ``visible_pending_rows`` — keep
     the default, because a parked mapping does resolve the origin and
     the operator must not be nagged about it again.
+
+    The map is **complete per provider**: every origin the server
+    resolves for a provider it is asked about is in it. A caller that
+    hands it to a sidecar as "the answer for these providers" may
+    therefore replace what it holds for them — the manifest response
+    does exactly that, and adds an explicit empty bucket for a provider
+    with no hints at all.
     """
     effective_sidecar_id = sidecar_id
     if effective_sidecar_id is None:
@@ -1119,6 +1127,13 @@ class CredentialManifestRequest(BaseModel):
     completed_providers: list[str] | None = None
     # Safe source metadata only: never include credential values.
     observations: list[CredentialHealthObservation] = Field(default_factory=list, max_length=256)
+    # The providers whose hints this sidecar currently holds. The server
+    # answers with the complete hint set for each of them — an empty map
+    # included — so a hint the server no longer holds is dropped on the same
+    # cycle instead of surviving until the next /fleet/config.
+    # Bounded like ``observations``: every id becomes one term in the query
+    # below and one bucket in the response.
+    hint_providers: list[str] = Field(default_factory=list, max_length=256)
 
 
 def _entry_reason(
@@ -1132,6 +1147,177 @@ def _entry_reason(
         reason = "token_withheld"
     seen[key] = reason
     return reason
+
+
+def _source_field(entry: dict[str, str], key: str) -> str | None:
+    """One bounded, non-secret field of a source-blocked manifest entry."""
+    value = entry.get(key)
+    if isinstance(value, str) and value:
+        return value[:200]
+    return None
+
+
+def _record_pending_entry(
+    session: Session,
+    payload: CredentialManifestRequest,
+    entry: dict[str, str],
+    provider_id: str,
+    origin: str,
+    keep_by_provider: dict[str, set[str]],
+    reasons_in_payload: dict[tuple[str, str], str | None],
+) -> None:
+    """Handle one reported credential origin: resolve it, or keep it pending.
+
+    An origin an operator already assigned (or a source-verified identity already
+    resolved) is not re-opened as pending on every heartbeat; a rotated credential
+    carries its binding over instead of reopening a silent quota outage.
+    """
+    existing_tag = CredentialTagRepo.get(
+        session,
+        provider_id=provider_id,
+        credential_origin=origin,
+        sidecar_id=payload.sidecar_id,
+    )
+    if existing_tag is not None and existing_tag.set_by != "identity_claim":
+        # A prior operator assignment or source-verified identity already
+        # resolves this origin. Do not re-open it as pending each heartbeat.
+        PendingCredentialTagRepo.delete(
+            session,
+            sidecar_id=payload.sidecar_id,
+            provider_id=provider_id,
+            credential_origin=origin,
+        )
+        return
+    claimed_id = entry.get("account_id")
+    if existing_tag is None:
+        carried = CredentialTagRepo.inherited_account_for_rotation(
+            session,
+            provider_id=provider_id,
+            credential_origin=origin,
+            sidecar_id=payload.sidecar_id,
+            claimed_account_id=claimed_id if isinstance(claimed_id, str) else None,
+        )
+        if carried is not None:
+            # The credential rotated — a CLI re-login re-fingerprints the
+            # origin (#349) — but the location did not and exactly one
+            # account was ever bound there: carry that binding over instead
+            # of reopening a silent quota outage (#474).
+            CredentialTagRepo.set_tag(
+                session,
+                provider_id=provider_id,
+                credential_origin=origin,
+                account_id=carried,
+                sidecar_id=payload.sidecar_id,
+                set_by="rotation",
+            )
+            PendingCredentialTagRepo.delete(
+                session,
+                sidecar_id=payload.sidecar_id,
+                provider_id=provider_id,
+                credential_origin=origin,
+            )
+            logger.info(
+                "Carried the %s credential binding across a rotation: %s → %s",
+                provider_id,
+                scrub_log(origin),
+                scrub_log(carried),
+            )
+            return
+    if provider_id == "anthropic" and isinstance(claimed_id, str):
+        matched = session.exec(
+            select(ProviderConfig.id).where(
+                ProviderConfig.provider_id == provider_id,
+                ProviderConfig.account_id == canonical_account_id(claimed_id),
+                ProviderConfig.enabled == True,  # noqa: E712
+            )
+        ).first()
+        if matched is not None:
+            CredentialTagRepo.set_tag(
+                session,
+                provider_id=provider_id,
+                credential_origin=origin,
+                account_id=canonical_account_id(claimed_id),
+                sidecar_id=payload.sidecar_id,
+                set_by="identity_claim",
+            )
+            PendingCredentialTagRepo.delete(
+                session,
+                sidecar_id=payload.sidecar_id,
+                provider_id=provider_id,
+                credential_origin=origin,
+            )
+            return
+    if existing_tag is not None and existing_tag.set_by == "identity_claim":
+        # Identity-claim rows are a visible record of automatic matching,
+        # not durable operator assignments. Drop a stale claim so the
+        # origin can return to the pending queue after account changes.
+        CredentialTagRepo.delete_tag_in_scope(
+            session,
+            provider_id=provider_id,
+            credential_origin=origin,
+            sidecar_id=payload.sidecar_id,
+        )
+    keep_by_provider.setdefault(provider_id, set()).add(origin)
+    pending = PendingCredentialTagRepo.upsert(
+        session,
+        sidecar_id=payload.sidecar_id,
+        provider_id=provider_id,
+        credential_origin=origin,
+    )
+    pending.reason = _entry_reason(reasons_in_payload, (provider_id, origin), entry)
+    pending.claimed_account_id = (
+        canonical_account_id(claimed_id)
+        if provider_id == "anthropic" and isinstance(claimed_id, str) and "@" in claimed_id
+        else None
+    )
+    session.add(pending)
+
+
+def _record_source_blocks(
+    session: Session,
+    payload: CredentialManifestRequest,
+    source_entries: list[dict[str, str]],
+    keep_by_provider: dict[str, set[str]],
+    reasons_in_payload: dict[tuple[str, str], str | None],
+) -> int:
+    """Record the credential sources a sidecar found but could not read.
+
+    A browser cookie store the browser holds open, or one whose values are app-bound
+    encrypted: there is no credential to map, so this never enters the pending-tag
+    machinery. It records why the source is unavailable and nothing else, and it is
+    pruned the cycle the sidecar stops reporting it.
+
+    Returns the number of entries recorded.
+    """
+    recorded = 0
+    for entry in source_entries:
+        provider_id = entry.get("provider_id")
+        origin = entry.get("credential_origin")
+        if not isinstance(provider_id, str) or not provider_id:
+            continue
+        if not isinstance(origin, str) or not origin:
+            continue
+        recorded += 1
+        keep_by_provider.setdefault(provider_id, set()).add(origin)
+        pending = PendingCredentialTagRepo.upsert(
+            session,
+            sidecar_id=payload.sidecar_id,
+            provider_id=provider_id,
+            credential_origin=origin,
+        )
+        effective = _entry_reason(reasons_in_payload, (provider_id, origin), entry)
+        pending.reason = effective
+        if effective in SOURCE_REASONS:
+            pending.source_store = _source_field(entry, "source_store")
+            pending.source_detail = _source_field(entry, "source_detail")
+            pending.source_remedy = _source_field(entry, "source_remedy")
+        else:
+            # A withheld token outranks the source report for this origin.
+            pending.source_store = None
+            pending.source_detail = None
+            pending.source_remedy = None
+        session.add(pending)
+    return recorded
 
 
 def _reported_manifest_origins(payload: CredentialManifestRequest) -> dict[str, set[str]]:
@@ -1336,7 +1522,20 @@ async def post_credential_manifest(
     keep_by_provider: dict[str, set[str]] = {}
     entries_received = 0
     reasons_in_payload: dict[tuple[str, str], str | None] = {}
+    # An origin can be reported twice in one payload: once as a credential the
+    # sidecar withheld, and once as a source it could not read. They are
+    # different kinds of report, so they are handled separately - and the
+    # withheld reason wins for the origin, because an operator still has to
+    # assign an account for it.
+    source_entries: list[dict[str, str]] = []
+    normal_entries: list[dict[str, str]] = []
     for entry in payload.entries:
+        reason = entry.get("reason")
+        if isinstance(reason, str) and reason in SOURCE_REASONS:
+            source_entries.append(entry)
+        else:
+            normal_entries.append(entry)
+    for entry in normal_entries:
         provider_id = entry.get("provider_id")
         origin = entry.get("credential_origin")
         if not isinstance(provider_id, str) or not provider_id:
@@ -1344,105 +1543,21 @@ async def post_credential_manifest(
         if not isinstance(origin, str) or not origin:
             continue
         entries_received += 1
-        existing_tag = CredentialTagRepo.get(
+        _record_pending_entry(
             session,
-            provider_id=provider_id,
-            credential_origin=origin,
-            sidecar_id=payload.sidecar_id,
+            payload,
+            entry,
+            provider_id,
+            origin,
+            keep_by_provider,
+            reasons_in_payload,
         )
-        if existing_tag is not None and existing_tag.set_by != "identity_claim":
-            # A prior operator assignment or source-verified identity already
-            # resolves this origin. Do not re-open it as pending each heartbeat.
-            PendingCredentialTagRepo.delete(
-                session,
-                sidecar_id=payload.sidecar_id,
-                provider_id=provider_id,
-                credential_origin=origin,
-            )
-            continue
-        claimed_id = entry.get("account_id")
-        if existing_tag is None:
-            carried = CredentialTagRepo.inherited_account_for_rotation(
-                session,
-                provider_id=provider_id,
-                credential_origin=origin,
-                sidecar_id=payload.sidecar_id,
-                claimed_account_id=claimed_id if isinstance(claimed_id, str) else None,
-            )
-            if carried is not None:
-                # The credential rotated — a CLI re-login re-fingerprints the
-                # origin (#349) — but the location did not and exactly one
-                # account was ever bound there: carry that binding over instead
-                # of reopening a silent quota outage (#474).
-                CredentialTagRepo.set_tag(
-                    session,
-                    provider_id=provider_id,
-                    credential_origin=origin,
-                    account_id=carried,
-                    sidecar_id=payload.sidecar_id,
-                    set_by="rotation",
-                )
-                PendingCredentialTagRepo.delete(
-                    session,
-                    sidecar_id=payload.sidecar_id,
-                    provider_id=provider_id,
-                    credential_origin=origin,
-                )
-                logger.info(
-                    "Carried the %s credential binding across a rotation: %s → %s",
-                    provider_id,
-                    scrub_log(origin),
-                    scrub_log(carried),
-                )
-                continue
-        if provider_id == "anthropic" and isinstance(claimed_id, str):
-            matched = session.exec(
-                select(ProviderConfig.id).where(
-                    ProviderConfig.provider_id == provider_id,
-                    ProviderConfig.account_id == canonical_account_id(claimed_id),
-                    ProviderConfig.enabled == True,  # noqa: E712
-                )
-            ).first()
-            if matched is not None:
-                CredentialTagRepo.set_tag(
-                    session,
-                    provider_id=provider_id,
-                    credential_origin=origin,
-                    account_id=canonical_account_id(claimed_id),
-                    sidecar_id=payload.sidecar_id,
-                    set_by="identity_claim",
-                )
-                PendingCredentialTagRepo.delete(
-                    session,
-                    sidecar_id=payload.sidecar_id,
-                    provider_id=provider_id,
-                    credential_origin=origin,
-                )
-                continue
-        if existing_tag is not None and existing_tag.set_by == "identity_claim":
-            # Identity-claim rows are a visible record of automatic matching,
-            # not durable operator assignments. Drop a stale claim so the
-            # origin can return to the pending queue after account changes.
-            CredentialTagRepo.delete_tag_in_scope(
-                session,
-                provider_id=provider_id,
-                credential_origin=origin,
-                sidecar_id=payload.sidecar_id,
-            )
-        keep_by_provider.setdefault(provider_id, set()).add(origin)
-        pending = PendingCredentialTagRepo.upsert(
-            session,
-            sidecar_id=payload.sidecar_id,
-            provider_id=provider_id,
-            credential_origin=origin,
-        )
-        pending.reason = _entry_reason(reasons_in_payload, (provider_id, origin), entry)
-        pending.claimed_account_id = (
-            canonical_account_id(claimed_id)
-            if provider_id == "anthropic" and isinstance(claimed_id, str) and "@" in claimed_id
-            else None
-        )
-        session.add(pending)
+
+    # A credential source the sidecar found but could not read: a browser cookie
+    # store the browser holds open, or one whose values are app-bound encrypted.
+    entries_received += _record_source_blocks(
+        session, payload, source_entries, keep_by_provider, reasons_in_payload
+    )
 
     # Retain currently reported origins and prune origins no longer present.
     existing_rows = PendingCredentialTagRepo.list_all(session, sidecar_id=payload.sidecar_id)
@@ -1465,6 +1580,14 @@ async def post_credential_manifest(
         ).all()
         if isinstance(pid, str) and pid
     )
+    # The sidecar names the providers whose hints it holds, so the server also
+    # answers for a provider whose tag was deleted — that provider has no tag
+    # row left to make it a candidate, yet the sidecar may still hold its hint.
+    # Deduplicated here: every id becomes one term in the query above and one
+    # bucket in the response, so a repeated id must not be counted twice.
+    candidate_provider_ids.update(
+        pid for pid in dict.fromkeys(payload.hint_providers) if isinstance(pid, str) and pid
+    )
     candidate_pids = sorted(candidate_provider_ids)
 
     # The sidecar reports which providers completed so a missing provider
@@ -1479,6 +1602,19 @@ async def post_credential_manifest(
             payload.completed_providers is None
             or row.provider_id not in payload.completed_providers
         ):
+            if is_source_blocked(row) and row.credential_origin not in keep_by_provider.get(
+                row.provider_id, set()
+            ):
+                # A row that records an unusable credential source is not a
+                # credential waiting to be mapped: there is nothing for the
+                # operator to tag. Its lifecycle is the sidecar's report, so it
+                # goes when the sidecar stops reporting that store - not when the
+                # provider is collected. On macOS the sidecar withholds a
+                # provider with a native source from completed_providers (a
+                # withheld scan never proves a logout), so the generic rule would
+                # keep the row forever and the advisory would outlive the store
+                # it describes. Leaving it out of the keep map retires it.
+                continue
             prune_keep.setdefault(row.provider_id, set()).add(row.credential_origin)
     if payload.completed_providers is not None:
         prune_keep.update(
@@ -1494,7 +1630,7 @@ async def post_credential_manifest(
             sidecar_id=payload.sidecar_id,
             keep_origins_by_provider=prune_keep,
         )
-        if prune_keep
+        if prune_keep or existing_rows
         else 0
     )
     await _retire_missing_claude_sources(session, payload)
@@ -1502,6 +1638,13 @@ async def post_credential_manifest(
     resolved = _account_tag_hints_for_providers(
         session, candidate_pids, sidecar_id=payload.sidecar_id, include_parked=False
     )
+    # The answer for a provider is *complete*: an empty bucket says "this
+    # provider has no hints", which is how a sidecar learns that a hint it
+    # cached before the account was archived is no longer valid. Without the
+    # explicit bucket the provider would simply be absent, and a sidecar that
+    # merges the map would keep the stale hint until the next /fleet/config.
+    for pid in candidate_pids:
+        resolved.setdefault(pid, {})
 
     return {
         "status": "ok",
@@ -1822,9 +1965,14 @@ def visible_pending_rows(session: Session) -> list[PendingCredentialTag]:
 
     One definition for the Untagged list, its per-sidecar counts, and the credential inventory,
     so the badge, the list and the Home banner can never disagree about what is "untagged".
+
+    A row that records an unusable credential source is not one of them: there is no
+    credential to map, so it belongs to the "Unavailable" surface instead.
     """
     by_sidecar: dict[str, list[PendingCredentialTag]] = {}
     for r in PendingCredentialTagRepo.list_all(session):
+        if is_source_blocked(r):
+            continue
         by_sidecar.setdefault(r.sidecar_id, []).append(r)
 
     visible: list[PendingCredentialTag] = []

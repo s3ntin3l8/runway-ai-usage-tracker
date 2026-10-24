@@ -3542,3 +3542,141 @@ def isolate_host_credentials(monkeypatch, tmp_path):
         return original_run(command, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", guarded_run)
+
+
+class TestResolvedHintsReplace:
+    """The server's answer for a provider is complete, so the sidecar replaces
+    what it holds for that provider instead of merging into it (#874).
+
+    A merge never deletes a key, so a hint the sidecar cached before the
+    account was archived survived until the next /fleet/config replaced the
+    whole map — "not shipped" was not "not applied".
+    """
+
+    def test_a_retracted_hint_is_dropped(self):
+        cached = {"kimi_coding": {"path:/home/u/.kimi/credentials.json": "old@example.com"}}
+        resolved = {"kimi_coding": {}}
+
+        merged = sidecar._apply_resolved_hints(cached, resolved)
+
+        # The provider is gone, not left behind with an empty bucket: the
+        # cache equals what the sidecar holds, so the provider is no longer
+        # named in `hint_providers` and not asked about again.
+        assert "kimi_coding" not in merged
+
+    def test_a_retracted_provider_is_not_asked_about_again(self):
+        """An emptied provider leaves `hint_providers`, so the server is not
+        asked for a hint the sidecar no longer holds."""
+        cached = {
+            "kimi_coding": {"path:/home/u/.kimi/credentials.json": "old@example.com"},
+            "anthropic": {"provider:anthropic": "alice@example.com"},
+        }
+        resolved = {"kimi_coding": {}}
+
+        merged = sidecar._apply_resolved_hints(cached, resolved)
+
+        assert sorted(merged) == ["anthropic"]
+
+    def test_a_new_hint_lands_on_the_same_cycle(self):
+        cached = {"anthropic": {"provider:anthropic": "alice@example.com"}}
+        resolved = {
+            "anthropic": {"provider:anthropic": "alice@example.com"},
+            "chatgpt": {"provider:chatgpt": "alice@example.com"},
+        }
+
+        merged = sidecar._apply_resolved_hints(cached, resolved)
+
+        assert merged["anthropic"] == {"provider:anthropic": "alice@example.com"}
+        assert merged["chatgpt"] == {"provider:chatgpt": "alice@example.com"}
+
+    def test_a_provider_the_server_did_not_answer_for_keeps_its_hints(self):
+        cached = {"kimi_coding": {"path:/home/u/.kimi/credentials.json": "old@example.com"}}
+        resolved = {"anthropic": {"provider:anthropic": "alice@example.com"}}
+
+        merged = sidecar._apply_resolved_hints(cached, resolved)
+
+        assert merged["kimi_coding"] == {"path:/home/u/.kimi/credentials.json": "old@example.com"}
+
+    def test_the_cached_map_is_not_mutated(self):
+        cached = {"kimi_coding": {"path:/home/u/.kimi/credentials.json": "old@example.com"}}
+
+        merged = sidecar._apply_resolved_hints(cached, {"kimi_coding": {}})
+
+        assert cached["kimi_coding"] == {"path:/home/u/.kimi/credentials.json": "old@example.com"}
+        assert merged is not cached
+
+    def test_the_manifest_names_the_providers_whose_hints_it_holds(self):
+        """The server answers for the providers the sidecar names, so a
+        provider whose tag was deleted (no tag row left to make it a
+        candidate) still gets an answer."""
+        captured: dict = {}
+
+        def _capture(body: bytes) -> None:
+            captured.update(json.loads(body.decode("utf-8")))
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(
+            return_value=MagicMock(
+                getcode=MagicMock(return_value=200), read=MagicMock(return_value=b"{}")
+            )
+        )
+        ctx.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch(
+                "scripts.sidecar_pkg.transport.urlopen",
+                side_effect=lambda *a, **kw: _capture(a[0].data) or ctx,
+            ),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                hint_providers=["kimi_coding", "anthropic"],
+            )
+
+        assert captured["hint_providers"] == ["anthropic", "kimi_coding"]
+
+    def test_the_named_providers_are_truncated_to_the_servers_cap(self):
+        """An oversized list must not fail the whole manifest.
+
+        The server rejects a manifest naming more providers than its cap
+        allows, and a rejected manifest takes this cycle's
+        `completed_providers` with it — the server would then stop pruning
+        this host's stale pending rows. Truncating degrades to fewer answers.
+        """
+        captured: dict = {}
+
+        def _capture(body: bytes) -> None:
+            captured.update(json.loads(body.decode("utf-8")))
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(
+            return_value=MagicMock(
+                getcode=MagicMock(return_value=200), read=MagicMock(return_value=b"{}")
+            )
+        )
+        ctx.__exit__ = MagicMock(return_value=False)
+
+        named = [f"provider_{i}" for i in range(sidecar._MAX_HINT_PROVIDERS + 5)]
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch(
+                "scripts.sidecar_pkg.transport.urlopen",
+                side_effect=lambda *a, **kw: _capture(a[0].data) or ctx,
+            ),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                hint_providers=named,
+            )
+
+        # The report still goes out, with fewer names than asked for.
+        assert captured["sidecar_id"] == "alpha-host"
+        assert captured["hint_providers"] == sorted(named)[: sidecar._MAX_HINT_PROVIDERS]

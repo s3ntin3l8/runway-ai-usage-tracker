@@ -73,6 +73,7 @@ function AccountBlock({
         <Badge variant={STATUS_VARIANT[account.status] ?? 'neutral'}>
           {STATUS_LABEL[account.status] ?? account.status}
         </Badge>
+        {account.archived ? <Badge variant="neutral">archived</Badge> : null}
         <span className="text-[11px] text-fg-subtle">
           {account.sources.length} {account.sources.length === 1 ? 'credential' : 'credentials'}
         </span>
