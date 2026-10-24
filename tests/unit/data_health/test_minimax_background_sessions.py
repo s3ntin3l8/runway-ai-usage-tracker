@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 
+from sqlmodel import select
+
+from app.models.db import UsageEvent
 from app.services.data_health.checks.minimax_background_sessions import (
     MinimaxBackgroundSessionsCheck,
 )
@@ -266,3 +269,27 @@ def test_a_stale_group_key_says_so(session):
 
     result, _ = _check().apply(session, "mvs_bg", {})
     assert result.counts["usage_events_moved"] == 0
+
+
+def test_a_padded_parent_is_trimmed_and_moves(session):
+    """The query trims the id, so the comparison and the group key agree.
+
+    A padded id that the report called fixable but the plan could not match
+    would stay in every scan.
+    """
+    _event(session, raw_json=_provenance(parent_session_id=" mvs_main "))
+
+    report = _check().detect(session)
+
+    assert report.total_count == 1
+    group = report.groups[0]
+    assert group.detail["parent_session_id"] == "mvs_main"
+
+    result, _ = _check().apply(session, group.key, {})
+    assert result.counts["usage_events_moved"] == 1
+
+    row = session.exec(select(UsageEvent)).one()
+    assert row.session_id == "mvs_main"
+
+    # And it is not reported again.
+    assert _check().detect(session).total_count == 0

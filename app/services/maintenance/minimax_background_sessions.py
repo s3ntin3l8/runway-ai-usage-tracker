@@ -253,7 +253,10 @@ def _provenance_parent(column: Any) -> Any:
             case(
                 (
                     func.json_type(column, "$.parent_session_id") == "text",
-                    func.json_extract(column, "$.parent_session_id"),
+                    # Trimmed here, not in Python: the comparison and the
+                    # group key must see the same value, or a padded id would
+                    # be reported as fixable and never move.
+                    func.trim(func.json_extract(column, "$.parent_session_id")),
                 ),
                 else_=None,
             ),
@@ -319,9 +322,9 @@ def plan_provenance_relinks(
         if not isinstance(parent, str):
             continue
         # A session id is not blank and does not carry whitespace inside it.
-        # The provenance is sidecar-supplied text, and a blank or padded
-        # value would file the row under a session id that cannot exist.
-        parent = parent.strip()
+        # The provenance is sidecar-supplied text, and a blank value would
+        # file the row under a session id that cannot exist. (The outer
+        # padding is trimmed by the query.)
         if not parent or any(char.isspace() for char in parent):
             continue
         plan.relinks.append(
