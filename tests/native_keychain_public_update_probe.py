@@ -7,6 +7,7 @@ fake data, and a separately signed native writer. No provider request is made.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.sidecar_pkg.keychain_protocol import KeychainError
+from tests.keychain_authorization_diagnostics import sanitize
 from tests.keychain_policy_fixture import capture, compare
 from tests.native_claude_keychain_acceptance import ACCOUNT, Fixture, environment_snapshot
 from tests.native_keychain_isolation import validate_scope
@@ -26,7 +28,8 @@ from tests.native_keychain_isolation import validate_scope
 SERVICE = "Runway synthetic public-update probe"
 ORIGINAL = b"synthetic-public-update-original"
 MODES = ("metadata-control", "data-only", "legacy-data", "combined-access")
-CONTROL_CASES = ("read-only-control", "reference-control", "writer-read-control")
+AUTH_CASES = ("authorization-metadata", "helper-owned-control")
+CONTROL_CASES = ("read-only-control", "reference-control", "writer-read-control", *AUTH_CASES)
 CASES = (*CONTROL_CASES, *MODES)
 DENIED_STATUSES = {-25293, -25308, -25315, -128}
 STAGES = {
@@ -43,6 +46,10 @@ STAGES = {
     "before_writer_data_read",
     "after_writer_data_read",
     "writer_data_verified",
+    "before_helper_seed",
+    "after_helper_seed",
+    "before_authorization_metadata",
+    "after_authorization_metadata",
 }
 SNAPSHOT_CHECKS = {
     "default_same": lambda snapshot: snapshot["default"]["path"],
@@ -119,6 +126,8 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
         )
     if checkpoint is not None:
         checkpoint(row)
+    if mode in AUTH_CASES:
+        row["fixture_creator"] = "helper" if mode == "helper-owned-control" else "python"
     fixture = Fixture(writer)
     interrupted = None
 
@@ -156,14 +165,65 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
         with fixture:
             try:
                 observe("fixture_created")
-                reference = fixture.add(service=SERVICE, data=ORIGINAL)
-                observe("fixture_seeded")
                 paths = validate_scope(Path(fixture.directory.name), fixture.paths())
                 assert len(paths) == 1
+                if mode == "helper-owned-control":
+                    helper_digest = hashlib.sha256(writer.read_bytes()).digest()
+                    try:
+                        seed = subprocess.run(
+                            [str(writer), str(paths[0]), "helper-seed"],
+                            capture_output=True,
+                            timeout=5,
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        row["failure"] = "seed_timed_out"
+                        row["seed_stages"] = stages(exc.stderr)
+                        observe("after_seed")
+                        raise
+                    row["seed_stages"] = stages(seed.stderr)
+                    row["seed_exit_code"] = seed.returncode
+                    observe("after_seed")
+                    assert seed.returncode == 0
+                    values = json.loads(seed.stdout)
+                    if (
+                        not isinstance(values, dict)
+                        or type(values.get("seed_status")) is not int
+                        or type(values.get("seed_completed")) is not bool
+                    ):
+                        row["failure"] = "invalid_seed_result"
+                        raise ValueError("invalid seed result")
+                    row.update(
+                        seed_status=values["seed_status"], seed_completed=values["seed_completed"]
+                    )
+                    if not row["seed_completed"] or row["seed_status"] != 0:
+                        row["failure"] = (
+                            "seed_denied"
+                            if row["seed_status"] in DENIED_STATUSES
+                            else "seed_failed"
+                        )
+                        raise RuntimeError("seed failed")
+                    matches = fixture.api.call(
+                        "copy",
+                        {"service": SERVICE, "account": ACCOUNT, "keychains": [str(paths[0])]},
+                        {},
+                    )
+                    assert len(matches) == 1
+                    reference = matches[0]["persistent"]
+                else:
+                    reference = fixture.add(service=SERVICE, data=ORIGINAL)
+                observe("fixture_seeded")
                 query = {"persistent": reference, "keychains": [str(path) for path in paths]}
-                assert fixture.api.call("copy", query, {})["data"] == ORIGINAL
-                observe("fixture_read")
+                if mode != "helper-owned-control":
+                    assert fixture.api.call("copy", query, {})["data"] == ORIGINAL
+                    observe("fixture_read")
                 before = capture(SERVICE, ACCOUNT, keychain=fixture.keychains[0])
+                if mode == "helper-owned-control":
+                    row["helper_binary_unchanged"] = (
+                        hashlib.sha256(writer.read_bytes()).digest() == helper_digest
+                    )
+                    if not row["helper_binary_unchanged"]:
+                        row["failure"] = "helper_binary_changed"
+                        raise RuntimeError("helper changed")
                 observe("before_writer")
                 try:
                     child = subprocess.run(
@@ -189,7 +249,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                         ("replacement_verified", bool),
                     )
                 )
-                if mode == "writer-read-control":
+                if mode in {"writer-read-control", "helper-owned-control"}:
                     fields += (("control_status", int),)
                 try:
                     values = json.loads(child.stdout)
@@ -201,6 +261,11 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                     row["failure"] = "invalid_writer_result"
                     raise ValueError("invalid writer result") from None
                 row.update({name: values[name] for name, _kind in fields})
+                if mode in AUTH_CASES:
+                    row["authorization"] = sanitize(values.get("authorization"))
+                    if row["authorization"]["metadata_status"] != 0:
+                        row["failure"] = "authorization_metadata_unavailable"
+                        raise RuntimeError("authorization metadata unavailable")
                 if control and row["control_completed"] is not True:
                     status = row.get("control_status")
                     row["failure"] = (

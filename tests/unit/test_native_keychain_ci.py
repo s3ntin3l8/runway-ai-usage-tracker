@@ -190,6 +190,8 @@ def test_child_preflight_block_is_not_reported_as_supervisor_failure(monkeypatch
 @pytest.mark.parametrize(
     "case",
     [
+        "authorization-metadata",
+        "helper-owned-control",
         "read-only-control",
         "reference-control",
         "writer-read-control",
