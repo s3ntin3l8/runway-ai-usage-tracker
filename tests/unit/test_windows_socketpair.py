@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from tests import windows_socketpair as socketpair_module
 from tests.windows_socketpair import (
     DISABLE_ENV_VAR,
     has_native_socketpair,
@@ -29,6 +30,34 @@ from tests.windows_socketpair import (
 # These are the tests whose subject is the Windows platform, so the native
 # Windows gate runs only these (see `scripts/dev_checks.py test-windows`).
 pytestmark = pytest.mark.windows
+
+
+def _winsock_error(code: int) -> OSError:
+    """A Winsock error the way Windows raises it.
+
+    ``winerror`` is a Windows-only attribute of ``OSError``, so it is set by
+    hand: the helper reads it, and on another platform the attribute does not
+    exist at all unless it is set. ``OSError(10048, "...")`` sets ``errno``
+    but leaves ``winerror`` unset, and the Winsock and C ``errno`` spaces
+    overlap, so the helper reads ``winerror`` alone.
+    """
+    error = OSError(None, "winsock", None, code, None)
+    error.winerror = code
+    return error
+
+
+def _record_created_sockets(monkeypatch: pytest.MonkeyPatch) -> list[socket.socket]:
+    """Record every socket the helper makes, so a leak can be spotted."""
+    created: list[socket.socket] = []
+    real_socket = socket.socket
+    real_init: Any = real_socket.__init__
+
+    def recording_init(self: socket.socket, *args: Any, **kwargs: Any) -> None:
+        real_init(self, *args, **kwargs)
+        created.append(self)
+
+    monkeypatch.setattr(real_socket, "__init__", recording_init)
+    return created
 
 
 def test_the_session_socketpair_returns_two_connected_sockets():
@@ -121,18 +150,12 @@ def test_a_handshake_that_never_lands_fails_loudly_and_leaves_no_socket(monkeypa
     A pair that cannot be made has to end the pair's sockets, not just the
     listening one: a leak here is a descriptor lost per failed pair.
     """
-    created: list[Any] = []
+    created = _record_created_sockets(monkeypatch)
     real_socket = socket.socket
-    real_init: Any = real_socket.__init__
-
-    def recording_init(self: socket.socket, *args: Any, **kwargs: Any) -> None:
-        real_init(self, *args, **kwargs)
-        created.append(self)
 
     def never_accepts(self: socket.socket, *args: Any, **kwargs: Any) -> None:
         raise TimeoutError("timed out")
 
-    monkeypatch.setattr(real_socket, "__init__", recording_init)
     monkeypatch.setattr(real_socket, "accept", never_accepts)
 
     with pytest.raises(socket.timeout):
@@ -140,3 +163,85 @@ def test_a_handshake_that_never_lands_fails_loudly_and_leaves_no_socket(monkeypa
 
     assert created, "the pair should have been attempted"
     assert [sock.fileno() for sock in created] == [-1, -1]
+
+
+def test_a_transient_port_collision_is_retried(monkeypatch):
+    """A crowded machine's WSAEADDRINUSE must not fail the run.
+
+    The client socket is unbound, so the source port is the OS's to pick and
+    it can pick one that is already bound -- an IP Helper ``portproxy`` rule
+    that forwards a port to itself can eat the machine's whole dynamic range
+    that way. A fresh socket gets a fresh port, so the pair is simply made
+    again.
+
+    The helper is called directly rather than through ``socket.socketpair``:
+    off Windows that name is CPython's own pair, which never connects and so
+    never meets the patched ``connect``.
+    """
+    created = _record_created_sockets(monkeypatch)
+    calls: list[Any] = []
+    real_connect = socket.socket.connect
+
+    def colliding_connect(self: socket.socket, addr: Any) -> Any:
+        calls.append(addr)
+        if len(calls) <= 2:
+            raise _winsock_error(10048)
+        return real_connect(self, addr)
+
+    monkeypatch.setattr(socket.socket, "connect", colliding_connect)
+
+    left, right = windows_socketpair()
+    try:
+        left.sendall(b"ping")
+        assert right.recv(4) == b"ping"
+        assert len(calls) == 3, "the pair should be rebuilt until a port is free"
+        # Only the pair may still be open: both failed attempts closed theirs.
+        assert sum(1 for sock in created if sock.fileno() != -1) == 2
+    finally:
+        left.close()
+        right.close()
+
+    assert [sock.fileno() for sock in created] == [-1] * len(created)
+
+
+def test_a_non_retryable_error_is_not_retried(monkeypatch):
+    """A refused connection is the machine's answer, not a busy moment.
+
+    Only the transient port errors are worth another socket; everything else
+    has to surface at once, or a broken environment would be retried into a
+    mystery.
+    """
+    calls: list[Any] = []
+
+    def refusing_connect(self: socket.socket, addr: Any) -> Any:
+        calls.append(addr)
+        raise _winsock_error(10061)
+
+    monkeypatch.setattr(socket.socket, "connect", refusing_connect)
+
+    with pytest.raises(OSError) as caught:
+        windows_socketpair()
+
+    assert caught.value.winerror == 10061
+    assert len(calls) == 1, "a refusal must not be retried"
+
+
+def test_an_exhausted_retry_raises_the_last_error_and_leaks_nothing(monkeypatch):
+    """A machine that cannot spare a port must say so, and leak nothing."""
+    monkeypatch.setattr(socketpair_module, "_PAIR_RETRY_BACKOFF_SECONDS", 0)
+    created = _record_created_sockets(monkeypatch)
+    calls: list[Any] = []
+
+    def always_collides(self: socket.socket, addr: Any) -> Any:
+        calls.append(addr)
+        raise _winsock_error(10048)
+
+    monkeypatch.setattr(socket.socket, "connect", always_collides)
+
+    with pytest.raises(OSError) as caught:
+        windows_socketpair()
+
+    assert caught.value.winerror == 10048
+    assert len(calls) > 1, "a transient collision must be retried"
+    assert len(calls) == socketpair_module._PAIR_ATTEMPTS, "the retry must be bounded"
+    assert [sock.fileno() for sock in created] == [-1] * len(created)

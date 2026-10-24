@@ -92,6 +92,20 @@ payload: send `Content-Length: 0`, or declare the length and send nothing.
 `tests/unit/test_sidecar_pairing.py` and
 `tests/unit/test_keychain_sources_settings.py` both work that way.
 
+The other Windows-native trap is the machine's port space rather than the
+suite's. Windows picks the source port when an unbound socket connects, and it
+can pick one that is already bound — `WinError 10048` (WSAEADDRINUSE) — when
+the dynamic range is crowded. An IP Helper `portproxy` rule that forwards a
+port to itself is a way to crowd it: with `0.0.0.0:8765 → 127.0.0.1:8765` on
+the machine and the local Runway server down, that rule is the only listener
+on 8765, so every connection to it is forwarded back to itself and IP Helper
+multiplies sockets until the range is gone. The suite then fails in
+`tests/windows_socketpair.py`. Run `netsh interface portproxy show v4tov4` and
+delete any rule whose listen address covers its connect address;
+`netsh int ipv4 show dynamicport tcp` shows how wide the range is. The
+socketpair helper retries a transient port error on a fresh socket, so a
+crowded machine no longer fails the run — but the machine still needs the fix.
+
 Git hooks live in the repository's shared `.git/hooks`, so every worktree of
 this repository writes into the same two hook files. Install them once with
 `make install-hooks`: the hook this repository installs resolves its
