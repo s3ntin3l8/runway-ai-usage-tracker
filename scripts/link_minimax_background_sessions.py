@@ -49,6 +49,8 @@ from app.services.maintenance.minimax_background_sessions import (  # noqa: E402
     plan_background_attribution,
 )
 from scripts.sidecar_pkg.event_extractors.minimax_code import (  # noqa: E402
+    INTERNAL_TURN_PREFIX,
+    SUBAGENT_TYPE_PLAN,
     background_provenance,
     background_session_links,
     build_event_id,
@@ -99,11 +101,20 @@ def collect_links(db_path: Path) -> list[BackgroundLink]:
                 cache_read,
             )
             parent_id = link["parent_session_id"]
+            turn_id = row["turn_id"] or ""
+            # The label follows the row, not the session: the runtime's own
+            # plan-review turn is a different kind of subagent work inside the
+            # same session, and the extractor gives it the "Plan" label. The
+            # repair has to agree, or it would flatten that label.
+            if turn_id.startswith(INTERNAL_TURN_PREFIX):
+                label = SUBAGENT_TYPE_PLAN
+            else:
+                label = str(link["label"])
             links.append(
                 BackgroundLink(
                     event_id=event_id,
                     parent_session_id=parent_id,
-                    subagent_type=str(link["label"]),
+                    subagent_type=label,
                     turn_id=row["turn_id"] or None,
                     raw_json=background_provenance(
                         session_id,

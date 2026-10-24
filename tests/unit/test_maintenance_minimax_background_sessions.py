@@ -258,6 +258,57 @@ def test_the_script_keeps_a_background_task_whose_parent_is_missing(tmp_path):
     assert links[0].turn_id == "turn_task_bg_bg_1234"
 
 
+def test_a_plan_review_turn_keeps_its_own_label(tmp_path):
+    """The repair must not flatten the runtime's plan-review label.
+
+    The extractor gives a ``mavis-internal:plan-review:*`` turn the "Plan"
+    label even inside a background task, so the repair has to agree — or it
+    would rewrite a stored "Plan" row into "Explore" and never settle.
+    """
+    from scripts.link_minimax_background_sessions import collect_links
+    from tests.fixtures.minimax_code_fixture import make_minimax_code_store
+
+    db_path = make_minimax_code_store(
+        tmp_path,
+        sessions=[
+            {
+                "session_id": "mvs_main",
+                "workspace_dir": "/home/user/project",
+                "extra_data_json": {"effectiveModel": "minimax/MiniMax-M3.1-Flash"},
+            },
+            {
+                "session_id": "mvs_bg",
+                "agent_name": "explore",
+                "workspace_dir": "/home/user/project",
+                "extra_data_json": {"effectiveModel": "minimax/MiniMax-M3.1-Flash"},
+                "parent_session_id": "mvs_main",
+                "session_kind": "task",
+                "purpose": "local-background-task:bg_1234",
+            },
+        ],
+        usage=[
+            {
+                "id": 10,
+                "session_id": "mvs_bg",
+                "agent_name": "explore",
+                "turn_id": "mavis-internal:plan-review:ask_bg",
+                "ts": 1792699951617,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "reasoning_tokens": 0,
+                "cache_read_tokens": 500,
+                "cache_write_tokens": 0,
+            }
+        ],
+        parent_links=True,
+    )
+
+    links = collect_links(db_path)
+    assert len(links) == 1
+    assert links[0].subagent_type == "Plan"
+    assert links[0].parent_session_id == "mvs_main"
+
+
 def test_the_script_builds_the_links_from_the_runtime_store(tmp_path):
     """The script's mapping must match the ids the sidecar pushes."""
     from scripts.link_minimax_background_sessions import collect_links

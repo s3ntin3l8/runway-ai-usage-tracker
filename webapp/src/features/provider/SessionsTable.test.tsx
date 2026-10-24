@@ -298,7 +298,7 @@ describe('SessionsTable subagent turns and requests', () => {
             subagents: [
               {
                 subagent_type: 'Explore',
-                requests: 0,
+                requests: 3,
                 tool_calls: 0,
                 tokens_total: 0,
               },
@@ -309,6 +309,7 @@ describe('SessionsTable subagent turns and requests', () => {
     );
     await userEvent.click(screen.getByText('aaaaaaaa').closest('tr')!);
     expect(screen.getByText('Turns')).toBeInTheDocument();
-    expect(screen.queryByText('Requests')).not.toBeInTheDocument();
+    expect(screen.getByText('Requests')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
   });
 });
