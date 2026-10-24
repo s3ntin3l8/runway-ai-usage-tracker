@@ -3638,3 +3638,45 @@ class TestResolvedHintsReplace:
             )
 
         assert captured["hint_providers"] == ["anthropic", "kimi_coding"]
+
+    def test_the_named_providers_are_truncated_to_the_servers_cap(self):
+        """An oversized list must not fail the whole manifest.
+
+        The server rejects a manifest naming more providers than its cap
+        allows, and a rejected manifest takes this cycle's
+        `completed_providers` with it — the server would then stop pruning
+        this host's stale pending rows. Truncating degrades to fewer answers.
+        """
+        captured: dict = {}
+
+        def _capture(body: bytes) -> None:
+            captured.update(json.loads(body.decode("utf-8")))
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(
+            return_value=MagicMock(
+                getcode=MagicMock(return_value=200), read=MagicMock(return_value=b"{}")
+            )
+        )
+        ctx.__exit__ = MagicMock(return_value=False)
+
+        named = [f"provider_{i}" for i in range(sidecar._MAX_HINT_PROVIDERS + 5)]
+
+        with (
+            patch("scripts.sidecar_pkg.tls.build_context", return_value=None),
+            patch(
+                "scripts.sidecar_pkg.transport.urlopen",
+                side_effect=lambda *a, **kw: _capture(a[0].data) or ctx,
+            ),
+        ):
+            sidecar._post_credential_manifest(
+                api_url="https://api.example.com",
+                api_key="test-key",
+                sidecar_id="alpha-host",
+                entries=[],
+                hint_providers=named,
+            )
+
+        # The report still goes out, with fewer names than asked for.
+        assert captured["sidecar_id"] == "alpha-host"
+        assert captured["hint_providers"] == sorted(named)[: sidecar._MAX_HINT_PROVIDERS]

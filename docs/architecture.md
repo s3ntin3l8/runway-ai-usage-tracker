@@ -273,7 +273,11 @@ The sidecar's cache therefore equals what it holds: a provider the server
 answered for with an empty map is dropped from the cache, and so from
 `hint_providers` — it is not asked about again on every manifest. The list
 is bounded (256 ids, like `observations`): every id becomes one term in the
-query that collects the hints and one bucket in the response.
+query that collects the hints and one bucket in the response. The sidecar
+truncates the list to that cap rather than exceeding it — the server
+rejects an oversized list, and a rejected manifest takes the cycle's
+`completed_providers` with it, so the host's stale pending rows would stop
+being pruned.
 
 ### Who refreshes an OAuth login
 

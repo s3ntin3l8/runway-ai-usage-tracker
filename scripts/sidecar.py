@@ -5316,6 +5316,16 @@ def _credential_health_observations(metrics: list[dict[str, Any]]) -> list[dict[
     return list(found.values())
 
 
+# Mirrors the server's cap on the manifest's ``hint_providers`` field. The
+# list is truncated here rather than allowed to exceed the cap: the server
+# rejects an oversized list, and a rejected manifest takes this cycle's
+# ``completed_providers`` with it — the server would then stop pruning this
+# host's stale pending rows. Truncating degrades to fewer answers instead of
+# failing the report. The headroom is wide (a provider per registered
+# provider), so this is a guard, not a limit that is ever reached.
+_MAX_HINT_PROVIDERS = 256
+
+
 def _apply_resolved_hints(
     cached: dict[str, dict[str, str]], resolved: dict[str, dict[str, str]]
 ) -> dict[str, dict[str, str]]:
@@ -5419,7 +5429,10 @@ def _post_credential_manifest(
             "observations": observations or [],
             # The providers whose hints this sidecar holds: the server answers
             # for those too, so a hint it no longer holds is dropped here.
-            "hint_providers": sorted(hint_providers or []),
+            # Truncated to the server's cap: an oversized list is rejected
+            # outright, and a rejected manifest takes this cycle's
+            # completed_providers with it.
+            "hint_providers": sorted(hint_providers or [])[:_MAX_HINT_PROVIDERS],
         }
     ).encode("utf-8")
     ts = server_http.signing_timestamp()
