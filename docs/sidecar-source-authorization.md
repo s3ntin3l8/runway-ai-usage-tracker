@@ -143,6 +143,9 @@ Keep local fallback until coverage/accounting parity is demonstrated; do not cla
 all Chat/Desktop/Cowork/mobile history is covered. Server collection continues
 while credentials remain usable; borrowed CLI refresh is never moved server-side.
 
+The [offline accounting audit](claude-cloud-accounting-669.md) records SDK usage
+observations and the live-verification gates; it does not enable cloud collection.
+
 Delivery order: #773 safety containment; #782 local consent; #783/#780 Fleet
 lifecycle and UI; #767/#781 release identity and supported renewal; #669 cloud
 collection. Run make lint, make test, make web-lint and make web-test for each PR,
