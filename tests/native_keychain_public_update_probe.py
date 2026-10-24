@@ -130,6 +130,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
         row["fixture_creator"] = "helper" if mode == "helper-owned-control" else "python"
     fixture = Fixture(writer)
     interrupted = None
+    helper_digest = None
 
     def observe(stage: str) -> None:
         try:
@@ -219,7 +220,8 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                 before = capture(SERVICE, ACCOUNT, keychain=fixture.keychains[0])
                 if mode == "helper-owned-control":
                     row["helper_binary_unchanged"] = (
-                        hashlib.sha256(writer.read_bytes()).digest() == helper_digest
+                        helper_digest is not None
+                        and hashlib.sha256(writer.read_bytes()).digest() == helper_digest
                     )
                     if not row["helper_binary_unchanged"]:
                         row["failure"] = "helper_binary_changed"
@@ -249,7 +251,7 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                         ("replacement_verified", bool),
                     )
                 )
-                if mode in {"writer-read-control", "helper-owned-control"}:
+                if mode in {"writer-read-control", *AUTH_CASES}:
                     fields += (("control_status", int),)
                 try:
                     values = json.loads(child.stdout)
@@ -262,7 +264,11 @@ def run_case(writer: Path, mode: str, *, checkpoint: Callable[[dict], None] | No
                     raise ValueError("invalid writer result") from None
                 row.update({name: values[name] for name, _kind in fields})
                 if mode in AUTH_CASES:
-                    row["authorization"] = sanitize(values.get("authorization"))
+                    try:
+                        row["authorization"] = sanitize(values.get("authorization"))
+                    except ValueError:
+                        row["failure"] = "invalid_authorization_metadata"
+                        raise
                     if row["authorization"]["metadata_status"] != 0:
                         row["failure"] = "authorization_metadata_unavailable"
                         raise RuntimeError("authorization metadata unavailable")

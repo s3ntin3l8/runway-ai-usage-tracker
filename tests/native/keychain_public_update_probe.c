@@ -88,11 +88,11 @@ int main(int argc, char **argv) {
     if (status || !owner || !CFEqual(owner, keychain)) goto cleanup;
     fputs("stage:owner_verified\n", stderr);
     if (authorization_control) {
-        printf("{\"control_completed\":true,");
+        printf("{");
         fputs("stage:before_authorization_metadata\n", stderr);
-        (void)authorization_metadata(item);
+        status = authorization_metadata(item);
         fputs("stage:after_authorization_metadata\n", stderr);
-        puts("}");
+        printf(",\"control_completed\":%s,\"control_status\":%d}\n", !status ? "true" : "false", (int)status);
         result = 0;
         goto cleanup;
     }

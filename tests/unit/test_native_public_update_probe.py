@@ -572,7 +572,7 @@ def test_read_only_control_records_ordered_isolation_without_candidate(
 
 @pytest.mark.parametrize("changed_at", [1, 2, 3, 4, 5, 6])
 @pytest.mark.parametrize(
-    "case", tuple(case for case in probe.CASES if case not in probe.AUTH_CASES)
+    "case", tuple(case for case in probe.CASES if case != "helper-owned-control")
 )
 def test_case_stops_at_first_isolation_change(
     monkeypatch, tmp_path, synthetic_case, changed_at, case
@@ -591,7 +591,16 @@ def test_case_stops_at_first_isolation_change(
         return subprocess.CompletedProcess(
             [],
             0,
-            stdout=b'{"control_completed":true,"control_status":0,"update_status":0,"read_status":0,"replacement_verified":false}',
+            stdout=json.dumps(
+                {
+                    "control_completed": True,
+                    "control_status": 0,
+                    "update_status": 0,
+                    "read_status": 0,
+                    "replacement_verified": False,
+                    "authorization": dict(dict.fromkeys(AUTH_FIELDS), metadata_status=0),
+                }
+            ).encode(),
             stderr=b"stage:control_complete\n",
         )
 
@@ -828,7 +837,13 @@ def test_python_fixture_metadata_control_does_not_repeat_helper_data_read(
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout=json.dumps({"control_completed": True, "authorization": metadata}).encode(),
+            stdout=json.dumps(
+                {
+                    "control_completed": metadata["metadata_status"] == 0,
+                    "control_status": metadata["metadata_status"],
+                    "authorization": metadata,
+                }
+            ).encode(),
             stderr=b"",
         )
 
@@ -912,7 +927,13 @@ def test_authorization_metadata_unavailable_stops_readback(monkeypatch, tmp_path
         lambda *a, **k: subprocess.CompletedProcess(
             [],
             0,
-            stdout=json.dumps({"control_completed": True, "authorization": metadata}).encode(),
+            stdout=json.dumps(
+                {
+                    "control_completed": metadata["metadata_status"] == 0,
+                    "control_status": metadata["metadata_status"],
+                    "authorization": metadata,
+                }
+            ).encode(),
             stderr=b"",
         ),
     )
@@ -948,3 +969,152 @@ def test_authorization_controls_are_scoped_and_do_not_update():
     assert "SecItemCopyMatching" not in metadata
     assert "kSecReturnData" not in metadata
     assert "SecItemAdd(" not in metadata
+
+
+@pytest.mark.parametrize("mode", probe.MODES)
+def test_original_reader_denial_stops_every_update_mode(
+    monkeypatch, tmp_path, synthetic_case, mode
+):
+    original = probe.Fixture
+    reads, dispatched = [], []
+
+    class DeniedReader(original):
+        def __init__(self, writer):
+            super().__init__(writer)
+
+            def read(*args):
+                reads.append(True)
+                if len(reads) > 1:
+                    raise probe.KeychainError("denied")
+                return {"data": probe.ORIGINAL}
+
+            self.api.call = read
+
+    def execute(command, **kwargs):
+        if Path(command[0]).name == "synthetic-writer":
+            dispatched.append(command[-1])
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=b'{"update_status":0,"read_status":0,"replacement_verified":true}',
+                stderr=b"",
+            )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(probe, "Fixture", DeniedReader)
+    monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    report = probe.run((mode, "read-only-control"), report_path=tmp_path / "report.json")
+    assert dispatched == [mode]
+    assert len(reads) == 2
+    assert len(report["cases"]) == 1
+    assert report["cases"][0]["failure"] == "original_reader_denied"
+    assert report["cases"][0]["candidate_preserves_shared_access"] is False
+    assert report["stopped_after_failure"] is True
+    assert report["matrix_complete"] is False
+    assert probe.report_exit_code(report) == 1
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"metadata_status": True}])
+def test_invalid_authorization_payload_has_specific_failure(
+    monkeypatch, tmp_path, synthetic_case, metadata
+):
+    monkeypatch.setattr(
+        probe.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps(
+                {"control_completed": True, "control_status": 0, "authorization": metadata}
+            ).encode(),
+            stderr=b"",
+        ),
+    )
+    monkeypatch.setattr(
+        probe, "compare", lambda *a: pytest.fail("no readback after invalid metadata")
+    )
+    row = probe.run_case(tmp_path / "writer", "authorization-metadata")
+    assert row["failure"] == "invalid_authorization_metadata"
+    assert row["candidate_preserves_shared_access"] is False
+    assert row["temporary_keychains_deleted"] is True
+
+
+def test_metadata_native_branch_reports_status_and_completion():
+    source = (probe.ROOT / "tests/native/keychain_public_update_probe.c").read_text()
+    branch = source[source.index("if (authorization_control) {") : source.index("if (control) {")]
+    assert "status = authorization_metadata(item);" in branch
+    assert "control_status" in branch
+    assert '!status ? "true" : "false"' in branch
+
+
+@pytest.mark.parametrize("changed_at", range(1, 8))
+def test_helper_owned_isolation_change_stops_next_operation(
+    monkeypatch, tmp_path, synthetic_case, changed_at
+):
+    writer = tmp_path / "writer"
+    writer.write_bytes(b"synthetic executable")
+    original = probe.Fixture
+    calls, snapshots = [], []
+    metadata = dict(dict.fromkeys(AUTH_FIELDS), metadata_status=0)
+
+    class HelperFixture(original):
+        def __init__(self, path):
+            super().__init__(path)
+            self.api.call = lambda op, query, values: (
+                {"data": probe.ORIGINAL}
+                if "persistent" in query
+                else [{"persistent": b"fake-reference"}]
+            )
+
+        def add(self, **kwargs):
+            pytest.fail("Python must not seed helper item")
+
+    def snapshot():
+        snapshots.append(True)
+        return {
+            "default": {"path": "synthetic", "unlocked": len(snapshots) < changed_at},
+            "search_list": [],
+        }
+
+    def execute(command, **kwargs):
+        calls.append(command[-1])
+        fields = (
+            {"seed_completed": True, "seed_status": 0}
+            if command[-1] == "helper-seed"
+            else {"control_completed": True, "control_status": 0, "authorization": metadata}
+        )
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(fields).encode(), stderr=b""
+        )
+
+    monkeypatch.setattr(probe, "Fixture", HelperFixture)
+    monkeypatch.setattr(probe, "environment_snapshot", snapshot)
+    monkeypatch.setattr(probe, "compare", lambda *a: {"access_policy_preserved": True})
+    monkeypatch.setattr(probe.subprocess, "run", execute)
+    row = probe.run_case(writer, "helper-owned-control")
+    assert row["isolation_failed"] is True
+    assert row["candidate_preserves_shared_access"] is False
+    assert calls == (
+        []
+        if changed_at == 1
+        else ["helper-seed"]
+        if changed_at <= 4
+        else ["helper-seed", "helper-owned-control"]
+    )
+    first_bad = next(
+        point for point in row["isolation_checkpoints"] if not all(point["checks"].values())
+    )
+    assert (
+        first_bad["stage"]
+        == [
+            "fixture_created",
+            "after_seed",
+            "fixture_seeded",
+            "before_writer",
+            "after_writer",
+            "after_readback",
+            "after_cleanup",
+        ][changed_at - 1]
+    )
+    assert probe.report_exit_code({"matrix_complete": True, "cases": [row]}) == 1

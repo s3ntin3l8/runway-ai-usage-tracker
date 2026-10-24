@@ -119,3 +119,22 @@ acceptance after the helper-owned failure. The next authorization work remains
 #773/#781; stable signing remains #767. Require a separately reviewed, supported
 shared-access/owner-cooperation design before another write experiment, without
 broad trust, partition editing, private APIs or Keychain-password retention.
+
+## Review hardening
+
+`original_reader_denied` deliberately applies to **every selected case**, including
+`metadata-control`, `data-only`, `legacy-data` and `combined-access` in the deferred
+`update-matrix`. Unlike the older harness, an original-reader denial stops the
+remaining matrix: the report retains the denied row, cannot become a renewal
+candidate, marks the selection incomplete, and exits nonzero. Only scoped cleanup
+and isolation metadata checks follow; later cases cannot perform another operation.
+Nonnative tests exercise this rule for each update mode. This does not authorize
+execution of that matrix in this investigation.
+
+Malformed authorization blocks now report `invalid_authorization_metadata`.
+The metadata-only native response reports both `control_status` and a completion
+boolean derived from that status, matching the helper-owned response. Historical
+artifacts retain their original payload and are not rewritten. These review edits
+were checked with nonnative tests and syntax-only C compilation; no native denial
+was repeated. Isolation-stop tests cover both new cases, including each boundary
+around helper seeding and the fresh reader.

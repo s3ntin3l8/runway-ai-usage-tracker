@@ -1,5 +1,10 @@
 /* Public metadata APIs only. Included solely in the quarantined synthetic tool. */
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
 #include <libproc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 static const unsigned char authorization_original[] = "synthetic-public-update-original";
 
