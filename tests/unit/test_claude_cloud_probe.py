@@ -334,7 +334,9 @@ async def test_history_budget_and_numeric_sequence_evidence_are_explicit(environ
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "payload", [b"x" * (1024 * 1024 + 1), b'{"private":NaN}', b'{"data":[],"data":[]}']
+    "payload",
+    [b"x" * (1024 * 1024 + 1), b'{"private":NaN}', b'{"data":[],"data":[]}'],
+    ids=["oversized", "nonfinite-json", "duplicate-keys"],
 )
 async def test_oversized_or_ambiguous_responses_never_escape(environment, payload):
     report = await run(request(), lambda r: httpx.Response(200, content=payload))
