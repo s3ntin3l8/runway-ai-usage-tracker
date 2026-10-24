@@ -1045,6 +1045,13 @@ def _account_tag_hints_for_providers(
     whether an origin is *resolved* — ``visible_pending_rows`` — keep
     the default, because a parked mapping does resolve the origin and
     the operator must not be nagged about it again.
+
+    The map is **complete per provider**: every origin the server
+    resolves for a provider it is asked about is in it. A caller that
+    hands it to a sidecar as "the answer for these providers" may
+    therefore replace what it holds for them — the manifest response
+    does exactly that, and adds an explicit empty bucket for a provider
+    with no hints at all.
     """
     effective_sidecar_id = sidecar_id
     if effective_sidecar_id is None:
@@ -1120,6 +1127,13 @@ class CredentialManifestRequest(BaseModel):
     completed_providers: list[str] | None = None
     # Safe source metadata only: never include credential values.
     observations: list[CredentialHealthObservation] = Field(default_factory=list, max_length=256)
+    # The providers whose hints this sidecar currently holds. The server
+    # answers with the complete hint set for each of them — an empty map
+    # included — so a hint the server no longer holds is dropped on the same
+    # cycle instead of surviving until the next /fleet/config.
+    # Bounded like ``observations``: every id becomes one term in the query
+    # below and one bucket in the response.
+    hint_providers: list[str] = Field(default_factory=list, max_length=256)
 
 
 def _entry_reason(
@@ -1566,6 +1580,14 @@ async def post_credential_manifest(
         ).all()
         if isinstance(pid, str) and pid
     )
+    # The sidecar names the providers whose hints it holds, so the server also
+    # answers for a provider whose tag was deleted — that provider has no tag
+    # row left to make it a candidate, yet the sidecar may still hold its hint.
+    # Deduplicated here: every id becomes one term in the query above and one
+    # bucket in the response, so a repeated id must not be counted twice.
+    candidate_provider_ids.update(
+        pid for pid in dict.fromkeys(payload.hint_providers) if isinstance(pid, str) and pid
+    )
     candidate_pids = sorted(candidate_provider_ids)
 
     # The sidecar reports which providers completed so a missing provider
@@ -1616,6 +1638,13 @@ async def post_credential_manifest(
     resolved = _account_tag_hints_for_providers(
         session, candidate_pids, sidecar_id=payload.sidecar_id, include_parked=False
     )
+    # The answer for a provider is *complete*: an empty bucket says "this
+    # provider has no hints", which is how a sidecar learns that a hint it
+    # cached before the account was archived is no longer valid. Without the
+    # explicit bucket the provider would simply be absent, and a sidecar that
+    # merges the map would keep the stale hint until the next /fleet/config.
+    for pid in candidate_pids:
+        resolved.setdefault(pid, {})
 
     return {
         "status": "ok",

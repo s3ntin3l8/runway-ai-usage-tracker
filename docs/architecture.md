@@ -258,6 +258,27 @@ write path stores accounts canonically, a config row carries whatever the
 operator typed) and is shared with `ParkedMapping`, so the inventory's marker
 and the parked-mapping check can never disagree.
 
+A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
+the hint before the account was archived was still applying it, because the
+manifest's `resolved` map was merged into the sidecar's cache and a merge
+never deletes a key. The manifest response is now **complete per provider**
+(an empty map for a provider it resolves no origin for), and the sidecar
+replaces what it holds for the providers it answered for, so a retraction
+lands on the next manifest instead of the next `/fleet/config`. The sidecar
+names the providers whose hints it holds in `hint_providers`, so the server
+also answers for a provider whose tag was deleted — that provider has no tag
+row left to make it a candidate.
+
+The sidecar's cache therefore equals what it holds: a provider the server
+answered for with an empty map is dropped from the cache, and so from
+`hint_providers` — it is not asked about again on every manifest. The list
+is bounded (256 ids, like `observations`): every id becomes one term in the
+query that collects the hints and one bucket in the response. The sidecar
+truncates the list to that cap rather than exceeding it — the server
+rejects an oversized list, and a rejected manifest takes the cycle's
+`completed_providers` with it, so the host's stale pending rows would stop
+being pruned.
+
 ### Who refreshes an OAuth login
 
 A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT, xAI and
