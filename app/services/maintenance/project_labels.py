@@ -43,9 +43,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, Integer, cast, func, or_, tuple_
+from sqlalchemy import ColumnElement, func, or_, tuple_
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, col, select
 
@@ -372,7 +373,7 @@ def plan_repo_relabels(session: Session, *, sample_size: int = 20) -> RepoRelabe
             col(UsageEvent.sidecar_id),
             col(UsageEvent.cwd),
             col(UsageEvent.project_ref),
-            func.max(cast(UsageEvent.id, Integer)).label("max_id"),
+            func.max(col(UsageEvent.ts)).label("max_ts"),
             func.count().label("rows"),
         )
         .where(col(UsageEvent.project_ref).is_not(None))
@@ -384,11 +385,17 @@ def plan_repo_relabels(session: Session, *, sample_size: int = 20) -> RepoRelabe
     # history win forever — the relabel never rewrites `project_ref`, so the
     # fresh rows could never outnumber the old ones, and every scan would
     # rewrite them back. The count is only a tie-break.
-    newest: dict[tuple[str, str], dict[str, tuple[int, int]]] = defaultdict(dict)
-    for sidecar_id, cwd, project_ref, max_id, count in reported:
+    #
+    # "Most recently" is the newest *timestamp*, not the newest row: an offline
+    # sidecar replaying its backlog inserts pre-rename events with fresh ids,
+    # and the insert order would flip the ranking back to the old name.
+    newest: dict[tuple[str, str], dict[str, tuple[float, int]]] = defaultdict(dict)
+    for sidecar_id, cwd, project_ref, max_ts, count in reported:
         if not cwd or not project_ref:
             continue
-        newest[(sidecar_id, cwd)][project_ref] = (max_id, count)
+        # `max(ts)` is never NULL for a group that has rows.
+        stamp = max_ts.timestamp() if isinstance(max_ts, datetime) else 0.0
+        newest[(sidecar_id, cwd)][project_ref] = (stamp, count)
     refs: dict[tuple[str, str], str] = {
         key: min(
             by_ref,

@@ -44,13 +44,14 @@ def _add(
     cost=1.0,
     project_ref=None,
     sidecar_id="local",
+    ts=_TS,
 ):
     session.add(
         UsageEvent(
             provider_id=provider,
             account_id="acc",
             event_id=event_id,
-            ts=_TS,
+            ts=ts,
             kind="message",
             session_id=session_id,
             sidecar_id=sidecar_id,
@@ -393,6 +394,7 @@ class TestRepoRelabels:
             cwd="/home/u/app",
             project="old-name",
             project_ref="old-name",
+            ts=_TS.replace(hour=6),
         )
         _add(
             s,
@@ -401,6 +403,7 @@ class TestRepoRelabels:
             cwd="/home/u/app",
             project="new-name",
             project_ref="new-name",
+            ts=_TS.replace(hour=12),
         )
 
         plan = plan_repo_relabels(s)
@@ -422,6 +425,7 @@ class TestRepoRelabels:
                 cwd="/home/u/app",
                 project="old-name",
                 project_ref="old-name",
+                ts=_TS.replace(hour=6),
             )
         _add(
             s,
@@ -430,6 +434,37 @@ class TestRepoRelabels:
             cwd="/home/u/app",
             project="new-name",
             project_ref="new-name",
+            ts=_TS.replace(hour=12),
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.relabels[0].project_ref == "new-name"
+
+    def test_a_replayed_backlog_does_not_flip_the_ranking(self):
+        """An offline sidecar replaying its backlog inserts pre-rename events
+        with fresh ids, so the ranking follows the event's timestamp, not the
+        insert order."""
+        s = _session()
+        _add(s, "older", session_id="s0", cwd="/home/u/app", project="app")
+        _add(
+            s,
+            "new",
+            session_id="s1",
+            cwd="/home/u/app",
+            project="new-name",
+            project_ref="new-name",
+            ts=_TS.replace(hour=12),
+        )
+        # The replay lands last, but its event is older than the rename.
+        _add(
+            s,
+            "replayed",
+            session_id="s2",
+            cwd="/home/u/app",
+            project="old-name",
+            project_ref="old-name",
+            ts=_TS.replace(hour=6),
         )
 
         plan = plan_repo_relabels(s)
