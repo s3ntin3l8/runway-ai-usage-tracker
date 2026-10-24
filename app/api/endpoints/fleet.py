@@ -1131,7 +1131,9 @@ class CredentialManifestRequest(BaseModel):
     # answers with the complete hint set for each of them — an empty map
     # included — so a hint the server no longer holds is dropped on the same
     # cycle instead of surviving until the next /fleet/config.
-    hint_providers: list[str] = Field(default_factory=list)
+    # Bounded like ``observations``: every id becomes one term in the query
+    # below and one bucket in the response.
+    hint_providers: list[str] = Field(default_factory=list, max_length=256)
 
 
 def _entry_reason(
@@ -1581,8 +1583,10 @@ async def post_credential_manifest(
     # The sidecar names the providers whose hints it holds, so the server also
     # answers for a provider whose tag was deleted — that provider has no tag
     # row left to make it a candidate, yet the sidecar may still hold its hint.
+    # Deduplicated here: every id becomes one term in the query above and one
+    # bucket in the response, so a repeated id must not be counted twice.
     candidate_provider_ids.update(
-        pid for pid in payload.hint_providers if isinstance(pid, str) and pid
+        pid for pid in dict.fromkeys(payload.hint_providers) if isinstance(pid, str) and pid
     )
     candidate_pids = sorted(candidate_provider_ids)
 

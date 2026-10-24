@@ -269,6 +269,12 @@ names the providers whose hints it holds in `hint_providers`, so the server
 also answers for a provider whose tag was deleted — that provider has no tag
 row left to make it a candidate.
 
+The sidecar's cache therefore equals what it holds: a provider the server
+answered for with an empty map is dropped from the cache, and so from
+`hint_providers` — it is not asked about again on every manifest. The list
+is bounded (256 ids, like `observations`): every id becomes one term in the
+query that collects the hints and one bucket in the response.
+
 ### Who refreshes an OAuth login
 
 A refresh exchanges the refresh token for a new one. Anthropic, ChatGPT, xAI and

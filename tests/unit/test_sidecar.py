@@ -3559,7 +3559,23 @@ class TestResolvedHintsReplace:
 
         merged = sidecar._apply_resolved_hints(cached, resolved)
 
-        assert merged["kimi_coding"] == {}
+        # The provider is gone, not left behind with an empty bucket: the
+        # cache equals what the sidecar holds, so the provider is no longer
+        # named in `hint_providers` and not asked about again.
+        assert "kimi_coding" not in merged
+
+    def test_a_retracted_provider_is_not_asked_about_again(self):
+        """An emptied provider leaves `hint_providers`, so the server is not
+        asked for a hint the sidecar no longer holds."""
+        cached = {
+            "kimi_coding": {"path:/home/u/.kimi/credentials.json": "old@example.com"},
+            "anthropic": {"provider:anthropic": "alice@example.com"},
+        }
+        resolved = {"kimi_coding": {}}
+
+        merged = sidecar._apply_resolved_hints(cached, resolved)
+
+        assert sorted(merged) == ["anthropic"]
 
     def test_a_new_hint_lands_on_the_same_cycle(self):
         cached = {"anthropic": {"provider:anthropic": "alice@example.com"}}

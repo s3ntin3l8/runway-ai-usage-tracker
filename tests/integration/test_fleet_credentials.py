@@ -4990,3 +4990,40 @@ def test_manifest_answers_for_a_provider_the_sidecar_names(client: TestClient, s
     resolved = result.json()["resolved"]
     assert "kimi_coding" in resolved
     assert resolved["kimi_coding"] == {}
+
+
+def test_manifest_caps_the_named_providers(client: TestClient, session: Session):
+    """`hint_providers` is bounded like `observations`.
+
+    Every id becomes one term in the query that collects the hints and one
+    bucket in the response, so an unbounded list is a way to make the server
+    build an arbitrarily large query.
+    """
+    result = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "entries": [],
+            "hint_providers": [f"provider_{i}" for i in range(257)],
+        },
+    )
+    assert result.status_code == 400, result.text
+
+
+def test_manifest_answers_for_a_repeated_named_provider_once(client: TestClient, session: Session):
+    """A repeated id is one provider, not two.
+
+    The id becomes one term in the query that collects the hints, so a
+    repeated id must not be counted twice.
+    """
+    result = _post_manifest(
+        client,
+        {
+            "sidecar_id": "alpha-host",
+            "entries": [],
+            "hint_providers": ["kimi_coding", "kimi_coding"],
+        },
+    )
+    assert result.status_code == 200, result.text
+    resolved = result.json()["resolved"]
+    assert resolved == {"kimi_coding": {}}

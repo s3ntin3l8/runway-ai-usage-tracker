@@ -5331,16 +5331,26 @@ def _apply_resolved_hints(
 
     Providers the server did not answer for keep what the sidecar holds: the
     answer is not about them.
+
+    A provider the server answered for with an *empty* map is dropped from
+    the cache as well: the complete answer is empty, so the sidecar holds no
+    hint for it any more. The key goes too — a surviving empty bucket would
+    keep naming the provider in ``hint_providers``, re-asking for it on every
+    manifest for a hint the sidecar no longer has.
     """
     merged: dict[str, dict[str, str]] = {k: dict(v) for k, v in cached.items()}
     for pid, by_origin in resolved.items():
         if not isinstance(pid, str) or not isinstance(by_origin, dict):
             continue
-        merged[pid] = {
+        filtered = {
             origin: account_id
             for origin, account_id in by_origin.items()
             if (isinstance(origin, str) and isinstance(account_id, str) and origin and account_id)
         }
+        if filtered:
+            merged[pid] = filtered
+        else:
+            merged.pop(pid, None)
     return merged
 
 
@@ -5368,10 +5378,11 @@ def _post_credential_manifest(
     ``{provider_id: {credential_origin: account_id}}`` for the providers it
     answered for. The answer is *complete per provider* — a provider with no
     hints comes back as an empty map — so the caller replaces what it holds
-    for those providers instead of merging into it. That is how a hint the
-    server stopped holding (the account was archived, the tag was deleted)
-    is dropped on this cycle rather than surviving until the next
-    ``/fleet/config`` round-trip.
+    for those providers instead of merging into it, and drops the provider
+    entirely when the answer is empty. That is how a hint the server stopped
+    holding (the account was archived, the tag was deleted) is dropped on
+    this cycle rather than surviving until the next ``/fleet/config``
+    round-trip.
 
     ``hint_providers`` names the providers whose hints this sidecar holds,
     so the server answers for those too: a provider whose tag was deleted
@@ -5965,7 +5976,9 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
             observations=_credential_health_observations(all_metrics),
             # The providers whose hints this sidecar holds: the server answers
             # for those too, so a hint it no longer holds is dropped on this
-            # cycle instead of surviving until the next /fleet/config.
+            # cycle instead of surviving until the next /fleet/config. A
+            # provider whose hints were all retracted is no longer in the map,
+            # so it is not asked about again.
             hint_providers=sorted(server_account_tag_hints),
             on_resolved=_consume_resolved_into_cache,
             config=config,
