@@ -93,3 +93,22 @@ def test_apply_leaves_the_unfixable_group_alone(session):
     assert result.counts["rows_relabeled"] == 0
     ev = session.exec(select(UsageEvent)).one()
     assert ev.project == "C:\\"
+
+
+def test_an_unknown_group_key_is_refused(session):
+    """A key from an older scan must not fall through to the relabel."""
+    _path_shaped(session, "1", r"D:\Projects\repo", r"D:\Projects\repo")
+
+    result, _hooks = _check().apply(session, "some-older-key", {})
+
+    assert result.counts["rows_relabeled"] == 0
+    ev = session.exec(select(UsageEvent)).one()
+    assert ev.project == r"D:\Projects\repo"
+
+
+def test_an_unknown_group_key_plans_nothing(session):
+    _path_shaped(session, "1", r"D:\Projects\repo", r"D:\Projects\repo")
+
+    plan = _check().plan(session, "some-older-key", {})
+
+    assert plan.counts["rows_to_relabel"] == 0

@@ -120,6 +120,11 @@ class TestWindowsPaths:
         # marks the root boundary even when it is the last one.
         assert normalize_cwd("/a/.claude") == "/a"
 
+    def test_a_relative_path_starting_with_claude_keeps_its_label(self):
+        # There is no root to cut back to, so the path is left alone.
+        assert normalize_cwd(".claude/worktrees/x") == ".claude/worktrees/x"
+        assert derive_project(".claude/worktrees/x") == "x"
+
 
 class TestPickCanonicalCwdOnWindows:
     def test_shallowest_windows_path_wins(self):

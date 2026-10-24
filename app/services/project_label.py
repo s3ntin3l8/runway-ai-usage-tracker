@@ -38,7 +38,11 @@ _SEPARATORS_RE = re.compile(r"[\\/]+")
 #: A path segment named `.claude` marks the project-root boundary. The segment
 #: must be a whole segment (`\.claude` followed by a separator or the end of the
 #: path), and the match is case-insensitive because Windows paths are.
-_CLAUDE_SEGMENT_RE = re.compile(r"(?:^|[\\/])\.claude(?=[\\/]|$)", re.IGNORECASE)
+#:
+#: The segment must be *preceded* by a separator, so a relative path that
+#: starts with `.claude` is not a project root boundary — it has no root to
+#: cut back to, and cutting it would lose the label entirely.
+_CLAUDE_SEGMENT_RE = re.compile(r"[\\/]\.claude(?=[\\/]|$)", re.IGNORECASE)
 
 #: A Windows drive spec (`C:`). It is not a directory level, so it does not count
 #: towards a path's depth and never becomes the label.

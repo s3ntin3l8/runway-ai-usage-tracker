@@ -13,6 +13,8 @@ from sqlmodel.pool import StaticPool
 from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine
 from app.models.db import UsageEvent
 from app.services.maintenance.project_labels import (
+    _is_path_shaped,
+    _path_shaped_filter,
     apply_path_shaped_projects,
     plan_path_shaped_projects,
     plan_session_relabels,
@@ -38,7 +40,6 @@ def _add(
     provider="minimax",
     tokens=10,
     cost=1.0,
-    project_ref=None,
 ):
     session.add(
         UsageEvent(
@@ -50,7 +51,6 @@ def _add(
             session_id=session_id,
             cwd=cwd,
             project=project,
-            project_ref=project_ref,
             tokens_input=tokens,
             cost_usd=cost,
         )
@@ -60,6 +60,25 @@ def _add(
 
 def _projects(session):
     return {r.event_id: r.project for r in session.exec(select(UsageEvent)).all()}
+
+
+class TestPathShapedRule:
+    """The scope is picked in SQL and the rows are counted in Python — the two
+    must be the same rule, or the fix reports rows it did not move."""
+
+    def test_the_sql_filter_and_the_python_rule_agree(self):
+        s = _session()
+        labels = ["repo", r"D:\repo", "D:/repo", r"C:\Users\u\repo", None, "", "a b"]
+        for index, label in enumerate(labels):
+            _add(s, str(index), session_id=f"s{index}", cwd="/home/u/repo", project=label)
+
+        sql_rows = {row.id for row in s.exec(select(UsageEvent).where(_path_shaped_filter())).all()}
+        python_rows = {
+            row.id for row in s.exec(select(UsageEvent)).all() if _is_path_shaped(row.project)
+        }
+
+        assert sql_rows == python_rows
+        assert len(sql_rows) == 3  # the three path-shaped labels
 
 
 class TestPlanPathShapedProjects:

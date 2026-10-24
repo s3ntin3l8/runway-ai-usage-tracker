@@ -53,29 +53,34 @@ from app.services.project_label import derive_project, pick_canonical_cwd
 _BATCH = 500
 
 
+#: The separators a path may use. A client's OS decides which one it writes,
+#: not the server's — so both are checked, everywhere.
+_SEPARATORS = ("/", "\\")
+
+
 def _is_path_shaped(project: str | None) -> bool:
     """True when a stored label is a path rather than a name.
 
     A basename never contains a separator — on POSIX a `/` cannot be part of a
     filename, and on Windows neither `/` nor `\\` can. So the test is exact:
     there are no heuristic labels to misjudge.
+
+    This and `_path_shaped_filter` are the same rule, one in Python and one in
+    SQL; both are built from `_SEPARATORS`, and a test pins them together.
     """
     if not project:
         return False
-    return "/" in project or "\\" in project
+    return any(separator in project for separator in _SEPARATORS)
 
 
 def _path_shaped_filter() -> ColumnElement[bool]:
-    """The SQL predicate for a path-shaped label.
+    """The SQL predicate for a path-shaped label — `_is_path_shaped` in SQL.
 
     `instr` rather than `LIKE`: SQLite's `LIKE` has no default escape
     character, and the pattern for a backslash is exactly the kind of thing
     that is easy to get subtly wrong.
     """
-    return or_(
-        func.instr(col(UsageEvent.project), "/") > 0,
-        func.instr(col(UsageEvent.project), "\\") > 0,
-    )
+    return or_(*(func.instr(col(UsageEvent.project), sep) > 0 for sep in _SEPARATORS))
 
 
 @dataclass
@@ -144,11 +149,15 @@ def _plan(
         stmt = stmt.where(col(UsageEvent.provider_id).in_(providers))
 
     if restrict_to_path_shaped:
-        shaped = session.exec(stmt.where(_path_shaped_filter())).all()
-        session_ids = {row[1] for row in shaped if row[1] is not None}
-        if not session_ids:
-            return PathShapedProjectPlan()
-        rows = session.exec(stmt.where(col(UsageEvent.session_id).in_(session_ids))).all()
+        # A subquery, not a list of session ids: the list grows with the number
+        # of affected sessions, and SQLite caps a statement at 32766 parameters —
+        # on a large install the list form would raise "too many SQL
+        # variables" in `detect` itself, leaving the repair unreachable exactly
+        # where it is needed.
+        shaped_sessions = select(col(UsageEvent.session_id)).where(_path_shaped_filter()).distinct()
+        if providers is not None:
+            shaped_sessions = shaped_sessions.where(col(UsageEvent.provider_id).in_(providers))
+        rows = session.exec(stmt.where(col(UsageEvent.session_id).in_(shaped_sessions))).all()
     else:
         rows = session.exec(stmt).all()
 

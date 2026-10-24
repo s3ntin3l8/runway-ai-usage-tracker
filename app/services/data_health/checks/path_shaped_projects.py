@@ -44,6 +44,16 @@ _FIXABLE_GROUP = "path_shaped_projects"
 _UNFIXABLE_GROUP = "path_shaped_projects_unfixable"
 
 
+def _stale_plan(check_id: str, group_key: str) -> FixPlan:
+    """The plan for a group key this check does not know."""
+    return FixPlan(
+        check_id=check_id,
+        group_key=group_key,
+        summary="This finding is stale — rescan to see the current groups.",
+        counts={"rows_to_relabel": 0},
+    )
+
+
 class PathShapedProjectsCheck(Check):
     id = "path_shaped_projects"
     title = "A project label is a path"
@@ -118,6 +128,11 @@ class PathShapedProjectsCheck(Check):
                 summary="These rows have no working directory to derive a label from.",
                 counts={"rows_to_relabel": 0},
             )
+        if group_key != _FIXABLE_GROUP:
+            # A key from an older scan (or a renamed group) must not fall
+            # through to the relabel: it would rewrite every path-shaped row
+            # instead of refusing.
+            return _stale_plan(self.id, group_key)
         relabel_plan = plan_path_shaped_projects(session)
         return FixPlan(
             check_id=self.id,
@@ -143,6 +158,17 @@ class PathShapedProjectsCheck(Check):
                     check_id=self.id,
                     group_key=group_key,
                     summary="Nothing to relabel — these rows have no usable working directory.",
+                    counts={"rows_relabeled": 0},
+                ),
+                [],
+            )
+        if group_key != _FIXABLE_GROUP:
+            # See `plan`: an unknown key is refused, never guessed at.
+            return (
+                FixResult(
+                    check_id=self.id,
+                    group_key=group_key,
+                    summary="This finding is stale — rescan to see the current groups.",
                     counts={"rows_relabeled": 0},
                 ),
                 [],
