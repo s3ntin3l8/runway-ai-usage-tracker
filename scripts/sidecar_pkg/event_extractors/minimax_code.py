@@ -297,25 +297,26 @@ def _macos_app_data_roots(home: Path) -> list[Path]:
     return [base / name for name in (*_APP_DATA_DIR_NAMES, "MiniMax")]
 
 
-def _windows_app_data_root(home: Path) -> Path:
+def _windows_app_data_root() -> Path:
     """Return the Windows roaming app-data root (``%APPDATA%``).
 
-    ``%APPDATA%`` is the variable the sidecar's own state dir reads
-    (``sidecar.get_sidecar_dir()``), so the discovery has to read the same
-    one: a host that redirects it — a roaming profile, a relocated
-    ``AppData`` — would otherwise look for the desktop app's profile in a
-    directory the app never touches. Falls back to the conventional
-    ``%USERPROFILE%\\AppData\\Roaming`` when the variable is unset.
+    Mirrors ``sidecar.get_sidecar_dir()``: on Windows it reads ``%APPDATA%``,
+    so a host that redirects it — a roaming profile, a relocated ``AppData``
+    — is probed where the app actually writes. The variable is a Windows one,
+    so it is ignored elsewhere: an ``APPDATA`` exported on macOS or Linux
+    cannot add a root the sidecar's own state dir would never use. Falls back
+    to the conventional ``%USERPROFILE%\\AppData\\Roaming`` when it is unset.
     """
-    app_data = os.getenv("APPDATA")
-    if app_data and app_data.strip():
-        return Path(app_data.strip())
-    return home / "AppData" / "Roaming"
+    if platform.system() == "Windows":
+        app_data = os.getenv("APPDATA")
+        if app_data and app_data.strip():
+            return Path(app_data.strip())
+    return Path.home() / "AppData" / "Roaming"
 
 
-def _windows_app_data_roots(home: Path) -> list[Path]:
+def _windows_app_data_roots() -> list[Path]:
     """Return the desktop app's Windows app-data roots."""
-    base = _windows_app_data_root(home)
+    base = _windows_app_data_root()
     return [base / name for name in _APP_DATA_DIR_NAMES]
 
 
@@ -344,7 +345,7 @@ def _data_roots() -> list[Path]:
     roots.extend(_profile_scoped_roots(home))
     roots.append(home / ".mavis")
     roots.extend(_macos_app_data_roots(home))
-    roots.extend(_windows_app_data_roots(home))
+    roots.extend(_windows_app_data_roots())
     seen: set[str] = set()
     unique: list[Path] = []
     for root in roots:

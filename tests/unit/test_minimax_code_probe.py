@@ -226,7 +226,20 @@ def test_the_sidecar_and_the_probe_share_the_bootstrap_window(monkeypatch):
     )
 
 
-def test_the_probe_finds_the_store_in_the_windows_app_data_root(tmp_path, monkeypatch):
+@pytest.fixture
+def _windows_host(monkeypatch):
+    """Make the extractor believe it runs on Windows.
+
+    The app-data root is read from ``%APPDATA%`` only on Windows, the same
+    way the sidecar's own state dir reads it, so the tests that exercise
+    that branch have to say which platform they mean.
+    """
+    monkeypatch.setattr(minimax_code.platform, "system", lambda: "Windows")
+
+
+def test_the_probe_finds_the_store_in_the_windows_app_data_root(
+    tmp_path, monkeypatch, _windows_host
+):
     """The desktop app's Windows root is probed, not just ~/.minimax."""
     make_minimax_code_store(tmp_path, data_dir=str(Path("AppData") / "Roaming" / "MiniMax Code"))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
@@ -240,7 +253,7 @@ def test_the_probe_finds_the_store_in_the_windows_app_data_root(tmp_path, monkey
     assert "AppData" in report["store"]
 
 
-def test_the_probe_follows_a_redirected_windows_app_data_root(tmp_path, monkeypatch):
+def test_the_probe_follows_a_redirected_windows_app_data_root(tmp_path, monkeypatch, _windows_host):
     """A host that relocates ``%APPDATA%`` keeps its app data there."""
     roaming = tmp_path / "Roaming"
     make_minimax_code_store(tmp_path, data_dir=str(Path("Roaming") / "MiniMax Agent"))

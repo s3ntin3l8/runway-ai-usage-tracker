@@ -217,10 +217,11 @@ The sidecar therefore reads **every** store it finds, not just the first:
 | `%APPDATA%\MiniMax Agent` | The same, on Windows: the Electron profile is named after the app's *product* name on both platforms, not after the installer's. |
 | `%APPDATA%\MiniMax Code` | The installer's spelling of the same dir — the other one is probed too, so a rename cannot hide the store. |
 
-The Windows app-data root is read from `%APPDATA%`, the same variable the sidecar's own state dir
-(`%APPDATA%\runway\sidecar`) reads, so a host that redirects it — a roaming profile, a relocated
-`AppData` — is probed where the app actually writes. `%USERPROFILE%\AppData\Roaming` is the
-fallback when the variable is unset.
+The Windows app-data root is read from `%APPDATA%` on Windows, the same variable the sidecar's
+own state dir (`%APPDATA%\runway\sidecar`) reads, so a host that redirects it — a roaming
+profile, a relocated `AppData` — is probed where the app actually writes.
+`%USERPROFILE%\AppData\Roaming` is the fallback when the variable is unset, and the variable is
+ignored off Windows, where it is not a Windows variable.
 
 Each store carries its own cursor — the cursor file is keyed by database path — so several stores
 advance on their own id axes without interfering. A host that never migrated keeps `~/.mavis` as a
