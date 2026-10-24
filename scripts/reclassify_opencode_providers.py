@@ -29,9 +29,9 @@ scripts/recost_events.py against the new provider_id afterward to price it
 from provider_pricing.
 
 Both OpenCode database layouts are read: v1's ``message`` table and v2's
-``session_message`` table (which opencode v2 left the v1 table behind, frozen).
-The v2 path reuses the live extractor's own detection, query and reshaping, so
-the two readers cannot drift apart.
+``session_message`` table; a v2 migration leaves the v1 ``message`` table
+behind, frozen. The v2 path reuses the live extractor's own detection, query
+and reshaping, so the two readers cannot drift apart.
 
 Must run on the host where opencode.db lives (local topology) — the sidecar's
 raw per-message data isn't retained server-side. Rows whose event_id is no
@@ -155,6 +155,15 @@ def _iter_v2_messages(cur: sqlite3.Cursor) -> Iterator[tuple[str, dict]]:
             continue
         # A row that never settled was never ingested either, so there is no
         # event to reclassify — the live extractor skipped it for the same reason.
+        #
+        # The extractor *breaks* on a pending row rather than skipping it: it
+        # holds the watermark there, because a row that is still streaming may
+        # still change and must not be read as final. There is no watermark
+        # here — this reads the whole history — and an unsettled row has no
+        # event to reclassify, so skipping it is right. The asymmetry is safe
+        # because both readers agree on *which* rows are settled
+        # (_v2_row_status) and differ only in what they do with the ones that
+        # are not.
         if _v2_row_status(raw, msg_type, time_created_ms, now_ms) != "ready":
             continue
         data = _normalize_v2_message(raw, msg_type, directory, session_model)

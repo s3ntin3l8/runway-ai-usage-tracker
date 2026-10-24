@@ -518,7 +518,10 @@ def test_migration_dry_run_writes_nothing(engine):
         assert ev.provider_id == "opencode"  # unchanged — dry run only
 
 
-def _make_opencode_v2_db(messages: list[dict]) -> Path:
+def _make_opencode_v2_db(
+    messages: list[dict],
+    sessions: list[dict] | None = None,
+) -> Path:
     """A migrated opencode DB: ``session_v2`` + ``session_message``, v1 frozen."""
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
@@ -526,7 +529,7 @@ def _make_opencode_v2_db(messages: list[dict]) -> Path:
     make_opencode_v2_db(
         str(db_path),
         messages=messages,
-        sessions=[{"id": "ses1", "directory": "/home/user/project", "model": None}],
+        sessions=sessions or [{"id": "ses1", "directory": "/home/user/project", "model": None}],
     )
     return db_path
 
@@ -595,6 +598,61 @@ def test_migration_reclassifies_a_v2_database(engine):
         assert err.stop_reason == "auth_failed"
         assert err.tokens_input == 0
         assert err.cost_usd == 0.0
+
+
+def test_migration_reclassifies_a_compaction_that_carries_usage(engine):
+    """A compaction with usage becomes an event, and it takes the session's model.
+
+    A compaction names no model of its own, so the provider comes from the
+    session — the one branch of the v2 reshape that only a compaction reaches.
+    """
+    with Session(engine) as s:
+        _seed_event(s, "msg_v2_compaction", "opencode", tokens_input=4242, tokens_output=7)
+        s.commit()
+
+    db_path = _make_opencode_v2_db(
+        [
+            {
+                "id": "msg_v2_compaction",
+                "session_id": "ses1",
+                "type": "compaction",
+                "time_created": _V2_CREATED_MS,
+                "data": {
+                    "status": "completed",
+                    "cost": 0,
+                    "tokens": {"input": 4242, "output": 7, "cache": {"read": 0, "write": 0}},
+                    "time": {"created": _V2_CREATED_MS, "completed": _V2_CREATED_MS + 10},
+                },
+            }
+        ],
+        sessions=[
+            {
+                "id": "ses1",
+                "directory": "/home/user/project",
+                # The session names the model the compaction does not.
+                "model": {"providerID": "open-design-byok", "id": "tencent/hy3:free"},
+            }
+        ],
+    )
+
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            changed = migrate(db_path, apply=True)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    assert changed == 1
+    with Session(engine) as s:
+        ev = s.exec(select(UsageEvent)).one()
+        # The provider came from the session's model, not the message's.
+        assert ev.provider_id == "opencode-byok"
+        assert ev.kind == "message"
+        assert ev.tokens_input == 4242
 
 
 def test_migration_ignores_the_frozen_v1_table_on_a_v2_database(engine):
