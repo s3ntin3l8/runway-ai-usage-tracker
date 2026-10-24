@@ -8,13 +8,15 @@ credential, and the destination is left with a credential-source row it
 cannot collect with.
 
 This module holds that record and the one lookup the ingest needs, plus the
-reads that tell the operator where a merged-away account went.
+reads that tell the operator where a merged-away account went — and the
+journal of what each merge moved, so a merge can be reversed.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
@@ -26,13 +28,79 @@ from app.services.account_identity import canonical_account_id
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class MergeJournal:
+    """What one merge moved, so that the move can be reversed.
+
+    The rows are recorded by **id**: once a row sits under the destination it
+    is indistinguishable from the destination's own row, so an account id
+    alone cannot say which rows the merge carried over.
+
+    What the merge destroyed is not journalled: the duplicates it deleted are
+    gone, and so is the provider credential it wiped.
+    """
+
+    rows: dict[str, list[int]] = field(default_factory=dict)
+    credential_sources: list[str] = field(default_factory=list)
+    credential_tags: list[int] = field(default_factory=list)
+    contributions: list[int] = field(default_factory=list)
+    config_row_id: int | None = None
+    config_outcome: str = "absent"  # "renamed" | "archived" | "absent"
+    config_enabled: bool | None = None
+    collisions_removed: int = 0
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "rows": self.rows,
+                "credential_sources": self.credential_sources,
+                "credential_tags": self.credential_tags,
+                "contributions": self.contributions,
+                "config_row_id": self.config_row_id,
+                "config_outcome": self.config_outcome,
+                "config_enabled": self.config_enabled,
+                "collisions_removed": self.collisions_removed,
+            }
+        )
+
+    @classmethod
+    def from_json(cls, raw: str | None) -> MergeJournal | None:
+        """The journal of a stored merge, or None when it has none.
+
+        A merge performed before the journal existed has no journal: it cannot
+        be reversed, and saying so beats pretending.
+        """
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("A merge journal is not readable JSON; treating it as absent.")
+            return None
+        return cls(
+            rows={str(k): [int(i) for i in v] for k, v in (data.get("rows") or {}).items()},
+            credential_sources=[str(s) for s in (data.get("credential_sources") or [])],
+            credential_tags=[int(i) for i in (data.get("credential_tags") or [])],
+            contributions=[int(i) for i in (data.get("contributions") or [])],
+            config_row_id=data.get("config_row_id"),
+            config_outcome=str(data.get("config_outcome") or "absent"),
+            config_enabled=data.get("config_enabled"),
+            collisions_removed=int(data.get("collisions_removed") or 0),
+        )
+
+
 def record_account_merge(
-    session: Session, provider_id: str, source_account_id: str, destination_account_id: str
+    session: Session,
+    provider_id: str,
+    source_account_id: str,
+    destination_account_id: str,
+    journal: MergeJournal | None = None,
 ) -> None:
     """Record that the source account went to the destination.
 
     One row per (provider, source account): merging the same source again
-    replaces the earlier record — the latest merge wins.
+    replaces the earlier record — the latest merge wins. The journal of what
+    the merge moved is stored with it, so the merge can be reversed.
     """
     source = canonical_account_id(source_account_id)
     destination = canonical_account_id(destination_account_id)
@@ -48,11 +116,26 @@ def record_account_merge(
                 provider_id=provider_id,
                 source_account_id=source,
                 destination_account_id=destination,
+                moved=journal.to_json() if journal is not None else None,
             )
         )
     else:
         row.destination_account_id = destination
+        row.moved = journal.to_json() if journal is not None else None
     session.flush()
+
+
+def load_journal(session: Session, provider_id: str, source_account_id: str) -> MergeJournal | None:
+    """The journal of one merge, or None when it has none (or no record)."""
+    row = session.exec(
+        select(ProviderAccountMerge).where(
+            ProviderAccountMerge.provider_id == provider_id,
+            ProviderAccountMerge.source_account_id == canonical_account_id(source_account_id),
+        )
+    ).first()
+    if row is None:
+        return None
+    return MergeJournal.from_json(row.moved)
 
 
 def resolve_merged_account(session: Session, provider_id: str, account_id: str) -> str:

@@ -315,7 +315,6 @@ A merged-away account is therefore **not an account any more**: the merge
 moved its history and its credential to the destination, so it holds nothing
 and it disappears from every list the operator reads. The record is what says
 where it went, and the read surfaces carry it:
-
 - `GET /api/v1/system/provider-configs` lists the merges per provider under
   `merged_accounts` (the destination a chain ends at), and every account entry
   carries `merged_into` when that account was merged away — the leftover
@@ -333,6 +332,17 @@ Restoring one would resurrect a phantom: the merge moved its history and its
 credential to the destination, so the restored row would collect nothing while
 the account showed up in the fleet again. The API refuses it (`409`, with the
 destination in the message) rather than leaving the hole open to every client.
+
+The merge also **journals what it moved** (`provider_account_merges.moved`): the
+rows it re-filed, the credential sources, tags and contributions it carried over,
+and what happened to the source's `provider_configs` row. The rows are recorded
+**by id** — once a row sits under the destination it cannot be told apart from
+the destination's own row, so an account id alone cannot say which rows the
+merge carried over. Without that journal a merge cannot be reversed: the
+destination's rows and the moved rows are one set. What the merge destroyed is
+not journalled — the duplicates it deleted are gone, and so is the provider
+credential it wiped. A merge performed before the journal existed has no
+journal, and cannot be reversed.
 
 A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
 the hint before the account was archived was still applying it, because the

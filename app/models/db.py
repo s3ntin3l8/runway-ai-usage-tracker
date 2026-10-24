@@ -338,6 +338,11 @@ class ProviderAccountMerge(SQLModel, table=True):  # type: ignore[call-arg]
     source_account_id: str = Field(index=True)
     destination_account_id: str = Field(index=True)
     merged_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    # What this merge moved, as JSON text — the rows it re-filed (by id), the
+    # credential sources, tags and contributions it carried over, and what
+    # happened to the source's provider_configs row. NULL for a merge that
+    # predates the journal: such a merge cannot be reversed.
+    moved: str | None = None
 
 
 class CredentialSource(SQLModel, table=True):  # type: ignore[call-arg]
