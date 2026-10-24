@@ -2308,6 +2308,17 @@ async def list_pending_usage_sessions(
 # The rows are grouped by provider, sidecar and session. A row without a
 # usable session id stands alone: missing session ids cannot safely
 # identify related events.
+#
+# SQLite: this query needs **SQLite 3.38 or newer**. It uses the JSON
+# functions (native from 3.38, JSON1 before that) and `AS MATERIALIZED`
+# (3.35+), which is what keeps the extracted rows in a transient table
+# instead of being re-evaluated per reference — without it the plan
+# collapses and a 50,000-row backlog takes minutes rather than seconds.
+# The app runs against the *system* SQLite, not the one bundled with
+# Python, so the minimum is pinned here and checked at startup
+# (`app/core/db.py`): Debian 12 ships 3.40, macOS 14 ships 3.43, both
+# fine. The query deliberately avoids `group_concat(... ORDER BY ...)`
+# (3.44+) — the group's event ids are a set, not a sequence.
 _PENDING_SESSION_GROUPS_SQL = text(
     r"""
     WITH extracted AS MATERIALIZED (
@@ -2363,7 +2374,12 @@ _PENDING_SESSION_GROUPS_SQL = text(
             COUNT(*) AS event_count,
             MIN(e.ts) AS first_ts,
             MAX(e.ts) AS last_ts,
-            group_concat(e.id ORDER BY e.ts DESC) AS event_ids,
+            -- The ids of a group are a set, not a sequence: the server
+            -- promotes them together and the client sends them back as
+            -- they came. Sorting them would need SQLite 3.44's
+            -- `group_concat(... ORDER BY ...)`, which the system SQLite on
+            -- Debian 12 and macOS 14 does not have.
+            group_concat(e.id) AS event_ids,
             group_concat(DISTINCT e.model_id) AS model_ids
         FROM extracted e
         JOIN matched m
