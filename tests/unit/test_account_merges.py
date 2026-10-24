@@ -161,3 +161,28 @@ def test_an_unreadable_journal_is_treated_as_absent(session):
     session.commit()
 
     assert load_journal(session, "openrouter", "alice@example.com") is None
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "null",  # parses, but is not an object
+        "[]",  # parses, but is not an object
+        '{"rows": {"usage_events": ["not-an-id"]}}',  # an id that is not a number
+        '{"credential_tags": "not-a-list"}',  # a list that is not a list
+    ],
+)
+def test_a_journal_that_is_not_what_it_should_be_is_treated_as_absent(session, raw):
+    """A journal that parses but holds the wrong shape is absent too — the
+    reader must not raise on it."""
+    session.add(
+        ProviderAccountMerge(
+            provider_id="openrouter",
+            source_account_id="alice@example.com",
+            destination_account_id="bob@example.com",
+            moved=raw,
+        )
+    )
+    session.commit()
+
+    assert load_journal(session, "openrouter", "alice@example.com") is None

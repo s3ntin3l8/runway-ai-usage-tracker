@@ -540,6 +540,33 @@ def test_the_journal_records_the_archived_config_outcome(client, session):
     journal = load_journal(session, "openrouter", "alice@example.com")
     assert journal is not None
     assert journal.config_outcome == "archived"
+    # The flags before the merge: the un-merge restores them, and it has to
+    # tell the merge's own archive from an archive the operator did earlier.
+    assert journal.config_enabled is True
+    assert journal.config_archived is False
+
+
+def test_the_journal_records_an_already_archived_source(client, session):
+    """Merging an account the operator had already archived is reachable — the
+    journal has to say which archive the row carried."""
+    _add_provider_config(
+        session, provider_id="openrouter", account_id="alice@example.com", enabled=False
+    )
+    row = session.exec(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_id == "openrouter",
+            ProviderConfig.account_id == "alice@example.com",
+        )
+    ).first()
+    row.archived = True
+    session.commit()
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    journal = load_journal(session, "openrouter", "alice@example.com")
+    assert journal is not None
+    assert journal.config_archived is True
 
 
 def test_the_journal_does_not_list_the_rows_the_merge_deleted(client, session):
@@ -580,3 +607,20 @@ def test_the_journal_does_not_list_the_rows_the_merge_deleted(client, session):
     assert journal is not None
     assert journal.collisions_removed == 1
     assert journal.rows["latest_usage"] == []
+
+
+# ---------------------------------------------------------------------------
+# Upgrade-path guard
+# ---------------------------------------------------------------------------
+
+
+def test_deferred_columns_includes_the_merge_journal():
+    """The journal column must be in _DEFERRED_COLUMNS for existing DB upgrades.
+
+    Every other test builds a fresh database from the model, so nothing else
+    covers this path: a typo here would only show up as "no such column" on
+    an install that already has a database.
+    """
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert ("provider_account_merges", "moved", "TEXT") in _DEFERRED_COLUMNS

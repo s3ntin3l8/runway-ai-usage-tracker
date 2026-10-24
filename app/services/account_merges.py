@@ -47,6 +47,7 @@ class MergeJournal:
     config_row_id: int | None = None
     config_outcome: str = "absent"  # "renamed" | "archived" | "absent"
     config_enabled: bool | None = None
+    config_archived: bool | None = None
     collisions_removed: int = 0
 
     def to_json(self) -> str:
@@ -59,6 +60,7 @@ class MergeJournal:
                 "config_row_id": self.config_row_id,
                 "config_outcome": self.config_outcome,
                 "config_enabled": self.config_enabled,
+                "config_archived": self.config_archived,
                 "collisions_removed": self.collisions_removed,
             }
         )
@@ -77,16 +79,24 @@ class MergeJournal:
         except (json.JSONDecodeError, TypeError):
             logger.warning("A merge journal is not readable JSON; treating it as absent.")
             return None
-        return cls(
-            rows={str(k): [int(i) for i in v] for k, v in (data.get("rows") or {}).items()},
-            credential_sources=[str(s) for s in (data.get("credential_sources") or [])],
-            credential_tags=[int(i) for i in (data.get("credential_tags") or [])],
-            contributions=[int(i) for i in (data.get("contributions") or [])],
-            config_row_id=data.get("config_row_id"),
-            config_outcome=str(data.get("config_outcome") or "absent"),
-            config_enabled=data.get("config_enabled"),
-            collisions_removed=int(data.get("collisions_removed") or 0),
-        )
+        if not isinstance(data, dict):
+            logger.warning("A merge journal is not an object; treating it as absent.")
+            return None
+        try:
+            return cls(
+                rows={str(k): [int(i) for i in v] for k, v in (data.get("rows") or {}).items()},
+                credential_sources=[str(s) for s in (data.get("credential_sources") or [])],
+                credential_tags=[int(i) for i in (data.get("credential_tags") or [])],
+                contributions=[int(i) for i in (data.get("contributions") or [])],
+                config_row_id=data.get("config_row_id"),
+                config_outcome=str(data.get("config_outcome") or "absent"),
+                config_enabled=data.get("config_enabled"),
+                config_archived=data.get("config_archived"),
+                collisions_removed=int(data.get("collisions_removed") or 0),
+            )
+        except (TypeError, ValueError):
+            logger.warning("A merge journal holds values that are not what it should; absent.")
+            return None
 
 
 def record_account_merge(

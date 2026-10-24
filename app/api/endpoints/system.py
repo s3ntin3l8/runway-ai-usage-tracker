@@ -1489,9 +1489,12 @@ async def apply_provider_account_merge(
                 ProviderConfig.account_id == destination_id,
             )
         ).first()
-        # The flags before the merge: the un-merge restores them.
+        # The flags before the merge: the un-merge restores them. Both of
+        # them — the merge's own archive must not be confused with an archive
+        # the operator did earlier.
         journal.config_row_id = src.id
         journal.config_enabled = src.enabled
+        journal.config_archived = src.archived
         if destination_config is None:
             src.account_id = destination_id
             journal.config_outcome = "renamed"
