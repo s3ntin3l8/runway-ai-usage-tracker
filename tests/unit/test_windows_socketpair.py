@@ -169,6 +169,10 @@ def test_a_transient_port_collision_is_retried(monkeypatch):
     that forwards a port to itself can eat the machine's whole dynamic range
     that way. A fresh socket gets a fresh port, so the pair is simply made
     again.
+
+    The helper is called directly rather than through ``socket.socketpair``:
+    off Windows that name is CPython's own pair, which never connects and so
+    never meets the patched ``connect``.
     """
     created = _record_created_sockets(monkeypatch)
     calls: list[Any] = []
@@ -182,7 +186,7 @@ def test_a_transient_port_collision_is_retried(monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", colliding_connect)
 
-    left, right = socket.socketpair()
+    left, right = windows_socketpair()
     try:
         left.sendall(b"ping")
         assert right.recv(4) == b"ping"
@@ -213,7 +217,7 @@ def test_a_non_retryable_error_is_not_retried(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", refusing_connect)
 
     with pytest.raises(OSError) as caught:
-        socket.socketpair()
+        windows_socketpair()
 
     assert caught.value.winerror == 10061
     assert len(calls) == 1, "a refusal must not be retried"
@@ -233,7 +237,7 @@ def test_an_exhausted_retry_raises_the_last_error_and_leaks_nothing(monkeypatch)
     monkeypatch.setattr(socket.socket, "connect", always_collides)
 
     with pytest.raises(OSError) as caught:
-        socket.socketpair()
+        windows_socketpair()
 
     assert caught.value.winerror == 10048
     assert len(calls) > 1, "a transient collision must be retried"
