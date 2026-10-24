@@ -47,16 +47,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-          # The npm cache. This job installs the whole webapp dependency tree
-          # on every pull request, and downloading it again is a fixed cost the
-          # job pays for nothing. setup-node's cache option keys on the
-          # lockfile hash, so a dependency change gets a fresh cache and an
-          # unchanged one reuses the previous run's download.
-          #
-          # This is the same option the dependency-audit job in ci-cd.yml
-          # uses. It needs no `actions/cache` reference of its own -- the cache
-          # action runs inside setup-node -- so scripts/action_pins.json does
-          # not have to record an action the workflows never name.
+          # The npm cache: setup-node's own option, keyed on the lockfile hash.
+          # It needs no actions/cache reference of its own, so
+          # scripts/action_pins.json records no action the workflows never name.
           cache: npm
           cache-dependency-path: webapp/package-lock.json
       - name: Install Python test dependencies
