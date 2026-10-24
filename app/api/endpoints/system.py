@@ -1455,6 +1455,15 @@ async def apply_provider_account_merge(
             src.api_key_encrypted = None
             src.session_cookie_encrypted = None
     session.commit()
+    # The merge retires the source account: its config row was renamed to the
+    # destination or archived (or it had none at all — a machine-discovered
+    # account), and its credential sources and tags moved to the destination.
+    # Whatever the cache still holds under the source id is stale, so it goes
+    # — the same rule the archive write path follows. Evicted after the
+    # commit, like the DELETE path: a failed commit must not leave a live
+    # account without its credential.
+    await token_cache.remove(body.provider_id, source_id)
+    auth_failures.clear(body.provider_id, source_id)
     manager._last_sync_time = 0.0
     for account_id in (source_id, destination_id):
         try:
@@ -2693,8 +2702,8 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
         if body.archived and row.enabled:
             row.enabled = False
         # Unarchiving restores collection so the provider is usable again,
-        # but only when the caller did not explicitly state enabled (e.g.
-        # the Settings dialog always sends both fields).
+        # but only when the caller did not explicitly state enabled (the
+        # UI's Restore action sends ``{"archived": false}`` alone).
         elif body.enabled is None and not body.archived and not row.enabled:
             row.enabled = True
     # PR #317 round-2 re-review warning: enforce the archive invariant AFTER
@@ -2928,6 +2937,17 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     # A replaced/removed credential deserves a fresh verdict: drop any stale
     # "provider rejected it" flag so the next collection re-evaluates.
     if credential_changed:
+        auth_failures.clear(provider_id, account_id)
+    if body.archived:
+        # An archived account holds no live credential: evict its cache entry
+        # the way the Remove path does. Otherwise the retired account keeps a
+        # bundle that only reads "expired" and stays refreshable. Idempotent —
+        # every write that asserts the archived state re-asserts it.
+        #
+        # This runs after the commit and after the credential mirroring above:
+        # a request that archives *and* stores a key would otherwise re-cache
+        # the credential it just archived.
+        await token_cache.remove(provider_id, account_id)
         auth_failures.clear(provider_id, account_id)
     # Invalidate server-side fleet/limits caches so archived/restored
     # providers appear or disappear immediately on the next dashboard poll.

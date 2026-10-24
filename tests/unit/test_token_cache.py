@@ -1267,3 +1267,33 @@ async def test_legacy_default_keeps_precedence_without_hiding_pending_device(cac
     assert len(pending) == 1
     assert pending[0]["source_id"] == "synthetic-device-source"
     assert pending[0]["tokens"] == {"api_key": "synthetic-device"}
+
+
+@pytest.mark.asyncio
+async def test_remove_drops_a_bundle_that_has_no_merged_entry(cache):
+    """An account that holds only a source bundle must be gone too.
+
+    A durable source — an enrolled machine's credential — lives in the source
+    cache only: ``store()`` skips the merged entry for it, and
+    ``_reload_durable_unlocked`` writes the bundle alone. Removing just the
+    merged entry left the credential behind.
+    """
+    cache._source_cache.setdefault("openrouter", {})["acc_a"] = {
+        "sidecar:host:oauth-json": (
+            {"api_key": "synthetic-durable"},  # pragma: allowlist secret
+            {"durable_source": True},
+            time.time(),
+        )
+    }
+    assert "acc_a" not in cache._cache.get("openrouter", {})
+
+    removed = await cache.remove("openrouter", "acc_a")
+    assert removed is True
+
+    assert "acc_a" not in cache._source_cache.get("openrouter", {})
+
+
+@pytest.mark.asyncio
+async def test_remove_reports_nothing_removed_for_an_unknown_account(cache):
+    removed = await cache.remove("openrouter", "acc_a")
+    assert removed is False
