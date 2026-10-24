@@ -293,3 +293,19 @@ def test_a_padded_parent_is_trimmed_and_moves(session):
 
     # And it is not reported again.
     assert _check().detect(session).total_count == 0
+
+
+def test_a_tab_padded_parent_is_trimmed_and_moves(session):
+    """SQLite's one-argument trim() strips spaces only — the tab has to be
+    named explicitly, or the id is ignored where Python's strip() would have
+    accepted it."""
+    _event(session, raw_json=_provenance(parent_session_id="\tmvs_main\n"))
+
+    report = _check().detect(session)
+
+    assert report.total_count == 1
+    assert report.groups[0].detail["parent_session_id"] == "mvs_main"
+
+    result, _ = _check().apply(session, report.groups[0].key, {})
+    assert result.counts["usage_events_moved"] == 1
+    assert session.exec(select(UsageEvent)).one().session_id == "mvs_main"

@@ -43,7 +43,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, literal_column
 from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
@@ -256,7 +256,15 @@ def _provenance_parent(column: Any) -> Any:
                     # Trimmed here, not in Python: the comparison and the
                     # group key must see the same value, or a padded id would
                     # be reported as fixable and never move.
-                    func.trim(func.json_extract(column, "$.parent_session_id")),
+                    #
+                    # SQLite's one-argument trim() strips spaces only, so the
+                    # whitespace Python's str.strip() would remove is named
+                    # explicitly: space, tab, line feed and carriage return.
+                    # Anything else is left in place and rejected below.
+                    func.trim(
+                        func.json_extract(column, "$.parent_session_id"),
+                        literal_column("char(9) || char(10) || char(13) || ' '"),
+                    ),
                 ),
                 else_=None,
             ),
@@ -324,7 +332,8 @@ def plan_provenance_relinks(
         # A session id is not blank and does not carry whitespace inside it.
         # The provenance is sidecar-supplied text, and a blank value would
         # file the row under a session id that cannot exist. (The outer
-        # padding is trimmed by the query.)
+        # padding is trimmed by the query; anything left over is rejected
+        # here.)
         if not parent or any(char.isspace() for char in parent):
             continue
         plan.relinks.append(
