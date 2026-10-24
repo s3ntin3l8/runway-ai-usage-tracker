@@ -128,6 +128,38 @@ def test_describes_the_session_by_its_latest_event(db_session):
     assert row["cwd"] == "/repo/alpha"
 
 
+def test_falls_back_when_the_latest_event_has_no_project(db_session):
+    """The latest event may carry no cwd, and no project derives from it. The
+    session still knows its project from an earlier event."""
+    _add(
+        db_session,
+        event_id="early",
+        session_id="s1",
+        project="alpha",
+        cwd="/repo/alpha",
+        sidecar_id="host-a",
+        ts=datetime(2026, 5, 21, 10, 0, tzinfo=UTC),
+        tokens_input=10,
+    )
+    _add(
+        db_session,
+        event_id="late",
+        session_id="s1",
+        project=None,
+        cwd=None,
+        sidecar_id="host-b",
+        ts=datetime(2026, 5, 21, 11, 0, tzinfo=UTC),
+        tokens_input=10,
+    )
+
+    row = query_top_sessions(db_session, since=_SINCE, metric="tokens")[0]
+    # The host still comes from the latest event...
+    assert row["sidecar_id"] == "host-b"
+    # ...but the project falls back to the best one the session had.
+    assert row["project"] == "alpha"
+    assert row["cwd"] == "/repo/alpha"
+
+
 def test_counts_the_hosts_a_session_ran_on(db_session):
     _add(
         db_session,

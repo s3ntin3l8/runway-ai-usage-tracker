@@ -36,7 +36,8 @@ def query_top_sessions(
     """Rank ``session_id`` across all providers/accounts in ``[since, until)``.
 
     Each row carries the session's ``project`` / ``cwd`` / ``sidecar_id`` — the
-    host that pushed its **latest** event, not a lexicographic maximum — its
+    host that pushed its **latest** event, not a lexicographic maximum (falling
+    back to the session's best value when that latest event carries none) — its
     first and last event timestamp, the token component sums +
     ``tokens_total``, ``cost_usd`` + ``cost_cache``, ``msgs``, the number of
     distinct ``hosts`` the session ran on, and the distinct ``providers`` /
@@ -103,9 +104,15 @@ def query_top_sessions(
             -- session can move between hosts, and MAX() would report the
             -- alphabetically greatest one while the UI reads the value as
             -- "the host that pushed this".
-            MAX(CASE WHEN rn = 1 THEN project END)             AS project,
-            MAX(CASE WHEN rn = 1 THEN cwd END)                 AS cwd,
-            MAX(CASE WHEN rn = 1 THEN sidecar_id END)          AS sidecar_id,
+            --
+            -- When the latest event carries no value of its own — an event
+            -- with no cwd derives no project — fall back to the best value
+            -- the session had. A label is worth more than the tidiness of
+            -- taking the newest row's NULL at face value.
+            COALESCE(MAX(CASE WHEN rn = 1 THEN project END), MAX(project)) AS project,
+            COALESCE(MAX(CASE WHEN rn = 1 THEN cwd END), MAX(cwd))         AS cwd,
+            COALESCE(MAX(CASE WHEN rn = 1 THEN sidecar_id END),
+                     MAX(sidecar_id))                                     AS sidecar_id,
             MIN(ts)                                            AS ts_start,
             MAX(ts)                                            AS ts_end,
             COUNT(DISTINCT sidecar_id)                         AS hosts,
