@@ -73,9 +73,14 @@ export interface QuickRange {
 /**
  * Quick-range options, computed fresh so the month entries track the wall
  * clock (call at render time, not module load).
+ *
+ * The 24-hour entry leads the list. It is a rolling `{ days: 1 }` window,
+ * which the API resolves to `now - 1 day` — the last 24 hours, not a
+ * calendar day — so it re-scopes on every load.
  */
 export function quickRanges(): QuickRange[] {
   return [
+    { id: '24h', label: 'Last 24 hours', value: { days: 1 } },
     ...ROLLING_DAYS.map((days) => ({
       id: `${days}d`,
       label: `Last ${days} days`,
@@ -186,9 +191,13 @@ export function isLiveMonth(v: DateRangeValue): boolean {
   return aligned.year === cur.year && aligned.month === cur.month;
 }
 
-/** Human label: 'Last 7 days' | 'September 2026' | 'Sep 1 – Sep 27'. */
+/** Human label: 'Last 24 hours' | 'Last 7 days' | 'September 2026' | 'Sep 1 – Sep 27'. */
 export function formatRangeLabel(v: DateRangeValue): string {
-  if (isRolling(v) && v.days != null) return `Last ${v.days} days`;
+  if (isRolling(v) && v.days != null) {
+    // A one-day rolling window is the last 24 hours, not "the last day".
+    if (v.days === 1) return 'Last 24 hours';
+    return `Last ${v.days} days`;
+  }
   if (isAbsolute(v)) {
     const aligned = monthAligned(v);
     if (aligned) {

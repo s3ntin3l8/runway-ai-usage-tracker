@@ -660,6 +660,19 @@ PRICING_SEED: list[dict] = [
     # the cost calculator skips its segment-trim fallback for free-tier ids,
     # so neither casing can reach this row (see the Data Health
     # `unpriced_models` check, which excludes them for the same reason).
+    #
+    # MiniMax Code (the app, not the API) reports the same model from its own
+    # runtime ledger, as `minimax/MiniMax-M3.1-Flash` — and that ledger
+    # records no free/paid flag at all: its usage rows carry cost 0.0
+    # (because the M Plan is a subscription) and their model column is NULL,
+    # while the only model string anywhere is the session's
+    # `effectiveModel`. So the free/paid distinction the "-free" spellings
+    # encode is missing from the source, not from this table: MiniMax Code
+    # traffic resolves here and is reported as an API-equivalent notional
+    # cost, the same convention the OpenCode Coding Plan uses above. Were the
+    # runtime ever to emit a "-free" id, the cost calculator's free-tier
+    # guard would price it at $0 without a change here. See
+    # docs/collection_logic.md → "MiniMax Code pricing: no free/paid signal".
     {
         "provider_id": "minimax",
         "model_id": "MiniMax-M3.1-Flash",

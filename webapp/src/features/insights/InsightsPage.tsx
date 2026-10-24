@@ -1,6 +1,6 @@
 // Insights: cross-provider aggregates — lifetime global stats plus the Top
-// Models / Projects / Tools rankings over the shared time range. Unlike
-// History, nothing here keys off a single account.
+// Models / Projects / Tools / Sessions / Hosts rankings over the shared time
+// range. Unlike History, nothing here keys off a single account.
 
 import { PageHeader } from '@/components/layout/PageHeader';
 import { SidecarFilter } from '@/components/ui/SidecarFilter';
@@ -9,8 +9,10 @@ import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { useRangeParam } from '@/hooks/useRangeParam';
 import { GlobalInsights } from './GlobalInsights';
 import { OverallChartCard } from './OverallChartCard';
+import { TopHostsCard } from './TopHostsCard';
 import { TopModelsCard } from './TopModelsCard';
 import { TopProjectsCard } from './TopProjectsCard';
+import { TopSessionsCard } from './TopSessionsCard';
 import { TopToolsCard } from './TopToolsCard';
 import { useGlobalStats } from './queries';
 
@@ -48,6 +50,11 @@ export function InsightsPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <TopProjectsCard range={range} />
           <TopToolsCard range={range} />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <TopSessionsCard range={range} />
+          <TopHostsCard range={range} />
         </div>
       </div>
     </>

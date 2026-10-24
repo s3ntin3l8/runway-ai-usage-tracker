@@ -65,9 +65,15 @@ describe('serializeRangeParam', () => {
 
   it('serializes rolling and absolute ranges', () => {
     expect(serializeRangeParam({ days: 30 })).toBe('30d');
+    expect(serializeRangeParam({ days: 1 })).toBe('1d');
     expect(serializeRangeParam({ since: '2026-09-01', until: '2026-09-30' })).toBe(
       '2026-09-01_2026-09-30',
     );
+  });
+
+  it('round-trips the 24-hour window through the URL param', () => {
+    expect(parseRangeParam('1d')).toEqual({ days: 1 });
+    expect(serializeRangeParam(parseRangeParam('1d'))).toBe('1d');
   });
 
   it('round-trips through parseRangeParam', () => {
@@ -107,6 +113,12 @@ describe('resolveRange', () => {
     const { since, until } = resolveRange({ days: 7 });
     expect(until).toBe('2026-06-13T15:30:00.000Z');
     expect(since).toBe(new Date(Date.parse('2026-06-13T15:30:00.000Z') - 7 * 86_400_000).toISOString());
+  });
+
+  it('spans exactly 24 hours for the one-day rolling window', () => {
+    const { since, until } = resolveRange({ days: 1 });
+    expect(until).toBe('2026-06-13T15:30:00.000Z');
+    expect(since).toBe('2026-06-12T15:30:00.000Z');
   });
 
   it('converts absolute dates to local-midnight instants with an exclusive end', () => {
@@ -183,6 +195,10 @@ describe('formatRangeLabel', () => {
     expect(formatRangeLabel({ days: 90 })).toBe('Last 90 days');
   });
 
+  it('labels a one-day rolling window as the last 24 hours', () => {
+    expect(formatRangeLabel({ days: 1 })).toBe('Last 24 hours');
+  });
+
   it('labels month-aligned spans with the long month + year', () => {
     expect(formatRangeLabel({ since: '2026-06-01', until: '2026-06-30' })).toBe('June 2026');
     expect(formatRangeLabel(monthSpanForKey('2026-01'))).toBe('January 2026');
@@ -203,6 +219,7 @@ describe('quickRanges', () => {
   it('offers rolling presets plus this/last month computed at call time', () => {
     const ranges = quickRanges();
     expect(ranges.map((r) => r.label)).toEqual([
+      'Last 24 hours',
       'Last 7 days',
       'Last 14 days',
       'Last 30 days',
@@ -210,8 +227,14 @@ describe('quickRanges', () => {
       'This month',
       'Last month',
     ]);
-    expect(ranges[4].value).toEqual({ since: '2026-06-01', until: '2026-06-30' });
-    expect(ranges[5].value).toEqual({ since: '2026-05-01', until: '2026-05-31' });
+    expect(ranges[5].value).toEqual({ since: '2026-06-01', until: '2026-06-30' });
+    expect(ranges[6].value).toEqual({ since: '2026-05-01', until: '2026-05-31' });
+  });
+
+  it('leads with a 24-hour rolling window', () => {
+    const [first] = quickRanges();
+    expect(first.id).toBe('24h');
+    expect(first.value).toEqual({ days: 1 });
   });
 });
 

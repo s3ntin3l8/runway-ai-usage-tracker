@@ -417,6 +417,68 @@ class TopProjectsResponse(BaseModel):
     generated_at: str
 
 
+class TopSessionEntry(BaseModel):
+    """One session's totals in the cross-provider Top Sessions ranking."""
+
+    session_id: str
+    project: str | None = None
+    cwd: str | None = None
+    sidecar_id: str | None = None  # the host that pushed the session's latest event
+    ts_start: str | None = None  # ISO-8601 UTC
+    ts_end: str | None = None  # ISO-8601 UTC
+    hosts: int = 0  # distinct hosts the session ran on
+    msgs: int
+    tokens_total: int
+    tokens_input: int
+    tokens_output: int
+    tokens_cache_read: int
+    tokens_cache_create: int
+    tokens_reasoning: int
+    cost_usd: float
+    cost_cache: float
+    cost_input: float = 0.0
+    cost_output: float = 0.0
+    cost_cache_read: float = 0.0
+    cost_cache_create: float = 0.0
+    providers: list[str]  # distinct providers that contributed to this session
+    models: list[str]  # distinct models used in this session
+
+
+class TopSessionsResponse(BaseModel):
+    sessions: list[TopSessionEntry]
+    metric: str  # "tokens" | "cost"
+    generated_at: str
+
+
+class TopHostEntry(BaseModel):
+    """One host's totals in the cross-provider Top Hosts ranking."""
+
+    sidecar_id: str  # the hostname that pushed these events
+    ts_start: str | None = None  # ISO-8601 UTC
+    ts_end: str | None = None  # ISO-8601 UTC
+    msgs: int
+    sessions: int  # distinct sessions that ran on this host
+    tokens_total: int
+    tokens_input: int
+    tokens_output: int
+    tokens_cache_read: int
+    tokens_cache_create: int
+    tokens_reasoning: int
+    cost_usd: float
+    cost_cache: float
+    cost_input: float = 0.0
+    cost_output: float = 0.0
+    cost_cache_read: float = 0.0
+    cost_cache_create: float = 0.0
+    providers: list[str]  # distinct providers that pushed to this host
+
+
+class TopHostsResponse(BaseModel):
+    hosts: list[TopHostEntry]
+    metric: str  # "tokens" | "cost"
+    generated_at: str
+
+
 class TopToolEntry(BaseModel):
     tool: str
     calls: int  # total invocations

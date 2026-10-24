@@ -26,6 +26,8 @@ All API routes are under `/api/v1/`.
 | `GET` | `/api/v1/usage/top-projects` | Top projects ranked by `metric=tokens\|cost\|sessions`, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/top-tools` | Top tools by invocation volume, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/top-models` | Cross-provider Top Models ranked by `metric=tokens\|cost`, optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/top-sessions` | Cross-provider Top Sessions ranked by `metric=tokens\|cost`, optionally scoped by `provider_id`/`sidecar_id` — the sessions behind a usage spike, across every provider |
+| `GET` | `/api/v1/usage/top-hosts` | Cross-provider Top Hosts ranked by `metric=tokens\|cost`, optionally scoped by `provider_id`/`sidecar_id` — the machines that pushed the events |
 | `GET` | `/api/v1/usage/source-apps` | Client apps that produced events, ranked by `metric=tokens\|cost`; several apps can share one provider, so this is what says which app spent the quota. Optionally scoped by `provider_id`/`account_id`/`sidecar_id` |
 | `GET` | `/api/v1/usage/global-stats` | Global cross-provider snapshot; optional `sidecar_id` and `exclude_cache` filters |
 | `GET` | `/api/v1/usage/cost-forecast` | MTD cost + 7-day burn extrapolated to EOM; optional `exclude_cache` |
@@ -41,6 +43,17 @@ Lifetime token totals and `cache_hit_ratio` in `/usage/global-stats` retain the
 cache-inclusive components; `exclude_cache` applies to session averages and peak
 token metrics, while the UI adjusts the lifetime token/cost tiles from their
 component fields. Cache-specific metrics remain cache-inclusive by definition.
+
+`/usage/top-sessions` and `/usage/top-hosts` rank across every provider and
+account unless `provider_id` says otherwise, and resolve their window the way
+the other rankings do: an explicit `since`/`until` pair (upper bound
+exclusive) wins, else the last `days` — `days=1` is the rolling last 24
+hours — else the current month on the user's local calendar. A session row
+carries the session's `project`, `cwd` and pushing host (`sidecar_id`), its
+first and last event, and the distinct `providers`/`models` behind it; a host
+row carries the number of distinct `sessions` that ran on it. Events with no
+`session_id` — or, for the host ranking, no pushing host — are not
+attributable and are left out of the ranking.
 
 ## Fleet / Ingestion
 
