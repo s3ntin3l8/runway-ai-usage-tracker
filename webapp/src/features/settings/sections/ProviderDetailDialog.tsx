@@ -6,7 +6,7 @@ import { claudeConnectionLabel } from '@/lib/providerFamilies';
 // the follow-up PR.
 //
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Archive, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -54,6 +54,10 @@ export function ProviderDetailDialog({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [editingDiscovered, setEditingDiscovered] = useState<ProviderAccount | null>(null);
   const [discoveredLabel, setDiscoveredLabel] = useState('');
+  // The master toggle's scope: which accounts the switch speaks for. The
+  // description carries it, and the switch points at it with
+  // aria-describedby so the qualifier reaches a screen reader too.
+  const masterToggleScopeId = useId();
 
   // Master enabled toggle: enables/disables every account under this provider
   // via N PUTs (one per account). For v1 the backend has no batch endpoint;
@@ -98,7 +102,6 @@ export function ProviderDetailDialog({
   }, [connections]);
   const listedAccounts = (familyAccounts ?? provider?.accounts ?? []).filter((a) => !a.archived);
   const configAccounts = listedAccounts.filter((a) => a.source !== 'discovered');
-  const masterEnabled = configAccounts.length > 0 && configAccounts.every((a) => a.enabled);
 
   // The provider an account is addressed to: its own, not the family's
   // representative. An account that names a provider the dialog does not
@@ -110,31 +113,57 @@ export function ProviderDetailDialog({
     if (id === provider.provider_id) return provider;
     return (connections ?? []).find((c) => c.provider_id === id) ?? null;
   };
+  // The provider the account dialog opens against — its own, or nothing. There
+  // is no fallback to the family's representative: the account mutations already
+  // refuse to act on an account they cannot address, and this dialog has to
+  // agree with them rather than show the wrong provider's settings.
+  const editingAccountProvider = editingAccount ? providerOf(editingAccount) : null;
+  // The accounts the master toggle can actually reach. An account the dialog
+  // cannot address is left out of the blast radius rather than silently
+  // dropped from it, and the switch says so when none of them is reachable.
+  const addressableConfigAccounts = configAccounts.filter((a) => providerOf(a) !== null);
+  const masterEnabled =
+    addressableConfigAccounts.length > 0 && addressableConfigAccounts.every((a) => a.enabled);
   const setMasterEnabled = useMutation({
     mutationFn: async (next: boolean) => {
-      if (!provider) return;
+      const skipped: string[] = [];
       const updates = configAccounts
         .filter((a) => a.enabled !== next)
         .flatMap((a) => {
           const target = providerOf(a);
-          return target
-            ? [putProviderConfig(target.provider_id, a.account_id, { enabled: next })]
-            : [];
+          if (!target) {
+            // An account the dialog cannot address is left alone — and named,
+            // so the toast can never claim a family-wide change that did not
+            // happen. The name goes through the display helper: the id may be
+            // an opaque 64-hex credential hash, and every other toast here
+            // masks it.
+            skipped.push(displayAccountName(a));
+            return [];
+          }
+          return [putProviderConfig(target.provider_id, a.account_id, { enabled: next })];
         });
       await Promise.all(updates);
+      return { changed: updates.length, skipped };
     },
-    onSuccess: (_data, next) => {
+    onSuccess: ({ changed, skipped }, next) => {
       // Capture `next` from the mutation variables — by the time onSuccess
       // fires, the parent state may have updated and `masterEnabled` reflects
       // the post-toggle value, not the user's intent. (Variable form of
       // useMutation's onSuccess callback.)
-      if (provider) {
-        toast.success(
-          configAccounts.length === 0
-            ? 'No accounts to update'
-            : `${provider.name} · all accounts ${next ? 'enabled' : 'disabled'}`,
+      const verb = next ? 'enabled' : 'disabled';
+      const name = provider?.name;
+      if (skipped.length > 0) {
+        // Not a success: part of the family was left alone, and the operator
+        // has to hear that from the one report they get. "N changed; M
+        // skipped" says what happened — "N of T accounts" mixes the two and
+        // under-reports when some accounts were already in the target state.
+        toast.error(
+          `${name} · ${changed} ${changed === 1 ? 'account' : 'accounts'} ${verb}; ` +
+            `${skipped.length} skipped (${skipped.join(', ')})`,
         );
+        return;
       }
+      toast.success(`${name} · all accounts ${verb} (${changed} changed)`);
     },
     onError: (err) => toast.error(err.message),
     // Refetch on success *and* failure so a mid-batch partial failure still
@@ -232,16 +261,21 @@ export function ProviderDetailDialog({
                 <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
                 <div>
                   <p className="text-[13px] font-medium">All accounts enabled</p>
-                  <p className="text-[11px] text-fg-subtle">
-                    Disabling hides this provider from collection across all accounts.
+                  {/* The scope of the switch lives here. It is wired to the
+                      switch with aria-describedby so a screen reader gets the
+                      qualifier with the name, not only on screen. */}
+                  <p id={masterToggleScopeId} className="text-[11px] text-fg-subtle">
+                    Turning this off hides the provider from collection for every account this
+                    card can address. An account whose provider is unavailable is left as it is.
                   </p>
                 </div>
               </div>
               <Switch
                 checked={masterEnabled}
-                disabled={configAccounts.length === 0 || setMasterEnabled.isPending}
+                disabled={addressableConfigAccounts.length === 0 || setMasterEnabled.isPending}
                 onCheckedChange={(v) => setMasterEnabled.mutate(v)}
                 aria-label="All accounts enabled"
+                aria-describedby={masterToggleScopeId}
               />
             </div>
 
@@ -345,14 +379,30 @@ export function ProviderDetailDialog({
                               <button
                                 type="button"
                                 role="menuitem"
-                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2"
+                                // An account the dialog cannot address has no
+                                // provider to open. Marked disabled for
+                                // assistive tech and dimmed, but still
+                                // clickable: a `disabled` button swallows the
+                                // click and says nothing, and the operator is
+                                // better served by being told why.
+                                aria-disabled={account.source !== 'discovered' && !providerOf(account)}
+                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2 aria-disabled:opacity-50"
                                 onClick={() => {
                                   setMenuFor(null);
                                   if (account.source === 'discovered') {
                                     setEditingDiscovered(account);
                                     setDiscoveredLabel(account.account_label ?? '');
-                                  } else {
+                                  } else if (providerOf(account)) {
                                     setEditingAccount(account);
+                                  } else {
+                                    // The account names a provider the dialog does
+                                    // not know, so there is no provider to open
+                                    // its settings against. Say so, rather than
+                                    // closing the menu and leaving the operator
+                                    // wondering whether the click landed.
+                                    toast.error(
+                                      `Cannot edit ${displayAccountName(account)} — its provider is not available`,
+                                    );
                                   }
                                 }}
                               >
@@ -444,9 +494,9 @@ export function ProviderDetailDialog({
         ) : null}
       </ResponsiveDialog>
 
-      {provider && editingAccount ? (
+      {provider && editingAccount && editingAccountProvider ? (
         <ProviderAccountDialog
-          provider={providerOf(editingAccount) ?? provider}
+          provider={editingAccountProvider}
           accountId={editingAccount.account_id}
           onClose={() => setEditingAccount(null)}
         />
