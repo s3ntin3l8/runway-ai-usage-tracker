@@ -210,6 +210,44 @@ def test_a_merge_moves_the_cached_bundle_to_the_destination(client, session):
     assert not token_cache._source_cache.get("openrouter", {}).get("alice@example.com")
 
 
+def test_a_usage_card_claiming_a_merged_account_is_filed_under_the_destination(
+    client, session, ingest_secret
+):
+    """The quota-card path is the same resurrection: a card claiming the
+    merged-away id must land under the destination, not bring the retired
+    account back into the fleet view."""
+    import json
+
+    from app.models.db import LatestUsage
+
+    _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
+    _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
+
+    assert _merge(client, "openrouter", "alice@example.com", "bob@example.com").status_code == 200
+
+    card = {
+        "service_name": "openrouter",
+        "provider_id": "openrouter",
+        "account_id": "alice@example.com",
+        "remaining": "1000",
+        "unit": "tokens",
+        "unit_type": "tokens",
+        "data_source": "logs",
+    }
+    body = json.dumps({"provider": "sidecar", "sidecar_id": "dev-01", "metrics": [card]}).encode()
+    ts, sig = _sign(body, ingest_secret)
+    resp = client.post(
+        "/api/v1/fleet/ingest",
+        content=body,
+        headers={"X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    session.expire_all()
+    accounts = {row.account_id for row in session.exec(select(LatestUsage)).all()}
+    assert accounts == {"bob@example.com"}
+
+
 def test_merging_into_a_merged_away_account_is_rejected(client, session):
     """alice → bob, then bob → alice would leave two records pointing at each
     other."""

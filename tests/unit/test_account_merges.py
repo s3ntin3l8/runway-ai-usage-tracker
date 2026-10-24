@@ -47,7 +47,11 @@ def test_a_chain_of_merges_resolves_to_the_last_destination(session):
 
 
 def test_a_cycle_stops_instead_of_looping(session):
-    """A malformed pair of records must not hang the ingest."""
+    """A malformed pair of records must not hang the ingest.
+
+    alice → bob → alice: the first hop is followed, and the cycle is broken
+    there — the resolution stops at bob rather than chasing alice again.
+    """
     session.add(
         ProviderAccountMerge(
             provider_id="openrouter",
@@ -64,8 +68,9 @@ def test_a_cycle_stops_instead_of_looping(session):
     )
     session.commit()
 
-    resolved = resolve_merged_account(session, "openrouter", "alice@example.com")
-    assert resolved in {"alice@example.com", "bob@example.com"}
+    assert resolve_merged_account(session, "openrouter", "alice@example.com") == "bob@example.com"
+    # And it terminates: the same answer on a second call.
+    assert resolve_merged_account(session, "openrouter", "alice@example.com") == "bob@example.com"
 
 
 def test_recording_a_merge_again_replaces_the_record(session):
