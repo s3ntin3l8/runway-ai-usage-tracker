@@ -31,8 +31,10 @@ _SINCE = datetime.fromtimestamp(_TS / 1000, tz=UTC) - timedelta(days=1)
 def _reset_pending_advances():
     """Keep the module-level pending-cursor registry out of other tests."""
     minimax_code._PENDING_ADVANCES.clear()
+    minimax_code._PENDING_SKIPS.clear()
     yield
     minimax_code._PENDING_ADVANCES.clear()
+    minimax_code._PENDING_SKIPS.clear()
 
 
 def _store(tmp_path: Path, **kwargs) -> Path:
@@ -1138,3 +1140,94 @@ def test_same_millisecond_requests_keep_their_tokens_across_the_paging_cap(tmp_p
 
     assert len(set(ids)) == 2
     assert sorted(tokens) == [100, 200]
+
+
+# --- skipped rows ---------------------------------------------------------
+
+
+def _store_with_a_broken_row(tmp_path: Path) -> tuple[Path, Path, int]:
+    """A store whose second row has a timestamp the extractor cannot read.
+
+    The ledger's ``ts`` column is an integer, but SQLite keeps a value it
+    cannot convert as text, so a corrupted row lands there as text.
+    """
+    usage = [
+        {**DEFAULT_USAGE[0], "id": 1},
+        {**DEFAULT_USAGE[1], "id": 2, "ts": "not-a-timestamp"},
+        {**DEFAULT_USAGE[2], "id": 3},
+    ]
+    db_path = make_minimax_code_store(tmp_path, usage=usage)
+    state_file = tmp_path / "minimax_code_watermark.json"
+    return db_path, state_file, 2
+
+
+def _state_entry(state_file: Path, db_path: Path) -> dict:
+    state = json.loads(state_file.read_text())
+    return state["databases"][str(db_path.resolve())]
+
+
+def test_a_skipped_row_stops_the_cursor_in_front_of_it(tmp_path):
+    """The cursor must not step over a row the extractor could not read.
+
+    Stepping over it would drop the row's usage for good: the rows behind it
+    would never be read again.
+    """
+    db_path, state_file, broken_id = _store_with_a_broken_row(tmp_path)
+
+    events = _parse(db_path, tmp_path)
+
+    # The rows around the broken one are still emitted.
+    assert len(events) == 2
+    # The cursor stops in front of the broken row.
+    state_key = str(state_file.resolve())
+    assert minimax_code._PENDING_ADVANCES[state_key][str(db_path.resolve())] == broken_id - 1
+    # The skipped row is remembered, so the next cycle reads it again.
+    assert minimax_code._PENDING_SKIPS[state_key][str(db_path.resolve())]["skipped"] == {
+        broken_id: 1
+    }
+
+
+def test_a_skipped_row_is_retried_until_it_is_abandoned(tmp_path):
+    """A row that never becomes a valid event is given up on — and said so.
+
+    It is retried on every cycle first: the failure may be transient. Only
+    after the attempt bound is it abandoned, and then it is reported rather
+    than dropped in silence.
+    """
+    db_path, state_file, broken_id = _store_with_a_broken_row(tmp_path)
+
+    for attempt in range(1, minimax_code._MAX_SKIP_ATTEMPTS):
+        _parse(db_path, tmp_path)
+        commit_pending_state()
+        entry = _state_entry(state_file, db_path)
+        # The cursor is still in front of the row.
+        assert entry["last_id"] == broken_id - 1
+        assert entry["skipped"] == {str(broken_id): attempt}
+        assert entry["abandoned"] == []
+
+    # The last attempt gives up on the row and moves past it.
+    _parse(db_path, tmp_path)
+    commit_pending_state()
+    entry = _state_entry(state_file, db_path)
+    assert entry["skipped"] == {}
+    assert entry["abandoned"] == [broken_id]
+    assert entry["last_id"] == 3
+
+    # The abandoned row is not read again: the cursor is past it.
+    _parse(db_path, tmp_path)
+    commit_pending_state()
+    assert _state_entry(state_file, db_path)["abandoned"] == [broken_id]
+
+
+def test_a_failed_push_keeps_the_skip_count(tmp_path):
+    """A failed push is not an attempt: the row is read again from scratch."""
+    db_path, state_file, broken_id = _store_with_a_broken_row(tmp_path)
+
+    _parse(db_path, tmp_path)
+    discard_pending_state()
+
+    state_key = str(state_file.resolve())
+    assert minimax_code._PENDING_ADVANCES == {}
+    assert minimax_code._PENDING_SKIPS == {}
+    # Nothing was written, so the next cycle starts over.
+    assert not state_file.exists()

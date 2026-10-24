@@ -7,7 +7,7 @@ import pytest
 
 from scripts.sidecar_pkg import minimax_code_probe as probe
 from scripts.sidecar_pkg.event_extractors import minimax_code
-from tests.fixtures.minimax_code_fixture import make_minimax_code_store
+from tests.fixtures.minimax_code_fixture import DEFAULT_USAGE, make_minimax_code_store
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +55,62 @@ def test_probe_reports_the_store_and_passes(host):
     # exactly one request comes back without a model.
     assert report["models"]["(unresolved)"] == 1
     assert report["plan_review_requests"] > 0
+    # The fixture's rows are inside the first-run window.
+    assert report["out_of_window_requests"] == 0
+    assert report["skipped_requests"] == 0
+    assert report["abandoned_requests"] == 0
+    assert report["warnings"] == []
+
+
+def test_probe_reports_the_rows_outside_the_first_run_window(tmp_path, monkeypatch):
+    """The rows a first run would not import have to be visible.
+
+    While the cursor advances every row is reported, but a rebuilt store or
+    a deleted cursor file starts from the window — so the operator has to
+    know how much of the ledger sits outside it.
+    """
+    old_ts = 1_600_000_000_000  # 2020-09-13, far outside any window
+    usage = [{**DEFAULT_USAGE[0], "id": 1, "ts": old_ts}]
+    make_minimax_code_store(tmp_path, usage=usage)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    report = probe.probe_minimax_code()
+
+    assert report["ok"] is True
+    assert report["out_of_window_requests"] == 1
+    assert any("SIDECAR_BOOTSTRAP_DAYS" in warning for warning in report["warnings"])
+    text = probe.format_report(report)
+    assert "outside the window" in text
+    assert "WARNING" in text
+
+
+def test_probe_reports_the_skipped_and_abandoned_rows(host):
+    """A row the extractor gave up on has to reach the operator."""
+    cursor = probe._cursor_path()
+    cursor.parent.mkdir(parents=True, exist_ok=True)
+    cursor.write_text(
+        json.dumps(
+            {
+                "databases": {
+                    "/db/runtime-state.sqlite": {
+                        "last_id": 42,
+                        "skipped": {"41": 1},
+                        "abandoned": [7],
+                    }
+                }
+            }
+        )
+    )
+
+    report = probe.probe_minimax_code()
+
+    assert report["skipped_requests"] == 1
+    assert report["abandoned_requests"] == 1
+    assert any("abandoned" in warning for warning in report["warnings"])
+    text = probe.format_report(report)
+    assert "skipped requests" in text
+    assert "abandoned requests" in text
 
 
 def test_probe_fails_when_the_runtime_never_ran(tmp_path, monkeypatch):

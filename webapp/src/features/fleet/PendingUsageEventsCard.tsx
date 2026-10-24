@@ -15,13 +15,13 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import type {
   PendingUsageAssignmentGroup,
   PendingUsageFilter,
-  PendingUsageMapping,
   PendingUsageSession,
   ProviderConfig,
 } from '@/api/types';
 import { accountConfigProviderIdForUsage, relatedAccountProviderIds } from '@/lib/providerAccountAliases';
 import { AddProviderWizard } from '@/features/settings/sections/AddProviderWizard';
 import { buildSidecarNameMap, useSidecars } from './queries';
+import { assignBatchInChunks, type BatchAssignmentOutcome } from './pendingUsageBatch';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
 import { errorMessage } from '@/lib/errorMessage';
 
@@ -116,26 +116,44 @@ export function PendingUsageEventsCard() {
     onError: (error) => toast.error(error.message),
   });
   const batch = useMutation<
-    {
-      assigned: number;
-      providers: string[];
-      mappings: PendingUsageMapping[];
-    },
+    BatchAssignmentOutcome,
     Error,
     PendingUsageAssignmentGroup[]
   >({
-    mutationFn: (assignments) => assignPendingUsageEventsBatch(assignments),
-    onSuccess: ({ assigned, mappings }) => {
-      toast.success(
-        `${assigned} usage event${assigned === 1 ? '' : 's'} assigned. Future attribution updated for ${mappings.length} provider/host pair${mappings.length === 1 ? '' : 's'} after the next config sync.`,
+    mutationFn: (assignments) => assignBatchInChunks(assignments, assignPendingUsageEventsBatch),
+    onSuccess: (outcome) => {
+      const confirmed = new Set(outcome.assignedEventIds);
+      // A chunk can split a session group, so the assigned events leave the
+      // selection while the ones that are still pending stay in it.
+      setSelected((current) =>
+        Object.fromEntries(
+          Object.entries(current)
+            .map(([key, group]) => {
+              const remaining = group.event_ids.filter((id) => !confirmed.has(id));
+              return [key, { ...group, event_ids: remaining, event_count: remaining.length }];
+            })
+            .filter(([, group]) => group.event_ids.length > 0),
+        ),
       );
-      setSelected({});
-      setBatchAccounts({});
-      setBatchOpen(false);
       setOffset(0);
       queryClient.invalidateQueries({ queryKey: ['fleet', 'pending_usage_sessions'] });
       queryClient.invalidateQueries({ queryKey: ['fleet', 'pending_usage_events'] });
       queryClient.invalidateQueries({ queryKey: ['usage'] });
+      if (outcome.error !== undefined) {
+        // The chunk that failed left its events pending, and the chunks
+        // after it were never sent. They stay selected, so a retry assigns
+        // exactly what is left.
+        toast.error(
+          `${outcome.unassignedEventIds.length} usage event${outcome.unassignedEventIds.length === 1 ? '' : 's'} not assigned: ${errorMessage(outcome.error, 'the request failed')}. They are still selected — assign again to retry.`,
+        );
+        return;
+      }
+      toast.success(
+        `${outcome.assigned} usage event${outcome.assigned === 1 ? '' : 's'} assigned. Future attribution updated for ${outcome.mappings.length} provider/host pair${outcome.mappings.length === 1 ? '' : 's'} after the next config sync.`,
+      );
+      setSelected({});
+      setBatchAccounts({});
+      setBatchOpen(false);
     },
     onError: (error) => toast.error(error.message),
   });
