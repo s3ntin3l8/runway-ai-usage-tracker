@@ -46,7 +46,9 @@ export function MergedSection() {
               key={`${m.provider_id}:${m.account_id}`}
               type="button"
               onClick={() =>
-                navigate(`/provider/${m.provider_id}?account=${m.destination_account_id}`)
+                navigate(
+                  `/provider/${m.provider_id}?account=${encodeURIComponent(m.destination_account_id)}`,
+                )
               }
               className="flex items-center gap-2.5 rounded border border-border bg-surface-1 px-3 py-2 text-left transition-colors hover:border-edge-strong"
             >

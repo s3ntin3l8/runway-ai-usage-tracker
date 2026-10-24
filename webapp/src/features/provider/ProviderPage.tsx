@@ -82,9 +82,6 @@ export function ProviderPage() {
     [fleet.data, providerId],
   );
   const accountParam = searchParams.get('account');
-  const entry = entries.find((e) => e.account_id === accountParam) ?? entries[0];
-  const accountId = entry?.account_id ?? accountParam ?? 'default';
-
   // The account was merged away: it holds nothing, so it has no entry here.
   // Saying where it went beats an unexplained "no data" — the operator
   // followed a link to an account that no longer exists.
@@ -95,6 +92,13 @@ export function ProviderPage() {
       ),
     [fleet.data, providerId, accountParam],
   );
+  // A merged-away account does not fall back to another account's entry: the
+  // destination usually has one, and showing its data under the merged-away
+  // account's name would be worse than saying where the account went.
+  const entry = mergedAway
+    ? undefined
+    : (entries.find((e) => e.account_id === accountParam) ?? entries[0]);
+  const accountId = entry?.account_id ?? accountParam ?? 'default';
 
   // Shared time-range picker — `?range=` holds 'Nd' or an absolute
   // 'YYYY-MM-DD_…' span, omitted for the default last-7-days window (mirrors
