@@ -359,13 +359,16 @@ guard that refused to restore it stops refusing. `preview` says what would go
 back and what cannot: the duplicates the merge dropped and the stored
 credential it wiped stay gone.
 
-What the un-merge does **not** do is take the destination's rows back: what the
-destination collected after the merge is the destination's, and it stays. The
-one thing that is dropped is a row that got in the way — an account recreated
-under the same id while the merge was in force — and only after the operator
-confirms it: the original history wins, because restoring it is the point. A
-chain is unwound from the end (alice → bob → carol: undo bob → carol first),
-since undoing the middle link would rewrite the chain twice.
+What the un-merge does **not** do is take the destination's *own* rows back:
+what the destination had before the merge, and what it collected afterwards, is
+the destination's and stays. The rows that go back are the ones the merge
+carried over — which means the destination loses the quota card that came from
+the source, and rebuilds it on the next collection. The one thing that is
+dropped is a row that got in the way — an account recreated under the same id
+while the merge was in force — and only after the operator confirms it: the
+original history wins, because restoring it is the point. A chain is unwound
+from the end (alice → bob → carol: undo bob → carol first), since undoing the
+middle link would rewrite the chain twice.
 
 A parked mapping is *not shipped* to the sidecar — but a sidecar that cached
 the hint before the account was archived was still applying it, because the
