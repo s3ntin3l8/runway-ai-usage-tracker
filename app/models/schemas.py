@@ -139,6 +139,12 @@ class UsageEventPush(BaseModel):
     # app/services/project_label.py. tool_names = the tool_use block names in the
     # message (Anthropic), stored as a JSON array.
     cwd: str | None = None
+    # The git repository the working directory belongs to, as the *name* only
+    # ("runway-ai-usage-tracker") — never the remote URL, which can carry
+    # credentials. The client resolves it on its own host, because the server
+    # never reads the client's filesystem. Optional: an older sidecar sends
+    # none, and the server then labels the row with the folder's name.
+    project_ref: str | None = None
     git_branch: str | None = None
     tool_names: list[str] | None = None
     tokens_input: int = 0

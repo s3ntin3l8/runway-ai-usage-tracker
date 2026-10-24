@@ -242,6 +242,11 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # Working-directory / project context + tool names (universal project linking).
     ("usage_events", "cwd", "VARCHAR"),
     ("usage_events", "project", "VARCHAR"),
+    # The git repository name the client resolved for the working directory.
+    # The label itself lives in `project`; this keeps the identity the client
+    # reported, so a row can be relabelled from one repository name to another
+    # without re-reading anything.
+    ("usage_events", "project_ref", "VARCHAR"),
     ("usage_events", "git_branch", "VARCHAR"),
     ("usage_events", "tools_json", "VARCHAR"),
     # Per-component USD cost (groundwork for cost-composition views; backfilled

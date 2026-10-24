@@ -5995,6 +5995,19 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     # of a traceback per cookie name per store per cycle.
     report_cookie_stores()
 
+    # Name the git repository each event's working directory belongs to, so
+    # two checkouts of one repository group under one project even when their
+    # folders are named differently. The server cannot do this — it never reads
+    # the client's filesystem — and only the name travels, never the remote
+    # URL. Best-effort: an event whose directory is not a repository keeps the
+    # folder-name label.
+    try:
+        from scripts.sidecar_pkg.git_identity import annotate_project_refs
+
+        annotate_project_refs(all_events)
+    except Exception as _e:
+        logging.debug(f"git identity: skipped ({_e})")
+
     return CollectionResult(
         all_metrics, all_events, error_count, completed_providers_this_cycle, cowork_batch
     )
