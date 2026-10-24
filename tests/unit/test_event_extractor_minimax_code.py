@@ -1,6 +1,7 @@
 """Unit tests for the MiniMax Code event extractor."""
 
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -605,9 +606,12 @@ def _clean_data_env(monkeypatch):
     """Clear every env var that can move the runtime's data dir.
 
     Without this a developer's own ``MINIMAX_DATA_DIR`` (or the runtime's
-    internal overrides) would leak into the discovery tests.
+    internal overrides) would leak into the discovery tests. ``APPDATA``
+    goes with them: the Windows app-data root is read from it, so on a
+    Windows host the developer's real roaming dir would otherwise be
+    probed.
     """
-    for name in ("MINIMAX_CODE_HOME", *minimax_code._DATA_DIR_ENV_VARS):
+    for name in ("MINIMAX_CODE_HOME", "APPDATA", *minimax_code._DATA_DIR_ENV_VARS):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -711,6 +715,68 @@ def test_discovery_finds_the_store_under_the_macos_app_data_root(
     found = discover_runtime_stores()
     assert len(found) == 1
     assert "MiniMax Agent" in str(found[0])
+
+
+def test_discovery_finds_the_store_under_the_windows_app_data_root(
+    tmp_path, monkeypatch, _clean_data_env
+):
+    """The desktop app's Windows root is probed as insurance."""
+    make_minimax_code_store(
+        tmp_path,
+        data_dir=str(Path("AppData") / "Roaming" / "MiniMax Code"),
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert "MiniMax Code" in str(found[0])
+
+
+def test_discovery_probes_the_windows_electron_profile_dir(tmp_path, monkeypatch, _clean_data_env):
+    """The Electron profile is ``MiniMax Agent`` on Windows as well as macOS.
+
+    The installer ships under "MiniMax Code", the app's product name — and
+    with it the profile dir — is "MiniMax Agent". Probing only the
+    installer's name would miss a store that lives in the profile dir.
+    """
+    make_minimax_code_store(
+        tmp_path,
+        data_dir=str(Path("AppData") / "Roaming" / "MiniMax Agent"),
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert "MiniMax Agent" in str(found[0])
+
+
+def test_discovery_follows_the_windows_app_data_variable(tmp_path, monkeypatch, _clean_data_env):
+    """A host that redirects ``%APPDATA%`` keeps its app data there.
+
+    The sidecar's own state dir reads the same variable, so the discovery
+    has to follow it: a roaming profile that relocates ``AppData`` would
+    otherwise be probed in a directory the app never touches.
+    """
+    roaming = tmp_path / "Roaming"
+    make_minimax_code_store(tmp_path, data_dir=str(Path("Roaming") / "MiniMax Code"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "elsewhere"))
+    monkeypatch.setenv("APPDATA", str(roaming))
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert str(roaming) in str(found[0])
+
+
+def test_discovery_falls_back_to_the_conventional_windows_app_data_root(
+    tmp_path, monkeypatch, _clean_data_env
+):
+    """Without ``%APPDATA%`` the conventional home-relative path is used."""
+    make_minimax_code_store(
+        tmp_path,
+        data_dir=str(Path("AppData") / "Roaming" / "MiniMax Code"),
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert "APPDATA" not in os.environ
+    found = discover_runtime_stores()
+    assert len(found) == 1
+    assert str(tmp_path / "AppData" / "Roaming") in str(found[0])
 
 
 # --- sidecar wiring --------------------------------------------------------
