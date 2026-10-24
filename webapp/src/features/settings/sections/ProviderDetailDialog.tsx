@@ -258,7 +258,8 @@ export function ProviderDetailDialog({
                 <div>
                   <p className="text-[13px] font-medium">All accounts enabled</p>
                   <p className="text-[11px] text-fg-subtle">
-                    Disabling hides this provider from collection across all accounts.
+                    Turning this off hides the provider from collection for every account this
+                    card can address. An account whose provider is unavailable is left as it is.
                   </p>
                 </div>
               </div>

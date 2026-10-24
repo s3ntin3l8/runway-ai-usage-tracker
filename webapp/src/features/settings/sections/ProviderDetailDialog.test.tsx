@@ -801,4 +801,82 @@ describe('ProviderDetailDialog — an account it cannot address (#795)', () => {
       ),
     );
   });
+
+  it('pluralises the count in the skipped toast too', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    const two: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [
+        { ...alice, account_id: 'a@example.com', enabled: false, provider_id: 'anthropic' },
+        { ...bob, account_id: 'b@example.com', enabled: false, provider_id: 'anthropic' },
+      ],
+      account_count: 2,
+    };
+    renderFamily(two, [two, strangerConnection]);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    // Two accounts changed, one could not be addressed: "2 accounts", not
+    // "2 account".
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/2 accounts enabled; 1 skipped \(Stranger\)/),
+      ),
+    );
+  });
+
+  it('masks an opaque account id in the skipped toast', async () => {
+    vi.mocked(api.putProviderConfig).mockResolvedValue({ status: 'ok' });
+    // No label, and an id that is a 64-hex credential hash: the toast must
+    // show the masked form, not the raw id.
+    const opaque: ProviderAccount = {
+      ...stranger,
+      account_id: 'a'.repeat(64),
+      account_label: null,
+    };
+    const opaqueConnection: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'mystery_connection',
+      name: 'Mystery',
+      accounts: [opaque],
+      account_count: 1,
+    };
+    renderFamily(subscription, [subscription, opaqueConnection]);
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+
+    await userEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/1 skipped \(aaaaaaaa…aaaa\)/),
+      ),
+    );
+    // The raw id never reaches the toast.
+    expect(toast.error).not.toHaveBeenCalledWith(
+      expect.stringContaining('a'.repeat(64)),
+    );
+  });
+
+  it('the master toggle speaks for the accounts it can address', async () => {
+    // The reachable account is enabled; the unreachable one is not. The
+    // switch is checked, and the copy says which accounts it covers — so the
+    // row's "disabled" badge is not a contradiction.
+    const reachable: ProviderConfig = {
+      ...multiAccount,
+      provider_id: 'anthropic',
+      name: 'Claude',
+      accounts: [{ ...alice, enabled: true, provider_id: 'anthropic' }],
+      account_count: 1,
+    };
+    renderFamily(reachable, [reachable, strangerConnection]);
+
+    const toggle = await screen.findByRole('switch', { name: /all accounts enabled/i });
+    expect(toggle).toBeChecked();
+    expect(
+      screen.getByText(/every account this card can address/i),
+    ).toBeInTheDocument();
+  });
 });
