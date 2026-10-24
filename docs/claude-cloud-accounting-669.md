@@ -91,3 +91,91 @@ the existing credential persistence interface. Live verification therefore remai
 pending a supported, source-pinned execution path in the running application or
 an eligible existing credential in the normal durable store. These results are
 not an API authorization rejection or evidence that the sidecar stopped collecting.
+
+## Operator-triggered server diagnostic
+
+`POST /api/v1/system/debug/claude-cloud` is an admin-only, rate-limited diagnostic
+for one explicit cached source. GET is inert. The normal Host, Origin and admin
+checks apply; there is no new permission, automatic execution or source discovery.
+It accepts at most 8 KiB of JSON, rejects duplicate keys and unknown fields, and
+never echoes request values in validation errors.
+
+Request fields:
+
+| Field | Meaning |
+| --- | --- |
+| `account_id` | Exact resolved account slot; `default` cannot be probed. |
+| `source_id` | Exact cached source ID, supplied in the body rather than the URL. |
+| `organization_id` | Optional UUID assertion, checked against the authenticated profile and any configured organization binding. |
+| `session_id` | Optional safe session ID that must appear in the sampled list page. |
+| `max_history_pages` | Literal integer 1–3; defaults to 2. |
+
+The service reads the selected source from the running application's cache. It
+never combines bundles or falls back to another source or a merged credential.
+A source must have an enabled persisted source record and an active account.
+Identity-pending sources and known-expired access credentials are not called.
+Eligible origins are Claude credential files, the existing Claude OAuth environment
+source, explicit configuration, and enrolled Claude Code Keychain contributions.
+Desktop OAuth/read-only sources are excluded from this Code-specific probe.
+A cached Keychain contribution also needs its current device, scraper revision,
+consent generation and unpaused/unrevoked local permission. The server action
+cannot authorize a local scraper.
+
+The first upstream GET is the OAuth profile. Holder email/UUID and organization
+UUID must be usable; holder identity must match the account slot, and any token,
+operator or configured organization assertions must agree. Only then is the
+organization-scoped session list requested. No identity, UUID or token is returned.
+Authority and the exact credential bundle are re-read before/after requests and
+before publication. Rechecks include the original origin, device, scraper and
+consent generation; re-enabling with unchanged tokens cannot revive old work. Late results are discarded if the source changes, is disabled,
+is withdrawn, or cannot be revalidated.
+
+A read-only cache snapshot avoids unrelated credential reload or expiry cleanup.
+Exact durable payloads are checked against that snapshot; every enrolled source,
+including files, remains subject to device revocation. Metadata checks use a
+separate SQLite read-only connection in a worker thread, with a 250 ms busy
+timeout. Cancellation cannot turn late thread results into provider requests or
+published evidence.
+
+The attempt/response is limited to 30 seconds, at most five upstream GETs, 1 MiB
+per response and 4 MiB total. Redirects, response compression, retries and refresh
+exchanges are disabled. One attempt can run per worker; a competing attempt gets
+`busy`. The endpoint allows two attempts per minute. Cancellation closes the
+response stream and releases admission.
+
+The probe samples only the **first 20 listed sessions** and one session's first
+1–3 history pages of at most 50 events each. Without an explicit session, it uses
+the first returned ID; no ordering or recency is assumed. An ID absent from that
+list sample produces `sample_not_found`, not a nonexistent-session claim. Pagination
+requires an explicit nullable `next_cursor`; cursor loops and unsupported shapes
+stop the attempt. `session_list_complete` and `history_complete` describe these
+specific page chains only. `sample_complete` does not establish retention,
+product coverage, numeric continuity or accounting parity.
+
+Numeric sequence strings and integers are normalized for duplicate/gap/order
+counts, without returning sequence values. SDK-shaped objects at the event root,
+`data`, and `content` locations are audited separately. Strings are not parsed as
+embedded records. These locations are observations of an **unverified envelope**;
+never combine their reports or promote them into consumption. Both
+`cloud_contract_verified` and `ready_for_ingestion` remain false.
+
+Reports contain fixed outcomes, booleans, numeric observations and the offline
+audit's sanitized fields. No conversation text, credential, account/session/model
+ID, cursor, request headers or raw provider error is returned or persisted by the
+probe. It does not update collection health, source promotion, backoff, usage
+records or renewal state. Access requests use only the selected access credential;
+refresh prevention remains unchanged.
+
+### Readiness and remaining acceptance
+
+The implementation and synthetic tests do not prove the live cloud contract.
+A reviewed build must first be deployed with explicit approval. Native credential
+probes remain quarantined; this diagnostic uses the server's existing cache only.
+Before live execution, record the immutable build, selected deployment and one
+eligible account/source pair without publishing its identifiers. Run one bounded
+POST, retain the sanitized report, and stop on rejection, timeout or unsupported
+contract. No fallback sweep or token rotation is authorized by this diagnostic.
+
+Then determine the actual envelope and accounting/version scopes from that
+bounded evidence before expanding pagination or building ingestion. Retain local
+collection and keep #669 open. No native acceptance tracker is closed by this work.

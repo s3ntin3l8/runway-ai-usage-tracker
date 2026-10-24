@@ -56,6 +56,8 @@ import type {
   Webhook,
   DebugRawResponse,
   SourceProbeResponse,
+  ClaudeCloudProbeRequest,
+  ClaudeCloudProbeReport,
   WindowDetailResponse,
 } from './types';
 
@@ -524,6 +526,11 @@ export const probeCredentialSources = (providerId: string, accountId: string) =>
     `/api/v1/system/debug/sources/${encodeURIComponent(providerId)}${qs({ account_id: accountId })}`,
     { method: 'POST' },
   );
+
+export const probeClaudeCloud = (body: ClaudeCloudProbeRequest) =>
+  api<ClaudeCloudProbeReport>('/api/v1/system/debug/claude-cloud', {
+    method: 'POST', body: JSON.stringify(body),
+  });
 
 export const fetchDebugRaw = (providerId: string, accountId?: string) =>
   api<DebugRawResponse>(

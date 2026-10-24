@@ -1345,6 +1345,39 @@ export interface SourceProbeResponse {
   sources: SourceProbeResult[];
 }
 
+/** Explicit read-only sample. IDs are inputs only; no credentials are accepted. */
+export interface ClaudeCloudProbeRequest {
+  account_id: string;
+  source_id: string;
+  organization_id?: string | null;
+  session_id?: string | null;
+  max_history_pages?: number;
+}
+
+export interface ClaudeCloudProbeReport {
+  format_version: 1;
+  outcome:
+    | 'sample_complete' | 'sample_limited' | 'sample_not_found' | 'no_sessions' | 'busy'
+    | 'source_unavailable' | 'source_ineligible' | 'unsupported_source' | 'source_changed'
+    | 'expired' | 'identity_mismatch' | 'identity_unavailable' | 'rejected' | 'rate_limited'
+    | 'unavailable' | 'timeout' | 'response_limit' | 'unsupported_contract';
+  stage: 'source' | 'profile' | 'sessions' | 'history' | 'complete';
+  requests: number;
+  http_status: number | null;
+  account_verified: boolean;
+  organization_verified: boolean;
+  session_list_records: number;
+  session_list_complete: boolean | null;
+  history_pages: number;
+  history_events: number;
+  history_complete: boolean | null;
+  sequence: { numeric: number; invalid: number; duplicates: number; gaps: number; out_of_order: number };
+  /** Separate, unverified envelope locations; never combine them into consumption. */
+  observations: { location: 'event' | 'data' | 'content'; report: Record<string, unknown> }[];
+  cloud_contract_verified: false;
+  ready_for_ingestion: false;
+}
+
 export interface DebugRawResponse {
   provider_id: string;
   account_id?: string | null;

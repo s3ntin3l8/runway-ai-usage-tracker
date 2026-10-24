@@ -9,6 +9,7 @@ Architecture:
 """
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -660,6 +661,27 @@ class TokenCache:
                 sources[source_id] = ({**tokens, **refreshed}, metadata, time.time())
                 updated += 1
         return updated
+
+    async def peek_source(
+        self, provider: str, account_id: str, source_id: str
+    ) -> tuple[dict[str, str], dict[str, Any]] | None:
+        """Copy one live cached bundle without DB reload, expiry mutation or fallback.
+
+        Diagnostics must separately validate durable authority. This snapshot
+        preserves legacy TTL while an enrolled source has no heartbeat lease.
+        """
+        async with self._lock:
+            entry = (
+                self._source_cache.get(provider, {})
+                .get(canonical_account_id(account_id), {})
+                .get(source_id)
+            )
+            if entry is None:
+                return None
+            tokens, metadata, timestamp = entry
+            if metadata.get("durable_source") is not True and time.time() - timestamp > self._ttl:
+                return None
+            return dict(tokens), copy.deepcopy(metadata)
 
     async def get_source_candidates(self, provider: str, account_id: str) -> list[dict[str, Any]]:
         """Return live source bundles in configured priority order."""
