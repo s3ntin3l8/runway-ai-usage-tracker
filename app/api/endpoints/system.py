@@ -1454,17 +1454,16 @@ async def apply_provider_account_merge(
             src.archived = True
             src.api_key_encrypted = None
             src.session_cookie_encrypted = None
-    # Read the flag before the commit: after it, the ORM instance is expired
-    # and reading an attribute would issue a fresh query.
-    source_retired = src is not None and src.archived
     session.commit()
-    if source_retired:
-        # The source account is retired: it must not keep a live cached
-        # credential either (same rule as the archive write path). Evicted
-        # after the commit, like the DELETE path: a failed commit must not
-        # leave a live account without its credential.
-        await token_cache.remove(body.provider_id, source_id)
-        auth_failures.clear(body.provider_id, source_id)
+    # The merge retires the source account: its config row was renamed to the
+    # destination or archived (or it had none at all — a machine-discovered
+    # account), and its credential sources and tags moved to the destination.
+    # Whatever the cache still holds under the source id is stale, so it goes
+    # — the same rule the archive write path follows. Evicted after the
+    # commit, like the DELETE path: a failed commit must not leave a live
+    # account without its credential.
+    await token_cache.remove(body.provider_id, source_id)
+    auth_failures.clear(body.provider_id, source_id)
     manager._last_sync_time = 0.0
     for account_id in (source_id, destination_id):
         try:

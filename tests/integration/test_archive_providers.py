@@ -770,6 +770,39 @@ class TestArchiveEvictsTheCachedCredential:
         assert row is not None
         assert row.archived is True
 
+    def test_merging_a_machine_discovered_account_evicts_its_cached_credential(
+        self, session: Session, clean_token_cache
+    ):
+        """A machine-discovered source has no config row — the merge retires
+        the account all the same, so its cached credential must go."""
+        _add_provider_config(
+            session, provider_id="openrouter", account_id="bob@example.com", enabled=True
+        )
+        clean_token_cache.seed_sync(
+            "openrouter",
+            "alice@example.com",
+            {"api_key": "sk-or-test-alice"},  # pragma: allowlist secret
+            {"account_label": "Alice", "source": "sidecar"},
+            time.time(),
+        )
+        _seed_source_bundle(clean_token_cache, "openrouter", "alice@example.com", "sidecar:dev-01")
+
+        resp = _client().post(
+            "/api/v1/system/provider-account-merge/apply",
+            json={
+                "provider_id": "openrouter",
+                "source_account_id": "alice@example.com",
+                "destination_account_id": "bob@example.com",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        # The retired source holds nothing — no config row, no cached bundle.
+        assert clean_token_cache._cache.get("openrouter", {}).get("alice@example.com") is None
+        assert (
+            clean_token_cache._source_cache.get("openrouter", {}).get("alice@example.com") is None
+        )
+
 
 # ---------------------------------------------------------------------------
 # Upgrade-path guard
