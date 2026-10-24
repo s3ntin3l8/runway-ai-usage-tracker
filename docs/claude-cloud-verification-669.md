@@ -152,3 +152,32 @@ The immutable release passed
 This source-validation result establishes no provider API/accounting/coverage
 contract. The one-shot approval was consumed. A further attempt requires the
 reviewed fix, a verified release image and a new concrete readiness/approval step.
+
+## Retry after #935: producer origin format
+
+After #935 passed review and all CI, source
+`b764a894afe547a1e182c724020fb4a34c30d526`, image
+`ghcr.io/s3ntin3l8/runway@sha256:6d843ad9a8c7f9362ee68c2a3097991e0897065302147026245cfdebce284aba`,
+was deployed with another verified owner-only SQLite backup. The exact packaged
+source matched the reviewed files; both release-image architecture audits,
+signing and publication passed in
+[run 40132425773](https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40132425773).
+The authorized diagnostic at 2026-10-24 21:16:00 UTC again returned
+`unsupported_source` at the source stage, with zero provider requests.
+The validated evidence retained all acceptance/contract/ingestion flags as false.
+
+A metadata-only read of the exact selected source established that its origin
+uses `path:`, has a recognized Code filename, has no fingerprint suffix, is not
+an explicit configuration source, and is classified by inventory as Claude Code.
+The sidecar token-file producer emits `path:<resolved filename>`; inventory
+supports both `path:` and `file:`. The diagnostic still accepted only `file:`.
+Thus #935 addressed the independent read-only-marker rejection, while its
+fixtures missed the producer's origin spelling. This remaining rejection is
+tracked in [#938](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/938).
+No actual path, account/source identifier or credential value is retained here.
+
+Regressions for both recognized Code filenames using `path:` failed against
+that release. Accepting both file-origin spellings fixes those offline cases;
+an unrelated filename continues to stop before provider access. This does not
+prove live provider access or any other #669 acceptance requirement. The retry
+was consumed; no provider retry, native lookup, refresh or activation followed.
