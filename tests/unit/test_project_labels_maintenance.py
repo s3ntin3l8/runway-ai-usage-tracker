@@ -14,7 +14,9 @@ from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine
 from app.models.db import UsageEvent
 from app.services.maintenance.project_labels import (
     apply_path_shaped_projects,
+    apply_repo_relabels,
     plan_path_shaped_projects,
+    plan_repo_relabels,
     plan_session_relabels,
 )
 
@@ -192,3 +194,127 @@ class TestPlanSessionRelabels:
 
         assert plan.sessions == 1
         assert plan.label_map == [("web", "repo", 1)]
+
+
+class TestRepoRelabels:
+    """The rows collected before the client reported a repository name."""
+
+    def test_a_row_without_a_reported_repository_is_left_alone(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.total == 0
+        assert plan.relabels == []
+
+    def test_rows_already_following_the_repository_are_left_alone(self):
+        s = _session()
+        _add(
+            s,
+            "a",
+            session_id="s1",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.total == 0
+
+    def test_an_older_row_of_the_same_directory_is_planned(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        plan = plan_repo_relabels(s)
+
+        assert plan.total == 1
+        assert plan.relabels[0].project_ref == "runway-ai-usage-tracker"
+        assert plan.relabels[0].rows == 2
+
+    def test_the_apply_moves_the_older_row(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        result = apply_repo_relabels(s, plan_repo_relabels(s))
+
+        assert result.relabeled == 1
+        assert _projects(s) == {"a": "runway-ai-usage-tracker", "b": "runway-ai-usage-tracker"}
+
+    def test_the_apply_rewrites_the_label_of_a_folder_named_differently(self):
+        s = _session()
+        _add(
+            s,
+            "a",
+            session_id="s1",
+            cwd=r"C:\Users\u\Projects\ai-usage-tracker",
+            project="ai-usage-tracker",
+        )
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd=r"C:\Users\u\Projects\ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        apply_repo_relabels(s, plan_repo_relabels(s))
+
+        assert _projects(s) == {
+            "a": "runway-ai-usage-tracker",
+            "b": "runway-ai-usage-tracker",
+        }
+
+    def test_the_apply_is_idempotent(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        first = apply_repo_relabels(s, plan_repo_relabels(s))
+        second = apply_repo_relabels(s, plan_repo_relabels(s))
+
+        assert first.relabeled == 1
+        assert second.relabeled == 0
+
+    def test_the_raw_context_is_kept(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/ai-usage-tracker", project="ai-usage-tracker")
+        _add(
+            s,
+            "b",
+            session_id="s2",
+            cwd="/home/u/ai-usage-tracker",
+            project="runway-ai-usage-tracker",
+            project_ref="runway-ai-usage-tracker",
+        )
+
+        apply_repo_relabels(s, plan_repo_relabels(s))
+
+        rows = {r.event_id: r for r in s.exec(select(UsageEvent)).all()}
+        assert rows["a"].cwd == "/home/u/ai-usage-tracker"
+        assert rows["a"].project_ref is None
